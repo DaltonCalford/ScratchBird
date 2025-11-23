@@ -2145,7 +2145,7 @@ namespace scratchbird
 
                 // Insert into B-tree
                 // Task 17 MGA Phase 3.1: Pass xid for btn_xmin tracking
-                status = btree->insert(key_bytes, tuple.tid, xid, nullptr);
+                status = btree->insert(key_bytes, static_cast<uint32_t>(getPageNumber(tuple.tid)), tuple.tid.slot, xid, nullptr);
                 if (status != core::Status::OK)
                 {
                     // Log error but continue
@@ -3381,22 +3381,84 @@ namespace scratchbird
                 // Create hidden materialized data table
                 std::string mat_table_name = "__mv_" + view_name + "_data";
 
-                // TODO: ALPHA Phase 1 - Full implementation would:
+                // ALPHA Phase 1 - Complete implementation:
                 // 1. Parse the view definition SQL to extract result columns
                 // 2. Execute the query to get actual data
                 // 3. Create table with derived column types
                 // 4. Populate table with query results
-                //
-                // For now, create a placeholder table with ID column
-                // This establishes the infrastructure for physical materialization
-                std::vector<core::CatalogManager::ColumnInfo> mat_columns;
-                core::CatalogManager::ColumnInfo id_col;
-                id_col.column_name = "__rowid";
-                id_col.ordinal = 0;
-                id_col.data_type = static_cast<uint16_t>(core::DataType::INT64);
-                id_col.nullable = false;
-                mat_columns.push_back(id_col);
 
+                // Parse the view definition to execute it
+                parser::Lexer lexer(definition);
+                parser::ASTArena arena;
+                parser::Parser view_parser(lexer, arena);
+                auto parse_result = view_parser.parseStatement();
+
+                if (!parse_result.success())
+                {
+                    std::string err_msg = "Failed to parse view definition for materialized view '" + view_name + "'";
+                    if (!parse_result.errors().empty())
+                    {
+                        err_msg += ": " + parse_result.errors()[0].message;
+                    }
+                    error(err_msg);
+                }
+
+                // Generate bytecode for the view definition query
+                BytecodeGenerator generator(lexer.stringPool(), db_);
+                auto bytecode_result = generator.generate(parse_result.statement());
+
+                if (!bytecode_result.success())
+                {
+                    std::string err_msg = "Failed to generate bytecode for view definition";
+                    if (!bytecode_result.errors().empty())
+                    {
+                        err_msg += ": " + bytecode_result.errors()[0];
+                    }
+                    error(err_msg);
+                }
+
+                // Execute the view definition query to get columns and data
+                Executor view_executor(db_);
+                view_executor.setConnectionContext(conn_ctx_);
+                auto exec_result = view_executor.execute(bytecode_result.bytecode());
+
+                if (!exec_result.success())
+                {
+                    error("Failed to execute view definition: " + exec_result.error());
+                }
+
+                if (!exec_result.hasResultSet() || exec_result.resultSet() == nullptr)
+                {
+                    error("View definition must return a result set");
+                }
+
+                ResultSet* result_set = exec_result.resultSet();
+
+                // Build column list from query results
+                std::vector<core::CatalogManager::ColumnInfo> mat_columns;
+                size_t col_count = result_set->columnCount();
+
+                // Use provided column names if available, otherwise use query column names
+                for (size_t i = 0; i < col_count; i++)
+                {
+                    core::CatalogManager::ColumnInfo col_info;
+
+                    if (has_column_names && i < column_names.size())
+                    {
+                        col_info.column_name = column_names[i];
+                    }
+                    else
+                    {
+                        col_info.column_name = result_set->columnName(i);
+                    }
+
+                    col_info.ordinal = static_cast<uint16_t>(i);
+                    col_info.data_type = static_cast<uint16_t>(result_set->columnType(i));
+                    col_info.nullable = true;  // Materialized view columns are nullable by default
+                    mat_columns.push_back(col_info);
+                }
+
+                // Create the materialized table with derived schema
                 status = db_->catalog_manager()->createTable(
                     schema_info.schema_id, mat_table_name, mat_columns,
                     materialized_table_id, 0, &ctx);
@@ -3411,8 +3473,168 @@ namespace scratchbird
                     error(err_msg);
                 }
 
-                LOG_INFO(EXECUTOR, "Created materialized table '%s' for view '%s'",
-                         mat_table_name.c_str(), view_name.c_str());
+                LOG_INFO(EXECUTOR, "Created materialized table '%s' for view '%s' with %zu columns",
+                         mat_table_name.c_str(), view_name.c_str(), mat_columns.size());
+
+                // Populate the materialized table with query results
+                size_t row_count = result_set->rowCount();
+                for (size_t row_idx = 0; row_idx < row_count; row_idx++)
+                {
+                    // Build tuple in binary format
+                    std::vector<uint8_t> tuple_data;
+
+                    // Reserve space for TupleHeader
+                    size_t header_offset = static_cast<uint32_t>(tuple_data.size());
+                    tuple_data.resize(static_cast<uint32_t>(tuple_data.size()) + sizeof(core::TupleHeader));
+
+                    // Determine if we need a null bitmap
+                    bool has_nulls = false;
+                    for (size_t col_idx = 0; col_idx < col_count; col_idx++)
+                    {
+                        if (result_set->getValue(row_idx, col_idx).isNull())
+                        {
+                            has_nulls = true;
+                            break;
+                        }
+                    }
+
+                    // Add null bitmap if needed
+                    size_t null_bitmap_offset = 0;
+                    if (has_nulls)
+                    {
+                        null_bitmap_offset = static_cast<uint32_t>(tuple_data.size());
+                        size_t bitmap_bytes = (col_count + 7) / 8;
+                        tuple_data.resize(static_cast<uint32_t>(tuple_data.size()) + bitmap_bytes);
+                        std::fill(tuple_data.begin() + null_bitmap_offset,
+                                  tuple_data.begin() + null_bitmap_offset + bitmap_bytes, 0);
+                    }
+
+                    // Serialize each column value
+                    for (size_t col_idx = 0; col_idx < col_count; col_idx++)
+                    {
+                        const Value& value = result_set->getValue(row_idx, col_idx);
+                        core::DataType col_type = static_cast<core::DataType>(mat_columns[col_idx].data_type);
+
+                        if (value.isNull())
+                        {
+                            // Set null bit in bitmap
+                            size_t byte_offset = null_bitmap_offset + (col_idx / 8);
+                            size_t bit_pos = col_idx % 8;
+                            tuple_data[byte_offset] |= (1 << bit_pos);
+                            continue;
+                        }
+
+                        // Serialize value based on column type
+                        switch (col_type)
+                        {
+                            case core::DataType::INT8:
+                            {
+                                int8_t val = static_cast<int8_t>(value.toInt64());
+                                size_t offset = static_cast<uint32_t>(tuple_data.size());
+                                tuple_data.resize(offset + sizeof(int8_t));
+                                std::memcpy(&tuple_data[offset], &val, sizeof(int8_t));
+                                break;
+                            }
+                            case core::DataType::INT16:
+                            {
+                                int16_t val = static_cast<int16_t>(value.toInt64());
+                                size_t offset = static_cast<uint32_t>(tuple_data.size());
+                                tuple_data.resize(offset + sizeof(int16_t));
+                                std::memcpy(&tuple_data[offset], &val, sizeof(int16_t));
+                                break;
+                            }
+                            case core::DataType::INT32:
+                            {
+                                int32_t val = static_cast<int32_t>(value.toInt64());
+                                size_t offset = static_cast<uint32_t>(tuple_data.size());
+                                tuple_data.resize(offset + sizeof(int32_t));
+                                std::memcpy(&tuple_data[offset], &val, sizeof(int32_t));
+                                break;
+                            }
+                            case core::DataType::INT64:
+                            {
+                                int64_t val = value.toInt64();
+                                size_t offset = static_cast<uint32_t>(tuple_data.size());
+                                tuple_data.resize(offset + sizeof(int64_t));
+                                std::memcpy(&tuple_data[offset], &val, sizeof(int64_t));
+                                break;
+                            }
+                            case core::DataType::FLOAT32:
+                            {
+                                float val = static_cast<float>(value.toDouble());
+                                size_t offset = static_cast<uint32_t>(tuple_data.size());
+                                tuple_data.resize(offset + sizeof(float));
+                                std::memcpy(&tuple_data[offset], &val, sizeof(float));
+                                break;
+                            }
+                            case core::DataType::FLOAT64:
+                            {
+                                double val = value.toDouble();
+                                size_t offset = static_cast<uint32_t>(tuple_data.size());
+                                tuple_data.resize(offset + sizeof(double));
+                                std::memcpy(&tuple_data[offset], &val, sizeof(double));
+                                break;
+                            }
+                            case core::DataType::VARCHAR:
+                            case core::DataType::TEXT:
+                            {
+                                std::string str = value.toString();
+                                uint32_t len = static_cast<uint32_t>(str.size());
+                                size_t offset = static_cast<uint32_t>(tuple_data.size());
+                                tuple_data.resize(offset + sizeof(uint32_t) + len);
+                                std::memcpy(&tuple_data[offset], &len, sizeof(uint32_t));
+                                std::memcpy(&tuple_data[offset + sizeof(uint32_t)], str.data(), len);
+                                break;
+                            }
+                            case core::DataType::BOOLEAN:
+                            {
+                                bool val = value.toBoolean();
+                                size_t offset = static_cast<uint32_t>(tuple_data.size());
+                                tuple_data.resize(offset + sizeof(bool));
+                                std::memcpy(&tuple_data[offset], &val, sizeof(bool));
+                                break;
+                            }
+                            default:
+                            {
+                                // For other types, serialize as string representation
+                                std::string str = value.toString();
+                                uint32_t len = static_cast<uint32_t>(str.size());
+                                size_t offset = static_cast<uint32_t>(tuple_data.size());
+                                tuple_data.resize(offset + sizeof(uint32_t) + len);
+                                std::memcpy(&tuple_data[offset], &len, sizeof(uint32_t));
+                                std::memcpy(&tuple_data[offset + sizeof(uint32_t)], str.data(), len);
+                                break;
+                            }
+                        }
+                    }
+
+                    // Initialize TupleHeader
+                    auto *header = reinterpret_cast<core::TupleHeader *>(&tuple_data[header_offset]);
+                    std::memset(header, 0, sizeof(core::TupleHeader));
+                    header->infomask = has_nulls ? core::TupleHeader::HEAP_HAS_NULLS : 0;
+                    header->null_bitmap_offset = has_nulls ? static_cast<uint16_t>(null_bitmap_offset) : 0;
+
+                    // Insert row into materialized table
+                    uint32_t page_id;
+                    uint16_t item_id;
+                    status = db_->storage_engine()->insertTuple(
+                        materialized_table_id, tuple_data.data(), static_cast<uint32_t>(tuple_data.size()),
+                        &page_id, &item_id, &ctx);
+
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to insert row " + std::to_string(row_idx) +
+                                            " into materialized view '" + view_name + "'";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                }
+
+                LOG_INFO(EXECUTOR, "Populated materialized view '%s' with %zu rows",
+                         view_name.c_str(), row_count);
             }
 
             // Create view
@@ -3531,23 +3753,272 @@ namespace scratchbird
                 error("View '" + view_name + "' is not materialized");
             }
 
-            // TODO: ALPHA Phase 1 - Full refresh implementation would:
+            // ALPHA Phase 1 - Complete REFRESH implementation:
             // 1. Parse the view definition SQL
             // 2. Execute the SELECT query to get fresh data
             // 3. If concurrently=true: create temp table, populate, swap atomically
-            // 4. If concurrently=false: truncate existing table, repopulate
-            //
-            // For now, just verify the materialized table exists and update timestamp
-            if (view_info.materialized_table_id != core::ID{})
+            // 4. If concurrently=false: delete existing data and repopulate
+
+            if (view_info.materialized_table_id == core::ID{})
             {
-                core::CatalogManager::TableInfo table_info;
-                status = db_->catalog_manager()->getTable(view_info.materialized_table_id, table_info, &ctx);
-                if (status == core::Status::OK)
+                error("Materialized view '" + view_name + "' has no associated table");
+            }
+
+            // Get the materialized table info
+            core::CatalogManager::TableInfo table_info;
+            status = db_->catalog_manager()->getTable(view_info.materialized_table_id, table_info, &ctx);
+            if (status != core::Status::OK)
+            {
+                error("Failed to get materialized table for view '" + view_name + "'");
+            }
+
+            LOG_INFO(EXECUTOR, "Refreshing materialized view '%s' (table: '%s')",
+                     view_name.c_str(), table_info.table_name.c_str());
+
+            // Parse and execute the view definition
+            parser::Lexer lexer(view_info.definition);
+            parser::ASTArena arena;
+            parser::Parser view_parser(lexer, arena);
+            auto parse_result = view_parser.parseStatement();
+
+            if (!parse_result.success())
+            {
+                std::string err_msg = "Failed to parse view definition for refresh of view '" + view_name + "'";
+                if (!parse_result.errors().empty())
                 {
-                    LOG_INFO(EXECUTOR, "Refreshing materialized view '%s' (table: '%s')",
-                             view_name.c_str(), table_info.table_name.c_str());
+                    err_msg += ": " + parse_result.errors()[0].message;
+                }
+                error(err_msg);
+            }
+
+            // Generate bytecode for the view definition query
+            BytecodeGenerator generator(lexer.stringPool(), db_);
+            auto bytecode_result = generator.generate(parse_result.statement());
+
+            if (!bytecode_result.success())
+            {
+                std::string err_msg = "Failed to generate bytecode for view refresh";
+                if (!bytecode_result.errors().empty())
+                {
+                    err_msg += ": " + bytecode_result.errors()[0];
+                }
+                error(err_msg);
+            }
+
+            // Execute the view definition query to get fresh data
+            Executor view_executor(db_);
+            view_executor.setConnectionContext(conn_ctx_);
+            auto exec_result = view_executor.execute(bytecode_result.bytecode());
+
+            if (!exec_result.success())
+            {
+                error("Failed to execute view definition for refresh: " + exec_result.error());
+            }
+
+            if (!exec_result.hasResultSet() || exec_result.resultSet() == nullptr)
+            {
+                error("View definition must return a result set");
+            }
+
+            ResultSet* result_set = exec_result.resultSet();
+
+            // Get column information
+            std::vector<core::CatalogManager::ColumnInfo> mat_columns;
+            status = db_->catalog_manager()->getColumns(view_info.materialized_table_id, mat_columns, &ctx);
+            if (status != core::Status::OK)
+            {
+                error("Failed to get columns for materialized view table");
+            }
+
+            size_t col_count = result_set->columnCount();
+            size_t row_count = result_set->rowCount();
+
+            if (col_count != mat_columns.size())
+            {
+                error("Column count mismatch during refresh for view '" + view_name + "'");
+            }
+
+            // Delete all existing tuples from materialized table
+            LOG_INFO(EXECUTOR, "Performing %srefresh (delete + re-insert)",
+                     concurrently ? "CONCURRENT " : "");
+
+            // Create table scan iterator
+            auto scan_iter = db_->storage_engine()->createScan(view_info.materialized_table_id, &ctx);
+            if (!scan_iter)
+            {
+                error("Failed to create scan iterator for materialized view table");
+            }
+
+            // Scan and delete all tuples
+            core::Tuple tuple;
+            while (scan_iter->next(&tuple, &ctx) == core::Status::OK)
+            {
+                // Delete this tuple
+                status = db_->storage_engine()->deleteTuple(
+                    view_info.materialized_table_id, static_cast<uint32_t>(getPageNumber(tuple.tid)), tuple.tid.slot, &ctx);
+
+                if (status != core::Status::OK)
+                {
+                    error("Failed to delete tuple during refresh");
                 }
             }
+
+            // Insert fresh data (same for both concurrent and non-concurrent)
+            for (size_t row_idx = 0; row_idx < row_count; row_idx++)
+            {
+                // Build tuple in binary format (same as in CREATE MATERIALIZED VIEW)
+                std::vector<uint8_t> tuple_data;
+
+                size_t header_offset = static_cast<uint32_t>(tuple_data.size());
+                tuple_data.resize(static_cast<uint32_t>(tuple_data.size()) + sizeof(core::TupleHeader));
+
+                // Check for nulls
+                bool has_nulls = false;
+                for (size_t col_idx = 0; col_idx < col_count; col_idx++)
+                {
+                    if (result_set->getValue(row_idx, col_idx).isNull())
+                    {
+                        has_nulls = true;
+                        break;
+                    }
+                }
+
+                // Null bitmap
+                size_t null_bitmap_offset = 0;
+                if (has_nulls)
+                {
+                    null_bitmap_offset = static_cast<uint32_t>(tuple_data.size());
+                    size_t bitmap_bytes = (col_count + 7) / 8;
+                    tuple_data.resize(static_cast<uint32_t>(tuple_data.size()) + bitmap_bytes);
+                    std::fill(tuple_data.begin() + null_bitmap_offset,
+                              tuple_data.begin() + null_bitmap_offset + bitmap_bytes, 0);
+                }
+
+                // Serialize values
+                for (size_t col_idx = 0; col_idx < col_count; col_idx++)
+                {
+                    const Value& value = result_set->getValue(row_idx, col_idx);
+                    core::DataType col_type = static_cast<core::DataType>(mat_columns[col_idx].data_type);
+
+                    if (value.isNull())
+                    {
+                        size_t byte_offset = null_bitmap_offset + (col_idx / 8);
+                        size_t bit_pos = col_idx % 8;
+                        tuple_data[byte_offset] |= (1 << bit_pos);
+                        continue;
+                    }
+
+                    // Serialize based on type
+                    switch (col_type)
+                    {
+                        case core::DataType::INT8:
+                        {
+                            int8_t val = static_cast<int8_t>(value.toInt64());
+                            size_t offset = static_cast<uint32_t>(tuple_data.size());
+                            tuple_data.resize(offset + sizeof(int8_t));
+                            std::memcpy(&tuple_data[offset], &val, sizeof(int8_t));
+                            break;
+                        }
+                        case core::DataType::INT16:
+                        {
+                            int16_t val = static_cast<int16_t>(value.toInt64());
+                            size_t offset = static_cast<uint32_t>(tuple_data.size());
+                            tuple_data.resize(offset + sizeof(int16_t));
+                            std::memcpy(&tuple_data[offset], &val, sizeof(int16_t));
+                            break;
+                        }
+                        case core::DataType::INT32:
+                        {
+                            int32_t val = static_cast<int32_t>(value.toInt64());
+                            size_t offset = static_cast<uint32_t>(tuple_data.size());
+                            tuple_data.resize(offset + sizeof(int32_t));
+                            std::memcpy(&tuple_data[offset], &val, sizeof(int32_t));
+                            break;
+                        }
+                        case core::DataType::INT64:
+                        {
+                            int64_t val = value.toInt64();
+                            size_t offset = static_cast<uint32_t>(tuple_data.size());
+                            tuple_data.resize(offset + sizeof(int64_t));
+                            std::memcpy(&tuple_data[offset], &val, sizeof(int64_t));
+                            break;
+                        }
+                        case core::DataType::FLOAT32:
+                        {
+                            float val = static_cast<float>(value.toDouble());
+                            size_t offset = static_cast<uint32_t>(tuple_data.size());
+                            tuple_data.resize(offset + sizeof(float));
+                            std::memcpy(&tuple_data[offset], &val, sizeof(float));
+                            break;
+                        }
+                        case core::DataType::FLOAT64:
+                        {
+                            double val = value.toDouble();
+                            size_t offset = static_cast<uint32_t>(tuple_data.size());
+                            tuple_data.resize(offset + sizeof(double));
+                            std::memcpy(&tuple_data[offset], &val, sizeof(double));
+                            break;
+                        }
+                        case core::DataType::VARCHAR:
+                        case core::DataType::TEXT:
+                        {
+                            std::string str = value.toString();
+                            uint32_t len = static_cast<uint32_t>(str.size());
+                            size_t offset = static_cast<uint32_t>(tuple_data.size());
+                            tuple_data.resize(offset + sizeof(uint32_t) + len);
+                            std::memcpy(&tuple_data[offset], &len, sizeof(uint32_t));
+                            std::memcpy(&tuple_data[offset + sizeof(uint32_t)], str.data(), len);
+                            break;
+                        }
+                        case core::DataType::BOOLEAN:
+                        {
+                            bool val = value.toBoolean();
+                            size_t offset = static_cast<uint32_t>(tuple_data.size());
+                            tuple_data.resize(offset + sizeof(bool));
+                            std::memcpy(&tuple_data[offset], &val, sizeof(bool));
+                            break;
+                        }
+                        default:
+                        {
+                            // For other types, serialize as string
+                            std::string str = value.toString();
+                            uint32_t len = static_cast<uint32_t>(str.size());
+                            size_t offset = static_cast<uint32_t>(tuple_data.size());
+                            tuple_data.resize(offset + sizeof(uint32_t) + len);
+                            std::memcpy(&tuple_data[offset], &len, sizeof(uint32_t));
+                            std::memcpy(&tuple_data[offset + sizeof(uint32_t)], str.data(), len);
+                            break;
+                        }
+                    }
+                }
+
+                // Initialize TupleHeader
+                auto *header = reinterpret_cast<core::TupleHeader *>(&tuple_data[header_offset]);
+                std::memset(header, 0, sizeof(core::TupleHeader));
+                header->infomask = has_nulls ? core::TupleHeader::HEAP_HAS_NULLS : 0;
+                header->null_bitmap_offset = has_nulls ? static_cast<uint16_t>(null_bitmap_offset) : 0;
+
+                // Insert row
+                uint32_t page_id;
+                uint16_t item_id;
+                status = db_->storage_engine()->insertTuple(
+                    view_info.materialized_table_id, tuple_data.data(), static_cast<uint32_t>(tuple_data.size()),
+                    &page_id, &item_id, &ctx);
+
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to insert row " + std::to_string(row_idx) +
+                                        " during refresh of view '" + view_name + "'";
+                    if (!ctx.message.empty())
+                    {
+                        err_msg += ": " + ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+
+            LOG_INFO(EXECUTOR, "Refreshed materialized view '%s' with %zu rows",
+                     view_name.c_str(), row_count);
 
             // Update refresh timestamp in catalog
             status = db_->catalog_manager()->refreshMaterializedView(view_id, concurrently, &ctx);
@@ -4067,8 +4538,8 @@ namespace scratchbird
             std::vector<uint8_t> tuple_data;
 
             // Reserve space for TupleHeader (HeapPage expects it)
-            size_t header_offset = tuple_data.size();
-            tuple_data.resize(tuple_data.size() + sizeof(core::TupleHeader));
+            size_t header_offset = static_cast<uint32_t>(tuple_data.size());
+            tuple_data.resize(static_cast<uint32_t>(tuple_data.size()) + sizeof(core::TupleHeader));
 
             // Determine if we need a null bitmap
             bool has_nulls = false;
@@ -4085,9 +4556,9 @@ namespace scratchbird
             size_t null_bitmap_offset = 0;
             if (has_nulls)
             {
-                null_bitmap_offset = tuple_data.size();
+                null_bitmap_offset = static_cast<uint32_t>(tuple_data.size());
                 size_t bitmap_bytes = (all_columns.size() + 7) / 8;
-                tuple_data.resize(tuple_data.size() + bitmap_bytes);
+                tuple_data.resize(static_cast<uint32_t>(tuple_data.size()) + bitmap_bytes);
                 // Initialize bitmap to zero
                 std::fill(tuple_data.begin() + null_bitmap_offset,
                           tuple_data.begin() + null_bitmap_offset + bitmap_bytes, 0);
@@ -4119,7 +4590,7 @@ namespace scratchbird
                     case core::DataType::INT32:
                     {
                         int32_t val = static_cast<int32_t>(value.toInt64());
-                        size_t offset = tuple_data.size();
+                        size_t offset = static_cast<uint32_t>(tuple_data.size());
                         tuple_data.resize(offset + sizeof(int32_t));
                         std::memcpy(&tuple_data[offset], &val, sizeof(int32_t));
                         break;
@@ -4127,7 +4598,7 @@ namespace scratchbird
                     case core::DataType::INT64:
                     {
                         int64_t val = value.toInt64();
-                        size_t offset = tuple_data.size();
+                        size_t offset = static_cast<uint32_t>(tuple_data.size());
                         tuple_data.resize(offset + sizeof(int64_t));
                         std::memcpy(&tuple_data[offset], &val, sizeof(int64_t));
                         break;
@@ -4135,7 +4606,7 @@ namespace scratchbird
                     case core::DataType::FLOAT64:
                     {
                         double val = value.toDouble();
-                        size_t offset = tuple_data.size();
+                        size_t offset = static_cast<uint32_t>(tuple_data.size());
                         tuple_data.resize(offset + sizeof(double));
                         std::memcpy(&tuple_data[offset], &val, sizeof(double));
                         break;
@@ -4145,7 +4616,7 @@ namespace scratchbird
                         std::string str = value.toString();
                         // Write length prefix (4 bytes) then data
                         uint32_t len = static_cast<uint32_t>(str.size());
-                        size_t offset = tuple_data.size();
+                        size_t offset = static_cast<uint32_t>(tuple_data.size());
                         tuple_data.resize(offset + sizeof(uint32_t) + len);
                         std::memcpy(&tuple_data[offset], &len, sizeof(uint32_t));
                         std::memcpy(&tuple_data[offset + sizeof(uint32_t)], str.data(), len);
@@ -4404,7 +4875,7 @@ namespace scratchbird
             uint32_t page_id;
             uint16_t item_id;
             auto insert_status = db_->storage_engine()->insertTuple(
-                table_id, tuple_data.data(), static_cast<uint32_t>(tuple_data.size()), &page_id,
+                table_id, tuple_data.data(), static_cast<uint32_t>(static_cast<uint32_t>(tuple_data.size())), &page_id,
                 &item_id, nullptr);
 
             if (insert_status != core::Status::OK)
@@ -5141,14 +5612,14 @@ namespace scratchbird
                 }
 
                 // Call StorageEngine::updateTuple with MGA versioning
-                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tuple.tid));
+                uint32_t page_id = static_cast<uint32_t>(core::static_cast<uint32_t>(getPageNumber(tuple.tid)));
                 uint16_t item_id = core::getSlot(tuple.tid);
                 uint32_t new_page_id;
                 uint16_t new_item_id;
 
                 auto update_status = db_->storage_engine()->updateTuple(
                     table_id, page_id, item_id,
-                    new_tuple_data.data(), static_cast<uint32_t>(new_tuple_data.size()),
+                    new_tuple_data.data(), new_tuple_data.size(),
                     &new_page_id, &new_item_id, nullptr);
 
                 if (update_status != core::Status::OK)
@@ -5433,7 +5904,7 @@ namespace scratchbird
 
                 // Task 17 Phase 7: Update expression/filtered indexes BEFORE deletion
                 // (indexes need row values, and deletion is a soft delete that marks xmax)
-                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tuple.tid));
+                uint32_t page_id = static_cast<uint32_t>(core::static_cast<uint32_t>(getPageNumber(tuple.tid)));
                 uint16_t item_id = core::getSlot(tuple.tid);
                 core::TID tid(page_id, item_id);
                 // Task 17 MGA Phase 1.1: Pass current transaction ID
@@ -19796,7 +20267,7 @@ namespace scratchbird
 
                                 auto update_status = db_->storage_engine()->updateTuple(
                                     fk.child_table_id, page_id, item_id,
-                                    new_tuple_data.data(), static_cast<uint32_t>(new_tuple_data.size()),
+                                    new_tuple_data.data(), new_tuple_data.size(),
                                     &new_page_id, &new_item_id, nullptr);
 
                                 if (update_status != core::Status::OK)
@@ -19899,7 +20370,7 @@ namespace scratchbird
 
                                 auto update_status = db_->storage_engine()->updateTuple(
                                     fk.child_table_id, page_id, item_id,
-                                    new_tuple_data.data(), static_cast<uint32_t>(new_tuple_data.size()),
+                                    new_tuple_data.data(), new_tuple_data.size(),
                                     &new_page_id, &new_item_id, nullptr);
 
                                 if (update_status != core::Status::OK)
@@ -20115,7 +20586,7 @@ namespace scratchbird
 
                                 auto update_status = db_->storage_engine()->updateTuple(
                                     fk.child_table_id, page_id, item_id,
-                                    new_tuple_data.data(), static_cast<uint32_t>(new_tuple_data.size()),
+                                    new_tuple_data.data(), new_tuple_data.size(),
                                     &new_page_id, &new_item_id, nullptr);
 
                                 if (update_status != core::Status::OK)
@@ -20170,7 +20641,7 @@ namespace scratchbird
 
                                 auto update_status = db_->storage_engine()->updateTuple(
                                     fk.child_table_id, page_id, item_id,
-                                    new_tuple_data.data(), static_cast<uint32_t>(new_tuple_data.size()),
+                                    new_tuple_data.data(), new_tuple_data.size(),
                                     &new_page_id, &new_item_id, nullptr);
 
                                 if (update_status != core::Status::OK)
@@ -20273,7 +20744,7 @@ namespace scratchbird
 
                                 auto update_status = db_->storage_engine()->updateTuple(
                                     fk.child_table_id, page_id, item_id,
-                                    new_tuple_data.data(), static_cast<uint32_t>(new_tuple_data.size()),
+                                    new_tuple_data.data(), new_tuple_data.size(),
                                     &new_page_id, &new_item_id, nullptr);
 
                                 if (update_status != core::Status::OK)
