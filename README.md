@@ -138,7 +138,18 @@ See **[OFFICIAL_ROADMAP.md](OFFICIAL_ROADMAP.md)** for comprehensive details:
 
 ## Quick Start
 
+**For detailed build instructions, dependency installation, and troubleshooting, see [BUILD_ENVIRONMENT.md](BUILD_ENVIRONMENT.md).**
+
 ```bash
+# Install dependencies (Ubuntu/Debian)
+sudo apt-get update && sudo apt-get install -y \
+    cmake build-essential git python3 pkg-config \
+    liblz4-dev libgeos-dev libproj-dev libxml2-dev libssl-dev
+
+# Clone repository
+git clone https://github.com/DaltonCalford/ScratchBird.git
+cd ScratchBird
+
 # Build
 mkdir build && cd build
 cmake .. && make -j$(nproc)
@@ -146,6 +157,12 @@ cmake .. && make -j$(nproc)
 # Test
 ctest --output-on-failure
 ```
+
+**See [BUILD_ENVIRONMENT.md](BUILD_ENVIRONMENT.md) for:**
+- Platform-specific installation instructions (macOS, Fedora, etc.)
+- Optional dependency details
+- Development tools setup
+- Troubleshooting guide
 
 ## MGA Architecture (Firebird Style)
 
@@ -170,6 +187,7 @@ if (isSnapshotVisible(tuple, snapshot)) { ... }  // NEVER USE
 ## Documentation
 
 ### Essential Reading
+- **[BUILD_ENVIRONMENT.md](BUILD_ENVIRONMENT.md)** - Build setup, dependencies, and troubleshooting
 - **[OFFICIAL_ROADMAP.md](OFFICIAL_ROADMAP.md)** - Complete project scope and development phases
 - **[PROJECT_CONTEXT.md](PROJECT_CONTEXT.md)** - Current work and immediate next steps
 - **[MGA_RULES.md](MGA_RULES.md)** - Mandatory MGA architecture rules
