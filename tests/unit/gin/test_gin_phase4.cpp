@@ -2,7 +2,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/uuidv7.h"
 #include <iostream>
-#include <cassert>
+#include "gtest/gtest.h"
 #include <vector>
 #include <string>
 #include <algorithm>
@@ -374,8 +374,9 @@ void test_edge_cases()
     db.close();
 }
 
-int main()
-{
+
+TEST(GinPhase4Test, Comprehensive) {
+
     std::cout << "=== GIN Index Phase 4 Tests (Multi-Key Queries) ===\n\n";
 
     try
@@ -403,4 +404,5 @@ int main()
         std::cerr << "Test failed with exception: " << e.what() << "\n";
         return 1;
     }
+
 }

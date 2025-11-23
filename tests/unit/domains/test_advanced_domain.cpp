@@ -2,12 +2,14 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include <iostream>
-#include <cassert>
+#include "gtest/gtest.h"
 #include <cstdio>
 
 using namespace scratchbird::core;
 
-int main() {
+
+TEST(AdvancedDomainTest, Comprehensive) {
+
     std::cout << "Testing Advanced Domain Features (Phase 6)...\n\n";
 
     const char* test_db = "test_advanced_domain.sbdb";
@@ -15,24 +17,24 @@ int main() {
 
     ErrorContext ctx;
     Status status = Database::create(test_db, 16384, &ctx);
-    assert(status == Status::OK);
+    ASSERT_EQ(status, Status::OK);
 
     Database db;
     status = db.open(test_db, &ctx);
-    assert(status == Status::OK);
+    ASSERT_EQ(status, Status::OK);
 
     DomainManager* dm = db.domain_manager();
     CatalogManager* catalog = db.catalog_manager();
 
     ID schema_id;
     status = catalog->createSchema("test_schema", "test_user", schema_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_EQ(status, Status::OK);
 
     // Create a basic domain for testing
     ID ssn_domain_id;
     std::vector<DomainConstraint> constraints;
     status = dm->createBasicDomain(schema_id, "SSN", DataType::VARCHAR, 11, 0, false, "", constraints, ssn_domain_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_EQ(status, Status::OK);
 
     // Test 1: Set security options
     std::cout << "Test 1: Set security options\n";
@@ -44,14 +46,14 @@ int main() {
         security.audit_enabled = false;
 
         status = dm->setSecurityOptions(ssn_domain_id, security, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         std::cout << "  Security options set ✓\n";
 
         // Verify options were stored
         DomainInfo info;
         dm->getDomain(ssn_domain_id, info, &ctx);
-        assert(info.security.masking_enabled == true);
-        assert(info.security.mask_type == "FULL");
+        ASSERT_EQ(info.security.masking_enabled, true);
+        ASSERT_EQ(info.security.mask_type, "FULL");
         std::cout << "  Security options verified ✓\n";
     }
     std::cout << "  ✓ Set security options passed\n\n";
@@ -63,11 +65,11 @@ int main() {
         TypedValue masked;
 
         status = dm->applyMasking(ssn_domain_id, original, masked, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         std::cout << "  Masking applied ✓\n";
 
         // Masked value should not equal original
-        assert(masked.type() == DataType::VARCHAR);
+        ASSERT_EQ(masked.type(), DataType::VARCHAR);
         std::cout << "  Masked value type correct ✓\n";
     }
     std::cout << "  ✓ Apply masking passed\n\n";
@@ -80,12 +82,12 @@ int main() {
         integrity.normalization_enabled = false;
 
         status = dm->setIntegrityOptions(ssn_domain_id, integrity, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         std::cout << "  Integrity options set ✓\n";
 
         DomainInfo info;
         dm->getDomain(ssn_domain_id, info, &ctx);
-        assert(info.integrity.uniqueness_check == true);
+        ASSERT_EQ(info.integrity.uniqueness_check, true);
         std::cout << "  Integrity options verified ✓\n";
     }
     std::cout << "  ✓ Set integrity options passed\n\n";
@@ -97,12 +99,12 @@ int main() {
         validation.validation_function = "ssn_validator";
 
         status = dm->setValidationOptions(ssn_domain_id, validation, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         std::cout << "  Validation options set ✓\n";
 
         DomainInfo info;
         dm->getDomain(ssn_domain_id, info, &ctx);
-        assert(info.validation.validation_function == "ssn_validator");
+        ASSERT_EQ(info.validation.validation_function, "ssn_validator");
         std::cout << "  Validation options verified ✓\n";
     }
     std::cout << "  ✓ Set validation options passed\n\n";
@@ -116,13 +118,13 @@ int main() {
         quality.enrich_function = "";
 
         status = dm->setQualityOptions(ssn_domain_id, quality, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         std::cout << "  Quality options set ✓\n";
 
         DomainInfo info;
         dm->getDomain(ssn_domain_id, info, &ctx);
-        assert(info.quality.parse_function == "parse_ssn");
-        assert(info.quality.standardize_function == "standardize_ssn");
+        ASSERT_EQ(info.quality.parse_function, "parse_ssn");
+        ASSERT_EQ(info.quality.standardize_function, "standardize_ssn");
         std::cout << "  Quality options verified ✓\n";
     }
     std::cout << "  ✓ Set quality options passed\n\n";
@@ -138,7 +140,7 @@ int main() {
         TypedValue masked;
 
         status = dm->applyMasking(email_domain_id, original, masked, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         // Should return original value (no masking enabled)
         std::cout << "  Masking skipped when disabled ✓\n";
@@ -160,6 +162,5 @@ int main() {
     std::cout << "  ✓ Phase 4: SET domains with operators\n";
     std::cout << "  ✓ Phase 5: VARIANT type with polymorphism\n";
     std::cout << "  ✓ Phase 6: Advanced features (security, integrity, validation, quality)\n";
-
-    return 0;
 }
+

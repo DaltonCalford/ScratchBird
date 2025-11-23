@@ -97,7 +97,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_mvcc\\.cpp$")  # Incomple
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_statistical_functions\\.cpp$")  # API compatibility issues
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_.*toast.*\\.cpp$")  # Transaction API issues, TupleHeader, ToastPointer fields need fixing
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_subquery_parser\\.cpp$")  # API compatibility issues
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/btree_page_test\\.cpp$")  # Tuple struct initializer mismatch
+# btree_page_test.cpp was fixed: Tuple struct initializer corrected to use TID{gpid, slot}
 
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_mga_compliance.cpp$")  # Phase 2C auto-exclusion
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_catalog_mga_compliance.cpp$")  # Phase 2C auto-exclusion

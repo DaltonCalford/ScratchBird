@@ -5,7 +5,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/uuidv7.h"
 #include <iostream>
-#include <cassert>
+#include "gtest/gtest.h"
 #include <vector>
 #include <string>
 #include <algorithm>
@@ -355,8 +355,9 @@ void testEdgeCases()
     db.close();
 }
 
-int main()
-{
+
+TEST(GinPhase5Test, Comprehensive) {
+
     std::cout << "============================================" << std::endl;
     std::cout << "GIN Index Phase 5 Test Suite" << std::endl;
     std::cout << "Query Optimization & Advanced Operators" << std::endl;
@@ -380,4 +381,5 @@ int main()
         std::cerr << "\n❌ Test failed with exception: " << e.what() << std::endl;
         return 1;
     }
+
 }
