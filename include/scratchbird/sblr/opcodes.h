@@ -155,6 +155,7 @@ namespace scratchbird
             UNIQUE_CONSTRAINT = 0x95, // UNIQUE constraint (column-level or table-level)
             PRIMARY_KEY = 0x96,       // PRIMARY KEY constraint (column-level or table-level)
             IDENTITY_COLUMN = 0x97,   // IDENTITY column (GENERATED {ALWAYS|BY DEFAULT} AS IDENTITY) - ALPHA Phase 1
+            GENERATED_COLUMN = 0x98,  // GENERATED column (GENERATED ALWAYS AS expr [STORED|VIRTUAL]) - ALPHA Phase 1
 
             // Special
             SELECT_STAR = 0xA0,  // SELECT *
