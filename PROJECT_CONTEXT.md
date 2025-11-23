@@ -26,26 +26,22 @@
 - **Advanced SQL:** 100% (CTEs recursive & non-recursive, MERGE, RETURNING, SAVEPOINT, Set Operations)
 - **Constraint Features:** 100% (GENERATED columns STORED/VIRTUAL, IDENTITY columns, Deferred constraints)
 - **SQL Engine Commands:** 100% (SHOW TABLES/DATABASES/COLUMNS/INDEXES/CREATE TABLE, DESCRIBE, EXPLAIN)
+- **Views:** 100% (regular views, materialized views with full data population and refresh) 🎉
 
 ### What's Missing ❌
 
 **Command-Line Tools** (~90-110 hours estimated):
-- sb_isql (interactive SQL shell)
+- sb_isql (interactive SQL shell) - HIGHEST PRIORITY
 - sb_verify (database integrity checker)
 - sb_backup (backup/restore tool)
 - sb_security (user/role management tool)
 
-**Views** (~10-15 hours estimated):
-- ⧗ Physical materialization (80% complete)
-- Updatable views (INSERT/UPDATE/DELETE through views)
-
 ### Immediate Next Steps
 
 1. Build sb_isql (interactive SQL shell) - HIGHEST PRIORITY
-2. Complete physical materialization for materialized views
-3. Build sb_verify (database integrity checker)
-4. Build sb_backup (backup/restore tool)
-5. Build sb_security (user/role management tool)
+2. Build sb_verify (database integrity checker)
+3. Build sb_backup (backup/restore tool)
+4. Build sb_security (user/role management tool)
 
 ---
 
@@ -221,13 +217,14 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 ## Recent Accomplishments
 
 **November 23, 2025 (Latest):**
+- ✅ **Views 100% COMPLETE:** Materialized views with full column derivation and data population, REFRESH with query re-execution 🎉
 - ✅ **Constraint Features 100% COMPLETE:** GENERATED columns (STORED/VIRTUAL), IDENTITY columns, Deferred constraint checking
 - ✅ **SHOW/DESCRIBE Commands 100% COMPLETE:** SHOW TABLES/DATABASES/COLUMNS/INDEXES/CREATE TABLE, DESCRIBE
 - ✅ **PSQL/Triggers 100% COMPLETE:** Control flow, cursors, exceptions, trigger firing, procedure invocation
 - ✅ **Advanced SQL 100% COMPLETE:** CTEs (recursive & non-recursive), MERGE, RETURNING, SAVEPOINT, Set Operations
 
 **November 2025:**
-- ✅ Views foundation (80% - CREATE VIEW, MATERIALIZED VIEW, REFRESH)
+- ✅ Views implementation (CREATE VIEW, MATERIALIZED VIEW with physical storage, REFRESH)
 - ✅ Index system documentation (900+ lines)
 - ✅ Columnstore TIP integration
 - ✅ All 123 built-in functions complete (XML, Cryptographic, Statistical, Mathematical, Bit Manipulation)
