@@ -90,11 +90,11 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gist_dml\\.cpp$")  # Incomplete 
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gist_mvcc\\.cpp$")  # Incomplete transaction API fixes
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_tree_simple\\.cpp$")  # LSMTreeIndex not declared
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_tree_comprehensive\\.cpp$")  # LSMTreeIndex not declared
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hnsw_dml\\.cpp$")  # UuidV7::generate() API + TID.value() issues
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hnsw_dml\\.cpp$")  # UuidV7::generate() → generateUuidV7(), Database constructor signature, TransactionManager forward declaration
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_rtree_dml\\.cpp$")  # Duplicate Status declarations
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_query_plan_security\\.cpp$")  # ErrorContext.status field removed
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_multi_index_mga\\.cpp$")  # commit() -> commitTransaction() not auto-fixed
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_dml\\.cpp$")  # Incomplete transaction API fixes
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_dml\\.cpp$")  # commit() → commitTransaction(), beginTransaction() signature, Database constructor, search() results parameter
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_mvcc\\.cpp$")  # Incomplete transaction API fixes
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_statistical_functions\\.cpp$")  # API compatibility issues
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_.*toast.*\\.cpp$")  # TOAST tests - Database constructor signature
@@ -155,7 +155,6 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_btree_rightmost_child\.cpp$")  #
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_btree_rightmost_simple\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_buffer_error_consistency\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_bytecode_executor\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_bytecode_opcodes\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_cache_bounded\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_clog_checksum\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_clog_state_size\.cpp$")  # Standalone main()
@@ -166,22 +165,17 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_predicate\.cpp$")  #
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_rle\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_segments\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_simple_e2e\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_composite_fk\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_create_view\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_create_view_ast\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_cte_basic\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_defragment_pdlower_fix\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_dirty_bit_protection\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_extract\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_fsm_durability\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_fsm_reconstruction\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gin_dml\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gin_transaction_isolation\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gin_tsvector_ops\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_group_commit\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_heap_free_space_simple\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hint_bits_simple\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hnsw_dml\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hot_updates\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_index_dml_integration\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_index_mga_compliance\.cpp$")  # Standalone main()
@@ -206,7 +200,6 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_range_types\.cpp$")  # Standalon
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_rtree\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_snapshot_sorted\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_snapshot_xids\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_dml\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_storage_toast_indexing\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_subquery_parser\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_subtransactions\.cpp$")  # Standalone main()
@@ -226,7 +219,6 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_toast_garbage_collection\.cpp$")
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_toast_tip_visibility\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_transaction_deadlock_simple\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_transaction_markers_race\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_type_conversions\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_version_chain_cycle\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_views_comprehensive\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_wave1_integration\.cpp$")  # Standalone main()
@@ -460,36 +452,7 @@ set_tests_properties(TypeSerialization PROPERTIES
     TIMEOUT 60
 )
 
-add_executable(test_type_conversions
-    unit/test_type_conversions.cpp
-)
-target_link_libraries(test_type_conversions
-    scratchbird_core
-    GTest::gtest
-    GTest::gtest_main
-)
-add_test(NAME TypeConversions COMMAND test_type_conversions)
-set_tests_properties(TypeConversions PROPERTIES
-    LABELS "unit;conversions;types"
-    TIMEOUT 60
-)
 
-# EXTRACT function tests
-add_executable(test_extract
-    unit/test_extract.cpp
-)
-target_link_libraries(test_extract
-    scratchbird_core
-    scratchbird_parser
-    scratchbird_sblr
-    GTest::gtest
-    GTest::gtest_main
-)
-add_test(NAME Extract COMMAND test_extract)
-set_tests_properties(Extract PROPERTIES
-    LABELS "unit;extract;functions"
-    TIMEOUT 60
-)
 
 # ============================================================================
 # Columnstore Index Tests - Phase 1: RLE Compression
@@ -790,20 +753,6 @@ set_tests_properties(LSMTreeSimple PROPERTIES
 # BRIN Index DML Integration Tests - TASK-DML-5
 # ============================================================================
 
-add_executable(test_brin_dml
-    integration/test_brin_dml.cpp
-)
-target_link_libraries(test_brin_dml
-    scratchbird_core
-    scratchbird_parser
-    scratchbird_sblr
-    scratchbird_optimizer
-)
-add_test(NAME BrinDML COMMAND test_brin_dml)
-set_tests_properties(BrinDML PROPERTIES
-    LABELS "integration;brin;dml;task-dml-5"
-    TIMEOUT 120
-)
 
 # Comprehensive integration test
 add_executable(test_lsm_tree_comprehensive
@@ -1035,22 +984,6 @@ set_tests_properties(ForeignKeys PROPERTIES
     TIMEOUT 60
 )
 
-# Views Tests (ALPHA Phase 1 - Views Execution)
-add_executable(test_create_view_ast
-    unit/test_create_view_ast.cpp
-)
-target_link_libraries(test_create_view_ast
-    scratchbird_core
-    scratchbird_parser
-    scratchbird_sblr
-    gtest
-    gtest_main
-)
-add_test(NAME CreateViewAST COMMAND test_create_view_ast)
-set_tests_properties(CreateViewAST PROPERTIES
-    LABELS "unit;views;ast;alpha_phase1"
-    TIMEOUT 60
-)
 
 add_executable(test_views_comprehensive
     unit/test_views_comprehensive.cpp
