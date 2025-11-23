@@ -241,8 +241,3 @@ TEST_F(HnswDMLTest, MultipleOperations)
     // Should find remaining visible vectors
 }
 
-int main(int argc, char **argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
