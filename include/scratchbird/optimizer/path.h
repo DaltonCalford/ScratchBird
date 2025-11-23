@@ -700,19 +700,25 @@ namespace scratchbird::optimizer
          * @param having_clause HAVING clause expression (may be nullptr)
          * @param num_groups Estimated number of groups (1 for simple aggregation)
          * @param cost Cost estimate
+         * @param grouping_type Type of grouping (STANDARD, ROLLUP, CUBE, GROUPING_SETS)
+         * @param grouping_sets Explicit grouping sets (for GROUPING SETS)
          */
         AggregatePath(std::shared_ptr<Path> input_path,
                      const std::vector<parser::Expression*>& grouping_exprs,
                      const std::vector<parser::AggregateExpr*>& aggregates,
                      parser::Expression* having_clause,
                      uint64_t num_groups,
-                     const CostEstimate& cost)
+                     const CostEstimate& cost,
+                     parser::GroupingType grouping_type = parser::GroupingType::STANDARD,
+                     const std::vector<std::vector<parser::Expression*>>& grouping_sets = {})
             : Path(PathType::AGGREGATE, cost),
               input_path_(std::move(input_path)),
               grouping_exprs_(grouping_exprs),
               aggregates_(aggregates),
               having_clause_(having_clause),
-              num_groups_(num_groups)
+              num_groups_(num_groups),
+              grouping_type_(grouping_type),
+              grouping_sets_(grouping_sets)
         {
         }
 
@@ -753,6 +759,19 @@ namespace scratchbird::optimizer
         bool isSimpleAggregation() const { return grouping_exprs_.empty(); }
 
         /**
+         * Get grouping type (STANDARD, ROLLUP, CUBE, GROUPING_SETS)
+         */
+        parser::GroupingType groupingType() const { return grouping_type_; }
+
+        /**
+         * Get explicit grouping sets (for GROUPING SETS)
+         */
+        const std::vector<std::vector<parser::Expression*>>& groupingSets() const
+        {
+            return grouping_sets_;
+        }
+
+        /**
          * Convert to string for debugging
          */
         auto toString() const -> std::string override
@@ -774,6 +793,8 @@ namespace scratchbird::optimizer
         std::vector<parser::AggregateExpr*> aggregates_;
         parser::Expression* having_clause_;
         uint64_t num_groups_;
+        parser::GroupingType grouping_type_;
+        std::vector<std::vector<parser::Expression*>> grouping_sets_;
     };
 
     /**

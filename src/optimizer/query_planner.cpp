@@ -1015,7 +1015,9 @@ namespace scratchbird::optimizer
                 child_plan,
                 agg_path->groupingExprs(),
                 agg_path->aggregates(),
-                agg_path->havingClause());
+                agg_path->havingClause(),
+                agg_path->groupingType(),
+                agg_path->groupingSets());
 
             plan->setCost(
                 path->startupCost(),
@@ -1684,10 +1686,14 @@ namespace scratchbird::optimizer
         // Extract GROUP BY expressions and HAVING clause
         std::vector<parser::Expression*> grouping_exprs;
         parser::Expression* having_clause = nullptr;
+        parser::GroupingType grouping_type = parser::GroupingType::STANDARD;
+        std::vector<std::vector<parser::Expression*>> grouping_sets;
         if (group_by)
         {
             grouping_exprs = group_by->grouping_exprs;
             having_clause = group_by->having_clause;
+            grouping_type = group_by->type;
+            grouping_sets = group_by->grouping_sets;
         }
 
         // Create aggregate path
@@ -1697,7 +1703,9 @@ namespace scratchbird::optimizer
             aggregates,
             having_clause,
             num_groups,
-            agg_cost);
+            agg_cost,
+            grouping_type,
+            grouping_sets);
 
         DEBUG_LOG_DB("Aggregate path: " + agg_path->toString());
         return agg_path;

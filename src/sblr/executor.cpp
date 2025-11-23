@@ -7572,10 +7572,95 @@ namespace scratchbird
                             result = core::TypedValue::makeFloat64(percent_rank);
                         }
                     }
+                    else if (spec.func_type == WindowFunctionSpec::FuncType::RANK)
+                    {
+                        // RANK() - rank of current row with gaps
+                        // Simplified: without proper ORDER BY support, just use row position
+                        // In full implementation, would count rows with lesser ORDER BY values + 1
+                        result = core::TypedValue::makeInt64(static_cast<int64_t>(row_idx + 1));
+                    }
+                    else if (spec.func_type == WindowFunctionSpec::FuncType::DENSE_RANK)
+                    {
+                        // DENSE_RANK() - rank without gaps
+                        // Simplified: without proper ORDER BY support, same as RANK
+                        // In full implementation, would count distinct ORDER BY value groups
+                        result = core::TypedValue::makeInt64(static_cast<int64_t>(row_idx + 1));
+                    }
+                    else if (spec.func_type == WindowFunctionSpec::FuncType::LAG)
+                    {
+                        // LAG(expr, offset, default) - access value from previous row
+                        // Simplified: offset = 1 (default), access first column
+                        // Full implementation would require argument parsing for expr and offset
+                        if (row_idx > 0 && input_result_set->columnCount() > 0)
+                        {
+                            // Get value from previous row, first column
+                            result = input_result_set->getValue(row_idx - 1, 0);
+                        }
+                        else
+                        {
+                            // First row or no columns - return NULL
+                            result = core::TypedValue::makeNull();
+                        }
+                    }
+                    else if (spec.func_type == WindowFunctionSpec::FuncType::LEAD)
+                    {
+                        // LEAD(expr, offset, default) - access value from next row
+                        // Simplified: offset = 1 (default), access first column
+                        // Full implementation would require argument parsing for expr and offset
+                        if (row_idx + 1 < input_result_set->rowCount() && input_result_set->columnCount() > 0)
+                        {
+                            // Get value from next row, first column
+                            result = input_result_set->getValue(row_idx + 1, 0);
+                        }
+                        else
+                        {
+                            // Last row or no columns - return NULL
+                            result = core::TypedValue::makeNull();
+                        }
+                    }
+                    else if (spec.func_type == WindowFunctionSpec::FuncType::FIRST_VALUE)
+                    {
+                        // FIRST_VALUE(expr) - first value in window frame
+                        // Simplified: return first row value (first column)
+                        // Full implementation would respect PARTITION BY and frame specification
+                        if (input_result_set->rowCount() > 0 && input_result_set->columnCount() > 0)
+                        {
+                            result = input_result_set->getValue(0, 0);
+                        }
+                        else
+                        {
+                            result = core::TypedValue::makeNull();
+                        }
+                    }
+                    else if (spec.func_type == WindowFunctionSpec::FuncType::LAST_VALUE)
+                    {
+                        // LAST_VALUE(expr) - last value in window frame
+                        // Simplified: return last row value (first column)
+                        // Full implementation would respect PARTITION BY and frame specification
+                        // Note: Default frame is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                        // So LAST_VALUE with default frame returns current row, not final row
+                        // For simplicity, we return current row value
+                        if (input_result_set->rowCount() > 0 && input_result_set->columnCount() > 0)
+                        {
+                            result = input_result_set->getValue(row_idx, 0);
+                        }
+                        else
+                        {
+                            result = core::TypedValue::makeNull();
+                        }
+                    }
+                    else if (spec.func_type == WindowFunctionSpec::FuncType::NTH_VALUE)
+                    {
+                        // NTH_VALUE(expr, n) - nth value in window frame
+                        // Requires argument parsing to get 'n' parameter
+                        // TODO: Implement once window function argument parsing is available
+                        // For now, return NULL as a clear indicator of incomplete implementation
+                        result = core::TypedValue::makeNull();
+                    }
                     else
                     {
-                        // Placeholder for other window functions
-                        result = core::TypedValue::makeInt64(0);
+                        // Unknown window function - should not reach here
+                        result = core::TypedValue::makeNull();
                     }
 
                     output_row.push_back(result);

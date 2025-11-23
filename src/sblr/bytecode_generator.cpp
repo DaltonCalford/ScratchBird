@@ -5201,9 +5201,14 @@ namespace scratchbird
         void BytecodeGenerator::visit(parser::GroupingExpr *node)
         {
             // Phase 3: Advanced Grouping - GROUPING() function
-            // TODO: Implement GROUPING() function bytecode generation
-            // For now, this is a stub to satisfy the pure virtual function requirement
-            current_result_->addError("GROUPING() function not yet fully implemented");
+            // GROUPING(column) returns 1 if column is aggregated, 0 if not
+
+            // Generate the argument expression
+            generateExpression(node->arg());
+
+            // Emit extended opcode for GROUPING function
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_GROUPING_FUNC));
         }
 
         void BytecodeGenerator::visit(parser::SequenceFunctionExpr *node)
