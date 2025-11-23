@@ -138,7 +138,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_window_functions.cpp$")  # 
 
 
 # Phase 2C: Exclude standalone tests with main() functions
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_brin_index\.cpp$")  # Phase 2C: nullptr vs uint64_t issue
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_brin_index\.cpp$")  # Phase 2C: removeDeadEntries API changed from uint64_t to TID
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_iterator\.cpp$")  # Phase 2C: nullptr vs uint64_t issue
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_catalog_manager\.cpp$")  # Phase 2C: createTable API signature
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_cte\.cpp$")  # Phase 2C: Database constructor API
