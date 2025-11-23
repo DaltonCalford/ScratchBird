@@ -163,11 +163,12 @@ namespace scratchbird::core
         col2.has_default = false;
         columns.push_back(col2);
 
-        // chunk_data column
+        // chunk_data column - use page-size-based max chunk size
+        uint32_t max_chunk_size = ToastSettings::getMaxChunkSize(db_->page_size());
         CatalogManager::ColumnInfo col3;
         col3.column_name = "chunk_data";
         col3.data_type = static_cast<uint16_t>(DataType::BYTEA);
-        col3.max_length = TOAST_MAX_CHUNK_SIZE;
+        col3.max_length = max_chunk_size;
         col3.nullable = false;
         col3.has_default = false;
         columns.push_back(col3);
@@ -446,24 +447,29 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ToastManager::chooseStrategy(const uint8_t *data, uint32_t size, bool compress_enabled)
-        -> ToastStrategy
+    auto ToastManager::chooseStrategy(const uint8_t *data, uint32_t size, uint32_t page_size,
+                                      bool compress_enabled) -> ToastStrategy
     {
-        // Simple strategy selection
-        if (size <= TOAST_TUPLE_THRESHOLD)
+        // Use page-size-based threshold for optimal performance
+        uint32_t threshold = ToastSettings::getThreshold(page_size);
+        uint32_t target = ToastSettings::getTarget(page_size);
+
+        // Don't TOAST small values
+        if (size <= threshold)
         {
-            return ToastStrategy::PLAIN; // Don't TOAST small values
+            return ToastStrategy::PLAIN;
         }
 
+        // If compression is disabled, use uncompressed out-of-line storage
         if (!compress_enabled)
         {
-            return ToastStrategy::EXTENDED; // Out-of-line, uncompressed
+            return ToastStrategy::EXTENDED;
         }
 
-        // For large values, try compression
+        // For large values (>2x target), try compression
         // In a real implementation, we might sample the data to estimate
         // compressibility before deciding
-        if (size > TOAST_TUPLE_THRESHOLD * 2)
+        if (size > target * 2)
         {
             return ToastStrategy::EXTERNAL; // Out-of-line, compressed
         }
@@ -518,9 +524,12 @@ namespace scratchbird::core
     {
         StorageEngine *storage = db_->storage_engine();
 
+        // Use page-size-based chunk size for optimal performance
+        uint32_t max_chunk_size = ToastSettings::getMaxChunkSize(db_->page_size());
+
         // MEDIUM-2 FIX: Check for integer overflow before chunk calculation
-        // If size is close to UINT32_MAX, adding TOAST_MAX_CHUNK_SIZE would overflow
-        if (size > UINT32_MAX - TOAST_MAX_CHUNK_SIZE + 1)
+        // If size is close to UINT32_MAX, adding max_chunk_size would overflow
+        if (size > UINT32_MAX - max_chunk_size + 1)
         {
             SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
                               "TOAST value too large - would cause integer overflow in chunk calculation");
@@ -528,7 +537,7 @@ namespace scratchbird::core
         }
 
         // Split data into chunks
-        uint32_t chunks_needed = (size + TOAST_MAX_CHUNK_SIZE - 1) / TOAST_MAX_CHUNK_SIZE;
+        uint32_t chunks_needed = (size + max_chunk_size - 1) / max_chunk_size;
         uint32_t offset = 0;
 
         // Track inserted chunks for cleanup on failure
@@ -546,7 +555,7 @@ namespace scratchbird::core
                 return Status::OUT_OF_RANGE;
             }
 
-            uint32_t chunk_size = std::min(TOAST_MAX_CHUNK_SIZE, size - offset);
+            uint32_t chunk_size = std::min(max_chunk_size, size - offset);
 
             // Build tuple data with Firebird MGA compliance
             // Format: xmin (8) | xmax (8) | chunk_id (4) | chunk_seq (4) | chunk_size (4) | data
@@ -611,6 +620,9 @@ namespace scratchbird::core
     {
         StorageEngine *storage = db_->storage_engine();
         CatalogManager *catalog = db_->catalog_manager();
+
+        // Use page-size-based chunk size for validation
+        uint32_t max_chunk_size = ToastSettings::getMaxChunkSize(db_->page_size());
 
         // Get the index ID for the TOAST table
         std::string toast_name = "pg_toast_" + table_id_.toString();
@@ -688,8 +700,8 @@ namespace scratchbird::core
             uint32_t chunk_size = *reinterpret_cast<const uint32_t *>(ptr);
             ptr += 4;
 
-            // Validate chunk size
-            if (chunk_size > TOAST_MAX_CHUNK_SIZE || 28 + chunk_size > tuple.data_size)
+            // Validate chunk size against page-size-based maximum
+            if (chunk_size > max_chunk_size || 28 + chunk_size > tuple.data_size)
             {
                 continue;
             }
@@ -733,6 +745,9 @@ namespace scratchbird::core
                                                uint64_t xmin, ErrorContext *ctx) -> Status
     {
         StorageEngine *storage = db_->storage_engine();
+
+        // Use page-size-based chunk size for validation
+        uint32_t max_chunk_size = ToastSettings::getMaxChunkSize(db_->page_size());
 
         // Scan TOAST table for chunks with this value_id
         // In a real implementation, we'd use an index
@@ -797,8 +812,8 @@ namespace scratchbird::core
                 continue; // Skip invisible chunk
             }
 
-            // Validate chunk size
-            if (chunk_size > TOAST_MAX_CHUNK_SIZE || 28 + chunk_size > tuple.data_size)
+            // Validate chunk size against page-size-based maximum
+            if (chunk_size > max_chunk_size || 28 + chunk_size > tuple.data_size)
             {
                 continue;
             }
