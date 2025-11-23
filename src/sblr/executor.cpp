@@ -711,6 +711,12 @@ namespace scratchbird
                             executeDropTrigger();
                             result = ExecutionResult();
                         }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_MERGE_START))
+                        {
+                            // Alpha 1 - Advanced SQL: MERGE statement execution
+                            executeMerge();
+                            result = ExecutionResult();
+                        }
                         else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_SCALAR) ||
                                  ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_EXISTS) ||
                                  ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_IN) ||
@@ -4164,6 +4170,42 @@ namespace scratchbird
             }
 
             // Success - tuple inserted
+
+            // Handle RETURNING clause if present (Alpha 1 - Advanced SQL)
+            if (pc_ < bytecode_size_)
+            {
+                size_t saved_pc = pc_;
+                uint8_t next_op = readByte();
+                if (next_op == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                {
+                    uint8_t ext_op = readByte();
+                    if (ext_op == static_cast<uint8_t>(Opcode::EXT_RETURNING))
+                    {
+                        // Read column count
+                        uint32_t col_count = readInt32();
+
+                        // Read column names
+                        std::vector<std::string> ret_col_names;
+                        for (uint32_t i = 0; i < col_count; ++i)
+                        {
+                            ret_col_names.push_back(readString());
+                        }
+
+                        // TODO: Build result set with the returned values
+                        // For now, just consume the bytecode
+                    }
+                    else
+                    {
+                        // Not a RETURNING clause, restore PC
+                        pc_ = saved_pc;
+                    }
+                }
+                else
+                {
+                    // Not an extended opcode, restore PC
+                    pc_ = saved_pc;
+                }
+            }
         }
 
         void Executor::executeUpdate()
@@ -4855,6 +4897,42 @@ namespace scratchbird
 
             // Note: Index updates are handled automatically by StorageEngine
             // in the updateTuple() method for MGA architecture
+
+            // Handle RETURNING clause if present (Alpha 1 - Advanced SQL)
+            if (pc_ < bytecode_size_)
+            {
+                size_t saved_pc = pc_;
+                uint8_t next_op = readByte();
+                if (next_op == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                {
+                    uint8_t ext_op = readByte();
+                    if (ext_op == static_cast<uint8_t>(Opcode::EXT_RETURNING))
+                    {
+                        // Read column count
+                        uint32_t col_count = readInt32();
+
+                        // Read column names
+                        std::vector<std::string> ret_col_names;
+                        for (uint32_t i = 0; i < col_count; ++i)
+                        {
+                            ret_col_names.push_back(readString());
+                        }
+
+                        // TODO: Build result set with the returned values
+                        // For now, just consume the bytecode
+                    }
+                    else
+                    {
+                        // Not a RETURNING clause, restore PC
+                        pc_ = saved_pc;
+                    }
+                }
+                else
+                {
+                    // Not an extended opcode, restore PC
+                    pc_ = saved_pc;
+                }
+            }
         }
 
         void Executor::executeDelete()
@@ -5109,6 +5187,190 @@ namespace scratchbird
 
             // Note: Index cleanup is handled automatically by StorageEngine
             // in the deleteTuple() method for MGA architecture
+
+            // Handle RETURNING clause if present (Alpha 1 - Advanced SQL)
+            if (pc_ < bytecode_size_)
+            {
+                size_t saved_pc = pc_;
+                uint8_t next_op = readByte();
+                if (next_op == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                {
+                    uint8_t ext_op = readByte();
+                    if (ext_op == static_cast<uint8_t>(Opcode::EXT_RETURNING))
+                    {
+                        // Read column count
+                        uint32_t col_count = readInt32();
+
+                        // Read column names
+                        std::vector<std::string> ret_col_names;
+                        for (uint32_t i = 0; i < col_count; ++i)
+                        {
+                            ret_col_names.push_back(readString());
+                        }
+
+                        // TODO: Build result set with the returned values
+                        // For now, just consume the bytecode
+                    }
+                    else
+                    {
+                        // Not a RETURNING clause, restore PC
+                        pc_ = saved_pc;
+                    }
+                }
+                else
+                {
+                    // Not an extended opcode, restore PC
+                    pc_ = saved_pc;
+                }
+            }
+        }
+
+        void Executor::executeMerge()
+        {
+            // Alpha 1 - Advanced SQL: MERGE statement executor implementation
+            // MERGE INTO target USING source ON condition WHEN clauses...
+
+            // Read target table name
+            std::string target_table_str = readString();
+
+            // Get target table metadata
+            core::ID table_id;
+            auto find_status = db_->catalog_manager()->findTableByName(target_table_str, &table_id, nullptr);
+            if (find_status != core::Status::OK)
+            {
+                error("Target table not found: " + target_table_str);
+                return;
+            }
+
+            core::CatalogManager::TableInfo table_info;
+            auto get_status = db_->catalog_manager()->getTableInfo(table_id, &table_info, nullptr);
+            if (get_status != core::Status::OK)
+            {
+                error("Failed to get target table info");
+                return;
+            }
+
+            std::vector<core::CatalogManager::ColumnInfo> all_columns;
+            db_->catalog_manager()->listColumnsInTable(table_id, &all_columns, nullptr);
+
+            // Read EXT_MERGE_SOURCE opcode
+            uint8_t opcode = readByte();
+            if (opcode != static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+            {
+                error("Expected EXTENDED_OPCODE before MERGE_SOURCE");
+                return;
+            }
+
+            uint8_t ext_op = readByte();
+            if (ext_op != static_cast<uint8_t>(Opcode::EXT_MERGE_SOURCE))
+            {
+                error("Expected EXT_MERGE_SOURCE opcode");
+                return;
+            }
+
+            // Execute source query - for now, handle simple table reference
+            // In a full implementation, this would handle subqueries too
+            std::string source_expr_marker = readString();  // This is placeholder for now
+
+            // Read EXT_MERGE_ON opcode and condition
+            opcode = readByte();
+            if (opcode != static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+            {
+                error("Expected EXTENDED_OPCODE before MERGE_ON");
+                return;
+            }
+
+            ext_op = readByte();
+            if (ext_op != static_cast<uint8_t>(Opcode::EXT_MERGE_ON))
+            {
+                error("Expected EXT_MERGE_ON opcode");
+                return;
+            }
+
+            // For this initial implementation, we'll process WHEN clauses
+            // Track matched target rows
+            std::unordered_set<uint64_t> matched_tids;
+            int affected_count = 0;
+
+            // Process WHEN clauses until we hit EXT_MERGE_END
+            while (pc_ < bytecode_size_)
+            {
+                opcode = readByte();
+                if (opcode != static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                {
+                    // Put it back and continue
+                    pc_--;
+                    break;
+                }
+
+                ext_op = readByte();
+
+                if (ext_op == static_cast<uint8_t>(Opcode::EXT_MERGE_END))
+                {
+                    // End of MERGE statement
+                    break;
+                }
+                else if (ext_op == static_cast<uint8_t>(Opcode::EXT_MERGE_WHEN_MATCHED))
+                {
+                    // WHEN MATCHED THEN UPDATE
+                    // Read number of assignments
+                    uint32_t num_assignments = readInt32();
+
+                    // For each target row, check if it matches and update if it does
+                    // This is a simplified implementation
+                    // TODO: Implement full matching logic with ON condition
+
+                    // Read and skip assignments for now (full implementation needed)
+                    for (uint32_t i = 0; i < num_assignments; ++i)
+                    {
+                        std::string col_name = readString();
+                        // Skip the expression bytecode
+                        evaluateExpression();  // This will consume the expression
+                        pop();  // Discard the value
+                    }
+                }
+                else if (ext_op == static_cast<uint8_t>(Opcode::EXT_MERGE_WHEN_NOT_MATCHED))
+                {
+                    // WHEN NOT MATCHED THEN INSERT
+                    // Read column count
+                    uint32_t col_count = readInt32();
+
+                    // Read column names
+                    std::vector<std::string> col_names;
+                    for (uint32_t i = 0; i < col_count; ++i)
+                    {
+                        col_names.push_back(readString());
+                    }
+
+                    // Read and evaluate value expressions
+                    std::vector<Value> values;
+                    for (uint32_t i = 0; i < col_count; ++i)
+                    {
+                        evaluateExpression();
+                        values.push_back(pop());
+                    }
+
+                    // TODO: Implement actual INSERT logic for unmatched source rows
+                    affected_count++;
+                }
+                else if (ext_op == static_cast<uint8_t>(Opcode::EXT_MERGE_WHEN_NOT_MATCHED_SOURCE))
+                {
+                    // WHEN NOT MATCHED BY SOURCE THEN DELETE
+                    // TODO: Implement deletion of target rows not matched by source
+                }
+                else
+                {
+                    error("Unexpected opcode in MERGE statement");
+                    return;
+                }
+            }
+
+            // Note: This is a stub implementation. A full implementation would:
+            // 1. Execute the source query to get all source rows
+            // 2. For each source row, evaluate the ON condition against each target row
+            // 3. Track which target rows match
+            // 4. Execute appropriate WHEN clauses based on match status
+            // 5. Delete unmatched target rows if WHEN NOT MATCHED BY SOURCE exists
         }
 
         // Aggregation helper implementations (Phase 1 Task 1.6.3)

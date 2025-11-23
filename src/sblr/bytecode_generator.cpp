@@ -875,6 +875,22 @@ namespace scratchbird
             }
 
             current_result_->writeOpcode(Opcode::END_LIST);
+
+            // Emit RETURNING clause if present (Alpha 1 - Advanced SQL)
+            if (node->hasReturning())
+            {
+                current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_RETURNING));
+
+                // Write column count
+                current_result_->writeInt32(static_cast<uint32_t>(node->returningColumns().size()));
+
+                // Write column names
+                for (const auto& col_id : node->returningColumns())
+                {
+                    writeStringId(col_id);
+                }
+            }
         }
 
         void BytecodeGenerator::visit(parser::SelectStmt *node)
@@ -1133,6 +1149,22 @@ namespace scratchbird
                 current_result_->writeOpcode(Opcode::WHERE_CLAUSE);
                 generateExpression(node->whereClause());
             }
+
+            // Emit RETURNING clause if present (Alpha 1 - Advanced SQL)
+            if (node->hasReturning())
+            {
+                current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_RETURNING));
+
+                // Write column count
+                current_result_->writeInt32(static_cast<uint32_t>(node->returningColumns().size()));
+
+                // Write column names
+                for (const auto& col_id : node->returningColumns())
+                {
+                    writeStringId(col_id);
+                }
+            }
         }
 
         void BytecodeGenerator::visit(parser::DeleteStmt *node)
@@ -1150,6 +1182,102 @@ namespace scratchbird
                 current_result_->writeOpcode(Opcode::WHERE_CLAUSE);
                 generateExpression(node->whereClause());
             }
+
+            // Emit RETURNING clause if present (Alpha 1 - Advanced SQL)
+            if (node->hasReturning())
+            {
+                current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_RETURNING));
+
+                // Write column count
+                current_result_->writeInt32(static_cast<uint32_t>(node->returningColumns().size()));
+
+                // Write column names
+                for (const auto& col_id : node->returningColumns())
+                {
+                    writeStringId(col_id);
+                }
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::MergeStmt *node)
+        {
+            // Alpha 1 - Advanced SQL: MERGE statement bytecode generation
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_MERGE_START));
+
+            // Write target table name
+            writeStringId(node->targetTable());
+
+            // Write source (MERGE_SOURCE opcode)
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_MERGE_SOURCE));
+            generateExpression(node->source());
+
+            // Write ON condition (MERGE_ON opcode)
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_MERGE_ON));
+            generateExpression(node->onCondition());
+
+            // Write WHEN clauses
+            for (const auto& when_clause : node->whenClauses())
+            {
+                switch (when_clause.type)
+                {
+                    case parser::MergeStmt::WhenClause::MATCHED:
+                    {
+                        // WHEN MATCHED THEN UPDATE
+                        current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                        current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_MERGE_WHEN_MATCHED));
+
+                        // Write number of assignments
+                        current_result_->writeInt32(static_cast<uint32_t>(when_clause.assignments.size()));
+
+                        // Write each assignment (column_name + value_expr)
+                        for (const auto& assignment : when_clause.assignments)
+                        {
+                            writeStringId(assignment.column_name);
+                            generateExpression(assignment.value);
+                        }
+                        break;
+                    }
+
+                    case parser::MergeStmt::WhenClause::NOT_MATCHED:
+                    {
+                        // WHEN NOT MATCHED THEN INSERT
+                        current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                        current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_MERGE_WHEN_NOT_MATCHED));
+
+                        // Write column count
+                        current_result_->writeInt32(static_cast<uint32_t>(when_clause.insert_columns.size()));
+
+                        // Write column names
+                        for (const auto& column_id : when_clause.insert_columns)
+                        {
+                            writeStringId(column_id);
+                        }
+
+                        // Write value expressions
+                        for (const auto& value_expr : when_clause.insert_values)
+                        {
+                            generateExpression(value_expr);
+                        }
+                        break;
+                    }
+
+                    case parser::MergeStmt::WhenClause::NOT_MATCHED_BY_SOURCE:
+                    {
+                        // WHEN NOT MATCHED BY SOURCE THEN DELETE
+                        current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                        current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_MERGE_WHEN_NOT_MATCHED_SOURCE));
+                        break;
+                    }
+                }
+            }
+
+            // Write MERGE_END marker
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_MERGE_END));
         }
 
         void BytecodeGenerator::visit(parser::StartTransactionStmt *node)

@@ -308,6 +308,7 @@ namespace scratchbird
                                  bool is_select_star);  // ALPHA Phase 1 - Views
             void executeUpdate();           // Phase 1 Task 1.6.1
             void executeDelete();           // Phase 1 Task 1.6.2
+            void executeMerge();            // Alpha 1 - Advanced SQL
             void executeNestedLoopJoin();   // Phase 1 Task 3.3
             void executeHashJoin();         // Phase 1 Task 3.3
             void executeSweep();            // Phase 3 Task 3.3
