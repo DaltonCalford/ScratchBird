@@ -5,8 +5,9 @@
 
 #include <iostream>
 
-int main()
-{
+
+TEST(TransactionDeadlockSimpleTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 1.11: Transaction Manager Deadlock ===" << std::endl;
     std::cout << std::endl;
 
@@ -63,6 +64,5 @@ int main()
     std::cout << "  - No such reverse ordering exists anywhere in the codebase" << std::endl;
     std::cout << "  - array_lock is acquired as READ lock, not write lock" << std::endl;
     std::cout << "  - Multiple readers can hold READ locks simultaneously (no blocking)" << std::endl;
-
-    return 0;
 }
+

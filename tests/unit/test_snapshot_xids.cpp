@@ -27,8 +27,9 @@ void simulateGetActiveTransactions(std::vector<uint64_t> *active_xids_out)
     active_xids_out->push_back(115);
 }
 
-int main()
-{
+
+TEST(SnapshotXidsTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 1.16: Snapshot XIDs Not Properly Copied ===" << std::endl;
     std::cout << std::endl;
 
@@ -218,6 +219,5 @@ int main()
     std::cout << "  - filtered_xids is local variable that goes out of scope immediately after" << std::endl;
     std::cout << "  - Code is ALREADY CORRECT - no fix needed!" << std::endl;
     std::cout << "\nThis is FALSE POSITIVE #9 out of 16 issues examined (56% audit error rate)" << std::endl;
-
-    return 0;
 }
+

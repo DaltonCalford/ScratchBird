@@ -6,8 +6,9 @@
 #include <iostream>
 #include <cstdint>
 
-int main()
-{
+
+TEST(DirtyBitProtectionTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 1.21: Dirty Bit Race Condition ===\n";
     std::cout << std::endl;
 
@@ -149,6 +150,5 @@ int main()
     std::cout << "  - No race conditions possible with current design\n";
     std::cout << std::endl;
     std::cout << "This is FALSE POSITIVE #12 out of 21 issues examined (57% audit error rate)\n";
-
-    return 0;
 }
+

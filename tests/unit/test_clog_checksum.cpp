@@ -13,8 +13,9 @@
 
 using namespace scratchbird::core;
 
-int main()
-{
+
+TEST(ClogChecksumTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 1.9: CLOG Missing Checksum Function ===" << std::endl;
     std::cout << std::endl;
 
@@ -145,6 +146,5 @@ int main()
     std::cout << "  - CLOG pages are properly checksummed in allocateClogPage() at clog.cpp:234" << std::endl;
     std::cout << "  - Checksums are validated when pages are loaded from disk" << std::endl;
     std::cout << "  - All transaction status operations work correctly with checksummed pages" << std::endl;
-
-    return 0;
 }
+

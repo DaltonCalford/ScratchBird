@@ -16,8 +16,9 @@
 
 using namespace scratchbird::core;
 
-int main()
-{
+
+TEST(HintBitsSimpleTest, Comprehensive) {
+
     std::cout << "\n=== Test: Hint Bits Optimization (Issue 2.13) ===" << std::endl;
 
     // Create test database
@@ -233,6 +234,5 @@ int main()
     std::cout << "  2. Visibility checks execute successfully" << std::endl;
     std::cout << "  3. Fast path logic is in place (no errors on second check)" << std::endl;
     std::cout << "  4. Implementation follows PostgreSQL pattern" << std::endl;
-
-    return 0;
 }
+

@@ -18,8 +18,9 @@
 
 using namespace scratchbird::core;
 
-int main()
-{
+
+TEST(SubtransactionsTest, Comprehensive) {
+
     std::cout << "\n=== Test: Subtransaction/Savepoint Support (Issue 2.15) ===" << std::endl;
 
     // Create test database
@@ -286,6 +287,5 @@ int main()
     std::cout << "  6. Error handling (duplicate names, not found)" << std::endl;
     std::cout << "  7. Savepoints cleared on commit/rollback" << std::endl;
     std::cout << "\nSpec: docs/specifications/TRANSACTION_MGA_CORE.md:774-908" << std::endl;
-
-    return 0;
 }
+

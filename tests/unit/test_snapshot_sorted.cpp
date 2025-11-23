@@ -8,8 +8,9 @@
 #include <algorithm>
 #include <vector>
 
-int main()
-{
+
+TEST(SnapshotSortedTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 2.1: Snapshot XID Array Sorting ===" << std::endl;
     std::cout << std::endl;
 
@@ -277,6 +278,5 @@ int main()
     std::cout << std::endl;
     std::cout << "This is FALSE POSITIVE #15 out of 24 issues examined (62.5% audit error rate)" << std::endl;
     std::cout << "PHASE 2 Progress: 0 real bugs, 1 false positive" << std::endl;
-
-    return 0;
 }
+

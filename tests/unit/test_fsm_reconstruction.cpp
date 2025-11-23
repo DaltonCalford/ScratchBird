@@ -18,8 +18,9 @@ struct PageHeader {
 
 constexpr uint32_t K_MAGIC_SBRD = 0x53425244;  // "SBRD"
 
-int main()
-{
+
+TEST(FsmReconstructionTest, Comprehensive) {
+
     std::cout << "=== Testing FSM Reconstruction (Issue 2.5 Fix) ===" << std::endl;
     std::cout << std::endl;
 
@@ -224,6 +225,5 @@ int main()
     std::cout << "This is REAL BUG #11 - FIXED with FSM reconstruction" << std::endl;
     std::cout << "Real bugs fixed: 1.2, 1.3, 1.7, 1.8, 1.13, 1.14, 1.15, 1.19, 1.23, 2.2, 2.5" << std::endl;
     std::cout << "False positives: 1.1, 1.4, 1.5, 1.6, 1.9, 1.10, 1.11, 1.12, 1.16, 1.17, 1.18, 1.20, 1.21, 1.22, 2.1, 2.3, 2.4" << std::endl;
-
-    return 0;
 }
+

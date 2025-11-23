@@ -11,8 +11,9 @@
 
 using namespace scratchbird::core;
 
-int main()
-{
+
+TEST(ClogStateSizeTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 1.17: CLOG Transaction State Size Mismatch ===" << std::endl;
     std::cout << std::endl;
 
@@ -271,6 +272,5 @@ int main()
     std::cout << "  - Compilation will FAIL with static assertion error" << std::endl;
     std::cout << "  - Error message explains: 'must fit in 2 bits (0-3)'" << std::endl;
     std::cout << "  - Instructions provided for expanding to 3-bit storage" << std::endl;
-
-    return 0;
 }
+

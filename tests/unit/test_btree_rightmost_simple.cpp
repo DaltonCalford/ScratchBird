@@ -14,8 +14,9 @@
 
 using namespace scratchbird::core;
 
-int main()
-{
+
+TEST(BtreeRightmostSimpleTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 1.10: B-Tree Rightmost Child Validation ===" << std::endl;
     std::cout << std::endl;
 
@@ -201,6 +202,5 @@ int main()
     std::cout << "  ✅ No code changes needed - already correct!" << std::endl;
     std::cout << std::endl;
     std::cout << "The audit was WRONG - this functionality already exists and works correctly." << std::endl;
-
-    return 0;
 }
+

@@ -16,8 +16,9 @@
 
 using namespace scratchbird::core;
 
-int main()
-{
+
+TEST(BtreeRightmostChildTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 1.10: B-Tree Rightmost Child Validation ===" << std::endl;
     std::cout << std::endl;
 
@@ -353,6 +354,5 @@ int main()
     std::cout << "  - Error message clearly indicates missing rightmost child pointer ✅" << std::endl;
     std::cout << "  - Code at btree.cpp:1083, 1087, 1378 properly sets rightmost_child ✅" << std::endl;
     std::cout << "  - No infinite loop possible - error is returned immediately ✅" << std::endl;
-
-    return 0;
 }
+
