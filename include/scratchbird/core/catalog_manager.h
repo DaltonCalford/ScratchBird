@@ -362,6 +362,12 @@ namespace scratchbird::core
             bool is_unique = false;
             bool is_foreign_key = false;
             bool is_generated = false;
+
+            // IDENTITY column fields (ALPHA Phase 1 - Constraint Features)
+            bool is_identity = false;           // Is this an IDENTITY column?
+            bool identity_always = true;        // true=ALWAYS (cannot override), false=BY DEFAULT (can override)
+            ID identity_sequence_id;            // Associated sequence ID (zero if not identity)
+
             uint8_t storage_type = 0;       // TOAST storage strategy
             bool with_timezone = false;     // For TIMESTAMP: WITH TIME ZONE
             uint16_t charset = 0;           // Character set (0 = inherit from table)
