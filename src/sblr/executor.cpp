@@ -2145,7 +2145,7 @@ namespace scratchbird
 
                 // Insert into B-tree
                 // Task 17 MGA Phase 3.1: Pass xid for btn_xmin tracking
-                status = btree->insert(key_bytes, static_cast<uint32_t>(getPageNumber(tuple.tid)), tuple.tid.slot, xid, nullptr);
+                status = btree->insert(key_bytes, tuple.tid, xid, nullptr);
                 if (status != core::Status::OK)
                 {
                     // Log error but continue
@@ -5612,7 +5612,7 @@ namespace scratchbird
                 }
 
                 // Call StorageEngine::updateTuple with MGA versioning
-                uint32_t page_id = static_cast<uint32_t>(core::static_cast<uint32_t>(getPageNumber(tuple.tid)));
+                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tuple.tid));
                 uint16_t item_id = core::getSlot(tuple.tid);
                 uint32_t new_page_id;
                 uint16_t new_item_id;
@@ -5904,7 +5904,7 @@ namespace scratchbird
 
                 // Task 17 Phase 7: Update expression/filtered indexes BEFORE deletion
                 // (indexes need row values, and deletion is a soft delete that marks xmax)
-                uint32_t page_id = static_cast<uint32_t>(core::static_cast<uint32_t>(getPageNumber(tuple.tid)));
+                uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tuple.tid));
                 uint16_t item_id = core::getSlot(tuple.tid);
                 core::TID tid(page_id, item_id);
                 // Task 17 MGA Phase 1.1: Pass current transaction ID
