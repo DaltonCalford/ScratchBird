@@ -1103,6 +1103,8 @@ namespace scratchbird::core
                              FKAction on_update,
                              FKMatchType match_type,
                              ID& fk_id_out,
+                             bool is_deferrable = false,
+                             bool initially_deferred = false,
                              ErrorContext* ctx = nullptr) -> Status;
 
         // Get foreign keys for a table (as child)
