@@ -259,8 +259,3 @@ TEST_F(StatisticalFunctionsTest, COVAR_POP_BasicTest)
     EXPECT_NEAR(covar_pop, 4.0, 0.001);
 }
 
-int main(int argc, char **argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

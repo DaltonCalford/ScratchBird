@@ -346,9 +346,3 @@ TEST_F(BitmapDMLTest, UpdateScenario)
     status = tx_manager_->commitTransaction(0, verify_xid, &ctx);
     ASSERT_EQ(status, Status::OK);
 }
-
-int main(int argc, char **argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
