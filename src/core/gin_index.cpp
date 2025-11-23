@@ -341,7 +341,7 @@ namespace scratchbird
             auto *tail = reinterpret_cast<SBGinPendingListPage *>(tail_data);
 
             // Check if tail page is full
-            if (tail->gpp_entry_count >= MAX_PENDING_ENTRIES_PER_PAGE)
+            if (tail->gpp_entry_count >= getMaxPendingEntriesPerPage())
             {
                 // Allocate new pending page
                 uint32_t new_pending_page = 0;
@@ -1288,7 +1288,7 @@ namespace scratchbird
             }
 
             // Check if leaf is full
-            if (leaf->gpt_entry_count >= MAX_POSTING_TREE_LEAF_TIDS)
+            if (leaf->gpt_entry_count >= getMaxPostingTreeLeafTids())
             {
                 buffer_pool_->unpinPage(leaf_page, false, ctx);
                 return splitPostingTreeLeaf(leaf_page, new_sibling_out, separator_tid_out, ctx);
@@ -1529,7 +1529,7 @@ namespace scratchbird
             auto *internal = reinterpret_cast<SBGinPostingTreeInternal *>(internal_data);
 
             // Check if internal node is full
-            if (internal->gpt_entry_count >= MAX_POSTING_TREE_INTERNAL_ENTRIES)
+            if (internal->gpt_entry_count >= getMaxPostingTreeInternalEntries())
             {
                 buffer_pool_->unpinPage(internal_page, false, ctx);
                 return splitPostingTreeInternal(internal_page, new_sibling_out, separator_tid_out, ctx);
@@ -4028,7 +4028,7 @@ namespace scratchbird
 
                 // Scan entries in this page
                 // We mark entries as deleted by setting tid = INVALID_TID
-                for (uint16_t i = 0; i < entry_count && i < MAX_PENDING_ENTRIES_PER_PAGE; i++)
+                for (uint16_t i = 0; i < entry_count && i < getMaxPendingEntriesPerPage(); i++)
                 {
                     GinPendingEntry &entry = pending_page->gpp_entries[i];
 
@@ -4202,7 +4202,7 @@ namespace scratchbird
                 bool page_modified = false;
 
                 // Update TIDs in pending entries
-                for (uint16_t i = 0; i < entry_count && i < MAX_PENDING_ENTRIES_PER_PAGE; i++)
+                for (uint16_t i = 0; i < entry_count && i < getMaxPendingEntriesPerPage(); i++)
                 {
                     GinPendingEntry &entry = pending_page->gpp_entries[i];
 
@@ -4393,7 +4393,7 @@ namespace scratchbird
                             // Leaf node: update TID array
                             uint16_t tid_count = leaf->gpt_entry_count;
 
-                            for (uint16_t i = 0; i < tid_count && i < MAX_POSTING_TREE_LEAF_TIDS; i++)
+                            for (uint16_t i = 0; i < tid_count && i < getMaxPostingTreeLeafTids(); i++)
                             {
                                 // Convert GPID to legacy for lookup
                                 uint64_t old_tid = convertTIDtoLegacy(leaf->gpt_tids[i].getTID());
@@ -4418,7 +4418,7 @@ namespace scratchbird
                             auto *internal = reinterpret_cast<SBGinPostingTreeInternal *>(tree_data);
                             uint16_t entry_count = internal->gpt_entry_count;
 
-                            for (uint16_t i = 0; i < entry_count && i < MAX_POSTING_TREE_INTERNAL_ENTRIES; i++)
+                            for (uint16_t i = 0; i < entry_count && i < getMaxPostingTreeInternalEntries(); i++)
                             {
                                 uint32_t child_page = internal->gpt_entries[i].child_page;
                                 if (child_page != 0)
@@ -4459,7 +4459,7 @@ namespace scratchbird
                     // Uncompressed posting list: simple TID array
                     uint16_t entry_count = posting_page->gpl_entry_count;
 
-                    for (uint16_t i = 0; i < entry_count && i < MAX_POSTING_ENTRIES_PER_PAGE; i++)
+                    for (uint16_t i = 0; i < entry_count && i < getMaxPostingEntriesPerPage(); i++)
                     {
                         // Convert GPID to legacy for lookup
                         uint64_t old_tid = convertTIDtoLegacy(posting_page->getEntries()[i].getTID());
