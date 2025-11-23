@@ -355,6 +355,12 @@ namespace scratchbird
             KW_IDENTITY,   // ALPHA Phase 1 - IDENTITY columns (auto-increment)
             KW_GENERATED,  // ALPHA Phase 1 - GENERATED columns
             KW_ALWAYS,     // ALPHA Phase 1 - GENERATED ALWAYS AS IDENTITY
+            KW_STORED,     // ALPHA Phase 1 - GENERATED ALWAYS AS ... STORED
+            KW_VIRTUAL,    // ALPHA Phase 1 - GENERATED ALWAYS AS ... VIRTUAL
+            KW_DEFERRABLE, // ALPHA Phase 1 - Deferred constraint checking
+            KW_INITIALLY,  // ALPHA Phase 1 - INITIALLY DEFERRED/IMMEDIATE
+            KW_DEFERRED,   // ALPHA Phase 1 - INITIALLY DEFERRED
+            KW_IMMEDIATE,  // ALPHA Phase 1 - INITIALLY IMMEDIATE
             // KW_BY already defined above for GROUP BY/ORDER BY
             KW_FOREIGN,    // ALPHA Phase C - Foreign key constraints
             KW_KEY,        // ALPHA Phase C - Foreign/primary key
