@@ -11,8 +11,9 @@ ScratchBird aims to be a **universal database engine** that can emulate PostgreS
 ## Current Status
 
 **Phase:** Alpha 1 - Engine Functionality (Local Operations)
-**Progress:** ~95% of Alpha 1 complete (~11% of total project)
-**Current Work:** Implementing 30 missing functions for full database compatibility
+**Progress:** ~75% of Alpha 1 complete (~11% of total project)
+**Remaining:** ~727-962 hours (18-24 weeks)
+**Current Work:** 30 missing functions → 61 improvement opportunities → CLI tools
 **Started:** June 2025 (5 months of evening/weekend development)
 **Project Type:** Educational/Research (no time constraints)
 **Last Updated:** November 23, 2025
@@ -102,14 +103,30 @@ ScratchBird aims to be a **universal database engine** that can emulate PostgreS
 
 ### What's Being Built 🚧
 
-**Current Work (Alpha 1 - ~5% remaining):**
-- 🚧 **Missing Functions (PRIORITY 1):** 30 functions for full database compatibility (207-312 hours)
+**Current Work (Alpha 1 - ~25% remaining, 727-962 hours):**
+
+- 🚧 **PRIORITY 1: Missing Functions** (207-312 hours / 5-8 weeks)
+  - 30 functions for full PostgreSQL/MySQL/MSSQL/Firebird compatibility
   - See [MISSING_FUNCTIONS_IMPLEMENTATION_PLAN.md](docs/planning/MISSING_FUNCTIONS_IMPLEMENTATION_PLAN.md)
-- ⏳ **Command-line tools (PRIORITY 2):** sb_isql, sb_verify, sb_backup, sb_security (~90-110 hours)
-  - *To be started after all functions are implemented*
+
+- ⏳ **PRIORITY 2: Improvement Opportunities** (430-540 hours / 11-14 weeks)
+  - 61 items: security, correctness, performance, feature completeness
+  - P0 (Critical): 8 items - password policy, account lockout, audit logging, overflow checking
+  - P1 (High): 15 items - exception handling, cursors, stored procedures, FK completion
+  - P2 (Medium): 25 items - performance optimizations, window frames, testing
+  - P3 (Low): 20+ items - MFA, DECIMAL optimization, SIMD, partition pruning
+  - See [IMPROVEMENT_OPPORTUNITIES.md](docs/audit/IMPROVEMENT_OPPORTUNITIES.md)
+
+- ⏳ **PRIORITY 3: Command-Line Tools** (90-110 hours / 2.5-3 weeks)
+  - sb_isql (interactive SQL shell)
+  - sb_verify (database integrity checker)
+  - sb_backup (backup/restore tool)
+  - sb_security (user/role management tool)
+  - *To be started after functions and improvements*
 
 **Recently Completed:**
 - ✅ Views (100% COMPLETE - materialized views with full data population) 🎉
+- ✅ Build environment documentation and cross-database comparison analysis
 
 **After Alpha 1 (~89% of project remaining):**
 
