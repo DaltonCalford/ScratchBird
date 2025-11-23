@@ -963,13 +963,16 @@ namespace scratchbird
                       StringPool::StringId fk_table = 0,
                       std::vector<StringPool::StringId> fk_columns = {},
                       StringPool::StringId fk_on_delete = 0,
-                      StringPool::StringId fk_on_update = 0)
+                      StringPool::StringId fk_on_update = 0,
+                      bool is_identity = false,
+                      bool identity_always = true)
                 : ASTNode(ASTKind::COLUMN_DEF, span), name_(name), type_(type), nullable_(nullable),
                   charset_(charset), collation_(collation),
                   default_value_(default_value), check_expr_(check_expr), is_unique_(is_unique),
                   is_primary_key_(is_primary_key),
                   fk_table_(fk_table), fk_columns_(std::move(fk_columns)),
-                  fk_on_delete_(fk_on_delete), fk_on_update_(fk_on_update)
+                  fk_on_delete_(fk_on_delete), fk_on_update_(fk_on_update),
+                  is_identity_(is_identity), identity_always_(identity_always)
             {
             }
 
@@ -1025,6 +1028,14 @@ namespace scratchbird
             {
                 return fk_on_update_;
             }
+            bool isIdentity() const
+            {
+                return is_identity_;
+            }
+            bool identityAlways() const
+            {
+                return identity_always_;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
@@ -1042,6 +1053,8 @@ namespace scratchbird
             std::vector<StringPool::StringId> fk_columns_;  // REFERENCES column list
             StringPool::StringId fk_on_delete_;  // ON DELETE action
             StringPool::StringId fk_on_update_;  // ON UPDATE action
+            bool is_identity_;                   // IDENTITY column flag (ALPHA Phase 1)
+            bool identity_always_;               // true=ALWAYS, false=BY DEFAULT (ALPHA Phase 1)
         };
 
         // Table-level constraint (ALPHA Phase C - Composite FK)

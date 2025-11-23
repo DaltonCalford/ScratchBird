@@ -1422,16 +1422,61 @@ namespace scratchbird
 
         void BytecodeGenerator::visit(parser::ShowStmt *node)
         {
-            // SHOW commands - bytecode generation not yet implemented
-            current_result_->addError("SHOW statement bytecode generation not yet implemented");
-            (void)node; // Suppress unused parameter warning
+            // SHOW commands - bytecode generation (ALPHA Phase 1 - Developer Experience)
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+
+            // Write appropriate extended opcode based on object type
+            switch (node->objectType())
+            {
+                case parser::ShowObjectType::TABLES:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_TABLES));
+                    // Write optional database name
+                    writeStringId(node->databaseName());
+                    // Write optional LIKE pattern
+                    writeStringId(node->likePattern());
+                    break;
+
+                case parser::ShowObjectType::DATABASES:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_DATABASES));
+                    // Write optional LIKE pattern
+                    writeStringId(node->likePattern());
+                    break;
+
+                case parser::ShowObjectType::COLUMNS:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_COLUMNS));
+                    // Write table name (required)
+                    writeStringId(node->tableName());
+                    // Write optional LIKE pattern
+                    writeStringId(node->likePattern());
+                    break;
+
+                case parser::ShowObjectType::INDEXES:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_INDEXES));
+                    // Write table name (required)
+                    writeStringId(node->tableName());
+                    break;
+
+                case parser::ShowObjectType::CREATE_TABLE:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_CREATE_TABLE));
+                    // Write table name (required)
+                    writeStringId(node->tableName());
+                    break;
+            }
+
+            DEBUG_LOG_DB("Generated SHOW bytecode");
         }
 
         void BytecodeGenerator::visit(parser::DescribeStmt *node)
         {
-            // DESCRIBE command - bytecode generation not yet implemented
-            current_result_->addError("DESCRIBE statement bytecode generation not yet implemented");
-            (void)node; // Suppress unused parameter warning
+            // DESCRIBE command - bytecode generation (ALPHA Phase 1 - Developer Experience)
+            // DESCRIBE is an alias for SHOW COLUMNS
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_DESCRIBE_TABLE));
+
+            // Write table name (required)
+            writeStringId(node->tableName());
+
+            DEBUG_LOG_DB("Generated DESCRIBE bytecode");
         }
 
         void BytecodeGenerator::visit(parser::AnalyzeStmt *node)
@@ -3484,6 +3529,15 @@ namespace scratchbird
 
                 // Write ON UPDATE action
                 writeStringId(node->fk_on_update());
+            }
+
+            // Write IDENTITY column constraint if present (ALPHA Phase 1 - IDENTITY Columns Phase 3)
+            if (node->isIdentity())
+            {
+                current_result_->writeOpcode(Opcode::IDENTITY_COLUMN);
+
+                // Write identity type: 1 byte (1 = ALWAYS, 0 = BY DEFAULT)
+                current_result_->writeByte(node->identityAlways() ? 1 : 0);
             }
         }
 
