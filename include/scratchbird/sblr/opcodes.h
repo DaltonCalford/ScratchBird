@@ -133,8 +133,19 @@ namespace scratchbird
             AGG_CORR = 0x83,         // CORR(y, x) - Pearson correlation coefficient
             AGG_COVAR_POP = 0x84,    // COVAR_POP(y, x) - population covariance
 
-            // Temporal functions
-            FUNC_DATE_ADD = 0x84,     // DATE_ADD(date, days)
+            // Regression aggregate functions (Alpha 1 - Missing Functions)
+            AGG_REGR_SLOPE = 0x8E,       // REGR_SLOPE(y, x) - slope of linear regression
+            AGG_REGR_INTERCEPT = 0x8F,   // REGR_INTERCEPT(y, x) - y-intercept of regression
+            AGG_REGR_COUNT = 0x90,       // REGR_COUNT(y, x) - count of non-null pairs
+            AGG_REGR_R2 = 0x91,          // REGR_R2(y, x) - coefficient of determination (R²)
+            AGG_REGR_AVGX = 0x92,        // REGR_AVGX(y, x) - average of x values
+            AGG_REGR_AVGY = 0x93,        // REGR_AVGY(y, x) - average of y values
+            AGG_REGR_SXX = 0x94,         // REGR_SXX(y, x) - sum of squares of x
+            AGG_REGR_SYY = 0x95,         // REGR_SYY(y, x) - sum of squares of y
+            AGG_REGR_SXY = 0x96,         // REGR_SXY(y, x) - sum of cross-products
+
+            // Temporal functions (Note: FUNC_DATE_ADD collision at 0x84 needs fixing)
+            FUNC_DATE_ADD = 0x84,     // DATE_ADD(date, days) - TODO: Move to extended opcodes
             FUNC_DATE_SUB = 0x85,     // DATE_SUB(date, days)
             FUNC_DATE_DIFF = 0x86,    // DATE_DIFF(date1, date2) - returns days
             FUNC_NOW = 0x87,          // NOW() - current timestamp

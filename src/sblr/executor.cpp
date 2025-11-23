@@ -6215,6 +6215,16 @@ namespace scratchbird
                 // They will use accumulate2() instead of accumulate()
                 case AggFunc::CORR:
                 case AggFunc::COVAR_POP:
+                // Regression functions (use accumulate2() for 2-variable statistics)
+                case AggFunc::REGR_SLOPE:
+                case AggFunc::REGR_INTERCEPT:
+                case AggFunc::REGR_COUNT:
+                case AggFunc::REGR_R2:
+                case AggFunc::REGR_AVGX:
+                case AggFunc::REGR_AVGY:
+                case AggFunc::REGR_SXX:
+                case AggFunc::REGR_SYY:
+                case AggFunc::REGR_SXY:
                     // These should not reach here - they use accumulate2()
                     // If they do, it's a programming error
                     break;
@@ -6362,6 +6372,111 @@ namespace scratchbird
                     double covariance = (sum_xy / count) - (mean_x * mean_y);
 
                     return Value::makeFloat64(covariance);
+                }
+
+                // Regression aggregate functions (Alpha 1 - Missing Functions)
+                case AggFunc::REGR_SLOPE:
+                {
+                    // Slope of linear regression line: slope = covar_pop(y,x) / var_pop(x)
+                    if (count < 2)
+                        return Value::makeNull();
+
+                    double mean_x = sum_x / count;
+                    double var_x = (sum_x2 / count) - (mean_x * mean_x);
+
+                    if (var_x <= 0.0)
+                        return Value::makeNull();  // No variance in x
+
+                    double mean_y = sum_y / count;
+                    double covar = (sum_xy / count) - (mean_x * mean_y);
+
+                    return Value::makeFloat64(covar / var_x);
+                }
+
+                case AggFunc::REGR_INTERCEPT:
+                {
+                    // Y-intercept of linear regression: intercept = avg(y) - slope * avg(x)
+                    if (count < 2)
+                        return Value::makeNull();
+
+                    double mean_x = sum_x / count;
+                    double mean_y = sum_y / count;
+                    double var_x = (sum_x2 / count) - (mean_x * mean_x);
+
+                    if (var_x <= 0.0)
+                        return Value::makeNull();
+
+                    double covar = (sum_xy / count) - (mean_x * mean_y);
+                    double slope = covar / var_x;
+
+                    return Value::makeFloat64(mean_y - slope * mean_x);
+                }
+
+                case AggFunc::REGR_COUNT:
+                {
+                    // Count of non-null (y, x) pairs
+                    return Value::makeInt64(count);
+                }
+
+                case AggFunc::REGR_R2:
+                {
+                    // Coefficient of determination: R² = (corr(y,x))²
+                    if (count < 2)
+                        return Value::makeNull();
+
+                    double mean_x = sum_x / count;
+                    double mean_y = sum_y / count;
+                    double var_x = (sum_x2 / count) - (mean_x * mean_x);
+                    double var_y = (sum_y2 / count) - (mean_y * mean_y);
+
+                    if (var_x <= 0.0 || var_y <= 0.0)
+                        return Value::makeNull();
+
+                    double covar = (sum_xy / count) - (mean_x * mean_y);
+                    double corr = covar / std::sqrt(var_x * var_y);
+
+                    return Value::makeFloat64(corr * corr);
+                }
+
+                case AggFunc::REGR_AVGX:
+                {
+                    // Average of x values
+                    return count > 0 ? Value::makeFloat64(sum_x / count) : Value::makeNull();
+                }
+
+                case AggFunc::REGR_AVGY:
+                {
+                    // Average of y values
+                    return count > 0 ? Value::makeFloat64(sum_y / count) : Value::makeNull();
+                }
+
+                case AggFunc::REGR_SXX:
+                {
+                    // Sum of squares of x: Σ(x²) - (Σx)²/n
+                    if (count == 0)
+                        return Value::makeNull();
+
+                    double mean_x = sum_x / count;
+                    return Value::makeFloat64(sum_x2 - count * mean_x * mean_x);
+                }
+
+                case AggFunc::REGR_SYY:
+                {
+                    // Sum of squares of y: Σ(y²) - (Σy)²/n
+                    if (count == 0)
+                        return Value::makeNull();
+
+                    double mean_y = sum_y / count;
+                    return Value::makeFloat64(sum_y2 - count * mean_y * mean_y);
+                }
+
+                case AggFunc::REGR_SXY:
+                {
+                    // Sum of cross-products: Σ(xy) - (Σx)(Σy)/n
+                    if (count == 0)
+                        return Value::makeNull();
+
+                    return Value::makeFloat64(sum_xy - (sum_x * sum_y) / count);
                 }
             }
 
@@ -6524,6 +6639,34 @@ namespace scratchbird
                         break;
                     case Opcode::AGG_COVAR_POP:
                         func = AggregateAccumulator::AggFunc::COVAR_POP;
+                        break;
+                    // Regression aggregate functions (Alpha 1 - Missing Functions)
+                    case Opcode::AGG_REGR_SLOPE:
+                        func = AggregateAccumulator::AggFunc::REGR_SLOPE;
+                        break;
+                    case Opcode::AGG_REGR_INTERCEPT:
+                        func = AggregateAccumulator::AggFunc::REGR_INTERCEPT;
+                        break;
+                    case Opcode::AGG_REGR_COUNT:
+                        func = AggregateAccumulator::AggFunc::REGR_COUNT;
+                        break;
+                    case Opcode::AGG_REGR_R2:
+                        func = AggregateAccumulator::AggFunc::REGR_R2;
+                        break;
+                    case Opcode::AGG_REGR_AVGX:
+                        func = AggregateAccumulator::AggFunc::REGR_AVGX;
+                        break;
+                    case Opcode::AGG_REGR_AVGY:
+                        func = AggregateAccumulator::AggFunc::REGR_AVGY;
+                        break;
+                    case Opcode::AGG_REGR_SXX:
+                        func = AggregateAccumulator::AggFunc::REGR_SXX;
+                        break;
+                    case Opcode::AGG_REGR_SYY:
+                        func = AggregateAccumulator::AggFunc::REGR_SYY;
+                        break;
+                    case Opcode::AGG_REGR_SXY:
+                        func = AggregateAccumulator::AggFunc::REGR_SXY;
                         break;
                     default:
                         error("Unknown aggregate function opcode");
