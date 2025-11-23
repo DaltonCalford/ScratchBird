@@ -13665,6 +13665,153 @@ namespace scratchbird
                             push(Value::makeText(str));
                         }
                     }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_LPAD))
+                    {
+                        // LPAD(str, length [, fill])
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 2 || arg_count > 3)
+                        {
+                            error("LPAD expects 2 or 3 arguments");
+                        }
+
+                        Value fill_val;
+                        if (arg_count == 3)
+                        {
+                            fill_val = pop();
+                        }
+                        Value length_val = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || length_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            int64_t target_length = length_val.toInt64();
+                            std::string fill_str = (arg_count == 3 && !fill_val.isNull()) ? fill_val.toString() : " ";
+
+                            if (fill_str.empty())
+                            {
+                                fill_str = " ";
+                            }
+
+                            if (static_cast<int64_t>(str.length()) >= target_length)
+                            {
+                                // Truncate if too long
+                                push(Value::makeText(str.substr(0, target_length)));
+                            }
+                            else
+                            {
+                                // Pad on the left
+                                int64_t pad_length = target_length - str.length();
+                                std::string padding;
+                                while (static_cast<int64_t>(padding.length()) < pad_length)
+                                {
+                                    padding += fill_str;
+                                }
+                                padding = padding.substr(0, pad_length);
+                                push(Value::makeText(padding + str));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_RPAD))
+                    {
+                        // RPAD(str, length [, fill])
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 2 || arg_count > 3)
+                        {
+                            error("RPAD expects 2 or 3 arguments");
+                        }
+
+                        Value fill_val;
+                        if (arg_count == 3)
+                        {
+                            fill_val = pop();
+                        }
+                        Value length_val = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || length_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            int64_t target_length = length_val.toInt64();
+                            std::string fill_str = (arg_count == 3 && !fill_val.isNull()) ? fill_val.toString() : " ";
+
+                            if (fill_str.empty())
+                            {
+                                fill_str = " ";
+                            }
+
+                            if (static_cast<int64_t>(str.length()) >= target_length)
+                            {
+                                // Truncate if too long
+                                push(Value::makeText(str.substr(0, target_length)));
+                            }
+                            else
+                            {
+                                // Pad on the right
+                                int64_t pad_length = target_length - str.length();
+                                std::string padding;
+                                while (static_cast<int64_t>(padding.length()) < pad_length)
+                                {
+                                    padding += fill_str;
+                                }
+                                padding = padding.substr(0, pad_length);
+                                push(Value::makeText(str + padding));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_OVERLAY))
+                    {
+                        // OVERLAY(str PLACING replacement FROM start [FOR length])
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 3 || arg_count > 4)
+                        {
+                            error("OVERLAY expects 3 or 4 arguments");
+                        }
+
+                        Value length_val;
+                        if (arg_count == 4)
+                        {
+                            length_val = pop();
+                        }
+                        Value start_val = pop();
+                        Value replacement_val = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || replacement_val.isNull() || start_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            std::string replacement = replacement_val.toString();
+                            int64_t start = start_val.toInt64() - 1; // Convert to 0-based
+                            int64_t length = (arg_count == 4 && !length_val.isNull()) ?
+                                           length_val.toInt64() : replacement.length();
+
+                            if (start < 0 || start > static_cast<int64_t>(str.length()))
+                            {
+                                push(Value::makeText(str));
+                            }
+                            else
+                            {
+                                std::string result = str.substr(0, start) + replacement;
+                                if (start + length < static_cast<int64_t>(str.length()))
+                                {
+                                    result += str.substr(start + length);
+                                }
+                                push(Value::makeText(result));
+                            }
+                        }
+                    }
                     // ========== Text Search Functions (Task 14 Phase 5) ==========
                     else if (ext_op == static_cast<uint8_t>(Opcode::EXT_TO_TSVECTOR))
                     {
@@ -14343,6 +14490,165 @@ namespace scratchbird
                         {
                             double x = arg.toDouble();
                             push(Value::makeFloat64(std::cbrt(x)));
+                        }
+                    }
+                    // Hyperbolic functions (Alpha 1 - Missing Functions)
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_SINH))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("SINH expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            push(Value::makeFloat64(std::sinh(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_COSH))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("COSH expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            push(Value::makeFloat64(std::cosh(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_TANH))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("TANH expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            push(Value::makeFloat64(std::tanh(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_ASINH))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("ASINH expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            push(Value::makeFloat64(std::asinh(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_ACOSH))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("ACOSH expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            if (x < 1.0)
+                            {
+                                // Domain error: ACOSH only defined for x >= 1
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                push(Value::makeFloat64(std::acosh(x)));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_ATANH))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("ATANH expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            if (std::abs(x) >= 1.0)
+                            {
+                                // Domain error: ATANH only defined for |x| < 1
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                push(Value::makeFloat64(std::atanh(x)));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_COT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("COT expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            double tan_x = std::tan(x);
+                            if (tan_x == 0.0)
+                            {
+                                // Division by zero - return NULL or infinity
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                push(Value::makeFloat64(1.0 / tan_x));
+                            }
                         }
                     }
                     else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_POWER))

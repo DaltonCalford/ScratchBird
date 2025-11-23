@@ -319,6 +319,8 @@ namespace scratchbird
             EXT_CHR = 0x42,                // CHR(code) - convert ASCII code to character
             EXT_REPEAT = 0x43,             // REPEAT(str, count)
             EXT_REVERSE = 0x44,            // REVERSE(str)
+            EXT_LPAD = 0x57,               // LPAD(str, length [, fill]) - left-pad string
+            EXT_RPAD = 0x58,               // RPAD(str, length [, fill]) - right-pad string
 
             // Spatial types and operations (Phase 2 Task 9.1) - 0x50-0x5F range
             EXT_TYPE_POINT = 0x50,         // POINT data type marker
@@ -531,6 +533,15 @@ namespace scratchbird
             EXT_FUNC_DEGREES = 0xE1,       // DEGREES(radians) - convert radians to degrees
             EXT_FUNC_RADIANS = 0xE2,       // RADIANS(degrees) - convert degrees to radians
             EXT_FUNC_PI = 0xE3,            // PI() - returns π (3.14159265358979323846)
+
+            // Hyperbolic trigonometric functions (Alpha 1 - Missing Functions) (0x59-0x5F)
+            EXT_FUNC_SINH = 0x59,          // SINH(x) - hyperbolic sine
+            EXT_FUNC_COSH = 0x5A,          // COSH(x) - hyperbolic cosine
+            EXT_FUNC_TANH = 0x5B,          // TANH(x) - hyperbolic tangent
+            EXT_FUNC_ASINH = 0x5C,         // ASINH(x) - inverse hyperbolic sine
+            EXT_FUNC_ACOSH = 0x5D,         // ACOSH(x) - inverse hyperbolic cosine
+            EXT_FUNC_ATANH = 0x5E,         // ATANH(x) - inverse hyperbolic tangent
+            EXT_FUNC_COT = 0x5F,           // COT(x) - cotangent
 
             // Algebraic functions (0xE4-0xEE)
             EXT_FUNC_ABS = 0xE4,           // ABS(x) - absolute value
