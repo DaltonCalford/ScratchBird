@@ -1173,16 +1173,22 @@ namespace scratchbird::optimizer
          * @param grouping_exprs Expressions to group by (empty for no GROUP BY)
          * @param aggregates Aggregate expressions in SELECT list
          * @param having_clause Optional HAVING filter (nullptr if none)
+         * @param grouping_type Type of grouping (STANDARD, ROLLUP, CUBE, GROUPING_SETS)
+         * @param grouping_sets Explicit grouping sets (for GROUPING SETS)
          */
         AggregateNode(std::shared_ptr<PlanNode> child_plan,
                      const std::vector<parser::Expression*>& grouping_exprs,
                      const std::vector<parser::AggregateExpr*>& aggregates,
-                     parser::Expression* having_clause = nullptr)
+                     parser::Expression* having_clause = nullptr,
+                     parser::GroupingType grouping_type = parser::GroupingType::STANDARD,
+                     const std::vector<std::vector<parser::Expression*>>& grouping_sets = {})
             : PlanNode(PlanNodeType::AGGREGATE),
               child_plan_(std::move(child_plan)),
               grouping_exprs_(grouping_exprs),
               aggregates_(aggregates),
-              having_clause_(having_clause)
+              having_clause_(having_clause),
+              grouping_type_(grouping_type),
+              grouping_sets_(grouping_sets)
         {
         }
 
@@ -1210,6 +1216,19 @@ namespace scratchbird::optimizer
          * Check if this is a simple aggregation (no GROUP BY)
          */
         bool isSimpleAggregation() const { return grouping_exprs_.empty(); }
+
+        /**
+         * Get grouping type (STANDARD, ROLLUP, CUBE, GROUPING_SETS)
+         */
+        parser::GroupingType groupingType() const { return grouping_type_; }
+
+        /**
+         * Get explicit grouping sets (for GROUPING SETS)
+         */
+        const std::vector<std::vector<parser::Expression*>>& groupingSets() const
+        {
+            return grouping_sets_;
+        }
 
         /**
          * Generate EXPLAIN output
@@ -1240,6 +1259,8 @@ namespace scratchbird::optimizer
         std::vector<parser::Expression*> grouping_exprs_;
         std::vector<parser::AggregateExpr*> aggregates_;
         parser::Expression* having_clause_;
+        parser::GroupingType grouping_type_;
+        std::vector<std::vector<parser::Expression*>> grouping_sets_;
     };
 
     /**
