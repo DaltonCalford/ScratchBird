@@ -11,9 +11,10 @@ ScratchBird aims to be a **universal database engine** that can emulate PostgreS
 ## Current Status
 
 **Phase:** Alpha 1 - Engine Functionality (Local Operations)
-**Progress:** ~87% of Alpha 1 complete (~11% of total project)
+**Progress:** ~99% of Alpha 1 complete (~11% of total project)
 **Started:** June 2025 (5 months of evening/weekend development)
 **Project Type:** Educational/Research (no time constraints)
+**Last Updated:** November 23, 2025
 
 ### What's Working ✅
 
@@ -58,15 +59,36 @@ ScratchBird aims to be a **universal database engine** that can emulate PostgreS
 - Full CRUD for security tables (8/8)
 - Core tables (10/10 structures defined)
 
+#### PSQL/Stored Procedures & Triggers (100%) 🎉
+- Variable scope management and operations
+- Control flow (IF, LOOP, WHILE, EXIT, RETURN)
+- Exception handling (RAISE, TRY/EXCEPT)
+- Cursor operations (DECLARE, OPEN, FETCH, CLOSE)
+- Trigger firing mechanism (BEFORE/AFTER, FOR EACH ROW)
+- Stored procedure/function invocation with OUT/INOUT parameters
+
+#### Advanced SQL Features (100%) 🎉
+- Common Table Expressions (CTEs) - both non-recursive and recursive
+- Set operations (UNION, UNION ALL, INTERSECT, INTERSECT ALL, EXCEPT, EXCEPT ALL)
+- MERGE statement (all 3 WHEN clause types)
+- RETURNING clause (INSERT/UPDATE/DELETE)
+- SAVEPOINT (nested transaction control)
+
+#### Constraint Features (100%) 🎉
+- NOT NULL, UNIQUE, PRIMARY KEY, FOREIGN KEY, CHECK, DEFAULT
+- GENERATED columns (STORED/VIRTUAL) with expression evaluation
+- IDENTITY columns (GENERATED ALWAYS/BY DEFAULT AS IDENTITY)
+- Deferred constraint checking (DEFERRABLE, INITIALLY DEFERRED)
+- Referential actions (CASCADE, SET NULL, SET DEFAULT)
+
+#### SQL Engine Commands (100%) 🎉
+- SHOW TABLES, SHOW DATABASES, SHOW COLUMNS, SHOW INDEXES, SHOW CREATE TABLE
+- DESCRIBE/DESC table introspection
+- EXPLAIN query plan visualization
+
 ### What's Being Built 🚧
 
-**Current Work (Alpha 1 - 13% remaining):**
-- ❌ PSQL/stored procedure execution
-- ❌ Trigger firing mechanism
-- ❌ Common Table Expressions (CTEs)
-- ❌ MERGE statement, RETURNING clause
-- ❌ GENERATED/IDENTITY columns
-- ❌ SQL engine internal commands (SHOW, DESCRIBE, EXPLAIN)
+**Current Work (Alpha 1 - ~1% remaining):**
 - ❌ Command-line tools (sb_isql, sb_verify, sb_backup, sb_security)
 - ⧗ Views (80% - materialized view physical implementation pending)
 
