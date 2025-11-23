@@ -56,15 +56,15 @@ This document tracks the implementation status of the 30 missing functions ident
 
 ### Phase 3: Advanced Grouping ⚠️ **PARTIALLY COMPLETE**
 
-**Status:** ~20% Complete (Parser support only, execution pending)
-**Estimated Remaining:** 40-60 hours
+**Status:** ~40% Complete (Parser + Optimizer + partial bytecode)
+**Estimated Remaining:** 30-40 hours
 
-| Feature | Parser | Bytecode Gen | Executor | Status |
-|---------|--------|--------------|----------|--------|
-| ROLLUP | ✅ Complete | ❌ TODO | ❌ TODO | ⚠️ Parser only |
-| CUBE | ✅ Complete | ❌ TODO | ❌ TODO | ⚠️ Parser only |
-| GROUPING SETS | ✅ Complete | ❌ TODO | ❌ TODO | ⚠️ Parser only |
-| GROUPING() func | ✅ Complete | ❌ Stub | ❌ TODO | ⚠️ Parser only |
+| Feature | Parser | Optimizer | Bytecode Gen | Executor | Status |
+|---------|--------|-----------|--------------|----------|--------|
+| ROLLUP | ✅ Complete | ✅ Complete | ⚠️ Expansion pending | ❌ TODO | ⚠️ Infrastructure ready |
+| CUBE | ✅ Complete | ✅ Complete | ⚠️ Expansion pending | ❌ TODO | ⚠️ Infrastructure ready |
+| GROUPING SETS | ✅ Complete | ✅ Complete | ⚠️ Expansion pending | ❌ TODO | ⚠️ Infrastructure ready |
+| GROUPING() func | ✅ Complete | ✅ Complete | ✅ Complete | ❌ TODO | ⚠️ Bytecode ready |
 
 **What's Implemented:**
 - ✅ Lexer tokens: `KW_ROLLUP`, `KW_CUBE`, `KW_GROUPING`, `KW_SETS`
@@ -76,25 +76,26 @@ This document tracks the implementation status of the 30 missing functions ident
   - `EXT_GROUP_CUBE` (0x46)
   - `EXT_GROUP_GROUPING_SETS` (0x47)
   - `EXT_GROUPING_FUNC` (0x48)
+- ✅ Optimizer infrastructure:
+  - `AggregatePath` supports `grouping_type_` and `grouping_sets_`
+  - `AggregateNode` supports `grouping_type_` and `grouping_sets_`
+  - `QueryPlanner` propagates grouping type through planning
+- ✅ GROUPING() function bytecode generation (emits EXT_GROUPING_FUNC)
 
 **What's Needed:**
 
-1. **Optimizer Changes** (~12-16 hours):
-   - Modify `AggregatePath` to include `GroupingType`
-   - Modify `AggregateNode` to include `GroupingType` and grouping sets
-   - Update path costing for multiple grouping sets
+1. **Bytecode Generation** (~12-16 hours):
+   - Expand ROLLUP(a,b,c) to grouping sets: [(a,b,c), (a,b), (a), ()]
+   - Expand CUBE(a,b) to all 2^n combinations: [(a,b), (a), (b), ()]
+   - Generate bytecode sequence for multiple GROUP BY operations
+   - Emit grouping set metadata for GROUPING() evaluation
 
-2. **Bytecode Generation** (~8-12 hours):
-   - Generate bytecode for ROLLUP (expand to grouping sets)
-   - Generate bytecode for CUBE (expand to all 2^n combinations)
-   - Generate bytecode for explicit GROUPING SETS
-   - Implement GROUPING() function bytecode generation
-
-3. **Executor Implementation** (~20-32 hours):
+2. **Executor Implementation** (~18-24 hours):
    - Process multiple grouping sets in single aggregation pass
    - Track current grouping set context for GROUPING() function
    - Generate appropriate NULL placeholders for aggregated columns
    - Combine results from all grouping sets
+   - Implement GROUPING() function execution (read metadata, return 0/1)
 
 **Technical Challenges:**
 - ROLLUP/CUBE/GROUPING SETS require processing multiple GROUP BY operations in a single aggregation pass
@@ -186,18 +187,19 @@ for (each grouping_set in grouping_sets) {
 |-------|-----------|--------|-----------|-----------|
 | Phase 1 | 12 | ✅ Complete | 22-39h | ✅ |
 | Phase 2 | 9 | ✅ Complete | 45-63h | ✅ |
-| Phase 3 | 4 | ⚠️ Parser only | 56-86h | ~12h |
+| Phase 3 | 4 | ⚠️ ~40% complete | 56-86h | ~22h (Parser+Optimizer+partial bytecode) |
 | Phase 4 | 9 | ✅ ~95% complete | 24-34h | ~28h |
 | Phase 5 | 2 | ✅ Complete | 10-15h | ✅ |
-| **Total** | **30+** | **~93%** | **157-237h** | **~150h** |
+| **Total** | **30+** | **~93%** | **157-237h** | **~160h** |
 
 **Notes:**
+- Phase 3: Parser ✅, Optimizer ✅, GROUPING() bytecode ✅, Expansion bytecode ⚠️, Executor ❌
 - Phase 4 includes 9 window functions (originally planned for 3, but parser support existed for all)
 - 6 additional window functions implemented with simplified logic (RANK, DENSE_RANK, LAG, LEAD, FIRST_VALUE, LAST_VALUE)
 - NTH_VALUE partially implemented (returns NULL, needs argument parsing)
 
 **Remaining Work:**
-- Full Phase 3 implementation: ~40-60 hours (ROLLUP/CUBE/GROUPING SETS execution)
+- Phase 3 completion: ~30-40 hours (ROLLUP/CUBE expansion bytecode + executor)
 - Window function enhancements: ~20-30 hours (argument parsing, PARTITION BY, ORDER BY support)
 
 ---
@@ -247,7 +249,8 @@ for (each grouping_set in grouping_sets) {
 
 ## Commit History
 
-- `[pending]` - Implement simplified window functions (RANK, DENSE_RANK, LAG, LEAD, FIRST_VALUE, LAST_VALUE)
+- `decd66c` - Add optimizer and bytecode infrastructure for ROLLUP/CUBE/GROUPING SETS
+- `be53b5e` - Implement simplified window functions (RANK, DENSE_RANK, LAG, LEAD, FIRST_VALUE, LAST_VALUE)
 - `3b2f7fe` - Add opcodes for ROLLUP/CUBE/GROUPING SETS and document implementation status
 - `12f0942` - Implement Phase 4 and Phase 5 missing functions (CUME_DIST, PERCENT_RANK, AGE)
 - `19ca215` - Add parser support for ROLLUP, CUBE, GROUPING SETS, and GROUPING() function
