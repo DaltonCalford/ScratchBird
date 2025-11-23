@@ -23,7 +23,8 @@ namespace scratchbird
         enum class ContainerType : uint8_t
         {
             ARRAY = 0,  // Sparse: sorted array of uint16_t (up to 4096 values)
-            BITSET = 1, // Dense: 8KB bitset (>4096 values)
+            BITSET = 1, // Dense: page-size-dependent bitset (>4096 values)
+                        // 8KB page: 65,536 bits, 16KB: 131,072 bits, etc.
             RUN = 2     // Run-length encoded (future optimization)
         };
 
@@ -49,7 +50,74 @@ namespace scratchbird
         static_assert(sizeof(VersionedBitmapEntry) <= 32,
                       "VersionedBitmapEntry should fit in 32 bytes");
 
-        // Bitmap index meta page (8192 bytes)
+        /**
+         * Page-Size-Based Bitmap Settings
+         *
+         * Dynamic calculation of bitmap page sizes based on database page size.
+         * Provides optimal capacity for all supported page sizes (8KB-128KB).
+         *
+         * Benefits:
+         * - 16KB pages: 2× bitset capacity (131,072 bits)
+         * - 32KB pages: 4× bitset capacity (262,144 bits)
+         * - 64KB pages: 8× bitset capacity (524,288 bits)
+         * - 128KB pages: 16× bitset capacity (1,048,576 bits)
+         */
+        namespace BitmapSettings
+        {
+            /**
+             * Get bitmap meta page size (equals database page size)
+             */
+            inline uint32_t getMetaPageSize(uint32_t page_size)
+            {
+                return page_size;
+            }
+
+            /**
+             * Get roaring container page size (equals database page size)
+             */
+            inline uint32_t getContainerPageSize(uint32_t page_size)
+            {
+                return page_size;
+            }
+
+            /**
+             * Get bitset container size in bytes
+             *
+             * For bitset containers, we use the full page size minus the
+             * container header to maximize bit density.
+             *
+             * Examples:
+             * - 8KB page:   8,192 bytes = 65,536 bits
+             * - 16KB page:  16,384 bytes = 131,072 bits
+             * - 32KB page:  32,768 bytes = 262,144 bits
+             * - 64KB page:  65,536 bytes = 524,288 bits
+             * - 128KB page: 131,072 bytes = 1,048,576 bits
+             */
+            inline uint32_t getBitsetContainerSize(uint32_t page_size)
+            {
+                // Reserve space for SBRoaringContainerPage header
+                constexpr uint32_t header_size = sizeof(PageHeader) + 16; // ~80 bytes
+                return page_size - header_size;
+            }
+
+            /**
+             * Get number of uint64_t elements in bitset container
+             */
+            inline uint32_t getBitsetElementCount(uint32_t page_size)
+            {
+                return getBitsetContainerSize(page_size) / sizeof(uint64_t);
+            }
+
+            /**
+             * Get maximum bits in bitset container
+             */
+            inline uint32_t getBitsetMaxBits(uint32_t page_size)
+            {
+                return getBitsetContainerSize(page_size) * 8;
+            }
+        } // namespace BitmapSettings
+
+        // Bitmap index meta page (page-size dependent, minimum 8KB)
         struct SBBitmapIndexMetaPage
         {
             PageHeader bmp_header;                    // Standard page header
@@ -60,8 +128,9 @@ namespace scratchbird
             uint32_t bmp_reserved[59];                // Reserved for future use
         };
 
+        // Static assert uses minimum page size (8KB); actual size determined by db->page_size()
         static_assert(sizeof(SBBitmapIndexMetaPage) <= 8192,
-                      "SBBitmapIndexMetaPage must fit in one page");
+                      "SBBitmapIndexMetaPage must fit in minimum page size (8KB)");
 
         // Dictionary entry mapping value -> bitmap
         struct BitmapDictionaryEntry
@@ -84,8 +153,9 @@ namespace scratchbird
             // Followed by BitmapDictionaryEntry array
         };
 
+        // Static assert uses minimum page size (8KB); actual size determined by db->page_size()
         static_assert(sizeof(SBBitmapDictionaryPage) <= 8192,
-                      "SBBitmapDictionaryPage must fit in one page");
+                      "SBBitmapDictionaryPage must fit in minimum page size (8KB)");
 
         // Container pointer in Roaring Bitmap root
         struct ContainerPointer
@@ -129,12 +199,18 @@ namespace scratchbird
             uint8_t rcp_reserved[3];
             // Followed by container data:
             // - ARRAY: sorted array of uint16_t values
-            // - BITSET: 8192 bytes (65536 bits)
+            // - BITSET: page-size-dependent (use BitmapSettings::getBitsetContainerSize())
+            //           8KB page:   8,192 bytes (65,536 bits)
+            //           16KB page:  16,384 bytes (131,072 bits)
+            //           32KB page:  32,768 bytes (262,144 bits)
+            //           64KB page:  65,536 bytes (524,288 bits)
+            //           128KB page: 131,072 bytes (1,048,576 bits)
             // - RUN: array of [start, length] pairs
         };
 
+        // Static assert uses minimum page size (8KB); actual size determined by db->page_size()
         static_assert(sizeof(SBRoaringContainerPage) <= 8192,
-                      "SBRoaringContainerPage must fit in one page");
+                      "SBRoaringContainerPage must fit in minimum page size (8KB)");
 
         // Forward declarations
         class RoaringBitmap;
@@ -372,7 +448,12 @@ namespace scratchbird
                 // TASK-CRITICAL-2: Store versioned entries for MGA compliance
                 // Firebird MGA: Each entry has xmin/xmax for TIP-based visibility
                 std::vector<VersionedBitmapEntry> array_data_versioned;  // For ARRAY containers
-                std::vector<uint64_t> bitset_data;                      // For BITSET containers (1024 uint64_t)
+                std::vector<uint64_t> bitset_data;  // For BITSET containers (page-size dependent)
+                                                     // 8KB:   1,024 uint64_t = 65,536 bits
+                                                     // 16KB:  2,048 uint64_t = 131,072 bits
+                                                     // 32KB:  4,096 uint64_t = 262,144 bits
+                                                     // 64KB:  8,192 uint64_t = 524,288 bits
+                                                     // 128KB: 16,384 uint64_t = 1,048,576 bits
                 std::unordered_map<uint16_t, VersionedBitmapEntry> bitset_versions; // Bitset version info
             };
 
