@@ -133,6 +133,16 @@ namespace scratchbird
                     return "FROM";
                 case TokenType::KW_WHERE:
                     return "WHERE";
+                case TokenType::KW_UPDATE:
+                    return "UPDATE";
+                case TokenType::KW_DELETE:
+                    return "DELETE";
+                case TokenType::KW_MERGE:
+                    return "MERGE";
+                case TokenType::KW_MATCHED:
+                    return "MATCHED";
+                case TokenType::KW_RETURNING:
+                    return "RETURNING";
                 case TokenType::KW_NULL:
                     return "NULL";
                 case TokenType::KW_NOT:

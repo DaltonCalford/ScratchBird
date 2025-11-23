@@ -128,6 +128,7 @@ namespace scratchbird
             SelectStmt *parseSelectCore(WithClause *with_clause, const SourceLocation &start_loc);  // Helper for set operations
             Statement *parseUpdate();                // Phase 1 Task 2.1
             Statement *parseDelete();                // Phase 1 Task 2.2
+            Statement *parseMerge();                 // Alpha 1 - Advanced SQL
             Statement *parseAnalyze();               // Phase 1 Task 1.1.2
             Statement *parseExplain();               // Phase 1 Task 1.5
             Statement *parseStartTransaction();      // Phase 2 Task 2.6
