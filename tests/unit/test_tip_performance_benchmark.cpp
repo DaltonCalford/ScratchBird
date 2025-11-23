@@ -292,18 +292,3 @@ TEST_F(TIPPerformanceBenchmark, VisibilityCheckScalability)
 }
 
 // Run all benchmarks
-int main(int argc, char **argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-
-    std::cout << "\n";
-    std::cout << "╔═══════════════════════════════════════════════════════════════╗\n";
-    std::cout << "║        ScratchBird TIP Performance Benchmark Suite            ║\n";
-    std::cout << "║                                                               ║\n";
-    std::cout << "║  Testing: Firebird MGA TIP-based Visibility Performance      ║\n";
-    std::cout << "║  Expected: O(1) TIP lookups, < 100ns per visibility check    ║\n";
-    std::cout << "╚═══════════════════════════════════════════════════════════════╝\n";
-    std::cout << "\n";
-
-    return RUN_ALL_TESTS();
-}

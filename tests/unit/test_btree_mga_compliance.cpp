@@ -480,8 +480,3 @@ TEST_F(BTreeMGATest, MultipleVersionsOfSameKey)
     EXPECT_GE(tids.size(), 1);  // May see both, but at least tid2
 }
 
-int main(int argc, char **argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

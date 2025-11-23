@@ -176,8 +176,3 @@ TEST_F(MaterializedViewsParserTest, MaterializedViewQueryDefinition)
     std::cout << "✓ Materialized view query definition preserved: " << query_text << std::endl;
 }
 
-int main(int argc, char** argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

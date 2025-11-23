@@ -112,8 +112,3 @@ TEST(CreateViewASTTest, SelectWithWhere)
     std::cout << "SELECT with WHERE extracted: " << query_text << std::endl;
 }
 
-int main(int argc, char** argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
