@@ -263,8 +263,3 @@ TEST_F(GinDMLTest, KeyExtractorSelection)
 #endif // Tests disabled
 
 // Main function
-int main(int argc, char **argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

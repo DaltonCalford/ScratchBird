@@ -90,11 +90,11 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gist_dml\\.cpp$")  # Incomplete 
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gist_mvcc\\.cpp$")  # Incomplete transaction API fixes
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_tree_simple\\.cpp$")  # LSMTreeIndex not declared
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_tree_comprehensive\\.cpp$")  # LSMTreeIndex not declared
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hnsw_dml\\.cpp$")  # UuidV7::generate() API + TID.value() issues
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hnsw_dml\\.cpp$")  # UuidV7::generate() → generateUuidV7(), Database constructor signature, TransactionManager forward declaration
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_rtree_dml\\.cpp$")  # Duplicate Status declarations
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_query_plan_security\\.cpp$")  # ErrorContext.status field removed
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_multi_index_mga\\.cpp$")  # commit() -> commitTransaction() not auto-fixed
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_dml\\.cpp$")  # Incomplete transaction API fixes
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_dml\\.cpp$")  # commit() → commitTransaction(), beginTransaction() signature, Database constructor, search() results parameter
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_mvcc\\.cpp$")  # Incomplete transaction API fixes
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_statistical_functions\\.cpp$")  # API compatibility issues
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_.*toast.*\\.cpp$")  # TOAST tests - Database constructor signature
@@ -171,13 +171,11 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_defragment_pdlower_fix\.cpp$")  
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_dirty_bit_protection\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_fsm_durability\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_fsm_reconstruction\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gin_dml\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gin_transaction_isolation\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gin_tsvector_ops\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_group_commit\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_heap_free_space_simple\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hint_bits_simple\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hnsw_dml\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hot_updates\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_index_dml_integration\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_index_mga_compliance\.cpp$")  # Standalone main()
@@ -202,7 +200,6 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_range_types\.cpp$")  # Standalon
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_rtree\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_snapshot_sorted\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_snapshot_xids\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_dml\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_storage_toast_indexing\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_subquery_parser\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_subtransactions\.cpp$")  # Standalone main()
