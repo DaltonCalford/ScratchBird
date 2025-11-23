@@ -20,14 +20,14 @@ TEST(SetDomainTest, Comprehensive) {
     Status status = Database::create(test_db, 16384, &ctx);
     if (status != Status::OK) {
         std::cerr << "Failed to create database: " << static_cast<int>(status) << "\n";
-        return 1;
+        FAIL(); return;
     }
 
     Database db;
     status = db.open(test_db, &ctx);
     if (status != Status::OK) {
         std::cerr << "Failed to open database: " << static_cast<int>(status) << "\n";
-        return 1;
+        FAIL(); return;
     }
 
     DomainManager* dm = db.domain_manager();
@@ -50,7 +50,7 @@ TEST(SetDomainTest, Comprehensive) {
             if (!ctx.message.empty()) {
                 std::cerr << "Error: " << ctx.message << "\n";
             }
-            return 1;
+            FAIL(); return;
         }
         std::cout << "  Created Tags SET domain with VARCHAR elements ✓\n";
     }

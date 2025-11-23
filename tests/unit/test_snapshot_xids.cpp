@@ -48,13 +48,13 @@ TEST(SnapshotXidsTest, Comprehensive) {
         if (snapshot.active_xids.size() != 4)
         {
             std::cout << "FAILED: Expected 4 XIDs, got " << snapshot.active_xids.size() << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         if (snapshot.active_xids[0] != 100 || snapshot.active_xids[3] != 115)
         {
             std::cout << "FAILED: XIDs not populated correctly" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         std::cout << "PASSED" << std::endl;
@@ -96,13 +96,13 @@ TEST(SnapshotXidsTest, Comprehensive) {
         {
             std::cout << "FAILED: Expected 2 XIDs after filtering, got "
                       << snapshot.active_xids.size() << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         if (snapshot.active_xids[0] != 110 || snapshot.active_xids[1] != 115)
         {
             std::cout << "FAILED: Filtered XIDs incorrect" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // IMPORTANT: filtered_xids is NOT used after std::move - this is SAFE
@@ -138,7 +138,7 @@ TEST(SnapshotXidsTest, Comprehensive) {
             snapshot.active_xids[2] != 110 || snapshot.active_xids[3] != 115)
         {
             std::cout << "FAILED: XIDs not sorted correctly" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         std::cout << "PASSED" << std::endl;
@@ -181,19 +181,19 @@ TEST(SnapshotXidsTest, Comprehensive) {
         if (snapshot.xmin != 100 || snapshot.xmax != 120)
         {
             std::cout << "FAILED: xmin/xmax incorrect" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         if (snapshot.active_xids.size() != 2)
         {
             std::cout << "FAILED: active_xids size incorrect" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         if (snapshot.active_xids[0] != 110 || snapshot.active_xids[1] != 115)
         {
             std::cout << "FAILED: active_xids values incorrect" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         std::cout << "PASSED" << std::endl;

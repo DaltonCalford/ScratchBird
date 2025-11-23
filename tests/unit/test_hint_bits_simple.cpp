@@ -30,7 +30,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to create database: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     Database db;
@@ -38,7 +38,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to open database: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Database created and opened" << std::endl;
@@ -48,7 +48,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to initialize ProcArray: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // Register backend
@@ -57,7 +57,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to register backend: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // Begin transaction
@@ -66,7 +66,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to begin transaction: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Transaction started: xid=" << xid << std::endl;
@@ -77,7 +77,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to allocate page: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // Pin the page
@@ -86,7 +86,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to pin page: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // Initialize heap page
@@ -95,7 +95,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to initialize heap page: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Heap page initialized" << std::endl;
@@ -113,7 +113,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to insert tuple: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Tuple inserted: item_id=" << item_id << std::endl;
@@ -125,7 +125,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to get tuple: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     auto *read_hdr = reinterpret_cast<const TupleHeader *>(read_data);
@@ -135,7 +135,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (read_hdr->infomask & TupleHeader::HEAP_XMIN_COMMITTED)
     {
         std::cerr << "ERROR: HEAP_XMIN_COMMITTED should not be set initially" << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Hint bits not set initially (as expected)" << std::endl;
@@ -145,7 +145,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to commit transaction: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Transaction committed" << std::endl;
@@ -156,7 +156,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to begin new transaction: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ New transaction started: xid=" << new_xid << std::endl;
@@ -167,7 +167,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to get snapshot: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // First visibility check - should set hint bits
@@ -179,7 +179,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to find visible version (first): " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ First visibility check successful" << std::endl;
@@ -189,7 +189,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to get tuple after visibility check: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     read_hdr = reinterpret_cast<const TupleHeader *>(read_data);
@@ -216,7 +216,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to find visible version (second): " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Second visibility check successful (fast path executed)" << std::endl;

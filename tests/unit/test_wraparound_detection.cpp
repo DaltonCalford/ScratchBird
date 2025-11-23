@@ -37,7 +37,7 @@ TEST(WraparoundDetectionTest, Comprehensive) {
         else
         {
             std::cout << "FAILED: Unexpected XID size" << std::endl;
-            return 1;
+            FAIL(); return;
         }
     }
 
@@ -90,7 +90,7 @@ TEST(WraparoundDetectionTest, Comprehensive) {
         }
         else
         {
-            return 1;
+            FAIL(); return;
         }
     }
 
@@ -132,7 +132,7 @@ TEST(WraparoundDetectionTest, Comprehensive) {
         else
         {
             std::cout << "FAILED: Threshold calculation mismatch" << std::endl;
-            return 1;
+            FAIL(); return;
         }
     }
 

@@ -33,14 +33,14 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
         if (Database::create(db_path, 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         Database db;
         if (db.open(db_path, &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Create B-tree index
@@ -58,7 +58,7 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
         if (status != Status::OK)
         {
             std::cout << "FAILED (BTree::create): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Verify root page has rightmost_child = 0 (it's a leaf initially)
@@ -66,7 +66,7 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
         if (db.buffer_pool()->pinPage(root_page, &root_data, &ctx) != Status::OK)
         {
             std::cout << "FAILED (pin root): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         auto *page = reinterpret_cast<SBBTreePage *>(root_data);
@@ -76,14 +76,14 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
         if (!is_leaf)
         {
             std::cout << "FAILED: Root should be leaf initially" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // For a leaf, rightmost_child should be 0
         if (page->btr_rightmost_child != 0)
         {
             std::cout << "FAILED: Leaf rightmost_child should be 0, got " << page->btr_rightmost_child << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         db.buffer_pool()->unpinPage(root_page, false, &ctx);
@@ -100,7 +100,7 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
         if (db.open(db_path, &ctx) != Status::OK)
         {
             std::cout << "FAILED (reopen): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Read root page from database metadata (it was saved in Test 1)
@@ -131,7 +131,7 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
         if (root_page == 0)
         {
             std::cout << "FAILED: Could not find B-tree root page" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         UuidV7Bytes index_uuid;
@@ -144,7 +144,7 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
         if (!btree)
         {
             std::cout << "FAILED (BTree::open): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Insert many entries to trigger splits (need enough to create internal nodes)
@@ -161,7 +161,7 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
             if (status != Status::OK)
             {
                 std::cout << "FAILED (insert " << i << "): " << ctx.message << std::endl;
-                return 1;
+                FAIL(); return;
             }
         }
 
@@ -209,7 +209,7 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
         {
             std::cout << "FAILED: Found " << rightmost_child_errors
                       << " internal nodes with invalid rightmost_child" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         if (internal_nodes_checked == 0)
@@ -230,7 +230,7 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
         if (db.open(db_path, &ctx) != Status::OK)
         {
             std::cout << "FAILED (reopen): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Find an internal node and corrupt its rightmost_child
@@ -303,7 +303,7 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
             if (!btree)
             {
                 std::cout << "FAILED (BTree::open after corruption): " << ctx.message << std::endl;
-                return 1;
+                FAIL(); return;
             }
 
             // Try to search for a key that would traverse through the corrupted node
@@ -334,7 +334,7 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
             {
                 std::cout << "FAILED: Should have detected corruption, got status "
                           << static_cast<int>(search_status) << std::endl;
-                return 1;
+                FAIL(); return;
             }
 
             db.close();

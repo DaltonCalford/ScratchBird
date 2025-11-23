@@ -450,12 +450,12 @@ TEST(GinPhase6Test, Comprehensive) {
         std::cout << "All Phase 6 tests passed! ✓\n";
         std::cout << "============================================\n";
 
-        return 0;
+        return;
     }
     catch (const std::exception &e)
     {
         std::cerr << "\n❌ Test failed with exception: " << e.what() << "\n";
-        return 1;
+        FAIL(); return;
     }
 
 }

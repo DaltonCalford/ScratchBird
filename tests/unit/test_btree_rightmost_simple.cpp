@@ -49,14 +49,14 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
         if (Database::create(db_path, 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         Database db;
         if (db.open(db_path, &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Create B-tree index
@@ -74,7 +74,7 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
         if (status != Status::OK)
         {
             std::cout << "FAILED (BTree::create): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Verify root page initialization
@@ -82,7 +82,7 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
         if (db.buffer_pool()->pinPage(root_page, &root_data, &ctx) != Status::OK)
         {
             std::cout << "FAILED (pin root): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         auto *page = reinterpret_cast<SBBTreePage *>(root_data);
@@ -92,14 +92,14 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
         if (!is_leaf)
         {
             std::cout << "FAILED: Root should be leaf initially" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // For a leaf, rightmost_child should be 0
         if (page->btr_rightmost_child != 0)
         {
             std::cout << "FAILED: Leaf rightmost_child should be 0, got " << page->btr_rightmost_child << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         db.buffer_pool()->unpinPage(root_page, false, &ctx);
@@ -120,14 +120,14 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
         if (Database::create(db_path, 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         Database db;
         if (db.open(db_path, &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Allocate a page and initialize it as internal node
@@ -135,14 +135,14 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
         if (db.page_manager()->allocatePage(page_id, &ctx) != Status::OK)
         {
             std::cout << "FAILED (allocate): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         void *page_data;
         if (db.buffer_pool()->pinPage(page_id, &page_data, &ctx) != Status::OK)
         {
             std::cout << "FAILED (pin): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Initialize as internal node (not leaf)
@@ -160,14 +160,14 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
         if (is_leaf)
         {
             std::cout << "FAILED: Should be internal node" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Initially rightmost_child should be 0
         if (internal_page->btr_rightmost_child != 0)
         {
             std::cout << "FAILED: Initial rightmost_child should be 0" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Set rightmost_child (simulating what happens during split)
@@ -177,7 +177,7 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
         if (internal_page->btr_rightmost_child != 42)
         {
             std::cout << "FAILED: Could not set rightmost_child" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         db.buffer_pool()->unpinPage(page_id, true, &ctx);

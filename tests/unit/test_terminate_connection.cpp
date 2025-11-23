@@ -296,11 +296,11 @@ int main()
         test_terminate_connection_on_rollback();
 
         std::cout << "\n=== ALL TESTS PASSED ===" << std::endl;
-        return 0;
+        return;
     }
     catch (const std::exception &e)
     {
         std::cerr << "Test failed with exception: " << e.what() << std::endl;
-        return 1;
+        FAIL(); return;
     }
 }

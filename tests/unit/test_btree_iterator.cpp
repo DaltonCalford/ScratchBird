@@ -84,7 +84,7 @@ protected:
     // Helper: Extract integer from key
     int32_t extractKey(const std::vector<uint8_t>& key)
     {
-        if (key.size() < sizeof(int32_t)) return 0;
+        if (key.size() < sizeof(int32_t)) return;
         return *reinterpret_cast<const int32_t*>(key.data());
     }
 

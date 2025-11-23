@@ -95,7 +95,7 @@ TEST(VersionChainCycleTest, Comprehensive) {
         else
         {
             std::cout << "FAILED: TID construction incorrect" << std::endl;
-            return 1;
+            FAIL(); return;
         }
     }
 

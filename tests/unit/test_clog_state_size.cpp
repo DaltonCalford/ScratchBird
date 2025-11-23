@@ -34,7 +34,7 @@ TEST(ClogStateSizeTest, Comprehensive) {
             std::cout << "  COMMITTED=" << static_cast<int>(committed) << std::endl;
             std::cout << "  ABORTED=" << static_cast<int>(aborted) << std::endl;
             std::cout << "  SUB_COMMITTED=" << static_cast<int>(sub_committed) << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         std::cout << "PASSED" << std::endl;
@@ -52,7 +52,7 @@ TEST(ClogStateSizeTest, Comprehensive) {
             if (bits != i)
             {
                 std::cout << "FAILED: Bit mask failed for value " << static_cast<int>(i) << std::endl;
-                return 1;
+                FAIL(); return;
             }
         }
 
@@ -62,7 +62,7 @@ TEST(ClogStateSizeTest, Comprehensive) {
         if (masked != 0)
         {
             std::cout << "FAILED: Value 4 should mask to 0, got " << static_cast<int>(masked) << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         std::cout << "PASSED" << std::endl;
@@ -107,7 +107,7 @@ TEST(ClogStateSizeTest, Comprehensive) {
                       << static_cast<int>(txn1) << ","
                       << static_cast<int>(txn2) << ","
                       << static_cast<int>(txn3) << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         std::cout << "PASSED" << std::endl;
@@ -126,14 +126,14 @@ TEST(ClogStateSizeTest, Comprehensive) {
         if (Database::create(db_path, 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         Database db;
         if (db.open(db_path, &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Test all 4 ClogStatus values
@@ -152,7 +152,7 @@ TEST(ClogStateSizeTest, Comprehensive) {
             if (db.clog()->setStatus(xid, expected, &ctx) != Status::OK)
             {
                 std::cout << "FAILED (setStatus): " << ctx.message << std::endl;
-                return 1;
+                FAIL(); return;
             }
 
             // Get status
@@ -160,7 +160,7 @@ TEST(ClogStateSizeTest, Comprehensive) {
             if (db.clog()->getStatus(xid, &actual, &ctx) != Status::OK)
             {
                 std::cout << "FAILED (getStatus): " << ctx.message << std::endl;
-                return 1;
+                FAIL(); return;
             }
 
             if (actual != expected)
@@ -168,7 +168,7 @@ TEST(ClogStateSizeTest, Comprehensive) {
                 std::cout << "FAILED: XID " << xid << " status mismatch" << std::endl;
                 std::cout << "  Expected: " << static_cast<int>(expected) << std::endl;
                 std::cout << "  Actual: " << static_cast<int>(actual) << std::endl;
-                return 1;
+                FAIL(); return;
             }
         }
 
@@ -191,14 +191,14 @@ TEST(ClogStateSizeTest, Comprehensive) {
         if (Database::create(db_path, 16384, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         Database db;
         if (db.open(db_path, &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Set status for many transactions
@@ -209,7 +209,7 @@ TEST(ClogStateSizeTest, Comprehensive) {
             if (db.clog()->setStatus(xid, status, &ctx) != Status::OK)
             {
                 std::cout << "FAILED (setStatus): " << ctx.message << std::endl;
-                return 1;
+                FAIL(); return;
             }
         }
 
@@ -221,13 +221,13 @@ TEST(ClogStateSizeTest, Comprehensive) {
             if (db.clog()->getStatus(xid, &actual, &ctx) != Status::OK)
             {
                 std::cout << "FAILED (getStatus): " << ctx.message << std::endl;
-                return 1;
+                FAIL(); return;
             }
 
             if (actual != expected)
             {
                 std::cout << "FAILED: XID " << xid << " incorrect after bulk write" << std::endl;
-                return 1;
+                FAIL(); return;
             }
         }
 
