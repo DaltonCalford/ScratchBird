@@ -172,10 +172,6 @@ namespace scratchbird
             // EXPLAIN command (Phase 1, Task 1.5)
             EXPLAIN_PLAN = 0xC2,  // EXPLAIN output (string)
 
-            // SHOW/DESCRIBE commands (ALPHA Phase 1 - Developer Experience)
-            SHOW_TABLES = 0xC3,   // SHOW TABLES
-            SHOW_DATABASES = 0xC4, // SHOW DATABASES / SHOW SCHEMAS
-
             // JOIN operations (Phase 1, Task 3.3)
             NESTED_LOOP_JOIN = 0xC5,  // Nested loop join
             HASH_JOIN = 0xC6,         // Hash join
@@ -570,6 +566,16 @@ namespace scratchbird
             // Encoding functions (0xFD-0xFE)
             EXT_ENCODE = 0xFD,             // ENCODE(data, format) - encode binary to text
             EXT_DECODE = 0xFE,             // DECODE(text, format) - decode text to binary
+
+            // SHOW/DESCRIBE commands (ALPHA Phase 1 - Developer Experience) - 0x05-0x09 range
+            // Note: These are extended opcodes, prefixed with EXTENDED_OPCODE (0xFF)
+            // Bytecode format: [0xFF] [EXT_SHOW_*]
+            EXT_SHOW_TABLES = 0x05,        // SHOW TABLES [FROM database] [LIKE 'pattern']
+            EXT_SHOW_DATABASES = 0x06,     // SHOW DATABASES [LIKE 'pattern']
+            EXT_SHOW_COLUMNS = 0x07,       // SHOW COLUMNS FROM table [LIKE 'pattern']
+            EXT_SHOW_INDEXES = 0x08,       // SHOW INDEXES FROM table
+            EXT_SHOW_CREATE_TABLE = 0x09,  // SHOW CREATE TABLE table
+            EXT_DESCRIBE_TABLE = 0x15,     // DESCRIBE table (alias for SHOW COLUMNS)
 
             // Note: 0xFF is EXTENDED_OPCODE marker (already defined above)
 

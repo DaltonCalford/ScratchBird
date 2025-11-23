@@ -443,6 +443,15 @@ namespace scratchbird
                         synchronize();
                     }
                 }
+                // Developer Experience commands (ALPHA Phase 1)
+                else if (match(TokenType::KW_SHOW))
+                {
+                    stmt = parseShowStatement();
+                }
+                else if (match(TokenType::KW_DESCRIBE) || match(TokenType::KW_DESC))
+                {
+                    stmt = parseDescribeStatement();
+                }
                 else if (isAtEnd())
                 {
                     error("Expected SQL statement, but got end of file");
@@ -3699,6 +3708,172 @@ namespace scratchbird
 
             auto span = makeSpan(start_loc);
             return arena_.make<SweepStmt>(span);
+        }
+
+        Statement *Parser::parseShowStatement()
+        {
+            // SHOW TABLES [FROM database] [LIKE 'pattern']
+            // SHOW DATABASES [LIKE 'pattern']
+            // SHOW COLUMNS FROM table [LIKE 'pattern']
+            // SHOW INDEXES FROM table
+            // SHOW CREATE TABLE table
+            auto start_loc = previous().location;
+
+            ShowObjectType object_type;
+            StringPool::StringId table_name = 0;
+            StringPool::StringId database_name = 0;
+            StringPool::StringId like_pattern = 0;
+
+            // Determine what to show
+            if (match(TokenType::KW_TABLES))
+            {
+                object_type = ShowObjectType::TABLES;
+
+                // Optional: FROM database
+                if (match(TokenType::KW_FROM))
+                {
+                    if (!check(TokenType::IDENTIFIER))
+                    {
+                        error("Expected database name after FROM");
+                        synchronize();
+                        return nullptr;
+                    }
+                    database_name = current().value.string_id;
+                    advance();
+                }
+
+                // Optional: LIKE 'pattern'
+                if (match(TokenType::KW_LIKE))
+                {
+                    if (!check(TokenType::STRING_LITERAL))
+                    {
+                        error("Expected string pattern after LIKE");
+                        synchronize();
+                        return nullptr;
+                    }
+                    like_pattern = current().value.string_id;
+                    advance();
+                }
+            }
+            else if (match(TokenType::KW_DATABASES) || match(TokenType::KW_SCHEMAS))
+            {
+                object_type = ShowObjectType::DATABASES;
+
+                // Optional: LIKE 'pattern'
+                if (match(TokenType::KW_LIKE))
+                {
+                    if (!check(TokenType::STRING_LITERAL))
+                    {
+                        error("Expected string pattern after LIKE");
+                        synchronize();
+                        return nullptr;
+                    }
+                    like_pattern = current().value.string_id;
+                    advance();
+                }
+            }
+            else if (match(TokenType::KW_COLUMNS))
+            {
+                object_type = ShowObjectType::COLUMNS;
+
+                // Required: FROM table
+                if (!consume(TokenType::KW_FROM, "Expected FROM after SHOW COLUMNS"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected table name after FROM");
+                    synchronize();
+                    return nullptr;
+                }
+                table_name = current().value.string_id;
+                advance();
+
+                // Optional: LIKE 'pattern'
+                if (match(TokenType::KW_LIKE))
+                {
+                    if (!check(TokenType::STRING_LITERAL))
+                    {
+                        error("Expected string pattern after LIKE");
+                        synchronize();
+                        return nullptr;
+                    }
+                    like_pattern = current().value.string_id;
+                    advance();
+                }
+            }
+            else if (match(TokenType::KW_INDEXES))
+            {
+                object_type = ShowObjectType::INDEXES;
+
+                // Required: FROM table
+                if (!consume(TokenType::KW_FROM, "Expected FROM after SHOW INDEXES"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected table name after FROM");
+                    synchronize();
+                    return nullptr;
+                }
+                table_name = current().value.string_id;
+                advance();
+            }
+            else if (match(TokenType::KW_CREATE))
+            {
+                // SHOW CREATE TABLE table
+                if (!consume(TokenType::KW_TABLE, "Expected TABLE after SHOW CREATE"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                object_type = ShowObjectType::CREATE_TABLE;
+
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected table name after SHOW CREATE TABLE");
+                    synchronize();
+                    return nullptr;
+                }
+                table_name = current().value.string_id;
+                advance();
+            }
+            else
+            {
+                error("Expected TABLES, DATABASES, COLUMNS, INDEXES, or CREATE after SHOW");
+                synchronize();
+                return nullptr;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<ShowStmt>(span, object_type, table_name, database_name, like_pattern);
+        }
+
+        Statement *Parser::parseDescribeStatement()
+        {
+            // DESCRIBE table_name
+            // DESC table_name
+            auto start_loc = previous().location;
+
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected table name after DESCRIBE");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId table_name = current().value.string_id;
+            advance();
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<DescribeStmt>(span, table_name);
         }
 
         Statement *Parser::parseCreateTablespace()
