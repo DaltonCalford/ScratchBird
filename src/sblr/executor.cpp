@@ -1523,6 +1523,23 @@ namespace scratchbird
                     pending_fks.push_back(fk);
                 }
 
+                // Check for IDENTITY column constraint (ALPHA Phase 1 - IDENTITY Columns Phase 3)
+                bool is_identity = false;
+                bool identity_always = true;
+                if (pc_ < bytecode_size_ &&
+                    bytecode_[pc_] == static_cast<uint8_t>(Opcode::IDENTITY_COLUMN))
+                {
+                    readByte(); // Consume IDENTITY_COLUMN opcode
+
+                    // Read identity type (1 = ALWAYS, 0 = BY DEFAULT)
+                    uint8_t identity_type = readByte();
+                    is_identity = true;
+                    identity_always = (identity_type == 1);
+
+                    // IDENTITY columns are implicitly NOT NULL
+                    nullable = false;
+                }
+
                 // Build ColumnInfo (table_id and column_id will be set by catalog)
                 core::CatalogManager::ColumnInfo col_info;
                 col_info.column_name = col_name;
@@ -1532,6 +1549,8 @@ namespace scratchbird
                 col_info.has_default = !default_expr_hex.empty();
                 col_info.default_expr = default_expr_hex; // Store DEFAULT expression hex bytecode
                 col_info.check_expr = check_expr_hex;     // Store CHECK expression hex bytecode
+                col_info.is_identity = is_identity;       // ALPHA Phase 1 - IDENTITY columns
+                col_info.identity_always = identity_always; // ALPHA Phase 1 - IDENTITY columns
                 columns.push_back(col_info);
             }
 
@@ -1609,6 +1628,42 @@ namespace scratchbird
                                static_cast<uint32_t>(core::CatalogManager::Privilege::CREATE)))
             {
                 error("Permission denied: CREATE on schema PUBLIC");
+            }
+
+            // Create sequences for IDENTITY columns BEFORE creating table (ALPHA Phase 1 - IDENTITY Columns Phase 3)
+            for (auto& col_info : columns)
+            {
+                if (col_info.is_identity)
+                {
+                    // Generate sequence name: <table>_<column>_seq
+                    std::string seq_name = table_name + "_" + col_info.column_name + "_seq";
+
+                    // Create sequence with default values
+                    status = db_->catalog_manager()->createSequence(
+                        schema_info.schema_id,
+                        seq_name,
+                        1,          // increment_by
+                        1,          // min_value
+                        INT64_MAX,  // max_value
+                        1,          // start_value
+                        1,          // cache_size
+                        false,      // cycle
+                        nullptr
+                    );
+
+                    if (status != core::Status::OK)
+                    {
+                        error("Failed to create sequence for IDENTITY column: " + col_info.column_name);
+                    }
+
+                    // Get the sequence ID
+                    core::CatalogManager::SequenceInfo seq_info;
+                    status = db_->catalog_manager()->getSequence(schema_info.schema_id, seq_name, seq_info, nullptr);
+                    if (status == core::Status::OK)
+                    {
+                        col_info.identity_sequence_id = seq_info.sequence_id;
+                    }
+                }
             }
 
             // Create table in catalog
