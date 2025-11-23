@@ -2,12 +2,14 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include <iostream>
-#include <cassert>
+#include "gtest/gtest.h"
 #include <cstdio>
 
 using namespace scratchbird::core;
 
-int main() {
+
+TEST(VariantDomainTest, Comprehensive) {
+
     std::cout << "Testing VARIANT Domain Implementation (Phase 5)...\n\n";
 
     const char* test_db = "test_variant_domain.sbdb";
@@ -15,20 +17,20 @@ int main() {
 
     ErrorContext ctx;
     Status status = Database::create(test_db, 16384, &ctx);
-    assert(status == Status::OK);
+    ASSERT_EQ(status, Status::OK);
 
     Database db;
     status = db.open(test_db, &ctx);
-    assert(status == Status::OK);
+    ASSERT_EQ(status, Status::OK);
 
     DomainManager* dm = db.domain_manager();
     CatalogManager* catalog = db.catalog_manager();
-    assert(dm != nullptr);
-    assert(catalog != nullptr);
+    ASSERT_NE(dm, nullptr);
+    ASSERT_NE(catalog, nullptr);
 
     ID schema_id;
     status = catalog->createSchema("test_schema", "test_user", schema_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_EQ(status, Status::OK);
 
     // Test 1: Create VARIANT domain
     std::cout << "Test 1: Create VARIANT domain\n";
@@ -36,7 +38,7 @@ int main() {
         std::vector<DataType> types = {DataType::INT32, DataType::VARCHAR, DataType::FLOAT64};
         ID variant_id;
         status = dm->createVariantDomain(schema_id, "NumberOrString", types, variant_id, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         std::cout << "  Created NumberOrString VARIANT ✓\n";
     }
     std::cout << "  ✓ Create VARIANT domain passed\n\n";
@@ -46,9 +48,9 @@ int main() {
     {
         DomainInfo info;
         status = dm->getDomain(schema_id, "NumberOrString", info, &ctx);
-        assert(status == Status::OK);
-        assert(info.domain_type == DomainType::VARIANT);
-        assert(info.variant_allowed_types.size() == 3);
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(info.domain_type, DomainType::VARIANT);
+        ASSERT_EQ(info.variant_allowed_types.size(), 3);
         std::cout << "  Retrieved VARIANT with 3 allowed types ✓\n";
     }
     std::cout << "  ✓ Get VARIANT domain info passed\n\n";
@@ -59,7 +61,7 @@ int main() {
         std::vector<DataType> empty;
         ID invalid_id;
         status = dm->createVariantDomain(schema_id, "Invalid", empty, invalid_id, &ctx);
-        assert(status == Status::INVALID_ARGUMENT);
+        ASSERT_EQ(status, Status::INVALID_ARGUMENT);
         std::cout << "  Empty types rejected ✓\n";
     }
     std::cout << "  ✓ Reject empty allowed types passed\n\n";
@@ -70,7 +72,7 @@ int main() {
         std::vector<DataType> types = {DataType::INT32, DataType::UNKNOWN};
         ID invalid_id;
         status = dm->createVariantDomain(schema_id, "Invalid", types, invalid_id, &ctx);
-        assert(status == Status::INVALID_ARGUMENT);
+        ASSERT_EQ(status, Status::INVALID_ARGUMENT);
         std::cout << "  UNKNOWN type rejected ✓\n";
     }
     std::cout << "  ✓ Reject UNKNOWN type passed\n\n";
@@ -81,7 +83,7 @@ int main() {
         std::vector<DataType> types = {DataType::INT32, DataType::VARCHAR, DataType::INT32};
         ID invalid_id;
         status = dm->createVariantDomain(schema_id, "Invalid", types, invalid_id, &ctx);
-        assert(status == Status::INVALID_ARGUMENT);
+        ASSERT_EQ(status, Status::INVALID_ARGUMENT);
         std::cout << "  Duplicate types rejected ✓\n";
     }
     std::cout << "  ✓ Reject duplicate types passed\n\n";
@@ -119,7 +121,7 @@ int main() {
         std::cout << "  Found: " << counts[0] << " BASIC, "
                   << counts[1] << " RECORD, " << counts[2] << " ENUM, "
                   << counts[3] << " SET, " << counts[4] << " VARIANT ✓\n";
-        assert(counts[0] >= 1 && counts[1] >= 1 && counts[2] >= 1 && counts[3] >= 1 && counts[4] >= 1);
+        ASSERT_GE(counts[0], 1 && counts[1] >= 1 && counts[2] >= 1 && counts[3] >= 1 && counts[4] >= 1);
     }
     std::cout << "  ✓ List all domain types passed\n\n";
 
@@ -132,6 +134,5 @@ int main() {
     std::cout << "========================================\n";
     std::cout << "\nNote: VARIANT value operations (extractDataType, isOfType, variantCast)\n";
     std::cout << "require TypedValue VARIANT support and are planned for future enhancement.\n";
-
-    return 0;
 }
+

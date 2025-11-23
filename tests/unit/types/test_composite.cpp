@@ -1,10 +1,12 @@
 #include "scratchbird/core/composite.h"
 #include <iostream>
-#include <cassert>
+#include "gtest/gtest.h"
 
 using namespace scratchbird::core;
 
-int main() {
+
+TEST(CompositeTest, Comprehensive) {
+
     std::cout << "Testing COMPOSITE/RECORD Implementation...\n\n";
 
     // Test 1: Create simple composite
@@ -17,11 +19,11 @@ int main() {
         };
 
         auto comp = Composite::create("User", fields);
-        assert(comp.getTypeName() == "User");
-        assert(comp.getFieldCount() == 3);
-        assert(comp.hasField("id"));
-        assert(comp.hasField("name"));
-        assert(comp.hasField("active"));
+        ASSERT_EQ(comp.getTypeName(), "User");
+        ASSERT_EQ(comp.getFieldCount(), 3);
+        ASSERT_TRUE(comp.hasField("id"));
+        ASSERT_TRUE(comp.hasField("name"));
+        ASSERT_TRUE(comp.hasField("active"));
         std::cout << "  Created composite type 'User' with 3 fields ✓\n";
     }
     std::cout << "  ✓ Simple composite passed\n\n";
@@ -38,24 +40,24 @@ int main() {
         auto comp = Composite::create("Person", fields);
 
         // Set values
-        assert(comp.setField("id", int32_t(123)));
-        assert(comp.setField("name", std::string("John Doe")));
-        assert(comp.setField("score", 95.5));
+        ASSERT_TRUE(comp.setField("id", int32_t(123)));
+        ASSERT_TRUE(comp.setField("name", std::string("John Doe")));
+        ASSERT_TRUE(comp.setField("score", 95.5));
 
         // Get values
         auto id = comp.getField("id");
-        assert(id.has_value());
-        assert(std::get<int32_t>(*id) == 123);
+        ASSERT_TRUE(id.has_value());
+        ASSERT_EQ(std::get<int32_t>(*id), 123);
         std::cout << "  id: " << std::get<int32_t>(*id) << " ✓\n";
 
         auto name = comp.getField("name");
-        assert(name.has_value());
-        assert(std::get<std::string>(*name) == "John Doe");
+        ASSERT_TRUE(name.has_value());
+        ASSERT_EQ(std::get<std::string>(*name), "John Doe");
         std::cout << "  name: " << std::get<std::string>(*name) << " ✓\n";
 
         auto score = comp.getField("score");
-        assert(score.has_value());
-        assert(std::get<double>(*score) == 95.5);
+        ASSERT_TRUE(score.has_value());
+        ASSERT_EQ(std::get<double>(*score), 95.5);
         std::cout << "  score: " << std::get<double>(*score) << " ✓\n";
     }
     std::cout << "  ✓ Field access passed\n\n";
@@ -73,12 +75,12 @@ int main() {
         comp.setFieldByIndex(1, int32_t(20));
 
         auto val0 = comp.getFieldByIndex(0);
-        assert(val0.has_value());
-        assert(std::get<int32_t>(*val0) == 10);
+        ASSERT_TRUE(val0.has_value());
+        ASSERT_EQ(std::get<int32_t>(*val0), 10);
 
         auto val1 = comp.getFieldByIndex(1);
-        assert(val1.has_value());
-        assert(std::get<int32_t>(*val1) == 20);
+        ASSERT_TRUE(val1.has_value());
+        ASSERT_EQ(std::get<int32_t>(*val1), 20);
 
         std::cout << "  Field access by index works ✓\n";
     }
@@ -105,12 +107,12 @@ int main() {
         comp.setField("string_field", std::string("test"));
         comp.setField("bool_field", true);
 
-        assert(std::get<int32_t>(*comp.getField("int32_field")) == 42);
-        assert(std::get<int64_t>(*comp.getField("int64_field")) == 123456789);
-        assert(std::get<float>(*comp.getField("float32_field")) == 3.14f);
-        assert(std::get<double>(*comp.getField("float64_field")) == 2.71828);
-        assert(std::get<std::string>(*comp.getField("string_field")) == "test");
-        assert(std::get<bool>(*comp.getField("bool_field")) == true);
+        ASSERT_EQ(std::get<int32_t>(*comp.getField("int32_field")), 42);
+        ASSERT_EQ(std::get<int64_t>(*comp.getField("int64_field")), 123456789);
+        ASSERT_EQ(std::get<float>(*comp.getField("float32_field")), 3.14f);
+        ASSERT_EQ(std::get<double>(*comp.getField("float64_field")), 2.71828);
+        ASSERT_EQ(std::get<std::string>(*comp.getField("string_field")), "test");
+        ASSERT_EQ(std::get<bool>(*comp.getField("bool_field")), true);
 
         std::cout << "  All 6 data types work correctly ✓\n";
     }
@@ -132,10 +134,10 @@ int main() {
 
         std::string str = comp.toString();
         std::cout << "  String: " << str << " ✓\n";
-        assert(str.find("User") != std::string::npos);
-        assert(str.find("id") != std::string::npos);
-        assert(str.find("name") != std::string::npos);
-        assert(str.find("Alice") != std::string::npos);
+        ASSERT_NE(str.find("User"), std::string::npos);
+        ASSERT_NE(str.find("id"), std::string::npos);
+        ASSERT_NE(str.find("name"), std::string::npos);
+        ASSERT_NE(str.find("Alice"), std::string::npos);
     }
     std::cout << "  ✓ String representation passed\n\n";
 
@@ -157,12 +159,12 @@ int main() {
         std::cout << "  Binary size: " << binary.size() << " bytes\n";
 
         auto comp2 = Composite::decode(binary);
-        assert(comp2.has_value());
-        assert(comp2->getTypeName() == "Point");
-        assert(comp2->getFieldCount() == 3);
-        assert(std::get<int32_t>(*comp2->getField("x")) == 100);
-        assert(std::get<int32_t>(*comp2->getField("y")) == 200);
-        assert(std::get<std::string>(*comp2->getField("label")) == "origin");
+        ASSERT_TRUE(comp2.has_value());
+        ASSERT_EQ(comp2->getTypeName(), "Point");
+        ASSERT_EQ(comp2->getFieldCount(), 3);
+        ASSERT_EQ(std::get<int32_t>(*comp2->getField("x")), 100);
+        ASSERT_EQ(std::get<int32_t>(*comp2->getField("y")), 200);
+        ASSERT_EQ(std::get<std::string>(*comp2->getField("label")), "origin");
 
         std::cout << "  Decoded: " << comp2->toString() << " ✓\n";
     }
@@ -182,9 +184,9 @@ int main() {
         };
 
         auto comp = Composite::fromMap("Employee", fields, values);
-        assert(comp.has_value());
-        assert(std::get<int32_t>(*comp->getField("id")) == 42);
-        assert(std::get<std::string>(*comp->getField("name")) == "Bob");
+        ASSERT_TRUE(comp.has_value());
+        ASSERT_EQ(std::get<int32_t>(*comp->getField("id")), 42);
+        ASSERT_EQ(std::get<std::string>(*comp->getField("name")), "Bob");
 
         std::cout << "  Created from map: " << comp->toString() << " ✓\n";
     }
@@ -200,10 +202,10 @@ int main() {
 
         auto comp = Composite::create("Test", fields);
 
-        assert(comp.hasField("field1"));
-        assert(comp.hasField("field2"));
-        assert(!comp.hasField("field3"));
-        assert(!comp.hasField("nonexistent"));
+        ASSERT_TRUE(comp.hasField("field1"));
+        ASSERT_TRUE(comp.hasField("field2"));
+        ASSERT_FALSE(comp.hasField("field3"));
+        ASSERT_FALSE(comp.hasField("nonexistent"));
 
         std::cout << "  Field existence checks work ✓\n";
     }
@@ -221,16 +223,16 @@ int main() {
         auto comp = Composite::create("Triple", fields);
 
         auto idx0 = comp.getFieldIndex("first");
-        assert(idx0.has_value() && *idx0 == 0);
+        ASSERT_TRUE(idx0.has_value() && *idx0 == 0);
 
         auto idx1 = comp.getFieldIndex("second");
-        assert(idx1.has_value() && *idx1 == 1);
+        ASSERT_TRUE(idx1.has_value() && *idx1 == 1);
 
         auto idx2 = comp.getFieldIndex("third");
-        assert(idx2.has_value() && *idx2 == 2);
+        ASSERT_TRUE(idx2.has_value() && *idx2 == 2);
 
         auto idx_missing = comp.getFieldIndex("missing");
-        assert(!idx_missing.has_value());
+        ASSERT_FALSE(idx_missing.has_value());
 
         std::cout << "  Field index lookup works ✓\n";
     }
@@ -247,12 +249,12 @@ int main() {
         auto comp = Composite::create("TypeTest", fields);
 
         // Correct types
-        assert(comp.setField("int_field", int32_t(42)));
-        assert(comp.setField("str_field", std::string("hello")));
+        ASSERT_TRUE(comp.setField("int_field", int32_t(42)));
+        ASSERT_TRUE(comp.setField("str_field", std::string("hello")));
 
         // Wrong types (should fail)
-        assert(!comp.setField("int_field", std::string("wrong")));
-        assert(!comp.setField("str_field", int32_t(123)));
+        ASSERT_FALSE(comp.setField("int_field", std::string("wrong")));
+        ASSERT_FALSE(comp.setField("str_field", int32_t(123)));
 
         std::cout << "  Type checking prevents wrong types ✓\n";
     }
@@ -283,10 +285,10 @@ int main() {
         // Encode and decode
         auto binary = Composite::encode(employee);
         auto decoded = Composite::decode(binary);
-        assert(decoded.has_value());
-        assert(decoded->getTypeName() == "Employee");
-        assert(std::get<std::string>(*decoded->getField("name")) == "John Smith");
-        assert(std::get<double>(*decoded->getField("salary")) == 75000.0);
+        ASSERT_TRUE(decoded.has_value());
+        ASSERT_EQ(decoded->getTypeName(), "Employee");
+        ASSERT_EQ(std::get<std::string>(*decoded->getField("name")), "John Smith");
+        ASSERT_EQ(std::get<double>(*decoded->getField("salary")), 75000.0);
 
         std::cout << "  Encode/decode preserved all data ✓\n";
     }
@@ -296,6 +298,5 @@ int main() {
     std::cout << "ALL TESTS PASSED! ✓\n";
     std::cout << "COMPOSITE/RECORD type is fully functional.\n";
     std::cout << "========================================\n";
-
-    return 0;
 }
+

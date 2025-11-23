@@ -41,7 +41,7 @@ TEST_F(BTreePageTest, AddNode)
     btree_page_->initialize(index_uuid, table_uuid, 0, static_cast<uint16_t>(BTreeFlags::LEAF));
 
     std::vector<uint8_t> key = {'k', 'e', 'y', '1'};
-    Tuple value = {nullptr, 0, 12345, 0, 0};
+    Tuple value = {nullptr, 0, TID{12345, 0}};
 
     // MGA Phase 3.1: add_node now requires xmin parameter for transaction tracking
     uint64_t xmin = 100; // Test transaction ID
