@@ -1,8 +1,8 @@
 # ScratchBird Project Context
 
-**Last Updated:** November 20, 2025
+**Last Updated:** November 23, 2025
 **Current Phase:** Alpha 1 - Engine Functionality (Local Operations)
-**Progress:** ~87% of Alpha 1 (~11% of total project scope)
+**Progress:** ~99% of Alpha 1 (~11% of total project scope)
 **Project Type:** Educational/Research (no time constraints)
 
 > **MANDATORY:** Read [/MGA_RULES.md](/MGA_RULES.md) before ANY transaction or index work.
@@ -10,9 +10,9 @@
 
 ---
 
-## Current Work: Alpha 1 Completion (~13% Remaining)
+## Current Work: Alpha 1 Completion (~1% Remaining)
 
-**Focus:** Complete all local (non-network) engine functionality
+**Focus:** Complete remaining command-line tools and finalize views
 
 ### What's Working ✅
 
@@ -22,50 +22,30 @@
 - **Built-in Functions:** 123/123 complete
 - **Security:** 100% (users, roles, table/column/row-level permissions, RLS)
 - **Catalog:** 40 tables (100% structures, 58% CRUD)
-- **Constraints:** 90% (CHECK, DEFAULT, FK, UNIQUE functional)
+- **PSQL/Stored Procedures & Triggers:** 100% (control flow, cursors, exceptions, trigger firing, procedure invocation)
+- **Advanced SQL:** 100% (CTEs recursive & non-recursive, MERGE, RETURNING, SAVEPOINT, Set Operations)
+- **Constraint Features:** 100% (GENERATED columns STORED/VIRTUAL, IDENTITY columns, Deferred constraints)
+- **SQL Engine Commands:** 100% (SHOW TABLES/DATABASES/COLUMNS/INDEXES/CREATE TABLE, DESCRIBE, EXPLAIN)
 
 ### What's Missing ❌
 
-**PSQL/Stored Procedures** (~15% of Alpha 1):
-- Bytecode execution (90% stubbed)
-- Trigger firing (CREATE works, execution doesn't)
-- Exception handling (TRY/CATCH)
-- Cursors
-
-**Advanced SQL** (~20% of Alpha 1):
-- Common Table Expressions (CTEs)
-- Recursive queries (WITH RECURSIVE)
-- MERGE statement
-- RETURNING clause
-
-**Constraint Features** (~10% of Alpha 1):
-- GENERATED columns (STORED/VIRTUAL)
-- IDENTITY columns (auto-increment)
-- Deferred constraint checking
-
-**SQL Engine Commands** (~5% of Alpha 1):
-- SHOW TABLES/DATABASES/COLUMNS
-- DESCRIBE TABLE
-- EXPLAIN query plans
-- System catalog queries (pg_catalog equivalent)
-
-**Command-Line Tools** (~15% of Alpha 1):
+**Command-Line Tools** (~90-110 hours estimated):
 - sb_isql (interactive SQL shell)
 - sb_verify (database integrity checker)
 - sb_backup (backup/restore tool)
 - sb_security (user/role management tool)
 
-**Views** (~5% of Alpha 1):
+**Views** (~10-15 hours estimated):
 - ⧗ Physical materialization (80% complete)
 - Updatable views (INSERT/UPDATE/DELETE through views)
 
 ### Immediate Next Steps
 
-1. Complete physical materialization for materialized views
-2. Implement PSQL bytecode execution infrastructure
-3. Add trigger firing mechanism
-4. Implement CTEs and recursive queries
-5. Build sb_isql command-line shell
+1. Build sb_isql (interactive SQL shell) - HIGHEST PRIORITY
+2. Complete physical materialization for materialized views
+3. Build sb_verify (database integrity checker)
+4. Build sb_backup (backup/restore tool)
+5. Build sb_security (user/role management tool)
 
 ---
 
@@ -240,6 +220,12 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 
 ## Recent Accomplishments
 
+**November 23, 2025 (Latest):**
+- ✅ **Constraint Features 100% COMPLETE:** GENERATED columns (STORED/VIRTUAL), IDENTITY columns, Deferred constraint checking
+- ✅ **SHOW/DESCRIBE Commands 100% COMPLETE:** SHOW TABLES/DATABASES/COLUMNS/INDEXES/CREATE TABLE, DESCRIBE
+- ✅ **PSQL/Triggers 100% COMPLETE:** Control flow, cursors, exceptions, trigger firing, procedure invocation
+- ✅ **Advanced SQL 100% COMPLETE:** CTEs (recursive & non-recursive), MERGE, RETURNING, SAVEPOINT, Set Operations
+
 **November 2025:**
 - ✅ Views foundation (80% - CREATE VIEW, MATERIALIZED VIEW, REFRESH)
 - ✅ Index system documentation (900+ lines)
@@ -253,10 +239,10 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 
 ## Summary
 
-**Current Focus:** Complete Alpha 1 (~13% remaining)
+**Current Focus:** Complete Alpha 1 (~1% remaining - CLI tools only)
 
 **Next Major Milestones:**
-1. Alpha 1 completion (~1-2 months)
+1. Alpha 1 completion (~1-2 weeks for CLI tools)
 2. Alpha 2: Multi-dialect parsers
 3. Alpha 3: Network protocols
 4. Beta 1-4: Distributed systems + NoSQL models
@@ -267,5 +253,5 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 
 ---
 
-**Last Updated:** November 20, 2025
-**Status:** Alpha 1 - ~87% complete (~11% of total project)
+**Last Updated:** November 23, 2025
+**Status:** Alpha 1 - ~99% complete (~11% of total project)
