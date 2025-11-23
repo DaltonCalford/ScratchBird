@@ -1538,6 +1538,16 @@ namespace scratchbird
             setExpressionType(node, ExpressionType(TypeName(result_type), true));
         }
 
+        void SemanticAnalyzer::visit(GroupingExpr *node)
+        {
+            // GROUPING() returns 0 or 1 (INT) to indicate if a column is aggregated
+            // Check the argument expression
+            checkExpression(node->arg());
+
+            // GROUPING() always returns INTEGER (0 or 1)
+            setExpressionType(node, ExpressionType(TypeName(DataType::INT32), false));
+        }
+
         void SemanticAnalyzer::visit(ArrayLiteral *node)
         {
             // Check all array elements

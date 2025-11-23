@@ -133,8 +133,19 @@ namespace scratchbird
             AGG_CORR = 0x83,         // CORR(y, x) - Pearson correlation coefficient
             AGG_COVAR_POP = 0x84,    // COVAR_POP(y, x) - population covariance
 
-            // Temporal functions
-            FUNC_DATE_ADD = 0x84,     // DATE_ADD(date, days)
+            // Regression aggregate functions (Alpha 1 - Missing Functions)
+            AGG_REGR_SLOPE = 0x8E,       // REGR_SLOPE(y, x) - slope of linear regression
+            AGG_REGR_INTERCEPT = 0x8F,   // REGR_INTERCEPT(y, x) - y-intercept of regression
+            AGG_REGR_COUNT = 0x90,       // REGR_COUNT(y, x) - count of non-null pairs
+            AGG_REGR_R2 = 0x91,          // REGR_R2(y, x) - coefficient of determination (R²)
+            AGG_REGR_AVGX = 0x92,        // REGR_AVGX(y, x) - average of x values
+            AGG_REGR_AVGY = 0x93,        // REGR_AVGY(y, x) - average of y values
+            AGG_REGR_SXX = 0x94,         // REGR_SXX(y, x) - sum of squares of x
+            AGG_REGR_SYY = 0x95,         // REGR_SYY(y, x) - sum of squares of y
+            AGG_REGR_SXY = 0x96,         // REGR_SXY(y, x) - sum of cross-products
+
+            // Temporal functions (Note: FUNC_DATE_ADD collision at 0x84 needs fixing)
+            FUNC_DATE_ADD = 0x84,     // DATE_ADD(date, days) - TODO: Move to extended opcodes
             FUNC_DATE_SUB = 0x85,     // DATE_SUB(date, days)
             FUNC_DATE_DIFF = 0x86,    // DATE_DIFF(date1, date2) - returns days
             FUNC_NOW = 0x87,          // NOW() - current timestamp
@@ -319,6 +330,8 @@ namespace scratchbird
             EXT_CHR = 0x42,                // CHR(code) - convert ASCII code to character
             EXT_REPEAT = 0x43,             // REPEAT(str, count)
             EXT_REVERSE = 0x44,            // REVERSE(str)
+            EXT_LPAD = 0x57,               // LPAD(str, length [, fill]) - left-pad string
+            EXT_RPAD = 0x58,               // RPAD(str, length [, fill]) - right-pad string
 
             // Spatial types and operations (Phase 2 Task 9.1) - 0x50-0x5F range
             EXT_TYPE_POINT = 0x50,         // POINT data type marker
@@ -531,6 +544,15 @@ namespace scratchbird
             EXT_FUNC_DEGREES = 0xE1,       // DEGREES(radians) - convert radians to degrees
             EXT_FUNC_RADIANS = 0xE2,       // RADIANS(degrees) - convert degrees to radians
             EXT_FUNC_PI = 0xE3,            // PI() - returns π (3.14159265358979323846)
+
+            // Hyperbolic trigonometric functions (Alpha 1 - Missing Functions) (0x59-0x5F)
+            EXT_FUNC_SINH = 0x59,          // SINH(x) - hyperbolic sine
+            EXT_FUNC_COSH = 0x5A,          // COSH(x) - hyperbolic cosine
+            EXT_FUNC_TANH = 0x5B,          // TANH(x) - hyperbolic tangent
+            EXT_FUNC_ASINH = 0x5C,         // ASINH(x) - inverse hyperbolic sine
+            EXT_FUNC_ACOSH = 0x5D,         // ACOSH(x) - inverse hyperbolic cosine
+            EXT_FUNC_ATANH = 0x5E,         // ATANH(x) - inverse hyperbolic tangent
+            EXT_FUNC_COT = 0x5F,           // COT(x) - cotangent
 
             // Algebraic functions (0xE4-0xEE)
             EXT_FUNC_ABS = 0xE4,           // ABS(x) - absolute value

@@ -5853,6 +5853,26 @@ namespace scratchbird
                 }
             }
 
+            // GROUPING function for ROLLUP/CUBE/GROUPING SETS (Phase 3: Advanced Grouping)
+            if (match(TokenType::KW_GROUPING))
+            {
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after GROUPING"))
+                    return nullptr;
+
+                auto *arg = parseExpression();
+                if (!arg)
+                {
+                    error("Expected expression in GROUPING function");
+                    return nullptr;
+                }
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after GROUPING argument"))
+                    return nullptr;
+
+                auto span = makeSpan(start_loc, previous().location);
+                return arena_.make<GroupingExpr>(span, arg);
+            }
+
             // Sequence functions: NEXTVAL, CURRVAL, SETVAL (ALPHA Phase 1 - Sequences)
             if (match(TokenType::KW_NEXTVAL) || match(TokenType::KW_CURRVAL) || match(TokenType::KW_SETVAL))
             {
@@ -6091,18 +6111,155 @@ namespace scratchbird
         {
             GroupByClause clause;
 
-            // Parse grouping expressions
-            do
+            // Check for advanced grouping constructs
+            if (check(TokenType::KW_ROLLUP))
             {
-                Expression *expr = parseExpression();
-                if (!expr)
+                advance();  // Consume ROLLUP
+                if (!match(TokenType::LEFT_PAREN))
                 {
-                    error("Expected expression in GROUP BY");
+                    error("Expected '(' after ROLLUP");
                     synchronize();
                     return clause;
                 }
-                clause.grouping_exprs.push_back(expr);
-            } while (match(TokenType::COMMA));
+
+                // Parse grouping expressions inside ROLLUP(...)
+                std::vector<Expression *> exprs;
+                do
+                {
+                    Expression *expr = parseExpression();
+                    if (!expr)
+                    {
+                        error("Expected expression in ROLLUP");
+                        synchronize();
+                        return clause;
+                    }
+                    exprs.push_back(expr);
+                } while (match(TokenType::COMMA));
+
+                if (!match(TokenType::RIGHT_PAREN))
+                {
+                    error("Expected ')' after ROLLUP expressions");
+                    synchronize();
+                    return clause;
+                }
+
+                clause = GroupByClause(GroupingType::ROLLUP, std::move(exprs));
+            }
+            else if (check(TokenType::KW_CUBE))
+            {
+                advance();  // Consume CUBE
+                if (!match(TokenType::LEFT_PAREN))
+                {
+                    error("Expected '(' after CUBE");
+                    synchronize();
+                    return clause;
+                }
+
+                // Parse grouping expressions inside CUBE(...)
+                std::vector<Expression *> exprs;
+                do
+                {
+                    Expression *expr = parseExpression();
+                    if (!expr)
+                    {
+                        error("Expected expression in CUBE");
+                        synchronize();
+                        return clause;
+                    }
+                    exprs.push_back(expr);
+                } while (match(TokenType::COMMA));
+
+                if (!match(TokenType::RIGHT_PAREN))
+                {
+                    error("Expected ')' after CUBE expressions");
+                    synchronize();
+                    return clause;
+                }
+
+                clause = GroupByClause(GroupingType::CUBE, std::move(exprs));
+            }
+            else if (check(TokenType::KW_GROUPING))
+            {
+                advance();  // Consume GROUPING
+
+                // Check if followed by SETS
+                if (!check(TokenType::KW_SETS))
+                {
+                    error("Expected SETS after GROUPING");
+                    synchronize();
+                    return clause;
+                }
+                advance();  // Consume SETS
+                if (!match(TokenType::LEFT_PAREN))
+                {
+                    error("Expected '(' after GROUPING SETS");
+                    synchronize();
+                    return clause;
+                }
+
+                // Parse grouping sets: GROUPING SETS ( (a,b), (a), (b), () )
+                std::vector<std::vector<Expression *>> grouping_sets;
+                do
+                {
+                    // Each grouping set is in parentheses
+                    if (!match(TokenType::LEFT_PAREN))
+                    {
+                        error("Expected '(' for grouping set");
+                        synchronize();
+                        return clause;
+                    }
+
+                    std::vector<Expression *> set_exprs;
+                    // Empty set () is valid for grand total
+                    if (!check(TokenType::RIGHT_PAREN))
+                    {
+                        do
+                        {
+                            Expression *expr = parseExpression();
+                            if (!expr)
+                            {
+                                error("Expected expression in grouping set");
+                                synchronize();
+                                return clause;
+                            }
+                            set_exprs.push_back(expr);
+                        } while (match(TokenType::COMMA));
+                    }
+
+                    if (!match(TokenType::RIGHT_PAREN))
+                    {
+                        error("Expected ')' after grouping set");
+                        synchronize();
+                        return clause;
+                    }
+
+                    grouping_sets.push_back(std::move(set_exprs));
+                } while (match(TokenType::COMMA));
+
+                if (!match(TokenType::RIGHT_PAREN))
+                {
+                    error("Expected ')' after GROUPING SETS");
+                    synchronize();
+                    return clause;
+                }
+
+                clause = GroupByClause(std::move(grouping_sets));
+            }
+            else
+            {
+                // Standard GROUP BY with comma-separated expressions
+                do
+                {
+                    Expression *expr = parseExpression();
+                    if (!expr)
+                    {
+                        error("Expected expression in GROUP BY");
+                        synchronize();
+                        return clause;
+                    }
+                    clause.grouping_exprs.push_back(expr);
+                } while (match(TokenType::COMMA));
+            }
 
             // Parse optional HAVING clause
             if (match(TokenType::KW_HAVING))

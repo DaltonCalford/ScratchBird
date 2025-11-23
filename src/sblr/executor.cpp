@@ -6215,6 +6215,16 @@ namespace scratchbird
                 // They will use accumulate2() instead of accumulate()
                 case AggFunc::CORR:
                 case AggFunc::COVAR_POP:
+                // Regression functions (use accumulate2() for 2-variable statistics)
+                case AggFunc::REGR_SLOPE:
+                case AggFunc::REGR_INTERCEPT:
+                case AggFunc::REGR_COUNT:
+                case AggFunc::REGR_R2:
+                case AggFunc::REGR_AVGX:
+                case AggFunc::REGR_AVGY:
+                case AggFunc::REGR_SXX:
+                case AggFunc::REGR_SYY:
+                case AggFunc::REGR_SXY:
                     // These should not reach here - they use accumulate2()
                     // If they do, it's a programming error
                     break;
@@ -6362,6 +6372,111 @@ namespace scratchbird
                     double covariance = (sum_xy / count) - (mean_x * mean_y);
 
                     return Value::makeFloat64(covariance);
+                }
+
+                // Regression aggregate functions (Alpha 1 - Missing Functions)
+                case AggFunc::REGR_SLOPE:
+                {
+                    // Slope of linear regression line: slope = covar_pop(y,x) / var_pop(x)
+                    if (count < 2)
+                        return Value::makeNull();
+
+                    double mean_x = sum_x / count;
+                    double var_x = (sum_x2 / count) - (mean_x * mean_x);
+
+                    if (var_x <= 0.0)
+                        return Value::makeNull();  // No variance in x
+
+                    double mean_y = sum_y / count;
+                    double covar = (sum_xy / count) - (mean_x * mean_y);
+
+                    return Value::makeFloat64(covar / var_x);
+                }
+
+                case AggFunc::REGR_INTERCEPT:
+                {
+                    // Y-intercept of linear regression: intercept = avg(y) - slope * avg(x)
+                    if (count < 2)
+                        return Value::makeNull();
+
+                    double mean_x = sum_x / count;
+                    double mean_y = sum_y / count;
+                    double var_x = (sum_x2 / count) - (mean_x * mean_x);
+
+                    if (var_x <= 0.0)
+                        return Value::makeNull();
+
+                    double covar = (sum_xy / count) - (mean_x * mean_y);
+                    double slope = covar / var_x;
+
+                    return Value::makeFloat64(mean_y - slope * mean_x);
+                }
+
+                case AggFunc::REGR_COUNT:
+                {
+                    // Count of non-null (y, x) pairs
+                    return Value::makeInt64(count);
+                }
+
+                case AggFunc::REGR_R2:
+                {
+                    // Coefficient of determination: R² = (corr(y,x))²
+                    if (count < 2)
+                        return Value::makeNull();
+
+                    double mean_x = sum_x / count;
+                    double mean_y = sum_y / count;
+                    double var_x = (sum_x2 / count) - (mean_x * mean_x);
+                    double var_y = (sum_y2 / count) - (mean_y * mean_y);
+
+                    if (var_x <= 0.0 || var_y <= 0.0)
+                        return Value::makeNull();
+
+                    double covar = (sum_xy / count) - (mean_x * mean_y);
+                    double corr = covar / std::sqrt(var_x * var_y);
+
+                    return Value::makeFloat64(corr * corr);
+                }
+
+                case AggFunc::REGR_AVGX:
+                {
+                    // Average of x values
+                    return count > 0 ? Value::makeFloat64(sum_x / count) : Value::makeNull();
+                }
+
+                case AggFunc::REGR_AVGY:
+                {
+                    // Average of y values
+                    return count > 0 ? Value::makeFloat64(sum_y / count) : Value::makeNull();
+                }
+
+                case AggFunc::REGR_SXX:
+                {
+                    // Sum of squares of x: Σ(x²) - (Σx)²/n
+                    if (count == 0)
+                        return Value::makeNull();
+
+                    double mean_x = sum_x / count;
+                    return Value::makeFloat64(sum_x2 - count * mean_x * mean_x);
+                }
+
+                case AggFunc::REGR_SYY:
+                {
+                    // Sum of squares of y: Σ(y²) - (Σy)²/n
+                    if (count == 0)
+                        return Value::makeNull();
+
+                    double mean_y = sum_y / count;
+                    return Value::makeFloat64(sum_y2 - count * mean_y * mean_y);
+                }
+
+                case AggFunc::REGR_SXY:
+                {
+                    // Sum of cross-products: Σ(xy) - (Σx)(Σy)/n
+                    if (count == 0)
+                        return Value::makeNull();
+
+                    return Value::makeFloat64(sum_xy - (sum_x * sum_y) / count);
                 }
             }
 
@@ -6524,6 +6639,34 @@ namespace scratchbird
                         break;
                     case Opcode::AGG_COVAR_POP:
                         func = AggregateAccumulator::AggFunc::COVAR_POP;
+                        break;
+                    // Regression aggregate functions (Alpha 1 - Missing Functions)
+                    case Opcode::AGG_REGR_SLOPE:
+                        func = AggregateAccumulator::AggFunc::REGR_SLOPE;
+                        break;
+                    case Opcode::AGG_REGR_INTERCEPT:
+                        func = AggregateAccumulator::AggFunc::REGR_INTERCEPT;
+                        break;
+                    case Opcode::AGG_REGR_COUNT:
+                        func = AggregateAccumulator::AggFunc::REGR_COUNT;
+                        break;
+                    case Opcode::AGG_REGR_R2:
+                        func = AggregateAccumulator::AggFunc::REGR_R2;
+                        break;
+                    case Opcode::AGG_REGR_AVGX:
+                        func = AggregateAccumulator::AggFunc::REGR_AVGX;
+                        break;
+                    case Opcode::AGG_REGR_AVGY:
+                        func = AggregateAccumulator::AggFunc::REGR_AVGY;
+                        break;
+                    case Opcode::AGG_REGR_SXX:
+                        func = AggregateAccumulator::AggFunc::REGR_SXX;
+                        break;
+                    case Opcode::AGG_REGR_SYY:
+                        func = AggregateAccumulator::AggFunc::REGR_SYY;
+                        break;
+                    case Opcode::AGG_REGR_SXY:
+                        func = AggregateAccumulator::AggFunc::REGR_SXY;
                         break;
                     default:
                         error("Unknown aggregate function opcode");
@@ -13665,6 +13808,153 @@ namespace scratchbird
                             push(Value::makeText(str));
                         }
                     }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_LPAD))
+                    {
+                        // LPAD(str, length [, fill])
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 2 || arg_count > 3)
+                        {
+                            error("LPAD expects 2 or 3 arguments");
+                        }
+
+                        Value fill_val;
+                        if (arg_count == 3)
+                        {
+                            fill_val = pop();
+                        }
+                        Value length_val = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || length_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            int64_t target_length = length_val.toInt64();
+                            std::string fill_str = (arg_count == 3 && !fill_val.isNull()) ? fill_val.toString() : " ";
+
+                            if (fill_str.empty())
+                            {
+                                fill_str = " ";
+                            }
+
+                            if (static_cast<int64_t>(str.length()) >= target_length)
+                            {
+                                // Truncate if too long
+                                push(Value::makeText(str.substr(0, target_length)));
+                            }
+                            else
+                            {
+                                // Pad on the left
+                                int64_t pad_length = target_length - str.length();
+                                std::string padding;
+                                while (static_cast<int64_t>(padding.length()) < pad_length)
+                                {
+                                    padding += fill_str;
+                                }
+                                padding = padding.substr(0, pad_length);
+                                push(Value::makeText(padding + str));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_RPAD))
+                    {
+                        // RPAD(str, length [, fill])
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 2 || arg_count > 3)
+                        {
+                            error("RPAD expects 2 or 3 arguments");
+                        }
+
+                        Value fill_val;
+                        if (arg_count == 3)
+                        {
+                            fill_val = pop();
+                        }
+                        Value length_val = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || length_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            int64_t target_length = length_val.toInt64();
+                            std::string fill_str = (arg_count == 3 && !fill_val.isNull()) ? fill_val.toString() : " ";
+
+                            if (fill_str.empty())
+                            {
+                                fill_str = " ";
+                            }
+
+                            if (static_cast<int64_t>(str.length()) >= target_length)
+                            {
+                                // Truncate if too long
+                                push(Value::makeText(str.substr(0, target_length)));
+                            }
+                            else
+                            {
+                                // Pad on the right
+                                int64_t pad_length = target_length - str.length();
+                                std::string padding;
+                                while (static_cast<int64_t>(padding.length()) < pad_length)
+                                {
+                                    padding += fill_str;
+                                }
+                                padding = padding.substr(0, pad_length);
+                                push(Value::makeText(str + padding));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_OVERLAY))
+                    {
+                        // OVERLAY(str PLACING replacement FROM start [FOR length])
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 3 || arg_count > 4)
+                        {
+                            error("OVERLAY expects 3 or 4 arguments");
+                        }
+
+                        Value length_val;
+                        if (arg_count == 4)
+                        {
+                            length_val = pop();
+                        }
+                        Value start_val = pop();
+                        Value replacement_val = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || replacement_val.isNull() || start_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string str = text.toString();
+                            std::string replacement = replacement_val.toString();
+                            int64_t start = start_val.toInt64() - 1; // Convert to 0-based
+                            int64_t length = (arg_count == 4 && !length_val.isNull()) ?
+                                           length_val.toInt64() : replacement.length();
+
+                            if (start < 0 || start > static_cast<int64_t>(str.length()))
+                            {
+                                push(Value::makeText(str));
+                            }
+                            else
+                            {
+                                std::string result = str.substr(0, start) + replacement;
+                                if (start + length < static_cast<int64_t>(str.length()))
+                                {
+                                    result += str.substr(start + length);
+                                }
+                                push(Value::makeText(result));
+                            }
+                        }
+                    }
                     // ========== Text Search Functions (Task 14 Phase 5) ==========
                     else if (ext_op == static_cast<uint8_t>(Opcode::EXT_TO_TSVECTOR))
                     {
@@ -14343,6 +14633,165 @@ namespace scratchbird
                         {
                             double x = arg.toDouble();
                             push(Value::makeFloat64(std::cbrt(x)));
+                        }
+                    }
+                    // Hyperbolic functions (Alpha 1 - Missing Functions)
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_SINH))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("SINH expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            push(Value::makeFloat64(std::sinh(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_COSH))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("COSH expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            push(Value::makeFloat64(std::cosh(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_TANH))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("TANH expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            push(Value::makeFloat64(std::tanh(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_ASINH))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("ASINH expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            push(Value::makeFloat64(std::asinh(x)));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_ACOSH))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("ACOSH expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            if (x < 1.0)
+                            {
+                                // Domain error: ACOSH only defined for x >= 1
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                push(Value::makeFloat64(std::acosh(x)));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_ATANH))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("ATANH expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            if (std::abs(x) >= 1.0)
+                            {
+                                // Domain error: ATANH only defined for |x| < 1
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                push(Value::makeFloat64(std::atanh(x)));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_COT))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1)
+                        {
+                            error("COT expects 1 argument, got " + std::to_string(arg_count));
+                        }
+
+                        Value arg = pop();
+                        if (arg.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            double x = arg.toDouble();
+                            double tan_x = std::tan(x);
+                            if (tan_x == 0.0)
+                            {
+                                // Division by zero - return NULL or infinity
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                push(Value::makeFloat64(1.0 / tan_x));
+                            }
                         }
                     }
                     else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_POWER))
