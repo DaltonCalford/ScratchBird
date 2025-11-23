@@ -666,12 +666,6 @@ namespace scratchbird
             (void)node; // Suppress unused parameter warning
         }
 
-        void SemanticAnalyzer::visit(MergeStmt *node)
-        {
-            // MERGE statement - semantic validation deferred until executor support
-            (void)node; // Suppress unused parameter warning
-        }
-
         void SemanticAnalyzer::visit(ShowStmt *node)
         {
             // SHOW commands (TABLES, DATABASES, COLUMNS, INDEXES, CREATE TABLE)
