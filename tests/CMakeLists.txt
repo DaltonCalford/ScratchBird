@@ -166,11 +166,9 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_rle\.cpp$")  # Stand
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_segments\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_simple_e2e\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_create_view\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_create_view_ast\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_cte_basic\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_defragment_pdlower_fix\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_dirty_bit_protection\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_extract\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_fsm_durability\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_fsm_reconstruction\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gin_dml\.cpp$")  # Standalone main()
@@ -224,7 +222,6 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_toast_garbage_collection\.cpp$")
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_toast_tip_visibility\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_transaction_deadlock_simple\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_transaction_markers_race\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_type_conversions\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_version_chain_cycle\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_views_comprehensive\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_wave1_integration\.cpp$")  # Standalone main()
@@ -458,36 +455,7 @@ set_tests_properties(TypeSerialization PROPERTIES
     TIMEOUT 60
 )
 
-add_executable(test_type_conversions
-    unit/test_type_conversions.cpp
-)
-target_link_libraries(test_type_conversions
-    scratchbird_core
-    GTest::gtest
-    GTest::gtest_main
-)
-add_test(NAME TypeConversions COMMAND test_type_conversions)
-set_tests_properties(TypeConversions PROPERTIES
-    LABELS "unit;conversions;types"
-    TIMEOUT 60
-)
 
-# EXTRACT function tests
-add_executable(test_extract
-    unit/test_extract.cpp
-)
-target_link_libraries(test_extract
-    scratchbird_core
-    scratchbird_parser
-    scratchbird_sblr
-    GTest::gtest
-    GTest::gtest_main
-)
-add_test(NAME Extract COMMAND test_extract)
-set_tests_properties(Extract PROPERTIES
-    LABELS "unit;extract;functions"
-    TIMEOUT 60
-)
 
 # ============================================================================
 # Columnstore Index Tests - Phase 1: RLE Compression
@@ -788,20 +756,6 @@ set_tests_properties(LSMTreeSimple PROPERTIES
 # BRIN Index DML Integration Tests - TASK-DML-5
 # ============================================================================
 
-add_executable(test_brin_dml
-    integration/test_brin_dml.cpp
-)
-target_link_libraries(test_brin_dml
-    scratchbird_core
-    scratchbird_parser
-    scratchbird_sblr
-    scratchbird_optimizer
-)
-add_test(NAME BrinDML COMMAND test_brin_dml)
-set_tests_properties(BrinDML PROPERTIES
-    LABELS "integration;brin;dml;task-dml-5"
-    TIMEOUT 120
-)
 
 # Comprehensive integration test
 add_executable(test_lsm_tree_comprehensive
@@ -1033,22 +987,6 @@ set_tests_properties(ForeignKeys PROPERTIES
     TIMEOUT 60
 )
 
-# Views Tests (ALPHA Phase 1 - Views Execution)
-add_executable(test_create_view_ast
-    unit/test_create_view_ast.cpp
-)
-target_link_libraries(test_create_view_ast
-    scratchbird_core
-    scratchbird_parser
-    scratchbird_sblr
-    gtest
-    gtest_main
-)
-add_test(NAME CreateViewAST COMMAND test_create_view_ast)
-set_tests_properties(CreateViewAST PROPERTIES
-    LABELS "unit;views;ast;alpha_phase1"
-    TIMEOUT 60
-)
 
 add_executable(test_views_comprehensive
     unit/test_views_comprehensive.cpp
