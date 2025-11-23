@@ -626,6 +626,48 @@ namespace scratchbird
             }
         }
 
+        void ASTPrinter::visit(MergeStmt *node)
+        {
+            // ALPHA Phase 1 - Advanced SQL: MERGE statement
+            printIndent();
+            out_ << "MERGE INTO " << pool_.get(node->targetTable());
+            out_ << " USING ";
+            if (node->source())
+            {
+                node->source()->accept(this);
+            }
+            out_ << " ON ";
+            if (node->onCondition())
+            {
+                node->onCondition()->accept(this);
+            }
+            // Print WHEN clauses
+            for (const auto& when : node->whenClauses())
+            {
+                out_ << " WHEN ";
+                switch (when.type)
+                {
+                    case MergeStmt::WhenClause::MATCHED:
+                        out_ << "MATCHED";
+                        break;
+                    case MergeStmt::WhenClause::NOT_MATCHED:
+                        out_ << "NOT MATCHED";
+                        break;
+                    case MergeStmt::WhenClause::NOT_MATCHED_BY_SOURCE:
+                        out_ << "NOT MATCHED BY SOURCE";
+                        break;
+                }
+                if (when.condition)
+                {
+                    out_ << " AND ";
+                    when.condition->accept(this);
+                }
+                out_ << " THEN";
+                // Note: Would need to print UPDATE/INSERT/DELETE details here
+                // but keeping simple for now
+            }
+        }
+
         void ASTPrinter::visit(AnalyzeStmt *node)
         {
             printIndent();
