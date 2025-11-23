@@ -5251,6 +5251,7 @@ namespace scratchbird
                 return;
             }
 
+            // Get table columns
             std::vector<core::CatalogManager::ColumnInfo> all_columns;
             status = db_->catalog_manager()->getColumns(table_info.table_id, all_columns, nullptr);
             if (status != core::Status::OK)
