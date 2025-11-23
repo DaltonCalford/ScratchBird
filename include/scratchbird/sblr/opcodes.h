@@ -154,6 +154,7 @@ namespace scratchbird
             TABLE_FK = 0x94,          // Table-level foreign key constraint (ALPHA Phase C - Composite FK)
             UNIQUE_CONSTRAINT = 0x95, // UNIQUE constraint (column-level or table-level)
             PRIMARY_KEY = 0x96,       // PRIMARY KEY constraint (column-level or table-level)
+            IDENTITY_COLUMN = 0x97,   // IDENTITY column (GENERATED {ALWAYS|BY DEFAULT} AS IDENTITY) - ALPHA Phase 1
 
             // Special
             SELECT_STAR = 0xA0,  // SELECT *

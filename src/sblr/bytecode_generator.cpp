@@ -3530,6 +3530,15 @@ namespace scratchbird
                 // Write ON UPDATE action
                 writeStringId(node->fk_on_update());
             }
+
+            // Write IDENTITY column constraint if present (ALPHA Phase 1 - IDENTITY Columns Phase 3)
+            if (node->isIdentity())
+            {
+                current_result_->writeOpcode(Opcode::IDENTITY_COLUMN);
+
+                // Write identity type: 1 byte (1 = ALWAYS, 0 = BY DEFAULT)
+                current_result_->writeByte(node->identityAlways() ? 1 : 0);
+            }
         }
 
         // ===== Security Statements (ALPHA Phase 1 - Security System Phase 2) =====
