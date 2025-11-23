@@ -421,6 +421,16 @@ namespace scratchbird
             // KW_LEVEL already defined (line 274)
             // KW_ROW already defined (line 137)
             // KW_RESTRICT already defined (line 300)
+
+            // SQL Engine Commands (ALPHA Phase 1 - Developer Experience)
+            KW_SHOW,          // SHOW TABLES, SHOW DATABASES, etc.
+            KW_DESCRIBE,      // DESCRIBE table (alias for SHOW COLUMNS FROM)
+            KW_DESC,          // Short form of DESCRIBE
+            KW_TABLES,        // SHOW TABLES
+            KW_DATABASES,     // SHOW DATABASES
+            KW_SCHEMAS,       // SHOW SCHEMAS
+            KW_COLUMNS,       // SHOW COLUMNS FROM table
+            KW_INDEXES,       // SHOW INDEXES FROM table
         };
 
         // Location in source file

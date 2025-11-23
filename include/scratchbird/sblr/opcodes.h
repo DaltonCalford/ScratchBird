@@ -172,6 +172,10 @@ namespace scratchbird
             // EXPLAIN command (Phase 1, Task 1.5)
             EXPLAIN_PLAN = 0xC2,  // EXPLAIN output (string)
 
+            // SHOW/DESCRIBE commands (ALPHA Phase 1 - Developer Experience)
+            SHOW_TABLES = 0xC3,   // SHOW TABLES
+            SHOW_DATABASES = 0xC4, // SHOW DATABASES / SHOW SCHEMAS
+
             // JOIN operations (Phase 1, Task 3.3)
             NESTED_LOOP_JOIN = 0xC5,  // Nested loop join
             HASH_JOIN = 0xC6,         // Hash join
