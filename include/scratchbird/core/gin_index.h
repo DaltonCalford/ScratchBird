@@ -156,10 +156,137 @@ namespace scratchbird
             GinPostingEntry gpt_tids[];                 // Sorted TID array (flexible array, capacity depends on page size)
         } __attribute__((packed));
 
-        // Maximum entries for various GIN structures (approximate, based on 16KB pages)
+        /**
+         * Page-Size-Based GIN Settings
+         *
+         * Dynamic calculation of GIN capacity parameters based on page size.
+         * Provides optimal capacity limits for all supported page sizes (8KB-128KB).
+         *
+         * Benefits:
+         * - 8KB pages:   110-311 entries (baseline)
+         * - 16KB pages:  225-626 entries (2.0× capacity)
+         * - 32KB pages:  455-1266 entries (4.1× capacity)
+         * - 64KB pages:  919-2546 entries (8.4× capacity)
+         * - 128KB pages: 1847-5106 entries (16.8× capacity)
+         */
+        namespace GinSettings
+        {
+            // Structure header sizes (in bytes)
+            constexpr uint32_t PENDING_PAGE_HEADER = 128;      // SBGinPendingListPage header
+            constexpr uint32_t POSTING_PAGE_HEADER = 80;       // SBGinPostingListPage header
+            constexpr uint32_t POSTING_TREE_LEAF_HEADER = 88;  // SBGinPostingTreeLeaf header
+            constexpr uint32_t POSTING_TREE_INTERNAL_HEADER = 92; // SBGinPostingTreeInternal header
+
+            /**
+             * Calculate maximum pending entries per page
+             *
+             * Formula: (page_size - 128) / 72
+             * 72 bytes = sizeof(GinPendingEntry)
+             *
+             * Examples:
+             * - 8KB page:   110 entries
+             * - 16KB page:  225 entries
+             * - 32KB page:  455 entries
+             * - 64KB page:  919 entries
+             * - 128KB page: 1847 entries
+             */
+            inline uint16_t getMaxPendingEntriesPerPage(uint32_t page_size)
+            {
+                return static_cast<uint16_t>((page_size - PENDING_PAGE_HEADER) / sizeof(GinPendingEntry));
+            }
+
+            /**
+             * Calculate maximum posting entries per page
+             *
+             * Formula: (page_size - 80) / 26
+             * 26 bytes = sizeof(GinPostingEntry)
+             *
+             * Examples:
+             * - 8KB page:   311 entries
+             * - 16KB page:  626 entries
+             * - 32KB page:  1266 entries
+             * - 64KB page:  2546 entries
+             * - 128KB page: 5106 entries
+             */
+            inline uint16_t getMaxPostingEntriesPerPage(uint32_t page_size)
+            {
+                return static_cast<uint16_t>((page_size - POSTING_PAGE_HEADER) / sizeof(GinPostingEntry));
+            }
+
+            /**
+             * Calculate maximum posting tree internal entries per page
+             *
+             * Formula: (page_size - 92) / 14
+             * 14 bytes = sizeof(GinPostingTreeInternalEntry)
+             *
+             * Examples:
+             * - 8KB page:   578 entries
+             * - 16KB page:  1163 entries
+             * - 32KB page:  2333 entries
+             * - 64KB page:  4674 entries
+             * - 128KB page: 9357 entries
+             */
+            inline uint16_t getMaxPostingTreeInternalEntries(uint32_t page_size)
+            {
+                return static_cast<uint16_t>((page_size - POSTING_TREE_INTERNAL_HEADER) / sizeof(GinPostingTreeInternalEntry));
+            }
+
+            /**
+             * Calculate maximum posting tree leaf TIDs per page
+             *
+             * Formula: (page_size - 88) / 26
+             * 26 bytes = sizeof(GinPostingEntry)
+             *
+             * Examples:
+             * - 8KB page:   311 entries
+             * - 16KB page:  626 entries
+             * - 32KB page:  1259 entries
+             * - 64KB page:  2526 entries
+             * - 128KB page: 5061 entries
+             */
+            inline uint16_t getMaxPostingTreeLeafTids(uint32_t page_size)
+            {
+                return static_cast<uint16_t>((page_size - POSTING_TREE_LEAF_HEADER) / sizeof(GinPostingEntry));
+            }
+
+            /**
+             * Check if page size is valid
+             */
+            inline bool isValidPageSize(uint32_t page_size)
+            {
+                return page_size == 8192U || page_size == 16384U || page_size == 32768U ||
+                       page_size == 65536U || page_size == 131072U;
+            }
+        } // namespace GinSettings
+
+        /**
+         * DEPRECATED: Hardcoded capacity constants (16KB page assumptions)
+         *
+         * These constants are DEPRECATED and should NOT be used in new code.
+         * They assume 16KB pages and will cause capacity waste on larger pages.
+         *
+         * Use the dynamic methods instead:
+         * - GinSettings::getMaxPendingEntriesPerPage(page_size)
+         * - GinSettings::getMaxPostingTreeLeafTids(page_size)
+         * - GinSettings::getMaxPostingTreeInternalEntries(page_size)
+         * - GinSettings::getMaxPostingEntriesPerPage(page_size)
+         *
+         * Or use the instance methods:
+         * - GinIndex::getMaxPendingEntriesPerPage()
+         * - GinIndex::getMaxPostingTreeLeafTids()
+         * - GinIndex::getMaxPostingTreeInternalEntries()
+         * - GinIndex::getMaxPostingEntriesPerPage()
+         *
+         * These constants remain only for backward compatibility and will be removed
+         * in a future version once all usages are migrated to dynamic calculations.
+         */
+        [[deprecated("Use GinSettings::getMaxPendingEntriesPerPage() instead")]]
         constexpr uint16_t MAX_PENDING_ENTRIES_PER_PAGE = 225;        // (16384-128)/72
+        [[deprecated("Use GinSettings::getMaxPostingTreeLeafTids() instead")]]
         constexpr uint16_t MAX_POSTING_TREE_LEAF_TIDS = 626;          // (16384-88)/26
+        [[deprecated("Use GinSettings::getMaxPostingTreeInternalEntries() instead")]]
         constexpr uint16_t MAX_POSTING_TREE_INTERNAL_ENTRIES = 1163;  // (16384-92)/14
+        [[deprecated("Use GinSettings::getMaxPostingEntriesPerPage() instead")]]
         constexpr uint16_t MAX_POSTING_ENTRIES_PER_PAGE = 626;        // (16384-80)/26
 
         // Entry in the Keys B-Tree
