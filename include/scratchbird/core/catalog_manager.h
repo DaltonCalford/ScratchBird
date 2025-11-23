@@ -345,6 +345,14 @@ namespace scratchbird::core
             uint64_t last_refresh_time;     // Timestamp of last REFRESH (0 if never refreshed)
         };
 
+        // Generated column types (ALPHA Phase 1 - Constraint Features)
+        enum class GeneratedColumnType : uint8_t
+        {
+            NOT_GENERATED = 0,  // Regular column
+            STORED = 1,         // GENERATED ALWAYS AS ... STORED
+            VIRTUAL = 2         // GENERATED ALWAYS AS ... VIRTUAL
+        };
+
         // Column information
         struct ColumnInfo
         {
@@ -362,6 +370,12 @@ namespace scratchbird::core
             bool is_unique = false;
             bool is_foreign_key = false;
             bool is_generated = false;
+
+            // GENERATED column fields (ALPHA Phase 1 - Constraint Features)
+            GeneratedColumnType generated_type = GeneratedColumnType::NOT_GENERATED;
+            std::string generation_expression;  // SQL expression (or serialized bytecode)
+            uint32_t generation_expr_oid = 0;   // TOAST reference for large expressions
+            std::vector<uint16_t> dependent_columns;  // Column ordinals this depends on
 
             // IDENTITY column fields (ALPHA Phase 1 - Constraint Features)
             bool is_identity = false;           // Is this an IDENTITY column?
@@ -534,6 +548,11 @@ namespace scratchbird::core
             FKAction on_update;                // Action on UPDATE of parent key
             FKMatchType match_type;            // Match type (SIMPLE, FULL, PARTIAL)
             bool is_enabled = true;            // Can be disabled temporarily
+
+            // ALPHA Phase 1 - Deferred constraint checking
+            bool is_deferrable = false;        // Can constraint checking be deferred?
+            bool initially_deferred = false;   // Defer by default in new transactions?
+
             uint64_t created_time = 0;
         };
 

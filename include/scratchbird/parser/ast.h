@@ -949,6 +949,14 @@ namespace scratchbird
             using ASTNode::ASTNode;
         };
 
+        // Generated column storage type (ALPHA Phase 1 - Constraint Features)
+        enum class GeneratedColumnStorage : uint8_t
+        {
+            NOT_GENERATED = 0,  // Regular column
+            STORED = 1,         // GENERATED ALWAYS AS ... STORED
+            VIRTUAL = 2         // GENERATED ALWAYS AS ... VIRTUAL
+        };
+
         // Column definition for CREATE TABLE
         class ColumnDef : public ASTNode
         {
@@ -965,14 +973,17 @@ namespace scratchbird
                       StringPool::StringId fk_on_delete = 0,
                       StringPool::StringId fk_on_update = 0,
                       bool is_identity = false,
-                      bool identity_always = true)
+                      bool identity_always = true,
+                      GeneratedColumnStorage generated_storage = GeneratedColumnStorage::NOT_GENERATED,
+                      Expression *generation_expr = nullptr)
                 : ASTNode(ASTKind::COLUMN_DEF, span), name_(name), type_(type), nullable_(nullable),
                   charset_(charset), collation_(collation),
                   default_value_(default_value), check_expr_(check_expr), is_unique_(is_unique),
                   is_primary_key_(is_primary_key),
                   fk_table_(fk_table), fk_columns_(std::move(fk_columns)),
                   fk_on_delete_(fk_on_delete), fk_on_update_(fk_on_update),
-                  is_identity_(is_identity), identity_always_(identity_always)
+                  is_identity_(is_identity), identity_always_(identity_always),
+                  generated_storage_(generated_storage), generation_expr_(generation_expr)
             {
             }
 
@@ -1036,6 +1047,18 @@ namespace scratchbird
             {
                 return identity_always_;
             }
+            GeneratedColumnStorage generatedStorage() const
+            {
+                return generated_storage_;
+            }
+            Expression *generationExpr() const
+            {
+                return generation_expr_;
+            }
+            bool isGenerated() const
+            {
+                return generated_storage_ != GeneratedColumnStorage::NOT_GENERATED;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
@@ -1055,6 +1078,8 @@ namespace scratchbird
             StringPool::StringId fk_on_update_;  // ON UPDATE action
             bool is_identity_;                   // IDENTITY column flag (ALPHA Phase 1)
             bool identity_always_;               // true=ALWAYS, false=BY DEFAULT (ALPHA Phase 1)
+            GeneratedColumnStorage generated_storage_;  // GENERATED column storage type (ALPHA Phase 1)
+            Expression *generation_expr_;        // GENERATED ALWAYS AS expression (ALPHA Phase 1)
         };
 
         // Table-level constraint (ALPHA Phase C - Composite FK)
@@ -1095,13 +1120,17 @@ namespace scratchbird
                                 std::vector<StringPool::StringId> parent_columns,
                                 StringPool::StringId on_delete = 0,
                                 StringPool::StringId on_update = 0,
-                                StringPool::StringId name = 0)
+                                StringPool::StringId name = 0,
+                                bool is_deferrable = false,
+                                bool initially_deferred = false)
                 : TableConstraint(span, ConstraintType::FOREIGN_KEY, name),
                   child_columns_(std::move(child_columns)),
                   parent_table_(parent_table),
                   parent_columns_(std::move(parent_columns)),
                   on_delete_(on_delete),
-                  on_update_(on_update)
+                  on_update_(on_update),
+                  is_deferrable_(is_deferrable),
+                  initially_deferred_(initially_deferred)
             {
             }
 
@@ -1110,6 +1139,8 @@ namespace scratchbird
             const std::vector<StringPool::StringId> &parentColumns() const { return parent_columns_; }
             StringPool::StringId onDelete() const { return on_delete_; }
             StringPool::StringId onUpdate() const { return on_update_; }
+            bool isDeferrable() const { return is_deferrable_; }
+            bool initiallyDeferred() const { return initially_deferred_; }
 
         private:
             std::vector<StringPool::StringId> child_columns_;
@@ -1117,6 +1148,8 @@ namespace scratchbird
             std::vector<StringPool::StringId> parent_columns_;
             StringPool::StringId on_delete_;
             StringPool::StringId on_update_;
+            bool is_deferrable_;        // ALPHA Phase 1 - Deferred constraint checking
+            bool initially_deferred_;   // ALPHA Phase 1 - Deferred constraint checking
         };
 
         // UNIQUE table constraint
