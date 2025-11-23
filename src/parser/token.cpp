@@ -141,6 +141,8 @@ namespace scratchbird
                     return "MERGE";
                 case TokenType::KW_MATCHED:
                     return "MATCHED";
+                case TokenType::KW_SOURCE:
+                    return "SOURCE";
                 case TokenType::KW_RETURNING:
                     return "RETURNING";
                 case TokenType::KW_NULL:

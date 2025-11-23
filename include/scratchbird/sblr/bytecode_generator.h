@@ -132,6 +132,7 @@ namespace scratchbird
             void visit(parser::SetOperationStmt *node) override;     // UNION/INTERSECT/EXCEPT
             void visit(parser::UpdateStmt *node) override;           // Phase 1 Task 2.1
             void visit(parser::DeleteStmt *node) override;           // Phase 1 Task 2.2
+            void visit(parser::MergeStmt *node) override;            // ALPHA Phase 1 - Advanced SQL
             void visit(parser::AnalyzeStmt *node) override;          // Phase 1 Task 1.1.2
             void visit(parser::ExplainStmt *node) override;          // Phase 1 Task 1.5
             void visit(parser::StartTransactionStmt *node) override; // Phase 2 Task 2.6

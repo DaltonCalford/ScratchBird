@@ -4019,6 +4019,7 @@ namespace scratchbird
             void visit(SelectStmt *node) override;
             void visit(UpdateStmt *node) override;                   // Phase 1 Task 2.1
             void visit(DeleteStmt *node) override;                   // Phase 1 Task 2.2
+            void visit(MergeStmt *node) override;                    // ALPHA Phase 1 - Advanced SQL
             void visit(AnalyzeStmt *node) override;                  // Phase 1 Task 1.1.2
             void visit(ExplainStmt *node) override;                  // Phase 1 Task 1.5
             void visit(StartTransactionStmt *node) override; // Phase 2 Task 2.6
