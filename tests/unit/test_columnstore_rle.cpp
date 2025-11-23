@@ -21,7 +21,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
-#include <cassert>
+#include "gtest/gtest.h"
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -636,8 +636,9 @@ void test_round_trip()
 //=============================================================================
 // Main Test Runner
 //=============================================================================
-int main()
-{
+
+TEST(ColumnstoreRleTest, Comprehensive) {
+
     printf("═══════════════════════════════════════════════════════════════\n");
     printf("  Columnstore RLE Compression - Unit Tests\n");
     printf("═══════════════════════════════════════════════════════════════\n\n");
@@ -658,4 +659,5 @@ int main()
     printf("═══════════════════════════════════════════════════════════════\n");
 
     return;
+
 }
