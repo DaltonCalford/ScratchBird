@@ -121,6 +121,12 @@ namespace scratchbird
             KW_DISTINCT,
             KW_ALL,
 
+            // Advanced grouping (ROLLUP, CUBE, GROUPING SETS)
+            KW_ROLLUP,
+            KW_CUBE,
+            KW_GROUPING,
+            KW_SETS,
+
             // Set operations (UNION, INTERSECT, EXCEPT)
             KW_UNION,
             KW_INTERSECT,
