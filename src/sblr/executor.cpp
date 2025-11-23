@@ -5233,20 +5233,19 @@ namespace scratchbird
             // Read target table name
             std::string target_table_str = readString();
 
-            // Get target table metadata
             // Get default schema (PUBLIC)
             core::CatalogManager::SchemaInfo schema_info;
-            auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
-            if (schema_status != core::Status::OK)
+            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            if (status != core::Status::OK)
             {
                 error("Failed to get default schema");
                 return;
             }
 
-            // Get table by name
+            // Get target table metadata
             core::CatalogManager::TableInfo table_info;
-            auto get_status = db_->catalog_manager()->getTable(schema_info.schema_id, target_table_str, table_info, nullptr);
-            if (get_status != core::Status::OK)
+            status = db_->catalog_manager()->getTable(schema_info.schema_id, target_table_str, table_info, nullptr);
+            if (status != core::Status::OK)
             {
                 error("Target table not found: " + target_table_str);
                 return;
@@ -5254,8 +5253,8 @@ namespace scratchbird
 
             // Get table columns
             std::vector<core::CatalogManager::ColumnInfo> all_columns;
-            auto col_status = db_->catalog_manager()->getColumns(table_info.table_id, all_columns, nullptr);
-            if (col_status != core::Status::OK)
+            status = db_->catalog_manager()->getColumns(table_info.table_id, all_columns, nullptr);
+            if (status != core::Status::OK)
             {
                 error("Failed to get table columns");
                 return;
@@ -15520,11 +15519,12 @@ namespace scratchbird
             {
                 if (mode == 1 || mode == 2)  // OUT or INOUT
                 {
-                    if (variable_stack_->hasVariable(param_name))
+                    try
                     {
-                        out_values.push_back(variable_stack_->getVariable(param_name));
+                        Value& param_value = variable_stack_->getVariable(param_name);
+                        out_values.push_back(param_value);
                     }
-                    else
+                    catch (...)
                     {
                         out_values.push_back(Value());  // NULL if not found
                     }
@@ -15676,11 +15676,12 @@ namespace scratchbird
             {
                 if (mode == 1 || mode == 2)  // OUT or INOUT
                 {
-                    if (variable_stack_->hasVariable(param_name))
+                    try
                     {
-                        out_values.push_back(variable_stack_->getVariable(param_name));
+                        Value& param_value = variable_stack_->getVariable(param_name);
+                        out_values.push_back(param_value);
                     }
-                    else
+                    catch (...)
                     {
                         out_values.push_back(Value());  // NULL if not found
                     }

@@ -92,11 +92,10 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_tree_comprehensive\\.cpp$") 
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hnsw_dml\\.cpp$")  # UuidV7::generate() → generateUuidV7(), Database constructor signature, TransactionManager forward declaration
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_rtree_dml\\.cpp$")  # Duplicate Status declarations
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_query_plan_security\\.cpp$")  # ErrorContext.status field removed
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_multi_index_mga\\.cpp$")  # commit() -> commitTransaction() not auto-fixed
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_dml\\.cpp$")  # commit() → commitTransaction(), beginTransaction() signature, Database constructor, search() results parameter
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_mvcc\\.cpp$")  # Incomplete transaction API fixes
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_statistical_functions\\.cpp$")  # API compatibility issues
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_.*toast.*\\.cpp$")  # TOAST tests - Database constructor signature
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_.*toast.*\\.cpp$")  # Transaction API issues, TupleHeader, ToastPointer fields need fixing
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_subquery_parser\\.cpp$")  # API compatibility issues
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/btree_page_test\\.cpp$")  # Tuple struct initializer mismatch
 
@@ -196,7 +195,6 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_range_types\.cpp$")  # Standalon
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_rtree\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_snapshot_sorted\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_snapshot_xids\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_storage_toast_indexing\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_subquery_parser\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_subtransactions\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_temporal_range_types\.cpp$")  # Standalone main()
@@ -210,8 +208,6 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_text_search_types\.cpp$")  # Sta
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_tip_performance_benchmark\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_toast_cleanup\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_toast_cleanup_ordering\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_toast_crash_recovery_mga\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_toast_garbage_collection\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_transaction_deadlock_simple\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_transaction_markers_race\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_version_chain_cycle\.cpp$")  # Standalone main()

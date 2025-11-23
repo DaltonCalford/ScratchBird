@@ -24,8 +24,15 @@ protected:
         db_path_ = "test_toast_crash_recovery_mga.db";
 
         // Create test database
-        db_ = std::make_unique<Database>(db_path_, 50 * 1024 * 1024); // 50MB
-        ASSERT_EQ(db_->open(), Status::OK);
+        ErrorContext ctx;
+        Status status = Database::create(db_path_, 8192, &ctx);
+        if (status != Status::OK && status != Status::ERROR_EXISTS) {
+            FAIL() << "Failed to create database: " << ctx.message;
+        }
+
+        db_ = std::make_unique<Database>();
+        status = db_->open(db_path_, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.message;
 
         storage_ = db_->storage_engine();
         catalog_ = db_->catalog_manager();
@@ -68,12 +75,14 @@ protected:
     void simulateDatabaseRestart()
     {
         // Close database
-        ASSERT_EQ(db_->close(), Status::OK);
+        db_->close();
         db_.reset();
 
         // Reopen database (simulates restart)
-        db_ = std::make_unique<Database>(db_path_, 50 * 1024 * 1024);
-        ASSERT_EQ(db_->open(), Status::OK);
+        ErrorContext ctx;
+        db_ = std::make_unique<Database>();
+        Status status = db_->open(db_path_, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to reopen database: " << ctx.message;
 
         // Reinitialize pointers
         storage_ = db_->storage_engine();
@@ -556,8 +565,3 @@ TEST_F(ToastCrashRecoveryMGATest, TIPStatePersistence)
 // Main
 // =============================================================================
 
-int main(int argc, char** argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}

@@ -426,8 +426,8 @@ namespace scratchbird
 
             // SQL Engine Commands (ALPHA Phase 1 - Developer Experience)
             KW_SHOW,          // SHOW TABLES, SHOW DATABASES, etc.
-            KW_DESCRIBE,      // DESCRIBE table (alias for SHOW COLUMNS FROM)
-            // KW_DESC already defined (line 116) - also used for DESCRIBE shorthand
+            KW_DESCRIBE,      // DESCRIBE table (alias for SHOW COLUMNS FROM table)
+            // KW_DESC already defined (line 117) - used for ORDER BY DESC, also works for DESCRIBE shorthand
             KW_TABLES,        // SHOW TABLES
             KW_DATABASES,     // SHOW DATABASES
             KW_SCHEMAS,       // SHOW SCHEMAS

@@ -58,7 +58,10 @@ TEST_F(MultiIndexMGATest, ConcurrentBTreeAndHashQueries)
     auto hash_idx = HashIndex::open(db_.get(), hash_uuid, hash_root);
 
     // Writer transaction inserts into both indexes
-    uint64_t writer_xid = tm_->beginTransaction();
+    uint64_t writer_xid;
+    ErrorContext ctx;
+    Status status = tm_->beginTransaction(0, writer_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     for (int i = 0; i < 100; i++)
     {
@@ -69,7 +72,8 @@ TEST_F(MultiIndexMGATest, ConcurrentBTreeAndHashQueries)
         hash_idx->insert(key.data(), key.size(), tid, writer_xid);
     }
 
-    tm_->commit(writer_xid);
+    status = tm_->commitTransaction(0, writer_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Concurrent readers on different indexes
     std::atomic<int> btree_matches{0};
@@ -77,7 +81,11 @@ TEST_F(MultiIndexMGATest, ConcurrentBTreeAndHashQueries)
 
     auto btree_reader = [&]()
     {
-        uint64_t xid = tm_->beginTransaction();
+        uint64_t xid;
+        ErrorContext ctx;
+        Status status = tm_->beginTransaction(0, xid, &ctx);
+        if (status != Status::OK) return;
+
         for (int i = 0; i < 100; i++)
         {
             std::vector<uint8_t> key = {static_cast<uint8_t>(i)};
@@ -85,12 +93,16 @@ TEST_F(MultiIndexMGATest, ConcurrentBTreeAndHashQueries)
             btree->search(key, xid, &results);
             btree_matches += results.size();
         }
-        tm_->commit(xid);
+        tm_->commitTransaction(0, xid, &ctx);
     };
 
     auto hash_reader = [&]()
     {
-        uint64_t xid = tm_->beginTransaction();
+        uint64_t xid;
+        ErrorContext ctx;
+        Status status = tm_->beginTransaction(0, xid, &ctx);
+        if (status != Status::OK) return;
+
         for (int i = 0; i < 100; i++)
         {
             std::vector<uint8_t> key = {static_cast<uint8_t>(i)};
@@ -98,7 +110,7 @@ TEST_F(MultiIndexMGATest, ConcurrentBTreeAndHashQueries)
             hash_idx->find(key.data(), key.size(), xid, &results);
             hash_matches += results.size();
         }
-        tm_->commit(xid);
+        tm_->commitTransaction(0, xid, &ctx);
     };
 
     std::thread t1(btree_reader);
@@ -128,23 +140,32 @@ TEST_F(MultiIndexMGATest, SnapshotIsolationConsistency)
     auto gin_idx = GinIndex::open(db_.get(), gin_uuid, gin_root);
 
     // Initial data
-    uint64_t init_xid = tm_->beginTransaction();
+    uint64_t init_xid;
+    ErrorContext ctx;
+    Status status = tm_->beginTransaction(0, init_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
     std::vector<uint8_t> key1 = {1};
     TID tid1 = makeTID(1, 1, 1);
     btree->insert(key1, tid1, init_xid);
     gin_idx->insert(key1, tid1);
-    tm_->commit(init_xid);
+    status = tm_->commitTransaction(0, init_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Start SNAPSHOT transaction (reader)
-    uint64_t snapshot_xid = tm_->beginTransaction();
+    uint64_t snapshot_xid;
+    status = tm_->beginTransaction(0, snapshot_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Concurrent writer adds more data
-    uint64_t writer_xid = tm_->beginTransaction();
+    uint64_t writer_xid;
+    status = tm_->beginTransaction(0, writer_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
     std::vector<uint8_t> key2 = {2};
     TID tid2 = makeTID(1, 2, 1);
     btree->insert(key2, tid2, writer_xid);
     gin_idx->insert(key2, tid2);
-    tm_->commit(writer_xid);
+    status = tm_->commitTransaction(0, writer_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Snapshot transaction should NOT see new data (TIP-based isolation)
     std::vector<TID> btree_results;
@@ -156,7 +177,8 @@ TEST_F(MultiIndexMGATest, SnapshotIsolationConsistency)
     // (Results depend on snapshot_xid relative to writer_xid)
     EXPECT_TRUE(btree_results.empty() || !btree_results.empty()); // May or may not see
 
-    tm_->commit(snapshot_xid);
+    status = tm_->commitTransaction(0, snapshot_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 }
 
 TEST_F(MultiIndexMGATest, MultiIndexRollbackVisibility)
@@ -175,7 +197,10 @@ TEST_F(MultiIndexMGATest, MultiIndexRollbackVisibility)
     auto hash_idx = HashIndex::open(db_.get(), hash_uuid, hash_root);
 
     // Insert and rollback
-    uint64_t xid = tm_->beginTransaction();
+    uint64_t xid;
+    ErrorContext ctx;
+    Status status = tm_->beginTransaction(0, xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     std::vector<uint8_t> key = {99};
     TID tid = makeTID(1, 999, 1);
@@ -183,10 +208,13 @@ TEST_F(MultiIndexMGATest, MultiIndexRollbackVisibility)
     btree->insert(key, tid, xid);
     hash_idx->insert(key.data(), key.size(), tid, xid);
 
-    tm_->rollback(xid); // Rollback transaction
+    status = tm_->rollbackTransaction(0, xid, &ctx); // Rollback transaction
+    ASSERT_EQ(status, Status::OK);
 
     // New transaction should NOT see rolled-back data
-    uint64_t reader_xid = tm_->beginTransaction();
+    uint64_t reader_xid;
+    status = tm_->beginTransaction(0, reader_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     std::vector<TID> btree_results;
     btree->search(key, reader_xid, &btree_results);
@@ -198,7 +226,8 @@ TEST_F(MultiIndexMGATest, MultiIndexRollbackVisibility)
     EXPECT_EQ(btree_results.size(), 0); // Not visible
     EXPECT_EQ(hash_results.size(), 0);  // Not visible
 
-    tm_->commit(reader_xid);
+    status = tm_->commitTransaction(0, reader_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 }
 
 TEST_F(MultiIndexMGATest, SpatialAndFullTextCombined)
@@ -219,7 +248,10 @@ TEST_F(MultiIndexMGATest, SpatialAndFullTextCombined)
     auto gin_idx = GinIndex::open(db_.get(), gin_uuid, gin_root);
 
     // Insert spatial and text data
-    uint64_t xid = tm_->beginTransaction();
+    uint64_t xid;
+    ErrorContext ctx;
+    Status status = tm_->beginTransaction(0, xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     BoundingBox bbox{0.0, 0.0, 10.0, 10.0};
     TID tid = makeTID(1, 100, 1);
@@ -229,10 +261,13 @@ TEST_F(MultiIndexMGATest, SpatialAndFullTextCombined)
     std::vector<uint8_t> text_key = {'h', 'e', 'l', 'l', 'o'};
     gin_idx->insert(text_key, tid);
 
-    tm_->commit(xid);
+    status = tm_->commitTransaction(0, xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Query both indexes with TIP visibility
-    uint64_t reader_xid = tm_->beginTransaction();
+    uint64_t reader_xid;
+    status = tm_->beginTransaction(0, reader_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     std::vector<TID> spatial_results;
     BoundingBox query_bbox{-5.0, -5.0, 15.0, 15.0};
@@ -244,7 +279,8 @@ TEST_F(MultiIndexMGATest, SpatialAndFullTextCombined)
     EXPECT_GT(spatial_results.size(), 0);
     EXPECT_GT(text_results.size(), 0);
 
-    tm_->commit(reader_xid);
+    status = tm_->commitTransaction(0, reader_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 }
 
 // =============================================================================
@@ -261,14 +297,20 @@ TEST_F(MultiIndexMGATest, ReadCommittedAcrossIndexes)
     auto btree = BTree::open(db_.get(), btree_uuid, btree_root);
 
     // Start READ COMMITTED reader
-    uint64_t reader_xid = tm_->beginTransaction();
+    uint64_t reader_xid;
+    ErrorContext ctx;
+    Status status = tm_->beginTransaction(0, reader_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Writer commits new data
-    uint64_t writer_xid = tm_->beginTransaction();
+    uint64_t writer_xid;
+    status = tm_->beginTransaction(0, writer_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
     std::vector<uint8_t> key = {42};
     TID tid = makeTID(1, 42, 1);
     btree->insert(key, tid, writer_xid);
-    tm_->commit(writer_xid);
+    status = tm_->commitTransaction(0, writer_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 
     // Reader should see newly committed data (READ COMMITTED semantics)
     std::vector<TID> results;
@@ -277,12 +319,6 @@ TEST_F(MultiIndexMGATest, ReadCommittedAcrossIndexes)
     // TIP-based visibility allows seeing committed changes
     EXPECT_GT(results.size(), 0);
 
-    tm_->commit(reader_xid);
-}
-
-// Run all tests
-int main(int argc, char **argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    status = tm_->commitTransaction(0, reader_xid, &ctx);
+    ASSERT_EQ(status, Status::OK);
 }

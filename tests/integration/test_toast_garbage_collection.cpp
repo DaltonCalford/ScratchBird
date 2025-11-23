@@ -22,8 +22,15 @@ protected:
     void SetUp() override
     {
         // Create test database
-        db_ = std::make_unique<Database>("test_toast_gc.db", 50 * 1024 * 1024); // 50MB
-        ASSERT_EQ(db_->open(), Status::OK);
+        ErrorContext ctx;
+        Status status = Database::create("test_toast_gc.db", 8192, &ctx);
+        if (status != Status::OK && status != Status::ERROR_EXISTS) {
+            FAIL() << "Failed to create database: " << ctx.message;
+        }
+
+        db_ = std::make_unique<Database>();
+        status = db_->open("test_toast_gc.db", &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.message;
 
         storage_ = db_->storage_engine();
         catalog_ = db_->catalog_manager();
@@ -472,8 +479,3 @@ TEST_F(ToastGarbageCollectionTest, StressTestManyOrphans)
 // Main
 // =============================================================================
 
-int main(int argc, char** argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
