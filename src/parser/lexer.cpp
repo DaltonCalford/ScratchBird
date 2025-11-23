@@ -370,7 +370,6 @@ namespace scratchbird
             // SQL Engine Commands (ALPHA Phase 1 - Developer Experience)
             {"SHOW", TokenType::KW_SHOW},
             {"DESCRIBE", TokenType::KW_DESCRIBE},
-            {"DESC", TokenType::KW_DESC},
             {"TABLES", TokenType::KW_TABLES},
             {"DATABASES", TokenType::KW_DATABASES},
             {"SCHEMAS", TokenType::KW_SCHEMAS},

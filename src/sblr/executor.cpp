@@ -15518,12 +15518,12 @@ namespace scratchbird
             {
                 if (mode == 1 || mode == 2)  // OUT or INOUT
                 {
-                    Value* param_value = variable_stack_->getVariable(param_name);
-                    if (param_value)
+                    try
                     {
-                        out_values.push_back(*param_value);
+                        Value& param_value = variable_stack_->getVariable(param_name);
+                        out_values.push_back(param_value);
                     }
-                    else
+                    catch (...)
                     {
                         out_values.push_back(Value());  // NULL if not found
                     }
@@ -15675,12 +15675,12 @@ namespace scratchbird
             {
                 if (mode == 1 || mode == 2)  // OUT or INOUT
                 {
-                    Value* param_value = variable_stack_->getVariable(param_name);
-                    if (param_value)
+                    try
                     {
-                        out_values.push_back(*param_value);
+                        Value& param_value = variable_stack_->getVariable(param_name);
+                        out_values.push_back(param_value);
                     }
-                    else
+                    catch (...)
                     {
                         out_values.push_back(Value());  // NULL if not found
                     }
