@@ -992,6 +992,11 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void GroupingExpr::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void ArrayLiteral::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);
@@ -1370,6 +1375,13 @@ namespace scratchbird
             }
 
             out_ << "END";
+        }
+
+        void ASTPrinter::visit(GroupingExpr *node)
+        {
+            out_ << "GROUPING(";
+            node->arg()->accept(this);
+            out_ << ")";
         }
 
         void ASTPrinter::visit(ArrayLiteral *node)

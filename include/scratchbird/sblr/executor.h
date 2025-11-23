@@ -410,7 +410,10 @@ namespace scratchbird
                 enum class AggFunc {
                     COUNT, SUM, AVG, MIN, MAX, ARRAY_AGG,
                     // Statistical functions (Nov 14, 2025)
-                    STDDEV_SAMP, STDDEV_POP, VAR_SAMP, VAR_POP, CORR, COVAR_POP
+                    STDDEV_SAMP, STDDEV_POP, VAR_SAMP, VAR_POP, CORR, COVAR_POP,
+                    // Regression functions (Alpha 1 - Missing Functions)
+                    REGR_SLOPE, REGR_INTERCEPT, REGR_COUNT, REGR_R2,
+                    REGR_AVGX, REGR_AVGY, REGR_SXX, REGR_SYY, REGR_SXY
                 };
 
                 AggFunc func;

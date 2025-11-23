@@ -129,6 +129,7 @@ namespace scratchbird
             void visit(CoalesceExpr *node) override;   // Phase 1 Task 8
             void visit(NullIfExpr *node) override;     // Phase 1 Task 8
             void visit(CaseExpr *node) override;       // Phase 1 Task 8
+            void visit(GroupingExpr *node) override;   // Phase 3: Advanced Grouping
             void visit(ArrayLiteral *node) override;   // Phase 2 Task 12
             void visit(SubqueryExpr *node) override;   // Phase 2 Wave 2 - Agent B
             void visit(ColumnDef *node) override;

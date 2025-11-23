@@ -66,6 +66,12 @@ namespace scratchbird
             {"DISTINCT", TokenType::KW_DISTINCT},
             {"ALL", TokenType::KW_ALL},
 
+            // Advanced grouping (ROLLUP, CUBE, GROUPING SETS)
+            {"ROLLUP", TokenType::KW_ROLLUP},
+            {"CUBE", TokenType::KW_CUBE},
+            {"GROUPING", TokenType::KW_GROUPING},
+            {"SETS", TokenType::KW_SETS},
+
             // Set operations (UNION, INTERSECT, EXCEPT)
             {"UNION", TokenType::KW_UNION},
             {"INTERSECT", TokenType::KW_INTERSECT},
