@@ -88,6 +88,8 @@ namespace scratchbird
             KW_DELETE,   // Phase 1 Task 2.2: DELETE statement
             KW_MERGE,    // Alpha 1 - Advanced SQL: MERGE statement
             KW_MATCHED,  // Alpha 1 - Advanced SQL: MERGE WHEN MATCHED
+            KW_SOURCE,   // Alpha 1 - Advanced SQL: MERGE WHEN NOT MATCHED BY SOURCE
+            KW_TARGET,   // Alpha 1 - Advanced SQL: MERGE WHEN NOT MATCHED BY TARGET
             KW_RETURNING, // Alpha 1 - Advanced SQL: RETURNING clause
             KW_NULL,
             KW_NOT,

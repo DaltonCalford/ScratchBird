@@ -2958,7 +2958,7 @@ namespace scratchbird
                 // Wrap in SubqueryExpr
                 SelectStmt *select_stmt = static_cast<SelectStmt *>(subquery_stmt);
                 auto subquery_span = select_stmt->span();
-                source = arena_.make<SubqueryExpr>(subquery_span, select_stmt);
+                source = arena_.make<SubqueryExpr>(subquery_span, select_stmt, SubqueryType::SCALAR);
 
                 if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after subquery"))
                 {
@@ -2969,9 +2969,10 @@ namespace scratchbird
             else if (check(TokenType::IDENTIFIER))
             {
                 // Table name source
+                auto id_start = current().location;
                 StringPool::StringId source_table = current().value.string_id;
-                auto id_span = current().span;
                 advance();
+                auto id_span = makeSpan(id_start);
                 source = arena_.make<IdentifierExpr>(id_span, source_table);
             }
             else
