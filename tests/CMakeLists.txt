@@ -92,7 +92,6 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_tree_comprehensive\\.cpp$") 
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hnsw_dml\\.cpp$")  # UuidV7::generate() → generateUuidV7(), Database constructor signature, TransactionManager forward declaration
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_rtree_dml\\.cpp$")  # Duplicate Status declarations
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_query_plan_security\\.cpp$")  # ErrorContext.status field removed
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_multi_index_mga\\.cpp$")  # commit() -> commitTransaction() not auto-fixed
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_dml\\.cpp$")  # commit() → commitTransaction(), beginTransaction() signature, Database constructor, search() results parameter
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_mvcc\\.cpp$")  # Incomplete transaction API fixes
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_statistical_functions\\.cpp$")  # API compatibility issues
