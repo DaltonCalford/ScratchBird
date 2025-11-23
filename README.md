@@ -11,9 +11,9 @@ ScratchBird aims to be a **universal database engine** that can emulate PostgreS
 ## Current Status
 
 **Phase:** Alpha 1 - Engine Functionality (Local Operations)
-**Progress:** ~75% of Alpha 1 complete (~11% of total project)
-**Remaining:** ~727-962 hours (18-24 weeks)
-**Current Work:** 30 missing functions → 61 improvement opportunities → CLI tools
+**Progress:** ~70% of Alpha 1 complete (~11% of total project)
+**Remaining:** ~867-1,152 hours (22-29 weeks)
+**Current Work:** Functions → Improvements → Server Architecture → CLI tools
 **Started:** June 2025 (5 months of evening/weekend development)
 **Project Type:** Educational/Research (no time constraints)
 **Last Updated:** November 23, 2025
@@ -103,7 +103,7 @@ ScratchBird aims to be a **universal database engine** that can emulate PostgreS
 
 ### What's Being Built 🚧
 
-**Current Work (Alpha 1 - ~25% remaining, 727-962 hours):**
+**Current Work (Alpha 1 - ~30% remaining, 867-1,152 hours):**
 
 - 🚧 **PRIORITY 1: Missing Functions** (207-312 hours / 5-8 weeks)
   - 30 functions for full PostgreSQL/MySQL/MSSQL/Firebird compatibility
@@ -117,12 +117,21 @@ ScratchBird aims to be a **universal database engine** that can emulate PostgreS
   - P3 (Low): 20+ items - MFA, DECIMAL optimization, SIMD, partition pruning
   - See [IMPROVEMENT_OPPORTUNITIES.md](docs/audit/IMPROVEMENT_OPPORTUNITIES.md)
 
+- ⏳ **PRIORITY 2.5: Local Server Architecture** (140-190 hours / 3.5-4.5 weeks)
+  - Transition from embedded to client-server model
+  - IPC infrastructure (Unix sockets, Named pipes, TCP localhost)
+  - Wire protocol (binary message format, result streaming)
+  - sb_server process (multi-threaded, session management)
+  - libscratchbird_client library (auto-start server, connection pooling)
+  - **Mandatory before CLI tools can function**
+  - See [LOCAL_SERVER_ARCHITECTURE_PLAN.md](docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md)
+
 - ⏳ **PRIORITY 3: Command-Line Tools** (90-110 hours / 2.5-3 weeks)
-  - sb_isql (interactive SQL shell)
-  - sb_verify (database integrity checker)
-  - sb_backup (backup/restore tool)
-  - sb_security (user/role management tool)
-  - *To be started after functions and improvements*
+  - sb_isql (interactive SQL shell) - connects via libscratchbird_client
+  - sb_verify (database integrity checker) - connects via libscratchbird_client
+  - sb_backup (backup/restore tool) - connects via libscratchbird_client
+  - sb_security (user/role management tool) - connects via libscratchbird_client
+  - *To be started after server architecture*
 
 **Recently Completed:**
 - ✅ Views (100% COMPLETE - materialized views with full data population) 🎉

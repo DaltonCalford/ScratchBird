@@ -10,9 +10,9 @@
 
 ---
 
-## Current Work: Alpha 1 Completion (~25% Remaining)
+## Current Work: Alpha 1 Completion (~30% Remaining)
 
-**Focus:** Complete missing functions, implement all improvement opportunities, then build command-line tools
+**Focus:** Complete missing functions, implement improvement opportunities, build local server architecture, then CLI tools
 
 ### What's Working ✅
 
@@ -72,13 +72,32 @@ See [docs/audit/IMPROVEMENT_OPPORTUNITIES.md](docs/audit/IMPROVEMENT_OPPORTUNITI
 
 **Total Improvement Opportunities:** 61 items across all priority levels
 
-**PRIORITY 3: Command-Line Tools** (~90-110 hours / 2.5-3 weeks):
-*To be started after all functions and improvements are implemented*
+**PRIORITY 2.5: Local Server Architecture** (~140-190 hours / 3.5-4.5 weeks):
+See [docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md](docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md) for complete details.
 
-- sb_isql (interactive SQL shell)
-- sb_verify (database integrity checker)
-- sb_backup (backup/restore tool)
-- sb_security (user/role management tool)
+*Transition from embedded to client-server model - MANDATORY before CLI tools*
+
+- **Phase 1:** IPC Infrastructure (Unix sockets, Named pipes, TCP localhost) - 40-50 hours
+- **Phase 2:** Wire Protocol (binary message format, streaming) - 30-40 hours
+- **Phase 3:** Server Implementation (sb_server, multi-threading, sessions) - 40-50 hours
+- **Phase 4:** Client Library (libscratchbird_client, auto-start) - 20-30 hours
+- **Phase 5:** Integration & Testing (security, performance, cross-platform) - 10-20 hours
+
+**Key Features:**
+- Database files opened exclusively by server process
+- Platform-appropriate IPC (Unix sockets on Linux/macOS, Named pipes on Windows)
+- Auto-start server when client connects
+- Authentication and session management
+- Multi-client support
+- Upgrade path to Alpha 3 network protocols
+
+**PRIORITY 3: Command-Line Tools** (~90-110 hours / 2.5-3 weeks):
+*To be started after server architecture is implemented*
+
+- sb_isql (interactive SQL shell) - connects via libscratchbird_client
+- sb_verify (database integrity checker) - connects via libscratchbird_client
+- sb_backup (backup/restore tool) - connects via libscratchbird_client
+- sb_security (user/role management tool) - connects via libscratchbird_client
 
 ### Immediate Next Steps
 
@@ -97,13 +116,20 @@ See [docs/audit/IMPROVEMENT_OPPORTUNITIES.md](docs/audit/IMPROVEMENT_OPPORTUNITI
    - P2 (Medium): Optimizations, completeness - 100-150 hours
    - P3 (Low): Enhancements, advanced features - 200+ hours
 
-3. **Build command-line tools** (90-110 hours / 2.5-3 weeks)
+3. **Implement local server architecture** (140-190 hours / 3.5-4.5 weeks)
+   - Phase 1: IPC infrastructure (Unix sockets, named pipes, TCP) - 40-50 hours
+   - Phase 2: Wire protocol (message format, streaming) - 30-40 hours
+   - Phase 3: Server implementation (sb_server process) - 40-50 hours
+   - Phase 4: Client library (libscratchbird_client) - 20-30 hours
+   - Phase 5: Integration & testing - 10-20 hours
+
+4. **Build command-line tools** (90-110 hours / 2.5-3 weeks)
    - sb_isql (interactive SQL shell)
    - sb_verify (database integrity checker)
    - sb_backup (backup/restore tool)
    - sb_security (user/role management tool)
 
-**Total Alpha 1 Remaining Work:** 727-962 hours (18-24 weeks)
+**Total Alpha 1 Remaining Work:** 867-1,152 hours (22-29 weeks)
 
 ---
 
@@ -301,7 +327,7 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 
 ## Summary
 
-**Current Focus:** Complete Alpha 1 (~25% remaining)
+**Current Focus:** Complete Alpha 1 (~30% remaining)
 
 **Immediate Work:**
 1. **Implement 30 missing functions** (207-312 hours / 5-8 weeks) - IN PROGRESS
@@ -314,11 +340,17 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
    - P2 (Medium): 25 items - optimizations, completeness
    - P3 (Low): 20+ items - enhancements, advanced features
 
-3. **Build CLI tools** (90-110 hours / 2.5-3 weeks) - AFTER improvements
+3. **Implement local server architecture** (140-190 hours / 3.5-4.5 weeks) - AFTER improvements
+   - Transition from embedded to client-server model
+   - IPC infrastructure, wire protocol, sb_server, libscratchbird_client
+   - Mandatory before CLI tools can function
+
+4. **Build CLI tools** (90-110 hours / 2.5-3 weeks) - AFTER server architecture
    - sb_isql, sb_verify, sb_backup, sb_security
+   - All tools connect via libscratchbird_client
 
 **Next Major Milestones:**
-1. Alpha 1 completion (~18-24 weeks total: 727-962 hours remaining)
+1. Alpha 1 completion (~22-29 weeks total: 867-1,152 hours remaining)
 2. Alpha 2: Multi-dialect parsers (PostgreSQL, MySQL, MSSQL, Firebird, ScratchBird)
 3. Alpha 3: Network protocols (libpq, MySQL, TDS, native)
 4. Beta 1-4: Distributed systems + NoSQL models
@@ -330,5 +362,5 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 ---
 
 **Last Updated:** November 23, 2025
-**Status:** Alpha 1 - ~75% complete (~11% of total project)
-**Current Priority:** Function implementation (123/153 complete) → Improvement opportunities (61 items) → CLI tools
+**Status:** Alpha 1 - ~70% complete (~11% of total project)
+**Current Priority:** Functions (123/153) → Improvements (61 items) → Server architecture → CLI tools
