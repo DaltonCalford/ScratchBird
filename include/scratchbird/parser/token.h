@@ -88,7 +88,8 @@ namespace scratchbird
             KW_DELETE,   // Phase 1 Task 2.2: DELETE statement
             KW_MERGE,    // Alpha 1 - Advanced SQL: MERGE statement
             KW_MATCHED,  // Alpha 1 - Advanced SQL: MERGE WHEN MATCHED
-            KW_SOURCE,   // Alpha 1 - Advanced SQL: MERGE ... WHEN NOT MATCHED BY SOURCE
+            KW_SOURCE,   // Alpha 1 - Advanced SQL: MERGE WHEN NOT MATCHED BY SOURCE
+            KW_TARGET,   // Alpha 1 - Advanced SQL: MERGE WHEN NOT MATCHED BY TARGET
             KW_RETURNING, // Alpha 1 - Advanced SQL: RETURNING clause
             KW_NULL,
             KW_NOT,
@@ -426,6 +427,7 @@ namespace scratchbird
             // SQL Engine Commands (ALPHA Phase 1 - Developer Experience)
             KW_SHOW,          // SHOW TABLES, SHOW DATABASES, etc.
             KW_DESCRIBE,      // DESCRIBE table (alias for SHOW COLUMNS FROM table)
+            // KW_DESC already defined (line 117) - used for ORDER BY DESC, also works for DESCRIBE shorthand
             KW_TABLES,        // SHOW TABLES
             KW_DATABASES,     // SHOW DATABASES
             KW_SCHEMAS,       // SHOW SCHEMAS
