@@ -264,6 +264,10 @@ namespace scratchbird
                 {
                     stmt = parseDelete();
                 }
+                else if (match(TokenType::KW_MERGE))  // Alpha 1 - Advanced SQL
+                {
+                    stmt = parseMerge();
+                }
                 else if (match(TokenType::KW_ANALYZE))  // Phase 1 Task 1.1.2
                 {
                     stmt = parseAnalyze();
@@ -2189,8 +2193,41 @@ namespace scratchbird
                 return nullptr;
             }
 
+            // Parse optional RETURNING clause (Alpha 1 - Advanced SQL)
+            bool has_returning = false;
+            std::vector<StringPool::StringId> returning_columns;
+
+            if (match(TokenType::KW_RETURNING))
+            {
+                has_returning = true;
+
+                if (match(TokenType::STAR))
+                {
+                    // RETURNING * - return all columns
+                    returning_columns.push_back(stringPool().intern("*"));
+                }
+                else
+                {
+                    // RETURNING column1, column2, ...
+                    do
+                    {
+                        if (!check(TokenType::IDENTIFIER))
+                        {
+                            error("Expected column name in RETURNING clause");
+                            synchronize();
+                            return nullptr;
+                        }
+
+                        returning_columns.push_back(current().value.string_id);
+                        advance();
+
+                    } while (match(TokenType::COMMA));
+                }
+            }
+
             auto span = makeSpan(start_loc);
-            return arena_.make<InsertStmt>(span, table_name, std::move(columns), std::move(values));
+            return arena_.make<InsertStmt>(span, table_name, std::move(columns), std::move(values),
+                                         has_returning, std::move(returning_columns));
         }
 
         // Helper: Parse SELECT core (without ORDER BY/LIMIT for set operations)
@@ -2755,8 +2792,41 @@ namespace scratchbird
                 }
             }
 
+            // Parse optional RETURNING clause (Alpha 1 - Advanced SQL)
+            bool has_returning = false;
+            std::vector<StringPool::StringId> returning_columns;
+
+            if (match(TokenType::KW_RETURNING))
+            {
+                has_returning = true;
+
+                if (match(TokenType::STAR))
+                {
+                    // RETURNING * - return all columns
+                    returning_columns.push_back(stringPool().intern("*"));
+                }
+                else
+                {
+                    // RETURNING column1, column2, ...
+                    do
+                    {
+                        if (!check(TokenType::IDENTIFIER))
+                        {
+                            error("Expected column name in RETURNING clause");
+                            synchronize();
+                            return nullptr;
+                        }
+
+                        returning_columns.push_back(current().value.string_id);
+                        advance();
+
+                    } while (match(TokenType::COMMA));
+                }
+            }
+
             auto span = makeSpan(start_loc);
-            return arena_.make<UpdateStmt>(span, table_name, std::move(assignments), where_clause);
+            return arena_.make<UpdateStmt>(span, table_name, std::move(assignments), where_clause,
+                                         has_returning, std::move(returning_columns));
         }
 
         Statement *Parser::parseDelete()
@@ -2796,8 +2866,313 @@ namespace scratchbird
                 }
             }
 
+            // Parse optional RETURNING clause (Alpha 1 - Advanced SQL)
+            bool has_returning = false;
+            std::vector<StringPool::StringId> returning_columns;
+
+            if (match(TokenType::KW_RETURNING))
+            {
+                has_returning = true;
+
+                if (match(TokenType::STAR))
+                {
+                    // RETURNING * - return all columns
+                    returning_columns.push_back(stringPool().intern("*"));
+                }
+                else
+                {
+                    // RETURNING column1, column2, ...
+                    do
+                    {
+                        if (!check(TokenType::IDENTIFIER))
+                        {
+                            error("Expected column name in RETURNING clause");
+                            synchronize();
+                            return nullptr;
+                        }
+
+                        returning_columns.push_back(current().value.string_id);
+                        advance();
+
+                    } while (match(TokenType::COMMA));
+                }
+            }
+
             auto span = makeSpan(start_loc);
-            return arena_.make<DeleteStmt>(span, table_name, where_clause);
+            return arena_.make<DeleteStmt>(span, table_name, where_clause,
+                                         has_returning, std::move(returning_columns));
+        }
+
+        Statement *Parser::parseMerge()
+        {
+            // MERGE INTO target_table USING source ON condition WHEN clauses...
+            // Alpha 1 - Advanced SQL
+            auto start_loc = previous().location;
+
+            // Expect INTO keyword
+            if (!consume(TokenType::KW_INTO, "Expected INTO after MERGE"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse target table name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected target table name after MERGE INTO");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId target_table = current().value.string_id;
+            advance();
+
+            // Expect USING keyword
+            if (!consume(TokenType::KW_USING, "Expected USING after target table"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse source (can be table name or subquery)
+            Expression *source = nullptr;
+            if (match(TokenType::LEFT_PAREN))
+            {
+                // Subquery source
+                Statement *subquery_stmt = parseSelect();
+                if (!subquery_stmt)
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                // Wrap in SubqueryExpr
+                SelectStmt *select_stmt = static_cast<SelectStmt *>(subquery_stmt);
+                auto subquery_span = select_stmt->span();
+                source = arena_.make<SubqueryExpr>(subquery_span, select_stmt);
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after subquery"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+            }
+            else if (check(TokenType::IDENTIFIER))
+            {
+                // Table name source
+                StringPool::StringId source_table = current().value.string_id;
+                auto id_span = current().span;
+                advance();
+                source = arena_.make<IdentifierExpr>(id_span, source_table);
+            }
+            else
+            {
+                error("Expected table name or subquery after USING");
+                synchronize();
+                return nullptr;
+            }
+
+            // Expect ON keyword
+            if (!consume(TokenType::KW_ON, "Expected ON after source"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse ON condition
+            Expression *on_condition = parseExpression();
+            if (!on_condition)
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse WHEN clauses
+            std::vector<MergeStmt::WhenClause> when_clauses;
+
+            while (match(TokenType::KW_WHEN))
+            {
+                MergeStmt::WhenClause clause;
+                clause.condition = nullptr;
+
+                if (match(TokenType::KW_MATCHED))
+                {
+                    // WHEN MATCHED THEN UPDATE
+                    clause.type = MergeStmt::WhenClause::MATCHED;
+
+                    if (!consume(TokenType::KW_THEN, "Expected THEN after MATCHED"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    if (!consume(TokenType::KW_UPDATE, "Expected UPDATE after THEN"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    if (!consume(TokenType::KW_SET, "Expected SET after UPDATE"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    // Parse UPDATE assignments
+                    do
+                    {
+                        if (!check(TokenType::IDENTIFIER))
+                        {
+                            error("Expected column name in SET clause");
+                            synchronize();
+                            return nullptr;
+                        }
+
+                        StringPool::StringId column_name = current().value.string_id;
+                        advance();
+
+                        if (!consume(TokenType::EQUAL, "Expected '=' after column name"))
+                        {
+                            synchronize();
+                            return nullptr;
+                        }
+
+                        Expression *value = parseExpression();
+                        if (!value)
+                        {
+                            synchronize();
+                            return nullptr;
+                        }
+
+                        clause.assignments.emplace_back(column_name, value);
+
+                    } while (match(TokenType::COMMA));
+                }
+                else if (match(TokenType::KW_NOT))
+                {
+                    // WHEN NOT MATCHED [BY SOURCE] THEN ...
+                    if (!consume(TokenType::KW_MATCHED, "Expected MATCHED after NOT"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    if (match(TokenType::KW_BY))
+                    {
+                        // WHEN NOT MATCHED BY SOURCE THEN DELETE
+                        if (!consume(TokenType::KW_SOURCE, "Expected SOURCE after BY"))
+                        {
+                            synchronize();
+                            return nullptr;
+                        }
+
+                        clause.type = MergeStmt::WhenClause::NOT_MATCHED_BY_SOURCE;
+
+                        if (!consume(TokenType::KW_THEN, "Expected THEN"))
+                        {
+                            synchronize();
+                            return nullptr;
+                        }
+
+                        if (!consume(TokenType::KW_DELETE, "Expected DELETE"))
+                        {
+                            synchronize();
+                            return nullptr;
+                        }
+                    }
+                    else
+                    {
+                        // WHEN NOT MATCHED THEN INSERT
+                        clause.type = MergeStmt::WhenClause::NOT_MATCHED;
+
+                        if (!consume(TokenType::KW_THEN, "Expected THEN after NOT MATCHED"))
+                        {
+                            synchronize();
+                            return nullptr;
+                        }
+
+                        if (!consume(TokenType::KW_INSERT, "Expected INSERT"))
+                        {
+                            synchronize();
+                            return nullptr;
+                        }
+
+                        // Optional column list
+                        if (match(TokenType::LEFT_PAREN))
+                        {
+                            do
+                            {
+                                if (!check(TokenType::IDENTIFIER))
+                                {
+                                    error("Expected column name");
+                                    synchronize();
+                                    return nullptr;
+                                }
+
+                                clause.insert_columns.push_back(current().value.string_id);
+                                advance();
+
+                            } while (match(TokenType::COMMA));
+
+                            if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after column list"))
+                            {
+                                synchronize();
+                                return nullptr;
+                            }
+                        }
+
+                        // VALUES clause
+                        if (!consume(TokenType::KW_VALUES, "Expected VALUES"))
+                        {
+                            synchronize();
+                            return nullptr;
+                        }
+
+                        if (!consume(TokenType::LEFT_PAREN, "Expected '(' after VALUES"))
+                        {
+                            synchronize();
+                            return nullptr;
+                        }
+
+                        // Parse values
+                        do
+                        {
+                            Expression *value = parseExpression();
+                            if (!value)
+                            {
+                                synchronize();
+                                return nullptr;
+                            }
+
+                            clause.insert_values.push_back(value);
+
+                        } while (match(TokenType::COMMA));
+
+                        if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after VALUES"))
+                        {
+                            synchronize();
+                            return nullptr;
+                        }
+                    }
+                }
+                else
+                {
+                    error("Expected MATCHED or NOT after WHEN");
+                    synchronize();
+                    return nullptr;
+                }
+
+                when_clauses.push_back(clause);
+            }
+
+            if (when_clauses.empty())
+            {
+                error("MERGE statement requires at least one WHEN clause");
+                return nullptr;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<MergeStmt>(span, target_table, source, on_condition, std::move(when_clauses));
         }
 
         Statement *Parser::parseAnalyze()

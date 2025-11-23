@@ -208,6 +208,11 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void MergeStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void AnalyzeStmt::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);

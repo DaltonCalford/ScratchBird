@@ -54,6 +54,7 @@ namespace scratchbird
             INSERT,
             SELECT,
             SET_OPERATION,     // UNION/INTERSECT/EXCEPT set operations
+            MERGE,             // Alpha 1 - Advanced SQL: MERGE statement
             UPDATE,            // Phase 1 Task 2.1: UPDATE statement
             DELETE_STMT,       // Phase 1 Task 2.2: DELETE statement (DELETE is a keyword)
             ANALYZE,           // Phase 1 Task 1.1.2: Statistics collection
@@ -1782,9 +1783,11 @@ namespace scratchbird
         {
         public:
             InsertStmt(const SourceSpan &span, StringPool::StringId table_name,
-                       std::vector<StringPool::StringId> columns, std::vector<Expression *> values)
+                       std::vector<StringPool::StringId> columns, std::vector<Expression *> values,
+                       bool has_returning = false, std::vector<StringPool::StringId> returning_columns = {})
                 : Statement(ASTKind::INSERT, span), table_name_(table_name),
-                  columns_(std::move(columns)), values_(std::move(values))
+                  columns_(std::move(columns)), values_(std::move(values)),
+                  has_returning_(has_returning), returning_columns_(std::move(returning_columns))
             {
             }
 
@@ -1800,6 +1803,14 @@ namespace scratchbird
             {
                 return values_;
             }
+            bool hasReturning() const
+            {
+                return has_returning_;
+            }
+            const std::vector<StringPool::StringId> &returningColumns() const
+            {
+                return returning_columns_;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
@@ -1807,6 +1818,8 @@ namespace scratchbird
             StringPool::StringId table_name_;
             std::vector<StringPool::StringId> columns_;
             std::vector<Expression *> values_;
+            bool has_returning_;
+            std::vector<StringPool::StringId> returning_columns_;
         };
 
         // SELECT list item
@@ -2169,9 +2182,11 @@ namespace scratchbird
         {
         public:
             UpdateStmt(const SourceSpan &span, StringPool::StringId table_name,
-                       std::vector<Assignment> assignments, Expression *where_clause = nullptr)
+                       std::vector<Assignment> assignments, Expression *where_clause = nullptr,
+                       bool has_returning = false, std::vector<StringPool::StringId> returning_columns = {})
                 : Statement(ASTKind::UPDATE, span), table_name_(table_name),
-                  assignments_(std::move(assignments)), where_clause_(where_clause)
+                  assignments_(std::move(assignments)), where_clause_(where_clause),
+                  has_returning_(has_returning), returning_columns_(std::move(returning_columns))
             {
             }
 
@@ -2187,6 +2202,14 @@ namespace scratchbird
             {
                 return where_clause_;
             }
+            bool hasReturning() const
+            {
+                return has_returning_;
+            }
+            const std::vector<StringPool::StringId> &returningColumns() const
+            {
+                return returning_columns_;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
@@ -2194,6 +2217,8 @@ namespace scratchbird
             StringPool::StringId table_name_;
             std::vector<Assignment> assignments_;
             Expression *where_clause_;
+            bool has_returning_;
+            std::vector<StringPool::StringId> returning_columns_;
         };
 
         // DELETE statement (Phase 1 Task 2.2)
@@ -2201,9 +2226,11 @@ namespace scratchbird
         {
         public:
             DeleteStmt(const SourceSpan &span, StringPool::StringId table_name,
-                       Expression *where_clause = nullptr)
+                       Expression *where_clause = nullptr,
+                       bool has_returning = false, std::vector<StringPool::StringId> returning_columns = {})
                 : Statement(ASTKind::DELETE_STMT, span), table_name_(table_name),
-                  where_clause_(where_clause)
+                  where_clause_(where_clause),
+                  has_returning_(has_returning), returning_columns_(std::move(returning_columns))
             {
             }
 
@@ -2215,12 +2242,72 @@ namespace scratchbird
             {
                 return where_clause_;
             }
+            bool hasReturning() const
+            {
+                return has_returning_;
+            }
+            const std::vector<StringPool::StringId> &returningColumns() const
+            {
+                return returning_columns_;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
         private:
             StringPool::StringId table_name_;
             Expression *where_clause_;
+            bool has_returning_;
+            std::vector<StringPool::StringId> returning_columns_;
+        };
+
+        // MERGE statement (Alpha 1 - Advanced SQL)
+        class MergeStmt : public Statement
+        {
+        public:
+            struct WhenClause
+            {
+                enum Type {
+                    MATCHED,              // WHEN MATCHED THEN UPDATE
+                    NOT_MATCHED,          // WHEN NOT MATCHED THEN INSERT
+                    NOT_MATCHED_BY_SOURCE // WHEN NOT MATCHED BY SOURCE THEN DELETE
+                };
+
+                Type type;
+                Expression* condition;  // Optional additional condition
+
+                // For UPDATE
+                std::vector<Assignment> assignments;
+
+                // For INSERT
+                std::vector<StringPool::StringId> insert_columns;
+                std::vector<Expression*> insert_values;
+            };
+
+            MergeStmt(const SourceSpan& span,
+                      StringPool::StringId target_table,
+                      Expression* source,  // Can be table or subquery
+                      Expression* on_condition,
+                      const std::vector<WhenClause>& when_clauses)
+                : Statement(ASTKind::MERGE, span),
+                  target_table_(target_table),
+                  source_(source),
+                  on_condition_(on_condition),
+                  when_clauses_(when_clauses)
+            {
+            }
+
+            StringPool::StringId targetTable() const { return target_table_; }
+            Expression* source() const { return source_; }
+            Expression* onCondition() const { return on_condition_; }
+            const std::vector<WhenClause>& whenClauses() const { return when_clauses_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId target_table_;
+            Expression* source_;
+            Expression* on_condition_;
+            std::vector<WhenClause> when_clauses_;
         };
 
         // ANALYZE statement (Phase 1 Task 1.1.2: Statistics collection)
