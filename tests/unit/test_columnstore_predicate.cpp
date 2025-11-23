@@ -19,7 +19,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
-#include <cassert>
+#include "gtest/gtest.h"
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -509,8 +509,9 @@ void test_selectivity()
 // Main
 // ============================================================================
 
-int main()
-{
+
+TEST(ColumnstorePredicateTest, Comprehensive) {
+
     printf("═══════════════════════════════════════════════════════════════\n");
     printf("  Columnstore Predicate Pushdown - Unit Tests\n");
     printf("═══════════════════════════════════════════════════════════════\n\n");
@@ -529,4 +530,5 @@ int main()
     printf("═══════════════════════════════════════════════════════════════\n");
 
     return;
+
 }

@@ -1,6 +1,6 @@
 #include "scratchbird/core/tsvector.h"
 #include "scratchbird/core/tsquery.h"
-#include <cassert>
+#include "gtest/gtest.h"
 #include <iostream>
 
 using namespace scratchbird::core;
@@ -274,8 +274,9 @@ void test_match_complex()
 // Main
 // ============================================================================
 
-int main()
-{
+
+TEST(TextSearchTypesTest, Comprehensive) {
+
     std::cout << "=== Testing TSVector ===" << std::endl;
     test_lexeme_construction();
     test_tsvector_parse_simple();
@@ -305,4 +306,5 @@ int main()
 
     std::cout << "\n=== All Tests Passed! ===" << std::endl;
     return;
+
 }
