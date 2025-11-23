@@ -14,13 +14,13 @@
 using namespace scratchbird::core;
 
 // Helper: Create a key from a string
-std::vector<uint8_t> makeKey(const std::string &s)
+static std::vector<uint8_t> makeKey(const std::string &s)
 {
     return std::vector<uint8_t>(s.begin(), s.end());
 }
 
 // Helper: Simple key extractor for tags
-std::vector<std::vector<uint8_t>> extractTags(const void *data, size_t len)
+static std::vector<std::vector<uint8_t>> extractTags(const void *data, size_t len)
 {
     std::string tags_str(static_cast<const char *>(data), len);
     std::vector<std::vector<uint8_t>> keys;
@@ -136,7 +136,7 @@ void testParallelQueries()
             tags += "div10,";
         tags.pop_back(); // Remove trailing comma
 
-        index->insert(tags.data(), tags.size(), (1ULL << 32) | i, extractTags, &ctx);
+        index->insert(tags.data(), tags.size(), TID{1, static_cast<uint16_t>(i)}, extractTags, &ctx);
     }
 
     status = index->mergePendingList(&ctx);
@@ -218,7 +218,7 @@ void testRangeQueries()
 
     for (size_t i = 0; i < tags.size(); i++)
     {
-        index->insert(tags[i].data(), tags[i].size(), (1ULL << 32) | (i + 1), extractTags, &ctx);
+        index->insert(tags[i].data(), tags[i].size(), TID{1, static_cast<uint16_t>(i + 1)}, extractTags, &ctx);
     }
 
     status = index->mergePendingList(&ctx);
@@ -289,7 +289,7 @@ void testOptimizedWildcardQueries()
 
     for (size_t i = 0; i < tags.size(); i++)
     {
-        index->insert(tags[i].data(), tags[i].size(), (1ULL << 32) | (i + 1), extractTags, &ctx);
+        index->insert(tags[i].data(), tags[i].size(), TID{1, static_cast<uint16_t>(i + 1)}, extractTags, &ctx);
     }
 
     status = index->mergePendingList(&ctx);
@@ -354,7 +354,7 @@ void testFuzzyMatchingInfrastructure()
     std::vector<std::string> tags = {"hello", "world", "test"};
     for (size_t i = 0; i < tags.size(); i++)
     {
-        index->insert(tags[i].data(), tags[i].size(), (1ULL << 32) | (i + 1), extractTags, &ctx);
+        index->insert(tags[i].data(), tags[i].size(), TID{1, static_cast<uint16_t>(i + 1)}, extractTags, &ctx);
     }
 
     status = index->mergePendingList(&ctx);
@@ -376,7 +376,7 @@ void testFuzzyMatchingInfrastructure()
     db.close();
 }
 
-void testEdgeCases()
+static void testEdgeCases()
 {
     std::cout << "\n=== Test 6: Edge Cases ===\n";
 

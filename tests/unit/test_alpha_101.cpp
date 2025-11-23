@@ -42,7 +42,7 @@ protected:
         {
             return st.st_size;
         }
-        return;
+        return 0;
     }
 };
 
