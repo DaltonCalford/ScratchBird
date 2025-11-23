@@ -8,21 +8,31 @@
 
 ---
 
-## ✨ November 23, 2025 Update (Later Session): PSQL 100% COMPLETE! 🎉🎉
+## ✨ November 23, 2025 Update (Session 2): PSQL 100% + SHOW/DESCRIBE Foundation! 🎉🎉
 
-**MAJOR MILESTONE:** PSQL/Stored Procedures component is now **100% COMPLETE**!
+**MAJOR MILESTONES:**
+1. PSQL/Stored Procedures component is now **100% COMPLETE**!
+2. SHOW/DESCRIBE commands foundation laid (~20% complete)
 
 ### ✅ Completed in This Session:
-1. **Stored Procedure/Function Invocation** - Added OUT/INOUT parameter handling:
+
+**1. Stored Procedure/Function Invocation** - Full implementation:
    - Modified executeFunction() to track and return OUT/INOUT parameter values (executor.cpp:15470-15551)
    - Modified executeProcedure() to track and return OUT/INOUT parameter values (executor.cpp:15631-15700)
    - OUT parameters: initialized to NULL, modified by procedure, returned to caller
    - INOUT parameters: passed in from caller, modified by procedure, returned to caller
    - Return values pushed onto stack in order for caller to retrieve
 
-**Impact:** PSQL/Triggers component jumps from **95% → 100% complete**!
+**2. SHOW/DESCRIBE Commands** - Foundation complete (~20%):
+   - Added 8 new keywords: SHOW, DESCRIBE, DESC, TABLES, DATABASES, SCHEMAS, COLUMNS, INDEXES
+   - Added 2 new opcodes: SHOW_TABLES (0xC3), SHOW_DATABASES (0xC4)
+   - Updated token.h and lexer.cpp for keyword recognition
+   - Remaining: Parser support, AST nodes, bytecode generation, executor implementation (~15-20 hours)
 
-**Status:** Component 1 (PSQL/Stored Procedures & Triggers) is now FINISHED!
+**Impact:**
+- PSQL/Triggers component: **95% → 100% complete**!
+- SQL Commands component: **35% → 40% complete** (foundation added)
+- Component 1 (PSQL/Stored Procedures & Triggers) is now **FINISHED**!
 
 ---
 
@@ -513,7 +523,7 @@ Target:  100% ██████████████████████
 | PSQL/Triggers | 100% ████████████████████████████ | 0% | **COMPLETE Nov 23!** |
 | Advanced SQL | 100% ████████████████████████████ | 0% | CTEs+Set Ops complete! |
 | Constraints | 90% ██████████████████████████░░░ | 10% | Most complete |
-| SQL Commands | 35% ██████████░░░░░░░░░░░░░░░░░░ | 65% | EXPLAIN exists |
+| SQL Commands | 40% ███████████░░░░░░░░░░░░░░░░░ | 60% | SHOW/DESC foundation |
 | CLI Tools | 0% ░░░░░░░░░░░░░░░░░░░░░░░░░░░░ | 100% | Not started |
 | Views | 80% ███████████████████████░░░░░░ | 20% | Nearly complete |
 
@@ -532,7 +542,7 @@ Target:  100% ██████████████████████
 7. ✅ **PSQL Execution:** Control flow, cursors, triggers, procedures - **✨ 100% COMPLETE!**
 8. ✅ **Advanced SQL:** MERGE, RETURNING - COMPLETE
 9. ❌ **CLI Tools:** sb_isql, sb_verify, sb_backup, sb_security not started
-10. ⧗ **SQL Commands:** EXPLAIN exists, SHOW/DESCRIBE needed
+10. ⧗ **SQL Commands:** EXPLAIN exists, SHOW/DESCRIBE foundation laid (~20% complete)
 
 ### Quality Gates
 
