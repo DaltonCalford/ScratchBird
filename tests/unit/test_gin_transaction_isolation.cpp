@@ -6,7 +6,7 @@
  */
 
 #include <iostream>
-#include <cassert>
+#include "gtest/gtest.h"
 #include <cstring>
 #include <cstdint>
 
@@ -19,8 +19,9 @@ struct GinPendingEntry
     uint8_t key_data[54]; // Key data (inline for small keys, reduced from 62 to accommodate xmin)
 } __attribute__((packed));
 
-int main()
-{
+
+TEST(GinTransactionIsolationTest, Comprehensive) {
+
     std::cout << "=== Testing GIN Index Transaction Isolation Fix (Issue 2.8) ===" << std::endl;
     std::cout << std::endl;
 
@@ -35,15 +36,15 @@ int main()
         std::memcpy(entry.key_data, "test_key", 8);
 
         // Verify structure size is still 72 bytes
-        assert(sizeof(GinPendingEntry) == 72);
+        ASSERT_EQ(sizeof(GinPendingEntry), 72);
         std::cout << "  ✅ GinPendingEntry size: 72 bytes (correct)" << std::endl;
 
         // Verify xmin field exists and is accessible
-        assert(entry.xmin == 100);
+        ASSERT_EQ(entry.xmin, 100);
         std::cout << "  ✅ xmin field accessible and correct" << std::endl;
 
         // Verify key_data reduced to 54 bytes (was 62)
-        assert(sizeof(entry.key_data) == 54);
+        ASSERT_EQ(sizeof(entry.key_data), 54);
         std::cout << "  ✅ key_data size: 54 bytes (reduced from 62)" << std::endl;
 
         std::cout << "  ✅ Test 1 PASSED" << std::endl;
@@ -69,9 +70,9 @@ int main()
         uint16_t *keylen_ptr = reinterpret_cast<uint16_t *>(base + 16);
         uint8_t *keydata_ptr = base + 18;
 
-        assert(*tid_ptr == 0x1111111111111111ULL);
-        assert(*xmin_ptr == 0x2222222222222222ULL);
-        assert(*keylen_ptr == 0x3333);
+        ASSERT_EQ(*tid_ptr, 0x1111111111111111ULL);
+        ASSERT_EQ(*xmin_ptr, 0x2222222222222222ULL);
+        ASSERT_EQ(*keylen_ptr, 0x3333);
 
         std::cout << "  ✅ tid at offset 0 (8 bytes)" << std::endl;
         std::cout << "  ✅ xmin at offset 8 (8 bytes)" << std::endl;
@@ -189,4 +190,5 @@ int main()
     std::cout << std::endl;
 
     return;
+
 }

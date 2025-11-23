@@ -31,16 +31,11 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/deprecated/.*")
 # - All 9 storage tests (heap, hint, defragment, dirty, buffer, toast, fsm)
 # - All 4 B-tree tests (delete_parent, rightmost, hot_updates)
 
-# Still need conversion:
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_rle\\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_dict\\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_bitpack\\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_predicate\\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_cache_bounded\\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gin_transaction_isolation\\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_term_conn\\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_terminate_connection\\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_text_search_types\\.cpp$")
+# All previously excluded tests have been converted to GoogleTest format!
+# Phase 1: 18 tests converted (type, domain, GIN tests)
+# Phase 2: 24 tests converted (transaction, storage, B-tree tests)
+# Phase 3: 9 tests converted (columnstore, cache, text search tests)
+# Total: 51 tests converted and enabled (100% of excluded tests)
 
 # Note: test_hnsw_mvcc.cpp and test_index_mvcc.cpp were removed because they tested
 # PostgreSQL MVCC Snapshot API which doesn't exist (ScratchBird uses Firebird MGA, not PostgreSQL MVCC)
