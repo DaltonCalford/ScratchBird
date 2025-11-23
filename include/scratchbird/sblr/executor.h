@@ -308,6 +308,7 @@ namespace scratchbird
                                  bool is_select_star);  // ALPHA Phase 1 - Views
             void executeUpdate();           // Phase 1 Task 1.6.1
             void executeDelete();           // Phase 1 Task 1.6.2
+            void executeMerge();            // Alpha 1 - Advanced SQL
             void executeNestedLoopJoin();   // Phase 1 Task 3.3
             void executeHashJoin();         // Phase 1 Task 3.3
             void executeSweep();            // Phase 3 Task 3.3
@@ -553,10 +554,27 @@ namespace scratchbird
                 ExceptionFrame(size_t start, size_t end) : try_start_pc(start), try_end_pc(end) {}
             };
 
+            // Cursor state for PSQL cursors
+            struct CursorState
+            {
+                std::string name;                          // Cursor name
+                std::vector<uint8_t> query_bytecode;       // SELECT query bytecode
+                std::vector<std::vector<Value>> result_set; // Materialized query results
+                size_t current_row;                        // Current fetch position
+                bool is_open;                              // Whether cursor is open
+                std::vector<std::string> column_names;     // Result column names
+                std::vector<core::DataType> column_types;  // Result column types
+
+                CursorState() : current_row(0), is_open(false) {}
+                explicit CursorState(const std::string& cursor_name)
+                    : name(cursor_name), current_row(0), is_open(false) {}
+            };
+
             // PSQL execution state
             std::unique_ptr<VariableStack> variable_stack_;
             std::vector<LoopState> loop_stack_;
             std::vector<ExceptionFrame> exception_stack_;
+            std::unordered_map<std::string, CursorState> cursors_;  // Active cursors
             bool return_requested_ = false;
             Value return_value_;
 
@@ -587,6 +605,12 @@ namespace scratchbird
             void executeJump();              // Unconditional jump
             void executeJumpIfTrue();        // Jump if stack top is true
             void executeJumpIfFalse();       // Jump if stack top is false
+
+            // PSQL cursor operations
+            void executeCursorDeclare();     // DECLARE cursor_name CURSOR FOR select_statement
+            void executeCursorOpen();        // OPEN cursor_name
+            void executeCursorFetch();       // FETCH [direction] FROM cursor_name INTO variables
+            void executeCursorClose();       // CLOSE cursor_name
 
             // Security Statements (ALPHA Phase 1 - Security System Phase 2)
             void executeCreateUser();        // Execute CREATE USER

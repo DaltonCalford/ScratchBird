@@ -643,6 +643,11 @@ namespace scratchbird
             EXT_INDEX_REINDEX = 0x14,      // Rebuild index
             EXT_INDEX_UPDATE = 0x1C,       // Update index entry (old_key, new_key, tid, xmin - combines delete old + insert new)
 
+            // Cursor Operations (0x1D-0x1F, 0x2E) - PSQL cursor support
+            EXT_CURSOR_DECLARE = 0x1D,     // DECLARE cursor_name CURSOR FOR select_statement
+            EXT_CURSOR_OPEN = 0x1E,        // OPEN cursor_name - Execute query and prepare for fetching
+            EXT_CURSOR_FETCH = 0x1F,       // FETCH [direction] FROM cursor_name INTO variables
+
             // Specialized Index Operations (0x28-0x2F) - For indexes with unique APIs
             //
             // These opcodes handle indexes that require specialized parameters beyond the generic
@@ -696,6 +701,7 @@ namespace scratchbird
             EXT_HNSW_SEARCH = 0x2B,        // HNSW k-NN search (vector, k, current_xid)
             EXT_COLUMNSTORE_INSERT = 0x2C, // Columnstore insert column
             EXT_COLUMNSTORE_SCAN = 0x2D,   // Columnstore scan column
+            EXT_CURSOR_CLOSE = 0x2E,       // CLOSE cursor_name - Close cursor and free resources
 
             // Bit manipulation - Byte/Bit access (0x06-0x09)
             EXT_GET_BYTE = 0x06,           // GET_BYTE(bytes, offset) - extract byte at offset
@@ -728,6 +734,18 @@ namespace scratchbird
             EXT_XPATH = 0x4C,              // XPATH(xpath_expr, xml) - extract nodes using XPath
             EXT_XMLEXISTS = 0x4D,          // XMLEXISTS(xpath_expr, xml) - check if XPath matches
             EXT_XMLAGG = 0x4E,             // XMLAGG(xml) - aggregate XML values (aggregate function)
+
+            // MERGE statement support (Alpha 1 - Advanced SQL) (0x4F-0x55)
+            EXT_MERGE_START = 0x4F,        // Begin MERGE operation
+            EXT_MERGE_SOURCE = 0x50,       // Source query/table specification
+            EXT_MERGE_ON = 0x51,           // ON condition (join predicate)
+            EXT_MERGE_WHEN_MATCHED = 0x52, // WHEN MATCHED THEN UPDATE
+            EXT_MERGE_WHEN_NOT_MATCHED = 0x53, // WHEN NOT MATCHED THEN INSERT
+            EXT_MERGE_WHEN_NOT_MATCHED_SOURCE = 0x54, // WHEN NOT MATCHED BY SOURCE THEN DELETE
+            EXT_MERGE_END = 0x55,          // End MERGE operation
+
+            // RETURNING clause support (Alpha 1 - Advanced SQL) (0x56)
+            EXT_RETURNING = 0x56,          // RETURNING clause marker (followed by column list or *)
         };
 
         /**
