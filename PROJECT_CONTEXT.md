@@ -10,16 +10,15 @@
 
 ---
 
-## Current Work: Alpha 1 Completion (~1% Remaining)
+## Current Work: Alpha 1 Completion (~5% Remaining)
 
-**Focus:** Complete remaining command-line tools and finalize views
+**Focus:** Complete missing functions for full database compatibility, then build command-line tools
 
 ### What's Working ✅
 
 - **Core Engine:** 100% (MGA, Buffer Pool, TOAST, Transactions, Tablespaces)
 - **Indexes:** 11/11 types production-ready with MGA compliance
 - **Data Types:** 86/86 complete
-- **Built-in Functions:** 123/123 complete
 - **Security:** 100% (users, roles, table/column/row-level permissions, RLS)
 - **Catalog:** 40 tables (100% structures, 58% CRUD)
 - **PSQL/Stored Procedures & Triggers:** 100% (control flow, cursors, exceptions, trigger firing, procedure invocation)
@@ -30,18 +29,44 @@
 
 ### What's Missing ❌
 
-**Command-Line Tools** (~90-110 hours estimated):
-- sb_isql (interactive SQL shell) - HIGHEST PRIORITY
+**PRIORITY 1: Missing Functions** (~207-312 hours estimated):
+See [docs/planning/MISSING_FUNCTIONS_IMPLEMENTATION_PLAN.md](docs/planning/MISSING_FUNCTIONS_IMPLEMENTATION_PLAN.md) for complete details.
+
+- **Advanced Grouping (CRITICAL):** ROLLUP, CUBE, GROUPING SETS, GROUPING() - 56-86 hours
+- **Statistical Regression (HIGH):** REGR_SLOPE, REGR_INTERCEPT, REGR_R2, etc. (9 functions) - 45-63 hours
+- **Hyperbolic Math (HIGH):** SINH, COSH, TANH, ASINH, ACOSH, ATANH, COT (7 functions) - 15-24 hours
+- **String Functions (HIGH):** LPAD, RPAD, OVERLAY (3 functions) - 4-8 hours
+- **Window Functions (HIGH):** NTH_VALUE, CUME_DIST, PERCENT_RANK (3 functions) - 24-34 hours
+- **Date/Time (MEDIUM):** AGE (1 function) - 4-6 hours
+- **Misc (LOW):** INITCAP, CBRT (2 functions) - 4-6 hours
+
+**Current Status:** 123/153 functions complete (80%)
+**After completion:** Full functional parity with PostgreSQL, MySQL, MSSQL, and Firebird
+
+**PRIORITY 2: Command-Line Tools** (~90-110 hours estimated):
+*To be started after all functions are implemented*
+
+- sb_isql (interactive SQL shell)
 - sb_verify (database integrity checker)
 - sb_backup (backup/restore tool)
 - sb_security (user/role management tool)
 
 ### Immediate Next Steps
 
-1. Build sb_isql (interactive SQL shell) - HIGHEST PRIORITY
-2. Build sb_verify (database integrity checker)
-3. Build sb_backup (backup/restore tool)
-4. Build sb_security (user/role management tool)
+**MANDATORY SEQUENCE:**
+
+1. **Implement all 30 missing functions** (207-312 hours / 5-8 weeks)
+   - Phase 1: Quick wins (string, hyperbolic, misc) - 22-39 hours
+   - Phase 2: Regression functions - 45-63 hours
+   - Phase 3: ROLLUP/CUBE/GROUPING SETS - 56-86 hours
+   - Phase 4: Window functions - 24-34 hours
+   - Phase 5: Remaining functions - 10-15 hours
+
+2. **Build command-line tools** (90-110 hours / 2.5-3 weeks)
+   - sb_isql (interactive SQL shell)
+   - sb_verify (database integrity checker)
+   - sb_backup (backup/restore tool)
+   - sb_security (user/role management tool)
 
 ---
 
@@ -217,6 +242,9 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 ## Recent Accomplishments
 
 **November 23, 2025 (Latest):**
+- ✅ **Build Environment Documentation:** Comprehensive BUILD_ENVIRONMENT.md with platform-specific setup
+- ✅ **Missing Functions Analysis:** Complete cross-database comparison identifying 30 missing functions
+- ✅ **Implementation Plan:** Detailed 5-phase roadmap for achieving full database parity
 - ✅ **Views 100% COMPLETE:** Materialized views with full column derivation and data population, REFRESH with query re-execution 🎉
 - ✅ **Constraint Features 100% COMPLETE:** GENERATED columns (STORED/VIRTUAL), IDENTITY columns, Deferred constraint checking
 - ✅ **SHOW/DESCRIBE Commands 100% COMPLETE:** SHOW TABLES/DATABASES/COLUMNS/INDEXES/CREATE TABLE, DESCRIBE
@@ -227,7 +255,7 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 - ✅ Views implementation (CREATE VIEW, MATERIALIZED VIEW with physical storage, REFRESH)
 - ✅ Index system documentation (900+ lines)
 - ✅ Columnstore TIP integration
-- ✅ All 123 built-in functions complete (XML, Cryptographic, Statistical, Mathematical, Bit Manipulation)
+- ✅ 123 core built-in functions complete (XML, Cryptographic, Statistical, Mathematical, Bit Manipulation)
 - ✅ Security Phase 3.5 complete (RLS DML enforcement, SQL object permissions)
 - ✅ Foreign key Phase C (table-level syntax, composite FKs, disk persistence)
 - ✅ Constraint system (CHECK, DEFAULT, UNIQUE, FK enforcement)
@@ -236,12 +264,19 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 
 ## Summary
 
-**Current Focus:** Complete Alpha 1 (~1% remaining - CLI tools only)
+**Current Focus:** Complete Alpha 1 (~5% remaining)
+
+**Immediate Work:**
+1. **Implement 30 missing functions** (207-312 hours / 5-8 weeks) - IN PROGRESS
+   - Required for full PostgreSQL, MySQL, MSSQL, Firebird compatibility
+   - Target: 153 total built-in functions (currently 123)
+2. **Build CLI tools** (90-110 hours / 2.5-3 weeks) - AFTER functions complete
+   - sb_isql, sb_verify, sb_backup, sb_security
 
 **Next Major Milestones:**
-1. Alpha 1 completion (~1-2 weeks for CLI tools)
-2. Alpha 2: Multi-dialect parsers
-3. Alpha 3: Network protocols
+1. Alpha 1 completion (~8-11 weeks total: functions + CLI tools)
+2. Alpha 2: Multi-dialect parsers (PostgreSQL, MySQL, MSSQL, Firebird, ScratchBird)
+3. Alpha 3: Network protocols (libpq, MySQL, TDS, native)
 4. Beta 1-4: Distributed systems + NoSQL models
 5. RC1-3: Native drivers + stabilization
 6. Gold: Production release
@@ -251,4 +286,5 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 ---
 
 **Last Updated:** November 23, 2025
-**Status:** Alpha 1 - ~99% complete (~11% of total project)
+**Status:** Alpha 1 - ~95% complete (~11% of total project)
+**Priority:** Function implementation (80% complete: 123/153 functions)

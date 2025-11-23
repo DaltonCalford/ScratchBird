@@ -11,7 +11,8 @@ ScratchBird aims to be a **universal database engine** that can emulate PostgreS
 ## Current Status
 
 **Phase:** Alpha 1 - Engine Functionality (Local Operations)
-**Progress:** ~99% of Alpha 1 complete (~11% of total project)
+**Progress:** ~95% of Alpha 1 complete (~11% of total project)
+**Current Work:** Implementing 30 missing functions for full database compatibility
 **Started:** June 2025 (5 months of evening/weekend development)
 **Project Type:** Educational/Research (no time constraints)
 **Last Updated:** November 23, 2025
@@ -37,12 +38,25 @@ ScratchBird aims to be a **universal database engine** that can emulate PostgreS
 - Network types (INET, CIDR, MACADDR)
 - Text search types (TSVECTOR, TSQUERY)
 
-#### Built-in Functions (123/123 = 100%) 🎉
+#### Built-in Functions (123/153 = 80%) 🚧
+**Current:** 123 functions implemented
+**Target:** 153 functions (30 missing for full PostgreSQL/MySQL/MSSQL/Firebird compatibility)
+
+**Implemented:**
 - String (11), Aggregate (6), Window (8)
 - JSON (13), Array (12), Date/Time (6)
 - Mathematical (29), Bit Manipulation (14)
 - Cryptographic (4), Statistical (7), XML (9)
 - Spatial (40+), Regex (4), Conditional (3)
+
+**Missing (see [MISSING_FUNCTIONS_IMPLEMENTATION_PLAN.md](docs/planning/MISSING_FUNCTIONS_IMPLEMENTATION_PLAN.md)):**
+- Advanced Grouping: ROLLUP, CUBE, GROUPING SETS, GROUPING()
+- Regression Functions: REGR_SLOPE, REGR_INTERCEPT, REGR_R2, etc. (9 functions)
+- Hyperbolic Math: SINH, COSH, TANH, ASINH, ACOSH, ATANH, COT (7 functions)
+- String: LPAD, RPAD, OVERLAY
+- Window: NTH_VALUE, CUME_DIST, PERCENT_RANK
+- Date/Time: AGE
+- Misc: INITCAP, CBRT
 
 #### Security System (100%) 🎉
 - User/role/group management with transitive membership
@@ -88,8 +102,13 @@ ScratchBird aims to be a **universal database engine** that can emulate PostgreS
 
 ### What's Being Built 🚧
 
-**Current Work (Alpha 1 - ~1% remaining):**
-- ❌ Command-line tools (sb_isql, sb_verify, sb_backup, sb_security)
+**Current Work (Alpha 1 - ~5% remaining):**
+- 🚧 **Missing Functions (PRIORITY 1):** 30 functions for full database compatibility (207-312 hours)
+  - See [MISSING_FUNCTIONS_IMPLEMENTATION_PLAN.md](docs/planning/MISSING_FUNCTIONS_IMPLEMENTATION_PLAN.md)
+- ⏳ **Command-line tools (PRIORITY 2):** sb_isql, sb_verify, sb_backup, sb_security (~90-110 hours)
+  - *To be started after all functions are implemented*
+
+**Recently Completed:**
 - ✅ Views (100% COMPLETE - materialized views with full data population) 🎉
 
 **After Alpha 1 (~89% of project remaining):**
