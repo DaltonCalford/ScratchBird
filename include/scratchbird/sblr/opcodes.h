@@ -330,6 +330,13 @@ namespace scratchbird
             EXT_CHR = 0x42,                // CHR(code) - convert ASCII code to character
             EXT_REPEAT = 0x43,             // REPEAT(str, count)
             EXT_REVERSE = 0x44,            // REVERSE(str)
+
+            // Advanced GROUP BY operations (ALPHA Phase 1 - Missing Functions Phase 3) - 0x45-0x48
+            EXT_GROUP_ROLLUP = 0x45,       // ROLLUP(...) - hierarchical grouping
+            EXT_GROUP_CUBE = 0x46,         // CUBE(...) - all combinations grouping
+            EXT_GROUP_GROUPING_SETS = 0x47, // GROUPING SETS(...) - explicit grouping sets
+            EXT_GROUPING_FUNC = 0x48,      // GROUPING(column) - identify aggregated columns
+
             EXT_LPAD = 0x57,               // LPAD(str, length [, fill]) - left-pad string
             EXT_RPAD = 0x58,               // RPAD(str, length [, fill]) - right-pad string
 
