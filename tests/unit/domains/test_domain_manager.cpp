@@ -2,12 +2,14 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include <iostream>
-#include <cassert>
+#include "gtest/gtest.h"
 #include <cstdio>
 
 using namespace scratchbird::core;
 
-int main() {
+
+TEST(DomainManagerTest, Comprehensive) {
+
     std::cout << "Testing Domain Manager Implementation...\n\n";
 
     // Create a test database
@@ -21,9 +23,9 @@ int main() {
         if (!ctx.message.empty()) {
             std::cerr << "Error: " << ctx.message << "\n";
         }
-        return 1;
+        FAIL(); return;
     }
-    assert(status == Status::OK);
+    ASSERT_EQ(status, Status::OK);
 
     Database db;
     status = db.open(test_db, &ctx);
@@ -33,10 +35,10 @@ int main() {
             std::cerr << "Error: " << ctx.message << "\n";
         }
     }
-    assert(status == Status::OK);
+    ASSERT_EQ(status, Status::OK);
 
     DomainManager* dm = db.domain_manager();
-    assert(dm != nullptr);
+    ASSERT_NE(dm, nullptr);
 
     // Test 1: Create basic domain
     std::cout << "Test 1: Create basic domain\n";
@@ -45,7 +47,7 @@ int main() {
         ID schema_id;
         auto* catalog = db.catalog_manager();
         status = catalog->createSchema("test_schema", "test_user", schema_id, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         // Create a domain for email addresses
         ID domain_id;
@@ -64,7 +66,7 @@ int main() {
             domain_id,
             &ctx
         );
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         std::cout << "  Created email_address domain ✓\n";
     }
     std::cout << "  ✓ Create basic domain passed\n\n";
@@ -74,27 +76,27 @@ int main() {
     {
         DomainInfo info;
         // Get first domain from test 1
-        assert(dm->domainCount() == 1);
+        ASSERT_EQ(dm->domainCount(), 1);
 
         // List all domains to get the ID
         ID schema_id;
         auto* catalog = db.catalog_manager();
         CatalogManager::SchemaInfo schema_info;
         status = catalog->getSchema("test_schema", schema_info, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         schema_id = schema_info.schema_id;
 
         std::vector<DomainInfo> domains;
         status = dm->listDomains(schema_id, domains, &ctx);
-        assert(status == Status::OK);
-        assert(domains.size() == 1);
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(domains.size(), 1);
 
         status = dm->getDomain(domains[0].domain_id, info, &ctx);
-        assert(status == Status::OK);
-        assert(info.domain_name == "email_address");
-        assert(info.base_type == DataType::VARCHAR);
-        assert(info.precision == 255);
-        assert(info.nullable == false);
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(info.domain_name, "email_address");
+        ASSERT_EQ(info.base_type, DataType::VARCHAR);
+        ASSERT_EQ(info.precision, 255);
+        ASSERT_EQ(info.nullable, false);
         std::cout << "  Retrieved domain: " << info.domain_name << " ✓\n";
     }
     std::cout << "  ✓ Get domain by ID passed\n\n";
@@ -106,13 +108,13 @@ int main() {
         auto* catalog = db.catalog_manager();
         CatalogManager::SchemaInfo schema_info;
         status = catalog->getSchema("test_schema", schema_info, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         schema_id = schema_info.schema_id;
 
         DomainInfo info;
         status = dm->getDomain(schema_id, "email_address", info, &ctx);
-        assert(status == Status::OK);
-        assert(info.domain_name == "email_address");
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(info.domain_name, "email_address");
         std::cout << "  Found domain by name: " << info.domain_name << " ✓\n";
     }
     std::cout << "  ✓ Get domain by name passed\n\n";
@@ -124,23 +126,23 @@ int main() {
         auto* catalog = db.catalog_manager();
         CatalogManager::SchemaInfo schema_info;
         status = catalog->getSchema("test_schema", schema_info, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         schema_id = schema_info.schema_id;
 
         DomainInfo info;
         status = dm->getDomain(schema_id, "email_address", info, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         // Valid value
         TypedValue valid_email = TypedValue::makeVarchar("test@example.com");
         status = dm->validateValue(info.domain_id, valid_email, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         std::cout << "  Valid email accepted ✓\n";
 
         // NULL value (should fail because nullable=false)
         TypedValue null_value = TypedValue::makeNull();
         status = dm->validateValue(info.domain_id, null_value, &ctx);
-        assert(status == Status::CONSTRAINT_VIOLATION);
+        ASSERT_EQ(status, Status::CONSTRAINT_VIOLATION);
         std::cout << "  NULL value rejected as expected ✓\n";
     }
     std::cout << "  ✓ Validate value passed\n\n";
@@ -152,7 +154,7 @@ int main() {
         auto* catalog = db.catalog_manager();
         CatalogManager::SchemaInfo schema_info;
         status = catalog->getSchema("test_schema", schema_info, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         schema_id = schema_info.schema_id;
 
         // Create parent domain
@@ -167,7 +169,7 @@ int main() {
             parent_domain_id,
             &ctx
         );
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         // Create child domain
         ID child_domain_id;
@@ -181,17 +183,17 @@ int main() {
             child_domain_id,
             &ctx
         );
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         // Set parent
         status = dm->setParentDomain(child_domain_id, parent_domain_id, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         // Verify inheritance
         DomainInfo child_info;
         status = dm->getDomain(child_domain_id, child_info, &ctx);
-        assert(status == Status::OK);
-        assert(child_info.parent_domain_id == parent_domain_id);
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(child_info.parent_domain_id, parent_domain_id);
         std::cout << "  Domain inheritance set up correctly ✓\n";
     }
     std::cout << "  ✓ Domain inheritance passed\n\n";
@@ -203,13 +205,13 @@ int main() {
         auto* catalog = db.catalog_manager();
         CatalogManager::SchemaInfo schema_info;
         status = catalog->getSchema("test_schema", schema_info, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         schema_id = schema_info.schema_id;
 
         std::vector<DomainInfo> domains;
         status = dm->listDomains(schema_id, domains, &ctx);
-        assert(status == Status::OK);
-        assert(domains.size() == 3);  // email_address, positive_int, age
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(domains.size(), 3);  // email_address, positive_int, age
         std::cout << "  Found " << domains.size() << " domains ✓\n";
         for (const auto& domain : domains) {
             std::cout << "    - " << domain.domain_name << "\n";
@@ -224,19 +226,19 @@ int main() {
         auto* catalog = db.catalog_manager();
         CatalogManager::SchemaInfo schema_info;
         status = catalog->getSchema("test_schema", schema_info, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         schema_id = schema_info.schema_id;
 
         DomainInfo info;
         status = dm->getDomain(schema_id, "age", info, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         status = dm->dropDomain(info.domain_id, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         // Verify it's dropped
         status = dm->getDomain(schema_id, "age", info, &ctx);
-        assert(status == Status::NOT_FOUND);
+        ASSERT_EQ(status, Status::NOT_FOUND);
         std::cout << "  Domain dropped successfully ✓\n";
     }
     std::cout << "  ✓ Drop domain passed\n\n";
@@ -248,6 +250,5 @@ int main() {
     std::cout << "ALL TESTS PASSED! ✓\n";
     std::cout << "Domain Manager Phase 1 is fully functional.\n";
     std::cout << "========================================\n";
-
-    return 0;
 }
+

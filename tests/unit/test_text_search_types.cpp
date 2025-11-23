@@ -304,5 +304,5 @@ int main()
     test_match_complex();
 
     std::cout << "\n=== All Tests Passed! ===" << std::endl;
-    return 0;
+    return;
 }

@@ -6,8 +6,9 @@
 #include <iostream>
 #include <cstdint>
 
-int main()
-{
+
+TEST(BufferErrorConsistencyTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 2.2: Buffer Pool Error Handling Inconsistency ===" << std::endl;
     std::cout << std::endl;
 
@@ -20,7 +21,7 @@ int main()
         //     if (frames_[evicted_frame].pin_count != 0)
         //     {
         //         DEBUG_LOG_BP(...);
-        //         assert(false && "Attempting to evict pinned frame");
+        //         ASSERT_TRUE(false && "Attempting to evict pinned frame");
         //     }
         // #endif
         // - Debug: asserts and crashes ❌
@@ -54,7 +55,7 @@ int main()
         // {
         //     DEBUG_LOG_BP(...);
         // #if SCRATCHBIRD_DEBUG
-        //     assert(false && "page_id not in page_table during eviction");
+        //     ASSERT_TRUE(false && "page_id not in page_table during eviction");
         // #endif
         //     // In release builds, continue but log the issue
         // }
@@ -89,7 +90,7 @@ int main()
         //     if (page_table_it->second != evicted_frame)
         //     {
         //         DEBUG_LOG_BP(...);
-        //         assert(false && "page_table frame_index mismatch");
+        //         ASSERT_TRUE(false && "page_table frame_index mismatch");
         //     }
         // #endif
         // - Debug: asserts and crashes ❌
@@ -296,6 +297,5 @@ int main()
     std::cout << "False positives: 1.1, 1.4, 1.5, 1.6, 1.9, 1.10, 1.11, 1.12, 1.16, 1.17, 1.18, 1.20, 1.21, 1.22, 2.1" << std::endl;
     std::cout << std::endl;
     std::cout << "PHASE 2 Progress: 1 real bug fixed, 1 false positive (50% accuracy so far)" << std::endl;
-
-    return 0;
 }
+

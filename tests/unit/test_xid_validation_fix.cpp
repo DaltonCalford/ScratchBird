@@ -9,7 +9,7 @@
  */
 
 #include <iostream>
-#include <cassert>
+#include "gtest/gtest.h"
 #include <cstdint>
 
 // Mock constants for testing
@@ -18,8 +18,9 @@ constexpr uint64_t BOOTSTRAP_XID = 1;
 constexpr uint64_t FROZEN_XID = 2;
 constexpr uint64_t FIRST_NORMAL_XID = 3;
 
-int main()
-{
+
+TEST(XidValidationFixTest, Comprehensive) {
+
     std::cout << "=== Testing XID Validation Logic Fix (Issue 2.9) ===\n\n";
 
     // Test 1: Verify the issue exists in the old code
@@ -216,6 +217,5 @@ int main()
     std::cout << "  - Issue 2.7: B-Tree Split Sibling Pointer Race ✅ (Fixed)\n";
     std::cout << "  - Issue 2.8: GIN Index Transaction Isolation ✅ (Fixed)\n";
     std::cout << "  - Issue 2.9: XID Validation Logic Flaw ✅ (FIXED - THIS ISSUE)\n\n";
-
-    return 0;
 }
+

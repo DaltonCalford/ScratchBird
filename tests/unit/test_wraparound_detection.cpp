@@ -11,8 +11,9 @@
 constexpr uint64_t XID_WRAPAROUND_THRESHOLD = 1000000;
 constexpr uint64_t MAX_SAFE_XID = UINT64_MAX - XID_WRAPAROUND_THRESHOLD;
 
-int main()
-{
+
+TEST(WraparoundDetectionTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 1.20: Transaction Wraparound Detection ===" << std::endl;
     std::cout << std::endl;
 
@@ -36,7 +37,7 @@ int main()
         else
         {
             std::cout << "FAILED: Unexpected XID size" << std::endl;
-            return 1;
+            FAIL(); return;
         }
     }
 
@@ -89,7 +90,7 @@ int main()
         }
         else
         {
-            return 1;
+            FAIL(); return;
         }
     }
 
@@ -131,7 +132,7 @@ int main()
         else
         {
             std::cout << "FAILED: Threshold calculation mismatch" << std::endl;
-            return 1;
+            FAIL(); return;
         }
     }
 
@@ -192,6 +193,5 @@ int main()
     std::cout << "  - Warning triggers 1 million XIDs before overflow ✅" << std::endl;
     std::cout << std::endl;
     std::cout << "This is FALSE POSITIVE #11 out of 19 issues examined (58% audit error rate)" << std::endl;
-
-    return 0;
 }
+

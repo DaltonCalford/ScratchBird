@@ -27,8 +27,9 @@ void simulateGetActiveTransactions(std::vector<uint64_t> *active_xids_out)
     active_xids_out->push_back(115);
 }
 
-int main()
-{
+
+TEST(SnapshotXidsTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 1.16: Snapshot XIDs Not Properly Copied ===" << std::endl;
     std::cout << std::endl;
 
@@ -47,13 +48,13 @@ int main()
         if (snapshot.active_xids.size() != 4)
         {
             std::cout << "FAILED: Expected 4 XIDs, got " << snapshot.active_xids.size() << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         if (snapshot.active_xids[0] != 100 || snapshot.active_xids[3] != 115)
         {
             std::cout << "FAILED: XIDs not populated correctly" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         std::cout << "PASSED" << std::endl;
@@ -95,13 +96,13 @@ int main()
         {
             std::cout << "FAILED: Expected 2 XIDs after filtering, got "
                       << snapshot.active_xids.size() << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         if (snapshot.active_xids[0] != 110 || snapshot.active_xids[1] != 115)
         {
             std::cout << "FAILED: Filtered XIDs incorrect" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // IMPORTANT: filtered_xids is NOT used after std::move - this is SAFE
@@ -137,7 +138,7 @@ int main()
             snapshot.active_xids[2] != 110 || snapshot.active_xids[3] != 115)
         {
             std::cout << "FAILED: XIDs not sorted correctly" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         std::cout << "PASSED" << std::endl;
@@ -180,19 +181,19 @@ int main()
         if (snapshot.xmin != 100 || snapshot.xmax != 120)
         {
             std::cout << "FAILED: xmin/xmax incorrect" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         if (snapshot.active_xids.size() != 2)
         {
             std::cout << "FAILED: active_xids size incorrect" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         if (snapshot.active_xids[0] != 110 || snapshot.active_xids[1] != 115)
         {
             std::cout << "FAILED: active_xids values incorrect" << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         std::cout << "PASSED" << std::endl;
@@ -218,6 +219,5 @@ int main()
     std::cout << "  - filtered_xids is local variable that goes out of scope immediately after" << std::endl;
     std::cout << "  - Code is ALREADY CORRECT - no fix needed!" << std::endl;
     std::cout << "\nThis is FALSE POSITIVE #9 out of 16 issues examined (56% audit error rate)" << std::endl;
-
-    return 0;
 }
+

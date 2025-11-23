@@ -657,5 +657,5 @@ int main()
     printf("  ✅ ALL TESTS PASSED (10/10)\n");
     printf("═══════════════════════════════════════════════════════════════\n");
 
-    return 0;
+    return;
 }

@@ -13,8 +13,9 @@
 
 using namespace scratchbird::core;
 
-int main()
-{
+
+TEST(ClogChecksumTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 1.9: CLOG Missing Checksum Function ===" << std::endl;
     std::cout << std::endl;
 
@@ -43,21 +44,21 @@ int main()
         if (Database::create(db_path, 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         Database db;
         if (db.open(db_path, &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         Clog clog(&db);
         if (clog.initialize(&ctx) != Status::OK)
         {
             std::cout << "FAILED (init): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         std::cout << "PASSED" << std::endl;
@@ -71,7 +72,7 @@ int main()
         if (clog.setStatus(test_xid, ClogStatus::COMMITTED, &ctx) != Status::OK)
         {
             std::cout << "FAILED (setStatus): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Retrieve status (this validates the checksum worked)
@@ -79,13 +80,13 @@ int main()
         if (clog.getStatus(test_xid, &status, &ctx) != Status::OK)
         {
             std::cout << "FAILED (getStatus): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         if (status != ClogStatus::COMMITTED)
         {
             std::cout << "FAILED: Expected COMMITTED, got " << static_cast<int>(status) << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         std::cout << "PASSED" << std::endl;
@@ -106,7 +107,7 @@ int main()
             if (clog.setStatus(xid, ClogStatus::COMMITTED, &ctx) != Status::OK)
             {
                 std::cout << "FAILED (setStatus xid=" << xid << "): " << ctx.message << std::endl;
-                return 1;
+                FAIL(); return;
             }
         }
 
@@ -117,14 +118,14 @@ int main()
             if (clog.getStatus(xid, &retrieved_status, &ctx) != Status::OK)
             {
                 std::cout << "FAILED (getStatus xid=" << xid << "): " << ctx.message << std::endl;
-                return 1;
+                FAIL(); return;
             }
 
             if (retrieved_status != ClogStatus::COMMITTED)
             {
                 std::cout << "FAILED: XID " << xid << " expected COMMITTED, got "
                           << static_cast<int>(retrieved_status) << std::endl;
-                return 1;
+                FAIL(); return;
             }
         }
 
@@ -145,6 +146,5 @@ int main()
     std::cout << "  - CLOG pages are properly checksummed in allocateClogPage() at clog.cpp:234" << std::endl;
     std::cout << "  - Checksums are validated when pages are loaded from disk" << std::endl;
     std::cout << "  - All transaction status operations work correctly with checksummed pages" << std::endl;
-
-    return 0;
 }
+

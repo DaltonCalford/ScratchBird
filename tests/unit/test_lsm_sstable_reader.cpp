@@ -547,5 +547,5 @@ int main()
 
     std::cout << "\n=== All SSTable Reader Tests PASSED ===\n\n";
 
-    return 0;
+    return;
 }

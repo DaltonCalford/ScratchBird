@@ -2,12 +2,14 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include <iostream>
-#include <cassert>
+#include "gtest/gtest.h"
 #include <cstdio>
 
 using namespace scratchbird::core;
 
-int main() {
+
+TEST(RecordDomainTest, Comprehensive) {
+
     std::cout << "Testing RECORD Domain Implementation (Phase 2)...\n\n";
 
     // Create a test database
@@ -18,25 +20,25 @@ int main() {
     Status status = Database::create(test_db, 16384, &ctx);
     if (status != Status::OK) {
         std::cerr << "Failed to create database: " << static_cast<int>(status) << "\n";
-        return 1;
+        FAIL(); return;
     }
 
     Database db;
     status = db.open(test_db, &ctx);
     if (status != Status::OK) {
         std::cerr << "Failed to open database: " << static_cast<int>(status) << "\n";
-        return 1;
+        FAIL(); return;
     }
 
     DomainManager* dm = db.domain_manager();
     CatalogManager* catalog = db.catalog_manager();
-    assert(dm != nullptr);
-    assert(catalog != nullptr);
+    ASSERT_NE(dm, nullptr);
+    ASSERT_NE(catalog, nullptr);
 
     // Create schema
     ID schema_id;
     status = catalog->createSchema("test_schema", "test_user", schema_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_EQ(status, Status::OK);
 
     // Test 1: Create RECORD domain
     std::cout << "Test 1: Create RECORD domain\n";
@@ -48,7 +50,7 @@ int main() {
 
         ID person_domain_id;
         status = dm->createRecordDomain(schema_id, "Person", fields, person_domain_id, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         std::cout << "  Created Person RECORD domain with 3 fields ✓\n";
     }
     std::cout << "  ✓ Create RECORD domain passed\n\n";
@@ -58,24 +60,24 @@ int main() {
     {
         DomainInfo info;
         status = dm->getDomain(schema_id, "Person", info, &ctx);
-        assert(status == Status::OK);
-        assert(info.domain_type == DomainType::RECORD);
-        assert(info.base_type == DataType::COMPOSITE);
-        assert(info.fields.size() == 3);
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(info.domain_type, DomainType::RECORD);
+        ASSERT_EQ(info.base_type, DataType::COMPOSITE);
+        ASSERT_EQ(info.fields.size(), 3);
         std::cout << "  Retrieved Person domain: " << info.fields.size() << " fields ✓\n";
 
         // Verify field details
-        assert(info.fields[0].name == "id");
-        assert(info.fields[0].type == DataType::INT32);
-        assert(info.fields[0].nullable == false);
+        ASSERT_EQ(info.fields[0].name, "id");
+        ASSERT_EQ(info.fields[0].type, DataType::INT32);
+        ASSERT_EQ(info.fields[0].nullable, false);
 
-        assert(info.fields[1].name == "name");
-        assert(info.fields[1].type == DataType::VARCHAR);
-        assert(info.fields[1].nullable == false);
+        ASSERT_EQ(info.fields[1].name, "name");
+        ASSERT_EQ(info.fields[1].type, DataType::VARCHAR);
+        ASSERT_EQ(info.fields[1].nullable, false);
 
-        assert(info.fields[2].name == "email");
-        assert(info.fields[2].type == DataType::VARCHAR);
-        assert(info.fields[2].nullable == true);
+        ASSERT_EQ(info.fields[2].name, "email");
+        ASSERT_EQ(info.fields[2].type, DataType::VARCHAR);
+        ASSERT_EQ(info.fields[2].nullable, true);
 
         std::cout << "  All fields verified ✓\n";
     }
@@ -86,19 +88,19 @@ int main() {
     {
         DomainInfo info;
         status = dm->getDomain(schema_id, "Person", info, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         RecordField field;
         status = dm->getRecordField(info.domain_id, "email", field, &ctx);
-        assert(status == Status::OK);
-        assert(field.name == "email");
-        assert(field.type == DataType::VARCHAR);
-        assert(field.nullable == true);
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(field.name, "email");
+        ASSERT_EQ(field.type, DataType::VARCHAR);
+        ASSERT_EQ(field.nullable, true);
         std::cout << "  Retrieved 'email' field: VARCHAR, nullable=true ✓\n";
 
         // Try non-existent field
         status = dm->getRecordField(info.domain_id, "nonexistent", field, &ctx);
-        assert(status == Status::NOT_FOUND);
+        ASSERT_EQ(status, Status::NOT_FOUND);
         std::cout << "  Non-existent field rejected as expected ✓\n";
     }
     std::cout << "  ✓ Get specific field passed\n\n";
@@ -112,7 +114,7 @@ int main() {
 
         ID dup_domain_id;
         status = dm->createRecordDomain(schema_id, "Invalid", fields, dup_domain_id, &ctx);
-        assert(status == Status::INVALID_ARGUMENT);
+        ASSERT_EQ(status, Status::INVALID_ARGUMENT);
         std::cout << "  Duplicate field name rejected ✓\n";
     }
     std::cout << "  ✓ Reject duplicate field names passed\n\n";
@@ -124,7 +126,7 @@ int main() {
 
         ID empty_domain_id;
         status = dm->createRecordDomain(schema_id, "Empty", fields, empty_domain_id, &ctx);
-        assert(status == Status::INVALID_ARGUMENT);
+        ASSERT_EQ(status, Status::INVALID_ARGUMENT);
         std::cout << "  Empty field list rejected ✓\n";
     }
     std::cout << "  ✓ Reject empty field list passed\n\n";
@@ -144,23 +146,23 @@ int main() {
 
         ID employee_domain_id;
         status = dm->createRecordDomain(schema_id, "Employee", fields, employee_domain_id, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         // Verify all fields
         DomainInfo info;
         status = dm->getDomain(schema_id, "Employee", info, &ctx);
-        assert(status == Status::OK);
-        assert(info.fields.size() == 8);
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(info.fields.size(), 8);
         std::cout << "  Created Employee RECORD with 8 fields ✓\n";
 
         // Test field access for each field
         for (const auto& expected_field : fields) {
             RecordField field;
             status = dm->getRecordField(info.domain_id, expected_field.name, field, &ctx);
-            assert(status == Status::OK);
-            assert(field.name == expected_field.name);
-            assert(field.type == expected_field.type);
-            assert(field.nullable == expected_field.nullable);
+            ASSERT_EQ(status, Status::OK);
+            ASSERT_EQ(field.name, expected_field.name);
+            ASSERT_EQ(field.type, expected_field.type);
+            ASSERT_EQ(field.nullable, expected_field.nullable);
         }
         std::cout << "  All 8 fields accessible ✓\n";
     }
@@ -177,13 +179,13 @@ int main() {
             0, 0, false, "0", constraints,
             basic_domain_id, &ctx
         );
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         // List all domains
         std::vector<DomainInfo> domains;
         status = dm->listDomains(schema_id, domains, &ctx);
-        assert(status == Status::OK);
-        assert(domains.size() >= 3);  // At least Person, Employee, PositiveInt
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_GE(domains.size(), 3);  // At least Person, Employee, PositiveInt
 
         int basic_count = 0;
         int record_count = 0;
@@ -197,8 +199,8 @@ int main() {
                      << " (" << (domain.domain_type == DomainType::BASIC ? "BASIC" : "RECORD") << ")\n";
         }
 
-        assert(basic_count >= 1);
-        assert(record_count >= 2);
+        ASSERT_GE(basic_count, 1);
+        ASSERT_GE(record_count, 2);
         std::cout << "  Found " << basic_count << " BASIC and " << record_count << " RECORD domains ✓\n";
     }
     std::cout << "  ✓ List mixed domain types passed\n\n";
@@ -212,6 +214,5 @@ int main() {
     std::cout << "========================================\n";
     std::cout << "\nNote: Field extraction from RECORD values (extractField)\n";
     std::cout << "requires TypedValue extension and is planned for future enhancement.\n";
-
-    return 0;
 }
+

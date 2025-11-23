@@ -18,8 +18,9 @@
 
 using namespace scratchbird::core;
 
-int main()
-{
+
+TEST(SubtransactionsTest, Comprehensive) {
+
     std::cout << "\n=== Test: Subtransaction/Savepoint Support (Issue 2.15) ===" << std::endl;
 
     // Create test database
@@ -31,7 +32,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to create database: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     Database db;
@@ -39,7 +40,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to open database: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Database created and opened" << std::endl;
@@ -49,7 +50,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to initialize ProcArray: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ ProcArray initialized" << std::endl;
 
@@ -59,7 +60,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to register backend: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Backend registered: proc_id=" << proc_id << std::endl;
 
@@ -69,7 +70,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to initialize connection context: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Connection context initialized, XID=" << ctx.getCurrentXid() << std::endl;
 
@@ -79,7 +80,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to create savepoint sp1: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Created savepoint 'sp1'" << std::endl;
 
@@ -95,7 +96,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to create savepoint sp2: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Created nested savepoint 'sp2'" << std::endl;
 
@@ -109,7 +110,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to rollback to sp2: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Rolled back to savepoint 'sp2' (no changes undone)" << std::endl;
 
@@ -118,7 +119,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to create savepoint sp3: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Created savepoint 'sp3'" << std::endl;
 
@@ -131,7 +132,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to rollback to sp1: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Rolled back to savepoint 'sp1' (undid sp2 and sp3)" << std::endl;
 
@@ -141,7 +142,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to create savepoint sp4: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Created savepoint 'sp4' after rollback" << std::endl;
 
@@ -154,7 +155,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to release savepoint sp4: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Released savepoint 'sp4' (merged into sp1)" << std::endl;
 
@@ -164,7 +165,7 @@ int main()
     if (s == Status::OK)
     {
         std::cerr << "ERROR: Should not allow duplicate savepoint name" << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Correctly rejected duplicate savepoint name: " << err_ctx.message << std::endl;
 
@@ -174,7 +175,7 @@ int main()
     if (s == Status::OK)
     {
         std::cerr << "ERROR: Should not allow rollback to non-existent savepoint" << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Correctly rejected non-existent savepoint: " << err_ctx.message << std::endl;
 
@@ -184,7 +185,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to release savepoint sp1: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Released savepoint 'sp1'" << std::endl;
 
@@ -192,7 +193,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to commit transaction: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Committed transaction (savepoints cleared)" << std::endl;
 
@@ -202,7 +203,7 @@ int main()
     if (s == Status::OK)
     {
         std::cerr << "ERROR: Savepoints should be cleared after commit" << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Savepoints correctly cleared after commit" << std::endl;
 
@@ -212,7 +213,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to create savepoint: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Created savepoint in new transaction" << std::endl;
 
@@ -220,7 +221,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to rollback transaction: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Rolled back transaction (savepoints cleared)" << std::endl;
 
@@ -228,7 +229,7 @@ int main()
     if (s == Status::OK)
     {
         std::cerr << "ERROR: Savepoints should be cleared after rollback" << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Savepoints correctly cleared after rollback" << std::endl;
 
@@ -238,21 +239,21 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to create level1: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     s = ctx.createSavepoint("level2", &err_ctx);
     if (s != Status::OK)
     {
         std::cerr << "Failed to create level2: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     s = ctx.createSavepoint("level3", &err_ctx);
     if (s != Status::OK)
     {
         std::cerr << "Failed to create level3: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Created 3 levels of nested savepoints" << std::endl;
 
@@ -260,7 +261,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to rollback to level1: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Rolled back to level1 (undid level2 and level3)" << std::endl;
 
@@ -269,7 +270,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed final commit: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     ProcArrayManager::unregisterBackend(proc_id, &err_ctx);
@@ -286,6 +287,5 @@ int main()
     std::cout << "  6. Error handling (duplicate names, not found)" << std::endl;
     std::cout << "  7. Savepoints cleared on commit/rollback" << std::endl;
     std::cout << "\nSpec: docs/specifications/TRANSACTION_MGA_CORE.md:774-908" << std::endl;
-
-    return 0;
 }
+

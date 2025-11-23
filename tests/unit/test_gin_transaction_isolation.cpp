@@ -188,5 +188,5 @@ int main()
     std::cout << "  5. src/core/gin_index.cpp:336-420 (visibility check)" << std::endl;
     std::cout << std::endl;
 
-    return 0;
+    return;
 }
