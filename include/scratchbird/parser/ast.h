@@ -110,6 +110,7 @@ namespace scratchbird
             COALESCE,        // Phase 1 Task 8: COALESCE expression
             NULLIF,          // Phase 1 Task 8: NULLIF expression
             CASE,            // Phase 1 Task 8: CASE expression
+            GROUPING,        // Phase 3: Advanced Grouping - GROUPING() function
             SUBQUERY,        // Phase 2 Wave 2 - Agent B: Subquery expression
             SEQUENCE_FUNCTION, // ALPHA Phase 1 - Sequences (NEXTVAL, CURRVAL, SETVAL)
             EXTRACT,         // EXTRACT(field FROM value) - extract sub-information
@@ -881,6 +882,27 @@ namespace scratchbird
             Expression* case_operand_;  // NULL for searched CASE, non-NULL for simple CASE
             std::vector<WhenClause> when_clauses_;
             Expression* else_result_;  // Can be NULL
+        };
+
+        // GROUPING() function for ROLLUP/CUBE/GROUPING SETS (Phase 3: Advanced Grouping)
+        class GroupingExpr : public Expression
+        {
+        public:
+            GroupingExpr(const SourceSpan &span, Expression* arg)
+                : Expression(ASTKind::GROUPING, span),
+                  arg_(arg)
+            {
+            }
+
+            Expression* arg() const
+            {
+                return arg_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            Expression* arg_;  // The grouping column expression to check
         };
 
         // Array literal expression: ARRAY[elem1, elem2, ...] (Phase 2 Task 12)
@@ -2004,15 +2026,36 @@ namespace scratchbird
                 : expr(e), order(o), nulls_order(n) {}
         };
 
-        // GROUP BY clause (Phase 1 Task 4.1)
+        // GROUP BY clause (Phase 1 Task 4.1, Phase 3: Advanced Grouping)
+
+        // Grouping type for advanced GROUP BY features
+        enum class GroupingType : uint8_t
+        {
+            STANDARD,        // Regular GROUP BY
+            ROLLUP,          // GROUP BY ROLLUP(...)
+            CUBE,            // GROUP BY CUBE(...)
+            GROUPING_SETS    // GROUP BY GROUPING SETS(...)
+        };
+
         struct GroupByClause
         {
-            std::vector<Expression *> grouping_exprs;
-            Expression *having_clause;  // Optional HAVING condition
+            GroupingType type;                                  // Type of grouping
+            std::vector<Expression *> grouping_exprs;          // Simple GROUP BY expressions
+            std::vector<std::vector<Expression *>> grouping_sets;  // For GROUPING SETS - list of grouping sets
+            Expression *having_clause;                          // Optional HAVING condition
 
-            GroupByClause() : having_clause(nullptr) {}
+            GroupByClause() : type(GroupingType::STANDARD), having_clause(nullptr) {}
+
             explicit GroupByClause(std::vector<Expression *> exprs, Expression *having = nullptr)
-                : grouping_exprs(std::move(exprs)), having_clause(having) {}
+                : type(GroupingType::STANDARD), grouping_exprs(std::move(exprs)), having_clause(having) {}
+
+            // Constructor for advanced grouping (ROLLUP, CUBE, GROUPING SETS)
+            GroupByClause(GroupingType grp_type, std::vector<Expression *> exprs, Expression *having = nullptr)
+                : type(grp_type), grouping_exprs(std::move(exprs)), having_clause(having) {}
+
+            // Constructor for explicit GROUPING SETS with multiple sets
+            GroupByClause(std::vector<std::vector<Expression *>> sets, Expression *having = nullptr)
+                : type(GroupingType::GROUPING_SETS), grouping_sets(std::move(sets)), having_clause(having) {}
         };
 
         // Set operation type (UNION, INTERSECT, EXCEPT)
@@ -4037,6 +4080,7 @@ namespace scratchbird
             virtual void visit(CoalesceExpr *node) = 0;   // Phase 1 Task 8
             virtual void visit(NullIfExpr *node) = 0;     // Phase 1 Task 8
             virtual void visit(CaseExpr *node) = 0;       // Phase 1 Task 8
+            virtual void visit(GroupingExpr *node) = 0;   // Phase 3: Advanced Grouping
             virtual void visit(ArrayLiteral *node) = 0;   // Phase 2 Task 12
             virtual void visit(SubqueryExpr *node) = 0;   // Phase 2 Wave 2 - Agent B
 
@@ -4085,6 +4129,7 @@ namespace scratchbird
             void visit(CoalesceExpr *node) override;   // Phase 1 Task 8
             void visit(NullIfExpr *node) override;     // Phase 1 Task 8
             void visit(CaseExpr *node) override;       // Phase 1 Task 8
+            void visit(GroupingExpr *node) override;   // Phase 3: Advanced Grouping
             void visit(ArrayLiteral *node) override;   // Phase 2 Task 12
             void visit(SubqueryExpr *node) override;   // Phase 2 Wave 2 - Agent B
             void visit(ColumnDef *node) override;
