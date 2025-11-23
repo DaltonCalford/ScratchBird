@@ -4695,16 +4695,96 @@ namespace scratchbird
             auto child_plan = node->childPlan();
             generateJoinPlan(child_plan.get(), stmt);
 
-            // Emit GROUP BY clause if present
+            // Check if we have advanced grouping (ROLLUP, CUBE, GROUPING SETS)
+            parser::GroupingType grouping_type = node->groupingType();
             const auto& grouping_exprs = node->groupingExprs();
-            if (!grouping_exprs.empty())
+
+            if (grouping_type != parser::GroupingType::STANDARD)
             {
-                current_result_->writeOpcode(Opcode::GROUP_BY);
+                // Generate grouping sets based on type
+                std::vector<std::vector<parser::Expression*>> grouping_sets;
+
+                if (grouping_type == parser::GroupingType::ROLLUP)
+                {
+                    // ROLLUP(a,b,c) => (a,b,c), (a,b), (a), ()
+                    for (size_t i = grouping_exprs.size(); i > 0; i--)
+                    {
+                        std::vector<parser::Expression*> set(grouping_exprs.begin(), grouping_exprs.begin() + i);
+                        grouping_sets.push_back(set);
+                    }
+                    // Add empty set for grand total
+                    grouping_sets.push_back({});
+                }
+                else if (grouping_type == parser::GroupingType::CUBE)
+                {
+                    // CUBE(a,b) => all 2^n combinations
+                    size_t n = grouping_exprs.size();
+                    size_t num_sets = 1 << n; // 2^n
+
+                    for (size_t mask = 0; mask < num_sets; mask++)
+                    {
+                        std::vector<parser::Expression*> set;
+                        for (size_t i = 0; i < n; i++)
+                        {
+                            if (mask & (1 << i))
+                            {
+                                set.push_back(grouping_exprs[i]);
+                            }
+                        }
+                        grouping_sets.push_back(set);
+                    }
+                }
+                else if (grouping_type == parser::GroupingType::GROUPING_SETS)
+                {
+                    // Use explicit grouping sets from parser
+                    grouping_sets = node->groupingSets();
+                }
+
+                // Emit extended opcode for advanced grouping
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                if (grouping_type == parser::GroupingType::ROLLUP)
+                {
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_GROUP_ROLLUP));
+                }
+                else if (grouping_type == parser::GroupingType::CUBE)
+                {
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_GROUP_CUBE));
+                }
+                else
+                {
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_GROUP_GROUPING_SETS));
+                }
+
+                // Write number of grouping sets
+                current_result_->writeInt32(static_cast<uint32_t>(grouping_sets.size()));
+
+                // Write total number of grouping columns (for GROUPING() function)
                 current_result_->writeInt32(static_cast<uint32_t>(grouping_exprs.size()));
 
-                for (auto* expr : grouping_exprs)
+                // For each grouping set, emit GROUP BY with those columns
+                for (const auto& set : grouping_sets)
                 {
-                    generateExpression(expr);
+                    current_result_->writeOpcode(Opcode::GROUP_BY);
+                    current_result_->writeInt32(static_cast<uint32_t>(set.size()));
+
+                    for (auto* expr : set)
+                    {
+                        generateExpression(expr);
+                    }
+                }
+            }
+            else
+            {
+                // Standard GROUP BY
+                if (!grouping_exprs.empty())
+                {
+                    current_result_->writeOpcode(Opcode::GROUP_BY);
+                    current_result_->writeInt32(static_cast<uint32_t>(grouping_exprs.size()));
+
+                    for (auto* expr : grouping_exprs)
+                    {
+                        generateExpression(expr);
+                    }
                 }
             }
 

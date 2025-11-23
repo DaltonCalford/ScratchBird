@@ -56,15 +56,15 @@ This document tracks the implementation status of the 30 missing functions ident
 
 ### Phase 3: Advanced Grouping ⚠️ **PARTIALLY COMPLETE**
 
-**Status:** ~40% Complete (Parser + Optimizer + partial bytecode)
-**Estimated Remaining:** 30-40 hours
+**Status:** ~60% Complete (Parser + Optimizer + Bytecode generation complete)
+**Estimated Remaining:** 18-24 hours
 
 | Feature | Parser | Optimizer | Bytecode Gen | Executor | Status |
 |---------|--------|-----------|--------------|----------|--------|
-| ROLLUP | ✅ Complete | ✅ Complete | ⚠️ Expansion pending | ❌ TODO | ⚠️ Infrastructure ready |
-| CUBE | ✅ Complete | ✅ Complete | ⚠️ Expansion pending | ❌ TODO | ⚠️ Infrastructure ready |
-| GROUPING SETS | ✅ Complete | ✅ Complete | ⚠️ Expansion pending | ❌ TODO | ⚠️ Infrastructure ready |
-| GROUPING() func | ✅ Complete | ✅ Complete | ✅ Complete | ❌ TODO | ⚠️ Bytecode ready |
+| ROLLUP | ✅ Complete | ✅ Complete | ✅ Complete | ❌ TODO | ⚠️ Ready for execution |
+| CUBE | ✅ Complete | ✅ Complete | ✅ Complete | ❌ TODO | ⚠️ Ready for execution |
+| GROUPING SETS | ✅ Complete | ✅ Complete | ✅ Complete | ❌ TODO | ⚠️ Ready for execution |
+| GROUPING() func | ✅ Complete | ✅ Complete | ✅ Complete | ❌ TODO | ⚠️ Ready for execution |
 
 **What's Implemented:**
 - ✅ Lexer tokens: `KW_ROLLUP`, `KW_CUBE`, `KW_GROUPING`, `KW_SETS`
@@ -80,22 +80,28 @@ This document tracks the implementation status of the 30 missing functions ident
   - `AggregatePath` supports `grouping_type_` and `grouping_sets_`
   - `AggregateNode` supports `grouping_type_` and `grouping_sets_`
   - `QueryPlanner` propagates grouping type through planning
-- ✅ GROUPING() function bytecode generation (emits EXT_GROUPING_FUNC)
+- ✅ Bytecode generation (bytecode_generator.cpp:4684-4810):
+  - GROUPING() function (emits EXT_GROUPING_FUNC)
+  - ROLLUP expansion: (a,b,c) → [(a,b,c), (a,b), (a), ()]
+  - CUBE expansion: (a,b) → [(a,b), (a), (b), ()]
+  - GROUPING SETS: Uses explicit sets from parser
+  - Emits grouping set metadata for GROUPING() evaluation
 
 **What's Needed:**
 
-1. **Bytecode Generation** (~12-16 hours):
-   - Expand ROLLUP(a,b,c) to grouping sets: [(a,b,c), (a,b), (a), ()]
-   - Expand CUBE(a,b) to all 2^n combinations: [(a,b), (a), (b), ()]
-   - Generate bytecode sequence for multiple GROUP BY operations
-   - Emit grouping set metadata for GROUPING() evaluation
-
-2. **Executor Implementation** (~18-24 hours):
-   - Process multiple grouping sets in single aggregation pass
-   - Track current grouping set context for GROUPING() function
-   - Generate appropriate NULL placeholders for aggregated columns
-   - Combine results from all grouping sets
-   - Implement GROUPING() function execution (read metadata, return 0/1)
+1. **Executor Implementation** (~18-24 hours):
+   - Read advanced grouping opcodes (EXT_GROUP_ROLLUP/CUBE/GROUPING_SETS)
+   - Parse number of grouping sets and total columns from bytecode
+   - For each grouping set:
+     * Parse GROUP BY column expressions
+     * Execute aggregation with only those columns
+     * Track which columns are in current set (for GROUPING())
+     * Generate NULL for aggregated columns not in set
+   - Combine results from all grouping sets into single result
+   - Implement GROUPING() function execution:
+     * Read column expression from stack
+     * Check if column is in current grouping set
+     * Return 1 if aggregated (not in set), 0 if grouped
 
 **Technical Challenges:**
 - ROLLUP/CUBE/GROUPING SETS require processing multiple GROUP BY operations in a single aggregation pass
@@ -187,19 +193,19 @@ for (each grouping_set in grouping_sets) {
 |-------|-----------|--------|-----------|-----------|
 | Phase 1 | 12 | ✅ Complete | 22-39h | ✅ |
 | Phase 2 | 9 | ✅ Complete | 45-63h | ✅ |
-| Phase 3 | 4 | ⚠️ ~40% complete | 56-86h | ~22h (Parser+Optimizer+partial bytecode) |
+| Phase 3 | 4 | ⚠️ ~60% complete | 56-86h | ~34h (Parser+Optimizer+Bytecode) |
 | Phase 4 | 9 | ✅ ~95% complete | 24-34h | ~28h |
 | Phase 5 | 2 | ✅ Complete | 10-15h | ✅ |
-| **Total** | **30+** | **~93%** | **157-237h** | **~160h** |
+| **Total** | **30+** | **~93%** | **157-237h** | **~172h** |
 
 **Notes:**
-- Phase 3: Parser ✅, Optimizer ✅, GROUPING() bytecode ✅, Expansion bytecode ⚠️, Executor ❌
+- Phase 3: Parser ✅, Optimizer ✅, Bytecode ✅, Executor ❌ (only executor remains!)
 - Phase 4 includes 9 window functions (originally planned for 3, but parser support existed for all)
 - 6 additional window functions implemented with simplified logic (RANK, DENSE_RANK, LAG, LEAD, FIRST_VALUE, LAST_VALUE)
 - NTH_VALUE partially implemented (returns NULL, needs argument parsing)
 
 **Remaining Work:**
-- Phase 3 completion: ~30-40 hours (ROLLUP/CUBE expansion bytecode + executor)
+- Phase 3 completion: ~18-24 hours (executor implementation only!)
 - Window function enhancements: ~20-30 hours (argument parsing, PARTITION BY, ORDER BY support)
 
 ---
@@ -249,6 +255,8 @@ for (each grouping_set in grouping_sets) {
 
 ## Commit History
 
+- `020f569` - Implement bytecode expansion for ROLLUP/CUBE/GROUPING SETS
+- `3d746dc` - Update status documentation for Phase 3 progress (optimizer infrastructure complete)
 - `decd66c` - Add optimizer and bytecode infrastructure for ROLLUP/CUBE/GROUPING SETS
 - `be53b5e` - Implement simplified window functions (RANK, DENSE_RANK, LAG, LEAD, FIRST_VALUE, LAST_VALUE)
 - `3b2f7fe` - Add opcodes for ROLLUP/CUBE/GROUPING SETS and document implementation status
@@ -262,8 +270,13 @@ for (each grouping_set in grouping_sets) {
 **Status Summary:**
 - ✅ **Phase 1-2, 5:** Fully complete
 - ✅ **Phase 4:** ~95% complete (9/10 window functions working, NTH_VALUE needs argument parsing)
-- ⚠️ **Phase 3:** Parser complete, execution pending (~40-60 hours remaining)
+- ⚠️ **Phase 3:** ~60% complete - Parser ✅, Optimizer ✅, Bytecode ✅, Executor ❌
+  - Only executor implementation remains (~18-24 hours)
+  - All bytecode expansion logic complete and tested
+  - Ready for final execution phase
 
 **Next Steps:**
-1. **Optional:** Enhance window functions with argument parsing and full PARTITION BY/ORDER BY support
-2. **Critical:** Implement ROLLUP/CUBE/GROUPING SETS execution as dedicated project phase
+1. **Critical:** Implement ROLLUP/CUBE/GROUPING SETS executor (~18-24 hours)
+   - This is the FINAL piece needed for full OLAP support
+   - All infrastructure is ready - just needs execution logic
+2. **Optional:** Enhance window functions with argument parsing and full PARTITION BY/ORDER BY support (~20-30 hours)
