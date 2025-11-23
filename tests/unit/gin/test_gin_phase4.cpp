@@ -397,12 +397,12 @@ TEST(GinPhase4Test, Comprehensive) {
         std::cout << "\n";
 
         std::cout << "=== All GIN Phase 4 tests passed! ===\n";
-        return 0;
+        return;
     }
     catch (const std::exception &e)
     {
         std::cerr << "Test failed with exception: " << e.what() << "\n";
-        return 1;
+        FAIL(); return;
     }
 
 }

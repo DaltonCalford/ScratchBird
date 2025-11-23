@@ -560,5 +560,5 @@ int main()
     printf("  ✅ ALL TESTS PASSED (9/9)\n");
     printf("═══════════════════════════════════════════════════════════════\n");
 
-    return 0;
+    return;
 }

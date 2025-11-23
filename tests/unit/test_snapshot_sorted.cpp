@@ -170,7 +170,7 @@ TEST(SnapshotSortedTest, Comprehensive) {
         else
         {
             std::cout << "FAILED: Sorting verification failed" << std::endl;
-            return 1;
+            FAIL(); return;
         }
     }
 

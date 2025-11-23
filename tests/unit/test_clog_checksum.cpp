@@ -44,21 +44,21 @@ TEST(ClogChecksumTest, Comprehensive) {
         if (Database::create(db_path, 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         Database db;
         if (db.open(db_path, &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         Clog clog(&db);
         if (clog.initialize(&ctx) != Status::OK)
         {
             std::cout << "FAILED (init): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         std::cout << "PASSED" << std::endl;
@@ -72,7 +72,7 @@ TEST(ClogChecksumTest, Comprehensive) {
         if (clog.setStatus(test_xid, ClogStatus::COMMITTED, &ctx) != Status::OK)
         {
             std::cout << "FAILED (setStatus): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Retrieve status (this validates the checksum worked)
@@ -80,13 +80,13 @@ TEST(ClogChecksumTest, Comprehensive) {
         if (clog.getStatus(test_xid, &status, &ctx) != Status::OK)
         {
             std::cout << "FAILED (getStatus): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         if (status != ClogStatus::COMMITTED)
         {
             std::cout << "FAILED: Expected COMMITTED, got " << static_cast<int>(status) << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         std::cout << "PASSED" << std::endl;
@@ -107,7 +107,7 @@ TEST(ClogChecksumTest, Comprehensive) {
             if (clog.setStatus(xid, ClogStatus::COMMITTED, &ctx) != Status::OK)
             {
                 std::cout << "FAILED (setStatus xid=" << xid << "): " << ctx.message << std::endl;
-                return 1;
+                FAIL(); return;
             }
         }
 
@@ -118,14 +118,14 @@ TEST(ClogChecksumTest, Comprehensive) {
             if (clog.getStatus(xid, &retrieved_status, &ctx) != Status::OK)
             {
                 std::cout << "FAILED (getStatus xid=" << xid << "): " << ctx.message << std::endl;
-                return 1;
+                FAIL(); return;
             }
 
             if (retrieved_status != ClogStatus::COMMITTED)
             {
                 std::cout << "FAILED: XID " << xid << " expected COMMITTED, got "
                           << static_cast<int>(retrieved_status) << std::endl;
-                return 1;
+                FAIL(); return;
             }
         }
 

@@ -512,5 +512,5 @@ int main()
     test_gin_workflow();
 
     std::cout << "\n=== All GIN TSVector Ops Tests Passed! ===\n" << std::endl;
-    return 0;
+    return;
 }

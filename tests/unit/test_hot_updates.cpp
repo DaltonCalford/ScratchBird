@@ -37,7 +37,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to create database: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     Database db;
@@ -45,7 +45,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to open database: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Database created and opened" << std::endl;
@@ -57,7 +57,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to pin page: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // Initialize heap page
@@ -66,7 +66,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to initialize heap page: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Heap page initialized" << std::endl;
 
@@ -87,7 +87,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to insert tuple 1: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "✓ Inserted initial tuple, item_id=" << item_id_1 << std::endl;
 
@@ -98,7 +98,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to get tuple 1: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     auto *retrieved_hdr = reinterpret_cast<const TupleHeader *>(retrieved_data);
     std::cout << "  xmin=" << retrieved_hdr->xmin << ", ctid=" << retrieved_hdr->ctid_page
@@ -124,7 +124,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to update tuple: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     uint32_t free_space_after = page.getFreeSpace();
@@ -139,7 +139,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     else
     {
         std::cout << "✗ HOT UPDATE FAILED: Different item_id (" << item_id_1 << " → " << item_id_2 << ")" << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // Verify HEAP_HOT_UPDATED flag is set
@@ -147,7 +147,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to get updated tuple: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     auto *hot_tuple_hdr = reinterpret_cast<const TupleHeader *>(retrieved_data);
 
@@ -158,7 +158,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     else
     {
         std::cout << "✗ HEAP_HOT_UPDATED flag is NOT set (infomask=0x" << std::hex << hot_tuple_hdr->infomask << std::dec << ")" << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // Test 3: HOT Update (smaller size)
@@ -177,7 +177,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to update tuple (smaller): " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     if (item_id_3 == item_id_2)
@@ -187,7 +187,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     else
     {
         std::cout << "✗ HOT UPDATE (smaller) FAILED: Different item_id" << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // Test 4: Fill page and force non-HOT update
@@ -214,7 +214,7 @@ TEST(HotUpdatesTest, Comprehensive) {
         else if (s != Status::OK)
         {
             std::cerr << "Failed to insert filler tuple: " << err_ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
     }
 
@@ -250,7 +250,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     else
     {
         std::cerr << "Update failed with unexpected status: " << static_cast<int>(s) << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // Test 5: Multiple HOT updates (version chain)
@@ -264,7 +264,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to pin page 2: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     HeapPage page2(static_cast<uint8_t *>(page_buffer_2), 8192);
@@ -272,7 +272,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to initialize heap page 2: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // Insert and perform multiple HOT updates
@@ -288,7 +288,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     if (s != Status::OK)
     {
         std::cerr << "Failed to insert chain tuple: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
     std::cout << "  Initial tuple inserted, item_id=" << chain_item_id << std::endl;
 
@@ -312,7 +312,7 @@ TEST(HotUpdatesTest, Comprehensive) {
         if (s != Status::OK)
         {
             std::cerr << "Failed update " << i << ": " << err_ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         if (new_item_id != chain_item_id)

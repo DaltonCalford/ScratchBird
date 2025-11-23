@@ -115,7 +115,7 @@ TEST(MoneyTypeTest, Comprehensive) {
         if (result != tc.expected) {
             std::cout << "  ✗ FAILED: " << tc.cents << " cents -> got '" << result
                       << "', expected '" << tc.expected << "'\n";
-            return 1;
+            FAIL(); return;
         }
     }
     std::cout << "  ✓ All common currency amounts passed\n\n";

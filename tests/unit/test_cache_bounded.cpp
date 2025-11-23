@@ -304,5 +304,5 @@ int main()
     std::cout << "PHASE 1: CRITICAL FIXES - ALL 23 ISSUES COMPLETE! 🎉" << std::endl;
     std::cout << "Final score: 9 real bugs fixed, 14 false positives (61% audit error rate)" << std::endl;
 
-    return 0;
+    return;
 }

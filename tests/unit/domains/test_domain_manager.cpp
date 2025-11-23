@@ -23,7 +23,7 @@ TEST(DomainManagerTest, Comprehensive) {
         if (!ctx.message.empty()) {
             std::cerr << "Error: " << ctx.message << "\n";
         }
-        return 1;
+        FAIL(); return;
     }
     ASSERT_EQ(status, Status::OK);
 

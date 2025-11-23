@@ -29,7 +29,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to create database: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     Database db;
@@ -37,7 +37,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to open database: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Database created and opened" << std::endl;
@@ -48,7 +48,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to register backend: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Backend registered: proc_id=" << proc_id << std::endl;
@@ -59,7 +59,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to initialize connection: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Connection initialized: xid=" << conn.getCurrentXid() << std::endl;
@@ -69,7 +69,7 @@ int main()
     if (!monitor)
     {
         std::cerr << "Long transaction monitor not available" << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // Configure monitor for TERMINATE_CONNECTION with very short thresholds for testing
@@ -86,7 +86,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to start monitoring: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Monitoring thread started" << std::endl;
@@ -103,7 +103,7 @@ int main()
     if (stats.connections_terminated == 0)
     {
         std::cerr << "ERROR: Expected termination request but got none" << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Termination was requested" << std::endl;
@@ -115,7 +115,7 @@ int main()
     {
         std::cerr << "ERROR: Expected IO_ERROR on commit but got: " << static_cast<int>(s)
                   << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Commit correctly failed with IO_ERROR" << std::endl;
@@ -129,5 +129,5 @@ int main()
     db.close();
 
     std::cout << "\n=== TERMINATE_CONNECTION Policy Test PASSED ===" << std::endl;
-    return 0;
+    return;
 }

@@ -446,5 +446,5 @@ int main()
     test_ranking_order();
 
     std::cout << "\n=== All Phase 3 Tests Passed! ===\n" << std::endl;
-    return 0;
+    return;
 }
