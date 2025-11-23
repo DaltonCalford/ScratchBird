@@ -5608,7 +5608,8 @@ namespace scratchbird
             if (match(TokenType::KW_ROW_NUMBER) || match(TokenType::KW_RANK) ||
                 match(TokenType::KW_DENSE_RANK) || match(TokenType::KW_LAG) ||
                 match(TokenType::KW_LEAD) || match(TokenType::KW_FIRST_VALUE) ||
-                match(TokenType::KW_LAST_VALUE) || match(TokenType::KW_NTH_VALUE))
+                match(TokenType::KW_LAST_VALUE) || match(TokenType::KW_NTH_VALUE) ||
+                match(TokenType::KW_CUME_DIST) || match(TokenType::KW_PERCENT_RANK))
             {
                 TokenType win_type = previous().type;
                 WindowFunc win_func;
@@ -5638,6 +5639,12 @@ namespace scratchbird
                     break;
                 case TokenType::KW_NTH_VALUE:
                     win_func = WindowFunc::NTH_VALUE;
+                    break;
+                case TokenType::KW_CUME_DIST:
+                    win_func = WindowFunc::CUME_DIST;
+                    break;
+                case TokenType::KW_PERCENT_RANK:
+                    win_func = WindowFunc::PERCENT_RANK;
                     break;
                 default:
                     error("Unknown window function");

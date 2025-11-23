@@ -2903,6 +2903,18 @@ namespace scratchbird
                 current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
                 return;
             }
+            // Date/Time function - AGE (Alpha 1 - Missing Functions Phase 5)
+            else if (func_name == "AGE")
+            {
+                for (auto *arg : node->args())
+                {
+                    generateExpression(arg);
+                }
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+                current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_FUNC_AGE));
+                current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+                return;
+            }
             else if (func_name == "POWER" || func_name == "POW")
             {
                 for (auto *arg : node->args())
@@ -4837,6 +4849,14 @@ namespace scratchbird
                 case parser::WindowFunc::NTH_VALUE:
                     current_result_->writeOpcode(Opcode::WIN_NTH_VALUE);
                     break;
+                case parser::WindowFunc::CUME_DIST:
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_WIN_CUME_DIST));
+                    break;
+                case parser::WindowFunc::PERCENT_RANK:
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_WIN_PERCENT_RANK));
+                    break;
             }
 
             // Emit argument count
@@ -5176,6 +5196,14 @@ namespace scratchbird
             // Emit subquery end marker
             current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
             current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SUBQUERY_END));
+        }
+
+        void BytecodeGenerator::visit(parser::GroupingExpr *node)
+        {
+            // Phase 3: Advanced Grouping - GROUPING() function
+            // TODO: Implement GROUPING() function bytecode generation
+            // For now, this is a stub to satisfy the pure virtual function requirement
+            current_result_->addError("GROUPING() function not yet fully implemented");
         }
 
         void BytecodeGenerator::visit(parser::SequenceFunctionExpr *node)
