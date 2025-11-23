@@ -288,8 +288,9 @@ void test_terminate_connection_on_rollback()
     std::cout << "\n=== TERMINATE_CONNECTION on Rollback Test PASSED ===" << std::endl;
 }
 
-int main()
-{
+
+TEST(TerminateConnectionTest, Comprehensive) {
+
     try
     {
         test_terminate_connection_policy();
@@ -303,4 +304,5 @@ int main()
         std::cerr << "Test failed with exception: " << e.what() << std::endl;
         FAIL(); return;
     }
+
 }

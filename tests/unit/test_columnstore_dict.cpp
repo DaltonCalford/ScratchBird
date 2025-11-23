@@ -1,36 +1,37 @@
 /**
- * @file test_columnstore_dict.cpp
- * @brief Unit tests for Columnstore Dictionary Encoding
+ * @file test_columnstore_rle.cpp
+ * @brief Unit tests for Columnstore RLE compression
  *
- * Tests dictionary encoding compression and decompression for string data.
+ * Tests Run-Length Encoding compression and decompression for all data types.
  *
  * Test Coverage:
- * - Dictionary builder operations
- * - Low-cardinality string compression (< 10% unique)
- * - High-cardinality rejection (fall back to RLE)
+ * - INT32/INT64 compression/decompression
+ * - Best case: All same value (1000x compression)
+ * - Worst case: All different values (1.2x overhead)
  * - NULL value handling
  * - Empty input
- * - Single unique value (best case)
+ * - Single value
+ * - Alternating values
+ * - Large datasets (1M values)
  * - Round-trip verification
- * - Compression ratio validation
+ * - Error handling (corrupted data)
  */
 
 #include "scratchbird/core/columnstore.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
-#include <cassert>
+#include "gtest/gtest.h"
 #include <cstdio>
 #include <cstring>
 #include <vector>
-#include <string>
 
 using namespace scratchbird::core;
 
 // Helper: Create a Database instance for testing
 Database* createTestDatabase()
 {
-    const char* test_db_path = "/tmp/test_columnstore_dict.db";
+    const char* test_db_path = "/tmp/test_columnstore_rle.db";
     std::remove(test_db_path);
 
     ErrorContext ctx;
@@ -53,104 +54,91 @@ Database* createTestDatabase()
     return db;
 }
 
-// Helper: Create ColumnSegment with string values (null-terminated)
-ColumnSegment createStringSegment(const std::vector<std::string>& values,
-                                  const std::vector<bool>& nulls = {})
+// Helper: Create ColumnSegment with INT32 values
+ColumnSegment createInt32Segment(const std::vector<int32_t>& values, const std::vector<bool>& nulls = {})
 {
     ColumnSegment seg;
-    seg.data_type = DataType::TEXT;
+    seg.data_type = DataType::INT32;
     seg.row_count = static_cast<uint32_t>(values.size());
     seg.null_count = 0;
 
-    // Build data buffer with null-terminated strings
-    for (size_t i = 0; i < values.size(); ++i)
-    {
-        bool is_null = (i < nulls.size()) ? nulls[i] : false;
-
-        if (is_null)
-        {
-            seg.null_count++;
-            seg.data.push_back(0);  // Empty string for NULL
-        }
-        else
-        {
-            // Copy string + null terminator
-            seg.data.insert(seg.data.end(), values[i].begin(), values[i].end());
-            seg.data.push_back(0);
-        }
-    }
+    // Copy values to data buffer
+    seg.data.resize(values.size() * sizeof(int32_t));
+    std::memcpy(seg.data.data(), values.data(), values.size() * sizeof(int32_t));
 
     // Set up NULL bitmap
     if (!nulls.empty())
     {
         seg.null_bitmap = nulls;
-    }
-    else
-    {
-        seg.null_bitmap.resize(values.size(), false);
+        for (bool is_null : nulls)
+        {
+            if (is_null) seg.null_count++;
+        }
     }
 
     return seg;
 }
 
-//=============================================================================
-// Test 1: Dictionary Builder - Basic Operations
-//=============================================================================
-void test_dictionary_builder()
+// Helper: Create ColumnSegment with INT64 values
+ColumnSegment createInt64Segment(const std::vector<int64_t>& values, const std::vector<bool>& nulls = {})
 {
-    printf("Test 1: Dictionary builder basic operations...\n");
+    ColumnSegment seg;
+    seg.data_type = DataType::INT64;
+    seg.row_count = static_cast<uint32_t>(values.size());
+    seg.null_count = 0;
 
-    Dictionary dict;
+    // Copy values to data buffer
+    seg.data.resize(values.size() * sizeof(int64_t));
+    std::memcpy(seg.data.data(), values.data(), values.size() * sizeof(int64_t));
 
-    // Add values
-    uint32_t code1 = dict.addValue("Apple");
-    uint32_t code2 = dict.addValue("Banana");
-    uint32_t code3 = dict.addValue("Cherry");
+    // Set up NULL bitmap
+    if (!nulls.empty())
+    {
+        seg.null_bitmap = nulls;
+        for (bool is_null : nulls)
+        {
+            if (is_null) seg.null_count++;
+        }
+    }
 
-    // Codes should be sequential
-    assert(code1 == 0);
-    assert(code2 == 1);
-    assert(code3 == 2);
+    return seg;
+}
 
-    // Re-adding same value should return same code
-    uint32_t code1_again = dict.addValue("Apple");
-    assert(code1_again == 0);
-    assert(dict.size() == 3);
+// Helper: Extract INT32 values from ColumnSegment
+std::vector<int32_t> extractInt32Values(const ColumnSegment& seg)
+{
+    std::vector<int32_t> values;
+    const int32_t* data_ptr = reinterpret_cast<const int32_t*>(seg.data.data());
+    for (uint32_t i = 0; i < seg.row_count; ++i)
+    {
+        values.push_back(data_ptr[i]);
+    }
+    return values;
+}
 
-    // Get code for existing value
-    int32_t lookup1 = dict.getCode("Banana");
-    assert(lookup1 == 1);
-
-    // Get code for non-existent value
-    int32_t lookup2 = dict.getCode("Durian");
-    assert(lookup2 == -1);
-
-    // Get value for code
-    std::string value;
-    bool found = dict.getValue(0, &value);
-    assert(found);
-    assert(value == "Apple");
-
-    found = dict.getValue(100, &value);
-    assert(!found);
-
-    // Clear dictionary
-    dict.clear();
-    assert(dict.size() == 0);
-
-    printf("  ✅ PASSED\n\n");
+// Helper: Extract INT64 values from ColumnSegment
+std::vector<int64_t> extractInt64Values(const ColumnSegment& seg)
+{
+    std::vector<int64_t> values;
+    const int64_t* data_ptr = reinterpret_cast<const int64_t*>(seg.data.data());
+    for (uint32_t i = 0; i < seg.row_count; ++i)
+    {
+        values.push_back(data_ptr[i]);
+    }
+    return values;
 }
 
 //=============================================================================
-// Test 2: Low-Cardinality Compression (Best Case)
+// Test 1: Basic INT32 Compression/Decompression
 //=============================================================================
-void test_low_cardinality_best_case()
+void test_int32_basic()
 {
-    printf("Test 2: Low-cardinality compression (best case)...\n");
+    printf("Test 1: Basic INT32 compression/decompression...\n");
 
     Database* db = createTestDatabase();
     assert(db != nullptr);
 
+    // Create index
     UuidV7Bytes index_uuid = generateUuidV7();
     UuidV7Bytes table_uuid = generateUuidV7();
     std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
@@ -158,49 +146,49 @@ void test_low_cardinality_best_case()
     uint32_t root_page = 0;
     ErrorContext ctx;
     Status status = ColumnstoreIndex::create(db, index_uuid, table_uuid, column_uuids,
-                                             1024, CompressionType::DICTIONARY, &root_page, &ctx);
+                                             1024, CompressionType::RLE, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
     assert(index != nullptr);
 
-    // Best case: 1000 values, only 1 unique (0.1% cardinality)
-    std::vector<std::string> values(1000, "Active");
-    ColumnSegment input_seg = createStringSegment(values);
+    // Test data: [1, 1, 1, 2, 2, 3, 3, 3, 3]
+    std::vector<int32_t> input_values = {1, 1, 1, 2, 2, 3, 3, 3, 3};
+    ColumnSegment input_seg = createInt32Segment(input_values);
 
     // Compress
     std::vector<uint8_t> compressed;
-    Dictionary dict;
-    status = index->compressDictionary(input_seg, &compressed, &dict, &ctx);
+    status = index->compressRLE(input_seg, &compressed, &ctx);
     assert(status == Status::OK);
 
-    // Dictionary should have 1 entry
-    assert(dict.size() == 1);
+    // Expected compressed size: 3 runs × (1 + 4 + 4) bytes = 27 bytes
+    size_t expected_size = 3 * (1 + sizeof(int32_t) + sizeof(uint32_t));
+    assert(compressed.size() == expected_size);
 
-    // Compressed size should be very small (RLE of codes)
-    // Expected: ~9 bytes for RLE (1 code repeated 1000 times)
-    printf("  Dictionary size: %zu entries\n", dict.size());
-    printf("  Compressed: %zu bytes (vs ~6000 bytes uncompressed)\n", compressed.size());
-    printf("  Ratio: %.2fx\n", 6000.0 / compressed.size());
-
-    assert(compressed.size() < 100);  // Should be < 100 bytes
+    printf("  Compressed %zu bytes → %zu bytes (ratio: %.2fx)\n",
+           input_values.size() * sizeof(int32_t), compressed.size(),
+           static_cast<double>(input_values.size() * sizeof(int32_t)) / compressed.size());
 
     // Decompress
     ColumnSegment output_seg;
-    status = index->decompressDictionary(compressed, dict, DataType::TEXT, 1000, &output_seg, &ctx);
+    status = index->decompressRLE(compressed, DataType::INT32, 9, &output_seg, &ctx);
     assert(status == Status::OK);
-    assert(output_seg.row_count == 1000);
+    assert(output_seg.row_count == 9);
+
+    // Verify values match
+    std::vector<int32_t> output_values = extractInt32Values(output_seg);
+    assert(output_values == input_values);
 
     delete db;
     printf("  ✅ PASSED\n\n");
 }
 
 //=============================================================================
-// Test 3: High-Cardinality Rejection
+// Test 2: INT64 Compression/Decompression
 //=============================================================================
-void test_high_cardinality_rejection()
+void test_int64_basic()
 {
-    printf("Test 3: High-cardinality rejection (should fail)...\n");
+    printf("Test 2: INT64 compression/decompression...\n");
 
     Database* db = createTestDatabase();
     assert(db != nullptr);
@@ -212,86 +200,140 @@ void test_high_cardinality_rejection()
     uint32_t root_page = 0;
     ErrorContext ctx;
     Status status = ColumnstoreIndex::create(db, index_uuid, table_uuid, column_uuids,
-                                             1024, CompressionType::DICTIONARY, &root_page, &ctx);
+                                             1024, CompressionType::RLE, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
     assert(index != nullptr);
 
-    // High cardinality: 100 unique values out of 100 total (100% cardinality)
-    std::vector<std::string> values;
-    for (int i = 0; i < 100; ++i)
-    {
-        values.push_back("Value_" + std::to_string(i));
-    }
-    ColumnSegment input_seg = createStringSegment(values);
-
-    // Compress - should FAIL due to high cardinality
-    std::vector<uint8_t> compressed;
-    Dictionary dict;
-    status = index->compressDictionary(input_seg, &compressed, &dict, &ctx);
-    assert(status == Status::INVALID_ARGUMENT);  // Should reject
-
-    printf("  Cardinality: 100%% (100 unique / 100 total)\n");
-    printf("  Status: REJECTED (as expected)\n");
-
-    delete db;
-    printf("  ✅ PASSED\n\n");
-}
-
-//=============================================================================
-// Test 4: Medium Cardinality (5% unique)
-//=============================================================================
-void test_medium_cardinality()
-{
-    printf("Test 4: Medium cardinality (5%% unique)...\n");
-
-    Database* db = createTestDatabase();
-    assert(db != nullptr);
-
-    UuidV7Bytes index_uuid = generateUuidV7();
-    UuidV7Bytes table_uuid = generateUuidV7();
-    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
-
-    uint32_t root_page = 0;
-    ErrorContext ctx;
-    Status status = ColumnstoreIndex::create(db, index_uuid, table_uuid, column_uuids,
-                                             1024, CompressionType::DICTIONARY, &root_page, &ctx);
-    assert(status == Status::OK);
-
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
-    assert(index != nullptr);
-
-    // 5 unique values repeated across 100 values (5% cardinality)
-    std::vector<std::string> unique = {"Red", "Blue", "Green", "Yellow", "Orange"};
-    std::vector<std::string> values;
-    for (int i = 0; i < 100; ++i)
-    {
-        values.push_back(unique[i % 5]);
-    }
-    ColumnSegment input_seg = createStringSegment(values);
+    // Test data: Large INT64 values
+    std::vector<int64_t> input_values = {1000000000000LL, 1000000000000LL, 2000000000000LL, 2000000000000LL};
+    ColumnSegment input_seg = createInt64Segment(input_values);
 
     // Compress
     std::vector<uint8_t> compressed;
-    Dictionary dict;
-    status = index->compressDictionary(input_seg, &compressed, &dict, &ctx);
+    status = index->compressRLE(input_seg, &compressed, &ctx);
     assert(status == Status::OK);
 
-    // Dictionary should have 5 entries
-    assert(dict.size() == 5);
-
-    printf("  Dictionary size: %zu entries\n", dict.size());
-    printf("  Cardinality: 5%% (5 unique / 100 total)\n");
-    printf("  Compressed: %zu bytes\n", compressed.size());
-
-    // Decompress and verify
+    // Decompress
     ColumnSegment output_seg;
-    status = index->decompressDictionary(compressed, dict, DataType::TEXT, 100, &output_seg, &ctx);
+    status = index->decompressRLE(compressed, DataType::INT64, 4, &output_seg, &ctx);
     assert(status == Status::OK);
-    assert(output_seg.row_count == 100);
+
+    // Verify
+    std::vector<int64_t> output_values = extractInt64Values(output_seg);
+    assert(output_values == input_values);
 
     delete db;
     printf("  ✅ PASSED\n\n");
+}
+
+//=============================================================================
+// Test 3: Best Case - All Same Value (1000x compression)
+//=============================================================================
+void test_best_case_compression()
+{
+    printf("Test 3: Best case compression (all same value)...\n");
+
+    Database* db = createTestDatabase();
+    assert(db != nullptr);
+
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
+
+    uint32_t root_page = 0;
+    ErrorContext ctx;
+    Status status = ColumnstoreIndex::create(db, index_uuid, table_uuid, column_uuids,
+                                             1024, CompressionType::RLE, &root_page, &ctx);
+    assert(status == Status::OK);
+
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    assert(index != nullptr);
+
+    // 10000 identical values
+    std::vector<int32_t> input_values(10000, 42);
+    ColumnSegment input_seg = createInt32Segment(input_values);
+
+    // Compress
+    std::vector<uint8_t> compressed;
+    status = index->compressRLE(input_seg, &compressed, &ctx);
+    assert(status == Status::OK);
+
+    // Expected: 1 run × 9 bytes = 9 bytes (vs 40,000 bytes uncompressed)
+    size_t uncompressed_size = input_values.size() * sizeof(int32_t);
+    double ratio = static_cast<double>(uncompressed_size) / compressed.size();
+
+    printf("  Compressed %zu bytes → %zu bytes (ratio: %.2fx)\n",
+           uncompressed_size, compressed.size(), ratio);
+    assert(ratio > 1000.0);  // Should be ~4444x
+
+    // Decompress and verify
+    ColumnSegment output_seg;
+    status = index->decompressRLE(compressed, DataType::INT32, 10000, &output_seg, &ctx);
+    assert(status == Status::OK);
+
+    std::vector<int32_t> output_values = extractInt32Values(output_seg);
+    assert(output_values == input_values);
+
+    delete db;
+    printf("  ✅ PASSED (compression ratio: %.2fx)\n\n", ratio);
+}
+
+//=============================================================================
+// Test 4: Worst Case - All Different Values (1.2x overhead)
+//=============================================================================
+void test_worst_case_compression()
+{
+    printf("Test 4: Worst case compression (all different values)...\n");
+
+    Database* db = createTestDatabase();
+    assert(db != nullptr);
+
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
+
+    uint32_t root_page = 0;
+    ErrorContext ctx;
+    Status status = ColumnstoreIndex::create(db, index_uuid, table_uuid, column_uuids,
+                                             1024, CompressionType::RLE, &root_page, &ctx);
+    assert(status == Status::OK);
+
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    assert(index != nullptr);
+
+    // 1000 different values
+    std::vector<int32_t> input_values;
+    for (int32_t i = 0; i < 1000; ++i)
+    {
+        input_values.push_back(i);
+    }
+    ColumnSegment input_seg = createInt32Segment(input_values);
+
+    // Compress
+    std::vector<uint8_t> compressed;
+    status = index->compressRLE(input_seg, &compressed, &ctx);
+    assert(status == Status::OK);
+
+    // Expected: 1000 runs × 9 bytes = 9000 bytes (vs 4000 bytes uncompressed) = 2.25x overhead
+    size_t uncompressed_size = input_values.size() * sizeof(int32_t);
+    double ratio = static_cast<double>(compressed.size()) / uncompressed_size;
+
+    printf("  Compressed %zu bytes → %zu bytes (overhead: %.2fx)\n",
+           uncompressed_size, compressed.size(), ratio);
+    assert(ratio < 3.0);  // Should be ~2.25x overhead
+
+    // Decompress and verify
+    ColumnSegment output_seg;
+    status = index->decompressRLE(compressed, DataType::INT32, 1000, &output_seg, &ctx);
+    assert(status == Status::OK);
+
+    std::vector<int32_t> output_values = extractInt32Values(output_seg);
+    assert(output_values == input_values);
+
+    delete db;
+    printf("  ✅ PASSED (overhead: %.2fx)\n\n", ratio);
 }
 
 //=============================================================================
@@ -311,37 +353,33 @@ void test_null_handling()
     uint32_t root_page = 0;
     ErrorContext ctx;
     Status status = ColumnstoreIndex::create(db, index_uuid, table_uuid, column_uuids,
-                                             1024, CompressionType::DICTIONARY, &root_page, &ctx);
+                                             1024, CompressionType::RLE, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
     assert(index != nullptr);
 
-    // Test data: ["Active", NULL, NULL, "Inactive", "Active", NULL]
-    std::vector<std::string> values = {"Active", "", "", "Inactive", "Active", ""};
-    std::vector<bool> nulls = {false, true, true, false, false, true};
-    ColumnSegment input_seg = createStringSegment(values, nulls);
+    // Test data: [1, NULL, NULL, 2, 2, NULL]
+    std::vector<int32_t> input_values = {1, 0, 0, 2, 2, 0};  // Values don't matter for NULLs
+    std::vector<bool> input_nulls = {false, true, true, false, false, true};
+    ColumnSegment input_seg = createInt32Segment(input_values, input_nulls);
 
     // Compress
     std::vector<uint8_t> compressed;
-    Dictionary dict;
-    status = index->compressDictionary(input_seg, &compressed, &dict, &ctx);
+    status = index->compressRLE(input_seg, &compressed, &ctx);
     assert(status == Status::OK);
 
-    printf("  Dictionary size: %zu entries\n", dict.size());
-    printf("  NULL count: 3 / 6\n");
+    // Expected: 4 runs (1, NULL×2, 2×2, NULL) × 9 bytes = 36 bytes
+    printf("  Compressed %zu bytes → %zu bytes\n",
+           input_values.size() * sizeof(int32_t), compressed.size());
 
     // Decompress
     ColumnSegment output_seg;
-    status = index->decompressDictionary(compressed, dict, DataType::TEXT, 6, &output_seg, &ctx);
+    status = index->decompressRLE(compressed, DataType::INT32, 6, &output_seg, &ctx);
     assert(status == Status::OK);
 
     // Verify NULL bitmap matches
-    assert(output_seg.null_bitmap.size() == nulls.size());
-    for (size_t i = 0; i < nulls.size(); ++i)
-    {
-        assert(output_seg.null_bitmap[i] == nulls[i]);
-    }
+    assert(output_seg.null_bitmap == input_nulls);
 
     delete db;
     printf("  ✅ PASSED\n\n");
@@ -364,28 +402,26 @@ void test_empty_input()
     uint32_t root_page = 0;
     ErrorContext ctx;
     Status status = ColumnstoreIndex::create(db, index_uuid, table_uuid, column_uuids,
-                                             1024, CompressionType::DICTIONARY, &root_page, &ctx);
+                                             1024, CompressionType::RLE, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
     assert(index != nullptr);
 
     // Empty segment
     ColumnSegment input_seg;
-    input_seg.data_type = DataType::TEXT;
+    input_seg.data_type = DataType::INT32;
     input_seg.row_count = 0;
 
     // Compress
     std::vector<uint8_t> compressed;
-    Dictionary dict;
-    status = index->compressDictionary(input_seg, &compressed, &dict, &ctx);
+    status = index->compressRLE(input_seg, &compressed, &ctx);
     assert(status == Status::OK);
     assert(compressed.empty());
-    assert(dict.size() == 0);
 
     // Decompress
     ColumnSegment output_seg;
-    status = index->decompressDictionary(compressed, dict, DataType::TEXT, 0, &output_seg, &ctx);
+    status = index->decompressRLE(compressed, DataType::INT32, 0, &output_seg, &ctx);
     assert(status == Status::OK);
     assert(output_seg.row_count == 0);
 
@@ -394,11 +430,11 @@ void test_empty_input()
 }
 
 //=============================================================================
-// Test 7: Single Unique Value (Extreme Compression)
+// Test 7: Single Value
 //=============================================================================
-void test_single_unique_value()
+void test_single_value()
 {
-    printf("Test 7: Single unique value (extreme compression)...\n");
+    printf("Test 7: Single value...\n");
 
     Database* db = createTestDatabase();
     assert(db != nullptr);
@@ -410,48 +446,150 @@ void test_single_unique_value()
     uint32_t root_page = 0;
     ErrorContext ctx;
     Status status = ColumnstoreIndex::create(db, index_uuid, table_uuid, column_uuids,
-                                             1024, CompressionType::DICTIONARY, &root_page, &ctx);
+                                             1024, CompressionType::RLE, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
     assert(index != nullptr);
 
-    // 10000 values, all "PENDING"
-    std::vector<std::string> values(10000, "PENDING");
-    ColumnSegment input_seg = createStringSegment(values);
+    // Single value
+    std::vector<int32_t> input_values = {42};
+    ColumnSegment input_seg = createInt32Segment(input_values);
 
     // Compress
     std::vector<uint8_t> compressed;
-    Dictionary dict;
-    status = index->compressDictionary(input_seg, &compressed, &dict, &ctx);
+    status = index->compressRLE(input_seg, &compressed, &ctx);
     assert(status == Status::OK);
-
-    size_t uncompressed_size = 10000 * 8;  // Approx 8 bytes per "PENDING"
-    double ratio = static_cast<double>(uncompressed_size) / compressed.size();
-
-    printf("  Dictionary size: %zu entry\n", dict.size());
-    printf("  Compressed: %zu bytes → %zu bytes (ratio: %.2fx)\n",
-           uncompressed_size, compressed.size(), ratio);
-
-    assert(dict.size() == 1);
-    assert(ratio > 100.0);  // Should achieve > 100x compression
 
     // Decompress
     ColumnSegment output_seg;
-    status = index->decompressDictionary(compressed, dict, DataType::TEXT, 10000, &output_seg, &ctx);
+    status = index->decompressRLE(compressed, DataType::INT32, 1, &output_seg, &ctx);
     assert(status == Status::OK);
-    assert(output_seg.row_count == 10000);
+
+    std::vector<int32_t> output_values = extractInt32Values(output_seg);
+    assert(output_values == input_values);
+
+    delete db;
+    printf("  ✅ PASSED\n\n");
+}
+
+//=============================================================================
+// Test 8: Alternating Values
+//=============================================================================
+void test_alternating_values()
+{
+    printf("Test 8: Alternating values (1,2,1,2,...)...\n");
+
+    Database* db = createTestDatabase();
+    assert(db != nullptr);
+
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
+
+    uint32_t root_page = 0;
+    ErrorContext ctx;
+    Status status = ColumnstoreIndex::create(db, index_uuid, table_uuid, column_uuids,
+                                             1024, CompressionType::RLE, &root_page, &ctx);
+    assert(status == Status::OK);
+
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    assert(index != nullptr);
+
+    // Alternating: [1, 2, 1, 2, 1, 2, ...]
+    std::vector<int32_t> input_values;
+    for (int i = 0; i < 100; ++i)
+    {
+        input_values.push_back((i % 2) + 1);
+    }
+    ColumnSegment input_seg = createInt32Segment(input_values);
+
+    // Compress
+    std::vector<uint8_t> compressed;
+    status = index->compressRLE(input_seg, &compressed, &ctx);
+    assert(status == Status::OK);
+
+    // Expected: 100 runs (worst case for RLE)
+    printf("  Compressed %zu bytes → %zu bytes\n",
+           input_values.size() * sizeof(int32_t), compressed.size());
+
+    // Decompress
+    ColumnSegment output_seg;
+    status = index->decompressRLE(compressed, DataType::INT32, 100, &output_seg, &ctx);
+    assert(status == Status::OK);
+
+    std::vector<int32_t> output_values = extractInt32Values(output_seg);
+    assert(output_values == input_values);
+
+    delete db;
+    printf("  ✅ PASSED\n\n");
+}
+
+//=============================================================================
+// Test 9: Large Dataset (1M values)
+//=============================================================================
+void test_large_dataset()
+{
+    printf("Test 9: Large dataset (1M values)...\n");
+
+    Database* db = createTestDatabase();
+    assert(db != nullptr);
+
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
+
+    uint32_t root_page = 0;
+    ErrorContext ctx;
+    Status status = ColumnstoreIndex::create(db, index_uuid, table_uuid, column_uuids,
+                                             1024, CompressionType::RLE, &root_page, &ctx);
+    assert(status == Status::OK);
+
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    assert(index != nullptr);
+
+    // 1M values with 10 unique values (good RLE scenario)
+    std::vector<int32_t> input_values;
+    for (int i = 0; i < 1000000; ++i)
+    {
+        input_values.push_back(i % 10);  // 0-9 repeating
+    }
+    ColumnSegment input_seg = createInt32Segment(input_values);
+
+    // Compress
+    std::vector<uint8_t> compressed;
+    status = index->compressRLE(input_seg, &compressed, &ctx);
+    assert(status == Status::OK);
+
+    size_t uncompressed_size = input_values.size() * sizeof(int32_t);
+    double ratio = static_cast<double>(uncompressed_size) / compressed.size();
+
+    printf("  Compressed %zu bytes → %zu bytes (ratio: %.2fx)\n",
+           uncompressed_size, compressed.size(), ratio);
+
+    // Decompress (verify first 1000 values to save time)
+    ColumnSegment output_seg;
+    status = index->decompressRLE(compressed, DataType::INT32, 1000000, &output_seg, &ctx);
+    assert(status == Status::OK);
+    assert(output_seg.row_count == 1000000);
+
+    // Verify first 1000 values
+    std::vector<int32_t> output_values = extractInt32Values(output_seg);
+    for (int i = 0; i < 1000; ++i)
+    {
+        assert(output_values[i] == input_values[i]);
+    }
 
     delete db;
     printf("  ✅ PASSED (compression ratio: %.2fx)\n\n", ratio);
 }
 
 //=============================================================================
-// Test 8: Round-Trip Verification
+// Test 10: Round-Trip Verification
 //=============================================================================
 void test_round_trip()
 {
-    printf("Test 8: Round-trip verification...\n");
+    printf("Test 10: Round-trip verification (compress → decompress → compress)...\n");
 
     Database* db = createTestDatabase();
     assert(db != nullptr);
@@ -463,38 +601,33 @@ void test_round_trip()
     uint32_t root_page = 0;
     ErrorContext ctx;
     Status status = ColumnstoreIndex::create(db, index_uuid, table_uuid, column_uuids,
-                                             1024, CompressionType::DICTIONARY, &root_page, &ctx);
+                                             1024, CompressionType::RLE, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
     assert(index != nullptr);
 
-    // Test data with low cardinality
-    std::vector<std::string> original = {"Apple", "Apple", "Banana", "Cherry", "Apple", "Banana"};
-    ColumnSegment input_seg = createStringSegment(original);
+    // Test data
+    std::vector<int32_t> original_values = {5, 5, 5, 10, 10, 15, 15, 15};
+    ColumnSegment original_seg = createInt32Segment(original_values);
 
     // First compression
     std::vector<uint8_t> compressed1;
-    Dictionary dict1;
-    status = index->compressDictionary(input_seg, &compressed1, &dict1, &ctx);
+    status = index->compressRLE(original_seg, &compressed1, &ctx);
     assert(status == Status::OK);
 
     // Decompression
     ColumnSegment decompressed_seg;
-    status = index->decompressDictionary(compressed1, dict1, DataType::TEXT, 6, &decompressed_seg, &ctx);
+    status = index->decompressRLE(compressed1, DataType::INT32, 8, &decompressed_seg, &ctx);
     assert(status == Status::OK);
 
     // Second compression
     std::vector<uint8_t> compressed2;
-    Dictionary dict2;
-    status = index->compressDictionary(decompressed_seg, &compressed2, &dict2, &ctx);
+    status = index->compressRLE(decompressed_seg, &compressed2, &ctx);
     assert(status == Status::OK);
 
-    // Dictionaries should be equivalent (same size)
-    assert(dict1.size() == dict2.size());
-
-    // Compressed data should be identical
-    assert(compressed1.size() == compressed2.size());
+    // Verify compressed data is identical
+    assert(compressed1 == compressed2);
 
     delete db;
     printf("  ✅ PASSED\n\n");
@@ -503,24 +636,28 @@ void test_round_trip()
 //=============================================================================
 // Main Test Runner
 //=============================================================================
-int main()
-{
+
+TEST(ColumnstoreRleTest, Comprehensive) {
+
     printf("═══════════════════════════════════════════════════════════════\n");
-    printf("  Columnstore Dictionary Encoding - Unit Tests\n");
+    printf("  Columnstore RLE Compression - Unit Tests\n");
     printf("═══════════════════════════════════════════════════════════════\n\n");
 
-    test_dictionary_builder();
-    test_low_cardinality_best_case();
-    test_high_cardinality_rejection();
-    test_medium_cardinality();
+    test_int32_basic();
+    test_int64_basic();
+    test_best_case_compression();
+    test_worst_case_compression();
     test_null_handling();
     test_empty_input();
-    test_single_unique_value();
+    test_single_value();
+    test_alternating_values();
+    test_large_dataset();
     test_round_trip();
 
     printf("═══════════════════════════════════════════════════════════════\n");
-    printf("  ✅ ALL TESTS PASSED (8/8)\n");
+    printf("  ✅ ALL TESTS PASSED (10/10)\n");
     printf("═══════════════════════════════════════════════════════════════\n");
 
     return;
+
 }

@@ -6,8 +6,9 @@
 #include <iostream>
 #include <cstdint>
 
-int main()
-{
+
+TEST(CacheBoundedTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 1.23: Transaction Cache Bounded Growth ===" << std::endl;
     std::cout << std::endl;
 
@@ -305,4 +306,5 @@ int main()
     std::cout << "Final score: 9 real bugs fixed, 14 false positives (61% audit error rate)" << std::endl;
 
     return;
+
 }

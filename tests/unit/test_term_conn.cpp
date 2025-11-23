@@ -16,8 +16,9 @@
 
 using namespace scratchbird::core;
 
-int main()
-{
+
+TEST(TermConnTest, Comprehensive) {
+
     std::cout << "\n=== Test: TERMINATE_CONNECTION Policy ===" << std::endl;
 
     // Create test database
@@ -130,4 +131,5 @@ int main()
 
     std::cout << "\n=== TERMINATE_CONNECTION Policy Test PASSED ===" << std::endl;
     return;
+
 }
