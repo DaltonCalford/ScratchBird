@@ -14,13 +14,13 @@
 using namespace scratchbird::core;
 
 // Helper: Create a key from a string
-std::vector<uint8_t> makeKey(const std::string &s)
+static std::vector<uint8_t> makeKey(const std::string &s)
 {
     return std::vector<uint8_t>(s.begin(), s.end());
 }
 
 // Helper: Simple key extractor for tags
-std::vector<std::vector<uint8_t>> extractTags(const void *data, size_t len)
+static std::vector<std::vector<uint8_t>> extractTags(const void *data, size_t len)
 {
     std::string tags_str(static_cast<const char *>(data), len);
     std::vector<std::vector<uint8_t>> keys;
@@ -77,17 +77,17 @@ void testCardinalityEstimation()
     for (uint64_t i = 1; i <= 10; i++)
     {
         std::string tags = "common,tag" + std::to_string(i);
-        index->insert(tags.data(), tags.size(), (1ULL << 32) | i, extractTags, &ctx);
+        index->insert(tags.data(), tags.size(), TID{1, static_cast<uint16_t>(i)}, extractTags, &ctx);
     }
 
     for (uint64_t i = 11; i <= 12; i++)
     {
         std::string tags = "rare,tag" + std::to_string(i);
-        index->insert(tags.data(), tags.size(), (1ULL << 32) | i, extractTags, &ctx);
+        index->insert(tags.data(), tags.size(), TID{1, static_cast<uint16_t>(i)}, extractTags, &ctx);
     }
 
     std::string unique_tags = "unique,tag13";
-    index->insert(unique_tags.data(), unique_tags.size(), (1ULL << 32) | 13, extractTags, &ctx);
+    index->insert(unique_tags.data(), unique_tags.size(), TID{1, 13}, extractTags, &ctx);
 
     // Merge pending list
     status = index->mergePendingList(&ctx);
@@ -147,7 +147,7 @@ void testOptimizedQueries()
         if (i % 50 == 0) tags += "very_rare"; // Appears in 2
         else tags.pop_back(); // Remove trailing comma
 
-        index->insert(tags.data(), tags.size(), (1ULL << 32) | i, extractTags, &ctx);
+        index->insert(tags.data(), tags.size(), TID{1, static_cast<uint16_t>(i)}, extractTags, &ctx);
     }
 
     status = index->mergePendingList(&ctx);
@@ -176,8 +176,8 @@ void testOptimizedQueries()
 
     // Verify correctness - should return docs 50 and 100
     assert(results_opt.size() == 2);
-    assert(std::find(results_opt.begin(), results_opt.end(), (1ULL << 32) | 50) != results_opt.end());
-    assert(std::find(results_opt.begin(), results_opt.end(), (1ULL << 32) | 100) != results_opt.end());
+    assert(std::find(results_opt.begin(), results_opt.end(), TID{1, 50}) != results_opt.end());
+    assert(std::find(results_opt.begin(), results_opt.end(), TID{1, 100}) != results_opt.end());
 
     // Test without optimization
     options.optimize_key_order = false;
@@ -228,11 +228,11 @@ void testPostgreSQLOperators()
     // Doc 4: {red, blue, green}
     // Doc 5: {yellow}
 
-    index->insert("red,blue", 8, (1ULL << 32) | 1, extractTags, &ctx);
-    index->insert("red,green", 9, (1ULL << 32) | 2, extractTags, &ctx);
-    index->insert("blue,green", 10, (1ULL << 32) | 3, extractTags, &ctx);
-    index->insert("red,blue,green", 14, (1ULL << 32) | 4, extractTags, &ctx);
-    index->insert("yellow", 6, (1ULL << 32) | 5, extractTags, &ctx);
+    index->insert("red,blue", 8, TID{1, 1}, extractTags, &ctx);
+    index->insert("red,green", 9, TID{1, 2}, extractTags, &ctx);
+    index->insert("blue,green", 10, TID{1, 3}, extractTags, &ctx);
+    index->insert("red,blue,green", 14, TID{1, 4}, extractTags, &ctx);
+    index->insert("yellow", 6, TID{1, 5}, extractTags, &ctx);
 
     status = index->mergePendingList(&ctx);
     assert(status == Status::OK);
@@ -245,8 +245,8 @@ void testPostgreSQLOperators()
     auto results = index->executeOperator(GinIndex::GinOperator::CONTAINS, empty_left, red_blue, &ctx);
     std::cout << "  Documents containing {red, blue}: " << results.size() << std::endl;
     assert(results.size() == 2); // Docs 1 and 4
-    assert(std::find(results.begin(), results.end(), (1ULL << 32) | 1) != results.end());
-    assert(std::find(results.begin(), results.end(), (1ULL << 32) | 4) != results.end());
+    assert(std::find(results.begin(), results.end(), TID{1, 1}) != results.end());
+    assert(std::find(results.begin(), results.end(), TID{1, 4}) != results.end());
 
     // Test OVERLAP (&&) - documents with at least one common tag
     std::cout << "\nTest OVERLAP (&&)" << std::endl;
@@ -288,7 +288,7 @@ void testPostgreSQLOperators()
     db.close();
 }
 
-void testEdgeCases()
+static void testEdgeCases()
 {
     std::cout << "\n=== Test 4: Edge Cases ===" << std::endl;
 
@@ -339,7 +339,7 @@ void testEdgeCases()
     assert(results.empty());
 
     // Insert a document and test
-    index->insert("tag1,tag2", 9, (1ULL << 32) | 1, extractTags, &ctx);
+    index->insert("tag1,tag2", 9, TID{1, 1}, extractTags, &ctx);
     status = index->mergePendingList(&ctx);
     assert(status == Status::OK);
 
@@ -348,7 +348,7 @@ void testEdgeCases()
     std::vector<std::vector<uint8_t>> single_key = {makeKey("tag1")};
     results = index->findAllOptimized(single_key, options, &ctx);
     assert(results.size() == 1);
-    assert(results[0] == ((1ULL << 32) | 1));
+    assert(results[0] == (TID{1, 1}));
 
     std::cout << "✓ Edge cases handled correctly" << std::endl;
 

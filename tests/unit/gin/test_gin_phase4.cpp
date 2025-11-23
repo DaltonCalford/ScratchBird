@@ -51,27 +51,27 @@ void test_find_all_basic()
 
     std::cout << "  Inserting test documents...\n";
     // Document 1: has "apple" and "banana"
-    status = gin_index->insert("apple", 5, (1ULL << 32) | 1, extractSingleWord, &ctx);
+    status = gin_index->insert("apple", 5, TID{1, 1}, extractSingleWord, &ctx);
     assert(status == Status::OK);
-    status = gin_index->insert("banana", 6, (1ULL << 32) | 1, extractSingleWord, &ctx);
+    status = gin_index->insert("banana", 6, TID{1, 1}, extractSingleWord, &ctx);
     assert(status == Status::OK);
 
     // Document 2: has "apple" and "cherry"
-    status = gin_index->insert("apple", 5, (1ULL << 32) | 2, extractSingleWord, &ctx);
+    status = gin_index->insert("apple", 5, TID{1, 2}, extractSingleWord, &ctx);
     assert(status == Status::OK);
-    status = gin_index->insert("cherry", 6, (1ULL << 32) | 2, extractSingleWord, &ctx);
+    status = gin_index->insert("cherry", 6, TID{1, 2}, extractSingleWord, &ctx);
     assert(status == Status::OK);
 
     // Document 3: has "apple", "banana", and "cherry"
-    status = gin_index->insert("apple", 5, (1ULL << 32) | 3, extractSingleWord, &ctx);
+    status = gin_index->insert("apple", 5, TID{1, 3}, extractSingleWord, &ctx);
     assert(status == Status::OK);
-    status = gin_index->insert("banana", 6, (1ULL << 32) | 3, extractSingleWord, &ctx);
+    status = gin_index->insert("banana", 6, TID{1, 3}, extractSingleWord, &ctx);
     assert(status == Status::OK);
-    status = gin_index->insert("cherry", 6, (1ULL << 32) | 3, extractSingleWord, &ctx);
+    status = gin_index->insert("cherry", 6, TID{1, 3}, extractSingleWord, &ctx);
     assert(status == Status::OK);
 
     // Document 4: has only "banana"
-    status = gin_index->insert("banana", 6, (1ULL << 32) | 4, extractSingleWord, &ctx);
+    status = gin_index->insert("banana", 6, TID{1, 4}, extractSingleWord, &ctx);
     assert(status == Status::OK);
 
     // Trigger merge
@@ -82,29 +82,29 @@ void test_find_all_basic()
 
     // Query: apple AND banana -> should return docs 1, 3
     std::vector<std::vector<uint8_t>> keys_ab = {stringToKey("apple"), stringToKey("banana")};
-    auto results_ab = gin_index->findAll(keys_ab, &ctx);
+    auto results_ab = gin_index->findAll(keys_ab, 0, &ctx);
     std::cout << "    apple AND banana: " << results_ab.size() << " results\n";
     assert(results_ab.size() == 2);
-    std::set<uint64_t> expected_ab = {(1ULL << 32) | 1, (1ULL << 32) | 3};
-    assert(std::set<uint64_t>(results_ab.begin(), results_ab.end()) == expected_ab);
+    std::set<TID> expected_ab = {TID{1, 1}, TID{1, 3}};
+    assert(std::set<TID>(results_ab.begin(), results_ab.end()) == expected_ab);
 
     // Query: apple AND cherry -> should return docs 2, 3
     std::vector<std::vector<uint8_t>> keys_ac = {stringToKey("apple"), stringToKey("cherry")};
-    auto results_ac = gin_index->findAll(keys_ac, &ctx);
+    auto results_ac = gin_index->findAll(keys_ac, 0, &ctx);
     std::cout << "    apple AND cherry: " << results_ac.size() << " results\n";
     assert(results_ac.size() == 2);
 
     // Query: apple AND banana AND cherry -> should return doc 3 only
     std::vector<std::vector<uint8_t>> keys_abc = {
         stringToKey("apple"), stringToKey("banana"), stringToKey("cherry")};
-    auto results_abc = gin_index->findAll(keys_abc, &ctx);
+    auto results_abc = gin_index->findAll(keys_abc, 0, &ctx);
     std::cout << "    apple AND banana AND cherry: " << results_abc.size() << " results\n";
     assert(results_abc.size() == 1);
-    assert(results_abc[0] == ((1ULL << 32) | 3));
+    assert(results_abc[0] == (TID{1, 3}));
 
     // Query: banana AND nonexistent -> should return 0
     std::vector<std::vector<uint8_t>> keys_bn = {stringToKey("banana"), stringToKey("nonexistent")};
-    auto results_bn = gin_index->findAll(keys_bn, &ctx);
+    auto results_bn = gin_index->findAll(keys_bn, 0, &ctx);
     std::cout << "    banana AND nonexistent: " << results_bn.size() << " results\n";
     assert(results_bn.size() == 0);
 
@@ -138,21 +138,21 @@ void test_find_any_basic()
 
     std::cout << "  Inserting test documents...\n";
     // Document 1: has "red"
-    status = gin_index->insert("red", 3, (1ULL << 32) | 1, extractSingleWord, &ctx);
+    status = gin_index->insert("red", 3, TID{1, 1}, extractSingleWord, &ctx);
     assert(status == Status::OK);
 
     // Document 2: has "green"
-    status = gin_index->insert("green", 5, (1ULL << 32) | 2, extractSingleWord, &ctx);
+    status = gin_index->insert("green", 5, TID{1, 2}, extractSingleWord, &ctx);
     assert(status == Status::OK);
 
     // Document 3: has "blue"
-    status = gin_index->insert("blue", 4, (1ULL << 32) | 3, extractSingleWord, &ctx);
+    status = gin_index->insert("blue", 4, TID{1, 3}, extractSingleWord, &ctx);
     assert(status == Status::OK);
 
     // Document 4: has "red" and "blue"
-    status = gin_index->insert("red", 3, (1ULL << 32) | 4, extractSingleWord, &ctx);
+    status = gin_index->insert("red", 3, TID{1, 4}, extractSingleWord, &ctx);
     assert(status == Status::OK);
-    status = gin_index->insert("blue", 4, (1ULL << 32) | 4, extractSingleWord, &ctx);
+    status = gin_index->insert("blue", 4, TID{1, 4}, extractSingleWord, &ctx);
     assert(status == Status::OK);
 
     // Trigger merge
@@ -163,28 +163,28 @@ void test_find_any_basic()
 
     // Query: red OR green -> should return docs 1, 2, 4
     std::vector<std::vector<uint8_t>> keys_rg = {stringToKey("red"), stringToKey("green")};
-    auto results_rg = gin_index->findAny(keys_rg, &ctx);
+    auto results_rg = gin_index->findAny(keys_rg, 0, &ctx);
     std::cout << "    red OR green: " << results_rg.size() << " results\n";
     assert(results_rg.size() == 3);
-    std::set<uint64_t> expected_rg = {(1ULL << 32) | 1, (1ULL << 32) | 2, (1ULL << 32) | 4};
-    assert(std::set<uint64_t>(results_rg.begin(), results_rg.end()) == expected_rg);
+    std::set<TID> expected_rg = {TID{1, 1}, TID{1, 2}, TID{1, 4}};
+    assert(std::set<TID>(results_rg.begin(), results_rg.end()) == expected_rg);
 
     // Query: red OR blue -> should return docs 1, 3, 4
     std::vector<std::vector<uint8_t>> keys_rb = {stringToKey("red"), stringToKey("blue")};
-    auto results_rb = gin_index->findAny(keys_rb, &ctx);
+    auto results_rb = gin_index->findAny(keys_rb, 0, &ctx);
     std::cout << "    red OR blue: " << results_rb.size() << " results\n";
     assert(results_rb.size() == 3);
 
     // Query: red OR green OR blue -> should return all docs 1, 2, 3, 4
     std::vector<std::vector<uint8_t>> keys_rgb = {
         stringToKey("red"), stringToKey("green"), stringToKey("blue")};
-    auto results_rgb = gin_index->findAny(keys_rgb, &ctx);
+    auto results_rgb = gin_index->findAny(keys_rgb, 0, &ctx);
     std::cout << "    red OR green OR blue: " << results_rgb.size() << " results\n";
     assert(results_rgb.size() == 4);
 
     // Query: nonexistent1 OR nonexistent2 -> should return 0
     std::vector<std::vector<uint8_t>> keys_nn = {stringToKey("nonexistent1"), stringToKey("nonexistent2")};
-    auto results_nn = gin_index->findAny(keys_nn, &ctx);
+    auto results_nn = gin_index->findAny(keys_nn, 0, &ctx);
     std::cout << "    nonexistent1 OR nonexistent2: " << results_nn.size() << " results\n";
     assert(results_nn.size() == 0);
 
@@ -229,7 +229,7 @@ void test_complex_queries()
         {
             std::string word = word_pool[(i + j) % word_pool.size()];
             status = gin_index->insert(word.data(), word.length(),
-                                       (1ULL << 32) | i, extractSingleWord, &ctx);
+                                       TID{1, static_cast<uint16_t>(i)}, extractSingleWord, &ctx);
             assert(status == Status::OK);
         }
     }
@@ -242,14 +242,14 @@ void test_complex_queries()
 
     // AND query with 2 keys
     std::vector<std::vector<uint8_t>> keys_and2 = {stringToKey("alpha"), stringToKey("beta")};
-    auto results_and2 = gin_index->findAll(keys_and2, &ctx);
+    auto results_and2 = gin_index->findAll(keys_and2, 0, &ctx);
     std::cout << "    alpha AND beta: " << results_and2.size() << " results\n";
     assert(results_and2.size() > 0);
 
     // OR query with 3 keys
     std::vector<std::vector<uint8_t>> keys_or3 = {
         stringToKey("gamma"), stringToKey("delta"), stringToKey("epsilon")};
-    auto results_or3 = gin_index->findAny(keys_or3, &ctx);
+    auto results_or3 = gin_index->findAny(keys_or3, 0, &ctx);
     std::cout << "    gamma OR delta OR epsilon: " << results_or3.size() << " results\n";
     assert(results_or3.size() > 0);
 
@@ -257,7 +257,7 @@ void test_complex_queries()
     std::vector<std::vector<uint8_t>> keys_and_all = {
         stringToKey("alpha"), stringToKey("beta"), stringToKey("gamma"),
         stringToKey("delta"), stringToKey("epsilon")};
-    auto results_and_all = gin_index->findAll(keys_and_all, &ctx);
+    auto results_and_all = gin_index->findAll(keys_and_all, 0, &ctx);
     std::cout << "    all 5 keys AND: " << results_and_all.size() << " results\n";
 
     std::cout << "  ✓ Complex query tests passed\n";
@@ -301,7 +301,7 @@ void test_large_scale_multi_key()
             if (i % (j + 2) == 0)
             {
                 status = gin_index->insert(keys[j].data(), keys[j].length(),
-                                           (1ULL << 32) | i, extractSingleWord, &ctx);
+                                           TID{1, static_cast<uint16_t>(i)}, extractSingleWord, &ctx);
                 assert(status == Status::OK);
             }
         }
@@ -311,13 +311,13 @@ void test_large_scale_multi_key()
 
     // Test AND query
     std::vector<std::vector<uint8_t>> keys_and = {stringToKey("key1"), stringToKey("key2")};
-    auto results_and = gin_index->findAll(keys_and, &ctx);
+    auto results_and = gin_index->findAll(keys_and, 0, &ctx);
     std::cout << "    key1 AND key2: " << results_and.size() << " results\n";
     assert(results_and.size() > 0);
 
     // Test OR query
     std::vector<std::vector<uint8_t>> keys_or = {stringToKey("key4"), stringToKey("key5")};
-    auto results_or = gin_index->findAny(keys_or, &ctx);
+    auto results_or = gin_index->findAny(keys_or, 0, &ctx);
     std::cout << "    key4 OR key5: " << results_or.size() << " results\n";
     assert(results_or.size() > 0);
 
@@ -353,19 +353,19 @@ void test_edge_cases()
 
     // Empty key list
     std::vector<std::vector<uint8_t>> empty_keys;
-    auto results_empty = gin_index->findAll(empty_keys, &ctx);
+    auto results_empty = gin_index->findAll(empty_keys, 0, &ctx);
     assert(results_empty.size() == 0);
     std::cout << "    ✓ Empty key list handled\n";
 
     // Single key AND (should work like find())
     std::vector<std::vector<uint8_t>> single_key = {stringToKey("test")};
-    auto results_single = gin_index->findAll(single_key, &ctx);
+    auto results_single = gin_index->findAll(single_key, 0, &ctx);
     assert(results_single.size() == 0); // No data inserted
     std::cout << "    ✓ Single key query handled\n";
 
     // Query on empty index
     std::vector<std::vector<uint8_t>> keys_any = {stringToKey("a"), stringToKey("b")};
-    auto results_any = gin_index->findAny(keys_any, &ctx);
+    auto results_any = gin_index->findAny(keys_any, 0, &ctx);
     assert(results_any.size() == 0);
     std::cout << "    ✓ Empty index query handled\n";
 
