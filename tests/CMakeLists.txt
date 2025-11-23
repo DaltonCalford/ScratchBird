@@ -95,7 +95,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_query_plan_security\\.cpp$")  # 
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_dml\\.cpp$")  # commit() → commitTransaction(), beginTransaction() signature, Database constructor, search() results parameter
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_mvcc\\.cpp$")  # Incomplete transaction API fixes
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_statistical_functions\\.cpp$")  # API compatibility issues
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_.*toast.*\\.cpp$")  # TOAST tests - Database constructor signature
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_.*toast.*\\.cpp$")  # Transaction API issues, TupleHeader, ToastPointer fields need fixing
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_subquery_parser\\.cpp$")  # API compatibility issues
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/btree_page_test\\.cpp$")  # Tuple struct initializer mismatch
 
