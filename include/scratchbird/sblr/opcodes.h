@@ -330,6 +330,13 @@ namespace scratchbird
             EXT_CHR = 0x42,                // CHR(code) - convert ASCII code to character
             EXT_REPEAT = 0x43,             // REPEAT(str, count)
             EXT_REVERSE = 0x44,            // REVERSE(str)
+
+            // Advanced GROUP BY operations (ALPHA Phase 1 - Missing Functions Phase 3) - 0x45-0x48
+            EXT_GROUP_ROLLUP = 0x45,       // ROLLUP(...) - hierarchical grouping
+            EXT_GROUP_CUBE = 0x46,         // CUBE(...) - all combinations grouping
+            EXT_GROUP_GROUPING_SETS = 0x47, // GROUPING SETS(...) - explicit grouping sets
+            EXT_GROUPING_FUNC = 0x48,      // GROUPING(column) - identify aggregated columns
+
             EXT_LPAD = 0x57,               // LPAD(str, length [, fill]) - left-pad string
             EXT_RPAD = 0x58,               // RPAD(str, length [, fill]) - right-pad string
 
@@ -372,6 +379,13 @@ namespace scratchbird
             EXT_INTERSECT_ALL = 0x67,      // INTERSECT ALL (keeps duplicates)
             EXT_EXCEPT = 0x68,             // EXCEPT (removes duplicates)
             EXT_EXCEPT_ALL = 0x69,         // EXCEPT ALL (keeps duplicates)
+
+            // Additional window functions (Alpha 1 - Missing Functions Phase 4) - 0x6A-0x6B range
+            EXT_WIN_CUME_DIST = 0x6A,      // CUME_DIST() - cumulative distribution
+            EXT_WIN_PERCENT_RANK = 0x6B,   // PERCENT_RANK() - relative rank percentile
+
+            // Additional date/time functions (Alpha 1 - Missing Functions Phase 5) - 0x6C range
+            EXT_FUNC_AGE = 0x6C,           // AGE(timestamp [, timestamp]) - age between timestamps
 
             // Trigger opcodes (Phase 2 Wave 2 - Agent C) - 0x70-0x72 range
             EXT_CREATE_TRIGGER = 0x70,     // CREATE TRIGGER
