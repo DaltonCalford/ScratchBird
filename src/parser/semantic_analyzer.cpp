@@ -578,6 +578,14 @@ namespace scratchbird
             current_table_ = nullptr;
         }
 
+        void SemanticAnalyzer::visit(MergeStmt *node)
+        {
+            // ALPHA Phase 1 - Advanced SQL: MERGE statement semantic analysis
+            // TODO: Implement full semantic analysis for MERGE statement
+            // For now, just provide a stub to allow compilation
+            (void)node;  // Suppress unused parameter warning
+        }
+
         void SemanticAnalyzer::visit(AnalyzeStmt *node)
         {
             // Phase 1 Task 1.1.2: ANALYZE statement semantic analysis
