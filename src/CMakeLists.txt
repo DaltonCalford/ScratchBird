@@ -67,6 +67,8 @@ set_target_properties(scratchbird_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+# Note: scratchbird_optimizer dependency will be added after optimizer library is defined
+
 # Parser library: scratchbird_parser
 file(GLOB_RECURSE SCRATCHBIRD_PARSER_SOURCES
     parser/*.cpp
@@ -137,7 +139,8 @@ target_include_directories(scratchbird_optimizer PUBLIC
 )
 
 target_link_libraries(scratchbird_optimizer PUBLIC
-    scratchbird_core
+    # Note: Not linking scratchbird_core to avoid circular dependency
+    # scratchbird_core will link against scratchbird_optimizer instead
 )
 
 set_target_properties(scratchbird_optimizer PROPERTIES
@@ -147,10 +150,13 @@ set_target_properties(scratchbird_optimizer PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
+# Add optimizer dependency to core (after optimizer is defined)
+target_link_libraries(scratchbird_core PUBLIC scratchbird_optimizer)
+
 # Main executable (placeholder)
 add_executable(scratchbird main.cpp)
 
-target_link_libraries(scratchbird PRIVATE scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer)
+target_link_libraries(scratchbird PRIVATE scratchbird_sblr scratchbird_parser scratchbird_optimizer scratchbird_core)
 
 set_target_properties(scratchbird PROPERTIES
     CXX_STANDARD 17
