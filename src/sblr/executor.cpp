@@ -15468,22 +15468,26 @@ namespace scratchbird
             variable_stack_->pushFrame();
 
             // Read parameters and bind to variables
+            // Track parameter names and modes for OUT/INOUT handling
+            std::vector<std::pair<std::string, uint8_t>> param_info;  // (name, mode)
+
             for (uint8_t i = 0; i < param_count; ++i)
             {
-                uint8_t mode = readByte();  // IN, OUT, INOUT
+                uint8_t mode = readByte();  // IN=0, OUT=1, INOUT=2
                 std::string param_name = readString();
                 uint8_t type_code = readByte();
 
-                // For now, parameters are passed on the stack
+                param_info.emplace_back(param_name, mode);
+
                 // Pop value from stack and bind to variable
-                if (!stack_.empty() && mode == 0)  // IN parameter
+                if (!stack_.empty() && (mode == 0 || mode == 2))  // IN or INOUT parameter
                 {
                     Value param_value = pop();
                     variable_stack_->declareVariable(param_name, param_value);
                 }
                 else
                 {
-                    // OUT/INOUT parameters initialized to NULL
+                    // OUT parameters initialized to NULL
                     variable_stack_->declareVariable(param_name, Value());
                 }
             }
@@ -15499,6 +15503,24 @@ namespace scratchbird
                 if (ext_opcode == static_cast<uint8_t>(Opcode::EXT_BLOCK))
                 {
                     executeBlock();
+                }
+            }
+
+            // Extract OUT/INOUT parameter values before popping frame
+            std::vector<Value> out_values;
+            for (const auto& [param_name, mode] : param_info)
+            {
+                if (mode == 1 || mode == 2)  // OUT or INOUT
+                {
+                    Value* param_value = variable_stack_->getVariable(param_name);
+                    if (param_value)
+                    {
+                        out_values.push_back(*param_value);
+                    }
+                    else
+                    {
+                        out_values.push_back(Value());  // NULL if not found
+                    }
                 }
             }
 
@@ -15520,6 +15542,12 @@ namespace scratchbird
             else
             {
                 push(Value());  // NULL if no return
+            }
+
+            // Push OUT/INOUT parameter values onto stack (in order)
+            for (const auto& out_value : out_values)
+            {
+                push(out_value);
             }
         }
 
@@ -15601,14 +15629,19 @@ namespace scratchbird
             variable_stack_->pushFrame();
 
             // Read parameters and bind to variables
+            // Track parameter names and modes for OUT/INOUT handling
+            std::vector<std::pair<std::string, uint8_t>> param_info;  // (name, mode)
+
             for (uint8_t i = 0; i < param_count; ++i)
             {
-                uint8_t mode = readByte();  // IN, OUT, INOUT
+                uint8_t mode = readByte();  // IN=0, OUT=1, INOUT=2
                 std::string param_name = readString();
                 uint8_t type_code = readByte();
 
-                // Parameters passed on stack (IN) or initialized to NULL (OUT/INOUT)
-                if (!stack_.empty() && mode == 0)  // IN parameter
+                param_info.emplace_back(param_name, mode);
+
+                // Parameters passed on stack (IN/INOUT) or initialized to NULL (OUT)
+                if (!stack_.empty() && (mode == 0 || mode == 2))  // IN or INOUT parameter
                 {
                     Value param_value = pop();
                     variable_stack_->declareVariable(param_name, param_value);
@@ -15630,6 +15663,24 @@ namespace scratchbird
                 }
             }
 
+            // Extract OUT/INOUT parameter values before popping frame
+            std::vector<Value> out_values;
+            for (const auto& [param_name, mode] : param_info)
+            {
+                if (mode == 1 || mode == 2)  // OUT or INOUT
+                {
+                    Value* param_value = variable_stack_->getVariable(param_name);
+                    if (param_value)
+                    {
+                        out_values.push_back(*param_value);
+                    }
+                    else
+                    {
+                        out_values.push_back(Value());  // NULL if not found
+                    }
+                }
+            }
+
             // Pop procedure frame
             variable_stack_->popFrame();
 
@@ -15639,8 +15690,14 @@ namespace scratchbird
                 ctx->popSecurityContext();
             }
 
-            // Procedures don't return values
+            // Procedures don't have a single return value, but they return OUT/INOUT parameters
             return_requested_ = false;
+
+            // Push OUT/INOUT parameter values onto stack (in order)
+            for (const auto& out_value : out_values)
+            {
+                push(out_value);
+            }
         }
 
         void Executor::executeBlock()
