@@ -1,10 +1,6 @@
-# ScratchBird Universal Database Engine
+# ScratchBird Database Engine
 
-**A universal multi-model database platform** featuring Firebird MGA (Multi-Generational Architecture), capable of replacing 9+ specialized databases in a single deployment with full protocol compatibility and unified ACID transactions.
-
-## Vision: The Universal Data Platform
-
-ScratchBird aims to be a **universal database engine** that can emulate PostgreSQL, MySQL, MSSQL, FirebirdSQL, Neo4j, MongoDB, Redis, Cassandra, Elasticsearch, and more—all in one platform with native client compatibility and unified transaction semantics.
+A multi-model database platform using Firebird MGA (Multi-Generational Architecture).
 
 **See [OFFICIAL_ROADMAP.md](OFFICIAL_ROADMAP.md) for complete project scope and development phases.**
 
@@ -28,10 +24,10 @@ ScratchBird aims to be a **universal database engine** that can emulate PostgreS
 - **Tablespaces** - Multi-file support with GPID addressing
 
 #### Indexes (11/11 = 100%) 🎉
-**Production-ready with MGA compliance:**
 - B-Tree, Hash, R-Tree, GIN, Bitmap
 - GiST, HNSW (vector), SP-GiST, BRIN
 - LSM-Tree, Columnstore
+- **Note:** "Production-ready" refers to component stability in development, not deployment readiness
 
 #### Data Types (86/86 = 100%) 🎉
 - Numeric, String, Temporal, Binary, Spatial
@@ -270,19 +266,14 @@ ScratchBird/
 └── MGA_RULES.md        # Architecture rules (mandatory)
 ```
 
-## The End Goal
+## Project Goals
 
-A universal database platform that can:
-- **Replace** 9+ specialized databases in a single deployment
-- **Emulate** PostgreSQL, MySQL, MSSQL, FirebirdSQL, Neo4j, MongoDB, Redis, Cassandra, Elasticsearch
-- **Integrate** with existing databases in heterogeneous clusters
-- **Scale** from embedded use to massive distributed systems
-- **Support** legacy applications with full wire protocol compatibility
-- **Enable** modern applications with NoSQL, streaming, and AI capabilities
-- **Unify** all data models under a single ACID transaction engine
-- **Provide** a stable educational platform for database research
-
-**This is not just a database—it's a database platform demonstrating what's possible when you combine the best ideas from relational, NoSQL, and distributed systems into a cohesive MGA architecture.**
+Planned capabilities:
+- Support multiple SQL dialects (PostgreSQL, MySQL, MSSQL, FirebirdSQL)
+- Implement 9 NoSQL models (Graph, Vector, Document, Key-Value, Time-Series, Column-Family, Search, Stream, Object/Blob)
+- Enable distributed clustering with heterogeneous databases
+- Provide wire protocol compatibility for existing clients
+- Unified ACID transactions across all data models
 
 ## License
 
