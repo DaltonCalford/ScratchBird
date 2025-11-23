@@ -64,6 +64,8 @@ namespace scratchbird
             COMMIT,            // Phase 2 Task 2.6
             ROLLBACK,          // Phase 2 Task 2.6
             SWEEP,             // Phase 3 Task 3.3
+            SHOW,              // ALPHA Phase 1 - Developer Experience: SHOW TABLES/DATABASES/COLUMNS/INDEXES/CREATE TABLE
+            DESCRIBE,          // ALPHA Phase 1 - Developer Experience: DESCRIBE table (alias for SHOW COLUMNS)
 
             // Security statements (ALPHA Phase 1 - Security System Phase 2)
             CREATE_USER,       // CREATE USER username [WITH PASSWORD 'xxx'] [SUPERUSER]
@@ -2720,6 +2722,97 @@ namespace scratchbird
             void accept(ASTVisitor *visitor) override;
         };
 
+        // SHOW statement (ALPHA Phase 1 - Developer Experience)
+        enum class ShowObjectType : uint8_t
+        {
+            TABLES,         // SHOW TABLES
+            DATABASES,      // SHOW DATABASES / SHOW SCHEMAS
+            COLUMNS,        // SHOW COLUMNS FROM table
+            INDEXES,        // SHOW INDEXES FROM table
+            CREATE_TABLE    // SHOW CREATE TABLE table
+        };
+
+        class ShowStmt : public Statement
+        {
+        public:
+            /**
+             * Constructor
+             *
+             * @param span Source location
+             * @param object_type Type of object to show (TABLES, DATABASES, etc.)
+             * @param table_name Table name (for SHOW COLUMNS/INDEXES/CREATE TABLE)
+             * @param database_name Database name (for SHOW TABLES FROM database)
+             * @param like_pattern LIKE pattern for filtering results
+             */
+            ShowStmt(const SourceSpan &span,
+                     ShowObjectType object_type,
+                     StringPool::StringId table_name = 0,
+                     StringPool::StringId database_name = 0,
+                     StringPool::StringId like_pattern = 0)
+                : Statement(ASTKind::SHOW, span),
+                  object_type_(object_type),
+                  table_name_(table_name),
+                  database_name_(database_name),
+                  like_pattern_(like_pattern)
+            {
+            }
+
+            ShowObjectType objectType() const
+            {
+                return object_type_;
+            }
+
+            StringPool::StringId tableName() const
+            {
+                return table_name_;
+            }
+
+            StringPool::StringId databaseName() const
+            {
+                return database_name_;
+            }
+
+            StringPool::StringId likePattern() const
+            {
+                return like_pattern_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            ShowObjectType object_type_;
+            StringPool::StringId table_name_;
+            StringPool::StringId database_name_;
+            StringPool::StringId like_pattern_;
+        };
+
+        // DESCRIBE statement (ALPHA Phase 1 - Developer Experience)
+        // Alias for SHOW COLUMNS FROM table
+        class DescribeStmt : public Statement
+        {
+        public:
+            /**
+             * Constructor
+             *
+             * @param span Source location
+             * @param table_name Table name to describe
+             */
+            DescribeStmt(const SourceSpan &span, StringPool::StringId table_name)
+                : Statement(ASTKind::DESCRIBE, span), table_name_(table_name)
+            {
+            }
+
+            StringPool::StringId tableName() const
+            {
+                return table_name_;
+            }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId table_name_;
+        };
+
         // SET TRANSACTION statement (Phase 3 Task 3.6)
         // Sets transaction parameters for the NEXT transaction (doesn't start one immediately)
         class SetTransactionStmt : public Statement
@@ -3839,7 +3932,7 @@ namespace scratchbird
             virtual void visit(SetOperationStmt *node) = 0;     // UNION/INTERSECT/EXCEPT
             virtual void visit(UpdateStmt *node) = 0;           // Phase 1 Task 2.1
             virtual void visit(DeleteStmt *node) = 0;           // Phase 1 Task 2.2
-            virtual void visit(MergeStmt *node) = 0;            // ALPHA Phase 1 - Advanced SQL
+            virtual void visit(MergeStmt *node) = 0;            // Alpha 1 - Advanced SQL
             virtual void visit(AnalyzeStmt *node) = 0;          // Phase 1 Task 1.1.2
             virtual void visit(ExplainStmt *node) = 0;          // Phase 1 Task 1.5
             virtual void visit(StartTransactionStmt *node) = 0; // Phase 2 Task 2.6
@@ -3847,6 +3940,8 @@ namespace scratchbird
             virtual void visit(CommitStmt *node) = 0;           // Phase 2 Task 2.6
             virtual void visit(RollbackStmt *node) = 0;         // Phase 2 Task 2.6
             virtual void visit(SweepStmt *node) = 0;            // Phase 3 Task 3.3
+            virtual void visit(ShowStmt *node) = 0;             // ALPHA Phase 1 - Developer Experience
+            virtual void visit(DescribeStmt *node) = 0;         // ALPHA Phase 1 - Developer Experience
             virtual void visit(CreateTriggerStmt *node) = 0;    // Phase 2 Wave 2 Agent C
             virtual void visit(DropTriggerStmt *node) = 0;      // Phase 2 Wave 2 Agent C
 
