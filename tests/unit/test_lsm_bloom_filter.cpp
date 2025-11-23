@@ -309,5 +309,5 @@ int main()
     std::cout << "  ✅ ALL BLOOM FILTER TESTS PASSED\n";
     std::cout << "========================================\n";
 
-    return 0;
+    return;
 }

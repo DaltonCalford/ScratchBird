@@ -368,5 +368,5 @@ int main()
     test_stemming_improves_recall();
 
     std::cout << "\n=== All Phase 2 Tests Passed! ===" << std::endl;
-    return 0;
+    return;
 }

@@ -410,5 +410,5 @@ int main()
 
     std::cout << "\n=== All LSM-Tree Compaction Tests PASSED ===\n";
 
-    return 0;
+    return;
 }

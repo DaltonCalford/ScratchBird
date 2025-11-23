@@ -522,5 +522,5 @@ int main()
     printf("  ✅ ALL TESTS PASSED (8/8)\n");
     printf("═══════════════════════════════════════════════════════════════\n");
 
-    return 0;
+    return;
 }

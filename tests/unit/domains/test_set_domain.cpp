@@ -2,12 +2,14 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include <iostream>
-#include <cassert>
+#include "gtest/gtest.h"
 #include <cstdio>
 
 using namespace scratchbird::core;
 
-int main() {
+
+TEST(SetDomainTest, Comprehensive) {
+
     std::cout << "Testing SET Domain Implementation (Phase 4)...\n\n";
 
     // Create a test database
@@ -18,25 +20,25 @@ int main() {
     Status status = Database::create(test_db, 16384, &ctx);
     if (status != Status::OK) {
         std::cerr << "Failed to create database: " << static_cast<int>(status) << "\n";
-        return 1;
+        FAIL(); return;
     }
 
     Database db;
     status = db.open(test_db, &ctx);
     if (status != Status::OK) {
         std::cerr << "Failed to open database: " << static_cast<int>(status) << "\n";
-        return 1;
+        FAIL(); return;
     }
 
     DomainManager* dm = db.domain_manager();
     CatalogManager* catalog = db.catalog_manager();
-    assert(dm != nullptr);
-    assert(catalog != nullptr);
+    ASSERT_NE(dm, nullptr);
+    ASSERT_NE(catalog, nullptr);
 
     // Create schema
     ID schema_id;
     status = catalog->createSchema("test_schema", "test_user", schema_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_EQ(status, Status::OK);
 
     // Test 1: Create SET domain
     std::cout << "Test 1: Create SET domain\n";
@@ -48,7 +50,7 @@ int main() {
             if (!ctx.message.empty()) {
                 std::cerr << "Error: " << ctx.message << "\n";
             }
-            return 1;
+            FAIL(); return;
         }
         std::cout << "  Created Tags SET domain with VARCHAR elements ✓\n";
     }
@@ -59,10 +61,10 @@ int main() {
     {
         DomainInfo info;
         status = dm->getDomain(schema_id, "Tags", info, &ctx);
-        assert(status == Status::OK);
-        assert(info.domain_type == DomainType::SET);
-        assert(info.base_type == DataType::VECTOR);
-        assert(info.set_element_type == DataType::VARCHAR);
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(info.domain_type, DomainType::SET);
+        ASSERT_EQ(info.base_type, DataType::VECTOR);
+        ASSERT_EQ(info.set_element_type, DataType::VARCHAR);
         std::cout << "  Retrieved Tags domain: SET<VARCHAR> ✓\n";
     }
     std::cout << "  ✓ Get SET domain info passed\n\n";
@@ -72,17 +74,17 @@ int main() {
     {
         ID int_set_id;
         status = dm->createSetDomain(schema_id, "Numbers", DataType::INT32, int_set_id, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         std::cout << "  Created Numbers SET<INT32> ✓\n";
 
         ID float_set_id;
         status = dm->createSetDomain(schema_id, "Scores", DataType::FLOAT64, float_set_id, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         std::cout << "  Created Scores SET<FLOAT64> ✓\n";
 
         ID date_set_id;
         status = dm->createSetDomain(schema_id, "Holidays", DataType::DATE, date_set_id, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         std::cout << "  Created Holidays SET<DATE> ✓\n";
     }
     std::cout << "  ✓ Create SET with different element types passed\n\n";
@@ -92,7 +94,7 @@ int main() {
     {
         ID invalid_set_id;
         status = dm->createSetDomain(schema_id, "Invalid", DataType::UNKNOWN, invalid_set_id, &ctx);
-        assert(status == Status::INVALID_ARGUMENT);
+        ASSERT_EQ(status, Status::INVALID_ARGUMENT);
         std::cout << "  UNKNOWN element type rejected ✓\n";
     }
     std::cout << "  ✓ Reject UNKNOWN element type passed\n\n";
@@ -108,7 +110,7 @@ int main() {
             0, 0, false, "0", constraints,
             basic_domain_id, &ctx
         );
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         // Create a RECORD domain
         std::vector<RecordField> fields;
@@ -117,7 +119,7 @@ int main() {
 
         ID record_domain_id;
         status = dm->createRecordDomain(schema_id, "Person", fields, record_domain_id, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         // Create an ENUM domain
         std::vector<EnumValue> values;
@@ -130,13 +132,13 @@ int main() {
 
         ID enum_domain_id;
         status = dm->createEnumDomain(schema_id, "Size", values, enum_domain_id, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         // List all domains
         std::vector<DomainInfo> domains;
         status = dm->listDomains(schema_id, domains, &ctx);
-        assert(status == Status::OK);
-        assert(domains.size() >= 7);  // Tags, Numbers, Scores, Holidays, PositiveInt, Person, Size
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_GE(domains.size(), 7);  // Tags, Numbers, Scores, Holidays, PositiveInt, Person, Size
 
         int basic_count = 0;
         int record_count = 0;
@@ -164,10 +166,10 @@ int main() {
             }
         }
 
-        assert(basic_count >= 1);
-        assert(record_count >= 1);
-        assert(enum_count >= 1);
-        assert(set_count >= 4);
+        ASSERT_GE(basic_count, 1);
+        ASSERT_GE(record_count, 1);
+        ASSERT_GE(enum_count, 1);
+        ASSERT_GE(set_count, 4);
 
         std::cout << "  Found " << basic_count << " BASIC, "
                  << record_count << " RECORD, "
@@ -190,27 +192,27 @@ int main() {
         // setContains - should return NOT_IMPLEMENTED
         status = dm->setContains(empty_vector, element, result_bool, &ctx);
         // We expect NOT_IMPLEMENTED or TYPE_MISMATCH (since empty_vector is NULL, not VECTOR)
-        assert(status != Status::OK);
+        ASSERT_NE(status, Status::OK);
         std::cout << "  setContains API exists (returns non-OK as expected) ✓\n";
 
         // setsOverlap - should return NOT_IMPLEMENTED
         status = dm->setsOverlap(empty_vector, empty_vector, result_bool, &ctx);
-        assert(status != Status::OK);
+        ASSERT_NE(status, Status::OK);
         std::cout << "  setsOverlap API exists (returns non-OK as expected) ✓\n";
 
         // setUnion - should return NOT_IMPLEMENTED
         status = dm->setUnion(empty_vector, empty_vector, result_set, &ctx);
-        assert(status != Status::OK);
+        ASSERT_NE(status, Status::OK);
         std::cout << "  setUnion API exists (returns non-OK as expected) ✓\n";
 
         // setIntersection - should return NOT_IMPLEMENTED
         status = dm->setIntersection(empty_vector, empty_vector, result_set, &ctx);
-        assert(status != Status::OK);
+        ASSERT_NE(status, Status::OK);
         std::cout << "  setIntersection API exists (returns non-OK as expected) ✓\n";
 
         // setDifference - should return NOT_IMPLEMENTED
         status = dm->setDifference(empty_vector, empty_vector, result_set, &ctx);
-        assert(status != Status::OK);
+        ASSERT_NE(status, Status::OK);
         std::cout << "  setDifference API exists (returns non-OK as expected) ✓\n";
     }
     std::cout << "  ✓ SET operations stub verification passed\n\n";
@@ -224,6 +226,5 @@ int main() {
     std::cout << "========================================\n";
     std::cout << "\nNote: SET value operations (contains, overlap, union, intersection, difference)\n";
     std::cout << "require TypedValue VECTOR element access and are planned for future enhancement.\n";
-
-    return 0;
 }
+

@@ -470,5 +470,5 @@ int main()
 
     std::cout << "\n=== All SSTable Writer Tests PASSED ===\n\n";
 
-    return 0;
+    return;
 }

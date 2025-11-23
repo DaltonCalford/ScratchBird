@@ -16,8 +16,9 @@
 
 using namespace scratchbird::core;
 
-int main()
-{
+
+TEST(HintBitsSimpleTest, Comprehensive) {
+
     std::cout << "\n=== Test: Hint Bits Optimization (Issue 2.13) ===" << std::endl;
 
     // Create test database
@@ -29,7 +30,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to create database: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     Database db;
@@ -37,7 +38,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to open database: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Database created and opened" << std::endl;
@@ -47,7 +48,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to initialize ProcArray: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // Register backend
@@ -56,7 +57,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to register backend: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // Begin transaction
@@ -65,7 +66,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to begin transaction: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Transaction started: xid=" << xid << std::endl;
@@ -76,7 +77,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to allocate page: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // Pin the page
@@ -85,7 +86,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to pin page: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // Initialize heap page
@@ -94,7 +95,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to initialize heap page: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Heap page initialized" << std::endl;
@@ -112,7 +113,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to insert tuple: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Tuple inserted: item_id=" << item_id << std::endl;
@@ -124,7 +125,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to get tuple: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     auto *read_hdr = reinterpret_cast<const TupleHeader *>(read_data);
@@ -134,7 +135,7 @@ int main()
     if (read_hdr->infomask & TupleHeader::HEAP_XMIN_COMMITTED)
     {
         std::cerr << "ERROR: HEAP_XMIN_COMMITTED should not be set initially" << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Hint bits not set initially (as expected)" << std::endl;
@@ -144,7 +145,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to commit transaction: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Transaction committed" << std::endl;
@@ -155,7 +156,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to begin new transaction: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ New transaction started: xid=" << new_xid << std::endl;
@@ -166,7 +167,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to get snapshot: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     // First visibility check - should set hint bits
@@ -178,7 +179,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to find visible version (first): " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ First visibility check successful" << std::endl;
@@ -188,7 +189,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to get tuple after visibility check: " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     read_hdr = reinterpret_cast<const TupleHeader *>(read_data);
@@ -215,7 +216,7 @@ int main()
     if (s != Status::OK)
     {
         std::cerr << "Failed to find visible version (second): " << err_ctx.message << std::endl;
-        return 1;
+        FAIL(); return;
     }
 
     std::cout << "✓ Second visibility check successful (fast path executed)" << std::endl;
@@ -233,6 +234,5 @@ int main()
     std::cout << "  2. Visibility checks execute successfully" << std::endl;
     std::cout << "  3. Fast path logic is in place (no errors on second check)" << std::endl;
     std::cout << "  4. Implementation follows PostgreSQL pattern" << std::endl;
-
-    return 0;
 }
+

@@ -8,11 +8,12 @@
  */
 
 #include <iostream>
-#include <cassert>
+#include "gtest/gtest.h"
 #include <cstdint>
 
-int main()
-{
+
+TEST(LongTransactionMonitorTest, Comprehensive) {
+
     std::cout << "=== Testing Long Transaction Monitor Implementation (Issue 2.12) ===\n\n";
 
     // Test 1: Verify the audit claim
@@ -322,6 +323,5 @@ int main()
     std::cout << "  - Issue 2.10: defragmentPage pd_lower Update ✅ (Fixed)\n";
     std::cout << "  - Issue 2.11: B-Tree Delete Parent Update ✅ (Fixed)\n";
     std::cout << "  - Issue 2.12: Long Transaction Warning Ineffective ✅ (ALREADY FIXED - THIS ISSUE)\n\n";
-
-    return 0;
 }
+

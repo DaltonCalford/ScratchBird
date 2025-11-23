@@ -2,12 +2,14 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include <iostream>
-#include <cassert>
+#include "gtest/gtest.h"
 #include <cstdio>
 
 using namespace scratchbird::core;
 
-int main() {
+
+TEST(EnumDomainTest, Comprehensive) {
+
     std::cout << "Testing ENUM Domain Implementation (Phase 3)...\n\n";
 
     // Create a test database
@@ -18,25 +20,25 @@ int main() {
     Status status = Database::create(test_db, 16384, &ctx);
     if (status != Status::OK) {
         std::cerr << "Failed to create database: " << static_cast<int>(status) << "\n";
-        return 1;
+        FAIL(); return;
     }
 
     Database db;
     status = db.open(test_db, &ctx);
     if (status != Status::OK) {
         std::cerr << "Failed to open database: " << static_cast<int>(status) << "\n";
-        return 1;
+        FAIL(); return;
     }
 
     DomainManager* dm = db.domain_manager();
     CatalogManager* catalog = db.catalog_manager();
-    assert(dm != nullptr);
-    assert(catalog != nullptr);
+    ASSERT_NE(dm, nullptr);
+    ASSERT_NE(catalog, nullptr);
 
     // Create schema
     ID schema_id;
     status = catalog->createSchema("test_schema", "test_user", schema_id, &ctx);
-    assert(status == Status::OK);
+    ASSERT_EQ(status, Status::OK);
 
     // Test 1: Create ENUM domain
     std::cout << "Test 1: Create ENUM domain\n";
@@ -51,7 +53,7 @@ int main() {
 
         ID size_domain_id;
         status = dm->createEnumDomain(schema_id, "Size", values, size_domain_id, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
         std::cout << "  Created Size ENUM domain with 3 values ✓\n";
     }
     std::cout << "  ✓ Create ENUM domain passed\n\n";
@@ -61,19 +63,19 @@ int main() {
     {
         DomainInfo info;
         status = dm->getDomain(schema_id, "Size", info, &ctx);
-        assert(status == Status::OK);
-        assert(info.domain_type == DomainType::ENUM);
-        assert(info.base_type == DataType::VARCHAR);
-        assert(info.enum_values.size() == 3);
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(info.domain_type, DomainType::ENUM);
+        ASSERT_EQ(info.base_type, DataType::VARCHAR);
+        ASSERT_EQ(info.enum_values.size(), 3);
         std::cout << "  Retrieved Size domain: " << info.enum_values.size() << " values ✓\n";
 
         // Verify enum values
-        assert(info.enum_values[0].label == "SMALL");
-        assert(info.enum_values[0].position == 0);
-        assert(info.enum_values[1].label == "MEDIUM");
-        assert(info.enum_values[1].position == 1);
-        assert(info.enum_values[2].label == "LARGE");
-        assert(info.enum_values[2].position == 2);
+        ASSERT_EQ(info.enum_values[0].label, "SMALL");
+        ASSERT_EQ(info.enum_values[0].position, 0);
+        ASSERT_EQ(info.enum_values[1].label, "MEDIUM");
+        ASSERT_EQ(info.enum_values[1].position, 1);
+        ASSERT_EQ(info.enum_values[2].label, "LARGE");
+        ASSERT_EQ(info.enum_values[2].position, 2);
 
         std::cout << "  All enum values verified ✓\n";
     }
@@ -84,17 +86,17 @@ int main() {
     {
         DomainInfo info;
         status = dm->getDomain(schema_id, "Size", info, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         std::string label;
         status = dm->getEnumValueForPosition(info.domain_id, 1, label, &ctx);
-        assert(status == Status::OK);
-        assert(label == "MEDIUM");
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(label, "MEDIUM");
         std::cout << "  Position 1 = 'MEDIUM' ✓\n";
 
         // Try invalid position
         status = dm->getEnumValueForPosition(info.domain_id, 10, label, &ctx);
-        assert(status == Status::OUT_OF_RANGE);
+        ASSERT_EQ(status, Status::OUT_OF_RANGE);
         std::cout << "  Out of range position rejected ✓\n";
     }
     std::cout << "  ✓ Get value for position passed\n\n";
@@ -104,17 +106,17 @@ int main() {
     {
         DomainInfo info;
         status = dm->getDomain(schema_id, "Size", info, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         int32_t position;
         status = dm->getPositionForEnumValue(info.domain_id, "LARGE", position, &ctx);
-        assert(status == Status::OK);
-        assert(position == 2);
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(position, 2);
         std::cout << "  'LARGE' = position 2 ✓\n";
 
         // Try non-existent value
         status = dm->getPositionForEnumValue(info.domain_id, "XLARGE", position, &ctx);
-        assert(status == Status::NOT_FOUND);
+        ASSERT_EQ(status, Status::NOT_FOUND);
         std::cout << "  Non-existent value rejected ✓\n";
     }
     std::cout << "  ✓ Get position for value passed\n\n";
@@ -124,22 +126,22 @@ int main() {
     {
         DomainInfo info;
         status = dm->getDomain(schema_id, "Size", info, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         std::string next_label;
         status = dm->setNextEnumValue(info.domain_id, "SMALL", next_label, &ctx);
-        assert(status == Status::OK);
-        assert(next_label == "MEDIUM");
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(next_label, "MEDIUM");
         std::cout << "  Next after 'SMALL' is 'MEDIUM' ✓\n";
 
         status = dm->setNextEnumValue(info.domain_id, "MEDIUM", next_label, &ctx);
-        assert(status == Status::OK);
-        assert(next_label == "LARGE");
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(next_label, "LARGE");
         std::cout << "  Next after 'MEDIUM' is 'LARGE' ✓\n";
 
         // Try to get next after last value
         status = dm->setNextEnumValue(info.domain_id, "LARGE", next_label, &ctx);
-        assert(status == Status::OUT_OF_RANGE);
+        ASSERT_EQ(status, Status::OUT_OF_RANGE);
         std::cout << "  No next after 'LARGE' (last value) ✓\n";
     }
     std::cout << "  ✓ Set next value passed\n\n";
@@ -149,22 +151,22 @@ int main() {
     {
         DomainInfo info;
         status = dm->getDomain(schema_id, "Size", info, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         int result;
         status = dm->compareEnumValues(info.domain_id, "SMALL", "LARGE", result, &ctx);
-        assert(status == Status::OK);
-        assert(result == -1);  // SMALL < LARGE
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(result, -1);  // SMALL < LARGE
         std::cout << "  'SMALL' < 'LARGE' ✓\n";
 
         status = dm->compareEnumValues(info.domain_id, "LARGE", "SMALL", result, &ctx);
-        assert(status == Status::OK);
-        assert(result == 1);   // LARGE > SMALL
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(result, 1);   // LARGE > SMALL
         std::cout << "  'LARGE' > 'SMALL' ✓\n";
 
         status = dm->compareEnumValues(info.domain_id, "MEDIUM", "MEDIUM", result, &ctx);
-        assert(status == Status::OK);
-        assert(result == 0);   // MEDIUM == MEDIUM
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(result, 0);   // MEDIUM == MEDIUM
         std::cout << "  'MEDIUM' == 'MEDIUM' ✓\n";
     }
     std::cout << "  ✓ Compare enum values passed\n\n";
@@ -182,7 +184,7 @@ int main() {
 
         ID dup_domain_id;
         status = dm->createEnumDomain(schema_id, "InvalidColor", values, dup_domain_id, &ctx);
-        assert(status == Status::INVALID_ARGUMENT);
+        ASSERT_EQ(status, Status::INVALID_ARGUMENT);
         std::cout << "  Duplicate enum value rejected ✓\n";
     }
     std::cout << "  ✓ Reject duplicate values passed\n\n";
@@ -194,7 +196,7 @@ int main() {
 
         ID empty_domain_id;
         status = dm->createEnumDomain(schema_id, "Empty", values, empty_domain_id, &ctx);
-        assert(status == Status::INVALID_ARGUMENT);
+        ASSERT_EQ(status, Status::INVALID_ARGUMENT);
         std::cout << "  Empty value list rejected ✓\n";
     }
     std::cout << "  ✓ Reject empty value list passed\n\n";
@@ -210,7 +212,7 @@ int main() {
 
         ID invalid_domain_id;
         status = dm->createEnumDomain(schema_id, "InvalidOrder", values, invalid_domain_id, &ctx);
-        assert(status == Status::INVALID_ARGUMENT);
+        ASSERT_EQ(status, Status::INVALID_ARGUMENT);
         std::cout << "  Non-sequential positions rejected ✓\n";
     }
     std::cout << "  ✓ Reject invalid positions passed\n\n";
@@ -229,26 +231,26 @@ int main() {
 
         ID day_domain_id;
         status = dm->createEnumDomain(schema_id, "DayOfWeek", values, day_domain_id, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         // Verify all values
         DomainInfo info;
         status = dm->getDomain(schema_id, "DayOfWeek", info, &ctx);
-        assert(status == Status::OK);
-        assert(info.enum_values.size() == 7);
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(info.enum_values.size(), 7);
         std::cout << "  Created DayOfWeek ENUM with 7 values ✓\n";
 
         // Test value access for each day
         for (const auto& expected_value : values) {
             std::string label;
             status = dm->getEnumValueForPosition(info.domain_id, expected_value.position, label, &ctx);
-            assert(status == Status::OK);
-            assert(label == expected_value.label);
+            ASSERT_EQ(status, Status::OK);
+            ASSERT_EQ(label, expected_value.label);
 
             int32_t position;
             status = dm->getPositionForEnumValue(info.domain_id, expected_value.label, position, &ctx);
-            assert(status == Status::OK);
-            assert(position == static_cast<int32_t>(expected_value.position));
+            ASSERT_EQ(status, Status::OK);
+            ASSERT_EQ(position, static_cast<int32_t>(expected_value.position));
         }
         std::cout << "  All 7 values accessible ✓\n";
     }
@@ -265,7 +267,7 @@ int main() {
             0, 0, false, "0", constraints,
             basic_domain_id, &ctx
         );
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         // Create a RECORD domain
         std::vector<RecordField> fields;
@@ -274,13 +276,13 @@ int main() {
 
         ID record_domain_id;
         status = dm->createRecordDomain(schema_id, "Person", fields, record_domain_id, &ctx);
-        assert(status == Status::OK);
+        ASSERT_EQ(status, Status::OK);
 
         // List all domains
         std::vector<DomainInfo> domains;
         status = dm->listDomains(schema_id, domains, &ctx);
-        assert(status == Status::OK);
-        assert(domains.size() >= 4);  // At least Size, DayOfWeek, PositiveInt, Person
+        ASSERT_EQ(status, Status::OK);
+        ASSERT_GE(domains.size(), 4);  // At least Size, DayOfWeek, PositiveInt, Person
 
         int basic_count = 0;
         int record_count = 0;
@@ -301,9 +303,9 @@ int main() {
             std::cout << ")\n";
         }
 
-        assert(basic_count >= 1);
-        assert(record_count >= 1);
-        assert(enum_count >= 2);
+        ASSERT_GE(basic_count, 1);
+        ASSERT_GE(record_count, 1);
+        ASSERT_GE(enum_count, 2);
         std::cout << "  Found " << basic_count << " BASIC, "
                  << record_count << " RECORD, and "
                  << enum_count << " ENUM domains ✓\n";
@@ -317,6 +319,5 @@ int main() {
     std::cout << "ALL TESTS PASSED! ✓\n";
     std::cout << "ENUM Domain Phase 3 is functional.\n";
     std::cout << "========================================\n";
-
-    return 0;
 }
+

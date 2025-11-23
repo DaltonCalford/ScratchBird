@@ -494,5 +494,5 @@ int main()
 
     std::cout << "\n=== All Memtable Tests PASSED ===\n";
 
-    return 0;
+    return;
 }

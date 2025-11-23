@@ -6,8 +6,9 @@
 #include <iostream>
 #include <cstdint>
 
-int main()
-{
+
+TEST(ToastCleanupTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 1.22: TOAST Pointer Dangling Reference ===\n";
     std::cout << std::endl;
 
@@ -190,6 +191,5 @@ int main()
     std::cout << "    4. Prevents TOAST leaks on UPDATE operations\n";
     std::cout << std::endl;
     std::cout << "This is FALSE POSITIVE #13 out of 22 issues examined (59% audit error rate)\n";
-
-    return 0;
 }
+

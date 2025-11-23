@@ -6,8 +6,9 @@
 #include <iostream>
 #include <cstdint>
 
-int main()
-{
+
+TEST(TransactionMarkersRaceTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 2.4: Transaction Markers Race ===" << std::endl;
     std::cout << std::endl;
 
@@ -240,6 +241,5 @@ int main()
     std::cout << "False positives: 1.1, 1.4, 1.5, 1.6, 1.9, 1.10, 1.11, 1.12, 1.16, 1.17, 1.18, 1.20, 1.21, 1.22, 2.1, 2.3, 2.4" << std::endl;
     std::cout << std::endl;
     std::cout << "PHASE 2 Progress: 1 real bug fixed, 3 false positives (25% accuracy so far)" << std::endl;
-
-    return 0;
 }
+

@@ -11,8 +11,9 @@
 
 using namespace scratchbird::core;
 
-int main()
-{
+
+TEST(ClogStateSizeTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 1.17: CLOG Transaction State Size Mismatch ===" << std::endl;
     std::cout << std::endl;
 
@@ -33,7 +34,7 @@ int main()
             std::cout << "  COMMITTED=" << static_cast<int>(committed) << std::endl;
             std::cout << "  ABORTED=" << static_cast<int>(aborted) << std::endl;
             std::cout << "  SUB_COMMITTED=" << static_cast<int>(sub_committed) << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         std::cout << "PASSED" << std::endl;
@@ -51,7 +52,7 @@ int main()
             if (bits != i)
             {
                 std::cout << "FAILED: Bit mask failed for value " << static_cast<int>(i) << std::endl;
-                return 1;
+                FAIL(); return;
             }
         }
 
@@ -61,7 +62,7 @@ int main()
         if (masked != 0)
         {
             std::cout << "FAILED: Value 4 should mask to 0, got " << static_cast<int>(masked) << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         std::cout << "PASSED" << std::endl;
@@ -106,7 +107,7 @@ int main()
                       << static_cast<int>(txn1) << ","
                       << static_cast<int>(txn2) << ","
                       << static_cast<int>(txn3) << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         std::cout << "PASSED" << std::endl;
@@ -125,14 +126,14 @@ int main()
         if (Database::create(db_path, 8192, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         Database db;
         if (db.open(db_path, &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Test all 4 ClogStatus values
@@ -151,7 +152,7 @@ int main()
             if (db.clog()->setStatus(xid, expected, &ctx) != Status::OK)
             {
                 std::cout << "FAILED (setStatus): " << ctx.message << std::endl;
-                return 1;
+                FAIL(); return;
             }
 
             // Get status
@@ -159,7 +160,7 @@ int main()
             if (db.clog()->getStatus(xid, &actual, &ctx) != Status::OK)
             {
                 std::cout << "FAILED (getStatus): " << ctx.message << std::endl;
-                return 1;
+                FAIL(); return;
             }
 
             if (actual != expected)
@@ -167,7 +168,7 @@ int main()
                 std::cout << "FAILED: XID " << xid << " status mismatch" << std::endl;
                 std::cout << "  Expected: " << static_cast<int>(expected) << std::endl;
                 std::cout << "  Actual: " << static_cast<int>(actual) << std::endl;
-                return 1;
+                FAIL(); return;
             }
         }
 
@@ -190,14 +191,14 @@ int main()
         if (Database::create(db_path, 16384, &ctx) != Status::OK)
         {
             std::cout << "FAILED (create): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         Database db;
         if (db.open(db_path, &ctx) != Status::OK)
         {
             std::cout << "FAILED (open): " << ctx.message << std::endl;
-            return 1;
+            FAIL(); return;
         }
 
         // Set status for many transactions
@@ -208,7 +209,7 @@ int main()
             if (db.clog()->setStatus(xid, status, &ctx) != Status::OK)
             {
                 std::cout << "FAILED (setStatus): " << ctx.message << std::endl;
-                return 1;
+                FAIL(); return;
             }
         }
 
@@ -220,13 +221,13 @@ int main()
             if (db.clog()->getStatus(xid, &actual, &ctx) != Status::OK)
             {
                 std::cout << "FAILED (getStatus): " << ctx.message << std::endl;
-                return 1;
+                FAIL(); return;
             }
 
             if (actual != expected)
             {
                 std::cout << "FAILED: XID " << xid << " incorrect after bulk write" << std::endl;
-                return 1;
+                FAIL(); return;
             }
         }
 
@@ -271,6 +272,5 @@ int main()
     std::cout << "  - Compilation will FAIL with static assertion error" << std::endl;
     std::cout << "  - Error message explains: 'must fit in 2 bits (0-3)'" << std::endl;
     std::cout << "  - Instructions provided for expanding to 3-bit storage" << std::endl;
-
-    return 0;
 }
+

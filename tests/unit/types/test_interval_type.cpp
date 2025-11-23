@@ -1,20 +1,22 @@
 #include "scratchbird/core/types.h"
 #include <iostream>
-#include <cassert>
+#include "gtest/gtest.h"
 
 using namespace scratchbird::core;
 
-int main() {
+
+TEST(IntervalTypeTest, Comprehensive) {
+
     std::cout << "Testing INTERVAL Type Implementation...\n\n";
 
     // Test 1: Basic INTERVAL creation and retrieval
     std::cout << "Test 1: Basic INTERVAL operations\n";
     auto interval1 = TypedValue::makeInterval(12, 30, 3600000000); // 1 year, 30 days, 1 hour
-    assert(interval1.type() == DataType::INTERVAL);
+    ASSERT_EQ(interval1.type(), DataType::INTERVAL);
     Interval i1 = interval1.getInterval();
-    assert(i1.months == 12);
-    assert(i1.days == 30);
-    assert(i1.microseconds == 3600000000);
+    ASSERT_EQ(i1.months, 12);
+    ASSERT_EQ(i1.days, 30);
+    ASSERT_EQ(i1.microseconds, 3600000000);
     std::cout << "  INTERVAL (12 months, 30 days, 3600000000 us): " << interval1.toString() << "\n";
     std::cout << "  ✓ Basic INTERVAL operations passed\n\n";
 
@@ -22,9 +24,9 @@ int main() {
     std::cout << "Test 2: Zero interval\n";
     auto interval_zero = TypedValue::makeInterval(0, 0, 0);
     Interval i_zero = interval_zero.getInterval();
-    assert(i_zero.months == 0);
-    assert(i_zero.days == 0);
-    assert(i_zero.microseconds == 0);
+    ASSERT_EQ(i_zero.months, 0);
+    ASSERT_EQ(i_zero.days, 0);
+    ASSERT_EQ(i_zero.microseconds, 0);
     std::cout << "  INTERVAL zero: " << interval_zero.toString() << "\n";
     std::cout << "  ✓ Zero interval passed\n\n";
 
@@ -32,9 +34,9 @@ int main() {
     std::cout << "Test 3: Negative intervals\n";
     auto interval_negative = TypedValue::makeInterval(-6, -15, -7200000000); // -6 months, -15 days, -2 hours
     Interval i_neg = interval_negative.getInterval();
-    assert(i_neg.months == -6);
-    assert(i_neg.days == -15);
-    assert(i_neg.microseconds == -7200000000);
+    ASSERT_EQ(i_neg.months, -6);
+    ASSERT_EQ(i_neg.days, -15);
+    ASSERT_EQ(i_neg.microseconds, -7200000000);
     std::cout << "  INTERVAL negative: " << interval_negative.toString() << "\n";
     std::cout << "  ✓ Negative intervals passed\n\n";
 
@@ -80,11 +82,11 @@ int main() {
     std::cout << "Test 8: Using Interval struct constructor\n";
     Interval custom_interval(6, 15, 7200000000); // 6 months, 15 days, 2 hours
     auto interval_custom = TypedValue::makeInterval(custom_interval);
-    assert(interval_custom.type() == DataType::INTERVAL);
+    ASSERT_EQ(interval_custom.type(), DataType::INTERVAL);
     Interval i_custom = interval_custom.getInterval();
-    assert(i_custom.months == 6);
-    assert(i_custom.days == 15);
-    assert(i_custom.microseconds == 7200000000);
+    ASSERT_EQ(i_custom.months, 6);
+    ASSERT_EQ(i_custom.days, 15);
+    ASSERT_EQ(i_custom.microseconds, 7200000000);
     std::cout << "  Custom interval: " << interval_custom.toString() << "\n";
     std::cout << "  ✓ Interval struct constructor passed\n\n";
 
@@ -93,28 +95,28 @@ int main() {
     Interval i1_cmp(12, 30, 3600000000);
     Interval i2_cmp(12, 30, 3600000000);
     Interval i3_cmp(6, 15, 1800000000);
-    assert(i1_cmp == i2_cmp);
-    assert(i1_cmp != i3_cmp);
+    ASSERT_EQ(i1_cmp, i2_cmp);
+    ASSERT_NE(i1_cmp, i3_cmp);
     std::cout << "  ✓ Comparison operators passed\n\n";
 
     // Test 10: TypeSystem utilities
     std::cout << "Test 10: TypeSystem utilities\n";
-    assert(TypeSystem::isTemporal(DataType::INTERVAL));
+    ASSERT_TRUE(TypeSystem::isTemporal(DataType::INTERVAL));
     std::cout << "  ✓ isTemporal() passed\n";
 
-    assert(TypeSystem::isFixedLength(DataType::INTERVAL));
+    ASSERT_TRUE(TypeSystem::isFixedLength(DataType::INTERVAL));
     std::cout << "  ✓ isFixedLength() passed\n";
 
     auto size = TypeSystem::getFixedSize(DataType::INTERVAL);
-    assert(size.has_value());
-    assert(*size == 16); // 4 + 4 + 8 = 16 bytes
+    ASSERT_TRUE(size.has_value());
+    ASSERT_EQ(*size, 16); // 4 + 4 + 8 = 16 bytes
     std::cout << "  ✓ getFixedSize() = 16 bytes passed\n";
 
-    assert(TypeSystem::getTypeName(DataType::INTERVAL) == "INTERVAL");
+    ASSERT_EQ(TypeSystem::getTypeName(DataType::INTERVAL), "INTERVAL");
     std::cout << "  ✓ getTypeName() passed\n";
 
-    assert(TypeSystem::parseTypeName("INTERVAL") == DataType::INTERVAL);
-    assert(TypeSystem::parseTypeName("interval") == DataType::INTERVAL);
+    ASSERT_EQ(TypeSystem::parseTypeName("INTERVAL"), DataType::INTERVAL);
+    ASSERT_EQ(TypeSystem::parseTypeName("interval"), DataType::INTERVAL);
     std::cout << "  ✓ parseTypeName() passed\n";
     std::cout << "  ✓ All TypeSystem utilities passed\n\n";
 
@@ -123,7 +125,7 @@ int main() {
     auto int_val = TypedValue::makeInt64(12345);
     try {
         int_val.getInterval(); // Should throw
-        assert(false && "Should have thrown exception");
+        ASSERT_TRUE(false && "Should have thrown exception");
     } catch (const std::runtime_error& e) {
         std::cout << "  ✓ Type mismatch correctly throws exception\n";
     }
@@ -134,7 +136,7 @@ int main() {
     auto interval_us = TypedValue::makeInterval(0, 0, 123456); // 0.123456 seconds
     std::cout << "  Microseconds (123456 us): " << interval_us.toString() << "\n";
     Interval i_us = interval_us.getInterval();
-    assert(i_us.microseconds == 123456);
+    ASSERT_EQ(i_us.microseconds, 123456);
     std::cout << "  ✓ Microseconds precision passed\n\n";
 
     // Test 13: Large intervals
@@ -147,6 +149,5 @@ int main() {
     std::cout << "ALL TESTS PASSED! ✓\n";
     std::cout << "INTERVAL type is fully functional.\n";
     std::cout << "========================================\n";
-
-    return 0;
 }
+

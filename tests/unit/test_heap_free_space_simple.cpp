@@ -5,8 +5,9 @@
 
 #include <iostream>
 
-int main()
-{
+
+TEST(HeapFreeSpaceSimpleTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 1.12: Heap Page Off-by-One Error ===" << std::endl;
     std::cout << std::endl;
 
@@ -90,6 +91,5 @@ int main()
     std::cout << "  7. Code is ALREADY CORRECT - no fix needed!" << std::endl;
     std::cout << std::endl;
     std::cout << "This is FALSE POSITIVE #8 out of 12 issues examined (67% audit error rate)" << std::endl;
-
-    return 0;
 }
+
