@@ -7410,6 +7410,23 @@ namespace scratchbird
                     case Opcode::WIN_NTH_VALUE:
                         spec.func_type = WindowFunctionSpec::FuncType::NTH_VALUE;
                         break;
+                    case Opcode::EXTENDED_OPCODE:
+                    {
+                        uint8_t ext_op = readByte();
+                        if (ext_op == static_cast<uint8_t>(Opcode::EXT_WIN_CUME_DIST))
+                        {
+                            spec.func_type = WindowFunctionSpec::FuncType::CUME_DIST;
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_WIN_PERCENT_RANK))
+                        {
+                            spec.func_type = WindowFunctionSpec::FuncType::PERCENT_RANK;
+                        }
+                        else
+                        {
+                            error("Unknown extended window function opcode: " + std::to_string(ext_op));
+                        }
+                        break;
+                    }
                     default:
                         error("Unknown window function opcode");
                 }
@@ -7529,6 +7546,31 @@ namespace scratchbird
                     {
                         // ROW_NUMBER() is 1-indexed
                         result = core::TypedValue::makeInt64(static_cast<int64_t>(row_idx + 1));
+                    }
+                    else if (spec.func_type == WindowFunctionSpec::FuncType::CUME_DIST)
+                    {
+                        // CUME_DIST() = (number of rows <= current row) / (total rows)
+                        // For simplified implementation without ORDER BY, this is (row + 1) / total
+                        double total_rows = static_cast<double>(input_result_set->rowCount());
+                        double rows_up_to_current = static_cast<double>(row_idx + 1);
+                        double cume_dist = rows_up_to_current / total_rows;
+                        result = core::TypedValue::makeFloat64(cume_dist);
+                    }
+                    else if (spec.func_type == WindowFunctionSpec::FuncType::PERCENT_RANK)
+                    {
+                        // PERCENT_RANK() = (rank - 1) / (total rows - 1)
+                        // For simplified implementation, rank is just row_idx + 1
+                        int64_t total_rows = static_cast<int64_t>(input_result_set->rowCount());
+                        if (total_rows <= 1)
+                        {
+                            result = core::TypedValue::makeFloat64(0.0);
+                        }
+                        else
+                        {
+                            double rank = static_cast<double>(row_idx);  // 0-based for calculation
+                            double percent_rank = rank / static_cast<double>(total_rows - 1);
+                            result = core::TypedValue::makeFloat64(percent_rank);
+                        }
                     }
                     else
                     {
@@ -14791,6 +14833,74 @@ namespace scratchbird
                             else
                             {
                                 push(Value::makeFloat64(1.0 / tan_x));
+                            }
+                        }
+                    }
+                    // Date/Time function - AGE (Alpha 1 - Missing Functions Phase 5)
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_AGE))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1 && arg_count != 2)
+                        {
+                            error("AGE expects 1 or 2 arguments, got " + std::to_string(arg_count));
+                        }
+
+                        if (arg_count == 1)
+                        {
+                            // AGE(timestamp) - age from current timestamp
+                            Value ts = pop();
+                            if (ts.isNull())
+                            {
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                // Get current timestamp
+                                auto now = std::chrono::system_clock::now();
+                                auto now_micros = std::chrono::duration_cast<std::chrono::microseconds>(
+                                    now.time_since_epoch()).count();
+
+                                // Get the input timestamp
+                                int64_t ts_micros = ts.getTimestamp();
+
+                                // Calculate difference in microseconds
+                                int64_t diff_micros = now_micros - ts_micros;
+
+                                // Convert to interval (for simplicity, just using microseconds component)
+                                // A full implementation would calculate months, days separately
+                                core::Interval interval;
+                                interval.months = 0;
+                                interval.days = static_cast<int32_t>(diff_micros / (1000000LL * 86400LL));  // days
+                                interval.microseconds = diff_micros % (1000000LL * 86400LL);  // remainder as microseconds
+
+                                push(core::TypedValue::makeInterval(interval));
+                            }
+                        }
+                        else  // arg_count == 2
+                        {
+                            // AGE(timestamp1, timestamp2) - timestamp1 - timestamp2
+                            Value ts2 = pop();
+                            Value ts1 = pop();
+
+                            if (ts1.isNull() || ts2.isNull())
+                            {
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                int64_t ts1_micros = ts1.getTimestamp();
+                                int64_t ts2_micros = ts2.getTimestamp();
+
+                                // Calculate difference
+                                int64_t diff_micros = ts1_micros - ts2_micros;
+
+                                // Convert to interval
+                                core::Interval interval;
+                                interval.months = 0;
+                                interval.days = static_cast<int32_t>(diff_micros / (1000000LL * 86400LL));
+                                interval.microseconds = diff_micros % (1000000LL * 86400LL);
+
+                                push(core::TypedValue::makeInterval(interval));
                             }
                         }
                     }

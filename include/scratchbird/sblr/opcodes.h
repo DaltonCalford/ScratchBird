@@ -373,6 +373,13 @@ namespace scratchbird
             EXT_EXCEPT = 0x68,             // EXCEPT (removes duplicates)
             EXT_EXCEPT_ALL = 0x69,         // EXCEPT ALL (keeps duplicates)
 
+            // Additional window functions (Alpha 1 - Missing Functions Phase 4) - 0x6A-0x6B range
+            EXT_WIN_CUME_DIST = 0x6A,      // CUME_DIST() - cumulative distribution
+            EXT_WIN_PERCENT_RANK = 0x6B,   // PERCENT_RANK() - relative rank percentile
+
+            // Additional date/time functions (Alpha 1 - Missing Functions Phase 5) - 0x6C range
+            EXT_FUNC_AGE = 0x6C,           // AGE(timestamp [, timestamp]) - age between timestamps
+
             // Trigger opcodes (Phase 2 Wave 2 - Agent C) - 0x70-0x72 range
             EXT_CREATE_TRIGGER = 0x70,     // CREATE TRIGGER
             EXT_DROP_TRIGGER = 0x71,       // DROP TRIGGER

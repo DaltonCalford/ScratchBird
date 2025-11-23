@@ -158,6 +158,8 @@ namespace scratchbird
             KW_FIRST_VALUE,
             KW_LAST_VALUE,
             KW_NTH_VALUE,
+            KW_CUME_DIST,
+            KW_PERCENT_RANK,
             KW_NULLS,
             KW_FIRST,
             KW_LAST,

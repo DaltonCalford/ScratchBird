@@ -467,7 +467,8 @@ namespace scratchbird
                 enum class FuncType {
                     ROW_NUMBER, RANK, DENSE_RANK,
                     LAG, LEAD,
-                    FIRST_VALUE, LAST_VALUE, NTH_VALUE
+                    FIRST_VALUE, LAST_VALUE, NTH_VALUE,
+                    CUME_DIST, PERCENT_RANK
                 };
 
                 FuncType func_type;
