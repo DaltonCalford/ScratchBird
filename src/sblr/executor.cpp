@@ -1152,6 +1152,37 @@ namespace scratchbird
                             executeAlterTableRLS();
                             result = ExecutionResult();
                         }
+                        // ===== SQL Engine Commands (ALPHA Phase 1 - Developer Experience) =====
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_TABLES))
+                        {
+                            executeShowTables();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_DATABASES))
+                        {
+                            executeShowDatabases();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_COLUMNS))
+                        {
+                            executeShowColumns();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_INDEXES))
+                        {
+                            executeShowIndexes();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_CREATE_TABLE))
+                        {
+                            executeShowCreateTable();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_DESCRIBE_TABLE))
+                        {
+                            executeDescribeTable();
+                            result = ExecutionResult();
+                        }
                         else
                         {
                             result = ExecutionResult("Unknown extended opcode: " +
@@ -17548,6 +17579,624 @@ namespace scratchbird
             if (status != core::Status::OK)
             {
                 error("ALTER TABLE ROW LEVEL SECURITY failed: Operation failed");
+            }
+        }
+
+        // ===== SQL Engine Commands (ALPHA Phase 1 - Developer Experience) =====
+
+        // Helper function to convert DataType to string
+        static std::string dataTypeToString(core::DataType type)
+        {
+            switch (type)
+            {
+                case core::DataType::INT8: return "TINYINT";
+                case core::DataType::INT16: return "SMALLINT";
+                case core::DataType::INT32: return "INT";
+                case core::DataType::INT64: return "BIGINT";
+                case core::DataType::FLOAT32: return "FLOAT";
+                case core::DataType::FLOAT64: return "DOUBLE";
+                case core::DataType::DECIMAL: return "DECIMAL";
+                case core::DataType::BOOLEAN: return "BOOLEAN";
+                case core::DataType::CHAR: return "CHAR";
+                case core::DataType::VARCHAR: return "VARCHAR";
+                case core::DataType::TEXT: return "TEXT";
+                case core::DataType::BINARY: return "BINARY";
+                case core::DataType::VARBINARY: return "VARBINARY";
+                case core::DataType::BLOB: return "BLOB";
+                case core::DataType::DATE: return "DATE";
+                case core::DataType::TIME: return "TIME";
+                case core::DataType::TIMESTAMP: return "TIMESTAMP";
+                case core::DataType::UUID: return "UUID";
+                case core::DataType::JSON: return "JSON";
+                case core::DataType::JSONB: return "JSONB";
+                case core::DataType::ARRAY: return "ARRAY";
+                case core::DataType::POINT: return "POINT";
+                case core::DataType::LINESTRING: return "LINESTRING";
+                case core::DataType::POLYGON: return "POLYGON";
+                case core::DataType::VECTOR: return "VECTOR";
+                default: return "UNKNOWN";
+            }
+        }
+
+        void Executor::executeShowTables()
+        {
+            // Read bytecode parameters
+            std::string database_name = readString();
+            std::string like_pattern = readString();
+
+            // Get catalog manager
+            auto* catalog = db_->catalog_manager();
+
+            // For now, we only support the current database (PUBLIC schema)
+            // In the future, this will support multiple databases/schemas
+            core::CatalogManager::SchemaInfo schema_info;
+            auto schema_status = catalog->getSchema("PUBLIC", schema_info, nullptr);
+            if (schema_status != core::Status::OK)
+            {
+                error("Failed to get schema PUBLIC");
+            }
+
+            // Get all tables in the schema
+            std::vector<core::CatalogManager::TableInfo> tables;
+            core::ErrorContext err_ctx;
+            auto status = catalog->listTables(schema_info.schema_id, tables, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                error("Failed to list tables: " + err_ctx.message);
+            }
+
+            // Create result set
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            // Add column: Tables_in_PUBLIC (or database name if specified)
+            std::string column_name = "Tables_in_" + (database_name.empty() ? "PUBLIC" : database_name);
+            current_result_set_->addColumn(column_name, core::DataType::VARCHAR);
+
+            // Add rows (filter by LIKE pattern if provided)
+            for (const auto& table : tables)
+            {
+                // Skip system tables (TOAST tables)
+                if (table.table_type == core::CatalogManager::TableType::TOAST)
+                {
+                    continue;
+                }
+
+                // Apply LIKE pattern if provided
+                if (!like_pattern.empty())
+                {
+                    // Simple pattern matching: % = wildcard
+                    // For now, just check if pattern matches
+                    // TODO: Implement full SQL LIKE pattern matching
+                    if (table.table_name.find(like_pattern) == std::string::npos)
+                    {
+                        continue;
+                    }
+                }
+
+                std::vector<Value> row;
+                row.push_back(Value::makeVarchar(table.table_name));
+                current_result_set_->addRow(row);
+            }
+        }
+
+        void Executor::executeShowDatabases()
+        {
+            // Read bytecode parameters
+            std::string like_pattern = readString();
+
+            // Get catalog manager
+            auto* catalog = db_->catalog_manager();
+
+            // Get all schemas (in ScratchBird, schemas are like databases)
+            std::vector<core::CatalogManager::SchemaInfo> schemas;
+            core::ErrorContext err_ctx;
+            auto status = catalog->listSchemas(schemas, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                error("Failed to list schemas: " + err_ctx.message);
+            }
+
+            // Create result set
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            // Add column: Database
+            current_result_set_->addColumn("Database", core::DataType::VARCHAR);
+
+            // Add rows (filter by LIKE pattern if provided)
+            for (const auto& schema : schemas)
+            {
+                // Apply LIKE pattern if provided
+                if (!like_pattern.empty())
+                {
+                    // Simple pattern matching
+                    if (schema.schema_name.find(like_pattern) == std::string::npos)
+                    {
+                        continue;
+                    }
+                }
+
+                std::vector<Value> row;
+                row.push_back(Value::makeVarchar(schema.schema_name));
+                current_result_set_->addRow(row);
+            }
+        }
+
+        void Executor::executeShowColumns()
+        {
+            // Read bytecode parameters
+            std::string table_name = readString();
+            std::string like_pattern = readString();
+
+            // Get catalog manager
+            auto* catalog = db_->catalog_manager();
+
+            // Look up table in PUBLIC schema
+            core::CatalogManager::SchemaInfo schema_info;
+            auto schema_status = catalog->getSchema("PUBLIC", schema_info, nullptr);
+            if (schema_status != core::Status::OK)
+            {
+                error("Failed to get schema PUBLIC");
+            }
+
+            core::CatalogManager::TableInfo table_info;
+            core::ErrorContext err_ctx;
+            auto table_status = catalog->getTable(schema_info.schema_id, table_name, table_info, &err_ctx);
+            if (table_status != core::Status::OK)
+            {
+                error("Table '" + table_name + "' not found");
+            }
+
+            // Get columns
+            std::vector<core::CatalogManager::ColumnInfo> columns;
+            auto col_status = catalog->getColumns(table_info.table_id, columns, &err_ctx);
+            if (col_status != core::Status::OK)
+            {
+                error("Failed to get columns: " + err_ctx.message);
+            }
+
+            // Create result set
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            // Add columns to result set (MySQL-style format)
+            current_result_set_->addColumn("Field", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Type", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Null", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Key", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Default", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Extra", core::DataType::VARCHAR);
+
+            // Add rows (filter by LIKE pattern if provided)
+            for (const auto& col : columns)
+            {
+                // Apply LIKE pattern if provided
+                if (!like_pattern.empty())
+                {
+                    if (col.column_name.find(like_pattern) == std::string::npos)
+                    {
+                        continue;
+                    }
+                }
+
+                std::vector<Value> row;
+
+                // Field name
+                row.push_back(Value::makeVarchar(col.column_name));
+
+                // Type (convert DataType enum to string)
+                std::string type_str = dataTypeToString(static_cast<core::DataType>(col.data_type));
+                if (col.type_precision > 0)
+                {
+                    type_str += "(" + std::to_string(col.type_precision);
+                    if (col.type_scale > 0)
+                    {
+                        type_str += "," + std::to_string(col.type_scale);
+                    }
+                    type_str += ")";
+                }
+                row.push_back(Value::makeVarchar(type_str));
+
+                // Null
+                row.push_back(Value::makeVarchar(col.nullable ? "YES" : "NO"));
+
+                // Key
+                std::string key_str;
+                if (col.is_primary_key)
+                {
+                    key_str = "PRI";
+                }
+                else if (col.is_unique)
+                {
+                    key_str = "UNI";
+                }
+                else if (col.is_foreign_key)
+                {
+                    key_str = "MUL";
+                }
+                row.push_back(Value::makeVarchar(key_str));
+
+                // Default
+                row.push_back(Value::makeVarchar(col.has_default ? col.default_value : ""));
+
+                // Extra
+                std::string extra_str;
+                if (col.is_generated)
+                {
+                    extra_str = "GENERATED";
+                }
+                row.push_back(Value::makeVarchar(extra_str));
+
+                current_result_set_->addRow(row);
+            }
+        }
+
+        void Executor::executeShowIndexes()
+        {
+            // Read bytecode parameters
+            std::string table_name = readString();
+
+            // Get catalog manager
+            auto* catalog = db_->catalog_manager();
+
+            // Look up table in PUBLIC schema
+            core::CatalogManager::SchemaInfo schema_info;
+            auto schema_status = catalog->getSchema("PUBLIC", schema_info, nullptr);
+            if (schema_status != core::Status::OK)
+            {
+                error("Failed to get schema PUBLIC");
+            }
+
+            core::CatalogManager::TableInfo table_info;
+            core::ErrorContext err_ctx;
+            auto table_status = catalog->getTable(schema_info.schema_id, table_name, table_info, &err_ctx);
+            if (table_status != core::Status::OK)
+            {
+                error("Table '" + table_name + "' not found");
+            }
+
+            // Get indexes
+            std::vector<core::CatalogManager::IndexInfo> indexes;
+            auto idx_status = catalog->listIndexesForTable(table_info.table_id, indexes, &err_ctx);
+            if (idx_status != core::Status::OK)
+            {
+                error("Failed to get indexes: " + err_ctx.message);
+            }
+
+            // Create result set
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            // Add columns to result set (MySQL-style format)
+            current_result_set_->addColumn("Table", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Non_unique", core::DataType::INT32);
+            current_result_set_->addColumn("Key_name", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Column_name", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Index_type", core::DataType::VARCHAR);
+
+            // Get all columns for the table to map column IDs to names
+            std::vector<core::CatalogManager::ColumnInfo> columns;
+            catalog->getColumns(table_info.table_id, columns, &err_ctx);
+
+            // Create a map from column ID to column name
+            std::unordered_map<std::string, std::string> col_id_to_name;
+            for (const auto& col : columns)
+            {
+                // Convert column_id (UUID) to string for lookup
+                char id_str[37];
+                snprintf(id_str, sizeof(id_str),
+                         "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                         col.column_id.bytes[0], col.column_id.bytes[1], col.column_id.bytes[2], col.column_id.bytes[3],
+                         col.column_id.bytes[4], col.column_id.bytes[5],
+                         col.column_id.bytes[6], col.column_id.bytes[7],
+                         col.column_id.bytes[8], col.column_id.bytes[9],
+                         col.column_id.bytes[10], col.column_id.bytes[11], col.column_id.bytes[12], col.column_id.bytes[13],
+                         col.column_id.bytes[14], col.column_id.bytes[15]);
+                col_id_to_name[id_str] = col.column_name;
+            }
+
+            // Add rows for each index
+            for (const auto& idx : indexes)
+            {
+                // Convert index type to string
+                std::string index_type_str;
+                switch (idx.index_type)
+                {
+                    case core::CatalogManager::IndexType::BTREE:
+                        index_type_str = "BTREE";
+                        break;
+                    case core::CatalogManager::IndexType::HASH:
+                        index_type_str = "HASH";
+                        break;
+                    case core::CatalogManager::IndexType::HNSW:
+                        index_type_str = "HNSW";
+                        break;
+                    case core::CatalogManager::IndexType::GIN:
+                        index_type_str = "GIN";
+                        break;
+                    case core::CatalogManager::IndexType::GIST:
+                        index_type_str = "GIST";
+                        break;
+                    case core::CatalogManager::IndexType::BRIN:
+                        index_type_str = "BRIN";
+                        break;
+                    case core::CatalogManager::IndexType::RTREE:
+                        index_type_str = "RTREE";
+                        break;
+                    case core::CatalogManager::IndexType::SPGIST:
+                        index_type_str = "SPGIST";
+                        break;
+                    case core::CatalogManager::IndexType::BITMAP:
+                        index_type_str = "BITMAP";
+                        break;
+                    case core::CatalogManager::IndexType::COLUMNSTORE:
+                        index_type_str = "COLUMNSTORE";
+                        break;
+                    case core::CatalogManager::IndexType::LSM:
+                        index_type_str = "LSM";
+                        break;
+                    default:
+                        index_type_str = "UNKNOWN";
+                }
+
+                // For each column in the index, add a row
+                for (const auto& col_id : idx.column_ids)
+                {
+                    std::vector<Value> row;
+
+                    // Table name
+                    row.push_back(Value::makeVarchar(table_name));
+
+                    // Non_unique (0 for unique, 1 for non-unique)
+                    row.push_back(Value::makeInt32(idx.is_unique ? 0 : 1));
+
+                    // Key_name
+                    row.push_back(Value::makeVarchar(idx.index_name));
+
+                    // Column_name - look up from map
+                    char id_str[37];
+                    snprintf(id_str, sizeof(id_str),
+                             "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                             col_id.bytes[0], col_id.bytes[1], col_id.bytes[2], col_id.bytes[3],
+                             col_id.bytes[4], col_id.bytes[5],
+                             col_id.bytes[6], col_id.bytes[7],
+                             col_id.bytes[8], col_id.bytes[9],
+                             col_id.bytes[10], col_id.bytes[11], col_id.bytes[12], col_id.bytes[13],
+                             col_id.bytes[14], col_id.bytes[15]);
+
+                    auto it = col_id_to_name.find(id_str);
+                    std::string col_name = (it != col_id_to_name.end()) ? it->second : "UNKNOWN";
+                    row.push_back(Value::makeVarchar(col_name));
+
+                    // Index_type
+                    row.push_back(Value::makeVarchar(index_type_str));
+
+                    current_result_set_->addRow(row);
+                }
+
+                // If index has no columns (shouldn't happen), still show a row
+                if (idx.column_ids.empty())
+                {
+                    std::vector<Value> row;
+                    row.push_back(Value::makeVarchar(table_name));
+                    row.push_back(Value::makeInt32(idx.is_unique ? 0 : 1));
+                    row.push_back(Value::makeVarchar(idx.index_name));
+                    row.push_back(Value::makeVarchar(""));
+                    row.push_back(Value::makeVarchar(index_type_str));
+                    current_result_set_->addRow(row);
+                }
+            }
+        }
+
+        void Executor::executeShowCreateTable()
+        {
+            // Read bytecode parameters
+            std::string table_name = readString();
+
+            // Get catalog manager
+            auto* catalog = db_->catalog_manager();
+
+            // Look up table in PUBLIC schema
+            core::CatalogManager::SchemaInfo schema_info;
+            auto schema_status = catalog->getSchema("PUBLIC", schema_info, nullptr);
+            if (schema_status != core::Status::OK)
+            {
+                error("Failed to get schema PUBLIC");
+            }
+
+            core::CatalogManager::TableInfo table_info;
+            core::ErrorContext err_ctx;
+            auto table_status = catalog->getTable(schema_info.schema_id, table_name, table_info, &err_ctx);
+            if (table_status != core::Status::OK)
+            {
+                error("Table '" + table_name + "' not found");
+            }
+
+            // Get columns
+            std::vector<core::CatalogManager::ColumnInfo> columns;
+            auto col_status = catalog->getColumns(table_info.table_id, columns, &err_ctx);
+            if (col_status != core::Status::OK)
+            {
+                error("Failed to get columns: " + err_ctx.message);
+            }
+
+            // Build CREATE TABLE statement
+            std::string create_stmt = "CREATE TABLE `" + table_name + "` (\n";
+
+            // Add column definitions
+            for (size_t i = 0; i < columns.size(); ++i)
+            {
+                const auto& col = columns[i];
+
+                create_stmt += "  `" + col.column_name + "` ";
+
+                // Add type
+                std::string type_str = dataTypeToString(static_cast<core::DataType>(col.data_type));
+                if (col.type_precision > 0)
+                {
+                    type_str += "(" + std::to_string(col.type_precision);
+                    if (col.type_scale > 0)
+                    {
+                        type_str += "," + std::to_string(col.type_scale);
+                    }
+                    type_str += ")";
+                }
+                create_stmt += type_str;
+
+                // Add NOT NULL
+                if (!col.nullable)
+                {
+                    create_stmt += " NOT NULL";
+                }
+
+                // Add DEFAULT
+                if (col.has_default && !col.default_value.empty())
+                {
+                    create_stmt += " DEFAULT '" + col.default_value + "'";
+                }
+
+                // Add PRIMARY KEY
+                if (col.is_primary_key)
+                {
+                    create_stmt += " PRIMARY KEY";
+                }
+
+                // Add comma if not last column
+                if (i < columns.size() - 1)
+                {
+                    create_stmt += ",";
+                }
+
+                create_stmt += "\n";
+            }
+
+            create_stmt += ")";
+
+            // Create result set
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            // Add columns to result set
+            current_result_set_->addColumn("Table", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Create Table", core::DataType::VARCHAR);
+
+            // Add row
+            std::vector<Value> row;
+            row.push_back(Value::makeVarchar(table_name));
+            row.push_back(Value::makeVarchar(create_stmt));
+            current_result_set_->addRow(row);
+        }
+
+        void Executor::executeDescribeTable()
+        {
+            // DESCRIBE is an alias for SHOW COLUMNS
+            // Read bytecode parameters
+            std::string table_name = readString();
+
+            // Get catalog manager
+            auto* catalog = db_->catalog_manager();
+
+            // Look up table in PUBLIC schema
+            core::CatalogManager::SchemaInfo schema_info;
+            auto schema_status = catalog->getSchema("PUBLIC", schema_info, nullptr);
+            if (schema_status != core::Status::OK)
+            {
+                error("Failed to get schema PUBLIC");
+            }
+
+            core::CatalogManager::TableInfo table_info;
+            core::ErrorContext err_ctx;
+            auto table_status = catalog->getTable(schema_info.schema_id, table_name, table_info, &err_ctx);
+            if (table_status != core::Status::OK)
+            {
+                error("Table '" + table_name + "' not found");
+            }
+
+            // Get columns
+            std::vector<core::CatalogManager::ColumnInfo> columns;
+            auto col_status = catalog->getColumns(table_info.table_id, columns, &err_ctx);
+            if (col_status != core::Status::OK)
+            {
+                error("Failed to get columns: " + err_ctx.message);
+            }
+
+            // Create result set
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            // Add columns to result set (same as SHOW COLUMNS)
+            current_result_set_->addColumn("Field", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Type", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Null", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Key", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Default", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Extra", core::DataType::VARCHAR);
+
+            // Add rows
+            for (const auto& col : columns)
+            {
+                std::vector<Value> row;
+
+                // Field name
+                row.push_back(Value::makeVarchar(col.column_name));
+
+                // Type
+                std::string type_str = dataTypeToString(static_cast<core::DataType>(col.data_type));
+                if (col.type_precision > 0)
+                {
+                    type_str += "(" + std::to_string(col.type_precision);
+                    if (col.type_scale > 0)
+                    {
+                        type_str += "," + std::to_string(col.type_scale);
+                    }
+                    type_str += ")";
+                }
+                row.push_back(Value::makeVarchar(type_str));
+
+                // Null
+                row.push_back(Value::makeVarchar(col.nullable ? "YES" : "NO"));
+
+                // Key
+                std::string key_str;
+                if (col.is_primary_key)
+                {
+                    key_str = "PRI";
+                }
+                else if (col.is_unique)
+                {
+                    key_str = "UNI";
+                }
+                else if (col.is_foreign_key)
+                {
+                    key_str = "MUL";
+                }
+                row.push_back(Value::makeVarchar(key_str));
+
+                // Default
+                row.push_back(Value::makeVarchar(col.has_default ? col.default_value : ""));
+
+                // Extra
+                std::string extra_str;
+                if (col.is_generated)
+                {
+                    extra_str = "GENERATED";
+                }
+                row.push_back(Value::makeVarchar(extra_str));
+
+                current_result_set_->addRow(row);
             }
         }
 

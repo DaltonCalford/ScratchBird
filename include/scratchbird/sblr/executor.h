@@ -630,6 +630,14 @@ namespace scratchbird
             void executeDropPolicy();        // Execute DROP POLICY (Security Phase 3.4.4)
             void executeAlterTableRLS();     // Execute ALTER TABLE ... ROW LEVEL SECURITY (Security Phase 3.4.4)
 
+            // SQL Engine Commands (ALPHA Phase 1 - Developer Experience)
+            void executeShowTables();        // Execute SHOW TABLES
+            void executeShowDatabases();     // Execute SHOW DATABASES/SCHEMAS
+            void executeShowColumns();       // Execute SHOW COLUMNS FROM table
+            void executeShowIndexes();       // Execute SHOW INDEXES FROM table
+            void executeShowCreateTable();   // Execute SHOW CREATE TABLE
+            void executeDescribeTable();     // Execute DESCRIBE table
+
             // Security context helpers (Phase 2 - Security System)
             // These wrap ConnectionContext methods for convenience
             const core::ID& getCurrentUserID() const;
