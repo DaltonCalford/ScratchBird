@@ -11232,6 +11232,8 @@ auto CatalogManager::createForeignKey(const std::string& fk_name,
                                      FKAction on_update,
                                      FKMatchType match_type,
                                      ID& fk_id_out,
+                                     bool is_deferrable,
+                                     bool initially_deferred,
                                      ErrorContext* ctx) -> Status
 {
     std::lock_guard<std::mutex> lock(foreign_keys_cache_mutex_);
@@ -11270,6 +11272,8 @@ auto CatalogManager::createForeignKey(const std::string& fk_name,
     fk_info.on_update = on_update;
     fk_info.match_type = match_type;
     fk_info.is_enabled = true;
+    fk_info.is_deferrable = is_deferrable;  // ALPHA Phase 1 - Deferred constraints
+    fk_info.initially_deferred = initially_deferred;  // ALPHA Phase 1 - Deferred constraints
     fk_info.created_time = std::chrono::system_clock::now().time_since_epoch().count();
 
     // Store in cache
