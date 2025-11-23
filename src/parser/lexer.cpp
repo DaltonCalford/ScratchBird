@@ -31,6 +31,9 @@ namespace scratchbird
             {"WHERE", TokenType::KW_WHERE},
             {"UPDATE", TokenType::KW_UPDATE},    // Phase 1 Task 2.1
             {"DELETE", TokenType::KW_DELETE},    // Phase 1 Task 2.2
+            {"MERGE", TokenType::KW_MERGE},      // Alpha 1 - Advanced SQL
+            {"MATCHED", TokenType::KW_MATCHED},  // Alpha 1 - Advanced SQL
+            {"RETURNING", TokenType::KW_RETURNING}, // Alpha 1 - Advanced SQL
             {"NULL", TokenType::KW_NULL},
             {"NOT", TokenType::KW_NOT},
             {"ANALYZE", TokenType::KW_ANALYZE},  // Phase 1 Task 1.1.2
