@@ -205,9 +205,10 @@ add_executable(tsan_buffer_pool_race tsan/test_buffer_pool_race.cpp)
 target_compile_options(tsan_buffer_pool_race PRIVATE -fsanitize=thread -g -O1)
 target_link_options(tsan_buffer_pool_race PRIVATE -fsanitize=thread)
 target_link_libraries(tsan_buffer_pool_race
-    scratchbird_core
-    scratchbird_parser
     scratchbird_sblr
+    scratchbird_parser
+    scratchbird_optimizer
+    scratchbird_core
     GTest::gtest
     GTest::gtest_main
 )
@@ -222,9 +223,10 @@ add_executable(tsan_transaction_cache_race tsan/test_transaction_cache_race.cpp)
 target_compile_options(tsan_transaction_cache_race PRIVATE -fsanitize=thread -g -O1)
 target_link_options(tsan_transaction_cache_race PRIVATE -fsanitize=thread)
 target_link_libraries(tsan_transaction_cache_race
-    scratchbird_core
-    scratchbird_parser
     scratchbird_sblr
+    scratchbird_parser
+    scratchbird_optimizer
+    scratchbird_core
     GTest::gtest
     GTest::gtest_main
 )
@@ -239,9 +241,10 @@ add_executable(tsan_lock_ordering tsan/test_lock_ordering.cpp)
 target_compile_options(tsan_lock_ordering PRIVATE -fsanitize=thread -g -O1)
 target_link_options(tsan_lock_ordering PRIVATE -fsanitize=thread)
 target_link_libraries(tsan_lock_ordering
-    scratchbird_core
-    scratchbird_parser
     scratchbird_sblr
+    scratchbird_parser
+    scratchbird_optimizer
+    scratchbird_core
     GTest::gtest
     GTest::gtest_main
 )
@@ -257,9 +260,10 @@ set_tests_properties(TSAN_LockOrdering PROPERTIES
 
 add_executable(helgrind_races helgrind/test_helgrind_races.cpp)
 target_link_libraries(helgrind_races
-    scratchbird_core
-    scratchbird_parser
     scratchbird_sblr
+    scratchbird_parser
+    scratchbird_optimizer
+    scratchbird_core
     GTest::gtest
     GTest::gtest_main
 )
@@ -271,9 +275,10 @@ target_link_libraries(helgrind_races
 
 add_executable(multithreaded_stress stress/test_multithreaded_stress.cpp)
 target_link_libraries(multithreaded_stress
-    scratchbird_core
-    scratchbird_parser
     scratchbird_sblr
+    scratchbird_parser
+    scratchbird_optimizer
+    scratchbird_core
     GTest::gtest
     GTest::gtest_main
 )
@@ -292,9 +297,10 @@ add_executable(wave1_tests
     unit/test_multi_geometry.cpp
 )
 target_link_libraries(wave1_tests
-    scratchbird_core
-    scratchbird_parser
     scratchbird_sblr
+    scratchbird_parser
+    scratchbird_optimizer
+    scratchbird_core
     GTest::gtest
     GTest::gtest_main
 )
