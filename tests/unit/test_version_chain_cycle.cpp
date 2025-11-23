@@ -6,8 +6,9 @@
 #include <iostream>
 #include <cstdint>
 
-int main()
-{
+
+TEST(VersionChainCycleTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 1.19: Version Chain Cycle Detection ===" << std::endl;
     std::cout << std::endl;
 
@@ -163,6 +164,5 @@ int main()
     std::cout << "This is REAL BUG #8 out of 20 issues examined" << std::endl;
     std::cout << "Real bugs: 1.2, 1.3, 1.7, 1.8, 1.13, 1.14, 1.15, 1.19" << std::endl;
     std::cout << "False positives: 1.1, 1.4, 1.5, 1.6, 1.9, 1.10, 1.11, 1.12, 1.16, 1.18, 1.20" << std::endl;
-
-    return 0;
 }
+

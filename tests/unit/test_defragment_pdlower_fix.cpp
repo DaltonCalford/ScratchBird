@@ -8,7 +8,7 @@
  */
 
 #include <iostream>
-#include <cassert>
+#include "gtest/gtest.h"
 #include <cstdint>
 #include <cstring>
 
@@ -47,8 +47,9 @@ constexpr uint32_t SIZEOF_ITEMPOINTER = sizeof(ItemPointer);
 constexpr uint32_t SIZEOF_PAGEHEADER = sizeof(PageHeader);
 constexpr uint32_t SIZEOF_SPECIAL = sizeof(HeapPageSpecial);
 
-int main()
-{
+
+TEST(DefragmentPdlowerFixTest, Comprehensive) {
+
     std::cout << "=== Testing defragmentPage pd_lower Update Fix (Issue 2.10) ===\n\n";
 
     // Test 1: Verify the issue existed in the old code
@@ -284,6 +285,5 @@ int main()
     std::cout << "  - Issue 2.8: GIN Index Transaction Isolation ✅ (Fixed)\n";
     std::cout << "  - Issue 2.9: XID Validation Logic Flaw ✅ (Fixed)\n";
     std::cout << "  - Issue 2.10: defragmentPage pd_lower Update ✅ (FIXED - THIS ISSUE)\n\n";
-
-    return 0;
 }
+

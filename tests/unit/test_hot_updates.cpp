@@ -23,8 +23,9 @@
 
 using namespace scratchbird::core;
 
-int main()
-{
+
+TEST(HotUpdatesTest, Comprehensive) {
+
     std::cout << "\n=== Test: HOT Update Implementation (Issue 2.16) ===\n" << std::endl;
 
     // Create test database
@@ -341,6 +342,5 @@ int main()
     std::cout << "  5. Version chains work correctly with HOT updates" << std::endl;
     std::cout << "\nSpec: docs/specifications/MGA_IMPLEMENTATION.md (HOT optimization)" << std::endl;
     std::cout << "Issue: COMPREHENSIVE_AUDIT_REPORT.md Issue 2.16" << std::endl;
-
-    return 0;
 }
+

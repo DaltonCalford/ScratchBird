@@ -10,7 +10,7 @@
  */
 
 #include <iostream>
-#include <cassert>
+#include "gtest/gtest.h"
 #include <cstdint>
 #include <cstring>
 
@@ -56,8 +56,9 @@ constexpr uint32_t PAGE_SIZE = 8192;
 constexpr uint16_t DELETED_FLAG = 0x0001;
 constexpr uint16_t HAS_GARBAGE_FLAG = 0x0040;
 
-int main()
-{
+
+TEST(BtreeDeleteParentUpdateTest, Comprehensive) {
+
     std::cout << "=== Testing B-Tree Delete Parent Update Fix (Issue 2.11) ===\n\n";
 
     // Test 1: Verify the issue existed in the old code
@@ -367,6 +368,5 @@ int main()
     std::cout << "  - Issue 2.9: XID Validation Logic Flaw ✅ (Fixed)\n";
     std::cout << "  - Issue 2.10: defragmentPage pd_lower Update ✅ (Fixed)\n";
     std::cout << "  - Issue 2.11: B-Tree Delete Parent Update ✅ (FIXED - THIS ISSUE)\n\n";
-
-    return 0;
 }
+

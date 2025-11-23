@@ -6,8 +6,9 @@
 #include <iostream>
 #include <cstdint>
 
-int main()
-{
+
+TEST(FsmDurabilityTest, Comprehensive) {
+
     std::cout << "=== Testing Issue 2.5: FSM Bitmap Durability ===" << std::endl;
     std::cout << std::endl;
 
@@ -227,6 +228,5 @@ int main()
     std::cout << "Fixed: 2.5 (FSM reconstruction implemented)" << std::endl;
     std::cout << std::endl;
     std::cout << "PHASE 2 Progress: 2 real bugs fixed, 3 false positives" << std::endl;
-
-    return 0;
 }
+
