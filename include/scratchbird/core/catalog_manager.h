@@ -1042,6 +1042,7 @@ namespace scratchbird::core
         auto createView(const ID& schema_id, const std::string& name,
                         const std::string& definition, bool or_replace, bool check_option,
                         bool materialized, const std::vector<std::string>& column_names,
+                        const ID& materialized_table_id = ID{},
                         ErrorContext* ctx = nullptr) -> Status;
 
         auto dropView(const ID& view_id, bool cascade,

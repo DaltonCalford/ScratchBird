@@ -3374,10 +3374,52 @@ namespace scratchbird
                 error("Schema not found: PUBLIC");
             }
 
+            // ALPHA Phase 1 - Materialized Views: Create physical storage table
+            core::ID materialized_table_id{};
+            if (materialized)
+            {
+                // Create hidden materialized data table
+                std::string mat_table_name = "__mv_" + view_name + "_data";
+
+                // TODO: ALPHA Phase 1 - Full implementation would:
+                // 1. Parse the view definition SQL to extract result columns
+                // 2. Execute the query to get actual data
+                // 3. Create table with derived column types
+                // 4. Populate table with query results
+                //
+                // For now, create a placeholder table with ID column
+                // This establishes the infrastructure for physical materialization
+                std::vector<core::CatalogManager::ColumnInfo> mat_columns;
+                core::CatalogManager::ColumnInfo id_col;
+                id_col.column_name = "__rowid";
+                id_col.ordinal = 0;
+                id_col.data_type = static_cast<uint16_t>(core::DataType::INT64);
+                id_col.nullable = false;
+                mat_columns.push_back(id_col);
+
+                status = db_->catalog_manager()->createTable(
+                    schema_info.schema_id, mat_table_name, mat_columns,
+                    materialized_table_id, 0, &ctx);
+
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to create materialized table for view '" + view_name + "'";
+                    if (!ctx.message.empty())
+                    {
+                        err_msg += ": " + ctx.message;
+                    }
+                    error(err_msg);
+                }
+
+                LOG_INFO(EXECUTOR, "Created materialized table '%s' for view '%s'",
+                         mat_table_name.c_str(), view_name.c_str());
+            }
+
             // Create view
             status = db_->catalog_manager()->createView(
                 schema_info.schema_id, view_name, definition,
-                or_replace, check_option, materialized, column_names, &ctx);
+                or_replace, check_option, materialized, column_names,
+                materialized_table_id, &ctx);
 
             if (status != core::Status::OK)
             {
@@ -3417,6 +3459,19 @@ namespace scratchbird
                 error("View not found: " + view_name);
             }
 
+            // ALPHA Phase 1 - Materialized Views: Check if we need to drop the materialized table
+            core::CatalogManager::ViewInfo view_info;
+            core::CatalogManager::SchemaInfo schema_info;
+            db_->catalog_manager()->getSchema("PUBLIC", schema_info, &ctx);
+            status = db_->catalog_manager()->getView(schema_info.schema_id, view_name, view_info, &ctx);
+
+            if (status == core::Status::OK && view_info.materialized && view_info.materialized_table_id != core::ID{})
+            {
+                // Drop the materialized data table first
+                db_->catalog_manager()->dropTable(view_info.materialized_table_id, cascade, &ctx);
+                LOG_INFO(EXECUTOR, "Dropped materialized table for view '%s'", view_name.c_str());
+            }
+
             // Drop view
             status = db_->catalog_manager()->dropView(view_id, cascade, &ctx);
             if (status != core::Status::OK)
@@ -3441,8 +3496,7 @@ namespace scratchbird
             // 1. RLS policies MUST be enforced during view query execution
             // 2. Only users with BYPASSRLS privilege can refresh views over RLS tables
             // 3. Materialized data should respect the refreshing user's permissions
-            // Current implementation delegates to catalog_manager->refreshMaterializedView()
-            // which should enforce RLS through the query planner. Verify this is working correctly.
+            // Current implementation updates metadata only. Full data refresh requires SQL re-execution.
 
             // Read view name
             std::string view_name = readString();
@@ -3461,7 +3515,41 @@ namespace scratchbird
                 error("Materialized view not found: " + view_name);
             }
 
-            // Refresh the materialized view
+            // Get view info to verify it's materialized and get table ID
+            core::CatalogManager::ViewInfo view_info;
+            core::CatalogManager::SchemaInfo schema_info;
+            db_->catalog_manager()->getSchema("PUBLIC", schema_info, &ctx);
+            status = db_->catalog_manager()->getView(schema_info.schema_id, view_name, view_info, &ctx);
+
+            if (status != core::Status::OK)
+            {
+                error("Failed to retrieve view info for: " + view_name);
+            }
+
+            if (!view_info.materialized)
+            {
+                error("View '" + view_name + "' is not materialized");
+            }
+
+            // TODO: ALPHA Phase 1 - Full refresh implementation would:
+            // 1. Parse the view definition SQL
+            // 2. Execute the SELECT query to get fresh data
+            // 3. If concurrently=true: create temp table, populate, swap atomically
+            // 4. If concurrently=false: truncate existing table, repopulate
+            //
+            // For now, just verify the materialized table exists and update timestamp
+            if (view_info.materialized_table_id != core::ID{})
+            {
+                core::CatalogManager::TableInfo table_info;
+                status = db_->catalog_manager()->getTable(view_info.materialized_table_id, table_info, &ctx);
+                if (status == core::Status::OK)
+                {
+                    LOG_INFO(EXECUTOR, "Refreshing materialized view '%s' (table: '%s')",
+                             view_name.c_str(), table_info.table_name.c_str());
+                }
+            }
+
+            // Update refresh timestamp in catalog
             status = db_->catalog_manager()->refreshMaterializedView(view_id, concurrently, &ctx);
 
             if (status != core::Status::OK)
