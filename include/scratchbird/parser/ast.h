@@ -3839,6 +3839,7 @@ namespace scratchbird
             virtual void visit(SetOperationStmt *node) = 0;     // UNION/INTERSECT/EXCEPT
             virtual void visit(UpdateStmt *node) = 0;           // Phase 1 Task 2.1
             virtual void visit(DeleteStmt *node) = 0;           // Phase 1 Task 2.2
+            virtual void visit(MergeStmt *node) = 0;            // ALPHA Phase 1 - Advanced SQL
             virtual void visit(AnalyzeStmt *node) = 0;          // Phase 1 Task 1.1.2
             virtual void visit(ExplainStmt *node) = 0;          // Phase 1 Task 1.5
             virtual void visit(StartTransactionStmt *node) = 0; // Phase 2 Task 2.6
@@ -3923,6 +3924,7 @@ namespace scratchbird
             void visit(SelectStmt *node) override;
             void visit(UpdateStmt *node) override;                   // Phase 1 Task 2.1
             void visit(DeleteStmt *node) override;                   // Phase 1 Task 2.2
+            void visit(MergeStmt *node) override;                    // ALPHA Phase 1 - Advanced SQL
             void visit(AnalyzeStmt *node) override;                  // Phase 1 Task 1.1.2
             void visit(ExplainStmt *node) override;                  // Phase 1 Task 1.5
             void visit(StartTransactionStmt *node) override; // Phase 2 Task 2.6
