@@ -103,6 +103,8 @@ namespace scratchbird
             {"FIRST_VALUE", TokenType::KW_FIRST_VALUE},
             {"LAST_VALUE", TokenType::KW_LAST_VALUE},
             {"NTH_VALUE", TokenType::KW_NTH_VALUE},
+            {"CUME_DIST", TokenType::KW_CUME_DIST},
+            {"PERCENT_RANK", TokenType::KW_PERCENT_RANK},
             {"NULLS", TokenType::KW_NULLS},
             {"FIRST", TokenType::KW_FIRST},
             {"LAST", TokenType::KW_LAST},

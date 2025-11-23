@@ -583,7 +583,9 @@ namespace scratchbird
             LEAD,
             FIRST_VALUE,
             LAST_VALUE,
-            NTH_VALUE
+            NTH_VALUE,
+            CUME_DIST,        // Alpha 1 - Missing Functions Phase 4
+            PERCENT_RANK      // Alpha 1 - Missing Functions Phase 4
         };
 
         // Window frame boundary type (Phase 1 Task 6)
