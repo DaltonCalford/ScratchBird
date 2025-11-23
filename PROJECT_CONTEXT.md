@@ -10,9 +10,9 @@
 
 ---
 
-## Current Work: Alpha 1 Completion (~5% Remaining)
+## Current Work: Alpha 1 Completion (~25% Remaining)
 
-**Focus:** Complete missing functions for full database compatibility, then build command-line tools
+**Focus:** Complete missing functions, implement all improvement opportunities, then build command-line tools
 
 ### What's Working ✅
 
@@ -29,7 +29,7 @@
 
 ### What's Missing ❌
 
-**PRIORITY 1: Missing Functions** (~207-312 hours estimated):
+**PRIORITY 1: Missing Functions** (~207-312 hours / 5-8 weeks):
 See [docs/planning/MISSING_FUNCTIONS_IMPLEMENTATION_PLAN.md](docs/planning/MISSING_FUNCTIONS_IMPLEMENTATION_PLAN.md) for complete details.
 
 - **Advanced Grouping (CRITICAL):** ROLLUP, CUBE, GROUPING SETS, GROUPING() - 56-86 hours
@@ -43,8 +43,37 @@ See [docs/planning/MISSING_FUNCTIONS_IMPLEMENTATION_PLAN.md](docs/planning/MISSI
 **Current Status:** 123/153 functions complete (80%)
 **After completion:** Full functional parity with PostgreSQL, MySQL, MSSQL, and Firebird
 
-**PRIORITY 2: Command-Line Tools** (~90-110 hours estimated):
-*To be started after all functions are implemented*
+**PRIORITY 2: Improvement Opportunities** (~430-540 hours / 11-14 weeks):
+See [docs/audit/IMPROVEMENT_OPPORTUNITIES.md](docs/audit/IMPROVEMENT_OPPORTUNITIES.md) for complete details.
+
+- **P0 (Critical - 8 items):** 50-70 hours
+  - Password policy enforcement, account lockout, security audit logging
+  - Arithmetic overflow checking, NaN/Infinity handling
+  - GIN parallel operations MGA bug, catalog sequence/charset operations
+
+- **P1 (High - 15 items):** 80-120 hours
+  - TRY/EXCEPT exception handling, SQLSTATE error codes
+  - Cursor operations, stored procedure invocation
+  - Foreign key completion, MERGE/RETURNING statements
+  - TIP binary search, index-based FK lookups
+  - Statistics table & ANALYZE, bulk loading for indexes
+
+- **P2 (Medium - 25 items):** 100-150 hours
+  - Performance optimizations (page table lock partitioning, dirty page counter, TOAST prefetching)
+  - Feature completeness (GENERATED columns, deferred constraints, statement-level triggers)
+  - Window function frames, statistical aggregates
+  - Testing & quality improvements
+
+- **P3 (Low - 20+ items):** 200+ hours
+  - Password expiration, MFA (requires Alpha 3)
+  - DECIMAL fixed-point, SIMD vector operations
+  - Advanced index features, partition pruning
+  - Telemetry, structured logging, query profiler
+
+**Total Improvement Opportunities:** 61 items across all priority levels
+
+**PRIORITY 3: Command-Line Tools** (~90-110 hours / 2.5-3 weeks):
+*To be started after all functions and improvements are implemented*
 
 - sb_isql (interactive SQL shell)
 - sb_verify (database integrity checker)
@@ -62,11 +91,19 @@ See [docs/planning/MISSING_FUNCTIONS_IMPLEMENTATION_PLAN.md](docs/planning/MISSI
    - Phase 4: Window functions - 24-34 hours
    - Phase 5: Remaining functions - 10-15 hours
 
-2. **Build command-line tools** (90-110 hours / 2.5-3 weeks)
+2. **Implement all improvement opportunities** (430-540 hours / 11-14 weeks)
+   - P0 (Critical): Security, correctness, MGA bugs - 50-70 hours
+   - P1 (High): Core features, performance - 80-120 hours
+   - P2 (Medium): Optimizations, completeness - 100-150 hours
+   - P3 (Low): Enhancements, advanced features - 200+ hours
+
+3. **Build command-line tools** (90-110 hours / 2.5-3 weeks)
    - sb_isql (interactive SQL shell)
    - sb_verify (database integrity checker)
    - sb_backup (backup/restore tool)
    - sb_security (user/role management tool)
+
+**Total Alpha 1 Remaining Work:** 727-962 hours (18-24 weeks)
 
 ---
 
@@ -264,17 +301,24 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 
 ## Summary
 
-**Current Focus:** Complete Alpha 1 (~5% remaining)
+**Current Focus:** Complete Alpha 1 (~25% remaining)
 
 **Immediate Work:**
 1. **Implement 30 missing functions** (207-312 hours / 5-8 weeks) - IN PROGRESS
    - Required for full PostgreSQL, MySQL, MSSQL, Firebird compatibility
    - Target: 153 total built-in functions (currently 123)
-2. **Build CLI tools** (90-110 hours / 2.5-3 weeks) - AFTER functions complete
+
+2. **Implement 61 improvement opportunities** (430-540 hours / 11-14 weeks) - AFTER functions
+   - P0 (Critical): 8 items - security, correctness, MGA bugs
+   - P1 (High): 15 items - core features, performance
+   - P2 (Medium): 25 items - optimizations, completeness
+   - P3 (Low): 20+ items - enhancements, advanced features
+
+3. **Build CLI tools** (90-110 hours / 2.5-3 weeks) - AFTER improvements
    - sb_isql, sb_verify, sb_backup, sb_security
 
 **Next Major Milestones:**
-1. Alpha 1 completion (~8-11 weeks total: functions + CLI tools)
+1. Alpha 1 completion (~18-24 weeks total: 727-962 hours remaining)
 2. Alpha 2: Multi-dialect parsers (PostgreSQL, MySQL, MSSQL, Firebird, ScratchBird)
 3. Alpha 3: Network protocols (libpq, MySQL, TDS, native)
 4. Beta 1-4: Distributed systems + NoSQL models
@@ -286,5 +330,5 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 ---
 
 **Last Updated:** November 23, 2025
-**Status:** Alpha 1 - ~95% complete (~11% of total project)
-**Priority:** Function implementation (80% complete: 123/153 functions)
+**Status:** Alpha 1 - ~75% complete (~11% of total project)
+**Current Priority:** Function implementation (123/153 complete) → Improvement opportunities (61 items) → CLI tools
