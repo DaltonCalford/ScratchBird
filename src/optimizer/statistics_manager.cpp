@@ -226,10 +226,150 @@ namespace scratchbird::optimizer
     {
         DEBUG_LOG_DB("Analyzing column");
 
-        // TODO: Phase 1, Task 1.1 - Implement column-level analysis
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                          "analyzeColumn not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        // Get catalog manager
+        if (!catalog_)
+        {
+            catalog_ = db_->catalog_manager();
+        }
+
+        // Get column information
+        std::vector<core::CatalogManager::ColumnInfo> columns;
+        Status status = catalog_->getColumns(table_id, columns, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to get table columns");
+            return status;
+        }
+
+        // Find the specific column
+        core::CatalogManager::ColumnInfo *target_column = nullptr;
+        for (auto &col : columns)
+        {
+            if (col.column_id == column_id)
+            {
+                target_column = &col;
+                break;
+            }
+        }
+
+        if (!target_column)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Column not found");
+            return Status::NOT_FOUND;
+        }
+
+        // Determine sample size
+        uint64_t sample_size = 30000; // Default
+
+        // Sample the table using Vitter's Algorithm S
+        std::vector<std::vector<uint8_t>> sample_rows;
+        status = sampleTable(table_id, sample_size, sample_rows, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to sample table");
+            return status;
+        }
+
+        if (sample_rows.empty())
+        {
+            DEBUG_LOG_DB("No rows sampled, table may be empty");
+            return Status::OK;
+        }
+
+        DEBUG_LOG_DB("Sampled " + std::to_string(sample_rows.size()) + " rows for column " +
+                     target_column->column_name);
+
+        // Extract column values
+        std::vector<std::vector<uint8_t>> column_values =
+            extractColumnValues(table_id, column_id, sample_rows, columns, ctx);
+
+        if (column_values.empty())
+        {
+            DEBUG_LOG_DB("Failed to extract column values for " + target_column->column_name);
+            SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR, "Failed to extract column values");
+            return Status::INTERNAL_ERROR;
+        }
+
+        // Compute column statistics
+        ColumnStatistics col_stats;
+        col_stats.table_id = table_id;
+        col_stats.column_id = column_id;
+        col_stats.column_name = target_column->column_name;
+        col_stats.data_type = static_cast<core::DataType>(target_column->data_type);
+
+        // Basic statistics
+        uint64_t null_count = 0;
+        uint64_t total_width = 0;
+        for (const auto &val : column_values)
+        {
+            if (val.empty())
+            {
+                null_count++;
+            }
+            else
+            {
+                total_width += val.size();
+            }
+        }
+
+        col_stats.num_rows = column_values.size();
+        col_stats.num_nulls = null_count;
+        col_stats.null_fraction = static_cast<float>(null_count) / static_cast<float>(column_values.size());
+
+        uint64_t non_null_count = column_values.size() - null_count;
+        if (non_null_count > 0)
+        {
+            col_stats.avg_width = static_cast<float>(total_width) / static_cast<float>(non_null_count);
+        }
+        else
+        {
+            col_stats.avg_width = 0.0f;
+        }
+
+        // n_distinct estimation
+        col_stats.num_distinct = estimateNDistinct(column_values, col_stats.num_rows, column_values.size());
+
+        // Set metadata
+        col_stats.last_analyzed_time = std::time(nullptr);
+        col_stats.sample_size = sample_rows.size();
+        col_stats.sample_rate = sample_rate;
+
+        // Generate histogram (equal-height, 100 buckets)
+        status = generateHistogram(column_values, 100, HistogramType::EQUAL_HEIGHT,
+                                   col_stats.histogram_buckets, ctx);
+        if (status != Status::OK)
+        {
+            DEBUG_LOG_DB("Failed to generate histogram for column " +
+                         target_column->column_name);
+            // Continue without histogram
+        }
+        else
+        {
+            col_stats.histogram_type = HistogramType::EQUAL_HEIGHT;
+            col_stats.histogram_bucket_count = col_stats.histogram_buckets.size();
+        }
+
+        // Identify MCVs (top 100)
+        status = identifyMCVs(column_values, 100, col_stats.mcv_list, ctx);
+        if (status != Status::OK)
+        {
+            DEBUG_LOG_DB("Failed to identify MCVs for column " +
+                         target_column->column_name);
+            // Continue without MCVs
+        }
+
+        // Store statistics
+        status = storeColumnStatistics(col_stats, ctx);
+        if (status != Status::OK)
+        {
+            DEBUG_LOG_DB("Failed to store statistics for column " +
+                         target_column->column_name);
+            return status;
+        }
+
+        DEBUG_LOG_DB("Successfully analyzed column " + target_column->column_name);
+
+        return Status::OK;
     }
 
     auto StatisticsManager::getColumnStatistics(const ID &table_id, const ID &column_id,
@@ -264,7 +404,7 @@ namespace scratchbird::optimizer
         std::lock_guard<std::mutex> lock(cache_mutex_);
 
         // Check cache first
-        uint64_t cache_key = 0; // TODO: Compute proper cache key from table_id
+        uint64_t cache_key = 0;
         std::memcpy(&cache_key, table_id.bytes.data(), sizeof(uint64_t));
 
         auto it = table_stats_cache_.find(cache_key);
@@ -274,24 +414,168 @@ namespace scratchbird::optimizer
             return Status::OK;
         }
 
-        // TODO: Load from catalog
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                          "getTableStatistics not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        // Get catalog manager
+        if (!catalog_)
+        {
+            catalog_ = db_->catalog_manager();
+        }
+
+        // Load table information from catalog
+        core::CatalogManager::TableInfo table_info;
+        Status status = catalog_->getTable(table_id, table_info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to get table information");
+            return status;
+        }
+
+        // Build table statistics structure
+        stats.table_id = table_id;
+        stats.table_name = table_info.table_name;
+        stats.num_rows = table_info.row_count;
+
+        // Get page count from storage
+        // For now, estimate based on row count and average row size
+        // In a full implementation, this would query the actual page count from storage
+        stats.num_pages = 0; // Will be set if we have column statistics
+        stats.avg_row_size = 0.0f;
+        stats.last_analyzed_time = 0;
+
+        // Try to compute aggregate statistics from column statistics if available
+        std::vector<core::CatalogManager::ColumnInfo> columns;
+        status = catalog_->getColumns(table_id, columns, ctx);
+        if (status == Status::OK && !columns.empty())
+        {
+            // Aggregate column statistics to get table-level stats
+            uint64_t total_width = 0;
+            uint64_t analyzed_columns = 0;
+            uint64_t latest_analysis_time = 0;
+
+            for (const auto &col : columns)
+            {
+                ColumnStatistics col_stats;
+                uint64_t col_cache_key = getCacheKey(table_id, col.column_id);
+
+                auto col_it = column_stats_cache_.find(col_cache_key);
+                if (col_it != column_stats_cache_.end())
+                {
+                    const auto &cs = col_it->second;
+                    total_width += static_cast<uint64_t>(cs.avg_width);
+                    analyzed_columns++;
+
+                    if (cs.last_analyzed_time > latest_analysis_time)
+                    {
+                        latest_analysis_time = cs.last_analyzed_time;
+                        stats.num_rows = cs.num_rows; // Use most recent row count
+                    }
+                }
+                else
+                {
+                    // Try loading from catalog
+                    status = loadColumnStatistics(table_id, col.column_id, col_stats, ctx);
+                    if (status == Status::OK)
+                    {
+                        total_width += static_cast<uint64_t>(col_stats.avg_width);
+                        analyzed_columns++;
+
+                        if (col_stats.last_analyzed_time > latest_analysis_time)
+                        {
+                            latest_analysis_time = col_stats.last_analyzed_time;
+                            stats.num_rows = col_stats.num_rows;
+                        }
+
+                        // Cache it for future use
+                        column_stats_cache_[col_cache_key] = col_stats;
+                    }
+                }
+            }
+
+            if (analyzed_columns > 0)
+            {
+                stats.avg_row_size = static_cast<float>(total_width);
+                stats.last_analyzed_time = latest_analysis_time;
+
+                // Estimate page count based on row count and average row size
+                // Assuming 8KB pages with ~80% utilization
+                if (stats.num_rows > 0 && stats.avg_row_size > 0)
+                {
+                    const uint64_t PAGE_SIZE = 8192;
+                    const float PAGE_UTILIZATION = 0.8f;
+                    uint64_t rows_per_page = static_cast<uint64_t>(
+                        (PAGE_SIZE * PAGE_UTILIZATION) / stats.avg_row_size);
+
+                    if (rows_per_page > 0)
+                    {
+                        stats.num_pages = (stats.num_rows + rows_per_page - 1) / rows_per_page;
+                    }
+                }
+            }
+        }
+
+        // Cache the table statistics
+        table_stats_cache_[cache_key] = stats;
+
+        DEBUG_LOG_DB("Loaded table statistics for " + stats.table_name +
+                     ": " + std::to_string(stats.num_rows) + " rows, " +
+                     std::to_string(stats.num_pages) + " pages");
+
+        return Status::OK;
     }
 
     auto StatisticsManager::dropStatistics(const ID &table_id, ErrorContext *ctx) -> Status
     {
         DEBUG_LOG_DB("Dropping statistics for table");
 
-        // TODO: Phase 1, Task 1.1 - Remove statistics records from pg_statistic
-        // TODO: Invalidate cache for this table
+        // Get catalog manager
+        if (!catalog_)
+        {
+            catalog_ = db_->catalog_manager();
+        }
 
+        // Get all columns for this table
+        std::vector<core::CatalogManager::ColumnInfo> columns;
+        Status status = catalog_->getColumns(table_id, columns, ctx);
+        if (status != Status::OK)
+        {
+            // Table might not exist or have no columns - not an error for drop
+            DEBUG_LOG_DB("Failed to get columns for table, may already be dropped");
+        }
+
+        // Remove column statistics from cache
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+
+            // Remove all column statistics for this table
+            for (const auto &col : columns)
+            {
+                uint64_t cache_key = getCacheKey(table_id, col.column_id);
+                column_stats_cache_.erase(cache_key);
+            }
+
+            // Remove table statistics
+            uint64_t table_cache_key = 0;
+            std::memcpy(&table_cache_key, table_id.bytes.data(), sizeof(uint64_t));
+            table_stats_cache_.erase(table_cache_key);
+
+            DEBUG_LOG_DB("Removed " + std::to_string(columns.size()) +
+                         " column statistics from cache");
+        }
+
+        // Invalidate entire cache for this table (belt and suspenders approach)
         invalidateCache(table_id);
 
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                          "dropStatistics not yet implemented");
-        return Status::NOT_IMPLEMENTED;
+        // TODO: Phase 2 Enhancement - Delete from pg_statistic catalog
+        // When statistics are persisted to catalog (see storeColumnStatistics TODO),
+        // this function should also:
+        // 1. Scan pg_statistic catalog for records matching table_id
+        // 2. Delete matching records
+        // 3. Free any TOAST objects referenced by the statistics (MCVs, histograms)
+        //
+        // For now, statistics are volatile (in-memory only), so cache removal is sufficient.
+
+        DEBUG_LOG_DB("Successfully dropped statistics for table");
+
+        return Status::OK;
     }
 
     auto StatisticsManager::invalidateCache(const ID &table_id) -> void
