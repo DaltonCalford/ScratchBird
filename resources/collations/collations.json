@@ -1,0 +1,274 @@
+{
+  "collations": [
+    {
+      "name": "utf8_general_ci",
+      "charset": "UTF-8",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "UTF-8 Unicode general case-insensitive",
+      "supported_by": ["MySQL", "MariaDB"]
+    },
+    {
+      "name": "utf8_bin",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "UTF-8 Unicode binary (case-sensitive)",
+      "supported_by": ["MySQL", "MariaDB"]
+    },
+    {
+      "name": "utf8_unicode_ci",
+      "charset": "UTF-8",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "UTF-8 Unicode case-insensitive (UCA-based)",
+      "supported_by": ["MySQL", "MariaDB"]
+    },
+    {
+      "name": "utf8mb4_general_ci",
+      "charset": "UTF-8",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "UTF-8 MB4 general case-insensitive",
+      "supported_by": ["MySQL", "MariaDB"]
+    },
+    {
+      "name": "utf8mb4_bin",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "UTF-8 MB4 binary (case-sensitive)",
+      "supported_by": ["MySQL", "MariaDB"]
+    },
+    {
+      "name": "utf8mb4_unicode_ci",
+      "charset": "UTF-8",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "UTF-8 MB4 Unicode case-insensitive (UCA-based)",
+      "supported_by": ["MySQL", "MariaDB"]
+    },
+    {
+      "name": "utf8mb4_0900_ai_ci",
+      "charset": "UTF-8",
+      "case_insensitive": true,
+      "accent_insensitive": true,
+      "language": "",
+      "description": "UTF-8 MB4 UCA 9.0 accent/case insensitive",
+      "supported_by": ["MySQL 8.0+"]
+    },
+    {
+      "name": "en_US.UTF-8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "en_US",
+      "description": "PostgreSQL US English UTF-8",
+      "supported_by": ["PostgreSQL"]
+    },
+    {
+      "name": "C",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "C",
+      "description": "PostgreSQL C locale (byte order)",
+      "supported_by": ["PostgreSQL"]
+    },
+    {
+      "name": "POSIX",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "POSIX",
+      "description": "PostgreSQL POSIX locale",
+      "supported_by": ["PostgreSQL"]
+    },
+    {
+      "name": "latin1_general_ci",
+      "charset": "ISO-8859-1",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Latin-1 general case-insensitive",
+      "supported_by": ["MySQL", "MariaDB"]
+    },
+    {
+      "name": "latin1_bin",
+      "charset": "ISO-8859-1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Latin-1 binary (case-sensitive)",
+      "supported_by": ["MySQL", "MariaDB"]
+    },
+    {
+      "name": "latin1_swedish_ci",
+      "charset": "ISO-8859-1",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "sv",
+      "description": "Latin-1 Swedish case-insensitive (MySQL default)",
+      "supported_by": ["MySQL", "MariaDB"]
+    },
+    {
+      "name": "ascii_general_ci",
+      "charset": "ASCII",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "ASCII general case-insensitive",
+      "supported_by": ["MySQL", "MariaDB"]
+    },
+    {
+      "name": "ascii_bin",
+      "charset": "ASCII",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "ASCII binary (case-sensitive)",
+      "supported_by": ["MySQL", "MariaDB"]
+    },
+    {
+      "name": "SQL_Latin1_General_CP1_CI_AS",
+      "charset": "Windows-1252",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "SQL Server Latin1 case-insensitive, accent-sensitive",
+      "supported_by": ["SQL Server"]
+    },
+    {
+      "name": "Latin1_General_CI_AS",
+      "charset": "Windows-1252",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "SQL Server Latin1 case-insensitive, accent-sensitive (default)",
+      "supported_by": ["SQL Server"]
+    },
+    {
+      "name": "Latin1_General_CS_AS",
+      "charset": "Windows-1252",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "SQL Server Latin1 case-sensitive, accent-sensitive",
+      "supported_by": ["SQL Server"]
+    },
+    {
+      "name": "Latin1_General_BIN",
+      "charset": "Windows-1252",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "SQL Server Latin1 binary",
+      "supported_by": ["SQL Server"]
+    },
+    {
+      "name": "Chinese_PRC_CI_AS",
+      "charset": "GBK",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "zh_CN",
+      "description": "SQL Server Simplified Chinese case-insensitive",
+      "supported_by": ["SQL Server"]
+    },
+    {
+      "name": "Japanese_CI_AS",
+      "charset": "Shift_JIS",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "ja",
+      "description": "SQL Server Japanese case-insensitive",
+      "supported_by": ["SQL Server"]
+    },
+    {
+      "name": "Korean_Wansung_CI_AS",
+      "charset": "EUC-KR",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "ko",
+      "description": "SQL Server Korean case-insensitive",
+      "supported_by": ["SQL Server"]
+    },
+    {
+      "name": "UTF8_UNICODE",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird UTF-8 Unicode",
+      "supported_by": ["Firebird"]
+    },
+    {
+      "name": "UTF8_UNICODE_CI",
+      "charset": "UTF-8",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird UTF-8 Unicode case-insensitive",
+      "supported_by": ["Firebird"]
+    },
+    {
+      "name": "WIN1252_UNICODE",
+      "charset": "Windows-1252",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird Windows-1252 Unicode",
+      "supported_by": ["Firebird"]
+    },
+    {
+      "name": "WIN1252_UNICODE_CI",
+      "charset": "Windows-1252",
+      "case_insensitive": true,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Firebird Windows-1252 Unicode case-insensitive",
+      "supported_by": ["Firebird"]
+    },
+    {
+      "name": "AL32UTF8",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Oracle 32-bit UTF-8 Unicode",
+      "supported_by": ["Oracle"]
+    },
+    {
+      "name": "WE8MSWIN1252",
+      "charset": "Windows-1252",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Oracle Western European Windows-1252",
+      "supported_by": ["Oracle"]
+    },
+    {
+      "name": "WE8ISO8859P1",
+      "charset": "ISO-8859-1",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Oracle Western European ISO-8859-1",
+      "supported_by": ["Oracle"]
+    },
+    {
+      "name": "BINARY",
+      "charset": "UTF-8",
+      "case_insensitive": false,
+      "accent_insensitive": false,
+      "language": "",
+      "description": "Binary comparison (byte-by-byte)",
+      "supported_by": ["MySQL", "PostgreSQL", "SQL Server", "Oracle", "Firebird"]
+    }
+  ]
+}
