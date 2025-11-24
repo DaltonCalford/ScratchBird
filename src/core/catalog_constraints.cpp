@@ -6,6 +6,7 @@
  */
 
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/debug.h"
 #include <ctime>
 
 namespace scratchbird::core
@@ -38,9 +39,9 @@ auto CatalogManager::createConstraint(const ConstraintInfo& constraint,
     auto name_it = constraint_name_lookup_.find(name_key);
     if (name_it != constraint_name_lookup_.end())
     {
-        SET_ERROR_CONTEXT(ctx, Status::DUPLICATE_OBJECT,
-                        "Constraint with name '" + constraint.constraint_name +
-                        "' already exists on this table");
+        std::string error_msg = "Constraint with name '" + constraint.constraint_name +
+                                "' already exists on this table";
+        SET_ERROR_CONTEXT(ctx, Status::DUPLICATE_OBJECT, error_msg.c_str());
         return Status::DUPLICATE_OBJECT;
     }
 
@@ -85,8 +86,8 @@ auto CatalogManager::getConstraintByName(const ID& table_id,
     auto it = constraint_name_lookup_.find(name_key);
     if (it == constraint_name_lookup_.end())
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
-                        "Constraint '" + constraint_name + "' not found on table");
+        std::string error_msg = "Constraint '" + constraint_name + "' not found on table";
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, error_msg.c_str());
         return Status::NOT_FOUND;
     }
 

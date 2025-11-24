@@ -151,7 +151,7 @@ set_target_properties(scratchbird_optimizer PROPERTIES
 )
 
 # Add optimizer dependency to core (after optimizer is defined)
-target_link_libraries(scratchbird_core PUBLIC scratchbird_optimizer)
+target_link_libraries(scratchbird_core PUBLIC scratchbird_optimizer nlohmann_json::nlohmann_json)
 
 # Main executable (placeholder)
 add_executable(scratchbird main.cpp)
