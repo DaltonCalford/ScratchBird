@@ -136,6 +136,50 @@ namespace scratchbird::sblr
         return row[pos];
     }
 
+    // ========================================================================
+    // P0-4: Safe Arithmetic Operations (Overflow Detection)
+    // ========================================================================
+
+    namespace {
+        // Safe arithmetic operations using compiler intrinsics
+        inline bool safeAdd(int64_t a, int64_t b, int64_t* result) {
+            return !__builtin_add_overflow(a, b, result);
+        }
+
+        inline bool safeSubtract(int64_t a, int64_t b, int64_t* result) {
+            return !__builtin_sub_overflow(a, b, result);
+        }
+
+        inline bool safeMultiply(int64_t a, int64_t b, int64_t* result) {
+            return !__builtin_mul_overflow(a, b, result);
+        }
+
+        inline bool safeDivide(int64_t a, int64_t b, int64_t* result) {
+            if (b == 0) {
+                return false;
+            }
+            // Check for INT64_MIN / -1 overflow
+            if (a == INT64_MIN && b == -1) {
+                return false;
+            }
+            *result = a / b;
+            return true;
+        }
+
+        inline bool safeModulo(int64_t a, int64_t b, int64_t* result) {
+            if (b == 0) {
+                return false;
+            }
+            // Check for INT64_MIN % -1 (which is also problematic on some platforms)
+            if (a == INT64_MIN && b == -1) {
+                *result = 0;
+                return true;
+            }
+            *result = a % b;
+            return true;
+        }
+    }
+
     TypedValue ExpressionEvaluator::evaluateBinaryOp(const BinaryOpExpr *expr,
                                                       const std::vector<TypedValue> &row)
     {
@@ -155,32 +199,70 @@ namespace scratchbird::sblr
         // Arithmetic
         case BinaryOp::ADD:
             if (left.type() == core::DataType::INT64 && right.type() == core::DataType::INT64)
-                return TypedValue::makeInt64(left.getInt64() + right.getInt64());
+            {
+                int64_t result;
+                if (!safeAdd(left.getInt64(), right.getInt64(), &result)) {
+                    throw std::runtime_error("Integer overflow in addition");
+                }
+                return TypedValue::makeInt64(result);
+            }
             else
                 return TypedValue::makeFloat64(left.toDouble() + right.toDouble());
 
         case BinaryOp::SUBTRACT:
             if (left.type() == core::DataType::INT64 && right.type() == core::DataType::INT64)
-                return TypedValue::makeInt64(left.getInt64() - right.getInt64());
+            {
+                int64_t result;
+                if (!safeSubtract(left.getInt64(), right.getInt64(), &result)) {
+                    throw std::runtime_error("Integer overflow in subtraction");
+                }
+                return TypedValue::makeInt64(result);
+            }
             else
                 return TypedValue::makeFloat64(left.toDouble() - right.toDouble());
 
         case BinaryOp::MULTIPLY:
             if (left.type() == core::DataType::INT64 && right.type() == core::DataType::INT64)
-                return TypedValue::makeInt64(left.getInt64() * right.getInt64());
+            {
+                int64_t result;
+                if (!safeMultiply(left.getInt64(), right.getInt64(), &result)) {
+                    throw std::runtime_error("Integer overflow in multiplication");
+                }
+                return TypedValue::makeInt64(result);
+            }
             else
                 return TypedValue::makeFloat64(left.toDouble() * right.toDouble());
 
         case BinaryOp::DIVIDE:
+            // For integer division
+            if (left.type() == core::DataType::INT64 && right.type() == core::DataType::INT64)
+            {
+                int64_t result;
+                if (!safeDivide(left.getInt64(), right.getInt64(), &result)) {
+                    throw std::runtime_error("Division by zero or integer overflow");
+                }
+                return TypedValue::makeInt64(result);
+            }
+            // For floating point division
             if (right.toDouble() == 0.0)
                 throw std::runtime_error("Division by zero");
             return TypedValue::makeFloat64(left.toDouble() / right.toDouble());
 
         case BinaryOp::MODULO:
             if (left.type() == core::DataType::INT64 && right.type() == core::DataType::INT64)
-                return TypedValue::makeInt64(left.getInt64() % right.getInt64());
+            {
+                int64_t result;
+                if (!safeModulo(left.getInt64(), right.getInt64(), &result)) {
+                    throw std::runtime_error("Modulo by zero");
+                }
+                return TypedValue::makeInt64(result);
+            }
             else
+            {
+                if (right.toDouble() == 0.0)
+                    throw std::runtime_error("Modulo by zero");
                 return TypedValue::makeFloat64(std::fmod(left.toDouble(), right.toDouble()));
+            }
 
         // Comparison
         case BinaryOp::EQ:
@@ -266,7 +348,13 @@ namespace scratchbird::sblr
             if (arg_values.empty())
                 throw std::runtime_error("ABS requires 1 argument");
             if (arg_values[0].type() == core::DataType::INT64)
-                return TypedValue::makeInt64(std::abs(arg_values[0].getInt64()));
+            {
+                int64_t val = arg_values[0].getInt64();
+                // Check for INT64_MIN overflow (abs(INT64_MIN) would overflow)
+                if (val == INT64_MIN)
+                    throw std::runtime_error("Integer overflow in ABS (INT64_MIN has no positive representation)");
+                return TypedValue::makeInt64(std::abs(val));
+            }
             else
                 return TypedValue::makeFloat64(std::abs(arg_values[0].toDouble()));
         }

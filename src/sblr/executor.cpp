@@ -14736,11 +14736,26 @@ namespace scratchbird
                         else
                         {
                             double x = arg.toDouble();
+                            // P0-5: Check for NaN/Infinity
+                            if (std::isnan(x))
+                            {
+                                error("SQRT argument cannot be NaN");
+                            }
+                            if (std::isinf(x))
+                            {
+                                error("SQRT argument cannot be Infinity");
+                            }
                             if (x < 0.0)
                             {
                                 error("SQRT argument must be non-negative");
                             }
-                            push(Value::makeFloat64(std::sqrt(x)));
+                            double result = std::sqrt(x);
+                            // Defensive check: result should not be NaN or Inf for valid inputs
+                            if (std::isnan(result) || std::isinf(result))
+                            {
+                                error("SQRT produced invalid result");
+                            }
+                            push(Value::makeFloat64(result));
                         }
                     }
                     else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_CBRT))
