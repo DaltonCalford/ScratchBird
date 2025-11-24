@@ -10120,6 +10120,156 @@ auto CatalogManager::closeSession(const ID& session_id, ErrorContext* ctx) -> St
     return Status::OK;
 }
 
+// P1-12: Session timeout management
+
+auto CatalogManager::updateSessionActivity(const ID& session_id, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(session_cache_mutex_);
+
+    auto it = session_cache_.find(session_id);
+    if (it == session_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Session not found");
+        return Status::NOT_FOUND;
+    }
+
+    // Update last activity time to current time
+    it->second.last_activity_time = static_cast<uint64_t>(std::time(nullptr));
+
+    return Status::OK;
+}
+
+auto CatalogManager::checkSessionTimeout(const ID& session_id, const SessionTimeoutConfig& config,
+                                         bool& is_expired_out, std::string& reason_out,
+                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(session_cache_mutex_);
+
+    auto it = session_cache_.find(session_id);
+    if (it == session_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Session not found");
+        return Status::NOT_FOUND;
+    }
+
+    SessionInfo& session = it->second;
+    uint64_t current_time = static_cast<uint64_t>(std::time(nullptr));
+
+    is_expired_out = false;
+    reason_out.clear();
+
+    // Check idle timeout
+    if (config.enable_idle_timeout)
+    {
+        uint64_t idle_seconds = current_time - session.last_activity_time;
+        if (idle_seconds > config.idle_timeout_seconds)
+        {
+            is_expired_out = true;
+            reason_out = "Session expired due to inactivity (" + std::to_string(idle_seconds) + " seconds idle)";
+            session.is_expired = true;
+            session.expiration_reason = reason_out;
+            return Status::OK;
+        }
+    }
+
+    // Check max session lifetime
+    if (config.enable_max_lifetime)
+    {
+        uint64_t lifetime_seconds = current_time - session.login_time;
+        if (lifetime_seconds > config.max_session_lifetime_seconds)
+        {
+            is_expired_out = true;
+            reason_out = "Session expired due to maximum lifetime exceeded (" + std::to_string(lifetime_seconds) + " seconds)";
+            session.is_expired = true;
+            session.expiration_reason = reason_out;
+            return Status::OK;
+        }
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::cleanupExpiredSessions(const SessionTimeoutConfig& config,
+                                           uint32_t& cleaned_count_out,
+                                           ErrorContext* ctx) -> Status
+{
+    if (!config.enable_automatic_cleanup)
+    {
+        cleaned_count_out = 0;
+        return Status::OK;
+    }
+
+    std::lock_guard<std::mutex> lock(session_cache_mutex_);
+
+    uint64_t current_time = static_cast<uint64_t>(std::time(nullptr));
+    std::vector<ID> expired_sessions;
+
+    // Identify expired sessions
+    for (auto& [session_id, session] : session_cache_)
+    {
+        bool is_expired = false;
+
+        // Check idle timeout
+        if (config.enable_idle_timeout)
+        {
+            uint64_t idle_seconds = current_time - session.last_activity_time;
+            if (idle_seconds > config.idle_timeout_seconds)
+            {
+                is_expired = true;
+            }
+        }
+
+        // Check max session lifetime
+        if (!is_expired && config.enable_max_lifetime)
+        {
+            uint64_t lifetime_seconds = current_time - session.login_time;
+            if (lifetime_seconds > config.max_session_lifetime_seconds)
+            {
+                is_expired = true;
+            }
+        }
+
+        if (is_expired)
+        {
+            expired_sessions.push_back(session_id);
+        }
+    }
+
+    // Remove expired sessions
+    for (const auto& session_id : expired_sessions)
+    {
+        session_cache_.erase(session_id);
+        DEBUG_LOG_DB("Cleaned up expired session " << session_id.toString());
+    }
+
+    cleaned_count_out = static_cast<uint32_t>(expired_sessions.size());
+
+    if (cleaned_count_out > 0)
+    {
+        DEBUG_LOG_DB("Cleaned up " << cleaned_count_out << " expired sessions");
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::setSessionTimeoutConfig(const SessionTimeoutConfig& config,
+                                            ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(session_timeout_config_mutex_);
+    session_timeout_config_ = config;
+    DEBUG_LOG_DB("Updated session timeout config: idle=" << config.idle_timeout_seconds
+                 << "s, max_lifetime=" << config.max_session_lifetime_seconds << "s");
+    return Status::OK;
+}
+
+auto CatalogManager::getSessionTimeoutConfig(SessionTimeoutConfig& config_out,
+                                            ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(session_timeout_config_mutex_);
+    config_out = session_timeout_config_;
+    return Status::OK;
+}
+
 // Compute transitive closure of roles
 
 auto CatalogManager::getEffectiveRoles(const ID& user_id, std::vector<ID>& roles_out,
