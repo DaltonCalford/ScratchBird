@@ -738,6 +738,16 @@ namespace scratchbird::core
             uint64_t created_time = 0;
         };
 
+        // Session timeout configuration (P1-12: Session Timeout)
+        struct SessionTimeoutConfig
+        {
+            uint64_t idle_timeout_seconds = 3600;      // 1 hour default idle timeout
+            uint64_t max_session_lifetime_seconds = 86400; // 24 hours default max lifetime
+            bool enable_idle_timeout = true;           // Enable idle timeout checking
+            bool enable_max_lifetime = true;           // Enable max lifetime checking
+            bool enable_automatic_cleanup = true;      // Enable automatic cleanup of expired sessions
+        };
+
         // Session information (Phase 1.4 - Security System)
         struct SessionInfo
         {
@@ -750,6 +760,10 @@ namespace scratchbird::core
             uint64_t login_time = 0;
             uint64_t last_activity_time = 0;
             ID current_schema_id;            // Current schema context
+
+            // P1-12: Session timeout tracking
+            bool is_expired = false;         // Whether session has been marked expired
+            std::string expiration_reason;   // Reason for expiration (idle/lifetime)
         };
 
         // Procedure types (Phase 3 - Stored Code Tables)
@@ -1224,6 +1238,23 @@ namespace scratchbird::core
                        ErrorContext* ctx = nullptr) -> Status;
 
         auto closeSession(const ID& session_id, ErrorContext* ctx = nullptr) -> Status;
+
+        // P1-12: Session timeout management
+        auto updateSessionActivity(const ID& session_id, ErrorContext* ctx = nullptr) -> Status;
+
+        auto checkSessionTimeout(const ID& session_id, const SessionTimeoutConfig& config,
+                                 bool& is_expired_out, std::string& reason_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto cleanupExpiredSessions(const SessionTimeoutConfig& config,
+                                   uint32_t& cleaned_count_out,
+                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto setSessionTimeoutConfig(const SessionTimeoutConfig& config,
+                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto getSessionTimeoutConfig(SessionTimeoutConfig& config_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
 
         // Compute transitive closure of roles (including roles granted to roles)
         auto getEffectiveRoles(const ID& user_id, std::vector<ID>& roles_out,
@@ -1957,6 +1988,10 @@ namespace scratchbird::core
         // Session cache (Phase 1.4 - Security System)
         std::unordered_map<ID, SessionInfo> session_cache_;  // session_id -> SessionInfo
         std::mutex session_cache_mutex_;
+
+        // P1-12: Session timeout configuration
+        SessionTimeoutConfig session_timeout_config_;
+        std::mutex session_timeout_config_mutex_;
 
         // Policy cache (Phase 3.4.6 - RLS Expression Storage)
         std::unordered_map<ID, PolicyInfo> policy_cache_;  // policy_id -> PolicyInfo
