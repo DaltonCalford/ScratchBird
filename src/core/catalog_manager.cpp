@@ -3697,18 +3697,15 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        collations.clear();
-
-        // Scan all collation records and filter by charset_id
-        auto converter = [charset_id](const CollationRecord &rec, CollationCatalogInfo &info) -> bool
+        // Filter for collations with matching charset_id
+        auto filter = [charset_id](const CollationRecord &rec)
         {
-            // Only include collations for the specified charset
-            if (rec.charset_id != charset_id || !rec.is_valid)
-            {
-                return false;  // Skip this record
-            }
+            return rec.charset_id == charset_id;
+        };
 
-            // Convert to CollationCatalogInfo
+        // Converter to CollationCatalogInfo
+        auto converter = [](const CollationRecord &rec, CollationCatalogInfo &info)
+        {
             info.collation_id = rec.collation_id;
             info.name = rec.name;
             info.charset_id = rec.charset_id;
@@ -3716,71 +3713,36 @@ namespace scratchbird::core
             info.strength = rec.strength;
             info.pad_space = rec.pad_space;
             info.is_default = rec.is_default;
-            std::memcpy(info.locale, rec.locale, sizeof(info.locale));
+            strncpy(info.locale, rec.locale, sizeof(info.locale) - 1);
+            info.locale[sizeof(info.locale) - 1] = '\0';
             info.created_time = rec.created_time;
             info.last_modified_time = rec.last_modified_time;
-
-            return true;  // Include this record
         };
 
-        // Use readRecordsToVector with a filter function
-        auto filter = [](const CollationRecord &rec) { return rec.is_valid; };
-
-        BufferPool *bp = db_->buffer_pool();
-        void *page_buffer;
-        Status status = bp->pinPage(collation_defs_table_page_, &page_buffer, ctx);
-        if (status != Status::OK)
-        {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to read collations page");
-            return status;
-        }
-
-        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
-        uint32_t offset = sizeof(CatalogHeapPage);
-
-        for (uint32_t i = 0; i < heap->record_count; i++)
-        {
-            auto *record =
-                reinterpret_cast<CollationRecord *>(reinterpret_cast<uint8_t *>(page_buffer) + offset);
-
-            if (filter(*record))
-            {
-                CollationCatalogInfo info;
-                if (converter(*record, info))
-                {
-                    collations.push_back(info);
-                }
-            }
-
-            offset += sizeof(CollationRecord);
-        }
-
-        bp->unpinPage(collation_defs_table_page_, false, ctx);
-
-        DEBUG_LOG_DB("Found " << collations.size() << " collations for charset ID: " << charset_id);
-        return Status::OK;
+        return scanHeapPageWithFilter<CollationRecord, CollationCatalogInfo>(
+            collation_defs_table_page_, collations, filter, converter, ctx);
     }
 
     auto CatalogManager::deleteCollation(uint32_t collation_id, ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        // Step 1: Check for tables using this collation (TODO: add when column metadata tracking is complete)
-        // For now, we'll skip this check as it requires full table column metadata tracking
-
-        // Step 2: Delete record from collations table using deleteRecordFromHeapPage
-        auto matcher = [collation_id](const CollationRecord &rec)
+        // Find the collation record
+        auto predicate = [collation_id](const CollationRecord &rec)
         { return rec.collation_id == collation_id && rec.is_valid; };
+        auto result = findRecordInHeapPage<CollationRecord>(collation_defs_table_page_, predicate, ctx);
 
-        Status status = deleteRecordFromHeapPage<CollationRecord>(collation_defs_table_page_,
-                                                                   matcher, ctx);
-        if (status != Status::OK)
+        if (result.status != Status::OK)
         {
-            return status;
+            return result.status;
         }
 
-        DEBUG_LOG_DB("Deleted collation ID: " << collation_id);
-        return Status::OK;
+        // Mark as deleted
+        CollationRecord record = result.record;
+        record.is_valid = 0;
+
+        // Update the record in place (Firebird MGA) using the slot index
+        return updateRecordInHeapPage<CollationRecord>(collation_defs_table_page_, result.slot_index, record, ctx);
     }
 
     // ============================================================================
