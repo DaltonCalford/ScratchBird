@@ -400,6 +400,11 @@ namespace scratchbird::core
         // LOCKING: No locks required (performs fsync via Database API).
         auto flushTransactionState(ErrorContext *ctx) -> Status;
 
+        // Check for XID wraparound based on transaction age
+        // LOCKING: Requires mutex_ held by caller.
+        // Returns Status::OK if safe, Status::PAGE_FULL if critical, Status::PAGE_CORRUPT if blocked
+        auto checkXIDWraparound(ErrorContext *ctx) -> Status;
+
         // Group commit methods
         // LOCKING: No locks required (performs batch TIP writes via writeTipEntry()).
         auto writeTipEntriesBatch(const std::vector<std::pair<uint64_t, TransactionState>> &batch,
@@ -435,6 +440,12 @@ namespace scratchbird::core
         // Remove entry from cache with LRU cleanup
         // LOCKING: Requires mutex_ held by caller.
         void removeFromCacheLRU(uint64_t xid) const;
+
+        // P1-7: Binary search for XID in TIP entries array
+        // Assumes entries are sorted by XID (which they should be due to monotonic allocation)
+        // Returns index if found, or -1 if not found
+        // LOCKING: No locks required (operates on pinned page buffer).
+        static int32_t binarySearchTIPEntries(const TIPEntry *entries, uint32_t count, uint64_t xid);
     };
 
 } // namespace scratchbird::core
