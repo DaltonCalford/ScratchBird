@@ -357,6 +357,15 @@ namespace scratchbird
                                  size_t where_start_pc,
                                  size_t where_end_pc);
 
+            // Advanced grouping (ROLLUP/CUBE/GROUPING SETS) execution helper (Phase 3: Missing Functions)
+            void executeAdvancedGrouping(const core::CatalogManager::TableInfo& table_info,
+                                        const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
+                                        const std::vector<std::pair<std::string, std::string>>& select_items,
+                                        bool is_select_star,
+                                        bool has_where,
+                                        size_t where_start_pc,
+                                        size_t where_end_pc);
+
             // Sorting execution helper (Phase 1 Task 1.6.4)
             void executeSort(std::unique_ptr<ResultSet> input_result_set);
 
