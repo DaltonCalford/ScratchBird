@@ -3178,9 +3178,54 @@ namespace scratchbird::core
     auto CatalogManager::updateTimezone(uint16_t timezone_id, const TimezoneInfo &tz_info,
                                         ErrorContext *ctx) -> Status
     {
-        // TODO: Needs findRecordInHeapPage and updateRecordInHeapPage helper functions
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "updateTimezone not fully implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Step 1: Find existing timezone record
+        auto predicate = [timezone_id](const TimezoneRecord &rec)
+        { return rec.timezone_id == timezone_id && rec.is_valid; };
+
+        auto result = findRecordInHeapPage<TimezoneRecord>(timezones_table_page_, predicate, ctx);
+        if (result.status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Timezone not found for update");
+            return Status::NOT_FOUND;
+        }
+
+        // Step 2: Prepare updated record
+        TimezoneRecord updated = result.record;
+
+        // Update fields from tz_info
+        std::memset(updated.name, 0, sizeof(updated.name));
+        std::memcpy(updated.name, tz_info.name.c_str(),
+                    std::min(tz_info.name.size(), sizeof(updated.name) - 1));
+
+        std::memset(updated.abbreviation, 0, sizeof(updated.abbreviation));
+        std::memcpy(updated.abbreviation, tz_info.abbreviation.c_str(),
+                    std::min(tz_info.abbreviation.size(), sizeof(updated.abbreviation) - 1));
+
+        updated.std_offset_minutes = tz_info.std_offset_minutes;
+        updated.observes_dst = tz_info.observes_dst ? 1 : 0;
+        updated.dst_start_month = tz_info.dst_start_month;
+        updated.dst_start_week = tz_info.dst_start_week;
+        updated.dst_start_day = tz_info.dst_start_day;
+        updated.dst_start_hour = tz_info.dst_start_hour;
+        updated.dst_end_month = tz_info.dst_end_month;
+        updated.dst_end_week = tz_info.dst_end_week;
+        updated.dst_end_day = tz_info.dst_end_day;
+        updated.dst_end_hour = tz_info.dst_end_hour;
+        updated.dst_offset_minutes = tz_info.dst_offset_minutes;
+        updated.last_modified_time = std::time(nullptr);
+
+        // Step 3: Update record in heap page using slot index (in-place update - Firebird MGA)
+        Status status = updateRecordInHeapPage(timezones_table_page_, result.slot_index,
+                                               updated, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        DEBUG_LOG_DB("Updated timezone: " << tz_info.name << " (ID: " << timezone_id << ")");
+        return Status::OK;
     }
 
     auto CatalogManager::getTimezone(uint16_t timezone_id, TimezoneInfo &info, ErrorContext *ctx)
@@ -3334,9 +3379,47 @@ namespace scratchbird::core
     auto CatalogManager::updateCharset(uint16_t charset_id, const CharsetInfo &cs_info,
                                        ErrorContext *ctx) -> Status
     {
-        // TODO: Needs findRecordInHeapPage and updateRecordInHeapPage helper functions
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "updateCharset not fully implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Step 1: Find existing charset record
+        auto predicate = [charset_id](const CharsetRecord &rec)
+        { return rec.charset_id == charset_id && rec.is_valid; };
+
+        auto result = findRecordInHeapPage<CharsetRecord>(charsets_table_page_, predicate, ctx);
+        if (result.status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Charset not found for update");
+            return Status::NOT_FOUND;
+        }
+
+        // Step 2: Prepare updated record
+        CharsetRecord updated = result.record;
+
+        // Update fields from cs_info
+        std::memset(updated.name, 0, sizeof(updated.name));
+        std::memcpy(updated.name, cs_info.name.c_str(),
+                    std::min(cs_info.name.size(), sizeof(updated.name) - 1));
+
+        std::memset(updated.description, 0, sizeof(updated.description));
+        std::memcpy(updated.description, cs_info.description.c_str(),
+                    std::min(cs_info.description.size(), sizeof(updated.description) - 1));
+
+        updated.min_bytes = cs_info.min_bytes;
+        updated.max_bytes = cs_info.max_bytes;
+        updated.variable_width = cs_info.variable_width;
+        updated.default_collation_id = cs_info.default_collation_id;
+        updated.last_modified_time = std::time(nullptr);
+
+        // Step 3: Update record in heap page using slot index (in-place update - Firebird MGA)
+        Status status = updateRecordInHeapPage(charsets_table_page_, result.slot_index,
+                                               updated, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        DEBUG_LOG_DB("Updated charset: " << cs_info.name << " (ID: " << charset_id << ")");
+        return Status::OK;
     }
 
     auto CatalogManager::getCharset(uint16_t charset_id, CharsetInfo &info, ErrorContext *ctx)
@@ -3424,9 +3507,64 @@ namespace scratchbird::core
 
     auto CatalogManager::deleteCharset(uint16_t charset_id, ErrorContext *ctx) -> Status
     {
-        // TODO: Needs findRecordInHeapPage and updateRecordInHeapPage helper functions
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "deleteCharset not fully implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Step 1: Check for dependent collations
+        std::vector<CollationCatalogInfo> dependent_collations;
+
+        // Temporarily release lock to call listCollationsForCharset (which also locks)
+        // Actually, we already hold the lock, so we need to scan manually
+        BufferPool *bp = db_->buffer_pool();
+        void *page_buffer;
+        Status status = bp->pinPage(collation_defs_table_page_, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to check for dependent collations");
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        bool has_dependent_collations = false;
+
+        for (uint32_t i = 0; i < heap->record_count; i++)
+        {
+            auto *record =
+                reinterpret_cast<CollationRecord *>(reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+            if (record->is_valid && record->charset_id == charset_id)
+            {
+                has_dependent_collations = true;
+                break;
+            }
+
+            offset += sizeof(CollationRecord);
+        }
+
+        bp->unpinPage(collation_defs_table_page_, false, ctx);
+
+        if (has_dependent_collations)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                              "Cannot delete charset with existing collations");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+
+        // Step 2: Check if charset is used by any tables (TODO: add when column metadata tracking is complete)
+        // For now, we'll skip this check as it requires full column metadata tracking
+
+        // Step 3: Delete record from charsets table using deleteRecordFromHeapPage
+        auto matcher = [charset_id](const CharsetRecord &rec)
+        { return rec.charset_id == charset_id && rec.is_valid; };
+
+        status = deleteRecordFromHeapPage<CharsetRecord>(charsets_table_page_, matcher, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        DEBUG_LOG_DB("Deleted charset ID: " << charset_id);
+        return Status::OK;
     }
 
     // ========== Collation Operations ==========
@@ -3557,17 +3695,92 @@ namespace scratchbird::core
                                                   std::vector<CollationCatalogInfo> &collations,
                                                   ErrorContext *ctx) -> Status
     {
-        // TODO: Needs scanHeapPageWithFilter helper function
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                          "listCollationsForCharset not fully implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        collations.clear();
+
+        // Scan all collation records and filter by charset_id
+        auto converter = [charset_id](const CollationRecord &rec, CollationCatalogInfo &info) -> bool
+        {
+            // Only include collations for the specified charset
+            if (rec.charset_id != charset_id || !rec.is_valid)
+            {
+                return false;  // Skip this record
+            }
+
+            // Convert to CollationCatalogInfo
+            info.collation_id = rec.collation_id;
+            info.name = rec.name;
+            info.charset_id = rec.charset_id;
+            info.collation_type = rec.collation_type;
+            info.strength = rec.strength;
+            info.pad_space = rec.pad_space;
+            info.is_default = rec.is_default;
+            std::memcpy(info.locale, rec.locale, sizeof(info.locale));
+            info.created_time = rec.created_time;
+            info.last_modified_time = rec.last_modified_time;
+
+            return true;  // Include this record
+        };
+
+        // Use readRecordsToVector with a filter function
+        auto filter = [](const CollationRecord &rec) { return rec.is_valid; };
+
+        BufferPool *bp = db_->buffer_pool();
+        void *page_buffer;
+        Status status = bp->pinPage(collation_defs_table_page_, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to read collations page");
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+
+        for (uint32_t i = 0; i < heap->record_count; i++)
+        {
+            auto *record =
+                reinterpret_cast<CollationRecord *>(reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+            if (filter(*record))
+            {
+                CollationCatalogInfo info;
+                if (converter(*record, info))
+                {
+                    collations.push_back(info);
+                }
+            }
+
+            offset += sizeof(CollationRecord);
+        }
+
+        bp->unpinPage(collation_defs_table_page_, false, ctx);
+
+        DEBUG_LOG_DB("Found " << collations.size() << " collations for charset ID: " << charset_id);
+        return Status::OK;
     }
 
     auto CatalogManager::deleteCollation(uint32_t collation_id, ErrorContext *ctx) -> Status
     {
-        // TODO: Needs findRecordInHeapPage and updateRecordInHeapPage helper functions
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "deleteCollation not fully implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Step 1: Check for tables using this collation (TODO: add when column metadata tracking is complete)
+        // For now, we'll skip this check as it requires full table column metadata tracking
+
+        // Step 2: Delete record from collations table using deleteRecordFromHeapPage
+        auto matcher = [collation_id](const CollationRecord &rec)
+        { return rec.collation_id == collation_id && rec.is_valid; };
+
+        Status status = deleteRecordFromHeapPage<CollationRecord>(collation_defs_table_page_,
+                                                                   matcher, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        DEBUG_LOG_DB("Deleted collation ID: " << collation_id);
+        return Status::OK;
     }
 
     // ============================================================================
