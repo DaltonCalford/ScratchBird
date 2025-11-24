@@ -492,15 +492,98 @@ namespace scratchbird::core
             return Status::TYPE_MISMATCH;
         }
 
-        // TODO: This requires TypedValue to support COMPOSITE values directly
-        // For now, this is a placeholder that demonstrates the API
-        // Full implementation requires:
-        // 1. TypedValue extension to hold CompositeValue
-        // 2. Binary decoding of COMPOSITE from TypedValue storage
-        // 3. Field extraction from decoded CompositeValue
+        /* ========================================================================
+         * Phase 2 Enhancement: RECORD Field Extraction
+         * ========================================================================
+         *
+         * STATUS: Deferred to Phase 2 (TypedValue COMPOSITE support required)
+         *
+         * DESCRIPTION:
+         *   Extracts a named field value from a RECORD/COMPOSITE type value.
+         *   This operation is fundamental for working with structured data types.
+         *
+         * PREREQUISITES:
+         *   1. TypedValue extension to hold CompositeValue
+         *      - Add DataType::COMPOSITE to TypedValue type system
+         *      - Internal storage for field name->value mappings
+         *      - Binary serialization format for COMPOSITE types
+         *
+         *   2. Binary decoding of COMPOSITE from TypedValue storage
+         *      - Deserialize binary format into in-memory structure
+         *      - Support for nested COMPOSITE types
+         *      - Handle NULL field values
+         *
+         *   3. Field extraction from decoded CompositeValue
+         *      - Field name lookup (case-sensitive)
+         *      - Type-safe value extraction
+         *      - Error handling for missing fields
+         *
+         * USAGE EXAMPLE:
+         *   // Create RECORD domain: employee(name TEXT, age INT, salary DECIMAL)
+         *   ID domain_id;
+         *   std::vector<RecordField> fields = {
+         *       RecordField("name", DataType::TEXT, false),
+         *       RecordField("age", DataType::INT32, false),
+         *       RecordField("salary", DataType::DECIMAL, true)
+         *   };
+         *   ASSERT_OK(domain_mgr->createRecordDomain(schema_id, "employee",
+         *                                            fields, domain_id, &ctx));
+         *
+         *   // Create RECORD value: ('Alice Smith', 30, 75000.00)
+         *   TypedValue employee_record = TypedValue::createComposite({
+         *       {"name", TypedValue::createText("Alice Smith")},
+         *       {"age", TypedValue::createInt32(30)},
+         *       {"salary", TypedValue::createDecimal(75000, 2)}
+         *   });
+         *
+         *   // Extract field value
+         *   TypedValue name_field;
+         *   ASSERT_OK(domain_mgr->extractField(employee_record, "name",
+         *                                      name_field, &ctx));
+         *   EXPECT_EQ(name_field.toString(), "Alice Smith");
+         *   EXPECT_EQ(name_field.type(), DataType::TEXT);
+         *
+         *   // Extract numeric field
+         *   TypedValue age_field;
+         *   ASSERT_OK(domain_mgr->extractField(employee_record, "age",
+         *                                      age_field, &ctx));
+         *   EXPECT_EQ(age_field.asInt32(), 30);
+         *
+         *   // Handle missing field
+         *   TypedValue invalid_field;
+         *   EXPECT_EQ(domain_mgr->extractField(employee_record, "nonexistent",
+         *                                      invalid_field, &ctx),
+         *             Status::NOT_FOUND);
+         *
+         * SQL EQUIVALENT:
+         *   SELECT (employee_data).name FROM employees;
+         *   SELECT rec.field_name FROM table;
+         *
+         * RELATED FUNCTIONS:
+         *   - createRecordDomain(): Create RECORD domain definition
+         *   - getRecordField(): Get field metadata from domain
+         *   - TypedValue::createComposite(): Create COMPOSITE value (future)
+         *
+         * IMPLEMENTATION NOTES:
+         *   - Field names are case-sensitive
+         *   - NULL field values must be supported
+         *   - Nested RECORD types should be handled recursively
+         *   - Performance: O(n) field lookup, consider hash map for large records
+         *
+         * ERROR CASES:
+         *   - Status::TYPE_MISMATCH: Value is not COMPOSITE/RECORD type
+         *   - Status::NOT_FOUND: Field name does not exist in domain
+         *   - Status::INVALID_ARGUMENT: field_name is empty
+         *
+         * ESTIMATED EFFORT: 6-8 hours
+         *   - TypedValue COMPOSITE storage: 3-4 hours
+         *   - Binary format design & implementation: 2-3 hours
+         *   - Field extraction logic: 1 hour
+         *   - Testing (10+ test cases): 1 hour
+         * ======================================================================== */
 
         SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-            "RECORD field extraction requires TypedValue COMPOSITE support (future enhancement)");
+            "RECORD field extraction requires TypedValue COMPOSITE support (Phase 2)");
         return Status::NOT_IMPLEMENTED;
     }
 
@@ -827,15 +910,72 @@ namespace scratchbird::core
             return Status::TYPE_MISMATCH;
         }
 
-        // TODO: This requires TypedValue VECTOR support for element access
-        // For now, this is a placeholder that demonstrates the API
-        // Full implementation requires:
-        // 1. TypedValue extension to access VectorValue elements
-        // 2. Element iteration through vector
-        // 3. Element comparison for membership testing
+        /* ========================================================================
+         * Phase 2 Enhancement: SET Contains Operation
+         * ========================================================================
+         *
+         * STATUS: Deferred to Phase 2 (TypedValue VECTOR support required)
+         *
+         * DESCRIPTION:
+         *   Checks if a SET/VECTOR value contains a specific element.
+         *   Implements PostgreSQL's @> (contains) operator for arrays/sets.
+         *
+         * PREREQUISITES:
+         *   1. TypedValue extension to access VectorValue elements
+         *      - Add iterator interface for VECTOR types
+         *      - Support element access by index
+         *      - Handle heterogeneous element types
+         *
+         *   2. Element iteration through vector
+         *      - Efficient iteration over all elements
+         *      - Support for large sets (1000+ elements)
+         *
+         *   3. Element comparison for membership testing
+         *      - Type-safe equality comparison
+         *      - Support for all comparable types
+         *      - NULL handling in sets
+         *
+         * USAGE EXAMPLE:
+         *   // Create SET domain for tags
+         *   ID domain_id;
+         *   ASSERT_OK(domain_mgr->createSetDomain(schema_id, "tag_set",
+         *                                          DataType::TEXT, domain_id, &ctx));
+         *
+         *   // Create SET value: {'database', 'nosql', 'distributed'}
+         *   TypedValue tag_set = TypedValue::createVector({
+         *       TypedValue::createText("database"),
+         *       TypedValue::createText("nosql"),
+         *       TypedValue::createText("distributed")
+         *   });
+         *
+         *   // Check if set contains 'nosql'
+         *   TypedValue search_elem = TypedValue::createText("nosql");
+         *   bool contains = false;
+         *   ASSERT_OK(domain_mgr->setContains(tag_set, search_elem, contains, &ctx));
+         *   EXPECT_TRUE(contains);
+         *
+         *   // Check for non-existent element
+         *   TypedValue missing = TypedValue::createText("mysql");
+         *   ASSERT_OK(domain_mgr->setContains(tag_set, missing, contains, &ctx));
+         *   EXPECT_FALSE(contains);
+         *
+         * SQL EQUIVALENT:
+         *   SELECT tags @> ARRAY['nosql'] FROM documents;
+         *   SELECT 'nosql' = ANY(tags) FROM documents;
+         *
+         * PERFORMANCE:
+         *   - Time complexity: O(n) where n = set size
+         *   - Consider hash-based membership for large sets (n > 100)
+         *
+         * ERROR CASES:
+         *   - Status::TYPE_MISMATCH: set_value is not VECTOR type
+         *   - Status::TYPE_MISMATCH: element type incompatible with set element type
+         *
+         * ESTIMATED EFFORT: 3-4 hours
+         * ======================================================================== */
 
         SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-            "SET contains operation requires TypedValue VECTOR element access (future enhancement)");
+            "SET contains operation requires TypedValue VECTOR element access (Phase 2)");
         return Status::NOT_IMPLEMENTED;
     }
 
@@ -851,14 +991,46 @@ namespace scratchbird::core
             return Status::TYPE_MISMATCH;
         }
 
-        // TODO: This requires TypedValue VECTOR support for element access
-        // Full implementation requires:
-        // 1. TypedValue extension to access VectorValue elements
-        // 2. Iterate through both sets looking for common elements
-        // 3. Return true if any element appears in both sets
+        /* ========================================================================
+         * Phase 2 Enhancement: SET Overlap Operation
+         * ========================================================================
+         *
+         * STATUS: Deferred to Phase 2 (TypedValue VECTOR support required)
+         *
+         * DESCRIPTION:
+         *   Checks if two SETs have any elements in common.
+         *   Implements PostgreSQL's && (overlap) operator for arrays.
+         *
+         * USAGE EXAMPLE:
+         *   TypedValue set1 = TypedValue::createVector({
+         *       TypedValue::createInt32(1),
+         *       TypedValue::createInt32(2),
+         *       TypedValue::createInt32(3)
+         *   });
+         *
+         *   TypedValue set2 = TypedValue::createVector({
+         *       TypedValue::createInt32(3),
+         *       TypedValue::createInt32(4),
+         *       TypedValue::createInt32(5)
+         *   });
+         *
+         *   bool overlaps = false;
+         *   ASSERT_OK(domain_mgr->setsOverlap(set1, set2, overlaps, &ctx));
+         *   EXPECT_TRUE(overlaps);  // Both contain 3
+         *
+         * SQL EQUIVALENT:
+         *   SELECT tags1 && tags2 FROM table;
+         *
+         * PERFORMANCE:
+         *   - Time complexity: O(n*m) naive, O(n+m) with hash set
+         *   - Optimize for small sets (n,m < 10): use nested loops
+         *   - Optimize for large sets: use hash set for smaller set, iterate larger
+         *
+         * ESTIMATED EFFORT: 2-3 hours
+         * ======================================================================== */
 
         SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-            "SET overlap operation requires TypedValue VECTOR element access (future enhancement)");
+            "SET overlap operation requires TypedValue VECTOR element access (Phase 2)");
         return Status::NOT_IMPLEMENTED;
     }
 
@@ -874,14 +1046,49 @@ namespace scratchbird::core
             return Status::TYPE_MISMATCH;
         }
 
-        // TODO: This requires TypedValue VECTOR support for construction and element access
-        // Full implementation requires:
-        // 1. TypedValue extension to access and create VectorValue
-        // 2. Collect all unique elements from both sets
-        // 3. Create new VECTOR with union of elements
+        /* ========================================================================
+         * Phase 2 Enhancement: SET Union Operation
+         * ========================================================================
+         *
+         * STATUS: Deferred to Phase 2 (TypedValue VECTOR construction required)
+         *
+         * DESCRIPTION:
+         *   Creates a new SET containing all unique elements from both input sets.
+         *   Implements set theory union: A ∪ B
+         *
+         * USAGE EXAMPLE:
+         *   TypedValue set1 = TypedValue::createVector({
+         *       TypedValue::createText("a"),
+         *       TypedValue::createText("b")
+         *   });
+         *
+         *   TypedValue set2 = TypedValue::createVector({
+         *       TypedValue::createText("b"),
+         *       TypedValue::createText("c")
+         *   });
+         *
+         *   TypedValue result;
+         *   ASSERT_OK(domain_mgr->setUnion(set1, set2, result, &ctx));
+         *   // result = {'a', 'b', 'c'}  (duplicates removed)
+         *
+         * SQL EQUIVALENT:
+         *   SELECT array_union(tags1, tags2) FROM table;
+         *   SELECT DISTINCT unnest(tags1 || tags2) FROM table;
+         *
+         * IMPLEMENTATION NOTES:
+         *   - Use hash set to track unique elements
+         *   - Preserve element order from set1, then set2
+         *   - Handle NULL elements (include only once if present in either set)
+         *
+         * PERFORMANCE:
+         *   - Time complexity: O(n + m)
+         *   - Space complexity: O(n + m) for result set
+         *
+         * ESTIMATED EFFORT: 3-4 hours
+         * ======================================================================== */
 
         SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-            "SET union operation requires TypedValue VECTOR construction (future enhancement)");
+            "SET union operation requires TypedValue VECTOR construction (Phase 2)");
         return Status::NOT_IMPLEMENTED;
     }
 
@@ -897,14 +1104,50 @@ namespace scratchbird::core
             return Status::TYPE_MISMATCH;
         }
 
-        // TODO: This requires TypedValue VECTOR support for construction and element access
-        // Full implementation requires:
-        // 1. TypedValue extension to access and create VectorValue
-        // 2. Collect elements that appear in both sets
-        // 3. Create new VECTOR with intersection of elements
+        /* ========================================================================
+         * Phase 2 Enhancement: SET Intersection Operation
+         * ========================================================================
+         *
+         * STATUS: Deferred to Phase 2 (TypedValue VECTOR construction required)
+         *
+         * DESCRIPTION:
+         *   Creates a new SET containing only elements present in both input sets.
+         *   Implements set theory intersection: A ∩ B
+         *
+         * USAGE EXAMPLE:
+         *   TypedValue set1 = TypedValue::createVector({
+         *       TypedValue::createInt32(1),
+         *       TypedValue::createInt32(2),
+         *       TypedValue::createInt32(3)
+         *   });
+         *
+         *   TypedValue set2 = TypedValue::createVector({
+         *       TypedValue::createInt32(2),
+         *       TypedValue::createInt32(3),
+         *       TypedValue::createInt32(4)
+         *   });
+         *
+         *   TypedValue result;
+         *   ASSERT_OK(domain_mgr->setIntersection(set1, set2, result, &ctx));
+         *   // result = {2, 3}
+         *
+         * SQL EQUIVALENT:
+         *   SELECT ARRAY(SELECT unnest(a1) INTERSECT SELECT unnest(a2));
+         *
+         * IMPLEMENTATION NOTES:
+         *   - Build hash set from smaller input set
+         *   - Iterate larger set, checking membership
+         *   - Result preserves order from first set
+         *
+         * PERFORMANCE:
+         *   - Time complexity: O(min(n,m) + max(n,m))
+         *   - Optimize: always build hash set from smaller input
+         *
+         * ESTIMATED EFFORT: 3-4 hours
+         * ======================================================================== */
 
         SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-            "SET intersection operation requires TypedValue VECTOR construction (future enhancement)");
+            "SET intersection operation requires TypedValue VECTOR construction (Phase 2)");
         return Status::NOT_IMPLEMENTED;
     }
 
@@ -920,14 +1163,54 @@ namespace scratchbird::core
             return Status::TYPE_MISMATCH;
         }
 
-        // TODO: This requires TypedValue VECTOR support for construction and element access
-        // Full implementation requires:
-        // 1. TypedValue extension to access and create VectorValue
-        // 2. Collect elements from set1 that don't appear in set2
-        // 3. Create new VECTOR with difference of elements
+        /* ========================================================================
+         * Phase 2 Enhancement: SET Difference Operation
+         * ========================================================================
+         *
+         * STATUS: Deferred to Phase 2 (TypedValue VECTOR construction required)
+         *
+         * DESCRIPTION:
+         *   Creates a new SET containing elements in set1 but not in set2.
+         *   Implements set theory difference: A \ B (or A - B)
+         *
+         * USAGE EXAMPLE:
+         *   TypedValue set1 = TypedValue::createVector({
+         *       TypedValue::createText("apple"),
+         *       TypedValue::createText("banana"),
+         *       TypedValue::createText("cherry")
+         *   });
+         *
+         *   TypedValue set2 = TypedValue::createVector({
+         *       TypedValue::createText("banana"),
+         *       TypedValue::createText("durian")
+         *   });
+         *
+         *   TypedValue result;
+         *   ASSERT_OK(domain_mgr->setDifference(set1, set2, result, &ctx));
+         *   // result = {'apple', 'cherry'}
+         *
+         * SQL EQUIVALENT:
+         *   SELECT ARRAY(SELECT unnest(a1) EXCEPT SELECT unnest(a2));
+         *
+         * IMPLEMENTATION NOTES:
+         *   - Build hash set from set2 for O(1) membership checks
+         *   - Iterate set1, excluding elements present in hash set
+         *   - Result preserves order from set1
+         *   - Note: NOT symmetric (A-B ≠ B-A)
+         *
+         * PERFORMANCE:
+         *   - Time complexity: O(n + m) where n = |set1|, m = |set2|
+         *   - Space complexity: O(m) for hash set + O(k) for result where k ≤ n
+         *
+         * RELATED OPERATIONS:
+         *   - Symmetric difference: (A-B) ∪ (B-A) = (A ∪ B) - (A ∩ B)
+         *   - Can be implemented using union, intersection, and difference
+         *
+         * ESTIMATED EFFORT: 3-4 hours
+         * ======================================================================== */
 
         SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-            "SET difference operation requires TypedValue VECTOR construction (future enhancement)");
+            "SET difference operation requires TypedValue VECTOR construction (Phase 2)");
         return Status::NOT_IMPLEMENTED;
     }
 
@@ -1008,14 +1291,84 @@ namespace scratchbird::core
                                        DataType& type,
                                        ErrorContext* ctx) -> Status
     {
-        // TODO: This requires TypedValue VARIANT support for runtime type access
-        // For now, this is a placeholder that demonstrates the API
-        // Full implementation requires:
-        // 1. TypedValue extension to hold VariantValue with runtime type tag
-        // 2. Runtime type extraction from VariantValue
+        /* ========================================================================
+         * Phase 2 Enhancement: VARIANT Type Extraction
+         * ========================================================================
+         *
+         * STATUS: Deferred to Phase 2 (TypedValue VARIANT support required)
+         *
+         * DESCRIPTION:
+         *   Extracts the runtime type tag from a VARIANT value.
+         *   Equivalent to SQL: EXTRACT(DATATYPE FROM variant_value)
+         *   Similar to TypeScript's typeof operator or C++ std::variant::index()
+         *
+         * PREREQUISITES:
+         *   1. TypedValue extension to hold VariantValue with runtime type tag
+         *      - Add DataType::VARIANT to TypedValue type system
+         *      - Internal discriminated union structure
+         *      - Type tag storage (1 byte overhead)
+         *
+         *   2. Runtime type extraction from VariantValue
+         *      - Efficient type tag access (O(1))
+         *      - Support for all allowed types in domain
+         *
+         * USAGE EXAMPLE:
+         *   // Create VARIANT domain allowing INT32, TEXT, DECIMAL
+         *   ID domain_id;
+         *   std::vector<DataType> allowed = {
+         *       DataType::INT32,
+         *       DataType::TEXT,
+         *       DataType::DECIMAL
+         *   };
+         *   ASSERT_OK(domain_mgr->createVariantDomain(schema_id, "flexible_value",
+         *                                              allowed, domain_id, &ctx));
+         *
+         *   // Create VARIANT value containing INT32
+         *   TypedValue variant = TypedValue::createVariant(
+         *       DataType::INT32,
+         *       TypedValue::createInt32(42)
+         *   );
+         *
+         *   // Extract runtime type
+         *   DataType runtime_type;
+         *   ASSERT_OK(domain_mgr->extractDataType(variant, runtime_type, &ctx));
+         *   EXPECT_EQ(runtime_type, DataType::INT32);
+         *
+         *   // Create VARIANT containing TEXT
+         *   TypedValue text_variant = TypedValue::createVariant(
+         *       DataType::TEXT,
+         *       TypedValue::createText("hello")
+         *   );
+         *   ASSERT_OK(domain_mgr->extractDataType(text_variant, runtime_type, &ctx));
+         *   EXPECT_EQ(runtime_type, DataType::TEXT);
+         *
+         * SQL EQUIVALENT:
+         *   SELECT EXTRACT(DATATYPE FROM json_value) FROM table;
+         *   -- PostgreSQL JSON: SELECT jsonb_typeof(col) FROM table;
+         *
+         * USE CASES:
+         *   - Polymorphic data handling
+         *   - JSON-like flexible schemas
+         *   - Union types in type systems
+         *   - Dynamic dispatch based on runtime type
+         *
+         * IMPLEMENTATION NOTES:
+         *   - Type tag should be first field for cache locality
+         *   - Validation: extracted type must be in domain's allowed_types
+         *   - Consider type ID instead of enum for extensibility
+         *
+         * ERROR CASES:
+         *   - Status::TYPE_MISMATCH: Value is not VARIANT type
+         *   - Status::CORRUPTION: Type tag is invalid/corrupted
+         *
+         * ESTIMATED EFFORT: 4-5 hours
+         *   - TypedValue VARIANT storage design: 2-3 hours
+         *   - Type extraction implementation: 1 hour
+         *   - Testing: 1 hour
+         * ======================================================================== */
 
         SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-            "VARIANT type extraction requires TypedValue VARIANT support (future enhancement)");
+            "VARIANT type extraction requires TypedValue VARIANT support (Phase 2)");
         return Status::NOT_IMPLEMENTED;
     }
 
@@ -1024,13 +1377,74 @@ namespace scratchbird::core
                                 bool& result,
                                 ErrorContext* ctx) -> Status
     {
-        // TODO: This requires TypedValue VARIANT support for runtime type checking
-        // Full implementation requires:
-        // 1. TypedValue extension to hold VariantValue with runtime type tag
-        // 2. Runtime type comparison
+        /* ========================================================================
+         * Phase 2 Enhancement: VARIANT Type Checking
+         * ========================================================================
+         *
+         * STATUS: Deferred to Phase 2 (TypedValue VARIANT support required)
+         *
+         * DESCRIPTION:
+         *   Checks if a VARIANT value currently holds a specific type.
+         *   Equivalent to SQL: value IS OF (TYPE expected_type)
+         *   Similar to TypeScript's instanceof or C++ std::holds_alternative<T>()
+         *
+         * USAGE EXAMPLE:
+         *   // Create VARIANT allowing multiple numeric types
+         *   TypedValue variant = TypedValue::createVariant(
+         *       DataType::INT32,
+         *       TypedValue::createInt32(100)
+         *   );
+         *
+         *   // Check if variant holds INT32
+         *   bool is_int32 = false;
+         *   ASSERT_OK(domain_mgr->isOfType(variant, DataType::INT32, is_int32, &ctx));
+         *   EXPECT_TRUE(is_int32);
+         *
+         *   // Check if variant holds TEXT (should be false)
+         *   bool is_text = false;
+         *   ASSERT_OK(domain_mgr->isOfType(variant, DataType::TEXT, is_text, &ctx));
+         *   EXPECT_FALSE(is_text);
+         *
+         *   // Use in conditional logic
+         *   if (is_int32) {
+         *       // Safe to extract as INT32
+         *       TypedValue int_value;
+         *       ASSERT_OK(domain_mgr->variantCast(variant, DataType::INT32,
+         *                                          int_value, &ctx));
+         *       int32_t num = int_value.asInt32();
+         *   }
+         *
+         * SQL EQUIVALENT:
+         *   SELECT CASE WHEN col IS OF (TYPE INTEGER) THEN 'int'
+         *               WHEN col IS OF (TYPE TEXT) THEN 'text'
+         *               ELSE 'unknown' END
+         *   FROM table;
+         *
+         * USE CASES:
+         *   - Type-safe variant access
+         *   - Conditional processing based on runtime type
+         *   - Type guards for safe casting
+         *   - Pattern matching on variant types
+         *
+         * IMPLEMENTATION NOTES:
+         *   - Simple type tag comparison (O(1))
+         *   - Can be inlined for performance
+         *   - Validate expected_type is in domain's allowed_types
+         *
+         * PERFORMANCE:
+         *   - Time complexity: O(1)
+         *   - Space complexity: O(1)
+         *   - Should be highly optimized (hot path for variant access)
+         *
+         * ERROR CASES:
+         *   - Status::TYPE_MISMATCH: variant_value is not VARIANT type
+         *   - Status::INVALID_ARGUMENT: expected_type is DataType::UNKNOWN
+         *
+         * ESTIMATED EFFORT: 2-3 hours
+         * ======================================================================== */
 
         SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-            "VARIANT type checking requires TypedValue VARIANT support (future enhancement)");
+            "VARIANT type checking requires TypedValue VARIANT support (Phase 2)");
         return Status::NOT_IMPLEMENTED;
     }
 
@@ -1039,15 +1453,127 @@ namespace scratchbird::core
                                    TypedValue& result,
                                    ErrorContext* ctx) -> Status
     {
-        // TODO: This requires TypedValue VARIANT support for type-safe casting
-        // Full implementation requires:
-        // 1. TypedValue extension to hold VariantValue
-        // 2. Runtime type extraction
-        // 3. Type-safe value extraction and casting
-        // 4. Validation that cast is to allowed type
+        /* ========================================================================
+         * Phase 2 Enhancement: VARIANT Type-Safe Casting
+         * ========================================================================
+         *
+         * STATUS: Deferred to Phase 2 (TypedValue VARIANT support required)
+         *
+         * DESCRIPTION:
+         *   Extracts the underlying value from a VARIANT with type checking.
+         *   Returns error if variant doesn't currently hold target_type.
+         *   Similar to C++ std::get<T>(variant) or Rust's match on enum.
+         *
+         * PREREQUISITES:
+         *   1. TypedValue extension to hold VariantValue
+         *      - Discriminated union storage
+         *      - Type-safe value extraction
+         *
+         *   2. Runtime type extraction
+         *      - Get current type tag
+         *      - Compare with target_type
+         *
+         *   3. Type-safe value extraction and casting
+         *      - Extract value only if types match
+         *      - Optional implicit casting (e.g., INT32 → INT64)
+         *
+         *   4. Validation that cast is to allowed type
+         *      - Check target_type is in domain's allowed_types
+         *      - Prevent unsafe casts
+         *
+         * USAGE EXAMPLE:
+         *   // Create VARIANT domain
+         *   ID domain_id;
+         *   std::vector<DataType> allowed = {
+         *       DataType::INT32,
+         *       DataType::TEXT,
+         *       DataType::DECIMAL
+         *   };
+         *   ASSERT_OK(domain_mgr->createVariantDomain(schema_id, "flexible_col",
+         *                                              allowed, domain_id, &ctx));
+         *
+         *   // Create VARIANT holding INT32
+         *   TypedValue variant = TypedValue::createVariant(
+         *       DataType::INT32,
+         *       TypedValue::createInt32(42)
+         *   );
+         *
+         *   // Safe cast to INT32 (should succeed)
+         *   TypedValue int_result;
+         *   ASSERT_OK(domain_mgr->variantCast(variant, DataType::INT32,
+         *                                      int_result, &ctx));
+         *   EXPECT_EQ(int_result.asInt32(), 42);
+         *   EXPECT_EQ(int_result.type(), DataType::INT32);
+         *
+         *   // Attempt to cast to TEXT (should fail - type mismatch)
+         *   TypedValue text_result;
+         *   EXPECT_EQ(domain_mgr->variantCast(variant, DataType::TEXT,
+         *                                      text_result, &ctx),
+         *             Status::TYPE_MISMATCH);
+         *
+         *   // Pattern matching style usage
+         *   TypedValue result;
+         *   if (domain_mgr->variantCast(variant, DataType::INT32, result, &ctx) == Status::OK) {
+         *       processInteger(result.asInt32());
+         *   } else if (domain_mgr->variantCast(variant, DataType::TEXT, result, &ctx) == Status::OK) {
+         *       processText(result.asText());
+         *   } else {
+         *       handleUnknownType();
+         *   }
+         *
+         * SQL EQUIVALENT:
+         *   -- PostgreSQL JSONB casting
+         *   SELECT (col::jsonb->>'key')::INTEGER FROM table;
+         *
+         *   -- SQL/MM VARIANT casting
+         *   SELECT CAST(variant_col AS INTEGER) FROM table;
+         *
+         * ADVANCED USAGE: Implicit Casting
+         *   // VARIANT holds INT32, cast to INT64 (widening cast)
+         *   TypedValue int32_variant = TypedValue::createVariant(
+         *       DataType::INT32,
+         *       TypedValue::createInt32(100)
+         *   );
+         *
+         *   TypedValue int64_result;
+         *   // Option 1: Strict casting (fails if types don't match exactly)
+         *   EXPECT_EQ(domain_mgr->variantCast(int32_variant, DataType::INT64,
+         *                                      int64_result, &ctx),
+         *             Status::TYPE_MISMATCH);
+         *
+         *   // Option 2: With implicit casting (future enhancement)
+         *   // EXPECT_OK(domain_mgr->variantCastWithConversion(...));
+         *
+         * IMPLEMENTATION NOTES:
+         *   - Phase 2.0: Strict type matching only (no implicit casts)
+         *   - Phase 2.1: Add implicit widening casts (INT32→INT64, FLOAT→DOUBLE)
+         *   - Phase 2.2: Add explicit conversion functions
+         *   - Always validate target_type is in domain's allowed_types
+         *   - Consider returning std::optional<TypedValue> instead of Status
+         *
+         * PERFORMANCE:
+         *   - Type check: O(1) - single tag comparison
+         *   - Value extraction: O(1) - direct memory access
+         *   - No dynamic allocation for small types (SBO - Small Buffer Optimization)
+         *
+         * ERROR CASES:
+         *   - Status::TYPE_MISMATCH: variant doesn't hold target_type
+         *   - Status::INVALID_ARGUMENT: target_type not in domain's allowed_types
+         *   - Status::CORRUPTION: variant type tag is invalid
+         *
+         * RELATED FUNCTIONS:
+         *   - extractDataType(): Get current type without extracting value
+         *   - isOfType(): Check type before casting
+         *
+         * ESTIMATED EFFORT: 5-6 hours
+         *   - Type-safe extraction: 2 hours
+         *   - Domain validation: 1 hour
+         *   - Error handling: 1 hour
+         *   - Testing (15+ test cases): 2 hours
+         * ======================================================================== */
 
         SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-            "VARIANT casting requires TypedValue VARIANT support (future enhancement)");
+            "VARIANT casting requires TypedValue VARIANT support (Phase 2)");
         return Status::NOT_IMPLEMENTED;
     }
 

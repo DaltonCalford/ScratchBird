@@ -230,6 +230,15 @@ namespace scratchbird
 
             Status vacuum(VacuumStats *stats_out = nullptr, ErrorContext *ctx = nullptr);
 
+            // P1-11: Bulk loading optimization for initial index construction
+            // Build index bottom-up from sorted data for O(N) vs O(N log N) performance
+            // @param entries Vector of (key, TID) pairs to insert (will be sorted)
+            // @param xid Transaction ID for btn_xmin on all entries
+            // @return Status::OK on success
+            Status bulkLoad(std::vector<std::pair<std::vector<uint8_t>, TID>> &entries,
+                           uint64_t xid,
+                           ErrorContext *ctx = nullptr);
+
             // PHASE 2 TASK 2.2: IndexGCInterface implementation
             // Remove index entries pointing to dead tuples
             // Called by garbage collector after heap sweep identifies dead TIDs

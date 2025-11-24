@@ -2833,4 +2833,91 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto BTree::bulkLoad(std::vector<std::pair<std::vector<uint8_t>, TID>> &entries,
+                         uint64_t xid,
+                         ErrorContext *ctx) -> Status
+    {
+        // P1-11: Bulk loading optimization for B-Tree index construction
+        //
+        // Current Implementation: Sort + Sequential Insert (O(N log N))
+        // This is better than random inserts but not optimal.
+        //
+        // TODO: Implement true bottom-up construction for O(N) performance:
+        //   Phase 1: Sort entries by key - O(N log N)
+        //   Phase 2: Build leaf pages from sorted entries - O(N)
+        //   Phase 3: Build internal nodes bottom-up - O(N)
+        //
+        // Benefits of true bottom-up:
+        //   - No page splits during insertion (pre-allocate full pages)
+        //   - Better page utilization (pack pages to ~95% instead of gradual filling)
+        //   - Reduced I/O (sequential writes instead of random updates)
+        //   - 3-5x faster than individual inserts for large datasets
+        //
+        // Reference: PostgreSQL's _bt_load() in nbtree/nbtsort.c
+
+        if (entries.empty())
+        {
+            return Status::OK; // Nothing to load
+        }
+
+        // Phase 1: Sort entries by key
+        std::sort(entries.begin(), entries.end(),
+                 [this](const auto &a, const auto &b) {
+                     return this->compare_keys(a.first, b.first) < 0;
+                 });
+
+        // Phase 2: Insert sorted entries
+        // TODO: Replace with bottom-up construction for true O(N) performance
+        // Current approach: O(N log N) but benefits from sorted order (fewer splits)
+
+        for (const auto &entry : entries)
+        {
+            Status status = insert(entry.first, entry.second, xid, ctx);
+            if (status != Status::OK)
+            {
+                // On error, return status - partial inserts have occurred
+                SET_ERROR_CONTEXT(ctx, status,
+                                "Bulk load failed at entry - partial index created");
+                return status;
+            }
+        }
+
+        // TODO: For true bottom-up construction, implement:
+        //
+        // 1. Calculate optimal page layout:
+        //    - entries_per_leaf = (PAGE_SIZE - sizeof(SBBTreePage)) / avg_entry_size
+        //    - num_leaf_pages = ceil(entries.size() / entries_per_leaf)
+        //
+        // 2. Build leaf level:
+        //    std::vector<uint32_t> leaf_pages;
+        //    for (size_t i = 0; i < entries.size(); i += entries_per_leaf)
+        //    {
+        //        uint32_t leaf_page = allocateLeafPage();
+        //        size_t count = min(entries_per_leaf, entries.size() - i);
+        //        fillLeafPage(leaf_page, &entries[i], count, xid);
+        //        leaf_pages.push_back(leaf_page);
+        //    }
+        //
+        // 3. Build internal levels bottom-up:
+        //    std::vector<uint32_t> current_level = leaf_pages;
+        //    while (current_level.size() > 1)
+        //    {
+        //        std::vector<uint32_t> next_level;
+        //        for (size_t i = 0; i < current_level.size(); i += children_per_internal)
+        //        {
+        //            uint32_t internal_page = allocateInternalPage();
+        //            fillInternalPage(internal_page, &current_level[i], ...);
+        //            next_level.push_back(internal_page);
+        //        }
+        //        current_level = next_level;
+        //    }
+        //
+        // 4. Set root:
+        //    index_info_.idx_root_page = current_level[0];
+        //
+        // See PostgreSQL's nbtsort.c for reference implementation.
+
+        return Status::OK;
+    }
+
 } // namespace scratchbird::core
