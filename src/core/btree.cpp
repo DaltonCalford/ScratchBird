@@ -1,6 +1,7 @@
 #include <utility>
 #include <cstring>
 #include <set>
+#include <algorithm>  // for std::sort
 
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/btree_page.h"

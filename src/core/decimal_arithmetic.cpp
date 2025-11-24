@@ -4,6 +4,13 @@
 #include <algorithm>
 #include <cmath>
 
+// Define HAS_INT128 for GCC/Clang with __int128 support
+#if defined(__GNUC__) && (defined(__x86_64__) || defined(__aarch64__))
+#define HAS_INT128 1
+#else
+#define HAS_INT128 0
+#endif
+
 namespace scratchbird::core
 {
     // ===== DecimalValue Implementation =====

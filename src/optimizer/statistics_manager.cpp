@@ -363,8 +363,12 @@ namespace scratchbird::optimizer
         // Build table statistics from catalog info
         stats.table_id = table_id;
         stats.table_name = table_info.table_name;
-        stats.num_rows = table_info.tuple_count;
-        stats.num_pages = table_info.num_pages;
+        stats.num_rows = table_info.row_count;
+
+        // TODO: num_pages is not currently tracked in TableInfo
+        // For now, estimate based on row_count or set to 0
+        // This will be properly implemented when P1-10 (Statistics & ANALYZE) is completed
+        stats.num_pages = 0;
 
         // Calculate average row size
         if (stats.num_rows > 0 && stats.num_pages > 0)

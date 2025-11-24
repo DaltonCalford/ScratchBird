@@ -4,6 +4,7 @@
 #include <vector>
 #include <mutex>
 #include <optional>
+#include <cstring>  // for std::memset, std::memcmp
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"

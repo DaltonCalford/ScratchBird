@@ -6,6 +6,8 @@
 #include <memory>
 #include <unordered_map>
 #include <mutex>
+#include <optional>
+#include <cstring>  // for std::memcpy
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/error_context.h"

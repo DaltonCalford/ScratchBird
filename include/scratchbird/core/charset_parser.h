@@ -1,7 +1,7 @@
 #pragma once
 
 #include <string>
-<vector>
+#include <vector>
 #include <cstdint>
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
