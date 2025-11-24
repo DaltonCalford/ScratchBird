@@ -117,3 +117,6 @@ include(CTest)
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
+
+# Tools
+add_subdirectory(tools)
