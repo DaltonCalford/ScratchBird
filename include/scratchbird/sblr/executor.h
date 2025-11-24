@@ -221,6 +221,11 @@ namespace scratchbird
             const std::vector<Value> *current_row_values_ = nullptr;
             const std::vector<core::CatalogManager::ColumnInfo> *current_row_columns_ = nullptr;
 
+            // Grouping context for ROLLUP/CUBE/GROUPING SETS (Phase 3: Advanced Grouping)
+            size_t current_grouping_set_index_ = 0;
+            std::vector<size_t> current_grouping_set_column_pcs_;  // Expression PCs in current set
+            size_t total_grouping_columns_ = 0;                     // Total columns across all sets
+
             // Session state for CURRVAL (ALPHA Phase 1 - Sequences)
             std::unordered_map<core::ID, int64_t> session_sequence_currval_;
 
@@ -356,6 +361,15 @@ namespace scratchbird
                                  bool has_where,
                                  size_t where_start_pc,
                                  size_t where_end_pc);
+
+            // Advanced grouping (ROLLUP/CUBE/GROUPING SETS) execution helper (Phase 3: Missing Functions)
+            void executeAdvancedGrouping(const core::CatalogManager::TableInfo& table_info,
+                                        const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
+                                        const std::vector<std::pair<std::string, std::string>>& select_items,
+                                        bool is_select_star,
+                                        bool has_where,
+                                        size_t where_start_pc,
+                                        size_t where_end_pc);
 
             // Sorting execution helper (Phase 1 Task 1.6.4)
             void executeSort(std::unique_ptr<ResultSet> input_result_set);
