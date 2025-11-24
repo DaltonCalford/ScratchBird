@@ -2383,6 +2383,43 @@ namespace scratchbird::core
             return bp->unpinPage(page_id, false, ctx);
         }
 
+        // Helper to scan filtered records in a catalog heap page
+        template <typename RecordType, typename InfoType, typename Filter, typename Converter>
+        auto scanHeapPageWithFilter(uint32_t page_id, std::vector<InfoType> &results,
+                                   Filter filter, Converter converter, ErrorContext *ctx) -> Status
+        {
+            BufferPool *bp = db_->buffer_pool();
+            void *page_buffer;
+
+            Status status = bp->pinPage(page_id, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
+                return status;
+            }
+
+            auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+            uint32_t offset = sizeof(CatalogHeapPage);
+
+            for (uint32_t i = 0; i < heap->record_count; i++)
+            {
+                auto *record = reinterpret_cast<RecordType *>(
+                    reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+                // Only process valid records that match the filter
+                if (record->is_valid && filter(*record))
+                {
+                    InfoType info;
+                    converter(*record, info);
+                    results.push_back(info);
+                }
+
+                offset += sizeof(RecordType);
+            }
+
+            return bp->unpinPage(page_id, false, ctx);
+        }
+
         // Helper to update a record in a catalog heap page
         template <typename RecordType>
         auto updateRecordInHeapPage(uint32_t page_id, uint32_t slot_index,
