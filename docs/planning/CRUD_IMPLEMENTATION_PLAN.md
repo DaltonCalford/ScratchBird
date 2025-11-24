@@ -1,10 +1,10 @@
 # CRUD Implementation Plan - Missing System Operations
 
-**Status:** Agent D Complete (Documentation) ✅
+**Status:** 🔄 25% Complete (15/61 operations)
 **Priority:** High (Core functionality)
-**Estimated Effort:** 60-80 hours (45-60 hours remaining for Agents A, B, C)
+**Estimated Effort:** 60-80 hours (45-60 hours remaining)
 **Target:** Alpha 1 Completion
-**Last Updated:** November 24, 2025
+**Last Updated:** November 24, 2025 (Status verified against source code)
 
 ---
 
@@ -30,23 +30,40 @@ This plan addresses all missing CRUD (Create, Read, Update, Delete) operations a
 
 ---
 
+## Implementation Status Summary
+
+**Completed:** 15/61 operations (25%)
+- ✅ Agent D: 9 operations documented for Phase 2 (TypedValue dependency)
+- ✅ Agent B: 1/5 helper functions (scanHeapPageWithFilter)
+- ✅ 5 existing create/read operations (already working)
+
+**Remaining:** 46/61 operations (75%)
+- ❌ Agent A: 5/5 timezone/charset CRUD operations
+- ❌ Agent B: 4/5 heap page helpers, multi-page version chains
+- ❌ Agent C: 6/6 statistics manager operations
+- ❌ 20+ miscellaneous catalog update/delete operations
+
 ## Agent Organization - 4 Parallel Tracks
 
-### Agent A: Catalog CRUD Operations (20-25 hours)
+### Agent A: Catalog CRUD Operations (20-25 hours) - ❌ NOT STARTED
 **Focus:** Complete all missing catalog table CRUD operations
 **Files:** `src/core/catalog_manager.cpp`, `include/scratchbird/core/catalog_manager.h`
+**Status:** All 5 timezone/charset/collation UPDATE/DELETE operations remain stubbed
 
-### Agent B: Helper Functions & Infrastructure (15-20 hours)
+### Agent B: Helper Functions & Infrastructure (15-20 hours) - 🔄 20% COMPLETE
 **Focus:** Implement reusable helper functions for catalog operations
 **Files:** `src/core/catalog_manager.cpp`, `src/core/heap_page.cpp`
+**Status:** scanHeapPageWithFilter implemented ✅, 4 other helpers pending
 
-### Agent C: Statistics & Analysis (10-15 hours)
+### Agent C: Statistics & Analysis (10-15 hours) - ❌ NOT STARTED
 **Focus:** Statistics collection and persistence
 **Files:** `src/optimizer/statistics_manager.cpp`, catalog integration
+**Status:** Statistics manager is skeleton-only, no CRUD operations implemented
 
-### Agent D: Domain & Type Operations (15-20 hours)
+### Agent D: Domain & Type Operations (15-20 hours) - ✅ DOCUMENTATION COMPLETE
 **Focus:** Advanced type operations (RECORD, SET, VARIANT)
 **Files:** `src/core/domain_manager.cpp`, `include/scratchbird/core/typed_value.h`
+**Status:** All 9 operations properly documented as Phase 2 work (requires TYPEDVALUE_ENHANCEMENTS_PHASE2.md)
 
 ---
 
