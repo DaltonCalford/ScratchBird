@@ -136,6 +136,8 @@ public:
  *
  * Implemented in Alpha. Uses BCrypt password hashing.
  * Authenticates against local user database.
+ *
+ * P0-2: Includes login attempt tracking and account lockout
  */
 class LocalAuthProvider : public AuthProvider {
 public:
@@ -163,8 +165,22 @@ public:
         return true; // Always connected (local)
     }
 
+    /**
+     * Clear login attempt tracking for a user (admin function)
+     * P0-2: Account lockout management
+     */
+    void clearLoginAttempts(const std::string& username);
+
+    /**
+     * Get failed attempt count for a user (admin function)
+     * P0-2: Account lockout management
+     */
+    uint32_t getFailedAttemptCount(const std::string& username);
+
 private:
     class CatalogManager* catalog_;
+    class LoginAttemptTracker* login_tracker_;  // P0-2: Brute-force protection
+    class AuditLogger* audit_logger_;           // P0-3: Security audit logging
 };
 
 /**
