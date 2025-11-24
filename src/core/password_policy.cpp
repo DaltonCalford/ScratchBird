@@ -63,14 +63,14 @@ Status validatePasswordPolicy(
 ) {
     // Length check
     if (password.length() < policy.min_length) {
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-            "Password must be at least " + std::to_string(policy.min_length) + " characters");
+        std::string error_msg = "Password must be at least " + std::to_string(policy.min_length) + " characters";
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
         return Status::INVALID_ARGUMENT;
     }
 
     if (password.length() > policy.max_length) {
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-            "Password must be at most " + std::to_string(policy.max_length) + " characters");
+        std::string error_msg = "Password must be at most " + std::to_string(policy.max_length) + " characters";
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
         return Status::INVALID_ARGUMENT;
     }
 
