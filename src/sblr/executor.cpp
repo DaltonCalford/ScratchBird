@@ -4955,8 +4955,54 @@ namespace scratchbird
                             ret_col_names.push_back(readString());
                         }
 
-                        // TODO: Build result set with the returned values
-                        // For now, just consume the bytecode
+                        // P1-14: Build result set with the returned values
+                        if (!current_result_set_)
+                        {
+                            current_result_set_ = std::make_unique<ResultSet>();
+                        }
+
+                        // Add columns to result set (first time only)
+                        if (current_result_set_->columnCount() == 0)
+                        {
+                            for (const auto& col_name : ret_col_names)
+                            {
+                                // Find column type
+                                core::DataType col_type = core::DataType::INT32; // Default
+                                for (const auto& col : all_columns)
+                                {
+                                    if (col.column_name == col_name)
+                                    {
+                                        col_type = static_cast<core::DataType>(col.data_type);
+                                        break;
+                                    }
+                                }
+                                current_result_set_->addColumn(col_name, col_type);
+                            }
+                        }
+
+                        // Extract values for returned columns
+                        std::vector<Value> return_row;
+                        for (const auto& col_name : ret_col_names)
+                        {
+                            // Find column index and extract value
+                            bool found = false;
+                            for (size_t i = 0; i < all_columns.size(); i++)
+                            {
+                                if (all_columns[i].column_name == col_name)
+                                {
+                                    return_row.push_back(row_values[i]);
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found)
+                            {
+                                return_row.push_back(Value()); // NULL if column not found
+                            }
+                        }
+
+                        // Add row to result set
+                        current_result_set_->addRow(return_row);
                     }
                     else
                     {
@@ -5201,6 +5247,62 @@ namespace scratchbird
                     }
                 }
                 where_end_pc = pc_;
+            }
+
+            // P1-14: Parse RETURNING clause before the loop (Alpha 1 - Advanced SQL)
+            std::vector<std::string> ret_col_names;
+            bool has_returning = false;
+            size_t returning_pc = 0;
+
+            if (pc_ < bytecode_size_)
+            {
+                size_t saved_pc = pc_;
+                uint8_t next_op = readByte();
+                if (next_op == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                {
+                    uint8_t ext_op = readByte();
+                    if (ext_op == static_cast<uint8_t>(Opcode::EXT_RETURNING))
+                    {
+                        // Read column count
+                        uint32_t col_count = readInt32();
+
+                        // Read column names
+                        for (uint32_t i = 0; i < col_count; ++i)
+                        {
+                            ret_col_names.push_back(readString());
+                        }
+
+                        has_returning = true;
+                        returning_pc = pc_;
+
+                        // Initialize result set
+                        current_result_set_ = std::make_unique<ResultSet>();
+                        for (const auto& col_name : ret_col_names)
+                        {
+                            // Find column type
+                            core::DataType col_type = core::DataType::INT32; // Default
+                            for (const auto& col : all_columns)
+                            {
+                                if (col.column_name == col_name)
+                                {
+                                    col_type = static_cast<core::DataType>(col.data_type);
+                                    break;
+                                }
+                            }
+                            current_result_set_->addColumn(col_name, col_type);
+                        }
+                    }
+                    else
+                    {
+                        // Not a RETURNING clause, restore PC
+                        pc_ = saved_pc;
+                    }
+                }
+                else
+                {
+                    // Not an extended opcode, restore PC
+                    pc_ = saved_pc;
+                }
             }
 
             // Create table scan iterator
@@ -5657,46 +5759,38 @@ namespace scratchbird
                 }
 
                 affected_count++;
+
+                // P1-14: Collect RETURNING values if requested
+                if (has_returning && current_result_set_)
+                {
+                    // Extract values for returned columns (using updated values)
+                    std::vector<Value> return_row;
+                    for (const auto& col_name : ret_col_names)
+                    {
+                        // Find column index and extract value
+                        bool found = false;
+                        for (size_t i = 0; i < all_columns.size(); i++)
+                        {
+                            if (all_columns[i].column_name == col_name)
+                            {
+                                return_row.push_back(row_values[i]);
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found)
+                        {
+                            return_row.push_back(Value()); // NULL if column not found
+                        }
+                    }
+
+                    // Add row to result set
+                    current_result_set_->addRow(return_row);
+                }
             }
 
             // Note: Index updates are handled automatically by StorageEngine
             // in the updateTuple() method for MGA architecture
-
-            // Handle RETURNING clause if present (Alpha 1 - Advanced SQL)
-            if (pc_ < bytecode_size_)
-            {
-                size_t saved_pc = pc_;
-                uint8_t next_op = readByte();
-                if (next_op == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
-                {
-                    uint8_t ext_op = readByte();
-                    if (ext_op == static_cast<uint8_t>(Opcode::EXT_RETURNING))
-                    {
-                        // Read column count
-                        uint32_t col_count = readInt32();
-
-                        // Read column names
-                        std::vector<std::string> ret_col_names;
-                        for (uint32_t i = 0; i < col_count; ++i)
-                        {
-                            ret_col_names.push_back(readString());
-                        }
-
-                        // TODO: Build result set with the returned values
-                        // For now, just consume the bytecode
-                    }
-                    else
-                    {
-                        // Not a RETURNING clause, restore PC
-                        pc_ = saved_pc;
-                    }
-                }
-                else
-                {
-                    // Not an extended opcode, restore PC
-                    pc_ = saved_pc;
-                }
-            }
         }
 
         void Executor::executeDelete()
@@ -5800,6 +5894,62 @@ namespace scratchbird
                     }
                 }
                 where_end_pc = pc_;
+            }
+
+            // P1-14: Parse RETURNING clause before the loop (Alpha 1 - Advanced SQL)
+            std::vector<std::string> ret_col_names;
+            bool has_returning = false;
+            size_t returning_pc = 0;
+
+            if (pc_ < bytecode_size_)
+            {
+                size_t saved_pc = pc_;
+                uint8_t next_op = readByte();
+                if (next_op == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                {
+                    uint8_t ext_op = readByte();
+                    if (ext_op == static_cast<uint8_t>(Opcode::EXT_RETURNING))
+                    {
+                        // Read column count
+                        uint32_t col_count = readInt32();
+
+                        // Read column names
+                        for (uint32_t i = 0; i < col_count; ++i)
+                        {
+                            ret_col_names.push_back(readString());
+                        }
+
+                        has_returning = true;
+                        returning_pc = pc_;
+
+                        // Initialize result set
+                        current_result_set_ = std::make_unique<ResultSet>();
+                        for (const auto& col_name : ret_col_names)
+                        {
+                            // Find column type
+                            core::DataType col_type = core::DataType::INT32; // Default
+                            for (const auto& col : all_columns)
+                            {
+                                if (col.column_name == col_name)
+                                {
+                                    col_type = static_cast<core::DataType>(col.data_type);
+                                    break;
+                                }
+                            }
+                            current_result_set_->addColumn(col_name, col_type);
+                        }
+                    }
+                    else
+                    {
+                        // Not a RETURNING clause, restore PC
+                        pc_ = saved_pc;
+                    }
+                }
+                else
+                {
+                    // Not an extended opcode, restore PC
+                    pc_ = saved_pc;
+                }
             }
 
             // Create table scan iterator
@@ -5947,46 +6097,38 @@ namespace scratchbird
                 }
 
                 affected_count++;
+
+                // P1-14: Collect RETURNING values if requested (before deletion)
+                if (has_returning && current_result_set_)
+                {
+                    // Extract values for returned columns (using OLD values before deletion)
+                    std::vector<Value> return_row;
+                    for (const auto& col_name : ret_col_names)
+                    {
+                        // Find column index and extract value
+                        bool found = false;
+                        for (size_t i = 0; i < all_columns.size(); i++)
+                        {
+                            if (all_columns[i].column_name == col_name)
+                            {
+                                return_row.push_back(row_values[i]);
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found)
+                        {
+                            return_row.push_back(Value()); // NULL if column not found
+                        }
+                    }
+
+                    // Add row to result set
+                    current_result_set_->addRow(return_row);
+                }
             }
 
             // Note: Index cleanup is handled automatically by StorageEngine
             // in the deleteTuple() method for MGA architecture
-
-            // Handle RETURNING clause if present (Alpha 1 - Advanced SQL)
-            if (pc_ < bytecode_size_)
-            {
-                size_t saved_pc = pc_;
-                uint8_t next_op = readByte();
-                if (next_op == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
-                {
-                    uint8_t ext_op = readByte();
-                    if (ext_op == static_cast<uint8_t>(Opcode::EXT_RETURNING))
-                    {
-                        // Read column count
-                        uint32_t col_count = readInt32();
-
-                        // Read column names
-                        std::vector<std::string> ret_col_names;
-                        for (uint32_t i = 0; i < col_count; ++i)
-                        {
-                            ret_col_names.push_back(readString());
-                        }
-
-                        // TODO: Build result set with the returned values
-                        // For now, just consume the bytecode
-                    }
-                    else
-                    {
-                        // Not a RETURNING clause, restore PC
-                        pc_ = saved_pc;
-                    }
-                }
-                else
-                {
-                    // Not an extended opcode, restore PC
-                    pc_ = saved_pc;
-                }
-            }
         }
 
         void Executor::executeMerge()
