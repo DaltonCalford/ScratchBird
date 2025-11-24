@@ -11,6 +11,36 @@ namespace scratchbird::core
     // Thread-local timezone manager for parsing/formatting
     static thread_local TimezoneManager g_timezone_manager;
 
+    // ========================================================================
+    // P0-5: NaN/Infinity Checking for Safe Type Conversions
+    // ========================================================================
+
+    namespace {
+        // Helper function to check and convert float to int64
+        inline std::optional<int64_t> safeFloatToInt64(double float_val, ErrorContext* ctx) {
+            // Check for NaN
+            if (std::isnan(float_val)) {
+                SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Cannot convert NaN to integer");
+                return std::nullopt;
+            }
+
+            // Check for infinity
+            if (std::isinf(float_val)) {
+                SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Cannot convert Infinity to integer");
+                return std::nullopt;
+            }
+
+            // Check range
+            if (float_val > static_cast<double>(std::numeric_limits<int64_t>::max()) ||
+                float_val < static_cast<double>(std::numeric_limits<int64_t>::min())) {
+                SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Float value out of range for INT64");
+                return std::nullopt;
+            }
+
+            return static_cast<int64_t>(float_val);
+        }
+    }
+
     /**
      * Type conversion implementation for TypedValue
      */
@@ -193,7 +223,11 @@ namespace scratchbird::core
             {
                 int64_t val;
                 if (is_float) {
-                    val = static_cast<int64_t>(float_val);
+                    auto safe_val = safeFloatToInt64(float_val, ctx);
+                    if (!safe_val) {
+                        return std::nullopt;
+                    }
+                    val = *safe_val;
                 } else if (is_int128) {
                     // INT128 to INT8 - check for overflow
                     if (int128_val > std::numeric_limits<int8_t>::max() ||
@@ -222,7 +256,11 @@ namespace scratchbird::core
             {
                 int64_t val;
                 if (is_float) {
-                    val = static_cast<int64_t>(float_val);
+                    auto safe_val = safeFloatToInt64(float_val, ctx);
+                    if (!safe_val) {
+                        return std::nullopt;
+                    }
+                    val = *safe_val;
                 } else if (is_int128) {
                     // INT128 to INT16 - check for overflow
                     if (int128_val > std::numeric_limits<int16_t>::max() ||
@@ -251,7 +289,11 @@ namespace scratchbird::core
             {
                 int64_t val;
                 if (is_float) {
-                    val = static_cast<int64_t>(float_val);
+                    auto safe_val = safeFloatToInt64(float_val, ctx);
+                    if (!safe_val) {
+                        return std::nullopt;
+                    }
+                    val = *safe_val;
                 } else if (is_int128) {
                     // INT128 to INT32 - check for overflow
                     if (int128_val > std::numeric_limits<int32_t>::max() ||
@@ -279,7 +321,11 @@ namespace scratchbird::core
             case DataType::INT64:
             {
                 if (is_float) {
-                    int_val = static_cast<int64_t>(float_val);
+                    auto safe_val = safeFloatToInt64(float_val, ctx);
+                    if (!safe_val) {
+                        return std::nullopt;
+                    }
+                    int_val = *safe_val;
                 } else if (is_int128) {
                     // INT128 to INT64 - check for overflow
                     if (int128_val > std::numeric_limits<int64_t>::max() ||
@@ -304,6 +350,15 @@ namespace scratchbird::core
             case DataType::INT128:
             {
                 if (is_float) {
+                    // Check for NaN and Infinity
+                    if (std::isnan(float_val)) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Cannot convert NaN to INT128");
+                        return std::nullopt;
+                    }
+                    if (std::isinf(float_val)) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Cannot convert Infinity to INT128");
+                        return std::nullopt;
+                    }
                     return TypedValue::makeInt128(static_cast<int128_t>(float_val));
                 } else if (is_int128) {
                     return TypedValue::makeInt128(int128_val);
@@ -317,6 +372,15 @@ namespace scratchbird::core
             case DataType::UINT8:
             {
                 if (is_float) {
+                    // Check for NaN and Infinity
+                    if (std::isnan(float_val)) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Cannot convert NaN to UINT8");
+                        return std::nullopt;
+                    }
+                    if (std::isinf(float_val)) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Cannot convert Infinity to UINT8");
+                        return std::nullopt;
+                    }
                     if (float_val < 0 || float_val > std::numeric_limits<uint8_t>::max()) {
                         SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
                                         "Value out of range for UINT8");
@@ -362,6 +426,15 @@ namespace scratchbird::core
             case DataType::UINT16:
             {
                 if (is_float) {
+                    // Check for NaN and Infinity
+                    if (std::isnan(float_val)) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Cannot convert NaN to UINT16");
+                        return std::nullopt;
+                    }
+                    if (std::isinf(float_val)) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Cannot convert Infinity to UINT16");
+                        return std::nullopt;
+                    }
                     if (float_val < 0 || float_val > std::numeric_limits<uint16_t>::max()) {
                         SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
                                         "Value out of range for UINT16");
@@ -407,6 +480,15 @@ namespace scratchbird::core
             case DataType::UINT32:
             {
                 if (is_float) {
+                    // Check for NaN and Infinity
+                    if (std::isnan(float_val)) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Cannot convert NaN to UINT32");
+                        return std::nullopt;
+                    }
+                    if (std::isinf(float_val)) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Cannot convert Infinity to UINT32");
+                        return std::nullopt;
+                    }
                     if (float_val < 0 || float_val > std::numeric_limits<uint32_t>::max()) {
                         SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
                                         "Value out of range for UINT32");
@@ -452,6 +534,15 @@ namespace scratchbird::core
             case DataType::UINT64:
             {
                 if (is_float) {
+                    // Check for NaN and Infinity
+                    if (std::isnan(float_val)) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Cannot convert NaN to UINT64");
+                        return std::nullopt;
+                    }
+                    if (std::isinf(float_val)) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Cannot convert Infinity to UINT64");
+                        return std::nullopt;
+                    }
                     if (float_val < 0) {
                         SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
                                         "Cannot convert negative value to UINT64");
@@ -551,8 +642,23 @@ namespace scratchbird::core
             case DataType::MONEY:
             {
                 if (is_float) {
+                    // Check for NaN and Infinity
+                    if (std::isnan(float_val)) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Cannot convert NaN to MONEY");
+                        return std::nullopt;
+                    }
+                    if (std::isinf(float_val)) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Cannot convert Infinity to MONEY");
+                        return std::nullopt;
+                    }
                     // FLOAT to MONEY: multiply by 100 and round to get cents
-                    int64_t cents = static_cast<int64_t>(std::round(float_val * 100.0));
+                    double money_cents = float_val * 100.0;
+                    if (money_cents > static_cast<double>(std::numeric_limits<int64_t>::max()) ||
+                        money_cents < static_cast<double>(std::numeric_limits<int64_t>::min())) {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "MONEY value out of range");
+                        return std::nullopt;
+                    }
+                    int64_t cents = static_cast<int64_t>(std::round(money_cents));
                     return TypedValue::makeMoney(cents);
                 } else if (is_int128) {
                     // INT128 to MONEY: check range and treat as cents
