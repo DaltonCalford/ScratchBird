@@ -3373,8 +3373,10 @@ namespace scratchbird
         }
 
         // Parallel multi-key AND query
+        // P0-6: Fixed to accept current_xid for proper MGA visibility
         std::vector<uint64_t> GinIndex::findAllParallel(
             const std::vector<std::vector<uint8_t>> &keys,
+            uint64_t current_xid,
             uint32_t max_threads,
             ErrorContext *ctx)
         {
@@ -3388,9 +3390,8 @@ namespace scratchbird
             if (max_threads <= 1 || keys.size() <= 1)
             {
                 // Use standard implementation for single thread or single key
-                // PHASE 1 TASK 1.1.5: Pass nullptr for snapshot (Phase 1 Task 1.2 will pass actual snapshot)
-                // PHASE 1.5: findAll returns TID, convert to legacy format for internal use
-                std::vector<TID> tid_results = findAll(keys, 0, ctx);
+                // P0-6: Pass current_xid for proper MGA visibility
+                std::vector<TID> tid_results = findAll(keys, current_xid, ctx);
                 for (const TID &tid : tid_results)
                 {
                     uint64_t legacy_tid = convertTIDtoLegacy(tid);
@@ -3434,9 +3435,8 @@ namespace scratchbird
                         }
 
                         std::vector<uint64_t> tids;
-                        // TODO: findAllParallel should accept current_xid parameter for proper MGA visibility
-                        // For now, pass 0 to see all committed transactions
-                        status = getPostingListTids(posting_page, &tids, 0, ctx);
+                        // P0-6: Fixed to use current_xid for proper MGA visibility
+                        status = getPostingListTids(posting_page, &tids, current_xid, ctx);
 
                         if (status != Status::OK || tids.empty())
                         {
@@ -3468,8 +3468,10 @@ namespace scratchbird
         }
 
         // Parallel multi-key OR query
+        // P0-6: Fixed to accept current_xid for proper MGA visibility
         std::vector<uint64_t> GinIndex::findAnyParallel(
             const std::vector<std::vector<uint8_t>> &keys,
+            uint64_t current_xid,
             uint32_t max_threads,
             ErrorContext *ctx)
         {
@@ -3482,8 +3484,8 @@ namespace scratchbird
 
             if (max_threads <= 1 || keys.size() <= 1)
             {
-                // PHASE 1.5: findAny returns TID, convert to legacy format for internal use
-                std::vector<TID> tid_results = findAny(keys, 0, ctx);
+                // P0-6: Pass current_xid for proper MGA visibility
+                std::vector<TID> tid_results = findAny(keys, current_xid, ctx);
                 for (const TID &tid : tid_results)
                 {
                     uint64_t legacy_tid = convertTIDtoLegacy(tid);
@@ -3520,9 +3522,8 @@ namespace scratchbird
                         }
 
                         std::vector<uint64_t> tids;
-                        // TODO: findAnyParallel should accept current_xid parameter for proper MGA visibility
-                        // For now, pass 0 to see all committed transactions
-                        status = getPostingListTids(posting_page, &tids, 0, ctx);
+                        // P0-6: Fixed to use current_xid for proper MGA visibility
+                        status = getPostingListTids(posting_page, &tids, current_xid, ctx);
 
                         if (status != Status::OK || tids.empty())
                         {

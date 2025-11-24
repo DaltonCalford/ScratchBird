@@ -3342,25 +3342,84 @@ namespace scratchbird::core
     auto CatalogManager::getCharset(uint16_t charset_id, CharsetInfo &info, ErrorContext *ctx)
         -> Status
     {
-        // TODO: Needs findRecordInHeapPage helper function
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "getCharset not fully implemented");
-        return Status::NOT_IMPLEMENTED;
+        // P0-8: Implemented charset retrieval using findRecordInHeapPage
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto predicate = [charset_id](const CharsetRecord &rec)
+        { return rec.charset_id == charset_id && rec.is_valid; };
+        auto result = findRecordInHeapPage<CharsetRecord>(charsets_table_page_, predicate, ctx);
+
+        if (result.status != Status::OK)
+        {
+            return result.status;
+        }
+
+        // Convert to CharsetInfo
+        const auto &rec = result.record;
+        info.charset_id = rec.charset_id;
+        info.name = rec.name;
+        info.description = rec.description;
+        info.min_bytes = rec.min_bytes;
+        info.max_bytes = rec.max_bytes;
+        info.variable_width = rec.variable_width;
+        info.default_collation_id = rec.default_collation_id;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+
+        return Status::OK;
     }
 
     auto CatalogManager::getCharsetByName(const std::string &name, CharsetInfo &info,
                                           ErrorContext *ctx) -> Status
     {
-        // TODO: Needs findRecordInHeapPage helper function
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "getCharsetByName not fully implemented");
-        return Status::NOT_IMPLEMENTED;
+        // P0-8: Implemented charset retrieval by name using findRecordInHeapPage
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto predicate = [&name](const CharsetRecord &rec)
+        { return std::string(rec.name) == name && rec.is_valid; };
+        auto result = findRecordInHeapPage<CharsetRecord>(charsets_table_page_, predicate, ctx);
+
+        if (result.status != Status::OK)
+        {
+            return result.status;
+        }
+
+        // Convert to CharsetInfo
+        const auto &rec = result.record;
+        info.charset_id = rec.charset_id;
+        info.name = rec.name;
+        info.description = rec.description;
+        info.min_bytes = rec.min_bytes;
+        info.max_bytes = rec.max_bytes;
+        info.variable_width = rec.variable_width;
+        info.default_collation_id = rec.default_collation_id;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+
+        return Status::OK;
     }
 
     auto CatalogManager::listCharsets(std::vector<CharsetInfo> &charsets, ErrorContext *ctx)
         -> Status
     {
-        // TODO: Needs scanHeapPage helper function
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "listCharsets not fully implemented");
-        return Status::NOT_IMPLEMENTED;
+        // P0-8: Implemented charset listing using scanHeapPage
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto converter = [](const CharsetRecord &rec, CharsetInfo &info)
+        {
+            info.charset_id = rec.charset_id;
+            info.name = rec.name;
+            info.description = rec.description;
+            info.min_bytes = rec.min_bytes;
+            info.max_bytes = rec.max_bytes;
+            info.variable_width = rec.variable_width;
+            info.default_collation_id = rec.default_collation_id;
+            info.created_time = rec.created_time;
+            info.last_modified_time = rec.last_modified_time;
+        };
+
+        return scanHeapPage<CharsetRecord, CharsetInfo>(charsets_table_page_, charsets,
+                                                        converter, ctx);
     }
 
     auto CatalogManager::deleteCharset(uint16_t charset_id, ErrorContext *ctx) -> Status
@@ -3408,25 +3467,90 @@ namespace scratchbird::core
     auto CatalogManager::getCollation(uint32_t collation_id, CollationCatalogInfo &info,
                                       ErrorContext *ctx) -> Status
     {
-        // TODO: Needs findRecordInHeapPage helper function
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "getCollation not fully implemented");
-        return Status::NOT_IMPLEMENTED;
+        // P0-8: Implemented collation retrieval using findRecordInHeapPage
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto predicate = [collation_id](const CollationRecord &rec)
+        { return rec.collation_id == collation_id && rec.is_valid; };
+        auto result = findRecordInHeapPage<CollationRecord>(collation_defs_table_page_, predicate, ctx);
+
+        if (result.status != Status::OK)
+        {
+            return result.status;
+        }
+
+        // Convert to CollationCatalogInfo
+        const auto &rec = result.record;
+        info.collation_id = rec.collation_id;
+        info.name = rec.name;
+        info.charset_id = rec.charset_id;
+        info.collation_type = rec.collation_type;
+        info.strength = rec.strength;
+        info.pad_space = rec.pad_space;
+        info.is_default = rec.is_default;
+        strncpy(info.locale, rec.locale, sizeof(info.locale) - 1);
+        info.locale[sizeof(info.locale) - 1] = '\0';
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+
+        return Status::OK;
     }
 
     auto CatalogManager::getCollationByName(const std::string &name, CollationCatalogInfo &info,
                                             ErrorContext *ctx) -> Status
     {
-        // TODO: Needs findRecordInHeapPage helper function
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "getCollationByName not fully implemented");
-        return Status::NOT_IMPLEMENTED;
+        // P0-8: Implemented collation retrieval by name using findRecordInHeapPage
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto predicate = [&name](const CollationRecord &rec)
+        { return std::string(rec.name) == name && rec.is_valid; };
+        auto result = findRecordInHeapPage<CollationRecord>(collation_defs_table_page_, predicate, ctx);
+
+        if (result.status != Status::OK)
+        {
+            return result.status;
+        }
+
+        // Convert to CollationCatalogInfo
+        const auto &rec = result.record;
+        info.collation_id = rec.collation_id;
+        info.name = rec.name;
+        info.charset_id = rec.charset_id;
+        info.collation_type = rec.collation_type;
+        info.strength = rec.strength;
+        info.pad_space = rec.pad_space;
+        info.is_default = rec.is_default;
+        strncpy(info.locale, rec.locale, sizeof(info.locale) - 1);
+        info.locale[sizeof(info.locale) - 1] = '\0';
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+
+        return Status::OK;
     }
 
     auto CatalogManager::listCollations(std::vector<CollationCatalogInfo> &collations,
                                         ErrorContext *ctx) -> Status
     {
-        // TODO: Needs scanHeapPage helper function
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "listCollations not fully implemented");
-        return Status::NOT_IMPLEMENTED;
+        // P0-8: Implemented collation listing using scanHeapPage
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto converter = [](const CollationRecord &rec, CollationCatalogInfo &info)
+        {
+            info.collation_id = rec.collation_id;
+            info.name = rec.name;
+            info.charset_id = rec.charset_id;
+            info.collation_type = rec.collation_type;
+            info.strength = rec.strength;
+            info.pad_space = rec.pad_space;
+            info.is_default = rec.is_default;
+            strncpy(info.locale, rec.locale, sizeof(info.locale) - 1);
+            info.locale[sizeof(info.locale) - 1] = '\0';
+            info.created_time = rec.created_time;
+            info.last_modified_time = rec.last_modified_time;
+        };
+
+        return scanHeapPage<CollationRecord, CollationCatalogInfo>(collation_defs_table_page_, collations,
+                                                                    converter, ctx);
     }
 
     auto CatalogManager::listCollationsForCharset(uint16_t charset_id,
@@ -8151,9 +8275,47 @@ auto CatalogManager::dropSequence(const ID& sequence_id, bool cascade, ErrorCont
 auto CatalogManager::getSequence(const ID& schema_id, const std::string& name,
                                   SequenceInfo& info_out, ErrorContext* ctx) -> Status
 {
-    // For now, stub - sequences are only in memory
-    SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "getSequence not yet implemented");
-    return Status::NOT_IMPLEMENTED;
+    // P0-7: Implemented sequence retrieval from in-memory cache
+
+    // Look up sequence ID by name
+    ID sequence_id;
+    Status status = getSequenceIdByName(name, sequence_id, ctx);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    // Find sequence in cache
+    std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+    auto it = sequence_cache_.find(sequence_id);
+    if (it == sequence_cache_.end()) {
+        std::string msg = "Sequence not found in cache: " + name;
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, msg.c_str());
+        return Status::NOT_FOUND;
+    }
+
+    auto state = it->second;
+
+    // Lock config mutex for consistent reads
+    std::lock_guard<std::mutex> config_lock(state->config_mutex);
+
+    // Populate SequenceInfo from SequenceState
+    info_out.sequence_id = state->sequence_id;
+    info_out.schema_id = schema_id;  // Use provided schema_id
+    info_out.name = state->name;
+    info_out.owner_id = ID();  // TODO: Track owner when implementing user ownership
+    info_out.current_value = state->current_value.load();
+    info_out.increment_by = state->increment_by;
+    info_out.min_value = state->min_value;
+    info_out.max_value = state->max_value;
+    info_out.start_value = state->min_value;  // Default: use min_value as start
+    info_out.cache_size = 1;  // Default: no caching
+    info_out.cycle = state->cycle;
+    info_out.created_time = 0;  // TODO: Track creation time when implementing persistence
+    info_out.last_modified_time = 0;  // TODO: Track modification time
+
+    LOG_DEBUG(CATALOG, "Retrieved sequence '%s' with ID %s", name.c_str(), "<sequence_id>");
+
+    return Status::OK;
 }
 
 auto CatalogManager::sequenceNextVal(const ID& sequence_id, int64_t& value_out,
