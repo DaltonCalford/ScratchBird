@@ -12,6 +12,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/password_hash.h"
+#include "scratchbird/core/password_policy.h"  // P0-1: Password policy enforcement
 #include "scratchbird/core/permission_cache.h"  // Security Phase 3.2.3: Global cache
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/garbage_collector.h"
@@ -17891,10 +17892,19 @@ namespace scratchbird
                 error("Permission denied: CREATE USER (superuser only)");
             }
 
-            // Hash password if provided (Security Phase 3.0)
+            // Validate and hash password if provided (Security Phase 3.0 + P0-1)
             std::string password_hash;
             if (has_password)
             {
+                // P0-1: Validate password policy BEFORE hashing
+                core::PasswordPolicy policy;  // Use default policy
+                core::ErrorContext policy_ctx;
+                auto policy_status = core::validatePasswordPolicy(password, policy, &policy_ctx);
+                if (policy_status != core::Status::OK)
+                {
+                    error("Password validation failed: " + policy_ctx.error_message);
+                }
+
                 try
                 {
                     password_hash = core::PasswordHash::hashPassword(password);
@@ -17954,10 +17964,19 @@ namespace scratchbird
                 error("User '" + username + "' not found");
             }
 
-            // Prepare password hash if changing (Security Phase 3.0)
+            // Prepare password hash if changing (Security Phase 3.0 + P0-1)
             std::string password_hash = user_info.password_hash;  // Keep existing if not changing
             if (change_password)
             {
+                // P0-1: Validate password policy BEFORE hashing
+                core::PasswordPolicy policy;  // Use default policy
+                core::ErrorContext policy_ctx;
+                auto policy_status = core::validatePasswordPolicy(password, policy, &policy_ctx);
+                if (policy_status != core::Status::OK)
+                {
+                    error("Password validation failed: " + policy_ctx.error_message);
+                }
+
                 try
                 {
                     password_hash = core::PasswordHash::hashPassword(password);
