@@ -11,13 +11,13 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/typed_value.h"
 
 namespace scratchbird::core
 {
     // Forward declarations
     class Database;
     class BufferPool;
-    struct TypedValue;  // Forward declaration for value representation (TODO: implement)
 
     using ID = UuidV7Bytes;
 
