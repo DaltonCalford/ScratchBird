@@ -21,6 +21,12 @@ Both loaders should:
 - Validate data integrity
 - Provide CLI tools for loading
 
+**Data File Locations:**
+- **Timezone data:** `resources/timezones/` (IANA tzdata 2024b)
+- **Character sets:** `resources/charsets/charsets.json`
+- **Collations:** `resources/collations/collations.json`
+- **Configuration:** `resources/config/sb_config.ini`
+
 **Execution Strategy:** Can be split into 2 parallel agents:
 - **Agent A:** Timezone Data Loader (20-25 hours)
 - **Agent B:** Character Set Loader (20-25 hours)
@@ -39,7 +45,12 @@ Both loaders should:
 The IANA timezone database (tzdata/tzdb) is the authoritative source for timezone information worldwide.
 
 **Standard Format:** Binary TZif format (Time Zone Information Format)
-**File Location (Linux):** `/usr/share/zoneinfo/`
+
+**File Locations:**
+- **Project resources:** `resources/timezones/` (IANA tzdata 2024b - included in repository)
+- **System location (Linux):** `/usr/share/zoneinfo/` (if available)
+- **Fallback:** `resources/timezones/` should always be used as the primary source
+
 **File Structure:**
 - Header (magic number, version)
 - Transition times (when rules change)
@@ -47,10 +58,12 @@ The IANA timezone database (tzdata/tzdb) is the authoritative source for timezon
 - Leap second records
 - POSIX TZ string (for future dates)
 
-**Example Files:**
-- `/usr/share/zoneinfo/America/New_York`
-- `/usr/share/zoneinfo/Europe/London`
-- `/usr/share/zoneinfo/Asia/Tokyo`
+**Included Files in resources/timezones/:**
+- Regional data files: `africa`, `asia`, `europe`, `northamerica`, `southamerica`, `australasia`, `antarctica`
+- Additional files: `etcetera`, `backward`, `backzone`, `factory`
+- Leap seconds: `leapseconds`, `leap-seconds.list`
+- Coordinate data: `zone.tab`, `zone1970.tab`, `zonenow.tab`
+- Compressed archives: `tzdata2024b.tar.gz`, `tzcode2024b.tar.gz`
 
 ---
 
@@ -267,12 +280,19 @@ Status TZFileParser::parseFile(const std::string& filepath,
     }
 
     // Extract timezone name from filepath
+    // resources/timezones/america -> america
     // /usr/share/zoneinfo/America/New_York -> America/New_York
     size_t zoneinfo_pos = filepath.find("/zoneinfo/");
     if (zoneinfo_pos != std::string::npos) {
         tz_info.name = filepath.substr(zoneinfo_pos + 10);
     } else {
-        tz_info.name = filepath;
+        // Check for resources/timezones/ prefix
+        size_t resources_pos = filepath.find("resources/timezones/");
+        if (resources_pos != std::string::npos) {
+            tz_info.name = filepath.substr(resources_pos + 20);
+        } else {
+            tz_info.name = filepath;
+        }
     }
 
     fclose(fp);
@@ -282,30 +302,56 @@ Status TZFileParser::parseFile(const std::string& filepath,
 Status TZFileParser::parseDirectory(const std::string& zoneinfo_dir,
                                     std::vector<TimezoneInfo>& timezones,
                                     ErrorContext* ctx) {
-    // Recursively scan directory for timezone files
-    // Use <filesystem> or platform-specific directory APIs
+    // Parse regional timezone data files from resources/timezones/
+    // These are the IANA source files (text format with zone definitions)
 
-    // Common timezone files to load:
-    const std::vector<std::string> common_zones = {
-        "UTC", "GMT",
+    const std::vector<std::string> regional_files = {
+        "africa", "antarctica", "asia", "australasia",
+        "europe", "northamerica", "southamerica",
+        "etcetera", "backward"
+    };
+
+    // For the implementation plan, we'll parse these source files
+    // OR if zoneinfo_dir points to a compiled zoneinfo directory,
+    // parse binary TZif files for common timezones:
+
+    const std::vector<std::string> common_binary_zones = {
+        "UTC", "GMT", "EST", "PST", "MST", "CST",
         "America/New_York", "America/Los_Angeles", "America/Chicago",
         "America/Denver", "America/Phoenix", "America/Anchorage",
         "America/Toronto", "America/Mexico_City", "America/Sao_Paulo",
         "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Moscow",
         "Asia/Tokyo", "Asia/Shanghai", "Asia/Dubai", "Asia/Kolkata",
         "Australia/Sydney", "Pacific/Auckland",
-        // ... add more
+        // ... (594 total in full implementation)
     };
 
-    for (const auto& zone : common_zones) {
-        std::string filepath = zoneinfo_dir + "/" + zone;
-        TimezoneInfo tz_info;
-        Status status = parseFile(filepath, tz_info, ctx);
-        if (status == Status::OK) {
-            timezones.push_back(tz_info);
-        } else {
-            // Log warning but continue
-            LOG_WARNING("Failed to parse timezone: " + zone);
+    // Check if directory contains source files or compiled binaries
+    std::string test_file = zoneinfo_dir + "/africa";
+    FILE* test_fp = fopen(test_file.c_str(), "rb");
+    bool is_source_dir = (test_fp != nullptr);
+    if (test_fp) fclose(test_fp);
+
+    if (is_source_dir) {
+        // Parse source files (requires zic compiler or custom parser)
+        for (const auto& file : regional_files) {
+            std::string filepath = zoneinfo_dir + "/" + file;
+            // TODO: Parse IANA source format (text-based zone definitions)
+            // This is complex - consider using system 'zic' compiler
+            LOG_INFO("Found timezone source file: " + file);
+        }
+    } else {
+        // Parse compiled binary TZif files
+        for (const auto& zone : common_binary_zones) {
+            std::string filepath = zoneinfo_dir + "/" + zone;
+            TimezoneInfo tz_info;
+            Status status = parseFile(filepath, tz_info, ctx);
+            if (status == Status::OK) {
+                timezones.push_back(tz_info);
+            } else {
+                // Log warning but continue
+                LOG_WARNING("Failed to parse timezone: " + zone);
+            }
         }
     }
 
@@ -475,14 +521,17 @@ Status TimezoneLoader::loadFromDirectory(const std::string& zoneinfo_dir,
 // Command-line tool to load timezone data
 
 int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::cerr << "Usage: sb_timezone_loader <database_path> <zoneinfo_dir>\n";
-        std::cerr << "Example: sb_timezone_loader /data/mydb.sb /usr/share/zoneinfo\n";
+    if (argc < 2) {
+        std::cerr << "Usage: sb_timezone_loader <database_path> [zoneinfo_dir]\n";
+        std::cerr << "Examples:\n";
+        std::cerr << "  sb_timezone_loader /data/mydb.sb resources/timezones\n";
+        std::cerr << "  sb_timezone_loader /data/mydb.sb /usr/share/zoneinfo\n";
+        std::cerr << "  sb_timezone_loader /data/mydb.sb  # Uses default: resources/timezones\n";
         return 1;
     }
 
     std::string db_path = argv[1];
-    std::string zoneinfo_dir = argv[2];
+    std::string zoneinfo_dir = (argc >= 3) ? argv[2] : "resources/timezones";
 
     // Open database
     ErrorContext ctx;
@@ -586,19 +635,25 @@ TEST(TimezoneLoader, LoadEntireDirectory) {
 
 Character sets define mappings between byte sequences and Unicode code points.
 
-**Common Formats:**
-1. **Unicode Character Database (UCD)** - Standard Unicode data files
-2. **ICU Data Files** - International Components for Unicode
-3. **GNU iconv** - Character set conversion library data
+**File Locations:**
+- **Project resources:** `resources/charsets/charsets.json` (39 character sets - included in repository)
+- **Collations:** `resources/collations/collations.json` (30+ collations - included in repository)
 
-**Example Character Sets:**
-- UTF-8 (variable width, 1-4 bytes)
-- UTF-16 (2 or 4 bytes)
-- UTF-32 (fixed 4 bytes)
-- ISO-8859-1 (Latin-1, single byte)
-- Windows-1252 (Western European)
-- Shift_JIS (Japanese)
-- GB18030 (Chinese)
+**File Format:** JSON format with character set definitions
+
+**Included Character Sets (39 total):**
+- **Unicode:** UTF-8, UTF-16, UTF-32
+- **Western European:** ASCII, ISO-8859-1/15, Windows-1252, MacRoman
+- **Central/Eastern European:** ISO-8859-2/3/4, Windows-1250/1251
+- **Asian:** Shift_JIS, EUC-JP, GB2312, GBK, GB18030, Big5, EUC-KR
+- **Other:** Cyrillic (KOI8-R/U), Arabic, Hebrew, Greek, Turkish, Thai
+
+**Included Collations (30+ total):**
+- MySQL: utf8mb4_general_ci, utf8mb4_unicode_ci, utf8mb4_0900_ai_ci
+- PostgreSQL: en_US.UTF-8, C, POSIX
+- SQL Server: Latin1_General_CI_AS, SQL_Latin1_General_CP1_CI_AS
+- Firebird: UTF8_UNICODE, UTF8_UNICODE_CI
+- Oracle: AL32UTF8, WE8MSWIN1252
 
 ---
 
@@ -634,27 +689,28 @@ struct Collation {
 };
 ```
 
-#### Parser for UCM Format (Unicode Character Mapping)
+#### Parser for JSON Character Set Definitions
 
 ```cpp
 class CharsetParser {
 public:
-    // Parse UCM file (Unicode Character Mapping)
-    Status parseUCMFile(const std::string& filepath,
-                       CharacterSet& charset,
-                       ErrorContext* ctx);
+    // Parse JSON character set file (resources/charsets/charsets.json)
+    Status parseJSONFile(const std::string& filepath,
+                        std::vector<CharacterSet>& charsets,
+                        ErrorContext* ctx);
 
-    // Parse charset directory
-    Status parseDirectory(const std::string& charset_dir,
-                         std::vector<CharacterSet>& charsets,
-                         ErrorContext* ctx);
+    // Parse collations JSON file (resources/collations/collations.json)
+    Status parseCollationsFile(const std::string& filepath,
+                              std::vector<Collation>& collations,
+                              ErrorContext* ctx);
 
     // Generate built-in character sets (UTF-8, ASCII, etc.)
+    // These don't require external files
     Status generateBuiltinCharsets(std::vector<CharacterSet>& charsets);
 
 private:
-    Status parseUCMHeader(FILE* fp, CharacterSet& charset);
-    Status parseUCMMappings(FILE* fp, CharacterSet& charset);
+    Status parseCharsetJSON(const nlohmann::json& j, CharacterSet& charset);
+    Status parseCollationJSON(const nlohmann::json& j, Collation& collation);
 };
 ```
 
@@ -841,16 +897,20 @@ Status CharsetLoader::loadBuiltinCharsets(ErrorContext* ctx) {
 ```cpp
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::cerr << "Usage: sb_charset_loader <database_path> [charset_dir]\n";
-        std::cerr << "       sb_charset_loader <database_path> --builtin\n";
+        std::cerr << "Usage: sb_charset_loader <database_path> [options]\n";
+        std::cerr << "Options:\n";
+        std::cerr << "  --builtin              Load built-in charsets only (UTF-8, ASCII, etc.)\n";
+        std::cerr << "  --all                  Load all charsets from resources/charsets/\n";
+        std::cerr << "  --json <file>          Load from specific JSON file\n";
         std::cerr << "\nExamples:\n";
         std::cerr << "  sb_charset_loader /data/mydb.sb --builtin\n";
-        std::cerr << "  sb_charset_loader /data/mydb.sb /usr/share/i18n/charmaps\n";
+        std::cerr << "  sb_charset_loader /data/mydb.sb --all\n";
+        std::cerr << "  sb_charset_loader /data/mydb.sb --json resources/charsets/charsets.json\n";
         return 1;
     }
 
     std::string db_path = argv[1];
-    bool builtin_only = (argc == 3 && std::string(argv[2]) == "--builtin");
+    std::string mode = (argc >= 3) ? argv[2] : "--builtin";
 
     // Open database
     ErrorContext ctx;
@@ -861,28 +921,34 @@ int main(int argc, char** argv) {
     }
 
     CharsetLoader loader(db->getCatalog(), db);
+    Status status;
 
-    if (builtin_only) {
-        std::cout << "Loading built-in character sets...\n";
-        Status status = loader.loadBuiltinCharsets(&ctx);
+    if (mode == "--builtin") {
+        std::cout << "Loading built-in character sets (UTF-8, ASCII, ISO-8859-1, UTF-16, UTF-32)...\n";
+        status = loader.loadBuiltinCharsets(&ctx);
+    } else if (mode == "--all") {
+        std::cout << "Loading all character sets from resources/charsets/charsets.json...\n";
+        status = loader.loadFromJSONFile("resources/charsets/charsets.json", &ctx);
+
         if (status == Status::OK) {
-            std::cout << "Built-in character sets loaded successfully!\n";
-            return 0;
-        } else {
-            std::cerr << "Failed: " << ctx.message << "\n";
-            return 1;
+            std::cout << "Loading collations from resources/collations/collations.json...\n";
+            status = loader.loadCollationsFromJSONFile("resources/collations/collations.json", &ctx);
         }
+    } else if (mode == "--json" && argc >= 4) {
+        std::string json_file = argv[3];
+        std::cout << "Loading character sets from " << json_file << "...\n";
+        status = loader.loadFromJSONFile(json_file, &ctx);
     } else {
-        std::string charset_dir = argv[2];
-        std::cout << "Loading character sets from " << charset_dir << "...\n";
-        Status status = loader.loadFromDirectory(charset_dir, &ctx);
-        if (status == Status::OK) {
-            std::cout << "Character sets loaded successfully!\n";
-            return 0;
-        } else {
-            std::cerr << "Failed: " << ctx.message << "\n";
-            return 1;
-        }
+        std::cerr << "Invalid option: " << mode << "\n";
+        return 1;
+    }
+
+    if (status == Status::OK) {
+        std::cout << "Character sets loaded successfully!\n";
+        return 0;
+    } else {
+        std::cerr << "Failed: " << ctx.message << "\n";
+        return 1;
     }
 }
 ```
@@ -969,28 +1035,44 @@ TEST(CharsetLoader, LoadCollations) {
 ### Loading Timezone Data
 
 ```bash
-# Load all timezones from system zoneinfo directory
+# Load timezones from project resources (default - RECOMMENDED)
+./sb_timezone_loader /data/mydb.sb
+
+# OR explicitly specify resources directory
+./sb_timezone_loader /data/mydb.sb resources/timezones
+
+# OR load from system zoneinfo directory (if available)
 ./sb_timezone_loader /data/mydb.sb /usr/share/zoneinfo
 
 # Verify in SQL
-SELECT tz_name, posix_string FROM pg_timezone ORDER BY tz_name;
+SELECT tz_name, posix_string FROM pg_timezone ORDER BY tz_name LIMIT 10;
 SELECT tz_name, COUNT(*) as transitions
 FROM pg_timezone_transitions
-GROUP BY tz_name;
+GROUP BY tz_name
+ORDER BY transitions DESC
+LIMIT 10;
 ```
 
 ### Loading Character Sets
 
 ```bash
-# Load built-in character sets only
+# Load built-in character sets only (UTF-8, ASCII, ISO-8859-1, UTF-16, UTF-32)
 ./sb_charset_loader /data/mydb.sb --builtin
 
-# Load additional character sets from directory
-./sb_charset_loader /data/mydb.sb /usr/share/i18n/charmaps
+# Load all character sets from project resources (RECOMMENDED)
+./sb_charset_loader /data/mydb.sb --all
+
+# Load from specific JSON file
+./sb_charset_loader /data/mydb.sb --json resources/charsets/charsets.json
 
 # Verify in SQL
-SELECT charset_name, description, max_bytes FROM pg_charsets;
-SELECT collation_name, charset_name, case_insensitive FROM pg_collations;
+SELECT charset_name, description, max_bytes, is_variable_width
+FROM pg_charsets
+ORDER BY charset_name;
+
+SELECT collation_name, charset_name, case_insensitive, accent_insensitive
+FROM pg_collations
+ORDER BY collation_name;
 ```
 
 ---
