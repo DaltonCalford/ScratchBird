@@ -221,6 +221,11 @@ namespace scratchbird
             const std::vector<Value> *current_row_values_ = nullptr;
             const std::vector<core::CatalogManager::ColumnInfo> *current_row_columns_ = nullptr;
 
+            // Grouping context for ROLLUP/CUBE/GROUPING SETS (Phase 3: Advanced Grouping)
+            size_t current_grouping_set_index_ = 0;
+            std::vector<size_t> current_grouping_set_column_pcs_;  // Expression PCs in current set
+            size_t total_grouping_columns_ = 0;                     // Total columns across all sets
+
             // Session state for CURRVAL (ALPHA Phase 1 - Sequences)
             std::unordered_map<core::ID, int64_t> session_sequence_currval_;
 
