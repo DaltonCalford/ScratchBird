@@ -228,7 +228,17 @@ namespace scratchbird::core
 
         // No longer check for active_xid_ - allow multiple active transactions
 
-        // WRAPAROUND PROTECTION: Check if approaching UINT64_MAX
+        // P1-2: Age-based wraparound protection (check OIT age first)
+        Status age_check = checkXIDWraparound(ctx);
+        if (age_check == Status::PAGE_CORRUPT)
+        {
+            // Hard block - age >= 2 billion
+            return Status::PAGE_CORRUPT;
+        }
+        // Note: PAGE_FULL from age check is a warning but not blocking
+        // We'll continue with transaction but have logged the critical state
+
+        // WRAPAROUND PROTECTION: Check if approaching UINT64_MAX (absolute limit)
         uint64_t current_next = next_xid_.load(std::memory_order_acquire);
         if (current_next > MAX_SAFE_XID)
         {
@@ -668,6 +678,90 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto TransactionManager::checkXIDWraparound(ErrorContext *ctx) -> Status
+    {
+        // P1-2: Age-based XID wraparound prevention (Firebird MGA style)
+        // Calculate transaction age: distance between next XID and oldest interesting transaction
+        // LOCKING: Caller must hold mutex_
+
+        uint64_t next_xid = next_xid_.load(std::memory_order_acquire);
+        uint64_t oit = oldest_xid_;
+
+        // Calculate age (wraparound-safe subtraction)
+        uint64_t age = next_xid - oit;
+
+        // WARNING threshold: 1 billion XIDs
+        // This is informational - database can continue
+        if (age > 1'000'000'000ULL && age <= 1'800'000'000ULL)
+        {
+            LOG_WARNING(VACUUM,
+                        "XID age is %lu (OIT=%lu, NEXT=%lu) - consider running VACUUM to advance OIT",
+                        age, oit, next_xid);
+            // Continue - not blocking
+        }
+
+        // CRITICAL threshold: 1.8 billion XIDs (90% of 2 billion)
+        // Force emergency sweep to advance OIT
+        else if (age > 1'800'000'000ULL && age < 2'000'000'000ULL)
+        {
+            LOG_ERROR(VACUUM,
+                      "XID age is %lu (OIT=%lu, NEXT=%lu) - XID wraparound imminent! Forcing "
+                      "emergency sweep...",
+                      age, oit, next_xid);
+
+            // Try to trigger emergency sweep
+            // Note: We don't block here, but we strongly recommend sweep
+            if (db_ && db_->sweep_manager())
+            {
+                // Check if sweep is already running
+                if (!db_->sweep_manager()->isSweepInProgress())
+                {
+                    LOG_INFO(VACUUM, "Triggering emergency background sweep to advance OIT");
+                    // Execute background sweep (doesn't reclaim space, just advances OIT)
+                    // This should be fast
+                    Status sweep_status = db_->sweep_manager()->executeSweep(false, ctx);
+                    if (sweep_status == Status::OK)
+                    {
+                        LOG_INFO(VACUUM, "Emergency sweep completed successfully");
+                    }
+                    else
+                    {
+                        LOG_ERROR(VACUUM,
+                                  "Emergency sweep failed with status %d - manual VACUUM required",
+                                  static_cast<int>(sweep_status));
+                    }
+                }
+                else
+                {
+                    LOG_INFO(VACUUM, "Sweep already in progress");
+                }
+            }
+
+            // Return PAGE_FULL to signal critical condition (but allow transaction to proceed)
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
+                              "XID wraparound critical - emergency sweep triggered, OIT must advance");
+            return Status::PAGE_FULL;
+        }
+
+        // PREVENT threshold: 2 billion XIDs
+        // Absolutely block new transactions until OIT advances
+        else if (age >= 2'000'000'000ULL)
+        {
+            LOG_ERROR(VACUUM,
+                      "XID age is %lu (OIT=%lu, NEXT=%lu) - DATABASE LOCKED! VACUUM must complete "
+                      "before new transactions allowed",
+                      age, oit, next_xid);
+
+            SET_ERROR_CONTEXT(
+                ctx, Status::PAGE_CORRUPT,
+                "XID wraparound blocked - age >= 2 billion. VACUUM must complete to advance OIT");
+            return Status::PAGE_CORRUPT;
+        }
+
+        // Safe - age is acceptable
+        return Status::OK;
+    }
+
     auto TransactionManager::updateTransactionMarkers(ErrorContext *ctx) -> Status
     {
         // CRITICAL FIX (CRITICAL-3): Lock ordering documentation
@@ -1049,27 +1143,25 @@ namespace scratchbird::core
                     auto *entries = reinterpret_cast<TIPEntry *>(
                         reinterpret_cast<uint8_t *>(page_buffer) + sizeof(TIPPageHeader));
 
-                    // Search for XID in this page
-                    for (uint32_t i = 0; i < tip_header->num_transactions; i++)
+                    // P1-7: Use binary search instead of linear search (O(log N) vs O(N))
+                    int32_t idx = binarySearchTIPEntries(entries, tip_header->num_transactions, xid);
+                    if (idx >= 0)
                     {
-                        if (entries[i].xid == xid)
-                        {
-                            // FAST PATH: Found entry on cached page - update it
-                            entries[i].state = static_cast<uint8_t>(state);
-                            entries[i].commit_time =
-                                (state != TransactionState::ACTIVE)
-                                    ? std::chrono::duration_cast<std::chrono::microseconds>(
-                                          std::chrono::system_clock::now().time_since_epoch())
-                                          .count()
-                                    : 0;
+                        // FAST PATH: Found entry on cached page - update it
+                        entries[idx].state = static_cast<uint8_t>(state);
+                        entries[idx].commit_time =
+                            (state != TransactionState::ACTIVE)
+                                ? std::chrono::duration_cast<std::chrono::microseconds>(
+                                      std::chrono::system_clock::now().time_since_epoch())
+                                      .count()
+                                : 0;
 
-                            // Update checksum
-                            tip_header->page_header.checksum = calculatePageChecksum(
-                                reinterpret_cast<uint8_t *>(page_buffer), db_->page_size());
+                        // Update checksum
+                        tip_header->page_header.checksum = calculatePageChecksum(
+                            reinterpret_cast<uint8_t *>(page_buffer), db_->page_size());
 
-                            buffer_pool_->unpinPage(start_page, true, ctx);
-                            return Status::OK;
-                        }
+                        buffer_pool_->unpinPage(start_page, true, ctx);
+                        return Status::OK;
                     }
                 }
 
@@ -1099,32 +1191,31 @@ namespace scratchbird::core
             auto *entries = reinterpret_cast<TIPEntry *>(reinterpret_cast<uint8_t *>(page_buffer) +
                                                          sizeof(TIPPageHeader));
 
-            for (uint32_t i = 0; i < tip_header->num_transactions; i++)
+            // P1-7: Use binary search instead of linear search (O(log N) vs O(N))
+            int32_t idx = binarySearchTIPEntries(entries, tip_header->num_transactions, xid);
+            if (idx >= 0)
             {
-                if (entries[i].xid == xid)
+                // Update existing entry
+                entries[idx].state = static_cast<uint8_t>(state);
+                entries[idx].commit_time =
+                    (state != TransactionState::ACTIVE)
+                        ? std::chrono::duration_cast<std::chrono::microseconds>(
+                              std::chrono::system_clock::now().time_since_epoch())
+                              .count()
+                        : 0;
+
+                // Update checksum
+                tip_header->page_header.checksum = calculatePageChecksum(
+                    reinterpret_cast<uint8_t *>(page_buffer), db_->page_size());
+
+                // Cache this page location for future updates (OPTIMIZATION)
+                if (tip_location_cache_.size() < MAX_TIP_LOCATION_CACHE_SIZE)
                 {
-                    // Update existing entry
-                    entries[i].state = static_cast<uint8_t>(state);
-                    entries[i].commit_time =
-                        (state != TransactionState::ACTIVE)
-                            ? std::chrono::duration_cast<std::chrono::microseconds>(
-                                  std::chrono::system_clock::now().time_since_epoch())
-                                  .count()
-                            : 0;
-
-                    // Update checksum
-                    tip_header->page_header.checksum = calculatePageChecksum(
-                        reinterpret_cast<uint8_t *>(page_buffer), db_->page_size());
-
-                    // Cache this page location for future updates (OPTIMIZATION)
-                    if (tip_location_cache_.size() < MAX_TIP_LOCATION_CACHE_SIZE)
-                    {
-                        tip_location_cache_[xid] = current_page;
-                    }
-
-                    buffer_pool_->unpinPage(current_page, true, ctx);
-                    return Status::OK;
+                    tip_location_cache_[xid] = current_page;
                 }
+
+                buffer_pool_->unpinPage(current_page, true, ctx);
+                return Status::OK;
             }
 
             last_page = current_page;
@@ -1453,6 +1544,47 @@ namespace scratchbird::core
         }
 
         transaction_cache_.erase(xid);
+    }
+
+    int32_t TransactionManager::binarySearchTIPEntries(const TIPEntry *entries, uint32_t count,
+                                                        uint64_t xid)
+    {
+        // P1-7: Binary search for XID in sorted TIP entries array
+        // Performance: O(log N) vs O(N) for linear search
+        // For 32K entries: ~15 comparisons vs ~16K average comparisons (1000x speedup)
+
+        if (count == 0)
+        {
+            return -1;
+        }
+
+        int32_t left = 0;
+        int32_t right = static_cast<int32_t>(count) - 1;
+
+        while (left <= right)
+        {
+            int32_t mid = left + (right - left) / 2;
+            uint64_t mid_xid = entries[mid].xid;
+
+            if (mid_xid == xid)
+            {
+                // Found it!
+                return mid;
+            }
+            else if (mid_xid < xid)
+            {
+                // Search upper half
+                left = mid + 1;
+            }
+            else
+            {
+                // Search lower half
+                right = mid - 1;
+            }
+        }
+
+        // Not found
+        return -1;
     }
 
 } // namespace scratchbird::core
