@@ -535,14 +535,18 @@ namespace scratchbird
                 ErrorContext *ctx = nullptr);
 
             // Parallel multi-key AND query
+            // P0-6: Fixed to accept current_xid for proper MGA visibility
             std::vector<uint64_t> findAllParallel(
                 const std::vector<std::vector<uint8_t>> &keys,
+                uint64_t current_xid,
                 uint32_t max_threads,
                 ErrorContext *ctx = nullptr);
 
             // Parallel multi-key OR query
+            // P0-6: Fixed to accept current_xid for proper MGA visibility
             std::vector<uint64_t> findAnyParallel(
                 const std::vector<std::vector<uint8_t>> &keys,
+                uint64_t current_xid,
                 uint32_t max_threads,
                 ErrorContext *ctx = nullptr);
 
