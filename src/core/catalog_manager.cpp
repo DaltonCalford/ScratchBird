@@ -3557,17 +3557,54 @@ namespace scratchbird::core
                                                   std::vector<CollationCatalogInfo> &collations,
                                                   ErrorContext *ctx) -> Status
     {
-        // TODO: Needs scanHeapPageWithFilter helper function
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                          "listCollationsForCharset not fully implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Filter for collations with matching charset_id
+        auto filter = [charset_id](const CollationRecord &rec)
+        {
+            return rec.charset_id == charset_id;
+        };
+
+        // Converter to CollationCatalogInfo
+        auto converter = [](const CollationRecord &rec, CollationCatalogInfo &info)
+        {
+            info.collation_id = rec.collation_id;
+            info.name = rec.name;
+            info.charset_id = rec.charset_id;
+            info.collation_type = rec.collation_type;
+            info.strength = rec.strength;
+            info.pad_space = rec.pad_space;
+            info.is_default = rec.is_default;
+            strncpy(info.locale, rec.locale, sizeof(info.locale) - 1);
+            info.locale[sizeof(info.locale) - 1] = '\0';
+            info.created_time = rec.created_time;
+            info.last_modified_time = rec.last_modified_time;
+        };
+
+        return scanHeapPageWithFilter<CollationRecord, CollationCatalogInfo>(
+            collation_defs_table_page_, collations, filter, converter, ctx);
     }
 
     auto CatalogManager::deleteCollation(uint32_t collation_id, ErrorContext *ctx) -> Status
     {
-        // TODO: Needs findRecordInHeapPage and updateRecordInHeapPage helper functions
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "deleteCollation not fully implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Find the collation record
+        auto predicate = [collation_id](const CollationRecord &rec)
+        { return rec.collation_id == collation_id && rec.is_valid; };
+        auto result = findRecordInHeapPage<CollationRecord>(collation_defs_table_page_, predicate, ctx);
+
+        if (result.status != Status::OK)
+        {
+            return result.status;
+        }
+
+        // Mark as deleted
+        CollationRecord record = result.record;
+        record.is_valid = 0;
+
+        // Update the record in place (Firebird MGA) using the slot index
+        return updateRecordInHeapPage<CollationRecord>(collation_defs_table_page_, result.slot_index, record, ctx);
     }
 
     // ============================================================================
