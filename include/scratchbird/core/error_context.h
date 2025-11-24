@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 #include "scratchbird/core/status.h"
+#include "scratchbird/core/sqlstate.h"
 
 namespace scratchbird::core
 {
@@ -12,6 +13,7 @@ namespace scratchbird::core
     struct ErrorContext
     {
         Status code{Status::OK};       // Error code
+        const char* sqlstate{SQLSTATE_SUCCESS}; // SQLSTATE (5-char SQL standard error code)
         std::string message;           // Human-readable description
         const char *file{nullptr};     // Source file
         int line{0};                   // Line number
@@ -40,10 +42,17 @@ namespace scratchbird::core
         void set(Status err_code, const char *msg, const char *f, int l, const char *func)
         {
             code = err_code;
+            sqlstate = statusToSQLState(err_code); // Automatically map Status to SQLSTATE
             message = (msg != nullptr) ? msg : "";
             file = f;
             line = l;
             function = func;
+        }
+
+        // Optional: Override SQLSTATE manually (for specific cases)
+        void setSQLState(const char* custom_sqlstate)
+        {
+            sqlstate = custom_sqlstate;
         }
     };
 
