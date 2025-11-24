@@ -25,6 +25,19 @@ namespace scratchbird::core
 
     using ID = UuidV7Bytes;
 
+    // P1-9: Hash function for std::pair (for constraint name lookup)
+    template<typename T1, typename T2>
+    struct PairHash
+    {
+        std::size_t operator()(const std::pair<T1, T2>& p) const
+        {
+            auto h1 = std::hash<T1>{}(p.first);
+            auto h2 = std::hash<T2>{}(p.second);
+            // Combine hashes using a standard method
+            return h1 ^ (h2 << 1);
+        }
+    };
+
     /**
      * CatalogConstants - Catalog layer storage limits
      *
@@ -554,6 +567,55 @@ namespace scratchbird::core
             bool initially_deferred = false;   // Defer by default in new transactions?
 
             uint64_t created_time = 0;
+        };
+
+        // P1-9: Constraint types for unified constraints table
+        enum class ConstraintType : uint8_t
+        {
+            PRIMARY_KEY = 0,  // PRIMARY KEY constraint
+            UNIQUE = 1,       // UNIQUE constraint
+            CHECK = 2,        // CHECK constraint
+            FOREIGN_KEY = 3,  // FOREIGN KEY constraint
+            NOT_NULL = 4,     // NOT NULL constraint (column-level)
+            EXCLUSION = 5     // EXCLUSION constraint (PostgreSQL extension)
+        };
+
+        // P1-9: Unified constraint information for sb_constraints table
+        struct ConstraintInfo
+        {
+            ID constraint_id;                  // Unique constraint ID
+            std::string constraint_name;       // Constraint name (may be system-generated)
+            ID table_id;                       // Table this constraint applies to
+            ConstraintType constraint_type;    // Type of constraint
+
+            // Column information (for PK, UNIQUE, NOT NULL, CHECK)
+            std::vector<std::string> column_names;  // Columns involved in constraint
+
+            // CHECK constraint specific
+            std::string check_expression;      // CHECK constraint SQL expression
+            uint32_t check_expr_oid = 0;      // TOAST reference for large expressions
+
+            // FOREIGN KEY specific
+            ID referenced_table_id;            // For FK: parent table
+            std::vector<std::string> referenced_columns;  // For FK: parent columns
+            FKAction on_delete = FKAction::NO_ACTION;
+            FKAction on_update = FKAction::NO_ACTION;
+            FKMatchType match_type = FKMatchType::SIMPLE;
+
+            // EXCLUSION constraint specific (PostgreSQL extension)
+            std::string exclusion_operator;    // Operator for exclusion (e.g., "&&", "=")
+            std::string index_method;          // Index method (GIST, etc.)
+
+            // Common fields
+            bool is_deferrable = false;        // Can constraint be deferred?
+            bool initially_deferred = false;   // Defer by default?
+            bool is_enabled = true;            // Can be disabled
+            bool is_validated = true;          // Has constraint been validated?
+            bool is_system_generated = false;  // System-generated name?
+
+            ID owner_id;                       // User who created constraint
+            uint64_t created_time = 0;
+            uint64_t validated_time = 0;       // When constraint was last validated
         };
 
         // Group types (Phase 2 - Security Tables)
@@ -1144,6 +1206,62 @@ namespace scratchbird::core
         // Enable/disable a foreign key
         auto setForeignKeyEnabled(const ID& fk_id, bool enabled,
                                  ErrorContext* ctx = nullptr) -> Status;
+
+        // ========================================================================
+        // P1-9: Constraint Operations (Unified Constraints Table)
+        // ========================================================================
+
+        // Create a constraint
+        auto createConstraint(const ConstraintInfo& constraint,
+                            ID& constraint_id_out,
+                            ErrorContext* ctx = nullptr) -> Status;
+
+        // Get a constraint by ID
+        auto getConstraint(const ID& constraint_id,
+                          ConstraintInfo& constraint_out,
+                          ErrorContext* ctx = nullptr) -> Status;
+
+        // Get a constraint by name and table
+        auto getConstraintByName(const ID& table_id,
+                                const std::string& constraint_name,
+                                ConstraintInfo& constraint_out,
+                                ErrorContext* ctx = nullptr) -> Status;
+
+        // Get all constraints for a table
+        auto getConstraintsForTable(const ID& table_id,
+                                   std::vector<ConstraintInfo>& constraints_out,
+                                   ErrorContext* ctx = nullptr) -> Status;
+
+        // Get constraints of a specific type for a table
+        auto getConstraintsByType(const ID& table_id,
+                                 ConstraintType type,
+                                 std::vector<ConstraintInfo>& constraints_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        // Update a constraint (enable/disable, defer settings, etc.)
+        auto updateConstraint(const ID& constraint_id,
+                            const ConstraintInfo& updated_constraint,
+                            ErrorContext* ctx = nullptr) -> Status;
+
+        // Drop a constraint
+        auto dropConstraint(const ID& constraint_id,
+                           ErrorContext* ctx = nullptr) -> Status;
+
+        // Enable/disable a constraint
+        auto setConstraintEnabled(const ID& constraint_id,
+                                 bool enabled,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        // Validate an existing constraint (check all rows)
+        auto validateConstraint(const ID& constraint_id,
+                               bool& is_valid_out,
+                               std::string& violation_message_out,
+                               ErrorContext* ctx = nullptr) -> Status;
+
+        // Get constraints that reference a table (for CASCADE delete checks)
+        auto getReferencingConstraints(const ID& table_id,
+                                      std::vector<ConstraintInfo>& constraints_out,
+                                      ErrorContext* ctx = nullptr) -> Status;
 
         // ========================================================================
         // Security Operations (Phase 1.3 - Users, Roles, Groups)
@@ -2010,6 +2128,13 @@ namespace scratchbird::core
         std::unordered_multimap<ID, ID> table_child_fks_;  // child_table_id -> fk_ids
         std::unordered_multimap<ID, ID> table_parent_fks_;  // parent_table_id -> fk_ids
         std::mutex foreign_keys_cache_mutex_;
+
+        // P1-9: Constraint cache (Unified Constraints Table)
+        std::unordered_map<ID, ConstraintInfo> constraints_cache_;  // constraint_id -> ConstraintInfo
+        std::unordered_multimap<ID, ID> table_constraints_;  // table_id -> constraint_ids
+        std::unordered_map<std::pair<ID, std::string>, ID, PairHash<ID, std::string>>
+            constraint_name_lookup_;  // (table_id, name) -> constraint_id
+        std::mutex constraints_cache_mutex_;
 
         // Internal helper methods (assume mutex_ is already held by caller)
         auto createSchemaInternal(const std::string &schema_name, const std::string &owner,
