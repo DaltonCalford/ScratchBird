@@ -1,6 +1,8 @@
 #include "scratchbird/core/auth_provider.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/password_hash.h"
+#include "scratchbird/core/login_attempt_tracker.h"  // P0-2: Account lockout
+#include "scratchbird/core/audit_logger.h"           // P0-3: Security audit logging
 #include "scratchbird/core/logger.h"
 
 namespace scratchbird {
@@ -11,14 +13,30 @@ namespace core {
 // ============================================================================
 
 LocalAuthProvider::LocalAuthProvider(CatalogManager* catalog)
-    : catalog_(catalog)
+    : catalog_(catalog),
+      login_tracker_(nullptr),
+      audit_logger_(nullptr)
 {
     if (catalog_ == nullptr) {
         throw std::invalid_argument("LocalAuthProvider: catalog cannot be null");
     }
+
+    // P0-2: Initialize login attempt tracker with default policy
+    LockoutPolicy policy;
+    login_tracker_ = new LoginAttemptTracker(policy);
+
+    // P0-3: Initialize audit logger
+    audit_logger_ = new AuditLogger(catalog_);
 }
 
-LocalAuthProvider::~LocalAuthProvider() = default;
+LocalAuthProvider::~LocalAuthProvider()
+{
+    // P0-2: Cleanup login tracker
+    delete login_tracker_;
+
+    // P0-3: Cleanup audit logger
+    delete audit_logger_;
+}
 
 AuthResult LocalAuthProvider::authenticate(
     const std::string& username,
@@ -26,6 +44,26 @@ AuthResult LocalAuthProvider::authenticate(
     AuthUserInfo& user_info_out,
     std::string& error_msg_out)
 {
+    // P0-2: Check if account is locked FIRST (before any DB lookups)
+    if (login_tracker_->isAccountLocked(username)) {
+        uint64_t remaining_ms = login_tracker_->getLockoutTimeRemaining(username);
+        uint32_t remaining_minutes = static_cast<uint32_t>((remaining_ms + 59999) / 60000);  // Round up
+
+        LOG_WARNING(GENERAL, "Login attempt for locked account: %s (locked for %u more minutes)",
+                   username.c_str(), remaining_minutes);
+
+        // P0-3: Audit log - account locked
+        if (audit_logger_) {
+            AuditEvent event = AuditLogger::createLoginFailureEvent(username, "account_locked");
+            ErrorContext audit_ctx;
+            audit_logger_->logEvent(event, &audit_ctx);
+        }
+
+        error_msg_out = "Account locked due to too many failed attempts. Try again in " +
+                       std::to_string(remaining_minutes) + " minute(s)";
+        return AuthResult::USER_LOCKED;
+    }
+
     // Look up user in catalog
     CatalogManager::UserInfo db_user;
     ErrorContext ctx;
@@ -61,11 +99,23 @@ AuthResult LocalAuthProvider::authenticate(
 
     // Check authentication result
     if (!user_exists || !password_valid) {
+        // P0-2: Record failed attempt BEFORE returning error
+        login_tracker_->recordFailedAttempt(username);
+
         // Log detailed error internally (for administrators)
         if (!user_exists) {
             LOG_WARNING(GENERAL, "Login attempt for non-existent user: %s", username.c_str());
         } else {
-            LOG_WARNING(GENERAL, "Invalid password for user: %s", username.c_str());
+            LOG_WARNING(GENERAL, "Invalid password for user: %s (failed attempts: %u)",
+                       username.c_str(), login_tracker_->getFailedAttemptCount(username));
+        }
+
+        // P0-3: Audit log - login failure
+        if (audit_logger_) {
+            std::string reason = user_exists ? "invalid_password" : "invalid_username";
+            AuditEvent event = AuditLogger::createLoginFailureEvent(username, reason);
+            ErrorContext audit_ctx;
+            audit_logger_->logEvent(event, &audit_ctx);
         }
 
         // SECURITY FIX (CRITICAL-1): Return GENERIC error message for both cases
@@ -76,6 +126,9 @@ AuthResult LocalAuthProvider::authenticate(
 
     // Check if user is active
     if (!db_user.is_active) {
+        // P0-2: Record failed attempt for disabled accounts too
+        login_tracker_->recordFailedAttempt(username);
+
         LOG_WARNING(GENERAL, "Login attempt for disabled user: %s", username.c_str());
         // Return generic error (don't reveal user status)
         error_msg_out = "Invalid username or password";
@@ -84,10 +137,23 @@ AuthResult LocalAuthProvider::authenticate(
 
     // Check if user has password hash set
     if (db_user.password_hash.empty()) {
+        // P0-2: Record failed attempt
+        login_tracker_->recordFailedAttempt(username);
+
         LOG_WARNING(GENERAL, "Login attempt for user with no password: %s", username.c_str());
         // Return generic error (don't reveal password status)
         error_msg_out = "Invalid username or password";
         return AuthResult::INVALID_CREDENTIALS;
+    }
+
+    // P0-2: Successful authentication - clear failed attempts
+    login_tracker_->recordSuccessfulLogin(username);
+
+    // P0-3: Audit log - login success
+    if (audit_logger_) {
+        AuditEvent event = AuditLogger::createLoginSuccessEvent(db_user.user_id, username);
+        ErrorContext audit_ctx;
+        audit_logger_->logEvent(event, &audit_ctx);
     }
 
     // Populate user info
@@ -159,6 +225,23 @@ bool LocalAuthProvider::getUserGroups(
     }
 
     return true;
+}
+
+// P0-2: Admin functions for login attempt management
+void LocalAuthProvider::clearLoginAttempts(const std::string& username)
+{
+    if (login_tracker_) {
+        login_tracker_->clearAttempts(username);
+        LOG_INFO(GENERAL, "Cleared login attempts for user: %s", username.c_str());
+    }
+}
+
+uint32_t LocalAuthProvider::getFailedAttemptCount(const std::string& username)
+{
+    if (login_tracker_) {
+        return login_tracker_->getFailedAttemptCount(username);
+    }
+    return 0;
 }
 
 // ============================================================================
