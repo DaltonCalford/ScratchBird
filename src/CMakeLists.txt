@@ -164,8 +164,19 @@ set_target_properties(scratchbird PROPERTIES
     CXX_EXTENSIONS NO
 )
 
+# Data loader tools
+add_executable(sb_charset_loader ${CMAKE_SOURCE_DIR}/tools/sb_charset_loader.cpp)
+
+target_link_libraries(sb_charset_loader PRIVATE scratchbird_core)
+
+set_target_properties(sb_charset_loader PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
 # Installation (for future use)
-install(TARGETS scratchbird scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer
+install(TARGETS scratchbird sb_charset_loader scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
