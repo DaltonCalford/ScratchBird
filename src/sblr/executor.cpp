@@ -6520,6 +6520,31 @@ namespace scratchbird
             size_t where_start_pc,
             size_t where_end_pc)
         {
+            // Phase 3 (Missing Functions): Check for advanced grouping BEFORE standard GROUP_BY
+            if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+            {
+                size_t saved_pc = pc_;
+                readByte(); // consume EXTENDED_OPCODE
+
+                if (pc_ < bytecode_size_)
+                {
+                    uint8_t ext_op = bytecode_[pc_];
+                    if (ext_op == static_cast<uint8_t>(Opcode::EXT_GROUP_ROLLUP) ||
+                        ext_op == static_cast<uint8_t>(Opcode::EXT_GROUP_CUBE) ||
+                        ext_op == static_cast<uint8_t>(Opcode::EXT_GROUP_GROUPING_SETS))
+                    {
+                        readByte(); // consume ext opcode
+                        // Advanced grouping detected - handle in separate function
+                        executeAdvancedGrouping(table_info, all_columns, select_items,
+                                               is_select_star, has_where, where_start_pc, where_end_pc);
+                        return;
+                    }
+                }
+
+                // Not advanced grouping - restore PC and continue
+                pc_ = saved_pc;
+            }
+
             // Phase 1 Task 1.6.3: Aggregation execution
             // Parse GROUP BY clause if present
             std::vector<size_t> group_by_expr_pcs;
@@ -7080,6 +7105,579 @@ namespace scratchbird
                  bytecode_[pc_] == static_cast<uint8_t>(Opcode::OFFSET)))
             {
                 // Move result set and apply limit/offset
+                executeLimit(std::move(current_result_set_));
+            }
+        }
+
+        void Executor::executeAdvancedGrouping(
+            const core::CatalogManager::TableInfo& table_info,
+            const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
+            const std::vector<std::pair<std::string, std::string>>& select_items,
+            bool is_select_star,
+            bool has_where,
+            size_t where_start_pc,
+            size_t where_end_pc)
+        {
+            // Phase 3 (Missing Functions): ROLLUP/CUBE/GROUPING SETS execution
+
+            // Step 2: Parse grouping set metadata
+            uint32_t num_grouping_sets = readInt32();
+            uint32_t total_grouping_columns = readInt32();
+
+            // Parse each grouping set's GROUP BY specification
+            struct GroupingSet
+            {
+                std::vector<size_t> column_expr_pcs;  // Bytecode positions for expressions
+                std::vector<size_t> column_indices;    // Column indices for GROUPING() function
+            };
+
+            std::vector<GroupingSet> grouping_sets;
+
+            for (uint32_t set_idx = 0; set_idx < num_grouping_sets; set_idx++)
+            {
+                // Read GROUP_BY opcode
+                if (readByte() != static_cast<uint8_t>(Opcode::GROUP_BY))
+                {
+                    error("Expected GROUP_BY in grouping set");
+                }
+
+                uint32_t num_cols = readInt32();
+                GroupingSet set;
+
+                // Parse each column expression
+                for (uint32_t col_idx = 0; col_idx < num_cols; col_idx++)
+                {
+                    size_t expr_start = pc_;
+                    set.column_expr_pcs.push_back(expr_start);
+
+                    // Skip expression (reuse logic from executeAggregate)
+                    int depth = 0;
+                    while (pc_ < bytecode_size_)
+                    {
+                        Opcode op = static_cast<Opcode>(readByte());
+
+                        if (op == Opcode::LITERAL_INT32)
+                        {
+                            pc_ += 4;
+                            depth++;
+                        }
+                        else if (op == Opcode::LITERAL_INT64)
+                        {
+                            pc_ += 8;
+                            depth++;
+                        }
+                        else if (op == Opcode::LITERAL_DOUBLE)
+                        {
+                            pc_ += 8;
+                            depth++;
+                        }
+                        else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
+                        {
+                            uint32_t len = readInt32();
+                            pc_ += len;
+                            depth++;
+                        }
+                        else if (op == Opcode::LITERAL_NULL)
+                        {
+                            depth++;
+                        }
+                        else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
+                        {
+                            depth--;
+                        }
+
+                        if (depth == 1)
+                            break; // Found complete expression
+                    }
+
+                    // Track column index for GROUPING() function
+                    set.column_indices.push_back(col_idx);
+                }
+
+                grouping_sets.push_back(set);
+            }
+
+            // Parse aggregate definitions (same as standard aggregation)
+            if (readByte() != static_cast<uint8_t>(Opcode::AGG_INIT))
+            {
+                error("Expected AGG_INIT for advanced grouping");
+            }
+
+            uint32_t agg_count = readInt32();
+
+            struct AggDef
+            {
+                AggregateAccumulator::AggFunc func;
+                bool distinct;
+                size_t expr_start_pc;
+                size_t expr_end_pc;
+            };
+            std::vector<AggDef> agg_defs;
+
+            for (uint32_t i = 0; i < agg_count; i++)
+            {
+                Opcode agg_op = static_cast<Opcode>(readByte());
+                AggregateAccumulator::AggFunc func;
+
+                switch (agg_op)
+                {
+                    case Opcode::AGG_COUNT: func = AggregateAccumulator::AggFunc::COUNT; break;
+                    case Opcode::AGG_SUM: func = AggregateAccumulator::AggFunc::SUM; break;
+                    case Opcode::AGG_AVG: func = AggregateAccumulator::AggFunc::AVG; break;
+                    case Opcode::AGG_MIN: func = AggregateAccumulator::AggFunc::MIN; break;
+                    case Opcode::AGG_MAX: func = AggregateAccumulator::AggFunc::MAX; break;
+                    case Opcode::ARRAY_AGG: func = AggregateAccumulator::AggFunc::ARRAY_AGG; break;
+                    case Opcode::AGG_STDDEV_SAMP: func = AggregateAccumulator::AggFunc::STDDEV_SAMP; break;
+                    case Opcode::AGG_STDDEV_POP: func = AggregateAccumulator::AggFunc::STDDEV_POP; break;
+                    case Opcode::AGG_VAR_SAMP: func = AggregateAccumulator::AggFunc::VAR_SAMP; break;
+                    case Opcode::AGG_VAR_POP: func = AggregateAccumulator::AggFunc::VAR_POP; break;
+                    case Opcode::AGG_CORR: func = AggregateAccumulator::AggFunc::CORR; break;
+                    case Opcode::AGG_COVAR_POP: func = AggregateAccumulator::AggFunc::COVAR_POP; break;
+                    case Opcode::AGG_REGR_SLOPE: func = AggregateAccumulator::AggFunc::REGR_SLOPE; break;
+                    case Opcode::AGG_REGR_INTERCEPT: func = AggregateAccumulator::AggFunc::REGR_INTERCEPT; break;
+                    case Opcode::AGG_REGR_COUNT: func = AggregateAccumulator::AggFunc::REGR_COUNT; break;
+                    case Opcode::AGG_REGR_R2: func = AggregateAccumulator::AggFunc::REGR_R2; break;
+                    case Opcode::AGG_REGR_AVGX: func = AggregateAccumulator::AggFunc::REGR_AVGX; break;
+                    case Opcode::AGG_REGR_AVGY: func = AggregateAccumulator::AggFunc::REGR_AVGY; break;
+                    case Opcode::AGG_REGR_SXX: func = AggregateAccumulator::AggFunc::REGR_SXX; break;
+                    case Opcode::AGG_REGR_SYY: func = AggregateAccumulator::AggFunc::REGR_SYY; break;
+                    case Opcode::AGG_REGR_SXY: func = AggregateAccumulator::AggFunc::REGR_SXY; break;
+                    default:
+                        error("Unknown aggregate function opcode in advanced grouping");
+                }
+
+                // Read DISTINCT flag
+                uint8_t distinct_flag = readByte();
+                bool distinct = (distinct_flag != 0);
+
+                // Save expression bytecode position
+                size_t expr_start = pc_;
+
+                // Skip over aggregate expression
+                int depth = 0;
+                while (pc_ < bytecode_size_)
+                {
+                    Opcode op = static_cast<Opcode>(readByte());
+
+                    if (op == Opcode::LITERAL_INT32)
+                    {
+                        pc_ += 4;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_INT64)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_DOUBLE)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
+                    {
+                        uint32_t len = readInt32();
+                        pc_ += len;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_NULL || op == Opcode::SELECT_STAR)
+                    {
+                        depth++;
+                    }
+                    else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
+                    {
+                        depth--;
+                    }
+
+                    if (depth == 1)
+                        break;
+                }
+
+                size_t expr_end = pc_;
+                agg_defs.push_back({func, distinct, expr_start, expr_end});
+            }
+
+            // Check for HAVING clause
+            bool has_having = false;
+            size_t having_start_pc = 0;
+            size_t having_end_pc = 0;
+
+            if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::HAVING))
+            {
+                has_having = true;
+                readByte(); // Consume HAVING opcode
+                having_start_pc = pc_;
+
+                // Skip HAVING expression
+                int depth = 1;
+                while (pc_ < bytecode_size_ && depth > 0)
+                {
+                    Opcode op = static_cast<Opcode>(readByte());
+
+                    if (op == Opcode::LITERAL_INT32)
+                    {
+                        pc_ += 4;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_INT64)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_DOUBLE)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
+                    {
+                        uint32_t len = readInt32();
+                        pc_ += len;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_NULL)
+                    {
+                        depth++;
+                    }
+                    else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
+                    {
+                        depth--;
+                    }
+                }
+                having_end_pc = pc_;
+            }
+
+            // Consume AGG_FINALIZE opcode
+            if (readByte() != static_cast<uint8_t>(Opcode::AGG_FINALIZE))
+            {
+                error("Expected AGG_FINALIZE in advanced grouping");
+            }
+
+            // Step 3: Execute aggregation for each grouping set
+            // Create combined result set
+            current_result_set_ = std::make_unique<ResultSet>();
+
+            // Add grouping columns (all total_grouping_columns)
+            for (uint32_t i = 0; i < total_grouping_columns; i++)
+            {
+                std::string col_name = "group_" + std::to_string(i);
+                current_result_set_->addColumn(col_name, core::DataType::VARCHAR);
+            }
+
+            // Add aggregate columns
+            for (size_t i = 0; i < agg_defs.size(); i++)
+            {
+                std::string agg_name;
+                core::DataType agg_type = core::DataType::FLOAT64;
+
+                switch (agg_defs[i].func)
+                {
+                    case AggregateAccumulator::AggFunc::COUNT: agg_name = "COUNT"; break;
+                    case AggregateAccumulator::AggFunc::SUM: agg_name = "SUM"; break;
+                    case AggregateAccumulator::AggFunc::AVG: agg_name = "AVG"; break;
+                    case AggregateAccumulator::AggFunc::MIN: agg_name = "MIN"; break;
+                    case AggregateAccumulator::AggFunc::MAX: agg_name = "MAX"; break;
+                    case AggregateAccumulator::AggFunc::ARRAY_AGG:
+                        agg_name = "ARRAY_AGG";
+                        agg_type = core::DataType::JSON;
+                        break;
+                    case AggregateAccumulator::AggFunc::STDDEV_SAMP: agg_name = "STDDEV_SAMP"; break;
+                    case AggregateAccumulator::AggFunc::STDDEV_POP: agg_name = "STDDEV_POP"; break;
+                    case AggregateAccumulator::AggFunc::VAR_SAMP: agg_name = "VAR_SAMP"; break;
+                    case AggregateAccumulator::AggFunc::VAR_POP: agg_name = "VAR_POP"; break;
+                    case AggregateAccumulator::AggFunc::CORR: agg_name = "CORR"; break;
+                    case AggregateAccumulator::AggFunc::COVAR_POP: agg_name = "COVAR_POP"; break;
+                    case AggregateAccumulator::AggFunc::REGR_SLOPE: agg_name = "REGR_SLOPE"; break;
+                    case AggregateAccumulator::AggFunc::REGR_INTERCEPT: agg_name = "REGR_INTERCEPT"; break;
+                    case AggregateAccumulator::AggFunc::REGR_COUNT: agg_name = "REGR_COUNT"; break;
+                    case AggregateAccumulator::AggFunc::REGR_R2: agg_name = "REGR_R2"; break;
+                    case AggregateAccumulator::AggFunc::REGR_AVGX: agg_name = "REGR_AVGX"; break;
+                    case AggregateAccumulator::AggFunc::REGR_AVGY: agg_name = "REGR_AVGY"; break;
+                    case AggregateAccumulator::AggFunc::REGR_SXX: agg_name = "REGR_SXX"; break;
+                    case AggregateAccumulator::AggFunc::REGR_SYY: agg_name = "REGR_SYY"; break;
+                    case AggregateAccumulator::AggFunc::REGR_SXY: agg_name = "REGR_SXY"; break;
+                }
+
+                current_result_set_->addColumn(agg_name, agg_type);
+            }
+
+            // Execute aggregation for each grouping set
+            for (size_t set_idx = 0; set_idx < grouping_sets.size(); set_idx++)
+            {
+                const auto& set = grouping_sets[set_idx];
+
+                // Build GROUP BY key using only columns in this set
+                GroupMap group_map;
+
+                // Scan table and accumulate aggregates
+                auto scan_iter = db_->storage_engine()->createScan(table_info.table_id, nullptr);
+                if (!scan_iter)
+                {
+                    error("Failed to create table scan iterator for advanced grouping");
+                }
+
+                core::Tuple tuple;
+                while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                {
+                    // Deserialize tuple
+                    std::vector<Value> row_values;
+                    if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
+                    {
+                        continue;
+                    }
+
+                    // Evaluate WHERE clause if present
+                    if (has_where)
+                    {
+                        size_t saved_pc = pc_;
+                        pc_ = where_start_pc;
+                        current_row_values_ = &row_values;
+                        current_row_columns_ = &all_columns;
+
+                        try
+                        {
+                            evaluateExpression();
+                            Value where_result = pop();
+                            current_row_values_ = nullptr;
+                            current_row_columns_ = nullptr;
+                            pc_ = saved_pc;
+
+                            if (!where_result.toBoolean())
+                            {
+                                continue; // Skip this row
+                            }
+                        }
+                        catch (...)
+                        {
+                            current_row_values_ = nullptr;
+                            current_row_columns_ = nullptr;
+                            pc_ = saved_pc;
+                            throw;
+                        }
+                    }
+
+                    // Build group key using ONLY columns in this set
+                    GroupKey key;
+                    for (size_t expr_pc : set.column_expr_pcs)
+                    {
+                        // Evaluate grouping expression
+                        size_t saved_pc = pc_;
+                        pc_ = expr_pc;
+                        current_row_values_ = &row_values;
+                        current_row_columns_ = &all_columns;
+
+                        try
+                        {
+                            evaluateExpression();
+                            Value key_value = pop();
+                            current_row_values_ = nullptr;
+                            current_row_columns_ = nullptr;
+                            pc_ = saved_pc;
+
+                            key.values.push_back(key_value);
+                        }
+                        catch (...)
+                        {
+                            current_row_values_ = nullptr;
+                            current_row_columns_ = nullptr;
+                            pc_ = saved_pc;
+                            throw;
+                        }
+                    }
+
+                    // Get or create aggregate state for this group
+                    auto& group_state = group_map[key];
+
+                    // Initialize accumulators if this is first row in group
+                    if (group_state.empty())
+                    {
+                        for (const auto& agg_def : agg_defs)
+                        {
+                            group_state.emplace_back(agg_def.func, agg_def.distinct);
+                        }
+                    }
+
+                    // Accumulate values for each aggregate
+                    for (size_t i = 0; i < agg_defs.size(); i++)
+                    {
+                        const auto& agg_def = agg_defs[i];
+
+                        // Check if this is a 2-argument function
+                        bool is_two_arg = (agg_def.func == AggregateAccumulator::AggFunc::CORR ||
+                                           agg_def.func == AggregateAccumulator::AggFunc::COVAR_POP);
+
+                        // Evaluate aggregate expression(s)
+                        size_t saved_pc = pc_;
+                        pc_ = agg_def.expr_start_pc;
+                        current_row_values_ = &row_values;
+                        current_row_columns_ = &all_columns;
+
+                        try
+                        {
+                            if (is_two_arg)
+                            {
+                                evaluateExpression(); // First arg (y)
+                                Value val1 = pop();
+                                evaluateExpression(); // Second arg (x)
+                                Value val2 = pop();
+                                current_row_values_ = nullptr;
+                                current_row_columns_ = nullptr;
+                                pc_ = saved_pc;
+
+                                group_state[i].accumulate2(val1, val2);
+                            }
+                            else
+                            {
+                                evaluateExpression();
+                                Value agg_val = pop();
+                                current_row_values_ = nullptr;
+                                current_row_columns_ = nullptr;
+                                pc_ = saved_pc;
+
+                                group_state[i].accumulate(agg_val);
+                            }
+                        }
+                        catch (...)
+                        {
+                            current_row_values_ = nullptr;
+                            current_row_columns_ = nullptr;
+                            pc_ = saved_pc;
+                            throw;
+                        }
+                    }
+                }
+
+                // Finalize and add rows to result set
+                for (auto& [group_key, group_state] : group_map)
+                {
+                    std::vector<Value> result_row;
+
+                    // Add grouping column values
+                    // Columns in set: use actual values
+                    // Columns NOT in set: use NULL (they're aggregated)
+                    for (uint32_t col_idx = 0; col_idx < total_grouping_columns; col_idx++)
+                    {
+                        bool col_in_set = (col_idx < set.column_expr_pcs.size());
+
+                        if (col_in_set)
+                        {
+                            result_row.push_back(group_key.values[col_idx]);
+                        }
+                        else
+                        {
+                            // This column is aggregated in this set - emit NULL
+                            result_row.push_back(core::TypedValue::makeNull());
+                        }
+                    }
+
+                    // Add aggregate values
+                    for (size_t agg_idx = 0; agg_idx < agg_defs.size(); agg_idx++)
+                    {
+                        result_row.push_back(group_state[agg_idx].finalize());
+                    }
+
+                    // Evaluate HAVING clause if present
+                    if (has_having)
+                    {
+                        // Create result columns for HAVING evaluation
+                        std::vector<core::CatalogManager::ColumnInfo> result_columns;
+
+                        // Add grouping columns
+                        for (uint32_t i = 0; i < total_grouping_columns; i++)
+                        {
+                            core::CatalogManager::ColumnInfo col_info;
+                            col_info.column_name = "group_" + std::to_string(i);
+                            col_info.data_type = static_cast<uint16_t>(core::DataType::VARCHAR);
+                            result_columns.push_back(col_info);
+                        }
+
+                        // Add aggregate columns
+                        for (size_t i = 0; i < agg_defs.size(); i++)
+                        {
+                            core::CatalogManager::ColumnInfo col_info;
+                            col_info.data_type = static_cast<uint16_t>(core::DataType::FLOAT64);
+
+                            switch (agg_defs[i].func)
+                            {
+                                case AggregateAccumulator::AggFunc::COUNT: col_info.column_name = "COUNT"; break;
+                                case AggregateAccumulator::AggFunc::SUM: col_info.column_name = "SUM"; break;
+                                case AggregateAccumulator::AggFunc::AVG: col_info.column_name = "AVG"; break;
+                                case AggregateAccumulator::AggFunc::MIN: col_info.column_name = "MIN"; break;
+                                case AggregateAccumulator::AggFunc::MAX: col_info.column_name = "MAX"; break;
+                                case AggregateAccumulator::AggFunc::ARRAY_AGG:
+                                    col_info.column_name = "ARRAY_AGG";
+                                    col_info.data_type = static_cast<uint16_t>(core::DataType::JSON);
+                                    break;
+                                case AggregateAccumulator::AggFunc::STDDEV_SAMP: col_info.column_name = "STDDEV_SAMP"; break;
+                                case AggregateAccumulator::AggFunc::STDDEV_POP: col_info.column_name = "STDDEV_POP"; break;
+                                case AggregateAccumulator::AggFunc::VAR_SAMP: col_info.column_name = "VAR_SAMP"; break;
+                                case AggregateAccumulator::AggFunc::VAR_POP: col_info.column_name = "VAR_POP"; break;
+                                case AggregateAccumulator::AggFunc::CORR: col_info.column_name = "CORR"; break;
+                                case AggregateAccumulator::AggFunc::COVAR_POP: col_info.column_name = "COVAR_POP"; break;
+                                case AggregateAccumulator::AggFunc::REGR_SLOPE: col_info.column_name = "REGR_SLOPE"; break;
+                                case AggregateAccumulator::AggFunc::REGR_INTERCEPT: col_info.column_name = "REGR_INTERCEPT"; break;
+                                case AggregateAccumulator::AggFunc::REGR_COUNT: col_info.column_name = "REGR_COUNT"; break;
+                                case AggregateAccumulator::AggFunc::REGR_R2: col_info.column_name = "REGR_R2"; break;
+                                case AggregateAccumulator::AggFunc::REGR_AVGX: col_info.column_name = "REGR_AVGX"; break;
+                                case AggregateAccumulator::AggFunc::REGR_AVGY: col_info.column_name = "REGR_AVGY"; break;
+                                case AggregateAccumulator::AggFunc::REGR_SXX: col_info.column_name = "REGR_SXX"; break;
+                                case AggregateAccumulator::AggFunc::REGR_SYY: col_info.column_name = "REGR_SYY"; break;
+                                case AggregateAccumulator::AggFunc::REGR_SXY: col_info.column_name = "REGR_SXY"; break;
+                            }
+                            result_columns.push_back(col_info);
+                        }
+
+                        // Evaluate HAVING expression
+                        size_t saved_pc = pc_;
+                        pc_ = having_start_pc;
+                        current_row_values_ = &result_row;
+                        current_row_columns_ = &result_columns;
+
+                        try
+                        {
+                            evaluateExpression();
+                            Value having_result = pop();
+                            current_row_values_ = nullptr;
+                            current_row_columns_ = nullptr;
+                            pc_ = saved_pc;
+
+                            if (!having_result.toBoolean())
+                            {
+                                continue; // Skip this group
+                            }
+                        }
+                        catch (...)
+                        {
+                            current_row_values_ = nullptr;
+                            current_row_columns_ = nullptr;
+                            pc_ = saved_pc;
+                            throw;
+                        }
+                    }
+
+                    current_result_set_->addRow(std::move(result_row));
+                }
+            }
+
+            // Check for WINDOW functions after aggregation
+            if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::WINDOW))
+            {
+                executeWindow(std::move(current_result_set_));
+                return;
+            }
+
+            // Check for ORDER BY after aggregation
+            if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::ORDER_BY))
+            {
+                executeSort(std::move(current_result_set_));
+                return;
+            }
+
+            // Check for LIMIT/OFFSET (if no ORDER BY)
+            if (pc_ < bytecode_size_ &&
+                (bytecode_[pc_] == static_cast<uint8_t>(Opcode::LIMIT) ||
+                 bytecode_[pc_] == static_cast<uint8_t>(Opcode::OFFSET)))
+            {
                 executeLimit(std::move(current_result_set_));
             }
         }
@@ -15560,6 +16158,28 @@ namespace scratchbird
                     else if (ext_op == static_cast<uint8_t>(Opcode::EXT_COLUMNSTORE_SCAN))
                     {
                         executeColumnstoreScan();
+                    }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_GROUPING_FUNC))
+                    {
+                        // Phase 3 (Missing Functions): GROUPING() function execution
+                        // GROUPING(column_expr) returns 1 if column is aggregated (NULL), 0 if grouped
+
+                        // NOTE: This is a simplified implementation that returns 0 (not aggregated)
+                        // for all cases. A complete implementation would require:
+                        // 1. Tracking current grouping set context during execution
+                        // 2. Maintaining a mapping of column references to grouping set positions
+                        // 3. Checking if the column is in the current set
+                        //
+                        // For now, this allows ROLLUP/CUBE/GROUPING SETS to execute without errors.
+                        // The GROUPING() function will be enhanced in a future update with proper
+                        // context tracking.
+
+                        // The argument (column reference) was already evaluated and is on the stack
+                        Value column_ref = pop();
+
+                        // Simplified: Always return 0 (column is grouped, not aggregated)
+                        // TODO: Implement proper grouping set context tracking
+                        push(core::TypedValue::makeInt32(0));
                     }
                     else
                     {
