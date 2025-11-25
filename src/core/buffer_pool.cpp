@@ -70,7 +70,13 @@ namespace scratchbird::core
 
         // Clear data structures
         lru_list_.clear();
-        page_table_.clear();
+
+        // P2-1: Clear all page table partitions
+        for (size_t i = 0; i < NUM_PAGE_TABLE_PARTITIONS; ++i)
+        {
+            std::lock_guard<std::mutex> partition_lock(page_table_partitions_[i].mutex);
+            page_table_partitions_[i].table.clear();
+        }
 
         return status;
     }
@@ -83,58 +89,84 @@ namespace scratchbird::core
     }
 
     // PHASE 1, TASK 1.2.3: NEW GPID-based implementation
+    // P2-1: Updated to use partitioned page table locks
     auto BufferPool::pinPageGlobal(GPID gpid, void **buffer, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-
         if (buffer == nullptr)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null buffer pointer");
             return Status::INVALID_ARGUMENT;
         }
 
-        // Check if page is already in buffer pool
-        auto it = page_table_.find(gpid);
-        if (it != page_table_.end())
+        // P2-1: Get partition for this GPID
+        size_t partition_idx = getPartitionIndex(gpid);
+        auto& partition = page_table_partitions_[partition_idx];
+
+        // First, try to find page with just the partition lock (fast path for cache hit)
         {
-            // Cache hit
-            uint32_t frame_index = it->second;
+            std::lock_guard<std::mutex> partition_lock(partition.mutex);
 
-            // CRITICAL FIX (Issue 1.13): Check for pin count overflow BEFORE incrementing
-            // If pin_count reaches UINT32_MAX and wraps to 0, the page could be evicted while in use
-            // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
-            if (frames_[frame_index].pin_count.load(std::memory_order_relaxed) == UINT32_MAX)
+            auto it = partition.table.find(gpid);
+            if (it != partition.table.end())
             {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                  "Pin count overflow - page pinned too many times");
-                return Status::INVALID_ARGUMENT;
+                // Cache hit
+                uint32_t frame_index = it->second;
+
+                // CRITICAL FIX (Issue 1.13): Check for pin count overflow BEFORE incrementing
+                if (frames_[frame_index].pin_count.load(std::memory_order_relaxed) == UINT32_MAX)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Pin count overflow - page pinned too many times");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                // CRITICAL FIX (CRITICAL-1): Use atomic fetch_add for thread-safe increment
+                frames_[frame_index].pin_count.fetch_add(1, std::memory_order_relaxed);
+
+                // Clock Sweep: Increment usage count (capped at MAX_USAGE_COUNT)
+                uint32_t current_usage = frames_[frame_index].usage_count.load(std::memory_order_relaxed);
+                if (current_usage < Frame::MAX_USAGE_COUNT)
+                {
+                    frames_[frame_index].usage_count.fetch_add(1, std::memory_order_relaxed);
+                }
+
+                *buffer = frames_[frame_index].data.get();
+
+                // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+                stats_.hits.fetch_add(1, std::memory_order_relaxed);
+                return Status::OK;
             }
-
-            // CRITICAL FIX (CRITICAL-1): Use atomic fetch_add for thread-safe increment
-            frames_[frame_index].pin_count.fetch_add(1, std::memory_order_relaxed);
-
-            // Clock Sweep: Increment usage count (capped at MAX_USAGE_COUNT)
-            // This gives frequently accessed pages a longer stay in the buffer pool
-            // CRITICAL FIX (CRITICAL-1): Use atomic operations for thread-safe read-modify-write
-            uint32_t current_usage = frames_[frame_index].usage_count.load(std::memory_order_relaxed);
-            if (current_usage < Frame::MAX_USAGE_COUNT)
-            {
-                frames_[frame_index].usage_count.fetch_add(1, std::memory_order_relaxed);
-            }
-
-            *buffer = frames_[frame_index].data.get();
-
-            // Update LRU (still maintained for fallback)
-            updateLru(frame_index);
-
-            // MEDIUM-1 FIX: Use relaxed atomic increment for stats (consistency with other operations)
-            stats_.hits.fetch_add(1, std::memory_order_relaxed);
-            return Status::OK;
         }
+        // Partition lock released here
 
-        // Cache miss - need to load page
+        // Cache miss - need global lock for frame allocation/eviction
+        std::lock_guard<std::mutex> global_lock(mutex_);
+
         // MEDIUM-1 FIX: Use relaxed atomic increment for stats
         stats_.misses.fetch_add(1, std::memory_order_relaxed);
+
+        // Re-check partition in case another thread loaded the page while we waited
+        {
+            std::lock_guard<std::mutex> partition_lock(partition.mutex);
+            auto it = partition.table.find(gpid);
+            if (it != partition.table.end())
+            {
+                // Another thread loaded it - handle as cache hit
+                uint32_t frame_index = it->second;
+                frames_[frame_index].pin_count.fetch_add(1, std::memory_order_relaxed);
+
+                uint32_t current_usage = frames_[frame_index].usage_count.load(std::memory_order_relaxed);
+                if (current_usage < Frame::MAX_USAGE_COUNT)
+                {
+                    frames_[frame_index].usage_count.fetch_add(1, std::memory_order_relaxed);
+                }
+
+                *buffer = frames_[frame_index].data.get();
+                updateLru(frame_index);
+                stats_.hits.fetch_add(1, std::memory_order_relaxed);
+                return Status::OK;
+            }
+        }
 
         // Find a frame to use
         uint32_t frame_index;
@@ -168,30 +200,19 @@ namespace scratchbird::core
             return status;
         }
 
+        // P2-1: Insert into partitioned page table
         // HIGH-1 FIX: Update page_table BEFORE frame metadata to ensure atomicity
-        // This prevents the race where frame is updated but page_table is not,
-        // which could cause evictPage() to fail to find the page in page_table
-        // while the frame thinks it contains the page.
-        //
-        // Order of operations (CRITICAL for correctness):
-        // 1. page_table_[gpid] = frame_index  (establish mapping first)
-        // 2. frames_[frame_index].gpid = gpid  (then update frame)
-        //
-        // This way, if anything fails after step 1, the page_table entry exists
-        // and evictPage() can clean it up properly. If we did it the other way,
-        // we'd have an orphaned frame that thinks it contains a page but isn't
-        // in the page_table, causing corruption.
-        page_table_[gpid] = frame_index;
+        {
+            std::lock_guard<std::mutex> partition_lock(partition.mutex);
+            partition.table[gpid] = frame_index;
+        }
 
         // Update frame metadata (page_table already knows about this mapping)
         frames_[frame_index].gpid = gpid;
-        // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
         frames_[frame_index].pin_count.store(1, std::memory_order_relaxed);
         frames_[frame_index].is_dirty = false;
 
         // Clock Sweep: Initialize usage count for newly loaded page
-        // Start with usage_count = 1 to give new pages a chance to stay
-        // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
         frames_[frame_index].usage_count.store(1, std::memory_order_relaxed);
 
         // Update LRU (still maintained for fallback)
@@ -209,13 +230,18 @@ namespace scratchbird::core
     }
 
     // PHASE 1, TASK 1.2.3: NEW GPID-based implementation
+    // P2-1: Updated to use partitioned page table locks
     auto BufferPool::unpinPageGlobal(GPID gpid, bool is_dirty, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // P2-1: Only need partition lock for unpin (no global lock needed)
+        size_t partition_idx = getPartitionIndex(gpid);
+        auto& partition = page_table_partitions_[partition_idx];
+
+        std::lock_guard<std::mutex> partition_lock(partition.mutex);
 
         // Find the page in buffer pool
-        auto it = page_table_.find(gpid);
-        if (it == page_table_.end())
+        auto it = partition.table.find(gpid);
+        if (it == partition.table.end())
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Page not in buffer pool");
             return Status::INVALID_ARGUMENT;
@@ -232,9 +258,11 @@ namespace scratchbird::core
         }
 
         // Update dirty flag
-        if (is_dirty)
+        // P2-2: Update atomic dirty page counter when transitioning to dirty
+        if (is_dirty && !frames_[frame_index].is_dirty)
         {
             frames_[frame_index].is_dirty = true;
+            dirty_page_count_.fetch_add(1, std::memory_order_relaxed);
         }
 
         // Decrement pin count
@@ -252,13 +280,18 @@ namespace scratchbird::core
     }
 
     // PHASE 1, TASK 1.2.3: NEW GPID-based implementation
+    // P2-1: Updated to use partitioned page table locks
     auto BufferPool::flushPageGlobal(GPID gpid, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // P2-1: Only need partition lock for flush (no global lock needed)
+        size_t partition_idx = getPartitionIndex(gpid);
+        auto& partition = page_table_partitions_[partition_idx];
+
+        std::lock_guard<std::mutex> partition_lock(partition.mutex);
 
         // Find the page in buffer pool
-        auto it = page_table_.find(gpid);
-        if (it == page_table_.end())
+        auto it = partition.table.find(gpid);
+        if (it == partition.table.end())
         {
             // Page not in buffer pool, nothing to flush
             return Status::OK;
@@ -277,7 +310,9 @@ namespace scratchbird::core
         Status status = writePageToDisk(gpid, frames_[frame_index].data.get(), ctx);
         if (status == Status::OK)
         {
+            // P2-2: Decrement dirty counter when transitioning from dirty to clean
             frames_[frame_index].is_dirty = false;
+            dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
             // MEDIUM-1 FIX: Use relaxed atomic increment for stats
             stats_.flushes.fetch_add(1, std::memory_order_relaxed);
         }
@@ -299,7 +334,9 @@ namespace scratchbird::core
                 {
                     return status;
                 }
+                // P2-2: Decrement dirty counter when transitioning from dirty to clean
                 frames_[i].is_dirty = false;
+                dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
                 // MEDIUM-1 FIX: Use relaxed atomic increment for stats
                 stats_.flushes.fetch_add(1, std::memory_order_relaxed);
             }
@@ -340,8 +377,9 @@ namespace scratchbird::core
                     return status;
                 }
 
-                // Mark as clean
+                // P2-2: Decrement dirty counter when transitioning from dirty to clean
                 frames_[i].is_dirty = false;
+                dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
                 stats_.flushes.fetch_add(1, std::memory_order_relaxed);
                 flushed_count++;
             }
@@ -354,16 +392,22 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    // P2-1: Updated to use partitioned page table locks
     auto BufferPool::lockPage(uint32_t page_id, ErrorContext *ctx) -> Status
     {
         uint32_t frame_index;
 
-        // Find the frame index while holding buffer pool mutex
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
+        // P2-1: Convert to GPID and use partition lock
+        GPID gpid = convertPageIDtoGPID(page_id);
+        size_t partition_idx = getPartitionIndex(gpid);
+        auto& partition = page_table_partitions_[partition_idx];
 
-            auto it = page_table_.find(page_id);
-            if (it == page_table_.end())
+        // Find the frame index while holding partition mutex
+        {
+            std::lock_guard<std::mutex> partition_lock(partition.mutex);
+
+            auto it = partition.table.find(gpid);
+            if (it == partition.table.end())
             {
                 SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
                                   "Page not in buffer pool - must pin first");
@@ -373,7 +417,6 @@ namespace scratchbird::core
             frame_index = it->second;
 
             // Page must be pinned before locking
-            // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
             if (frames_[frame_index].pin_count.load(std::memory_order_relaxed) == 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Cannot lock unpinned page");
@@ -381,22 +424,28 @@ namespace scratchbird::core
             }
         }
 
-        // Acquire the content mutex for this page (outside buffer pool mutex to avoid deadlock)
+        // Acquire the content mutex for this page (outside partition mutex to avoid deadlock)
         frames_[frame_index].content_mutex->lock();
 
         return Status::OK;
     }
 
+    // P2-1: Updated to use partitioned page table locks
     auto BufferPool::unlockPage(uint32_t page_id, ErrorContext *ctx) -> Status
     {
         uint32_t frame_index;
 
-        // Find the frame index while holding buffer pool mutex
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
+        // P2-1: Convert to GPID and use partition lock
+        GPID gpid = convertPageIDtoGPID(page_id);
+        size_t partition_idx = getPartitionIndex(gpid);
+        auto& partition = page_table_partitions_[partition_idx];
 
-            auto it = page_table_.find(page_id);
-            if (it == page_table_.end())
+        // Find the frame index while holding partition mutex
+        {
+            std::lock_guard<std::mutex> partition_lock(partition.mutex);
+
+            auto it = partition.table.find(gpid);
+            if (it == partition.table.end())
             {
                 SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Page not in buffer pool");
                 return Status::NOT_FOUND;
@@ -602,6 +651,8 @@ namespace scratchbird::core
             {
                 return status;
             }
+            // P2-2: Decrement dirty counter since page is being flushed during eviction
+            dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
             // MEDIUM-1 FIX: Use relaxed atomic increment for stats
             stats_.flushes.fetch_add(1, std::memory_order_relaxed);
             stats_.evictions_dirty.fetch_add(1, std::memory_order_relaxed);
@@ -612,32 +663,38 @@ namespace scratchbird::core
             stats_.evictions_clean.fetch_add(1, std::memory_order_relaxed);
         }
 
+        // P2-1: Use partitioned page table for eviction
         // CRITICAL FIX (Issue 2.2): Verify gpid exists in page_table before erasing
-        // This MUST be fatal in ALL builds (not just debug) to prevent corruption
-        auto page_table_it = page_table_.find(evicted_gpid);
-        if (page_table_it == page_table_.end())
-        {
-            DEBUG_LOG_BP("CONSISTENCY ERROR: gpid "
-                         << gpidToString(evicted_gpid) << " not found in page_table during eviction");
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
-                              "Buffer pool corruption: evicting page not in page_table");
-            return Status::IO_ERROR;
-        }
+        size_t partition_idx = getPartitionIndex(evicted_gpid);
+        auto& partition = page_table_partitions_[partition_idx];
 
-        // CRITICAL FIX (Issue 2.2): Verify consistency - page_table points to correct frame
-        // This MUST be fatal in ALL builds (not just debug) to prevent corruption
-        if (page_table_it->second != evicted_frame)
         {
-            DEBUG_LOG_BP("CONSISTENCY ERROR: page_table["
-                         << gpidToString(evicted_gpid) << "] = " << page_table_it->second
-                         << " but evicting frame " << evicted_frame);
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
-                              "Buffer pool corruption: page_table frame_index mismatch");
-            return Status::IO_ERROR;
-        }
+            std::lock_guard<std::mutex> partition_lock(partition.mutex);
 
-        // Remove from page table
-        page_table_.erase(page_table_it);
+            auto page_table_it = partition.table.find(evicted_gpid);
+            if (page_table_it == partition.table.end())
+            {
+                DEBUG_LOG_BP("CONSISTENCY ERROR: gpid "
+                             << gpidToString(evicted_gpid) << " not found in page_table during eviction");
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                  "Buffer pool corruption: evicting page not in page_table");
+                return Status::IO_ERROR;
+            }
+
+            // CRITICAL FIX (Issue 2.2): Verify consistency - page_table points to correct frame
+            if (page_table_it->second != evicted_frame)
+            {
+                DEBUG_LOG_BP("CONSISTENCY ERROR: page_table["
+                             << gpidToString(evicted_gpid) << "] = " << page_table_it->second
+                             << " but evicting frame " << evicted_frame);
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                  "Buffer pool corruption: page_table frame_index mismatch");
+                return Status::IO_ERROR;
+            }
+
+            // Remove from page table
+            partition.table.erase(page_table_it);
+        }
 
         // Reset frame (including Clock Sweep usage_count)
         // PHASE 1, TASK 1.2.3: Changed page_id to gpid
@@ -766,13 +823,18 @@ namespace scratchbird::core
     }
 
     // PHASE 1, TASK 1.2.3: NEW GPID-based implementation
+    // P2-1: Updated to use partitioned page table locks
     auto BufferPool::markDirtyGlobal(GPID gpid, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // P2-1: Only need partition lock (no global lock needed)
+        size_t partition_idx = getPartitionIndex(gpid);
+        auto& partition = page_table_partitions_[partition_idx];
+
+        std::lock_guard<std::mutex> partition_lock(partition.mutex);
 
         // Find the page in buffer pool
-        auto it = page_table_.find(gpid);
-        if (it == page_table_.end())
+        auto it = partition.table.find(gpid);
+        if (it == partition.table.end())
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Page not in buffer pool");
             return Status::INVALID_ARGUMENT;
@@ -780,8 +842,12 @@ namespace scratchbird::core
 
         uint32_t frame_index = it->second;
 
-        // Mark the frame as dirty
-        frames_[frame_index].is_dirty = true;
+        // P2-2: Update atomic dirty page counter when transitioning to dirty
+        if (!frames_[frame_index].is_dirty)
+        {
+            frames_[frame_index].is_dirty = true;
+            dirty_page_count_.fetch_add(1, std::memory_order_relaxed);
+        }
 
         return Status::OK;
     }
@@ -976,7 +1042,9 @@ namespace scratchbird::core
             Status status = writePageToDisk(frame.gpid, frame.data.get(), ctx);
             if (status == Status::OK)
             {
+                // P2-2: Decrement dirty counter when transitioning from dirty to clean
                 frame.is_dirty = false;
+                dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
                 pages_written++;
                 // MEDIUM-1 FIX: Use relaxed atomic increment for stats
                 stats_.bgwriter_pages_written.fetch_add(1, std::memory_order_relaxed);
@@ -1018,21 +1086,9 @@ namespace scratchbird::core
 
     uint32_t BufferPool::getDirtyPageCount() const
     {
-        // CRITICAL: Caller must hold mutex_
-        // Count the number of dirty pages in the buffer pool
-
-        uint32_t dirty_count = 0;
-
-        for (uint32_t i = 0; i < config_.pool_size; i++)
-        {
-            // PHASE 1, TASK 1.2.3: Changed page_id to gpid
-            if (frames_[i].is_dirty && frames_[i].gpid != INVALID_GPID)
-            {
-                dirty_count++;
-            }
-        }
-
-        return dirty_count;
+        // P2-2: O(1) dirty page count using atomic counter
+        // No longer requires mutex or O(N) scan through frames
+        return dirty_page_count_.load(std::memory_order_relaxed);
     }
 
 } // namespace scratchbird::core

@@ -25,11 +25,14 @@ namespace scratchbird::core
      * Permission Cache - Phase 3.2.3
      *
      * Global permission cache with LRU eviction and TTL expiration.
+     *
+     * P2-4: TTL reduced from 60s to 10s to minimize TOCTOU (time-of-check to time-of-use)
+     * race window for permission changes.
      * Provides 2-5x additional performance improvement on top of Phase 3.2.1/3.2.2.
      *
      * Features:
      * - LRU eviction when cache is full
-     * - TTL-based expiration (default: 60 seconds)
+     * - TTL-based expiration (default: 10 seconds - reduced from 60s for security)
      * - Thread-safe with shared_mutex (multiple readers, single writer)
      * - Cache invalidation on GRANT/REVOKE
      * - Performance statistics tracking
@@ -91,10 +94,13 @@ namespace scratchbird::core
          * Constructor
          *
          * @param max_entries Maximum number of entries (default: 1000)
-         * @param ttl_seconds Time-to-live in seconds (default: 60)
+         * @param ttl_seconds Time-to-live in seconds (default: 10)
+         *
+         * P2-4: Reduced TTL from 60s to 10s to minimize TOCTOU race window.
+         * Permission changes now propagate to all sessions within 10 seconds.
          */
         explicit PermissionCache(size_t max_entries = 1000,
-                                 std::chrono::seconds ttl_seconds = std::chrono::seconds(60));
+                                 std::chrono::seconds ttl_seconds = std::chrono::seconds(10));
 
         ~PermissionCache();
 
