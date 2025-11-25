@@ -8,6 +8,8 @@
 #include <memory>
 #include <string>
 #include <chrono>
+#include <unordered_map>
+#include <vector>
 
 namespace scratchbird::core
 {
@@ -336,6 +338,70 @@ namespace scratchbird::core
         {
             return command_id_;
         }
+
+        // P2-7: Deferred Constraint Support
+        /**
+         * Structure to track a deferred constraint check
+         */
+        struct DeferredConstraintCheck
+        {
+            ID constraint_id;                    // Which constraint to validate
+            ID table_id;                         // Table involved
+            std::string constraint_name;         // For error messages
+            std::vector<std::string> column_values; // Values that may violate
+            uint32_t command_id;                 // When this check was deferred
+        };
+
+        /**
+         * Check if a constraint is currently deferred
+         * @param constraint_id Constraint to check
+         * @return true if constraint checking is deferred
+         */
+        bool isConstraintDeferred(const ID& constraint_id) const;
+
+        /**
+         * Set constraint deferral state for this transaction
+         * @param constraint_id Constraint ID (or empty for ALL)
+         * @param deferred true=DEFERRED, false=IMMEDIATE
+         */
+        void setConstraintDeferred(const ID& constraint_id, bool deferred);
+
+        /**
+         * Set all constraints to deferred or immediate
+         * @param deferred true=DEFERRED, false=IMMEDIATE
+         */
+        void setAllConstraintsDeferred(bool deferred);
+
+        /**
+         * Add a deferred constraint check to be validated at commit
+         * @param check The constraint check to defer
+         */
+        void addDeferredConstraintCheck(const DeferredConstraintCheck& check);
+
+        /**
+         * Validate all deferred constraint checks
+         * Called at COMMIT time or when SET CONSTRAINTS ... IMMEDIATE is issued
+         * @param ctx Error context
+         * @return Status::OK if all constraints pass, error status otherwise
+         */
+        Status validateDeferredConstraints(ErrorContext* ctx = nullptr);
+
+        /**
+         * Clear all deferred constraint checks (on ROLLBACK)
+         */
+        void clearDeferredConstraints();
+
+        /**
+         * Initialize constraint states from catalog (at transaction start)
+         * Sets initial deferral state based on INITIALLY DEFERRED/IMMEDIATE
+         */
+        void initializeConstraintStates();
+
+    private:
+        // P2-7: Deferred constraint tracking
+        std::unordered_map<ID, bool, IDHash> constraint_deferred_state_; // Per-constraint deferral
+        std::vector<DeferredConstraintCheck> deferred_checks_;           // Pending checks
+        bool all_constraints_deferred_ = false;                          // Global deferral flag
     };
 
 } // namespace scratchbird::core

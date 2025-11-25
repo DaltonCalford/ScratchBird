@@ -4547,7 +4547,7 @@ namespace scratchbird
             for (size_t i = 0; i < all_columns.size(); i++)
             {
                 const auto& col = all_columns[i];
-                if (col.generated_type != core::GeneratedColumnType::STORED) continue;
+                if (col.generated_type != core::CatalogManager::GeneratedColumnType::STORED) continue;
 
                 // Check if this column was specified in the INSERT
                 auto it = std::find(col_indices.begin(), col_indices.end(), i);

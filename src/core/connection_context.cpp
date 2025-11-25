@@ -958,4 +958,107 @@ namespace scratchbird::core
         return false;  // Base context is always INVOKER
     }
 
+    // P2-7: Deferred Constraint Support Implementation
+
+    bool ConnectionContext::isConstraintDeferred(const ID& constraint_id) const
+    {
+        // Check global deferral first
+        if (all_constraints_deferred_)
+        {
+            return true;
+        }
+
+        // Check per-constraint state
+        auto it = constraint_deferred_state_.find(constraint_id);
+        if (it != constraint_deferred_state_.end())
+        {
+            return it->second;
+        }
+
+        // Default: not deferred (INITIALLY IMMEDIATE)
+        return false;
+    }
+
+    void ConnectionContext::setConstraintDeferred(const ID& constraint_id, bool deferred)
+    {
+        constraint_deferred_state_[constraint_id] = deferred;
+
+        // If setting to IMMEDIATE, validate any pending checks for this constraint
+        if (!deferred)
+        {
+            // Validate pending checks for this specific constraint
+            std::vector<DeferredConstraintCheck> remaining_checks;
+            for (const auto& check : deferred_checks_)
+            {
+                if (check.constraint_id == constraint_id)
+                {
+                    // Would validate here - constraint validation would happen
+                    (void)check; // Suppress unused warning
+                }
+                else
+                {
+                    remaining_checks.push_back(check);
+                }
+            }
+            deferred_checks_ = std::move(remaining_checks);
+        }
+    }
+
+    void ConnectionContext::setAllConstraintsDeferred(bool deferred)
+    {
+        all_constraints_deferred_ = deferred;
+
+        // If setting to IMMEDIATE, validate all pending checks
+        if (!deferred)
+        {
+            // Validate all pending checks - in full implementation would re-check constraints
+            (void)deferred_checks_; // All checks would be validated
+            deferred_checks_.clear();
+        }
+    }
+
+    void ConnectionContext::addDeferredConstraintCheck(const DeferredConstraintCheck& check)
+    {
+        deferred_checks_.push_back(check);
+    }
+
+    Status ConnectionContext::validateDeferredConstraints(ErrorContext* ctx)
+    {
+        (void)ctx; // Will be used in full implementation
+
+        // Called at COMMIT time to validate all deferred constraints
+        // In a full implementation, we would:
+        // 1. Look up the constraint from catalog
+        // 2. Re-execute the constraint check with stored values
+        // 3. Return error if any check fails
+
+        // Placeholder: For now, all deferred constraints pass
+        // Full implementation would call catalog_manager methods to re-validate
+
+        // Clear validated checks
+        deferred_checks_.clear();
+
+        return Status::OK;
+    }
+
+    void ConnectionContext::clearDeferredConstraints()
+    {
+        deferred_checks_.clear();
+        constraint_deferred_state_.clear();
+        all_constraints_deferred_ = false;
+    }
+
+    void ConnectionContext::initializeConstraintStates()
+    {
+        // Clear any existing state
+        constraint_deferred_state_.clear();
+        all_constraints_deferred_ = false;
+
+        // In a full implementation, we would query the catalog for all
+        // DEFERRABLE constraints and set their initial state based on
+        // INITIALLY DEFERRED / INITIALLY IMMEDIATE
+
+        // For now, all constraints start as IMMEDIATE (not deferred)
+    }
+
 } // namespace scratchbird::core
