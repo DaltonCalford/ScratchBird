@@ -15,6 +15,7 @@ namespace scratchbird::core
         Status code{Status::OK};       // Error code
         const char* sqlstate{SQLSTATE_SUCCESS}; // SQLSTATE (5-char SQL standard error code)
         std::string message;           // Human-readable description
+        std::string& error_message = message;  // Alias for legacy code
         const char *file{nullptr};     // Source file
         int line{0};                   // Line number
         const char *function{nullptr}; // Function name

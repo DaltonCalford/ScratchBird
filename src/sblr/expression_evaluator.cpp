@@ -1,4 +1,5 @@
 #include "scratchbird/sblr/expression_evaluator.h"
+#include "scratchbird/core/typed_value.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"

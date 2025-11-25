@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <array>
+#include <vector>
+#include <memory>
 #include "scratchbird/core/uuidv7.h"
 
 namespace scratchbird::core
@@ -142,6 +144,251 @@ namespace scratchbird::core
     };
 
     /**
+     * Spatial Type Structures
+     *
+     * Forward declarations for spatial types.
+     * These structs are used to store spatial geometry data.
+     */
+
+    /**
+     * Point - 2D geometric point with optional SRID
+     */
+    struct Point
+    {
+        double x;
+        double y;
+        int32_t srid;  // Spatial Reference ID (0 = undefined)
+
+        Point() : x(0.0), y(0.0), srid(0) {}
+        Point(double x_, double y_) : x(x_), y(y_), srid(0) {}
+        Point(double x_, double y_, int32_t srid_) : x(x_), y(y_), srid(srid_) {}
+
+        int32_t getSRID() const { return srid; }
+        void setSRID(int32_t new_srid) { srid = new_srid; }
+        bool hasSRID() const { return srid != 0; }
+
+        bool operator==(const Point& other) const {
+            return x == other.x && y == other.y && srid == other.srid;
+        }
+        bool operator!=(const Point& other) const { return !(*this == other); }
+    };
+
+    /**
+     * LineString - Sequence of connected points forming a line
+     */
+    struct LineString
+    {
+        std::vector<Point> points;
+        int32_t srid;
+
+        LineString() : srid(0) {}
+        explicit LineString(std::vector<Point> pts) : points(std::move(pts)), srid(0) {}
+        LineString(std::vector<Point> pts, int32_t srid_) : points(std::move(pts)), srid(srid_) {}
+
+        bool isEmpty() const { return points.empty(); }
+        size_t numPoints() const { return points.size(); }
+        bool isValid() const { return points.size() >= 2; }
+        bool isClosed() const {
+            return !isEmpty() && points.front() == points.back();
+        }
+
+        int32_t getSRID() const { return srid; }
+        void setSRID(int32_t new_srid) { srid = new_srid; }
+        bool hasSRID() const { return srid != 0; }
+
+        bool operator==(const LineString& other) const {
+            return points == other.points && srid == other.srid;
+        }
+        bool operator!=(const LineString& other) const { return !(*this == other); }
+    };
+
+    /**
+     * Polygon - Closed polygon with optional holes
+     */
+    struct Polygon
+    {
+        std::vector<std::vector<Point>> rings;  // First ring = exterior, rest = holes
+        int32_t srid;
+
+        Polygon() : srid(0) {}
+        explicit Polygon(std::vector<std::vector<Point>> rings_)
+            : rings(std::move(rings_)), srid(0) {}
+        Polygon(std::vector<std::vector<Point>> rings_, int32_t srid_)
+            : rings(std::move(rings_)), srid(srid_) {}
+
+        bool isEmpty() const { return rings.empty(); }
+        size_t numRings() const { return rings.size(); }
+        bool hasExteriorRing() const { return !rings.empty(); }
+        bool hasHoles() const { return rings.size() > 1; }
+
+        bool isValid() const {
+            if (rings.empty()) return true;
+            // Exterior ring must have at least 4 points (3 + closing point)
+            if (rings[0].size() < 4) return false;
+            // All rings must be closed
+            for (const auto& ring : rings) {
+                if (ring.empty() || ring.front() != ring.back()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        int32_t getSRID() const { return srid; }
+        void setSRID(int32_t new_srid) { srid = new_srid; }
+        bool hasSRID() const { return srid != 0; }
+
+        bool operator==(const Polygon& other) const {
+            return rings == other.rings && srid == other.srid;
+        }
+        bool operator!=(const Polygon& other) const { return !(*this == other); }
+    };
+
+    /**
+     * Interval - PostgreSQL-compatible interval type
+     * Represents a time span with separate month, day, and microsecond components
+     */
+    struct Interval
+    {
+        int32_t months;         // Number of months
+        int32_t days;           // Number of days
+        int64_t microseconds;   // Number of microseconds
+
+        Interval() : months(0), days(0), microseconds(0) {}
+        Interval(int32_t m, int32_t d, int64_t us) : months(m), days(d), microseconds(us) {}
+
+        bool operator==(const Interval& other) const {
+            return months == other.months && days == other.days && microseconds == other.microseconds;
+        }
+        bool operator!=(const Interval& other) const { return !(*this == other); }
+    };
+
+    // Forward declare TypedValue for multi-geometry types
+    class TypedValue;
+
+    /**
+     * MultiPoint - Collection of Point geometries
+     */
+    struct MultiPoint
+    {
+        std::vector<Point> points;
+        int32_t srid;
+
+        MultiPoint() : srid(0) {}
+        explicit MultiPoint(std::vector<Point> pts) : points(std::move(pts)), srid(0) {}
+        MultiPoint(std::vector<Point> pts, int32_t srid_) : points(std::move(pts)), srid(srid_) {}
+
+        bool isEmpty() const { return points.empty(); }
+        size_t numGeometries() const { return points.size(); }
+
+        int32_t getSRID() const { return srid; }
+        void setSRID(int32_t new_srid) { srid = new_srid; }
+        bool hasSRID() const { return srid != 0; }
+
+        bool isValid() const { return true; }  // MultiPoint is always valid
+
+        bool operator==(const MultiPoint& other) const {
+            return points == other.points && srid == other.srid;
+        }
+        bool operator!=(const MultiPoint& other) const { return !(*this == other); }
+    };
+
+    /**
+     * MultiLineString - Collection of LineString geometries
+     */
+    struct MultiLineString
+    {
+        std::vector<LineString> linestrings;
+        int32_t srid;
+
+        MultiLineString() : srid(0) {}
+        explicit MultiLineString(std::vector<LineString> lines)
+            : linestrings(std::move(lines)), srid(0) {}
+        MultiLineString(std::vector<LineString> lines, int32_t srid_)
+            : linestrings(std::move(lines)), srid(srid_) {}
+
+        bool isEmpty() const { return linestrings.empty(); }
+        size_t numGeometries() const { return linestrings.size(); }
+
+        bool isValid() const {
+            for (const auto& line : linestrings) {
+                if (!line.isValid()) return false;
+            }
+            return true;
+        }
+
+        int32_t getSRID() const { return srid; }
+        void setSRID(int32_t new_srid) { srid = new_srid; }
+        bool hasSRID() const { return srid != 0; }
+
+        bool operator==(const MultiLineString& other) const {
+            return linestrings == other.linestrings && srid == other.srid;
+        }
+        bool operator!=(const MultiLineString& other) const { return !(*this == other); }
+    };
+
+    /**
+     * MultiPolygon - Collection of Polygon geometries
+     */
+    struct MultiPolygon
+    {
+        std::vector<Polygon> polygons;
+        int32_t srid;
+
+        MultiPolygon() : srid(0) {}
+        explicit MultiPolygon(std::vector<Polygon> polys)
+            : polygons(std::move(polys)), srid(0) {}
+        MultiPolygon(std::vector<Polygon> polys, int32_t srid_)
+            : polygons(std::move(polys)), srid(srid_) {}
+
+        bool isEmpty() const { return polygons.empty(); }
+        size_t numGeometries() const { return polygons.size(); }
+
+        bool isValid() const {
+            for (const auto& poly : polygons) {
+                if (!poly.isValid()) return false;
+            }
+            return true;
+        }
+
+        int32_t getSRID() const { return srid; }
+        void setSRID(int32_t new_srid) { srid = new_srid; }
+        bool hasSRID() const { return srid != 0; }
+
+        bool operator==(const MultiPolygon& other) const {
+            return polygons == other.polygons && srid == other.srid;
+        }
+        bool operator!=(const MultiPolygon& other) const { return !(*this == other); }
+    };
+
+    /**
+     * GeometryCollection - Heterogeneous collection of any geometry types
+     */
+    struct GeometryCollection
+    {
+        std::vector<std::shared_ptr<TypedValue>> geometries;
+        int32_t srid;
+
+        GeometryCollection() : srid(0) {}
+        explicit GeometryCollection(std::vector<std::shared_ptr<TypedValue>> geoms)
+            : geometries(std::move(geoms)), srid(0) {}
+        GeometryCollection(std::vector<std::shared_ptr<TypedValue>> geoms, int32_t srid_)
+            : geometries(std::move(geoms)), srid(srid_) {}
+
+        bool isEmpty() const { return geometries.empty(); }
+        size_t numGeometries() const { return geometries.size(); }
+
+        int32_t getSRID() const { return srid; }
+        void setSRID(int32_t new_srid) { srid = new_srid; }
+        bool hasSRID() const { return srid != 0; }
+
+        bool isValid() const { return true; }  // GeometryCollection is always valid
+
+        bool operator==(const GeometryCollection& other) const;
+        bool operator!=(const GeometryCollection& other) const { return !(*this == other); }
+    };
+
+    /**
      * Type System Helper Functions
      */
     class TypeSystem
@@ -152,6 +399,13 @@ namespace scratchbird::core
 
         // Check if a type can be explicitly converted to another
         static bool isExplicitlyConvertible(DataType from, DataType to);
+
+        // Check if a type is a string type
+        static bool isString(DataType type)
+        {
+            return type == DataType::VARCHAR || type == DataType::TEXT ||
+                   type == DataType::CHAR;
+        }
     };
 
 } // namespace scratchbird::core

@@ -5,6 +5,7 @@
 #include "scratchbird/core/error_context.h"
 #include <memory>
 #include <string>
+#include <optional>
 
 #ifdef HAVE_GEOS
 #include <geos_c.h>

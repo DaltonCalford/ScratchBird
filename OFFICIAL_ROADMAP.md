@@ -50,9 +50,9 @@ PRODUCTION RELEASE
 
 ## Alpha 1: Engine Functionality (LOCAL OPERATIONS ONLY)
 
-**Status:** 70% Complete
+**Status:** 78% Complete
 
-**Note:** Originally planned features are complete, but additional work items were identified during development (improvement opportunities, server architecture requirements) that expand the Alpha 1 scope.
+**Note:** Originally planned features are complete, but additional work items were identified during development (improvement opportunities, server architecture requirements) that expand the Alpha 1 scope. All P0 critical issues have been resolved!
 
 **Completion Policy:** Alpha 1 is NOT complete until ALL local (non-network) functionality is implemented. There are NO "nice to have" deferrals - if a command is local, it MUST be in Alpha 1.
 
@@ -113,13 +113,14 @@ PRODUCTION RELEASE
 - Network types (INET, CIDR, MACADDR)
 - Text search types (TSVECTOR, TSQUERY)
 
-**Built-in Functions (123/123 - 100%)**
-- String (11), Aggregate (6), Window (8)
-- JSON (13), Array (12), Date/Time (6)
-- Mathematical (29), Bit Manipulation (14)
-- Cryptographic (4), Statistical (7)
+**Built-in Functions (153/153 - 100%)** 🎉
+- String (14), Aggregate (15), Window (17)
+- JSON (13), Array (12), Date/Time (7)
+- Mathematical (36), Bit Manipulation (14)
+- Cryptographic (4), Statistical (16)
 - XML (9), Spatial (40+), Regex (4)
 - Text Search, Conditional (3)
+- **Recently Added:** ROLLUP, CUBE, GROUPING SETS, regression functions, hyperbolic math
 
 **Security System (100% - Phase 3.5 Complete)**
 - User/role/group management
@@ -182,20 +183,49 @@ PRODUCTION RELEASE
 - ✅ Physical materialization (table creation + data population from SELECT query)
 - ✅ Materialized view refresh (delete + repopulate with fresh query results)
 
+**Critical Issues (100% Complete)** 🎉
+- ✅ P0-1: Password Policy Enforcement
+- ✅ P0-2: Account Lockout Mechanism
+- ✅ P0-3: Security Audit Logging
+- ✅ P0-4: Arithmetic Overflow Checking
+- ✅ P0-5: NaN/Infinity Handling
+- ✅ P0-6: GIN Parallel Operations MGA Bug
+- ✅ P0-7: Catalog Sequence Operations
+- ✅ P0-8: Charset/Collation Read Operations
+
 #### ⧗ IN PROGRESS (Components)
+
+**Improvement Opportunities (13% Complete)**
+- ✅ P0 Critical Issues (8/8 - 100% complete)
+- ⧗ P1 High Priority (5/15 - 33% complete)
+- ⧗ P2 Medium Priority (0/25 - 0% complete)
+- ⧗ P3 Low Priority (0/13+ - 0% complete)
 
 **Catalog CRUD (58% Complete)**
 - ⧗ Stored code operations (Procedures, Parameters, Domains, UDR, Packages)
 - ⧗ Emulation table operations (Types, Servers, Databases)
 - ⧗ Some infrastructure operations (Statistics)
 
-#### ❌ NOT IMPLEMENTED (Remaining Items - ~1%)
+#### ❌ NOT IMPLEMENTED (Remaining Items - ~22%)
+
+**Local Server Architecture** (~140-190 hours estimated)
+- ❌ IPC Infrastructure (Unix sockets, Named pipes, TCP localhost)
+- ❌ Wire Protocol (binary message format, result streaming)
+- ❌ Server Process (sb_server, multi-threading, sessions)
+- ❌ Client Library (libscratchbird_client, auto-start)
+- **Required before CLI tools**
 
 **Command-Line Tools** (~90-110 hours estimated)
 - ❌ sb_isql (interactive SQL shell) - HIGHEST PRIORITY
 - ❌ sb_verify (database integrity checker)
 - ❌ sb_backup (backup/restore tool)
 - ❌ sb_security (user/role management tool)
+- **All tools connect via libscratchbird_client**
+
+**P1-P3 Improvement Opportunities** (~360-470 hours estimated)
+- ⧗ P1 High: Exception handling, cursors, stored procedures, FK actions
+- ❌ P2 Medium: Performance optimizations, window frames, testing
+- ❌ P3 Low: MFA, DECIMAL optimization, SIMD, partition pruning
 
 ### Alpha 1 Completion Criteria
 
@@ -203,14 +233,15 @@ PRODUCTION RELEASE
 
 1. ✅ All 11 index types functional
 2. ✅ All 86 data types supported
-3. ✅ All 123 built-in functions implemented
+3. ✅ All 153 built-in functions implemented - **100% COMPLETE** 🎉
 4. ✅ Security system complete (users, roles, permissions, RLS)
 5. ✅ Constraint enforcement (CHECK, FK, UNIQUE, PK, DEFAULT, GENERATED, IDENTITY, Deferred)
 6. ✅ Views fully functional (regular + materialized with data population) - **100% COMPLETE** 🎉
-7. ✅ PSQL/stored procedure execution - **100% COMPLETE**
-8. ✅ Trigger firing mechanism - **100% COMPLETE**
-9. ✅ CTEs and recursive queries - **100% COMPLETE**
-10. ✅ MERGE statement - **100% COMPLETE**
+7. ✅ PSQL/stored procedure execution - **100% COMPLETE** 🎉
+8. ✅ Trigger firing mechanism - **100% COMPLETE** 🎉
+9. ✅ CTEs and recursive queries - **100% COMPLETE** 🎉
+10. ✅ MERGE statement - **100% COMPLETE** 🎉
+11. ✅ All P0 critical issues resolved - **100% COMPLETE** 🎉
 11. ✅ RETURNING clause - **100% COMPLETE**
 12. ✅ GENERATED/IDENTITY columns - **100% COMPLETE**
 13. ✅ Deferred constraint checking - **100% COMPLETE**

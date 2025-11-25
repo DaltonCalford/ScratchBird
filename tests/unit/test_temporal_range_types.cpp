@@ -10,6 +10,7 @@
 
 #include "scratchbird/core/range.h"
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/typed_value.h"
 #include <iostream>
 #include <cassert>
 
@@ -84,7 +85,7 @@ void test_daterange_typedvalue()
 
     test_assert(v.type() == DataType::DATERANGE, "TypedValue type is DATERANGE");
 
-    DateRange retrieved = v.getDateRange();
+    const Range<int64_t>& retrieved = v.getDateRange<int64_t>();
     test_assert(retrieved.lower() == date1, "Retrieved lower bound correct");
     test_assert(retrieved.upper() == date2, "Retrieved upper bound correct");
 
@@ -139,7 +140,7 @@ void test_tsrange_typedvalue()
 
     test_assert(v.type() == DataType::TSRANGE, "TypedValue type is TSRANGE");
 
-    TSRange retrieved = v.getTSRange();
+    const Range<int64_t>& retrieved = v.getTSRange<int64_t>();
     test_assert(retrieved.lower() == ts1, "Retrieved lower bound correct");
     test_assert(retrieved.upper() == ts2, "Retrieved upper bound correct");
     test_assert(retrieved.isLowerInclusive(), "Lower bound is inclusive");
@@ -196,7 +197,7 @@ void test_tstzrange_typedvalue()
 
     test_assert(v.type() == DataType::TSTZRANGE, "TypedValue type is TSTZRANGE");
 
-    TSTZRange retrieved = v.getTSTZRange();
+    const Range<int64_t>& retrieved = v.getTSTZRange<int64_t>();
     test_assert(!retrieved.isLowerInclusive(), "Lower bound is exclusive");
     test_assert(retrieved.isUpperInclusive(), "Upper bound is inclusive");
 

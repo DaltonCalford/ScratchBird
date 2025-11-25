@@ -151,7 +151,8 @@ void testParallelQueries()
         makeKey("div5")};
 
     auto start = std::chrono::high_resolution_clock::now();
-    auto parallel_results = index->findAllParallel(and_keys, 4, &ctx);
+    // P0-6: Pass current_xid for proper MGA visibility
+    auto parallel_results = index->findAllParallel(and_keys, 1, 4, &ctx);
     auto end = std::chrono::high_resolution_clock::now();
     auto parallel_duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
@@ -168,7 +169,8 @@ void testParallelQueries()
         makeKey("div10")};
 
     start = std::chrono::high_resolution_clock::now();
-    auto parallel_or_results = index->findAnyParallel(or_keys, 2, &ctx);
+    // P0-6: Pass current_xid for proper MGA visibility
+    auto parallel_or_results = index->findAnyParallel(or_keys, 1, 2, &ctx);
     end = std::chrono::high_resolution_clock::now();
     auto parallel_or_duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
 
@@ -412,7 +414,8 @@ static void testEdgeCases()
 
     std::cout << "Testing parallel queries with empty index...\n";
     std::vector<std::vector<uint8_t>> test_keys = {makeKey("nonexistent")};
-    auto parallel_empty = index->findAllParallel(test_keys, 2, &ctx);
+    // P0-6: Pass current_xid for proper MGA visibility
+    auto parallel_empty = index->findAllParallel(test_keys, 1, 2, &ctx);
     assert(parallel_empty.empty());
 
     std::cout << "Testing range query on empty index...\n";

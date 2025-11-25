@@ -6,10 +6,12 @@ file(GLOB_RECURSE SCRATCHBIRD_CORE_SOURCES
     core/*.cpp
 )
 
-# Spatial library sources
+# Spatial library sources (exclude disabled_p1_15 directory)
 file(GLOB_RECURSE SCRATCHBIRD_SPATIAL_SOURCES
     spatial/*.cpp
 )
+# Remove disabled files
+list(FILTER SCRATCHBIRD_SPATIAL_SOURCES EXCLUDE REGEX ".*/disabled_p1_15/.*")
 
 # Geo library sources (SRID and PROJ integration)
 file(GLOB_RECURSE SCRATCHBIRD_GEO_SOURCES

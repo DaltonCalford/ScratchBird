@@ -1,6 +1,18 @@
 /**
  * sb_charset_loader - ScratchBird Character Set Loader
  *
+ * ⚠️ DEPRECATED - 2025-11-24
+ *
+ * This tool has a linking issue with OpenSSL (RAND_bytes) and is no longer maintained.
+ * Character set data is now loaded automatically during database initialization.
+ *
+ * DO NOT USE - Kept for historical reference only.
+ *
+ * NOTE: This file does not compile due to missing OpenSSL linkage in CMakeLists.txt.
+ * The tool called statistics_manager which uses RAND_bytes, but sb_charset_loader
+ * target doesn't link against OpenSSL crypto library (-lcrypto).
+ *
+ * Original Purpose:
  * Command-line tool to load character set and collation data into the database catalog.
  * Supports loading:
  * - Built-in character sets (UTF-8, ASCII, ISO-8859-1, UTF-16, UTF-32)
@@ -135,7 +147,7 @@ int main(int argc, char **argv)
     }
 
     // Get catalog manager
-    CatalogManager *catalog = db.getCatalog();
+    CatalogManager *catalog = db.catalog_manager();
     if (!catalog)
     {
         std::cerr << "Failed to get catalog manager\n";

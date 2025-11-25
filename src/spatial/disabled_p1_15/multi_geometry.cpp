@@ -305,7 +305,7 @@ namespace scratchbird::spatial
                         if (!pt_opt) {
                             return std::nullopt;
                         }
-                        geom = core::TypedValue::makePoint(pt_opt->x, pt_opt->y);
+                        geom = core::TypedValue::makePoint(*pt_opt);
                         break;
                     }
                     case MultiGeometryType::MULTILINESTRING: {
