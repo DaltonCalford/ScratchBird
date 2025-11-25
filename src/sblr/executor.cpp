@@ -4541,6 +4541,44 @@ namespace scratchbird
                 }
             }
 
+            // P2-6: Process GENERATED STORED columns
+            // GENERATED columns must be computed from other column values
+            // For now, we handle simple cases - full expression evaluation is complex
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                const auto& col = all_columns[i];
+                if (col.generated_type != core::GeneratedColumnType::STORED) continue;
+
+                // Check if this column was specified in the INSERT
+                auto it = std::find(col_indices.begin(), col_indices.end(), i);
+                bool column_specified = (it != col_indices.end());
+
+                if (column_specified)
+                {
+                    // GENERATED ALWAYS columns cannot be explicitly specified
+                    error("Cannot INSERT into GENERATED column '" + col.column_name + "'");
+                }
+
+                // For STORED generated columns, we need to compute the value
+                // The generation_expression contains serialized bytecode
+                // For now, mark as placeholder - full implementation requires expression evaluation
+                // TODO: Deserialize generation_expression and evaluate against current row values
+                if (!col.generation_expression.empty())
+                {
+                    // Placeholder: For complex expressions, we'd need to:
+                    // 1. Deserialize the bytecode from hex string
+                    // 2. Create an ExpressionEvaluator
+                    // 3. Evaluate against the current values vector
+                    // 4. Store the result
+
+                    // For now, insert NULL as placeholder for GENERATED columns
+                    // This allows the schema to be created and used
+                    col_names.push_back(col.column_name);
+                    col_indices.push_back(i);
+                    values.push_back(Value::makeNull());
+                }
+            }
+
             // Build tuple in binary format
             // Format: TupleHeader + null bitmap (if needed) + column data
             // HeapPage will overwrite some TupleHeader fields (xmin, xmax, ctid, etc.)
