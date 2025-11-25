@@ -1,7 +1,7 @@
 # Alpha 1 - Medium Priority Issues (P2) Implementation Plan
 
 **Created:** November 23, 2025
-**Status:** 🔄 In Progress (4/25 items complete)
+**Status:** 🔄 In Progress (5/25 items complete)
 **Priority:** P2 - MEDIUM
 **Estimated Effort:** 100-150 hours (~90 remaining)
 **Target:** Beta 2
@@ -25,7 +25,7 @@ This plan covers 25 medium-priority issues focused on performance optimizations,
 ## AGENT A: PERFORMANCE OPTIMIZATIONS
 
 **Total Effort:** 27-33 hours
-**Status:** 80% Complete (4/5 items)
+**Status:** ✅ 100% Complete (5/5 items)
 
 ### P2-1: Page Table Lock Partitioning ✅ COMPLETE (Nov 25, 2025)
 - **Current:** Single mutex for entire buffer pool page table
@@ -54,10 +54,18 @@ This plan covers 25 medium-priority issues focused on performance optimizations,
 - **Impact:** Smaller TOCTOU window (6x improvement)
 - **Implementation:** `permission_cache.h:100`
 
-### P2-5: Hash Index Directory Resize (10-12 hours) ❌ PENDING
+### P2-5: Hash Index Directory Resize ✅ COMPLETE (Nov 25, 2025)
 - **Current:** Directory expansion blocks all writes
 - **Improvement:** Concurrent resize with fine-grained locking
 - **Impact:** No write stalls during resize
+- **Implementation:**
+  - `hash_index.h:192-219` - Added reader-writer lock infrastructure, resize flag, cached directory info
+  - `hash_index.cpp:217-272` - findBucketPageForKey now uses shared lock and cached directory
+  - `hash_index.cpp:649-872` - expandDirectoryConcurrent() with minimal blocking:
+    1. Allocates new pages outside critical section
+    2. Uses atomic resize_in_progress flag to coordinate concurrent expansions
+    3. Only takes exclusive lock during the actual pointer swap
+    4. Readers continue with shared lock during resize
 
 ---
 
