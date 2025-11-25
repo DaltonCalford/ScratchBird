@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include <shared_mutex>
+#include <atomic>
 
 namespace scratchbird
 {
@@ -187,6 +189,19 @@ namespace scratchbird
             UuidV7Bytes index_uuid_;
             uint32_t meta_page_;
 
+            // P2-5: Concurrent directory resize infrastructure
+            // Reader-writer lock for directory access
+            // - Shared lock: read directory (find operations)
+            // - Exclusive lock: modify directory (expand/split)
+            mutable std::shared_mutex directory_mutex_;
+
+            // Flag indicating resize is in progress (allows readers to wait or retry)
+            std::atomic<bool> resize_in_progress_{false};
+
+            // Cached directory info for fast reads (updated atomically during resize)
+            mutable std::atomic<uint32_t> cached_global_depth_{0};
+            mutable std::atomic<uint64_t> cached_directory_page_{0};
+
             // Helper methods
             uint32_t getDirectoryIndex(uint64_t hash, uint32_t global_depth);
             uint64_t findBucketPageForKey(uint64_t hash, ErrorContext *ctx);
@@ -194,10 +209,14 @@ namespace scratchbird
             Status allocateOverflowPage(uint32_t *page_num_out, ErrorContext *ctx);
             Status splitBucket(uint32_t bucket_page, uint64_t hash, ErrorContext *ctx);
             Status expandDirectory(ErrorContext *ctx);
+            Status expandDirectoryConcurrent(ErrorContext *ctx);  // P2-5: Concurrent version
             bool bucketNeedsSplit(SBHashBucketPage *bucket);
             uint16_t countEntriesInBucket(uint32_t bucket_page, ErrorContext *ctx);
             Status redistributeEntries(SBHashBucketPage *old_bucket, SBHashBucketPage *new_bucket,
                                        uint32_t new_local_depth, ErrorContext *ctx);
+
+            // P2-5: Helper to refresh cached directory info from meta page
+            void refreshCachedDirectoryInfo(ErrorContext *ctx);
 
             // No copy or move
             HashIndex(const HashIndex &) = delete;

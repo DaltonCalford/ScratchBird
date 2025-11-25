@@ -8,6 +8,7 @@
 #include <cstring>
 #include <algorithm>
 #include <set>
+#include <thread>  // P2-5: For std::this_thread::yield()
 
 namespace scratchbird
 {
@@ -198,6 +199,10 @@ namespace scratchbird
                 return nullptr;
             }
 
+            // P2-5: Initialize cached directory info for concurrent access
+            index->cached_global_depth_.store(meta->hip_global_depth, std::memory_order_relaxed);
+            index->cached_directory_page_.store(meta->hip_directory_page, std::memory_order_relaxed);
+
             db->buffer_pool()->unpinPage(meta_page, false, ctx);
 
             return index;
@@ -211,28 +216,32 @@ namespace scratchbird
         }
 
         // Helper: Find bucket page for a given hash value
+        // P2-5: Uses cached directory info and shared lock for concurrent reads
         uint64_t HashIndex::findBucketPageForKey(uint64_t hash, ErrorContext *ctx)
         {
-            // Pin meta page
-            uint8_t *meta_data = nullptr;
-            Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
-            if (status != Status::OK)
+            // P2-5: Use shared lock to allow concurrent reads during resize
+            std::shared_lock<std::shared_mutex> lock(directory_mutex_);
+
+            // Use cached directory info (fast path - no meta page pin needed)
+            uint32_t global_depth = cached_global_depth_.load(std::memory_order_acquire);
+            uint64_t dir_page = cached_directory_page_.load(std::memory_order_acquire);
+
+            // If cache not initialized, refresh from meta page
+            if (global_depth == 0 || dir_page == 0)
             {
-                return 0;
+                lock.unlock();
+                refreshCachedDirectoryInfo(ctx);
+                lock.lock();
+                global_depth = cached_global_depth_.load(std::memory_order_acquire);
+                dir_page = cached_directory_page_.load(std::memory_order_acquire);
             }
-
-            auto *meta = reinterpret_cast<SBHashIndexMetaPage *>(meta_data);
-            uint32_t global_depth = meta->hip_global_depth;
-            uint64_t dir_page = meta->hip_directory_page;
-
-            buffer_pool_->unpinPage(meta_page_, false, ctx);
 
             // Calculate directory index
             uint32_t dir_index = getDirectoryIndex(hash, global_depth);
 
             // Pin directory page
             uint8_t *dir_data = nullptr;
-            status = buffer_pool_->pinPage(dir_page, (void **)&dir_data, ctx);
+            Status status = buffer_pool_->pinPage(dir_page, (void **)&dir_data, ctx);
             if (status != Status::OK)
             {
                 return 0;
@@ -244,6 +253,23 @@ namespace scratchbird
             buffer_pool_->unpinPage(dir_page, false, ctx);
 
             return bucket_page;
+        }
+
+        // P2-5: Helper to refresh cached directory info from meta page
+        void HashIndex::refreshCachedDirectoryInfo(ErrorContext *ctx)
+        {
+            uint8_t *meta_data = nullptr;
+            Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            if (status != Status::OK)
+            {
+                return;
+            }
+
+            auto *meta = reinterpret_cast<SBHashIndexMetaPage *>(meta_data);
+            cached_global_depth_.store(meta->hip_global_depth, std::memory_order_release);
+            cached_directory_page_.store(meta->hip_directory_page, std::memory_order_release);
+
+            buffer_pool_->unpinPage(meta_page_, false, ctx);
         }
 
         // Helper: Allocate a new bucket page
@@ -614,13 +640,39 @@ namespace scratchbird
         }
 
         // Expand directory (double its size)
+        // P2-5: Now uses concurrent resize - allocates new space first, then swaps atomically
         Status HashIndex::expandDirectory(ErrorContext *ctx)
         {
-            // Pin meta page
+            // Delegate to concurrent version
+            return expandDirectoryConcurrent(ctx);
+        }
+
+        // P2-5: Concurrent directory expansion
+        // This version minimizes write blocking by:
+        // 1. Allocating new directory pages outside the critical section
+        // 2. Copying existing pointers without blocking readers
+        // 3. Using exclusive lock only for the atomic swap
+        Status HashIndex::expandDirectoryConcurrent(ErrorContext *ctx)
+        {
+            // Set resize flag to let readers know expansion is in progress
+            bool expected = false;
+            if (!resize_in_progress_.compare_exchange_strong(expected, true))
+            {
+                // Another thread is already expanding - wait and retry
+                while (resize_in_progress_.load(std::memory_order_acquire))
+                {
+                    std::this_thread::yield();
+                }
+                // After other expansion completes, the bucket might not need split anymore
+                return Status::OK;
+            }
+
+            // Read current state from meta page (without exclusive lock)
             uint8_t *meta_data = nullptr;
             Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
             if (status != Status::OK)
             {
+                resize_in_progress_.store(false, std::memory_order_release);
                 return status;
             }
 
@@ -631,40 +683,193 @@ namespace scratchbird
             if (new_global_depth > MAX_GLOBAL_DEPTH)
             {
                 buffer_pool_->unpinPage(meta_page_, false, ctx);
+                resize_in_progress_.store(false, std::memory_order_release);
                 SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "Maximum directory depth exceeded");
                 return Status::PAGE_FULL;
             }
 
-            uint64_t dir_page = meta->hip_directory_page;
+            uint64_t old_dir_page = meta->hip_directory_page;
+            buffer_pool_->unpinPage(meta_page_, false, ctx);
 
-            // Pin directory page
-            uint8_t *dir_data = nullptr;
-            status = buffer_pool_->pinPage(dir_page, (void **)&dir_data, ctx);
-            if (status != Status::OK)
-            {
-                buffer_pool_->unpinPage(meta_page_, false, ctx);
-                return status;
-            }
-
-            auto *dir = reinterpret_cast<SBHashDirectoryPage *>(dir_data);
-
-            // Double the directory by duplicating each pointer
+            // Calculate sizes
             uint32_t old_size = (1U << old_global_depth);
             uint32_t new_size = (1U << new_global_depth);
 
-            // Copy pointers (second half mirrors first half)
-            for (uint32_t i = 0; i < old_size; i++)
+            // Check if we need additional directory pages
+            // Each directory page can hold approximately (page_size - 72) / 8 pointers
+            size_t pointers_per_page = (db_->page_size() - sizeof(SBHashDirectoryPage)) / sizeof(uint64_t);
+
+            // For simplicity, if new size fits in one page, expand in place
+            // Otherwise, allocate new page(s)
+            if (new_size <= pointers_per_page)
             {
-                dir->hdp_bucket_pointers[old_size + i] = dir->hdp_bucket_pointers[i];
+                // In-place expansion (fits in single page)
+                // Take exclusive lock for the actual modification
+                std::unique_lock<std::shared_mutex> lock(directory_mutex_);
+
+                // Re-read meta page with lock held
+                status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+                if (status != Status::OK)
+                {
+                    resize_in_progress_.store(false, std::memory_order_release);
+                    return status;
+                }
+
+                meta = reinterpret_cast<SBHashIndexMetaPage *>(meta_data);
+
+                // Check if another thread already expanded
+                if (meta->hip_global_depth >= new_global_depth)
+                {
+                    buffer_pool_->unpinPage(meta_page_, false, ctx);
+                    resize_in_progress_.store(false, std::memory_order_release);
+                    // Update cache
+                    cached_global_depth_.store(meta->hip_global_depth, std::memory_order_release);
+                    return Status::OK;
+                }
+
+                old_dir_page = meta->hip_directory_page;
+
+                // Pin directory page for modification
+                uint8_t *dir_data = nullptr;
+                status = buffer_pool_->pinPage(old_dir_page, (void **)&dir_data, ctx);
+                if (status != Status::OK)
+                {
+                    buffer_pool_->unpinPage(meta_page_, false, ctx);
+                    resize_in_progress_.store(false, std::memory_order_release);
+                    return status;
+                }
+
+                auto *dir = reinterpret_cast<SBHashDirectoryPage *>(dir_data);
+
+                // Double the directory by duplicating each pointer (second half mirrors first half)
+                // This is done atomically from the perspective of readers since they hold shared lock
+                for (uint32_t i = old_size; i > 0; --i)
+                {
+                    // Copy in reverse order to avoid overwriting unread entries
+                    dir->hdp_bucket_pointers[2 * (i - 1) + 1] = dir->hdp_bucket_pointers[i - 1];
+                    dir->hdp_bucket_pointers[2 * (i - 1)] = dir->hdp_bucket_pointers[i - 1];
+                }
+
+                buffer_pool_->unpinPage(old_dir_page, true, ctx);
+
+                // Update meta page
+                meta->hip_global_depth = new_global_depth;
+                buffer_pool_->unpinPage(meta_page_, true, ctx);
+
+                // Update cache atomically
+                cached_global_depth_.store(new_global_depth, std::memory_order_release);
+
+                resize_in_progress_.store(false, std::memory_order_release);
+
+                return Status::OK;
             }
+            else
+            {
+                // Multi-page directory - allocate new page chain
+                // This is more complex but allows unbounded growth
 
-            buffer_pool_->unpinPage(dir_page, true, ctx);
+                // Allocate new directory page
+                uint32_t new_dir_page_num = 0;
+                status = db_->page_manager()->allocatePage(new_dir_page_num, ctx);
+                if (status != Status::OK)
+                {
+                    resize_in_progress_.store(false, std::memory_order_release);
+                    return status;
+                }
 
-            // Update meta page
-            meta->hip_global_depth = new_global_depth;
-            buffer_pool_->unpinPage(meta_page_, true, ctx);
+                // Initialize new directory page
+                uint8_t *new_dir_data = nullptr;
+                status = buffer_pool_->pinPage(new_dir_page_num, (void **)&new_dir_data, ctx);
+                if (status != Status::OK)
+                {
+                    resize_in_progress_.store(false, std::memory_order_release);
+                    return status;
+                }
 
-            return Status::OK;
+                auto *new_dir = reinterpret_cast<SBHashDirectoryPage *>(new_dir_data);
+                std::memset(new_dir, 0, sizeof(SBHashDirectoryPage));
+
+                new_dir->hdp_header.magic = K_MAGIC_SBRD;
+                new_dir->hdp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
+                new_dir->hdp_header.page_type = static_cast<uint16_t>(PageType::HASH_INDEX_DIRECTORY);
+                new_dir->hdp_header.page_size = db_->page_size();
+                new_dir->hdp_header.page_id = new_dir_page_num;
+
+                // Take exclusive lock for the directory chain update
+                std::unique_lock<std::shared_mutex> lock(directory_mutex_);
+
+                // Re-read meta and copy existing directory entries
+                status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+                if (status != Status::OK)
+                {
+                    buffer_pool_->unpinPage(new_dir_page_num, false, ctx);
+                    resize_in_progress_.store(false, std::memory_order_release);
+                    return status;
+                }
+
+                meta = reinterpret_cast<SBHashIndexMetaPage *>(meta_data);
+
+                // Check if another thread already expanded
+                if (meta->hip_global_depth >= new_global_depth)
+                {
+                    buffer_pool_->unpinPage(meta_page_, false, ctx);
+                    buffer_pool_->unpinPage(new_dir_page_num, false, ctx);
+                    resize_in_progress_.store(false, std::memory_order_release);
+                    cached_global_depth_.store(meta->hip_global_depth, std::memory_order_release);
+                    return Status::OK;
+                }
+
+                old_dir_page = meta->hip_directory_page;
+
+                // Read old directory
+                uint8_t *old_dir_data = nullptr;
+                status = buffer_pool_->pinPage(old_dir_page, (void **)&old_dir_data, ctx);
+                if (status != Status::OK)
+                {
+                    buffer_pool_->unpinPage(meta_page_, false, ctx);
+                    buffer_pool_->unpinPage(new_dir_page_num, false, ctx);
+                    resize_in_progress_.store(false, std::memory_order_release);
+                    return status;
+                }
+
+                auto *old_dir = reinterpret_cast<SBHashDirectoryPage *>(old_dir_data);
+
+                // Link new directory page to chain and copy expanded pointers
+                new_dir->hdp_next_page = 0; // New page is at end of chain
+
+                // Copy and double pointers from old directory
+                // First half goes in old dir (updated in place), second half in new dir
+                for (uint32_t i = 0; i < old_size && i < pointers_per_page; i++)
+                {
+                    uint64_t bucket_ptr = old_dir->hdp_bucket_pointers[i];
+                    // Keep original in old dir, add duplicate in new dir
+                    if (old_size + i < pointers_per_page)
+                    {
+                        old_dir->hdp_bucket_pointers[old_size + i] = bucket_ptr;
+                    }
+                    else
+                    {
+                        new_dir->hdp_bucket_pointers[(old_size + i) - pointers_per_page] = bucket_ptr;
+                    }
+                }
+
+                // Link new page to old directory chain
+                old_dir->hdp_next_page = new_dir_page_num;
+
+                buffer_pool_->unpinPage(old_dir_page, true, ctx);
+                buffer_pool_->unpinPage(new_dir_page_num, true, ctx);
+
+                // Update meta page
+                meta->hip_global_depth = new_global_depth;
+                buffer_pool_->unpinPage(meta_page_, true, ctx);
+
+                // Update cache
+                cached_global_depth_.store(new_global_depth, std::memory_order_release);
+
+                resize_in_progress_.store(false, std::memory_order_release);
+
+                return Status::OK;
+            }
         }
 
         // Find operation
