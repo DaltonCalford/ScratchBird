@@ -4,6 +4,7 @@
 #include "scratchbird/parser/parser.h"     // ALPHA Phase 1 - Views: For parsing view definitions
 #include "scratchbird/sblr/bytecode_generator.h"  // ALPHA Phase 1 - Views: For generating view bytecode
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/type_extractor.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/charset.h"
@@ -5714,6 +5715,10 @@ namespace scratchbird
                     continue;  // Skip this row if trigger prevented update
                 }
 
+                // P1-6: Apply foreign key actions BEFORE update (cascade to child tables)
+                // This must happen before the actual update so child rows can detect FK column changes
+                applyFKActionOnUpdate(table_id, old_row_values, row_values, all_columns);
+
                 // Call StorageEngine::updateTuple with MGA versioning
                 uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tuple.tid));
                 uint16_t item_id = core::getSlot(tuple.tid);
@@ -6052,6 +6057,10 @@ namespace scratchbird
                 {
                     continue;  // Skip this row if trigger prevented delete
                 }
+
+                // P1-6: Apply foreign key actions BEFORE deletion (cascade to child tables)
+                // This must happen before the actual delete so child rows can still reference this parent
+                applyFKActionOnDelete(table_id, row_values, all_columns);
 
                 // Task 17 Phase 7: Update expression/filtered indexes BEFORE deletion
                 // (indexes need row values, and deletion is a soft delete that marks xmax)
@@ -10580,9 +10589,12 @@ namespace scratchbird
                     Value value = pop();
 
                     // Perform cast using TypedValue conversion
-                    auto converted = value.convertTo(target_type);
-
-                    if (!converted)
+                    try
+                    {
+                        auto converted = value.convertTo(target_type);
+                        push(converted);
+                    }
+                    catch (const std::exception& e)
                     {
                         if (is_try_cast)
                         {
@@ -10594,11 +10606,6 @@ namespace scratchbird
                             // CAST throws error on failure
                             error("Failed to cast value to target type");
                         }
-                    }
-                    else
-                    {
-                        // Push converted value
-                        push(*converted);
                     }
                     break;
                 }
@@ -15218,7 +15225,7 @@ namespace scratchbird
 
                             if (result.has_value())
                             {
-                                push(Value::makeTSQuery(*result));
+                                push(Value::makeTSQuery(std::make_shared<core::TSQuery>(std::move(*result))));
                             }
                             else
                             {
@@ -15261,7 +15268,7 @@ namespace scratchbird
 
                             if (result.has_value())
                             {
-                                push(Value::makeTSQuery(*result));
+                                push(Value::makeTSQuery(std::make_shared<core::TSQuery>(std::move(*result))));
                             }
                             else
                             {
@@ -15304,7 +15311,7 @@ namespace scratchbird
 
                             if (result.has_value())
                             {
-                                push(Value::makeTSQuery(*result));
+                                push(Value::makeTSQuery(std::make_shared<core::TSQuery>(std::move(*result))));
                             }
                             else
                             {
@@ -15330,9 +15337,9 @@ namespace scratchbird
                             if (left_val.type() == core::DataType::TSVECTOR &&
                                 right_val.type() == core::DataType::TSQUERY)
                             {
-                                auto vec = left_val.getTSVector();
-                                auto query = right_val.getTSQuery();
-                                match = core::ts_match(*vec, *query);
+                                const auto& vec = left_val.getTSVector();
+                                const auto& query = right_val.getTSQuery();
+                                match = core::ts_match(vec, query);
                             }
                             // Handle text @@ tsquery (implicit to_tsvector)
                             else if ((left_val.type() == core::DataType::TEXT ||
@@ -15340,16 +15347,16 @@ namespace scratchbird
                                     right_val.type() == core::DataType::TSQUERY)
                             {
                                 std::string text = left_val.toString();
-                                auto query = right_val.getTSQuery();
-                                match = core::ts_match_text(text, *query);
+                                const auto& query = right_val.getTSQuery();
+                                match = core::ts_match_text(text, query);
                             }
                             // Handle tsquery @@ tsvector (reversed)
                             else if (left_val.type() == core::DataType::TSQUERY &&
                                     right_val.type() == core::DataType::TSVECTOR)
                             {
-                                auto query = left_val.getTSQuery();
-                                auto vec = right_val.getTSVector();
-                                match = core::ts_match(*vec, *query);
+                                const auto& query = left_val.getTSQuery();
+                                const auto& vec = right_val.getTSVector();
+                                match = core::ts_match(vec, query);
                             }
                             else
                             {
@@ -15396,9 +15403,9 @@ namespace scratchbird
                         }
                         else
                         {
-                            auto vec = vec_val.getTSVector();
-                            auto query = query_val.getTSQuery();
-                            double rank = core::ts_rank(*vec, *query, normalization);
+                            const auto& vec = vec_val.getTSVector();
+                            const auto& query = query_val.getTSQuery();
+                            double rank = core::ts_rank(vec, query, normalization);
                             push(Value::makeFloat64(rank));
                         }
                     }
@@ -15420,6 +15427,15 @@ namespace scratchbird
                         else
                         {
                             double x = arg.toDouble();
+                            // P0-5: Check for NaN/Infinity
+                            if (std::isnan(x))
+                            {
+                                error("SIN argument cannot be NaN");
+                            }
+                            if (std::isinf(x))
+                            {
+                                error("SIN argument cannot be Infinity");
+                            }
                             push(Value::makeFloat64(std::sin(x)));
                         }
                     }
@@ -15439,6 +15455,15 @@ namespace scratchbird
                         else
                         {
                             double x = arg.toDouble();
+                            // P0-5: Check for NaN/Infinity
+                            if (std::isnan(x))
+                            {
+                                error("COS argument cannot be NaN");
+                            }
+                            if (std::isinf(x))
+                            {
+                                error("COS argument cannot be Infinity");
+                            }
                             push(Value::makeFloat64(std::cos(x)));
                         }
                     }
@@ -15458,6 +15483,15 @@ namespace scratchbird
                         else
                         {
                             double x = arg.toDouble();
+                            // P0-5: Check for NaN/Infinity
+                            if (std::isnan(x))
+                            {
+                                error("TAN argument cannot be NaN");
+                            }
+                            if (std::isinf(x))
+                            {
+                                error("TAN argument cannot be Infinity");
+                            }
                             push(Value::makeFloat64(std::tan(x)));
                         }
                     }
@@ -16079,7 +16113,17 @@ namespace scratchbird
                         {
                             double x = base.toDouble();
                             double y = exponent.toDouble();
-                            push(Value::makeFloat64(std::pow(x, y)));
+                            // P0-5: Check for NaN/Infinity
+                            if (std::isnan(x) || std::isnan(y))
+                            {
+                                error("POWER arguments cannot be NaN");
+                            }
+                            double result = std::pow(x, y);
+                            if (std::isnan(result))
+                            {
+                                error("POWER produced invalid result (NaN)");
+                            }
+                            push(Value::makeFloat64(result));
                         }
                     }
                     else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_EXP))
@@ -16098,7 +16142,18 @@ namespace scratchbird
                         else
                         {
                             double x = arg.toDouble();
-                            push(Value::makeFloat64(std::exp(x)));
+                            // P0-5: Check for NaN/Infinity
+                            if (std::isnan(x))
+                            {
+                                error("EXP argument cannot be NaN");
+                            }
+                            double result = std::exp(x);
+                            // exp() can legitimately produce Infinity for large inputs, but not NaN
+                            if (std::isnan(result))
+                            {
+                                error("EXP produced invalid result (NaN)");
+                            }
+                            push(Value::makeFloat64(result));
                         }
                     }
                     // Logarithmic functions
@@ -16118,11 +16173,25 @@ namespace scratchbird
                         else
                         {
                             double x = arg.toDouble();
+                            // P0-5: Check for NaN/Infinity
+                            if (std::isnan(x))
+                            {
+                                error("LN argument cannot be NaN");
+                            }
+                            if (std::isinf(x) && x < 0)
+                            {
+                                error("LN argument cannot be negative Infinity");
+                            }
                             if (x <= 0.0)
                             {
                                 error("LN argument must be positive");
                             }
-                            push(Value::makeFloat64(std::log(x)));
+                            double result = std::log(x);
+                            if (std::isnan(result))
+                            {
+                                error("LN produced invalid result");
+                            }
+                            push(Value::makeFloat64(result));
                         }
                     }
                     else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_LOG))
@@ -16144,11 +16213,26 @@ namespace scratchbird
                             else
                             {
                                 double x = arg.toDouble();
+                                // P0-5: Check for NaN/Infinity
+                                if (std::isnan(x))
+                                {
+                                    error("LOG argument cannot be NaN");
+                                }
+                                if (std::isinf(x) && x < 0)
+                                {
+                                    error("LOG argument cannot be negative Infinity");
+                                }
                                 if (x <= 0.0)
                                 {
                                     error("LOG argument must be positive");
                                 }
-                                push(Value::makeFloat64(std::log10(x)));
+                                double result = std::log10(x);
+                                // Defensive check for result
+                                if (std::isnan(result))
+                                {
+                                    error("LOG produced invalid result");
+                                }
+                                push(Value::makeFloat64(result));
                             }
                         }
                         else
@@ -16166,6 +16250,16 @@ namespace scratchbird
                                 double base = base_val.toDouble();
                                 double x = x_val.toDouble();
 
+                                // P0-5: Check for NaN/Infinity
+                                if (std::isnan(base) || std::isnan(x))
+                                {
+                                    error("LOG arguments cannot be NaN");
+                                }
+                                if ((std::isinf(base) && base < 0) || (std::isinf(x) && x < 0))
+                                {
+                                    error("LOG arguments cannot be negative Infinity");
+                                }
+
                                 if (base <= 0.0 || base == 1.0)
                                 {
                                     error("LOG base must be positive and not equal to 1");
@@ -16176,7 +16270,13 @@ namespace scratchbird
                                 }
 
                                 // Change of base formula: log_b(x) = ln(x) / ln(b)
-                                push(Value::makeFloat64(std::log(x) / std::log(base)));
+                                double result = std::log(x) / std::log(base);
+                                // Defensive check
+                                if (std::isnan(result))
+                                {
+                                    error("LOG produced invalid result");
+                                }
+                                push(Value::makeFloat64(result));
                             }
                         }
                     }
@@ -16196,11 +16296,25 @@ namespace scratchbird
                         else
                         {
                             double x = arg.toDouble();
+                            // P0-5: Check for NaN/Infinity
+                            if (std::isnan(x))
+                            {
+                                error("LOG10 argument cannot be NaN");
+                            }
+                            if (std::isinf(x) && x < 0)
+                            {
+                                error("LOG10 argument cannot be negative Infinity");
+                            }
                             if (x <= 0.0)
                             {
                                 error("LOG10 argument must be positive");
                             }
-                            push(Value::makeFloat64(std::log10(x)));
+                            double result = std::log10(x);
+                            if (std::isnan(result))
+                            {
+                                error("LOG10 produced invalid result");
+                            }
+                            push(Value::makeFloat64(result));
                         }
                     }
                     else if (ext_op == static_cast<uint8_t>(Opcode::EXT_FUNC_LOG2))
@@ -16219,11 +16333,25 @@ namespace scratchbird
                         else
                         {
                             double x = arg.toDouble();
+                            // P0-5: Check for NaN/Infinity
+                            if (std::isnan(x))
+                            {
+                                error("LOG2 argument cannot be NaN");
+                            }
+                            if (std::isinf(x) && x < 0)
+                            {
+                                error("LOG2 argument cannot be negative Infinity");
+                            }
                             if (x <= 0.0)
                             {
                                 error("LOG2 argument must be positive");
                             }
-                            push(Value::makeFloat64(std::log2(x)));
+                            double result = std::log2(x);
+                            if (std::isnan(result))
+                            {
+                                error("LOG2 produced invalid result");
+                            }
+                            push(Value::makeFloat64(result));
                         }
                     }
                     // Statistical functions (0xF3-0xF8)
@@ -23792,41 +23920,32 @@ namespace scratchbird
             // ===== ARRAY TYPE =====
             else if (source_type == core::DataType::ARRAY)
             {
-                auto array = source.getArray();
-                if (!array)
-                {
+                try {
+                    const auto& array = source.getArray();
+
+                    switch (field)
+                    {
+                        case ExtractField::CARDINALITY:
+                            push(Value::makeInt32(static_cast<int32_t>(array.size())));
+                            return;
+                        case ExtractField::NDIMS:
+                            // For vector<TypedValue>, we treat it as 1D array
+                            push(Value::makeInt32(1));
+                            return;
+                        case ExtractField::LOWER:
+                            // PostgreSQL arrays are 1-indexed by default
+                            push(Value::makeInt32(1));
+                            return;
+                        case ExtractField::UPPER:
+                            push(Value::makeInt32(static_cast<int32_t>(array.size())));
+                            return;
+                        default:
+                            error("Field '" + std::to_string(field_id) + "' not yet implemented for ARRAY type");
+                            return;
+                    }
+                } catch (const std::exception& e) {
                     push(Value::makeNull());
                     return;
-                }
-
-                switch (field)
-                {
-                    case ExtractField::CARDINALITY:
-                        push(Value::makeInt32(static_cast<int32_t>(array->getTotalElements())));
-                        return;
-                    case ExtractField::NDIMS:
-                        push(Value::makeInt32(static_cast<int32_t>(array->getRank())));
-                        return;
-                    case ExtractField::LOWER:
-                        // PostgreSQL arrays are 1-indexed by default
-                        push(Value::makeInt32(1));
-                        return;
-                    case ExtractField::UPPER:
-                    {
-                        auto dims = array->getDimensions();
-                        if (!dims.empty())
-                        {
-                            push(Value::makeInt32(static_cast<int32_t>(dims[0])));
-                        }
-                        else
-                        {
-                            push(Value::makeNull());
-                        }
-                        return;
-                    }
-                    default:
-                        error("Field '" + std::to_string(field_id) + "' not yet implemented for ARRAY type");
-                        return;
                 }
             }
             // ===== SPATIAL TYPES =====

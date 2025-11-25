@@ -12,6 +12,7 @@
 
 #include "scratchbird/core/network.h"
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/typed_value.h"
 #include <iostream>
 #include <cassert>
 

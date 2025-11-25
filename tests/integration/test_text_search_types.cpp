@@ -9,6 +9,7 @@
  */
 
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/typed_value.h"
 #include "scratchbird/core/tsvector.h"
 #include "scratchbird/core/tsquery.h"
 #include "scratchbird/core/ts_functions.h"
@@ -55,10 +56,9 @@ void test_tsvector_value_creation()
         test_assert(val.type() == DataType::TSVECTOR, "Value type is TSVECTOR");
 
         // Test retrieval
-        auto retrieved = val.getTSVector();
-        test_assert(retrieved != nullptr, "getTSVector returns non-null");
-        test_assert(retrieved->numLexemes() == 2, "Retrieved vector has 2 lexemes");
-        test_assert(retrieved->toString() == "'cat':1 'dog':2", "Retrieved vector matches");
+        const TSVector& retrieved = val.getTSVector();
+        test_assert(retrieved.numLexemes() == 2, "Retrieved vector has 2 lexemes");
+        test_assert(retrieved.toString() == "'cat':1 'dog':2", "Retrieved vector matches");
     }
 }
 
@@ -76,9 +76,8 @@ void test_tsvector_value_shared_ptr()
     TypedValue val = TypedValue::makeTSVector(vec_ptr);
     test_assert(val.type() == DataType::TSVECTOR, "Value type is TSVECTOR");
 
-    auto retrieved = val.getTSVector();
-    test_assert(retrieved != nullptr, "getTSVector returns non-null");
-    test_assert(retrieved->numLexemes() == 1, "Retrieved vector has 1 lexeme");
+    const TSVector& retrieved = val.getTSVector();
+    test_assert(retrieved.numLexemes() == 1, "Retrieved vector has 1 lexeme");
 }
 
 void test_tsvector_value_tostring()
@@ -104,14 +103,14 @@ void test_tsquery_value_creation()
 
     if (query.has_value())
     {
-        // Test value creation (uses binary copy since TSQuery is non-copyable)
-        TypedValue val = TypedValue::makeTSQuery(*query);
+        // Test value creation (TSQuery requires shared_ptr since it's move-only)
+        auto query_ptr = std::make_shared<TSQuery>(std::move(*query));
+        TypedValue val = TypedValue::makeTSQuery(query_ptr);
         test_assert(val.type() == DataType::TSQUERY, "Value type is TSQUERY");
 
         // Test retrieval
-        auto retrieved = val.getTSQuery();
-        test_assert(retrieved != nullptr, "getTSQuery returns non-null");
-        test_assert(retrieved->toString() == "('cat' & 'dog')", "Retrieved query matches");
+        const TSQuery& retrieved = val.getTSQuery();
+        test_assert(retrieved.toString() == "('cat' & 'dog')", "Retrieved query matches");
     }
 }
 
@@ -127,9 +126,8 @@ void test_tsquery_value_shared_ptr()
         TypedValue val = TypedValue::makeTSQuery(query_ptr);
         test_assert(val.type() == DataType::TSQUERY, "Value type is TSQUERY");
 
-        auto retrieved = val.getTSQuery();
-        test_assert(retrieved != nullptr, "getTSQuery returns non-null");
-        test_assert(retrieved->toString() == "('cat' | 'dog')", "Retrieved query matches");
+        const TSQuery& retrieved = val.getTSQuery();
+        test_assert(retrieved.toString() == "('cat' | 'dog')", "Retrieved query matches");
     }
 }
 
@@ -140,7 +138,8 @@ void test_tsquery_value_tostring()
     auto query = TSQuery::fromString("hello & world");
     if (query.has_value())
     {
-        TypedValue val = TypedValue::makeTSQuery(*query);
+        auto query_ptr = std::make_shared<TSQuery>(std::move(*query));
+        TypedValue val = TypedValue::makeTSQuery(query_ptr);
         std::string str = val.toString();
 
         test_assert(str == "('hello' & 'world')", "TypedValue::toString() works for TSQUERY");
@@ -165,17 +164,18 @@ void test_full_workflow()
 
         if (query_opt.has_value())
         {
-            TypedValue query_val = TypedValue::makeTSQuery(*query_opt);
+            auto query_ptr = std::make_shared<TSQuery>(std::move(*query_opt));
+            TypedValue query_val = TypedValue::makeTSQuery(query_ptr);
 
             // Test match operation
-            auto vec = vec_val.getTSVector();
-            auto query = query_val.getTSQuery();
+            const TSVector& vec = vec_val.getTSVector();
+            const TSQuery& query = query_val.getTSQuery();
 
-            bool match = ts_match(*vec, *query);
+            bool match = ts_match(vec, query);
             test_assert(match == true, "Match operation returns true for matching document");
 
             // Test rank operation
-            double rank = ts_rank(*vec, *query);
+            double rank = ts_rank(vec, query);
             test_assert(rank > 0.0, "Rank operation returns positive value");
         }
     }
@@ -191,14 +191,15 @@ void test_text_match_workflow()
 
     if (query_opt.has_value())
     {
-        TypedValue query_val = TypedValue::makeTSQuery(*query_opt);
-        auto query = query_val.getTSQuery();
+        auto query_ptr = std::make_shared<TSQuery>(std::move(*query_opt));
+        TypedValue query_val = TypedValue::makeTSQuery(query_ptr);
+        const TSQuery& query = query_val.getTSQuery();
 
         // Test match with text
-        bool match = ts_match_text("I have a cat and a dog", *query);
+        bool match = ts_match_text("I have a cat and a dog", query);
         test_assert(match == true, "Text match returns true");
 
-        bool no_match = ts_match_text("I have a bird", *query);
+        bool no_match = ts_match_text("I have a bird", query);
         test_assert(no_match == false, "Text non-match returns false");
     }
 }
@@ -220,19 +221,20 @@ void test_multiple_value_operations()
     {
         TypedValue val1 = TypedValue::makeTSVector(*vec1_opt);
         TypedValue val2 = TypedValue::makeTSVector(*vec2_opt);
-        TypedValue query_val = TypedValue::makeTSQuery(*query_opt);
+        auto query_ptr = std::make_shared<TSQuery>(std::move(*query_opt));
+        TypedValue query_val = TypedValue::makeTSQuery(query_ptr);
 
         test_assert(val1.type() == DataType::TSVECTOR, "Val1 type correct");
         test_assert(val2.type() == DataType::TSVECTOR, "Val2 type correct");
         test_assert(query_val.type() == DataType::TSQUERY, "Query val type correct");
 
         // Test matches
-        auto vec1 = val1.getTSVector();
-        auto vec2 = val2.getTSVector();
-        auto query = query_val.getTSQuery();
+        const TSVector& vec1 = val1.getTSVector();
+        const TSVector& vec2 = val2.getTSVector();
+        const TSQuery& query = query_val.getTSQuery();
 
-        bool match1 = ts_match(*vec1, *query);
-        bool match2 = ts_match(*vec2, *query);
+        bool match1 = ts_match(vec1, query);
+        bool match2 = ts_match(vec2, query);
 
         test_assert(match1 == true, "Vec1 matches (contains cat)");
         test_assert(match2 == false, "Vec2 doesn't match (no cat)");

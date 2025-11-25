@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/typed_value.h"
 #include "scratchbird/core/type_serialization.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/spatial/wkb.h"
@@ -1047,7 +1048,8 @@ TEST(TypeSerializationTest, SizeValidation_FixedSizeTypes)
     EXPECT_EQ(TypeSerializer::getSerializedSize(v4), 8u);
 
     // INT128: 16 bytes
-    auto v5 = TypedValue::makeInt128(12345);
+    std::vector<uint8_t> int128_data(16, 0);
+    auto v5 = TypedValue::makeInt128(int128_data);
     EXPECT_EQ(TypeSerializer::getSerializedSize(v5), 16u);
 
     // MONEY: 8 bytes
@@ -1055,7 +1057,8 @@ TEST(TypeSerializationTest, SizeValidation_FixedSizeTypes)
     EXPECT_EQ(TypeSerializer::getSerializedSize(v6), 8u);
 
     // INTERVAL: 16 bytes
-    auto v7 = TypedValue::makeInterval(1, 2, 3);
+    Interval interval(1, 2, 3);
+    auto v7 = TypedValue::makeInterval(interval);
     EXPECT_EQ(TypeSerializer::getSerializedSize(v7), 16u);
 
     // MACADDR: 6 bytes
@@ -1071,13 +1074,14 @@ TEST(TypeSerializationTest, SizeValidation_FixedSizeTypes)
 
 TEST(TypeSerializationTest, MultipleTypes_EndToEnd)
 {
+    std::vector<uint8_t> int128_data2(16, 0);
     std::vector<TypedValue> values = {
         TypedValue::makeUInt8(255),
         TypedValue::makeUInt32(123456),
-        TypedValue::makeInt128(9999),
+        TypedValue::makeInt128(int128_data2),
         TypedValue::makeMoney(500000),
-        TypedValue::makeInterval(6, 15, 1800000000LL),
-        TypedValue::makePoint(1.5, 2.5),
+        TypedValue::makeInterval(Interval(6, 15, 1800000000LL)),
+        TypedValue::makePoint(Point(1.5, 2.5)),
         TypedValue::makeInt4Range(Int4Range(1, 10, true, false)),
         TypedValue::makeMacAddr(MacAddr::fromString("11:22:33:44:55:66").value())
     };

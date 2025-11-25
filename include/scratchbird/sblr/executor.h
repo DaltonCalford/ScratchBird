@@ -9,6 +9,7 @@
 #include "scratchbird/core/charset.h"
 #include "scratchbird/core/timezone.h"
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/typed_value.h"
 #include "scratchbird/core/permission_cache.h"  // For PermissionCheckMode
 // Index headers needed for template implementation
 #include "scratchbird/core/gist_index.h"

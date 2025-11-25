@@ -1,6 +1,7 @@
 #pragma once
 
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/typed_value.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include <vector>
