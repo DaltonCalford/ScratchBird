@@ -2840,19 +2840,16 @@ namespace scratchbird::core
     {
         // P1-11: Bulk loading optimization for B-Tree index construction
         //
-        // Current Implementation: Sort + Sequential Insert (O(N log N))
-        // This is better than random inserts but not optimal.
-        //
-        // TODO: Implement true bottom-up construction for O(N) performance:
+        // Bottom-up construction algorithm (O(N) after sorting):
         //   Phase 1: Sort entries by key - O(N log N)
         //   Phase 2: Build leaf pages from sorted entries - O(N)
         //   Phase 3: Build internal nodes bottom-up - O(N)
         //
-        // Benefits of true bottom-up:
-        //   - No page splits during insertion (pre-allocate full pages)
-        //   - Better page utilization (pack pages to ~95% instead of gradual filling)
-        //   - Reduced I/O (sequential writes instead of random updates)
-        //   - 3-5x faster than individual inserts for large datasets
+        // Benefits over individual inserts:
+        //   - No page splits during construction (pre-allocate full pages)
+        //   - Better page utilization (~95% vs gradual filling)
+        //   - Sequential I/O (no random page updates)
+        //   - 3-5x faster for large datasets
         //
         // Reference: PostgreSQL's _bt_load() in nbtree/nbtsort.c
 
@@ -2861,62 +2858,421 @@ namespace scratchbird::core
             return Status::OK; // Nothing to load
         }
 
-        // Phase 1: Sort entries by key
+        BufferPool *buffer_pool = db_->buffer_pool();
+        PageManager *page_manager = db_->page_manager();
+        uint32_t page_size = db_->page_size();
+
+        if (!buffer_pool || !page_manager)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                            "Database components not initialized for bulk load");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // ========================================================================
+        // Phase 1: Sort entries by key - O(N log N)
+        // ========================================================================
         std::sort(entries.begin(), entries.end(),
                  [this](const auto &a, const auto &b) {
                      return this->compare_keys(a.first, b.first) < 0;
                  });
 
-        // Phase 2: Insert sorted entries
-        // TODO: Replace with bottom-up construction for true O(N) performance
-        // Current approach: O(N log N) but benefits from sorted order (fewer splits)
+        // ========================================================================
+        // Phase 2: Build leaf pages from sorted entries - O(N)
+        // ========================================================================
 
+        // Calculate available space per leaf page (after header and offsets overhead)
+        // We leave 5% slack for header growth and alignment
+        uint32_t available_space = page_size - sizeof(SBBTreePage);
+        uint32_t target_fill = (available_space * 95) / 100; // 95% fill factor
+
+        // Calculate average entry size for estimation
+        // Entry size = SBBTreeNode header + key size + TID (uint64_t)
+        size_t total_key_size = 0;
         for (const auto &entry : entries)
         {
-            Status status = insert(entry.first, entry.second, xid, ctx);
+            total_key_size += entry.first.size();
+        }
+        size_t avg_key_size = entries.empty() ? 16 : (total_key_size / entries.size());
+        size_t avg_entry_size = sizeof(SBBTreeNode) + avg_key_size + sizeof(uint64_t) + sizeof(uint16_t);
+
+        // Estimate entries per page (conservative to avoid overflow)
+        size_t entries_per_page = target_fill / avg_entry_size;
+        if (entries_per_page < 2) entries_per_page = 2; // Minimum 2 entries per page
+
+        // Build leaf pages
+        std::vector<uint32_t> leaf_pages;
+        std::vector<std::vector<uint8_t>> separator_keys; // First key of each leaf page (except first)
+
+        size_t entry_idx = 0;
+        while (entry_idx < entries.size())
+        {
+            // Allocate a new leaf page
+            uint32_t leaf_page_num = 0;
+            Status status = page_manager->allocatePage(leaf_page_num, ctx);
             if (status != Status::OK)
             {
-                // On error, return status - partial inserts have occurred
-                SET_ERROR_CONTEXT(ctx, status,
-                                "Bulk load failed at entry - partial index created");
+                SET_ERROR_CONTEXT(ctx, status, "Failed to allocate leaf page during bulk load");
                 return status;
+            }
+
+            // Pin and initialize the page
+            void *page_data_ptr = nullptr;
+            status = buffer_pool->pinPage(leaf_page_num, &page_data_ptr, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to pin leaf page during bulk load");
+                return status;
+            }
+
+            // Initialize as leaf page
+            auto *page = reinterpret_cast<SBBTreePage *>(page_data_ptr);
+            std::memset(page, 0, page_size);
+
+            page->btr_header.magic = K_MAGIC_SBRD;
+            page->btr_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
+            page->btr_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BTREE_LEAF);
+            page->btr_header.page_size = page_size;
+            page->btr_header.page_id = leaf_page_num;
+            std::memcpy(page->btr_header.database_uuid, db_->uuid().bytes.data(), 16);
+
+            page->btr_index_uuid = index_info_.idx_uuid;
+            page->btr_table_uuid = index_info_.idx_table_uuid;
+            page->btr_level = 0; // Leaf level
+            page->btr_flags = static_cast<uint16_t>(BTreeFlags::LEAF);
+            page->btr_count = 0;
+            page->btr_free_space = page_size - sizeof(SBBTreePage);
+            page->btr_high_water = page_size;
+            page->btr_xmin = xid;
+            page->btr_xmax = 0;
+
+            // Set leftmost/rightmost flags as appropriate
+            if (leaf_pages.empty())
+            {
+                page->btr_flags |= static_cast<uint16_t>(BTreeFlags::LEFTMOST);
+            }
+
+            // Record first key as separator for internal nodes (except first page)
+            if (!leaf_pages.empty() && entry_idx < entries.size())
+            {
+                separator_keys.push_back(entries[entry_idx].first);
+            }
+
+            // Fill the leaf page with entries
+            BTreePage btree_page(reinterpret_cast<uint8_t *>(page_data_ptr), page_size);
+
+            while (entry_idx < entries.size())
+            {
+                const auto &entry = entries[entry_idx];
+
+                // Calculate entry size
+                uint32_t entry_size = sizeof(SBBTreeNode) + entry.first.size() + sizeof(uint64_t);
+
+                // Check if entry fits (including offset array entry)
+                if (!btree_page.has_sufficient_space(entry_size))
+                {
+                    break; // Page full, move to next page
+                }
+
+                // Create tuple and add node
+                Tuple tuple;
+                tuple.tid = entry.second;
+                tuple.data = nullptr;
+                tuple.data_size = 0;
+
+                status = btree_page.add_node(entry.first, tuple, xid, ctx);
+                if (status != Status::OK)
+                {
+                    break; // Page full or error
+                }
+
+                entry_idx++;
+            }
+
+            // Link to previous leaf page
+            if (!leaf_pages.empty())
+            {
+                page->btr_left_sibling = leaf_pages.back();
+
+                // Update previous page's right sibling pointer
+                void *prev_page_ptr = nullptr;
+                status = buffer_pool->pinPage(leaf_pages.back(), &prev_page_ptr, ctx);
+                if (status == Status::OK)
+                {
+                    auto *prev_page = reinterpret_cast<SBBTreePage *>(prev_page_ptr);
+                    prev_page->btr_right_sibling = leaf_page_num;
+                    buffer_pool->unpinPage(leaf_pages.back(), true, ctx);
+                }
+            }
+
+            leaf_pages.push_back(leaf_page_num);
+            buffer_pool->unpinPage(leaf_page_num, true, ctx);
+        }
+
+        // Mark last leaf page as rightmost
+        if (!leaf_pages.empty())
+        {
+            void *last_page_ptr = nullptr;
+            Status status = buffer_pool->pinPage(leaf_pages.back(), &last_page_ptr, ctx);
+            if (status == Status::OK)
+            {
+                auto *last_page = reinterpret_cast<SBBTreePage *>(last_page_ptr);
+                last_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::RIGHTMOST);
+                buffer_pool->unpinPage(leaf_pages.back(), true, ctx);
             }
         }
 
-        // TODO: For true bottom-up construction, implement:
-        //
-        // 1. Calculate optimal page layout:
-        //    - entries_per_leaf = (PAGE_SIZE - sizeof(SBBTreePage)) / avg_entry_size
-        //    - num_leaf_pages = ceil(entries.size() / entries_per_leaf)
-        //
-        // 2. Build leaf level:
-        //    std::vector<uint32_t> leaf_pages;
-        //    for (size_t i = 0; i < entries.size(); i += entries_per_leaf)
-        //    {
-        //        uint32_t leaf_page = allocateLeafPage();
-        //        size_t count = min(entries_per_leaf, entries.size() - i);
-        //        fillLeafPage(leaf_page, &entries[i], count, xid);
-        //        leaf_pages.push_back(leaf_page);
-        //    }
-        //
-        // 3. Build internal levels bottom-up:
-        //    std::vector<uint32_t> current_level = leaf_pages;
-        //    while (current_level.size() > 1)
-        //    {
-        //        std::vector<uint32_t> next_level;
-        //        for (size_t i = 0; i < current_level.size(); i += children_per_internal)
-        //        {
-        //            uint32_t internal_page = allocateInternalPage();
-        //            fillInternalPage(internal_page, &current_level[i], ...);
-        //            next_level.push_back(internal_page);
-        //        }
-        //        current_level = next_level;
-        //    }
-        //
-        // 4. Set root:
-        //    index_info_.idx_root_page = current_level[0];
-        //
-        // See PostgreSQL's nbtsort.c for reference implementation.
+        // ========================================================================
+        // Phase 3: Build internal nodes bottom-up - O(N)
+        // ========================================================================
+
+        // If only one leaf page, it becomes the root
+        if (leaf_pages.size() == 1)
+        {
+            void *root_page_ptr = nullptr;
+            Status status = buffer_pool->pinPage(leaf_pages[0], &root_page_ptr, ctx);
+            if (status == Status::OK)
+            {
+                auto *root_page = reinterpret_cast<SBBTreePage *>(root_page_ptr);
+                root_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::ROOT);
+                buffer_pool->unpinPage(leaf_pages[0], true, ctx);
+            }
+            index_info_.idx_root_page = leaf_pages[0];
+            index_info_.idx_height = 1;
+            index_info_.idx_page_count = 1;
+            index_info_.idx_tuple_count = entries.size();
+            return Status::OK;
+        }
+
+        // Build internal levels until we have a single root
+        std::vector<uint32_t> current_level = leaf_pages;
+        std::vector<std::vector<uint8_t>> current_separators = separator_keys;
+        uint16_t level = 1;
+
+        while (current_level.size() > 1)
+        {
+            std::vector<uint32_t> next_level;
+            std::vector<std::vector<uint8_t>> next_separators;
+
+            // Calculate children per internal page
+            // Internal node entry: SBBTreeNode header + key + child pointer (uint64_t)
+            size_t avg_sep_size = 0;
+            for (const auto &sep : current_separators)
+            {
+                avg_sep_size += sep.size();
+            }
+            avg_sep_size = current_separators.empty() ? 16 : (avg_sep_size / current_separators.size());
+            size_t internal_entry_size = sizeof(SBBTreeNode) + avg_sep_size + sizeof(uint16_t);
+            size_t children_per_page = target_fill / internal_entry_size;
+            if (children_per_page < 2) children_per_page = 2;
+
+            size_t child_idx = 0;
+            size_t sep_idx = 0;
+
+            while (child_idx < current_level.size())
+            {
+                // Allocate internal page
+                uint32_t internal_page_num = 0;
+                Status status = page_manager->allocatePage(internal_page_num, ctx);
+                if (status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to allocate internal page during bulk load");
+                    return status;
+                }
+
+                void *page_data_ptr = nullptr;
+                status = buffer_pool->pinPage(internal_page_num, &page_data_ptr, ctx);
+                if (status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to pin internal page during bulk load");
+                    return status;
+                }
+
+                // Initialize as internal page
+                auto *page = reinterpret_cast<SBBTreePage *>(page_data_ptr);
+                std::memset(page, 0, page_size);
+
+                page->btr_header.magic = K_MAGIC_SBRD;
+                page->btr_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
+                page->btr_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BTREE_INTERNAL);
+                page->btr_header.page_size = page_size;
+                page->btr_header.page_id = internal_page_num;
+                std::memcpy(page->btr_header.database_uuid, db_->uuid().bytes.data(), 16);
+
+                page->btr_index_uuid = index_info_.idx_uuid;
+                page->btr_table_uuid = index_info_.idx_table_uuid;
+                page->btr_level = level;
+                page->btr_flags = 0; // Internal page, not leaf
+                page->btr_count = 0;
+                page->btr_free_space = page_size - sizeof(SBBTreePage);
+                page->btr_high_water = page_size;
+                page->btr_xmin = xid;
+                page->btr_xmax = 0;
+
+                if (next_level.empty())
+                {
+                    page->btr_flags |= static_cast<uint16_t>(BTreeFlags::LEFTMOST);
+                }
+
+                // Record first separator for next level (except first internal page)
+                if (!next_level.empty() && sep_idx < current_separators.size())
+                {
+                    next_separators.push_back(current_separators[sep_idx]);
+                }
+
+                // Fill internal page with child pointers and separator keys
+                //
+                // B-tree internal node structure:
+                //   - N keys separate N+1 children
+                //   - node[i].btn_child_page = child to the LEFT of key[i]
+                //   - btr_rightmost_child = rightmost child (to the right of all keys)
+                //
+                // Given children: [c0, c1, c2, c3] and separators: [k0, k1, k2]
+                //   c0 < k0 < c1 < k1 < c2 < k2 < c3
+                //
+                // We store:
+                //   node[0]: key=k0, btn_child_page=c0  (c0 is left of k0)
+                //   node[1]: key=k1, btn_child_page=c1  (c1 is left of k1)
+                //   node[2]: key=k2, btn_child_page=c2  (c2 is left of k2)
+                //   btr_rightmost_child = c3             (c3 is right of k2)
+
+                auto *offsets = reinterpret_cast<uint16_t *>(
+                    reinterpret_cast<uint8_t *>(page) + sizeof(SBBTreePage));
+
+                size_t page_children = 0;
+                size_t first_child_idx_for_page = child_idx;
+
+                // Add entries: each key[i] paired with child[i] (left of key)
+                // We need N-1 separators for N children
+                // children[first..last] where last-first+1 = number of children
+                while (child_idx < current_level.size() &&
+                       page_children < children_per_page)
+                {
+                    // For children beyond the first, we need a separator key
+                    if (page_children > 0)
+                    {
+                        if (sep_idx >= current_separators.size())
+                        {
+                            break; // No more separators available
+                        }
+
+                        // Calculate entry size for this separator + child
+                        uint32_t entry_size = sizeof(SBBTreeNode) + current_separators[sep_idx].size();
+
+                        // Check if entry fits
+                        uint32_t needed = entry_size + sizeof(uint16_t);
+                        if (page->btr_free_space < needed)
+                        {
+                            break;
+                        }
+
+                        // Allocate node from high water mark
+                        page->btr_high_water -= entry_size;
+                        auto *node = reinterpret_cast<SBBTreeNode *>(
+                            reinterpret_cast<uint8_t *>(page) + page->btr_high_water);
+
+                        // Initialize internal node
+                        // btn_child_page points to child[page_children-1] (to the LEFT of this key)
+                        node->btn_flags = 0;
+                        node->btn_prefix_len = 0;
+                        node->btn_suffix_trunc = 0;
+                        node->btn_key_len = current_separators[sep_idx].size();
+                        node->btn_tuple_count = 0; // Internal nodes don't have tuples
+                        node->btn_child_page = current_level[child_idx - 1]; // Previous child is to the left
+                        node->btn_xmin = xid;
+                        node->btn_xmax = 0;
+
+                        // Copy separator key
+                        uint8_t *key_location = reinterpret_cast<uint8_t *>(node) + sizeof(SBBTreeNode);
+                        std::memcpy(key_location, current_separators[sep_idx].data(),
+                                   current_separators[sep_idx].size());
+
+                        // Update offsets array
+                        offsets[page->btr_count] = page->btr_high_water;
+                        page->btr_count++;
+                        page->btr_free_space -= needed;
+
+                        sep_idx++;
+                    }
+
+                    // Update parent pointer of this child page
+                    void *child_ptr = nullptr;
+                    status = buffer_pool->pinPage(current_level[child_idx], &child_ptr, ctx);
+                    if (status == Status::OK)
+                    {
+                        auto *child_page = reinterpret_cast<SBBTreePage *>(child_ptr);
+                        child_page->btr_parent_page = internal_page_num;
+                        buffer_pool->unpinPage(current_level[child_idx], true, ctx);
+                    }
+
+                    child_idx++;
+                    page_children++;
+                }
+
+                // Set rightmost child pointer - the last child added
+                // This is the child to the RIGHT of all separator keys on this page
+                if (page_children > 0)
+                {
+                    page->btr_rightmost_child = current_level[child_idx - 1];
+                }
+
+                // Link to previous internal page
+                if (!next_level.empty())
+                {
+                    page->btr_left_sibling = next_level.back();
+
+                    void *prev_page_ptr = nullptr;
+                    status = buffer_pool->pinPage(next_level.back(), &prev_page_ptr, ctx);
+                    if (status == Status::OK)
+                    {
+                        auto *prev_page = reinterpret_cast<SBBTreePage *>(prev_page_ptr);
+                        prev_page->btr_right_sibling = internal_page_num;
+                        buffer_pool->unpinPage(next_level.back(), true, ctx);
+                    }
+                }
+
+                next_level.push_back(internal_page_num);
+                buffer_pool->unpinPage(internal_page_num, true, ctx);
+            }
+
+            // Mark last internal page as rightmost
+            if (!next_level.empty())
+            {
+                void *last_page_ptr = nullptr;
+                Status status = buffer_pool->pinPage(next_level.back(), &last_page_ptr, ctx);
+                if (status == Status::OK)
+                {
+                    auto *last_page = reinterpret_cast<SBBTreePage *>(last_page_ptr);
+                    last_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::RIGHTMOST);
+                    buffer_pool->unpinPage(next_level.back(), true, ctx);
+                }
+            }
+
+            current_level = next_level;
+            current_separators = next_separators;
+            level++;
+        }
+
+        // ========================================================================
+        // Phase 4: Set the root page
+        // ========================================================================
+
+        if (!current_level.empty())
+        {
+            void *root_page_ptr = nullptr;
+            Status status = buffer_pool->pinPage(current_level[0], &root_page_ptr, ctx);
+            if (status == Status::OK)
+            {
+                auto *root_page = reinterpret_cast<SBBTreePage *>(root_page_ptr);
+                root_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::ROOT);
+                root_page->btr_parent_page = 0; // Root has no parent
+                buffer_pool->unpinPage(current_level[0], true, ctx);
+            }
+            index_info_.idx_root_page = current_level[0];
+            index_info_.idx_height = level;
+            index_info_.idx_page_count = leaf_pages.size() + (current_level.size() > 1 ? current_level.size() : 0);
+            index_info_.idx_tuple_count = entries.size();
+        }
 
         return Status::OK;
     }
