@@ -1,7 +1,7 @@
 # Alpha 1 - Medium Priority Issues (P2) Implementation Plan
 
 **Created:** November 23, 2025
-**Status:** 🔄 In Progress (3/25 items complete)
+**Status:** 🔄 In Progress (4/25 items complete)
 **Priority:** P2 - MEDIUM
 **Estimated Effort:** 100-150 hours (~90 remaining)
 **Target:** Beta 2
@@ -25,7 +25,7 @@ This plan covers 25 medium-priority issues focused on performance optimizations,
 ## AGENT A: PERFORMANCE OPTIMIZATIONS
 
 **Total Effort:** 27-33 hours
-**Status:** 60% Complete (3/5 items)
+**Status:** 80% Complete (4/5 items)
 
 ### P2-1: Page Table Lock Partitioning ✅ COMPLETE (Nov 25, 2025)
 - **Current:** Single mutex for entire buffer pool page table
@@ -39,10 +39,14 @@ This plan covers 25 medium-priority issues focused on performance optimizations,
 - **Impact:** O(1) dirty page count for background writer
 - **Implementation:** `buffer_pool.h:399`, `buffer_pool.cpp:1019-1024`
 
-### P2-3: TOAST Chunk Prefetching (6-8 hours) ❌ PENDING
+### P2-3: TOAST Chunk Prefetching ✅ COMPLETE (Nov 25, 2025)
 - **Current:** Sequential chunk reads (many random I/Os)
-- **Improvement:** Batch read all chunks in single range scan
-- **Impact:** 5-10x faster for large TOAST values
+- **Improvement:** Three-phase prefetch: collect TIDs → prefetch pages → read chunks
+- **Impact:** 5-10x faster for large TOAST values (cache hits instead of random I/O)
+- **Implementation:**
+  - `buffer_pool.h:179-202` - Added prefetchPages/prefetchPagesGlobal methods
+  - `buffer_pool.cpp:348-419` - Prefetch implementation with deduplication
+  - `toast.cpp:659-692` - Three-phase read with prefetching
 
 ### P2-4: Permission Cache TTL Reduction ✅ COMPLETE (Nov 25, 2025)
 - **Current:** 60-second TTL creates race window

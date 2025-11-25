@@ -620,6 +620,7 @@ namespace scratchbird::core
     {
         StorageEngine *storage = db_->storage_engine();
         CatalogManager *catalog = db_->catalog_manager();
+        BufferPool *buffer_pool = db_->buffer_pool();
 
         // Use page-size-based chunk size for validation
         uint32_t max_chunk_size = ToastSettings::getMaxChunkSize(db_->page_size());
@@ -655,7 +656,44 @@ namespace scratchbird::core
             return status;
         }
 
-        // Collect chunks in order
+        // ========================================================================
+        // P2-3: TOAST Chunk Prefetching
+        // Phase 1: Collect all TIDs for this value_id from index
+        // ========================================================================
+        std::vector<TID> chunk_tids;
+        Tuple tid_tuple;
+        while ((status = scan->next(&tid_tuple, ctx)) == Status::OK)
+        {
+            // Index scan returns TID in tuple.tid
+            // We need to verify this is still our value_id by checking the key
+            // Since we can't easily check the key from just the TID, we'll collect
+            // all TIDs returned by the index scan for this key
+            chunk_tids.push_back(tid_tuple.tid);
+        }
+
+        if (chunk_tids.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "TOAST value not found");
+            return Status::NOT_FOUND;
+        }
+
+        // ========================================================================
+        // P2-3: Phase 2: Prefetch all unique pages containing chunks
+        // ========================================================================
+        std::vector<GPID> gpids;
+        gpids.reserve(chunk_tids.size());
+        for (const TID &tid : chunk_tids)
+        {
+            // TID contains GPID (which includes tablespace + page number)
+            gpids.push_back(tid.gpid);
+        }
+
+        // Prefetch all pages - this reads them into buffer pool cache
+        buffer_pool->prefetchPagesGlobal(gpids, ctx);
+
+        // ========================================================================
+        // P2-3: Phase 3: Read chunks from (now cached) pages
+        // ========================================================================
         struct ChunkData
         {
             uint32_t seq;
@@ -663,9 +701,16 @@ namespace scratchbird::core
         };
         std::vector<ChunkData> chunks;
 
-        Tuple tuple;
-        while ((status = scan->next(&tuple, ctx)) == Status::OK)
+        for (const TID &tid : chunk_tids)
         {
+            // Get tuple data using storage engine
+            Tuple tuple;
+            status = storage->getTuple(toast_table_id_, tid, &tuple, ctx);
+            if (status != Status::OK)
+            {
+                continue; // Skip failed reads
+            }
+
             // Parse tuple format: xmin (8) | xmax (8) | chunk_id (4) | chunk_seq (4) | chunk_size (4) | data
             // 28-byte header + data (Firebird MGA compliant)
             if ((tuple.data == nullptr) || tuple.data_size < 28)
@@ -688,8 +733,8 @@ namespace scratchbird::core
 
             if (chunk_id != value_id)
             {
-                // We've moved past our value_id in the index
-                break;
+                // Not our value_id, skip
+                continue;
             }
 
             ptr += 4;

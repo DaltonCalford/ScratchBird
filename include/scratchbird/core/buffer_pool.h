@@ -177,6 +177,31 @@ namespace scratchbird::core
         auto flushAll(ErrorContext *ctx = nullptr) -> Status;
 
         /**
+         * P2-3: Prefetch multiple pages into buffer pool
+         *
+         * @param page_ids Vector of page IDs to prefetch
+         * @param ctx Error context
+         * @return Status::OK on success (partial success still returns OK)
+         *
+         * Purpose: TOAST chunk prefetching optimization. Batches multiple page reads
+         *          to reduce random I/O and improve cache locality.
+         *
+         * Algorithm:
+         *   1. Filter out pages already in buffer pool
+         *   2. Pin remaining pages (reads from disk into cache)
+         *   3. Immediately unpin (but pages stay in cache for subsequent access)
+         *
+         * Thread-safety: Uses partition locks for page table lookups, global lock
+         *                only when frame allocation is needed.
+         */
+        auto prefetchPages(const std::vector<uint32_t> &page_ids, ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * P2-3: Prefetch multiple pages (GPID version)
+         */
+        auto prefetchPagesGlobal(const std::vector<GPID> &gpids, ErrorContext *ctx = nullptr) -> Status;
+
+        /**
          * flushTablespace - Flush all dirty pages for a specific tablespace
          *
          * @param tablespace_id Tablespace ID to flush (0 = primary, 1-65535 = custom)

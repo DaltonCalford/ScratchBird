@@ -345,6 +345,79 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    // P2-3: TOAST Chunk Prefetching - LEGACY API
+    auto BufferPool::prefetchPages(const std::vector<uint32_t> &page_ids, ErrorContext *ctx) -> Status
+    {
+        // Convert to GPIDs and call GPID version
+        std::vector<GPID> gpids;
+        gpids.reserve(page_ids.size());
+        for (uint32_t page_id : page_ids)
+        {
+            gpids.push_back(convertPageIDtoGPID(page_id));
+        }
+        return prefetchPagesGlobal(gpids, ctx);
+    }
+
+    // P2-3: TOAST Chunk Prefetching - Batch read pages into buffer pool
+    auto BufferPool::prefetchPagesGlobal(const std::vector<GPID> &gpids, ErrorContext *ctx) -> Status
+    {
+        if (gpids.empty())
+        {
+            return Status::OK;
+        }
+
+        // Remove duplicates and pages already in cache
+        std::vector<GPID> pages_to_fetch;
+        pages_to_fetch.reserve(gpids.size());
+
+        for (GPID gpid : gpids)
+        {
+            // Check if already in buffer pool using partition lock
+            size_t partition_idx = getPartitionIndex(gpid);
+            auto& partition = page_table_partitions_[partition_idx];
+
+            bool in_cache = false;
+            {
+                std::lock_guard<std::mutex> partition_lock(partition.mutex);
+                in_cache = (partition.table.find(gpid) != partition.table.end());
+            }
+
+            if (!in_cache)
+            {
+                // Check for duplicates in our fetch list
+                bool duplicate = false;
+                for (GPID existing : pages_to_fetch)
+                {
+                    if (existing == gpid)
+                    {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (!duplicate)
+                {
+                    pages_to_fetch.push_back(gpid);
+                }
+            }
+        }
+
+        // Prefetch pages by pinning then immediately unpinning
+        // The pages stay in the buffer pool cache for subsequent access
+        for (GPID gpid : pages_to_fetch)
+        {
+            void *buffer = nullptr;
+            Status status = pinPageGlobal(gpid, &buffer, ctx);
+            if (status == Status::OK)
+            {
+                // Immediately unpin - page stays in cache
+                unpinPageGlobal(gpid, false, ctx);
+            }
+            // Ignore errors - partial prefetch is still useful
+        }
+
+        return Status::OK;
+    }
+
     // PHASE 6, TASK 6.2: Flush all dirty pages for a specific tablespace
     auto BufferPool::flushTablespace(uint16_t tablespace_id, ErrorContext *ctx) -> Status
     {
