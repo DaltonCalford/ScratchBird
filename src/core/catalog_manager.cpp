@@ -9735,6 +9735,60 @@ auto CatalogManager::grantRole(const ID& role_id, const ID& user_id, const ID& g
         return Status::FILE_EXISTS;
     }
 
+    // P2-15: Role cycle detection - prevent A → B → C → A grants
+    // Check if granting role_id to user_id would create a cycle
+    // A cycle exists if user_id is already (transitively) a member of role_id
+    // i.e., if role_id can reach user_id through existing memberships
+    {
+        std::unordered_set<ID, IDHash> visited;
+        std::queue<ID> to_process;
+
+        // Start from role_id and see if we can reach user_id
+        to_process.push(role_id);
+        visited.insert(role_id);
+
+        while (!to_process.empty())
+        {
+            ID current = to_process.front();
+            to_process.pop();
+
+            // Get all roles that 'current' is a member of (current's parent roles)
+            auto role_filter = [&current](const RoleMembershipRecord& rec) {
+                return rec.is_valid && rec.user_id == current;
+            };
+
+            auto converter = [](const RoleMembershipRecord& rec, RoleMembershipInfo& info) {
+                info.membership_id = rec.membership_id;
+                info.user_id = rec.user_id;
+                info.role_id = rec.role_id;
+                info.granted_by = rec.granted_by;
+                info.with_admin_option = rec.with_admin_option != 0;
+                info.granted_time = rec.granted_time;
+            };
+
+            std::vector<RoleMembershipInfo> memberships;
+            readRecordsToVector<RoleMembershipRecord, RoleMembershipInfo>(
+                role_memberships_table_page_, memberships, role_filter, converter, ctx);
+
+            for (const auto& m : memberships)
+            {
+                // Check if we've found the target (user_id)
+                if (m.role_id == user_id)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                        "Role grant would create a cycle");
+                    return Status::CONSTRAINT_VIOLATION;
+                }
+
+                if (visited.find(m.role_id) == visited.end())
+                {
+                    visited.insert(m.role_id);
+                    to_process.push(m.role_id);
+                }
+            }
+        }
+    }
+
     // Create membership record
     RoleMembershipRecord membership_rec;
     memset(&membership_rec, 0, sizeof(RoleMembershipRecord));
