@@ -1495,11 +1495,23 @@ namespace scratchbird
 
         void BytecodeGenerator::visit(parser::AnalyzeStmt *node)
         {
-            // Generate ANALYZE bytecode (Phase 1 Task 1.1.2)
-            // NOTE: ANALYZE is not yet implemented in bytecode executor
-            // For now, just add an error
-            current_result_->addError("ANALYZE statement bytecode generation not yet implemented");
-            (void)node; // Suppress unused parameter warning
+            // P1-10: Generate ANALYZE bytecode
+            // ANALYZE table_name [COLUMN column_name] [SAMPLE sample_rate]
+
+            // Emit extended opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ANALYZE));
+
+            // Emit table name (write StringId directly)
+            writeStringId(node->tableName());
+
+            // Emit optional column name (0 if not specified)
+            writeStringId(node->columnName());
+
+            // Emit sample rate (0.0 means auto-determine)
+            current_result_->writeDouble(static_cast<double>(node->sampleRate()));
+
+            DEBUG_LOG_DB("Generated ANALYZE bytecode");
         }
 
         void BytecodeGenerator::visit(parser::ExplainStmt *node)
