@@ -10,6 +10,7 @@ namespace scratchbird::core
 {
 
     // Error context structure per ERROR_HANDLING.md
+    // P2-17: Enhanced with constraint violation context
     struct ErrorContext
     {
         Status code{Status::OK};       // Error code
@@ -20,6 +21,16 @@ namespace scratchbird::core
         int line{0};                   // Line number
         const char *function{nullptr}; // Function name
         ErrorContext *cause{nullptr};  // Optional chained cause
+
+        // P2-17: Constraint violation context for enhanced error messages
+        std::string constraint_name;           // Name of violated constraint
+        std::string table_name;                // Table where violation occurred
+        std::string column_name;               // Column involved (if applicable)
+        std::string violating_value;           // The value that caused the violation
+        std::string referenced_table;          // FK: referenced parent table
+        std::string referenced_column;         // FK: referenced parent column
+        std::string check_expression;          // CHECK: the expression that failed
+        std::string hint;                      // Suggested remediation
 
         ErrorContext() {}
 
@@ -77,16 +88,94 @@ namespace scratchbird::core
         (ctx)->set((err_code), (msg), __FILE__, __LINE__, __func__);    \
     } while (0)
 
-    // Placeholder for SET_ERROR_CONTEXT_LOG (requires logging framework from Phase 1)
-    // Will be uncommented after logging framework is implemented
-    /*
-    #define SET_ERROR_CONTEXT_LOG(ctx, err_code, msg)                        \
-        do                                                                   \
-        {                                                                    \
-            SET_ERROR_CONTEXT(ctx, err_code, msg);                          \
-            LOG_ERROR(GENERAL, "%s:%d %s - %s",                             \
-                     __FILE__, __LINE__, __func__, (msg));                  \
-        } while (0)
-    */
+// P2-17: Enhanced constraint violation macros with context
+// Foreign key violation with full context
+#define SET_FK_VIOLATION(ctx, constraint, table, col, value, ref_table, ref_col) \
+    do                                                                           \
+    {                                                                            \
+        if (ctx)                                                                 \
+        {                                                                        \
+            (ctx)->code = Status::FOREIGN_KEY_VIOLATION;                         \
+            (ctx)->sqlstate = SQLSTATE_FOREIGN_KEY_VIOLATION;                    \
+            (ctx)->constraint_name = (constraint);                               \
+            (ctx)->table_name = (table);                                         \
+            (ctx)->column_name = (col);                                          \
+            (ctx)->violating_value = (value);                                    \
+            (ctx)->referenced_table = (ref_table);                               \
+            (ctx)->referenced_column = (ref_col);                                \
+            (ctx)->message = "Foreign key constraint '" + std::string(constraint) + \
+                "' violated: no parent row found for " + std::string(col) +      \
+                " = " + std::string(value) + " in table '" + std::string(ref_table) + "'"; \
+            (ctx)->hint = "Insert a matching row in '" + std::string(ref_table) + \
+                "' first, or use an existing " + std::string(ref_col) + " value"; \
+            (ctx)->file = __FILE__;                                              \
+            (ctx)->line = __LINE__;                                              \
+            (ctx)->function = __func__;                                          \
+        }                                                                        \
+    } while (0)
+
+// Unique constraint violation with context
+#define SET_UNIQUE_VIOLATION(ctx, constraint, table, col, value)                 \
+    do                                                                           \
+    {                                                                            \
+        if (ctx)                                                                 \
+        {                                                                        \
+            (ctx)->code = Status::UNIQUE_VIOLATION;                              \
+            (ctx)->sqlstate = SQLSTATE_UNIQUE_VIOLATION;                         \
+            (ctx)->constraint_name = (constraint);                               \
+            (ctx)->table_name = (table);                                         \
+            (ctx)->column_name = (col);                                          \
+            (ctx)->violating_value = (value);                                    \
+            (ctx)->message = "Unique constraint '" + std::string(constraint) +   \
+                "' violated: duplicate value '" + std::string(value) +           \
+                "' in column '" + std::string(col) + "'";                        \
+            (ctx)->hint = "Use a different value or UPDATE the existing row";    \
+            (ctx)->file = __FILE__;                                              \
+            (ctx)->line = __LINE__;                                              \
+            (ctx)->function = __func__;                                          \
+        }                                                                        \
+    } while (0)
+
+// NOT NULL violation with context
+#define SET_NOT_NULL_VIOLATION(ctx, constraint, table, col)                      \
+    do                                                                           \
+    {                                                                            \
+        if (ctx)                                                                 \
+        {                                                                        \
+            (ctx)->code = Status::NOT_NULL_VIOLATION;                            \
+            (ctx)->sqlstate = SQLSTATE_NOT_NULL_VIOLATION;                       \
+            (ctx)->constraint_name = (constraint);                               \
+            (ctx)->table_name = (table);                                         \
+            (ctx)->column_name = (col);                                          \
+            (ctx)->message = "NOT NULL constraint violated: column '" +          \
+                std::string(col) + "' cannot be NULL";                           \
+            (ctx)->hint = "Provide a non-NULL value for column '" +              \
+                std::string(col) + "'";                                          \
+            (ctx)->file = __FILE__;                                              \
+            (ctx)->line = __LINE__;                                              \
+            (ctx)->function = __func__;                                          \
+        }                                                                        \
+    } while (0)
+
+// CHECK constraint violation with context
+#define SET_CHECK_VIOLATION(ctx, constraint, table, expr, value)                 \
+    do                                                                           \
+    {                                                                            \
+        if (ctx)                                                                 \
+        {                                                                        \
+            (ctx)->code = Status::CHECK_VIOLATION;                               \
+            (ctx)->sqlstate = SQLSTATE_CHECK_VIOLATION;                          \
+            (ctx)->constraint_name = (constraint);                               \
+            (ctx)->table_name = (table);                                         \
+            (ctx)->check_expression = (expr);                                    \
+            (ctx)->violating_value = (value);                                    \
+            (ctx)->message = "Check constraint '" + std::string(constraint) +    \
+                "' violated: value does not satisfy: " + std::string(expr);      \
+            (ctx)->hint = "Ensure value satisfies: " + std::string(expr);        \
+            (ctx)->file = __FILE__;                                              \
+            (ctx)->line = __LINE__;                                              \
+            (ctx)->function = __func__;                                          \
+        }                                                                        \
+    } while (0)
 
 } // namespace scratchbird::core

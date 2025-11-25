@@ -2047,13 +2047,71 @@ namespace scratchbird
         }
 
         // Security Phase 3.4: Row-level security policy statements
+        // P2-16: Policy Expression Validation at CREATE POLICY time
         void SemanticAnalyzer::visit(CreatePolicyStmt *node)
         {
-            // TODO Phase 3.4.3: Add full semantic validation
-            // - Validate table exists
-            // - Validate role names exist
-            // - Validate USING and WITH CHECK expressions
-            (void)node;
+            // Policy name and table name are required by grammar, so they're always present
+            // if parsing succeeded. Just validate expressions.
+
+            // P2-16: Validate USING expression if present
+            if (node->hasUsingExpr() && node->usingExpr())
+            {
+                // The USING expression must be a boolean predicate
+                // Visit the expression to validate column references and types
+                Expression *using_expr = node->usingExpr();
+
+                // Validate the expression - check for valid structure
+                // Note: Full type checking would require table context from catalog
+                // For now, validate that the expression is syntactically valid
+                // LiteralExpr with non-boolean type is invalid for USING clause
+                if (using_expr->kind() == ASTKind::LITERAL)
+                {
+                    auto *lit = static_cast<LiteralExpr *>(using_expr);
+                    // NULL literals are acceptable (will evaluate to false)
+                    // Non-boolean literals should be flagged
+                    if (lit->literalType() != LiteralExpr::NULL_LITERAL)
+                    {
+                        // Integer/float/string literals are not boolean predicates
+                        if (lit->literalType() == LiteralExpr::INTEGER ||
+                            lit->literalType() == LiteralExpr::FLOAT ||
+                            lit->literalType() == LiteralExpr::STRING)
+                        {
+                            reportError(using_expr,
+                                "USING clause must evaluate to a boolean expression");
+                        }
+                    }
+                }
+                // Column references, comparisons, logical ops are acceptable
+            }
+
+            // P2-16: Validate WITH CHECK expression if present
+            if (node->hasWithCheckExpr() && node->withCheckExpr())
+            {
+                Expression *check_expr = node->withCheckExpr();
+
+                // Same validation as USING - must be boolean predicate
+                if (check_expr->kind() == ASTKind::LITERAL)
+                {
+                    auto *lit = static_cast<LiteralExpr *>(check_expr);
+                    if (lit->literalType() != LiteralExpr::NULL_LITERAL)
+                    {
+                        if (lit->literalType() == LiteralExpr::INTEGER ||
+                            lit->literalType() == LiteralExpr::FLOAT ||
+                            lit->literalType() == LiteralExpr::STRING)
+                        {
+                            reportError(check_expr,
+                                "WITH CHECK clause must evaluate to a boolean expression");
+                        }
+                    }
+                }
+            }
+
+            // P2-16: Validate command type is valid (enum values are all valid by definition)
+            // Just ensure node is properly formed
+            (void)node->command();
+
+            // Note: Role existence validation requires catalog access
+            // which is done at execution time in executeCreatePolicy()
         }
 
         void SemanticAnalyzer::visit(DropPolicyStmt *node)
