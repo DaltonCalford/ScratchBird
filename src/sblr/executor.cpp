@@ -18,6 +18,7 @@
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/proc_array.h"
+#include "scratchbird/optimizer/statistics_manager.h"  // P1-10: ANALYZE command
 #include "scratchbird/spatial/wkt_parser.h"
 #include "scratchbird/spatial/wkb.h"
 #include "scratchbird/spatial/geos_wrapper.h"
@@ -717,6 +718,12 @@ namespace scratchbird
                         {
                             // Alpha 1 - Advanced SQL: MERGE statement execution
                             executeMerge();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ANALYZE))
+                        {
+                            // P1-10: ANALYZE statement execution
+                            executeAnalyze();
                             result = ExecutionResult();
                         }
                         else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_SCALAR) ||
@@ -6599,6 +6606,106 @@ namespace scratchbird
                     }
                     break; // Only one WHEN NOT MATCHED BY SOURCE clause
                 }
+            }
+        }
+
+        void Executor::executeAnalyze()
+        {
+            // P1-10: ANALYZE table_name [COLUMN column_name] [SAMPLE sample_rate]
+            //
+            // Collects statistics for query optimization using Vitter's Algorithm S,
+            // MCVs, histograms, and HyperLogLog for n_distinct estimation.
+
+            // Read table name (already resolved from StringId by bytecode generator)
+            std::string table_name = readString();
+
+            // Read optional column name (empty string if not specified)
+            std::string column_name = readString();
+
+            // Read sample rate (0.0 means auto-determine)
+            float sample_rate = static_cast<float>(readDouble());
+
+            DEBUG_LOG_DB("Executing ANALYZE on table: " + table_name +
+                        (column_name.empty() ? "" : ", column: " + column_name) +
+                        ", sample rate: " + std::to_string(sample_rate));
+
+            // Get table ID from catalog
+            core::CatalogManager::SchemaInfo schema_info;
+            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            if (status != core::Status::OK)
+            {
+                error("Failed to get default schema");
+                return;
+            }
+
+            core::CatalogManager::TableInfo table_info;
+            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info, nullptr);
+            if (status != core::Status::OK)
+            {
+                error("Table not found: " + table_name);
+                return;
+            }
+
+            // Get statistics manager
+            auto stats_manager = db_->statistics_manager();
+            if (!stats_manager)
+            {
+                error("Statistics manager not available");
+                return;
+            }
+
+            // If column name is specified, analyze single column
+            if (!column_name.empty())
+            {
+                // Get column ID
+                std::vector<core::CatalogManager::ColumnInfo> columns;
+                status = db_->catalog_manager()->getColumns(table_info.table_id, columns, nullptr);
+                if (status != core::Status::OK)
+                {
+                    error("Failed to get table columns");
+                    return;
+                }
+
+                // Find the column
+                core::ID column_id;
+                bool found = false;
+                for (const auto& col : columns)
+                {
+                    if (col.column_name == column_name)
+                    {
+                        column_id = col.column_id;
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found)
+                {
+                    error("Column not found: " + column_name);
+                    return;
+                }
+
+                // Analyze single column
+                status = stats_manager->analyzeColumn(table_info.table_id, column_id, sample_rate, nullptr);
+                if (status != core::Status::OK)
+                {
+                    error("Failed to analyze column: " + column_name);
+                    return;
+                }
+
+                DEBUG_LOG_DB("Successfully analyzed column: " + column_name);
+            }
+            else
+            {
+                // Analyze entire table
+                status = stats_manager->analyzeTable(table_info.table_id, sample_rate, nullptr);
+                if (status != core::Status::OK)
+                {
+                    error("Failed to analyze table: " + table_name);
+                    return;
+                }
+
+                DEBUG_LOG_DB("Successfully analyzed table: " + table_name);
             }
         }
 

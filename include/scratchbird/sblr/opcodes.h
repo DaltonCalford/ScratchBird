@@ -794,6 +794,9 @@ namespace scratchbird
 
             // RETURNING clause support (Alpha 1 - Advanced SQL) (0x56)
             EXT_RETURNING = 0x56,          // RETURNING clause marker (followed by column list or *)
+
+            // Statistics and query optimization (P1-10) - 0x57 range
+            EXT_ANALYZE = 0x57,            // ANALYZE table_name [COLUMN column_name] [SAMPLE sample_rate]
         };
 
         /**
