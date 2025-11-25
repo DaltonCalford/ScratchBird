@@ -1,10 +1,12 @@
 # Alpha 1 - Medium Priority Issues (P2) Implementation Plan
 
 **Created:** November 23, 2025
+**Status:** 🔄 In Progress (3/25 items complete)
 **Priority:** P2 - MEDIUM
-**Estimated Effort:** 100-150 hours
+**Estimated Effort:** 100-150 hours (~90 remaining)
 **Target:** Beta 2
-**Dependencies:** P0 and P1 items should be complete
+**Dependencies:** P0 and P1 items should be complete ✅
+**Last Updated:** November 25, 2025
 
 ---
 
@@ -23,28 +25,32 @@ This plan covers 25 medium-priority issues focused on performance optimizations,
 ## AGENT A: PERFORMANCE OPTIMIZATIONS
 
 **Total Effort:** 27-33 hours
+**Status:** 60% Complete (3/5 items)
 
-### P2-1: Page Table Lock Partitioning (8-10 hours)
+### P2-1: Page Table Lock Partitioning ✅ COMPLETE (Nov 25, 2025)
 - **Current:** Single mutex for entire buffer pool page table
-- **Improvement:** Partition into N buckets (e.g., 64) with separate locks
+- **Improvement:** Partition into 64 buckets with separate locks
 - **Impact:** Reduced lock contention under high concurrency
+- **Implementation:** `buffer_pool.h:390-405`, `buffer_pool.cpp` (partitioned lookups)
 
-### P2-2: Dirty Page Counter (2-3 hours)
+### P2-2: Dirty Page Counter ✅ COMPLETE (Nov 25, 2025)
 - **Current:** O(N) scan to count dirty pages
 - **Improvement:** Atomic counter updated on flag changes
 - **Impact:** O(1) dirty page count for background writer
+- **Implementation:** `buffer_pool.h:399`, `buffer_pool.cpp:1019-1024`
 
-### P2-3: TOAST Chunk Prefetching (6-8 hours)
+### P2-3: TOAST Chunk Prefetching (6-8 hours) ❌ PENDING
 - **Current:** Sequential chunk reads (many random I/Os)
 - **Improvement:** Batch read all chunks in single range scan
 - **Impact:** 5-10x faster for large TOAST values
 
-### P2-4: Permission Cache TTL Reduction (1 hour)
+### P2-4: Permission Cache TTL Reduction ✅ COMPLETE (Nov 25, 2025)
 - **Current:** 60-second TTL creates race window
-- **Improvement:** Reduce to 5-10 seconds
-- **Impact:** Smaller TOCTOU window
+- **Improvement:** Reduced TTL from 60s to 10s
+- **Impact:** Smaller TOCTOU window (6x improvement)
+- **Implementation:** `permission_cache.h:100`
 
-### P2-5: Hash Index Directory Resize (10-12 hours)
+### P2-5: Hash Index Directory Resize (10-12 hours) ❌ PENDING
 - **Current:** Directory expansion blocks all writes
 - **Improvement:** Concurrent resize with fine-grained locking
 - **Impact:** No write stalls during resize

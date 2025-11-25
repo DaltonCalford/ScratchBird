@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 #include <list>
+#include <array>
 #include <unordered_map>
 #include <mutex>
 #include <memory>
@@ -386,13 +387,33 @@ namespace scratchbird::core
         Config config_;                                     // Configuration
         std::vector<Frame> frames_;                         // Buffer pool frames
         std::list<uint32_t> lru_list_;                      // LRU list (frame indices)
-        // PHASE 1, TASK 1.2.3: Changed key from uint32_t to GPID (64-bit)
-        std::unordered_map<GPID, uint32_t> page_table_;     // gpid -> frame_index
+
+        // P2-1: Page Table Lock Partitioning
+        // Split page table into NUM_PAGE_TABLE_PARTITIONS buckets with separate locks
+        // This reduces contention when multiple threads access different pages
+        static constexpr size_t NUM_PAGE_TABLE_PARTITIONS = 64;
+
+        struct PageTablePartition {
+            std::unordered_map<GPID, uint32_t> table;       // gpid -> frame_index
+            mutable std::mutex mutex;                        // Per-partition lock
+        };
+        std::array<PageTablePartition, NUM_PAGE_TABLE_PARTITIONS> page_table_partitions_;
+
+        // Hash function to map GPID to partition index
+        static size_t getPartitionIndex(GPID gpid) {
+            // Use simple modulo hashing - GPID is already well-distributed
+            return static_cast<size_t>(gpid) % NUM_PAGE_TABLE_PARTITIONS;
+        }
+
         Stats stats_;                                       // Statistics (atomic counters)
-        mutable std::mutex mutex_;                          // Thread safety (future)
+        mutable std::mutex mutex_;                          // Global mutex for frame allocation/eviction
 
         // Clock Sweep algorithm state
         uint32_t clock_hand_ = 0;                           // Current position of clock hand
+
+        // P2-2: Atomic dirty page counter for O(1) getDirtyPageCount()
+        // Updated atomically whenever is_dirty flag changes on any frame
+        std::atomic<uint32_t> dirty_page_count_{0};
 
         // Background writer state (Issue 2.20)
         std::unique_ptr<std::thread> bgwriter_thread_;      // Background writer thread
