@@ -1,8 +1,8 @@
 # ScratchBird Project Context
 
-**Last Updated:** November 25, 2025 (P1 high-priority verification complete)
+**Last Updated:** November 25, 2025 (P1-10 Statistics & ANALYZE complete!)
 **Current Phase:** Alpha 1 - Engine Functionality (Local Operations)
-**Progress:** ~80% of Alpha 1 (~14% of total project scope)
+**Progress:** ~81% of Alpha 1 (~14% of total project scope)
 **Project Type:** Educational/Research (no time constraints)
 **Detailed Status:** [IMPLEMENTATION_STATUS_DASHBOARD.md](docs/IMPLEMENTATION_STATUS_DASHBOARD.md)
 
@@ -18,7 +18,7 @@
 **Focus:** ✅ Functions complete → ✅ P0 Critical Issues complete → ⚠️ P1 67% complete → P2-P3 Improvements → Server Architecture → CLI tools
 
 **Remaining Alpha 1 Work:**
-- ⏳ P1 High-Priority (10/15 complete): Exception handling, cursors, stored procedures - 20-32 hours
+- ⏳ P1 High-Priority (11/15 complete): Exception handling, cursors, stored procedures - 13-19 hours
 - ⏳ P2-P3 Improvements (38 items): Performance, completeness, optimizations - 340-438 hours
 - ❌ Local Server Architecture (5 phases): IPC, protocol, server, client library - 140-190 hours
 - ❌ CLI Tools (4 tools): sb_isql, sb_verify, sb_backup, sb_security - 90-110 hours
@@ -39,7 +39,7 @@
 
 ### Recently Completed ✅
 
-**PRIORITY 3: P1 High-Priority Improvements** ⚠️ **67% COMPLETE** (10/15 items, November 25, 2025):
+**PRIORITY 3: P1 High-Priority Improvements** ⚠️ **73% COMPLETE** (11/15 items, November 25, 2025):
 See [docs/planning/IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md](docs/planning/IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md) for complete details.
 
 **Agent B (Performance) - 88% complete (3.5/4 items):**
@@ -48,11 +48,11 @@ See [docs/planning/IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md](docs/planning/IMPROVEM
 - ✅ **P1-8:** Index-Based FK Lookups (src/sblr/executor.cpp:21895-21926)
 - ⚠️ **P1-11:** Bulk Index Loading - **PARTIAL** (sort+insert done, bottom-up pending)
 
-**Agent C (Constraints/Catalog) - 92% complete (5.5/6 items):**
+**Agent C (Constraints/Catalog) - 100% complete (6/6 items):** 🎉
 - ✅ **P1-3:** SQLSTATE Error Codes, **P1-9:** Constraints Table CRUD
 - ✅ **P1-6:** Foreign Key Actions (CASCADE/SET NULL) - integrated into DELETE/UPDATE
 - ✅ **P1-12:** Session Timeout, **P1-15:** Multi-Geometry Functions
-- ⚠️ **P1-10:** Statistics & ANALYZE - **PARTIAL** (StatisticsManager done, needs bytecode/executor wiring)
+- ✅ **P1-10:** Statistics & ANALYZE - **COMPLETE!** (commit 5676aae - bytecode/executor fully wired)
 
 **Agent A (PSQL/SQL) - 40% complete (2/5 items):**
 - ✅ **P1-13:** MERGE Statement, **P1-14:** RETURNING Clause
@@ -103,11 +103,12 @@ See [docs/audit/IMPROVEMENT_OPPORTUNITIES.md](docs/audit/IMPROVEMENT_OPPORTUNITI
   - ✅ GIN parallel operations MGA bug, catalog sequence/charset operations
   - **All P0 items verified complete! Only minor fixes needed.**
 
-- **P1 (High - 15 items):** ⚠️ 67% COMPLETE (10/15) - 20-32 hours remaining
+- **P1 (High - 15 items):** ⚠️ 73% COMPLETE (11/15) - 13-19 hours remaining
   - ✅ SQLSTATE error codes, MERGE statement, RETURNING clause
   - ✅ Constraints table CRUD, Session timeout, Multi-Geometry functions
   - ✅ XID wraparound prevention, Index-based FK lookups, FK actions (CASCADE/SET NULL)
-  - ⚠️ **PARTIAL:** Bulk index loading (50%), Statistics & ANALYZE (75%)
+  - ✅ **Statistics & ANALYZE** - 100% COMPLETE (commit 5676aae)
+  - ⚠️ **PARTIAL:** Bulk index loading (50% - sort+insert done, bottom-up pending)
   - ❌ **PENDING:** TRY/EXCEPT exception handling, cursor operations, stored procedure invocation
   - **Most P1 items were already implemented! Only 3 items pending.**
   - See [docs/planning/IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md](docs/planning/IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md)
@@ -168,9 +169,10 @@ See [docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md](docs/planning/LOCAL_SERVER
    - ✅ All 8 P0 items verified complete (most were already implemented)
    - ✅ Minor enhancements: NaN/Infinity checks, test fixes
 
-3. ⚠️ **Implement P1 high-priority improvements** ⚠️ **67% COMPLETE** (20-32 hours remaining) - **CURRENT PRIORITY**
-   - 10/15 items complete (most were already implemented!)
-   - ⚠️ PARTIAL: Bulk loading (50%), Statistics & ANALYZE (75%)
+3. ⚠️ **Implement P1 high-priority improvements** ⚠️ **73% COMPLETE** (13-19 hours remaining) - **CURRENT PRIORITY**
+   - 11/15 items complete (most were already implemented!)
+   - ✅ Statistics & ANALYZE fully wired (commit 5676aae)
+   - ⚠️ PARTIAL: Bulk loading (50% - sort+insert done, bottom-up pending)
    - ❌ PENDING: TRY/EXCEPT, cursors, stored procedure invocation
 
 4. **Implement P2-P3 improvement opportunities** (340-438 hours / 8.5-11 weeks) - **NEXT PRIORITY**
