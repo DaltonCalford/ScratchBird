@@ -1,8 +1,8 @@
 # ScratchBird Project Context
 
-**Last Updated:** November 24, 2025 (Status verified via comprehensive source code analysis)
+**Last Updated:** November 25, 2025 (P1 high-priority verification complete)
 **Current Phase:** Alpha 1 - Engine Functionality (Local Operations)
-**Progress:** ~78% of Alpha 1 (~13% of total project scope)
+**Progress:** ~80% of Alpha 1 (~14% of total project scope)
 **Project Type:** Educational/Research (no time constraints)
 **Detailed Status:** [IMPLEMENTATION_STATUS_DASHBOARD.md](docs/IMPLEMENTATION_STATUS_DASHBOARD.md)
 
@@ -11,14 +11,15 @@
 
 ---
 
-## Current Work: Alpha 1 Completion (~22% Remaining)
+## Current Work: Alpha 1 Completion (~20% Remaining)
 
-**Note:** Due to additional work items identified during development (improvement opportunities, server architecture requirements), Alpha 1 is now estimated at 78% complete with all missing functions and P0 critical issues resolved.
+**Note:** Due to additional work items identified during development (improvement opportunities, server architecture requirements), Alpha 1 is now estimated at 80% complete with all missing functions, P0 critical issues, and most P1 high-priority improvements resolved.
 
-**Focus:** ✅ Functions complete → ✅ P0 Critical Issues complete → P1-P3 Improvements → Server Architecture → CLI tools
+**Focus:** ✅ Functions complete → ✅ P0 Critical Issues complete → ⚠️ P1 67% complete → P2-P3 Improvements → Server Architecture → CLI tools
 
 **Remaining Alpha 1 Work:**
-- ⏳ P1-P3 Improvements (53 items): Exception handling, cursors, performance, completeness - 360-470 hours
+- ⏳ P1 High-Priority (10/15 complete): Exception handling, cursors, stored procedures - 20-32 hours
+- ⏳ P2-P3 Improvements (38 items): Performance, completeness, optimizations - 340-438 hours
 - ❌ Local Server Architecture (5 phases): IPC, protocol, server, client library - 140-190 hours
 - ❌ CLI Tools (4 tools): sb_isql, sb_verify, sb_backup, sb_security - 90-110 hours
 
@@ -37,6 +38,30 @@
 - **Views:** 100% (regular views, materialized views with full data population and refresh) 🎉
 
 ### Recently Completed ✅
+
+**PRIORITY 3: P1 High-Priority Improvements** ⚠️ **67% COMPLETE** (10/15 items, November 25, 2025):
+See [docs/planning/IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md](docs/planning/IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md) for complete details.
+
+**Agent B (Performance) - 88% complete (3.5/4 items):**
+- ✅ **P1-2:** XID Wraparound Prevention (src/core/transaction_manager.cpp:681-760)
+- ✅ **P1-7:** TIP Binary Search - **N/A** (using superior CLOG O(1) lookup)
+- ✅ **P1-8:** Index-Based FK Lookups (src/sblr/executor.cpp:21895-21926)
+- ⚠️ **P1-11:** Bulk Index Loading - **PARTIAL** (sort+insert done, bottom-up pending)
+
+**Agent C (Constraints/Catalog) - 92% complete (5.5/6 items):**
+- ✅ **P1-3:** SQLSTATE Error Codes, **P1-9:** Constraints Table CRUD
+- ✅ **P1-6:** Foreign Key Actions (CASCADE/SET NULL) - integrated into DELETE/UPDATE
+- ✅ **P1-12:** Session Timeout, **P1-15:** Multi-Geometry Functions
+- ⚠️ **P1-10:** Statistics & ANALYZE - **PARTIAL** (StatisticsManager done, needs bytecode/executor wiring)
+
+**Agent A (PSQL/SQL) - 40% complete (2/5 items):**
+- ✅ **P1-13:** MERGE Statement, **P1-14:** RETURNING Clause
+- ❌ **P1-1:** TRY/EXCEPT Exception Handling (pending)
+- ❌ **P1-4:** Cursor Operations (pending)
+- ❌ **P1-5:** Stored Procedure Invocation (pending)
+
+**Key Finding:** Most P1 items were already implemented! Only 3 items pending (exception handling, cursors, stored procedures).
+**Achievement:** Major performance and constraint improvements verified for Alpha 1.
 
 **PRIORITY 2: P0 Critical Issues** ✅ **COMPLETE** (<1 hour actual work, November 24, 2025):
 See [docs/planning/IMPROVEMENTS_P0_CRITICAL_PLAN.md](docs/planning/IMPROVEMENTS_P0_CRITICAL_PLAN.md) for complete details.
@@ -78,16 +103,14 @@ See [docs/audit/IMPROVEMENT_OPPORTUNITIES.md](docs/audit/IMPROVEMENT_OPPORTUNITI
   - ✅ GIN parallel operations MGA bug, catalog sequence/charset operations
   - **All P0 items verified complete! Only minor fixes needed.**
 
-- **P1 (High - 15 items):** 🔄 33% COMPLETE (5/15) - 59-78 hours remaining
-  - ✅ SQLSTATE error codes (commit 9c35bb8)
-  - ✅ MERGE statement (commit 15de05f)
-  - ✅ RETURNING clause (commit ebd29a7)
-  - ✅ Constraints table CRUD (commit a1ed4c8)
-  - ✅ Session timeout (commit b54afd4)
-  - ❌ TRY/EXCEPT exception handling, cursor operations
-  - ❌ Stored procedure invocation, foreign key actions
-  - ❌ TIP binary search, index-based FK lookups
-  - ❌ Statistics & ANALYZE, bulk loading for indexes
+- **P1 (High - 15 items):** ⚠️ 67% COMPLETE (10/15) - 20-32 hours remaining
+  - ✅ SQLSTATE error codes, MERGE statement, RETURNING clause
+  - ✅ Constraints table CRUD, Session timeout, Multi-Geometry functions
+  - ✅ XID wraparound prevention, Index-based FK lookups, FK actions (CASCADE/SET NULL)
+  - ⚠️ **PARTIAL:** Bulk index loading (50%), Statistics & ANALYZE (75%)
+  - ❌ **PENDING:** TRY/EXCEPT exception handling, cursor operations, stored procedure invocation
+  - **Most P1 items were already implemented! Only 3 items pending.**
+  - See [docs/planning/IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md](docs/planning/IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md)
 
 - **P2 (Medium - 25 items):** 100-150 hours
   - Performance optimizations (page table lock partitioning, dirty page counter, TOAST prefetching)
@@ -101,7 +124,7 @@ See [docs/audit/IMPROVEMENT_OPPORTUNITIES.md](docs/audit/IMPROVEMENT_OPPORTUNITI
   - Advanced index features, partition pruning
   - Telemetry, structured logging, query profiler
 
-**Total Improvement Opportunities:** 53 remaining items (P1-P3 levels after P0 completion)
+**Total Improvement Opportunities:** 48 remaining items (5 P1 + P2-P3 items after P0 completion)
 
 **PRIORITY 4: Local Server Architecture** (~140-190 hours / 3.5-4.5 weeks):
 See [docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md](docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md) for complete details.
@@ -145,12 +168,16 @@ See [docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md](docs/planning/LOCAL_SERVER
    - ✅ All 8 P0 items verified complete (most were already implemented)
    - ✅ Minor enhancements: NaN/Infinity checks, test fixes
 
-3. **Implement P1-P3 improvement opportunities** (360-470 hours / 9-12 weeks) - **NEXT PRIORITY**
-   - P1 (High): Core features, performance - 59-78 hours remaining
+3. ⚠️ **Implement P1 high-priority improvements** ⚠️ **67% COMPLETE** (20-32 hours remaining) - **CURRENT PRIORITY**
+   - 10/15 items complete (most were already implemented!)
+   - ⚠️ PARTIAL: Bulk loading (50%), Statistics & ANALYZE (75%)
+   - ❌ PENDING: TRY/EXCEPT, cursors, stored procedure invocation
+
+4. **Implement P2-P3 improvement opportunities** (340-438 hours / 8.5-11 weeks) - **NEXT PRIORITY**
    - P2 (Medium): Optimizations, completeness - 100-150 hours
    - P3 (Low): Enhancements, advanced features - 200+ hours
 
-4. **Implement local server architecture** (140-190 hours / 3.5-4.5 weeks)
+5. **Implement local server architecture** (140-190 hours / 3.5-4.5 weeks)
    - Phase 1: IPC infrastructure (Unix sockets, named pipes, TCP) - 40-50 hours
    - Phase 2: Wire protocol (message format, streaming) - 30-40 hours
    - Phase 3: Server implementation (sb_server process) - 40-50 hours
