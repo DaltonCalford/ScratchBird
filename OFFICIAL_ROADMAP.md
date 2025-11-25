@@ -21,7 +21,7 @@ The term "production-ready" in technical documentation refers to **component sta
 
 ```
 ALPHA STAGE (Embedded Engine)
-├── Alpha 1: Engine Functionality (80% Complete) ← CURRENT
+├── Alpha 1: Engine Functionality (82% Complete) ← CURRENT
 ├── Alpha 2: Parser Separation (Not Started)
 └── Alpha 3: Network Listeners (Not Started)
 
@@ -50,9 +50,9 @@ PRODUCTION RELEASE
 
 ## Alpha 1: Engine Functionality (LOCAL OPERATIONS ONLY)
 
-**Status:** 81% Complete
+**Status:** 82% Complete
 
-**Note:** Originally planned features are complete, but additional work items were identified during development (improvement opportunities, server architecture requirements) that expand the Alpha 1 scope. All P0 critical issues resolved! P1 high-priority improvements 73% complete!
+**Note:** Originally planned features are complete, but additional work items were identified during development (improvement opportunities, server architecture requirements) that expand the Alpha 1 scope. All P0 critical issues resolved! P1 high-priority improvements 93% complete!
 
 **Completion Policy:** Alpha 1 is NOT complete until ALL local (non-network) functionality is implemented. There are NO "nice to have" deferrals - if a command is local, it MUST be in Alpha 1.
 
@@ -193,24 +193,24 @@ PRODUCTION RELEASE
 - ✅ P0-7: Catalog Sequence Operations
 - ✅ P0-8: Charset/Collation Read Operations
 
-**High-Priority Improvements (P1) - 73% Complete** ⚠️
+**High-Priority Improvements (P1) - 93% Complete** ✅
 - ✅ P1-2: XID Wraparound Prevention, P1-3: SQLSTATE Error Codes
 - ✅ P1-6: Foreign Key Actions (CASCADE/SET NULL/SET DEFAULT)
 - ✅ P1-7: TIP Binary Search (N/A - using CLOG O(1) lookup)
+- ✅ P1-1: TRY/EXCEPT Exception Handling (executor.cpp:19142) **ALREADY IMPLEMENTED!**
+- ✅ P1-4: Cursor Operations (executor.cpp:18956+) **ALREADY IMPLEMENTED!**
+- ✅ P1-5: Stored Procedure Invocation (executor.cpp:18321) **ALREADY IMPLEMENTED!**
 - ✅ P1-8: Index-Based FK Lookups, P1-9: Constraints Table CRUD
 - ✅ P1-10: Statistics & ANALYZE (100% - COMPLETE! commit 5676aae)
 - ✅ P1-12: Session Timeout, P1-13: MERGE Statement, P1-14: RETURNING Clause
 - ✅ P1-15: Multi-Geometry Functions
 - ⚠️ P1-11: Bulk Index Loading (50% - sort+insert done, bottom-up pending)
-- ❌ P1-1: TRY/EXCEPT Exception Handling (pending)
-- ❌ P1-4: Cursor Operations (pending)
-- ❌ P1-5: Stored Procedure Invocation (pending)
 
 #### ⧗ IN PROGRESS (Components)
 
-**Improvement Opportunities (38% Complete)**
+**Improvement Opportunities (46% Complete)**
 - ✅ P0 Critical Issues (8/8 - 100% complete)
-- ⚠️ P1 High Priority (11/15 - 73% complete)
+- ✅ P1 High Priority (14/15 - 93% complete)
 - ⧗ P2 Medium Priority (0/25 - 0% complete)
 - ⧗ P3 Low Priority (0/13+ - 0% complete)
 
@@ -235,8 +235,8 @@ PRODUCTION RELEASE
 - ❌ sb_security (user/role management tool)
 - **All tools connect via libscratchbird_client**
 
-**P1-P3 Improvement Opportunities** (~360-470 hours estimated)
-- ⚠️ P1 High (11/15 complete): Statistics & ANALYZE done! Exception handling, cursors, stored procedures pending
+**P1-P3 Improvement Opportunities** (~347-457 hours estimated)
+- ✅ P1 High (14/15 complete): Nearly all complete! Only bulk loading bottom-up pending (7-13 hours)
 - ❌ P2 Medium (0/25): Performance optimizations, window frames, testing
 - ❌ P3 Low (0/13+): MFA, DECIMAL optimization, SIMD, partition pruning
 

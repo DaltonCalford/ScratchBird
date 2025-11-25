@@ -7,12 +7,12 @@ A multi-model database platform using Firebird MGA (Multi-Generational Architect
 ## Current Status
 
 **Phase:** Alpha 1 - Engine Functionality (Local Operations)
-**Progress:** ~81% of Alpha 1 complete (~14% of total project)
-**Remaining:** ~483-623 hours (12-16 weeks for blocking work)
-**Current Work:** ✅ Functions Complete → ✅ P0 Critical Issues Complete → ⚠️ P1 73% Complete → P2-P3 Improvements → Server Architecture → CLI Tools
+**Progress:** ~82% of Alpha 1 complete (~14% of total project)
+**Remaining:** ~476-616 hours (12-15 weeks for blocking work)
+**Current Work:** ✅ Functions Complete → ✅ P0 Critical Issues Complete → ⚠️ P1 93% Complete → P2-P3 Improvements → Server Architecture → CLI Tools
 **Started:** June 2025 (5 months of evening/weekend development)
 **Project Type:** Educational/Research (no time constraints)
-**Last Updated:** November 25, 2025 (P1-10 Statistics & ANALYZE complete!)
+**Last Updated:** November 25, 2025 (P1 Agent A complete - all PSQL features verified!)
 
 **Detailed Status:** See [IMPLEMENTATION_STATUS_DASHBOARD.md](docs/IMPLEMENTATION_STATUS_DASHBOARD.md)
 
@@ -116,11 +116,11 @@ A multi-model database platform using Firebird MGA (Multi-Generational Architect
   - **All P0 items were already implemented!** Only minor enhancements needed
   - See [IMPROVEMENTS_P0_CRITICAL_PLAN.md](docs/planning/IMPROVEMENTS_P0_CRITICAL_PLAN.md)
 
-- ⚠️ **PRIORITY 3: P1 High-Priority Improvements** - 73% COMPLETE (11/15 items, 13-19 hours remaining)
-  - ✅ XID Wraparound Prevention, Index-Based FK Lookups, FK Actions (CASCADE/SET NULL)
-  - ✅ **Statistics & ANALYZE** (100% - COMPLETE! Bytecode/executor wired, commit 5676aae)
+- ⚠️ **PRIORITY 3: P1 High-Priority Improvements** - 93% COMPLETE (14/15 items, 7-13 hours remaining)
+  - ✅ **Agent A (PSQL)**: 100% complete - TRY/EXCEPT, Cursors, Stored Procedures, MERGE, RETURNING (all verified)
+  - ✅ **Agent C (Constraints)**: 100% complete - SQLSTATE, FK Actions, Constraints CRUD, Statistics & ANALYZE, Session Timeout, Multi-Geometry
+  - ⚠️ **Agent B (Performance)**: 88% complete - XID Wraparound, CLOG O(1), Index FK Lookups complete, Bulk Loading partial
   - ⚠️ **PARTIAL**: Bulk Index Loading (50% - sort+insert done, bottom-up pending)
-  - ❌ **PENDING**: TRY/EXCEPT exception handling, cursor operations, stored procedure invocation
   - See [IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md](docs/planning/IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md)
 
 - ⏳ **PRIORITY 4: P2-P3 Improvement Opportunities** (340-438 hours / 8.5-11 weeks)
@@ -145,11 +145,12 @@ A multi-model database platform using Firebird MGA (Multi-Generational Architect
   - *To be started after server architecture*
 
 **Recently Completed:**
-- ⚠️ **P1 High-Priority Improvements** (11/15 = 73% COMPLETE, November 25, 2025)
-  - Agent B (Performance): 88% complete - XID wraparound, CLOG O(1) lookup, index-based FK
+- ⚠️ **P1 High-Priority Improvements** (14/15 = 93% COMPLETE, November 25, 2025)
+  - Agent A (PSQL): 100% complete 🎉 - All PSQL features were already implemented!
   - Agent C (Constraints): 100% complete 🎉 - FK actions, **Statistics & ANALYZE fully wired!**
+  - Agent B (Performance): 88% complete - XID wraparound, CLOG O(1) lookup, index-based FK
   - Bulk loading partial (sort+insert done), bottom-up construction pending
-  - **Most P1 items were already implemented!** Only 3 items pending (exception handling, cursors, stored procedures)
+  - **Nearly all P1 items were already implemented!** Only 1 item pending (bulk loading bottom-up)
 - ✅ **P0 Critical Issues** (8/8 = 100% COMPLETE) 🎉
   - All critical security and correctness issues resolved (November 24, 2025)
   - Password policy, account lockout, audit logging
