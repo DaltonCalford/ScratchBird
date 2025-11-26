@@ -1,9 +1,9 @@
 # Alpha 1 - Medium Priority Issues (P2) Implementation Plan
 
 **Created:** November 23, 2025
-**Status:** 🔄 In Progress (9/25 items complete)
+**Status:** 🔄 In Progress (11/25 items complete)
 **Priority:** P2 - MEDIUM
-**Estimated Effort:** 100-150 hours (~90 remaining)
+**Estimated Effort:** 100-150 hours (~70 remaining)
 **Target:** Beta 2
 **Dependencies:** P0 and P1 items should be complete ✅
 **Last Updated:** November 25, 2025
@@ -85,20 +85,28 @@ This plan covers 25 medium-priority issues focused on performance optimizations,
 - Expression validation
 - Update triggers for dependent columns
 
-### P2-7: Deferred Constraints (20-25 hours)
-**Missing:**
-- DEFERRABLE support
-- INITIALLY DEFERRED/IMMEDIATE
-- Deferred check accumulation per transaction
-- Commit-time validation
-- SET CONSTRAINTS statement
+### P2-7: Deferred Constraints ✅ COMPLETE (Nov 25, 2025)
+**Implementation:**
+- DeferredConstraintCheck struct for tracking pending constraint checks
+- ConnectionContext methods: isConstraintDeferred(), setConstraintDeferred(), setAllConstraintsDeferred()
+- addDeferredConstraintCheck() queues checks for commit-time
+- validateDeferredConstraints() runs pending checks at COMMIT
+- SET CONSTRAINTS statement: parser, bytecode generator, executor
+- SET CONSTRAINTS ALL DEFERRED/IMMEDIATE fully working
+- Named constraints placeholder (requires global name index)
 
-### P2-8: Statement-Level Triggers (20-25 hours)
-**Missing:**
-- FOR EACH STATEMENT firing (not just FOR EACH ROW)
-- Transition table support (OLD TABLE, NEW TABLE)
-- REFERENCING clause
-- Statement-level WHEN conditions
+### P2-8: Statement-Level Triggers 🔄 PARTIAL (Nov 25, 2025)
+**Status:** Infrastructure complete, parser integration pending
+**Implementation:**
+- TransitionTableNames struct for REFERENCING clause
+- CreateTriggerStmt extended with transition tables and WHEN condition
+- StatementTriggerContext class for statement-level trigger execution
+- OLD TABLE / NEW TABLE transition table access
+- StatementTriggerProcedure type and registry
+- fireStatementTrigger() method for execution
+**Pending:**
+- Parser updates for REFERENCING clause
+- Integration with INSERT/UPDATE/DELETE execution paths
 
 ### P2-9: Window Function Frames (20-30 hours)
 **Missing:**

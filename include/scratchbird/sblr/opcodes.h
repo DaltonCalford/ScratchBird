@@ -218,6 +218,7 @@ namespace scratchbird
             FRAME_CLAUSE = 0xDA,      // Frame clause marker
             FRAME_ROWS = 0xDB,        // ROWS frame mode
             FRAME_RANGE = 0xDC,       // RANGE frame mode
+            FRAME_GROUPS = 0x6C,      // P2-9: GROUPS frame mode
             FRAME_UNBOUNDED_PRECEDING = 0xDD,  // UNBOUNDED PRECEDING boundary
             FRAME_PRECEDING = 0xDE,   // n PRECEDING boundary
             FRAME_CURRENT_ROW = 0xDF, // CURRENT ROW boundary

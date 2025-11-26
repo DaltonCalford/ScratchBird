@@ -144,6 +144,7 @@ namespace scratchbird
             KW_PARTITION,
             KW_ROWS,
             KW_RANGE,
+            KW_GROUPS,   // P2-9: GROUPS frame mode
             KW_BETWEEN,
             KW_UNBOUNDED,
             KW_PRECEDING,

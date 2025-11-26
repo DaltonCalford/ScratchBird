@@ -599,11 +599,12 @@ namespace scratchbird
             UNBOUNDED_FOLLOWING
         };
 
-        // Window frame mode (Phase 1 Task 6)
+        // Window frame mode (Phase 1 Task 6, P2-9: Added GROUPS)
         enum class FrameMode : uint8_t
         {
-            ROWS,
-            RANGE
+            ROWS,    // Physical row-based frames
+            RANGE,   // Value range-based frames
+            GROUPS   // P2-9: Peer group-based frames
         };
 
         // Window frame boundary (Phase 1 Task 6)
