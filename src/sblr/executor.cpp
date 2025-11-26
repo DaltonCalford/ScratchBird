@@ -1146,6 +1146,11 @@ namespace scratchbird
                             executeSetSessionAuth();
                             result = ExecutionResult();
                         }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SET_CONSTRAINTS))
+                        {
+                            executeSetConstraints();
+                            result = ExecutionResult();
+                        }
                         else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CREATE_POLICY))
                         {
                             executeCreatePolicy();
@@ -20101,6 +20106,61 @@ namespace scratchbird
                 // SET SESSION AUTHORIZATION: Not yet implemented
                 std::string username = readString();
                 error("SET SESSION AUTHORIZATION not yet implemented (requires session user tracking)");
+            }
+        }
+
+        // P2-7: SET CONSTRAINTS statement execution
+        void Executor::executeSetConstraints()
+        {
+            // Decode bytecode
+            uint8_t flags = readByte();
+            bool all_constraints = flags & 0x01;
+            bool deferred = flags & 0x02;
+
+            // Check connection context is available
+            if (!conn_ctx_)
+            {
+                error("SET CONSTRAINTS requires connection context");
+            }
+
+            if (all_constraints)
+            {
+                // SET CONSTRAINTS ALL DEFERRED/IMMEDIATE
+                conn_ctx_->setAllConstraintsDeferred(deferred);
+            }
+            else
+            {
+                // SET CONSTRAINTS name1, name2, ... DEFERRED/IMMEDIATE
+                // We need to find each constraint by name and set its deferral state
+                uint8_t name_count = readByte();
+                for (uint8_t i = 0; i < name_count; i++)
+                {
+                    std::string constraint_name = readString();
+
+                    // Look up the constraint by name - requires a global constraint name index
+                    // For P2-7 partial implementation, we support SET CONSTRAINTS ALL
+                    // Named constraints would require iterating all tables or a name index
+                    //
+                    // Full implementation would need either:
+                    // 1. A global constraint name index in the catalog
+                    // 2. Qualified constraint names (schema.table.constraint_name)
+                    //
+                    // For now, named constraints are deferred to a future enhancement
+                    (void)constraint_name;
+                    error("SET CONSTRAINTS with named constraints not yet fully implemented. "
+                          "Use 'SET CONSTRAINTS ALL DEFERRED' or 'SET CONSTRAINTS ALL IMMEDIATE' for now.");
+                }
+            }
+
+            // If setting to IMMEDIATE, validate all currently deferred constraints
+            if (!deferred)
+            {
+                core::ErrorContext err_ctx;
+                core::Status status = conn_ctx_->validateDeferredConstraints(&err_ctx);
+                if (status != core::Status::OK)
+                {
+                    error("Deferred constraint violation: " + err_ctx.message);
+                }
             }
         }
 

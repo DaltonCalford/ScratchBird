@@ -148,6 +148,7 @@ namespace scratchbird
             void visit(RevokeRoleStmt *node) override;
             void visit(SetRoleStmt *node) override;
             void visit(SetSessionAuthStmt *node) override;
+            void visit(SetConstraintsStmt *node) override;   // P2-7: SET CONSTRAINTS
             void visit(CreatePolicyStmt *node) override;     // Security Phase 3.4
             void visit(DropPolicyStmt *node) override;       // Security Phase 3.4
             void visit(AlterTableRLSStmt *node) override;    // Security Phase 3.4
