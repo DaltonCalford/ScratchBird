@@ -2,7 +2,7 @@
 
 **Created:** November 26, 2025
 **Priority:** MEDIUM (Foundation for Phase 2 Wire Protocols)
-**Estimated Effort:** 30-40 hours
+**Estimated Effort:** 35-50 hours
 **Prerequisites:** Phase A, B, C complete
 **Status:** NOT STARTED
 
@@ -10,45 +10,79 @@
 
 ## Overview
 
-This phase implements the virtual catalog infrastructure required for Alpha Phase 2 wire protocol integration. Virtual catalogs allow ScratchBird to present protocol-specific system views (pg_catalog, information_schema, mysql.*, sys.*) while maintaining a single internal catalog.
+This phase implements the virtual catalog infrastructure required for Alpha Phase 2 wire protocol integration. Virtual catalogs allow ScratchBird to present protocol-specific system views while maintaining a single internal catalog.
 
-Reference: `05-Wire-Protocol-Integration-Specification.md`
+**Key Design Principle:** Emulated system tables (RDB$*, pg_catalog.*, mysql.*, sys.*) are **created on-demand** when an emulation server/database is configured. They are implemented as **views** that query the internal ScratchBird catalog and transform results to match the emulated format.
+
+Reference:
+- `05-Wire-Protocol-Integration-Specification.md`
+- `SCHEMA_ARCHITECTURE.md` - Hierarchical schema design
+
+---
+
+## On-Demand Emulation Architecture
+
+Emulated system catalogs are NOT pre-created. They are generated dynamically:
+
+```
+User creates emulated server:
+  CREATE EMULATED SERVER firebird_local TYPE 'firebird' HOST 'localhost' PORT 3050;
+
+  System creates: /remote/emulated/firebird/localhost/
+  (EmulationServerInfo record)
+
+User connects to database:
+  CONNECT TO firebird_local DATABASE 'employee';
+
+  System creates:
+    - /remote/emulated/firebird/localhost/employee/  (database schema)
+    - EmulatedDatabaseInfo record
+    - RDB$RELATIONS view → maps to sys.catalog.tables
+    - RDB$FIELDS view → maps to sys.catalog.columns
+    - RDB$INDICES view → maps to sys.catalog.indexes
+    - RDB$PROCEDURES view → maps to sys.catalog.procedures
+    - etc...
+```
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Wire Protocol Layer                         │
-├──────────────┬──────────────┬──────────────┬───────────────────┤
-│  PostgreSQL  │    MySQL     │    MSSQL     │     Firebird      │
-│  (port 5432) │  (port 3306) │  (port 1433) │    (port 3050)    │
-└──────┬───────┴──────┬───────┴──────┬───────┴────────┬──────────┘
-       │              │              │                │
-       ▼              ▼              ▼                ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                   Virtual Catalog Router                         │
-│  - Intercepts system catalog queries                            │
-│  - Routes to protocol-specific handlers                          │
-│  - Translates results to protocol format                         │
-└──────────────────────────────────────────────────────────────────┘
-       │
-       ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                    Protocol Catalog Handlers                     │
-├──────────────┬──────────────┬──────────────┬───────────────────┤
-│ pg_catalog   │ mysql.*      │ sys.*        │ RDB$*             │
-│ handler      │ handler      │ handler      │ handler           │
-└──────┬───────┴──────┬───────┴──────┬───────┴────────┬──────────┘
-       │              │              │                │
-       └──────────────┴──────────────┴────────────────┘
-                              │
-                              ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                   Internal ScratchBird Catalog                   │
-│                      (CatalogManager)                            │
-└──────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                         Schema Hierarchy                                  │
+├──────────────────────────────────────────────────────────────────────────┤
+│ / (root)                                                                 │
+│ ├── sys/                        # System management (real tables)        │
+│ │   ├── catalog/                # Core catalog tables                    │
+│ │   ├── security/               # Users, roles, permissions              │
+│ │   └── config/                 # Configuration                          │
+│ │                                                                        │
+│ ├── remote/                                                              │
+│ │   └── emulated/               # ON-DEMAND emulation schemas            │
+│ │       ├── firebird/                                                    │
+│ │       │   └── localhost/      # Server (created on CREATE SERVER)      │
+│ │       │       └── employee/   # Database (created on CONNECT)          │
+│ │       │           ├── RDB$RELATIONS    ← VIEW to sys.catalog.tables   │
+│ │       │           ├── RDB$FIELDS       ← VIEW to sys.catalog.columns  │
+│ │       │           └── RDB$INDICES      ← VIEW to sys.catalog.indexes  │
+│ │       │                                                                │
+│ │       ├── postgresql/                                                  │
+│ │       │   └── pgserver/                                                │
+│ │       │       └── mydb/                                                │
+│ │       │           └── pg_catalog/                                      │
+│ │       │               ├── pg_class      ← VIEW                        │
+│ │       │               └── pg_attribute  ← VIEW                        │
+│ │       │                                                                │
+│ │       └── mysql/                                                       │
+│ │           └── mysqlserver/                                             │
+│ │               └── shop/                                                │
+│ │                   └── mysql/                                           │
+│ │                       ├── user          ← VIEW                        │
+│ │                       └── db            ← VIEW                        │
+│ │                                                                        │
+│ └── public/                     # Default public schema                  │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -389,32 +423,140 @@ Status QueryExecutor::resolveTable(const std::string& schema_name,
 
 ---
 
+### D-7: On-Demand Emulation View Generator (8-10 hours)
+
+Generate protocol-specific system views when emulated database is connected.
+
+**File:** `include/scratchbird/catalog/emulation_view_generator.h`
+
+```cpp
+namespace scratchbird::catalog {
+
+// View template for emulated system tables
+struct EmulatedViewDefinition {
+    std::string view_name;           // e.g., "RDB$RELATIONS"
+    std::string source_query;        // SQL that maps to internal catalog
+    std::vector<std::string> columns;
+};
+
+// Emulation view generator - creates views on-demand
+class EmulationViewGenerator {
+public:
+    EmulationViewGenerator(core::CatalogManager* catalog);
+
+    // Generate all system views for an emulated database
+    // Called when user connects to an emulated database
+    core::Status generateEmulatedViews(const ID& database_schema_id,
+                                       ProtocolType protocol,
+                                       ErrorContext* ctx = nullptr);
+
+    // Drop all emulated views (cleanup)
+    core::Status dropEmulatedViews(const ID& database_schema_id,
+                                   ErrorContext* ctx = nullptr);
+
+private:
+    // Protocol-specific view definitions
+    std::vector<EmulatedViewDefinition> getFirebirdViews();
+    std::vector<EmulatedViewDefinition> getPostgreSQLViews();
+    std::vector<EmulatedViewDefinition> getMySQLViews();
+    std::vector<EmulatedViewDefinition> getMSSQLViews();
+
+    core::CatalogManager* catalog_;
+};
+
+} // namespace scratchbird::catalog
+```
+
+**Firebird RDB$ View Mappings:**
+```sql
+-- RDB$RELATIONS → Tables
+CREATE VIEW remote.emulated.firebird.{server}.{db}.RDB$RELATIONS AS
+SELECT
+    t.table_name AS RDB$RELATION_NAME,
+    t.table_id AS RDB$RELATION_ID,
+    CASE t.is_system WHEN true THEN 1 ELSE 0 END AS RDB$SYSTEM_FLAG,
+    s.schema_name AS RDB$OWNER_NAME,
+    t.row_count AS RDB$RELATION_COUNTS
+FROM sys.catalog.tables t
+JOIN sys.catalog.schemas s ON t.schema_id = s.schema_id
+WHERE t.schema_id = {emulated_db_schema_id};
+
+-- RDB$FIELDS → Columns
+CREATE VIEW remote.emulated.firebird.{server}.{db}.RDB$FIELDS AS
+SELECT
+    c.column_name AS RDB$FIELD_NAME,
+    t.table_name AS RDB$RELATION_NAME,
+    c.ordinal AS RDB$FIELD_POSITION,
+    c.data_type AS RDB$FIELD_TYPE,
+    c.max_length AS RDB$FIELD_LENGTH,
+    c.precision AS RDB$FIELD_PRECISION,
+    c.scale AS RDB$FIELD_SCALE,
+    CASE c.nullable WHEN true THEN 1 ELSE 0 END AS RDB$NULL_FLAG
+FROM sys.catalog.columns c
+JOIN sys.catalog.tables t ON c.table_id = t.table_id
+WHERE t.schema_id = {emulated_db_schema_id};
+
+-- RDB$INDICES → Indexes
+CREATE VIEW remote.emulated.firebird.{server}.{db}.RDB$INDICES AS
+SELECT
+    i.index_name AS RDB$INDEX_NAME,
+    t.table_name AS RDB$RELATION_NAME,
+    CASE i.is_unique WHEN true THEN 1 ELSE 0 END AS RDB$UNIQUE_FLAG,
+    i.column_count AS RDB$SEGMENT_COUNT
+FROM sys.catalog.indexes i
+JOIN sys.catalog.tables t ON i.table_id = t.table_id
+WHERE t.schema_id = {emulated_db_schema_id};
+```
+
+**PostgreSQL pg_catalog View Mappings:**
+```sql
+-- pg_class → Tables/Indexes/Sequences
+CREATE VIEW remote.emulated.postgresql.{server}.{db}.pg_catalog.pg_class AS
+SELECT
+    t.table_id::int AS oid,
+    t.table_name AS relname,
+    s.schema_id::int AS relnamespace,
+    'r'::char AS relkind,  -- r=table, i=index, S=sequence
+    t.owner_id::int AS relowner
+FROM sys.catalog.tables t
+JOIN sys.catalog.schemas s ON t.schema_id = s.schema_id
+WHERE t.schema_id = {emulated_db_schema_id};
+
+-- pg_attribute → Columns
+CREATE VIEW remote.emulated.postgresql.{server}.{db}.pg_catalog.pg_attribute AS
+SELECT
+    c.table_id::int AS attrelid,
+    c.column_name AS attname,
+    c.ordinal AS attnum,
+    c.data_type AS atttypid,
+    CASE c.nullable WHEN true THEN false ELSE true END AS attnotnull
+FROM sys.catalog.columns c
+JOIN sys.catalog.tables t ON c.table_id = t.table_id
+WHERE t.schema_id = {emulated_db_schema_id};
+```
+
+---
+
 ## Virtual Schema Registration
 
-On server startup, register virtual schemas:
+On server startup, register core virtual schema handlers (information_schema):
 
 ```cpp
 void initializeVirtualCatalogs(core::CatalogManager* catalog) {
     VirtualCatalogRouter& router = VirtualCatalogRouter::getInstance();
     router.initialize(catalog);
 
-    // Register information_schema (all protocols)
-    router.registerHandler(ProtocolType::POSTGRESQL,
+    // Register information_schema (shared by all protocols)
+    // This is always available at /information_schema
+    router.registerHandler(ProtocolType::SCRATCHBIRD,
         std::make_unique<InformationSchemaHandler>(catalog));
-    router.registerHandler(ProtocolType::MYSQL,
-        std::make_unique<InformationSchemaHandler>(catalog));
-    router.registerHandler(ProtocolType::MSSQL,
-        std::make_unique<InformationSchemaHandler>(catalog));
-
-    // Register protocol-specific catalogs
-    router.registerHandler(ProtocolType::POSTGRESQL,
-        std::make_unique<PgCatalogHandler>(catalog));
-    router.registerHandler(ProtocolType::MYSQL,
-        std::make_unique<MySqlCatalogHandler>(catalog));
-    router.registerHandler(ProtocolType::MSSQL,
-        std::make_unique<MssqlCatalogHandler>(catalog));
 }
 ```
+
+**Emulated protocol catalogs are NOT registered at startup.**
+They are generated on-demand when:
+1. `CREATE EMULATED SERVER` - creates server schema
+2. `CONNECT TO {server} DATABASE {db}` - creates database schema + emulated views
 
 ---
 
@@ -423,21 +565,23 @@ void initializeVirtualCatalogs(core::CatalogManager* catalog) {
 ### Implementation
 - [ ] D-1: Virtual catalog interface design
 - [ ] D-2: information_schema implementation (12 views)
-- [ ] D-3: pg_catalog handler (12 views)
-- [ ] D-4: mysql.* handler (6 views)
-- [ ] D-5: sys.* handler (8 views)
+- [ ] D-3: pg_catalog view templates (12 views)
+- [ ] D-4: mysql.* view templates (6 views)
+- [ ] D-5: sys.* view templates (8 views)
 - [ ] D-6: Query router integration
+- [ ] D-7: On-demand emulation view generator (Firebird RDB$*)
 
 ### Testing
 - [ ] information_schema queries return correct data
-- [ ] pg_catalog queries work with PostgreSQL clients
-- [ ] mysql.* queries work with MySQL clients
-- [ ] sys.* queries work with MSSQL clients
-- [ ] WHERE clause filtering works
+- [ ] CREATE EMULATED SERVER creates correct schema path
+- [ ] CONNECT TO {server} DATABASE generates views correctly
+- [ ] Emulated views query internal catalog correctly
+- [ ] WHERE clause filtering works on emulated views
 
 ### Documentation
 - [ ] Document virtual catalog mapping
-- [ ] Update wire protocol documentation
+- [ ] Document on-demand view generation
+- [ ] Update SCHEMA_ARCHITECTURE.md
 
 ---
 
@@ -447,11 +591,12 @@ void initializeVirtualCatalogs(core::CatalogManager* catalog) {
 |------|-----------|
 | D-1: Interface Design | 4-6 |
 | D-2: information_schema | 8-10 |
-| D-3: pg_catalog | 6-8 |
-| D-4: mysql.* | 4-6 |
-| D-5: sys.* | 4-6 |
+| D-3: pg_catalog templates | 6-8 |
+| D-4: mysql.* templates | 4-6 |
+| D-5: sys.* templates | 4-6 |
 | D-6: Router Integration | 4-6 |
-| **Total** | **30-42 hours** |
+| D-7: On-Demand View Generator | 8-10 |
+| **Total** | **38-52 hours** |
 
 ---
 
@@ -459,11 +604,20 @@ void initializeVirtualCatalogs(core::CatalogManager* catalog) {
 
 This virtual catalog infrastructure provides the foundation for:
 1. **Wire Protocol Integration** - Clients can query system catalogs in their native format
-2. **Tool Compatibility** - pgAdmin, MySQL Workbench, SSMS work without modification
-3. **Migration Support** - Schema introspection tools work correctly
-4. **Cross-Protocol Access** - Unified access to metadata regardless of protocol
+2. **On-Demand Emulation** - System tables only created when emulation is configured
+3. **Views to Real Catalog** - Emulated tables are views, not duplicated data
+4. **Tool Compatibility** - pgAdmin, MySQL Workbench, SSMS work without modification
+5. **Hierarchical Schemas** - Full path support (remote.emulated.firebird.server.db.RDB$*)
 
 ---
 
-**Document Version:** 1.0
+## Related Documents
+
+- `SCHEMA_ARCHITECTURE.md` - Hierarchical schema design
+- `CATALOG_CLEANUP_PHASE_A_CRUD.md` - Emulation CRUD operations
+- `CATALOG_CLEANUP_PHASE_B_STRUCTURES.md` - EmulationServerInfo, EmulatedDatabaseInfo
+
+---
+
+**Document Version:** 1.1
 **Last Updated:** November 26, 2025

@@ -1,8 +1,9 @@
 # Catalog System Cleanup - Overview and Master Plan
 
 **Created:** November 26, 2025
+**Updated:** November 26, 2025
 **Priority:** HIGH - Prerequisite for Alpha Phase 2
-**Estimated Total Effort:** 120-160 hours
+**Estimated Total Effort:** 155-215 hours
 **Target:** Complete before Alpha Phase 2 development
 
 ---
@@ -43,7 +44,7 @@ The cleanup is organized into 4 sequential phases:
 
 ### Phase A: Complete Missing CRUD Operations
 **Document:** `CATALOG_CLEANUP_PHASE_A_CRUD.md`
-**Effort:** 40-50 hours
+**Effort:** 48-63 hours
 **Priority:** Critical
 
 Add CRUD methods for existing structures that lack them:
@@ -56,10 +57,12 @@ Add CRUD methods for existing structures that lack them:
 
 ### Phase B: Add Missing Structures
 **Document:** `CATALOG_CLEANUP_PHASE_B_STRUCTURES.md`
-**Effort:** 30-40 hours
+**Effort:** 37-48 hours
 **Priority:** High
 
 Define new structures required for Phase 2:
+- SchemaType enum and hierarchical schema support
+- SynonymInfo for cross-schema pointers
 - ForeignServerInfo, ForeignTableInfo, UserMappingInfo (FDW)
 - ServerRegistryInfo (Distributed MVCC)
 - UDRModuleInfo, UDREngineInfo (UDR System)
@@ -67,10 +70,11 @@ Define new structures required for Phase 2:
 
 ### Phase C: System Table Page Allocation
 **Document:** `CATALOG_CLEANUP_PHASE_C_PAGES.md`
-**Effort:** 20-30 hours
+**Effort:** 30-43 hours
 **Priority:** High
 
 Allocate storage pages for unallocated system tables:
+- synonyms_table_page_
 - domains_table_page_
 - udr_table_page_
 - packages_table_page_
@@ -81,13 +85,16 @@ Allocate storage pages for unallocated system tables:
 
 ### Phase D: Virtual Catalog Infrastructure
 **Document:** `CATALOG_CLEANUP_PHASE_D_VIRTUAL.md`
-**Effort:** 30-40 hours
+**Effort:** 38-52 hours
 **Priority:** Medium (Foundation for Phase 2)
 
 Design and implement virtual catalog layer:
 - information_schema view infrastructure
-- Protocol-specific catalog mapping (pg_catalog, mysql.*, sys.*)
+- Protocol-specific view templates (pg_catalog, mysql.*, sys.*, RDB$*)
+- On-demand emulation view generation
 - View registration and query routing
+
+**Reference:** `SCHEMA_ARCHITECTURE.md` for hierarchical schema design
 
 ---
 
@@ -181,14 +188,15 @@ Phase C (Pages) ─────────────────────�
 
 ## Related Documents
 
+- `SCHEMA_ARCHITECTURE.md` - **NEW** Hierarchical schema namespace design
 - `CATALOG_CLEANUP_PHASE_A_CRUD.md` - CRUD operations implementation
-- `CATALOG_CLEANUP_PHASE_B_STRUCTURES.md` - New structure definitions
+- `CATALOG_CLEANUP_PHASE_B_STRUCTURES.md` - New structure definitions (including Synonyms)
 - `CATALOG_CLEANUP_PHASE_C_PAGES.md` - Page allocation
-- `CATALOG_CLEANUP_PHASE_D_VIRTUAL.md` - Virtual catalog infrastructure
+- `CATALOG_CLEANUP_PHASE_D_VIRTUAL.md` - Virtual catalog infrastructure (on-demand emulation)
 - `FUTURE_WORK_BLOCKED_ITEMS.md` - Deferred items
 - `/docs/specifications/Alpha Phase 2/` - Phase 2 specifications
 
 ---
 
-**Document Version:** 1.0
+**Document Version:** 1.1
 **Last Updated:** November 26, 2025
