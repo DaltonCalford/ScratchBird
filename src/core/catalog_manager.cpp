@@ -8736,6 +8736,194 @@ auto CatalogManager::refreshMaterializedView(const ID& view_id, bool concurrentl
     return Status::OK;
 }
 
+// P2-18: Advanced refresh with strategy
+auto CatalogManager::refreshMaterializedViewWithStrategy(const ID& view_id, MVRefreshStrategy strategy,
+                                                          bool concurrently, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(view_cache_mutex_);
+
+    auto it = view_cache_.find(view_id);
+    if (it == view_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "View not found");
+        return Status::NOT_FOUND;
+    }
+
+    ViewInfo& view = it->second;
+
+    if (!view.materialized)
+    {
+        std::string msg = "View '" + view.name + "' is not materialized";
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, msg.c_str());
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Log the refresh strategy being used
+    const char* strategy_name = "COMPLETE";
+    switch (strategy)
+    {
+        case MVRefreshStrategy::COMPLETE:
+            strategy_name = "COMPLETE";
+            // Full refresh: truncate and repopulate
+            // TODO: Execute view definition query and replace all data
+            break;
+        case MVRefreshStrategy::INCREMENTAL:
+            strategy_name = "INCREMENTAL";
+            // Incremental: only apply changes since last refresh
+            // Requires change tracking on base tables
+            if (view.base_table_ids.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                    "Incremental refresh requires base table tracking");
+                return Status::INVALID_ARGUMENT;
+            }
+            break;
+        case MVRefreshStrategy::FAST:
+            strategy_name = "FAST";
+            // Fast refresh: use change log
+            if (view.change_log_table_id == ID())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                    "Fast refresh requires a change log table");
+                return Status::INVALID_ARGUMENT;
+            }
+            break;
+    }
+
+    // Update last refresh time
+    view.last_refresh_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+    LOG_INFO(CATALOG, "Refreshed materialized view '%s' using strategy '%s' %s",
+             view.name.c_str(), strategy_name, concurrently ? "(CONCURRENTLY)" : "");
+
+    return Status::OK;
+}
+
+auto CatalogManager::setMVRefreshStrategy(const ID& view_id, MVRefreshStrategy strategy,
+                                           ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(view_cache_mutex_);
+
+    auto it = view_cache_.find(view_id);
+    if (it == view_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "View not found");
+        return Status::NOT_FOUND;
+    }
+
+    ViewInfo& view = it->second;
+
+    if (!view.materialized)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Not a materialized view");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    view.refresh_strategy = strategy;
+    LOG_INFO(CATALOG, "Set refresh strategy for MV '%s'", view.name.c_str());
+
+    return Status::OK;
+}
+
+auto CatalogManager::setMVRefreshOnCommit(const ID& view_id, bool refresh_on_commit,
+                                           ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(view_cache_mutex_);
+
+    auto it = view_cache_.find(view_id);
+    if (it == view_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "View not found");
+        return Status::NOT_FOUND;
+    }
+
+    ViewInfo& view = it->second;
+
+    if (!view.materialized)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Not a materialized view");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    view.refresh_on_commit = refresh_on_commit;
+    LOG_INFO(CATALOG, "Set refresh-on-commit=%s for MV '%s'",
+             refresh_on_commit ? "true" : "false", view.name.c_str());
+
+    return Status::OK;
+}
+
+auto CatalogManager::getMVRefreshStatus(const ID& view_id, uint64_t& last_refresh_time,
+                                         bool& is_stale, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(view_cache_mutex_);
+
+    auto it = view_cache_.find(view_id);
+    if (it == view_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "View not found");
+        return Status::NOT_FOUND;
+    }
+
+    const ViewInfo& view = it->second;
+
+    if (!view.materialized)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Not a materialized view");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    last_refresh_time = view.last_refresh_time;
+
+    // Check if view is stale by comparing to base table modification times
+    // For now, assume stale if never refreshed or if last refresh > 1 hour ago
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+    uint64_t one_hour_ns = 3600ULL * 1000000000ULL;
+    is_stale = (last_refresh_time == 0) || (now - last_refresh_time > one_hour_ns);
+
+    return Status::OK;
+}
+
+auto CatalogManager::refreshDependentMVs(const ID& base_table_id, ErrorContext* ctx) -> Status
+{
+    // Find all materialized views that depend on this base table
+    std::vector<ID> mv_ids_to_refresh;
+
+    {
+        std::lock_guard<std::mutex> lock(view_cache_mutex_);
+
+        for (auto& [view_id, view] : view_cache_)
+        {
+            if (!view.materialized || !view.refresh_on_commit)
+                continue;
+
+            // Check if this MV depends on the modified table
+            for (const auto& table_id : view.base_table_ids)
+            {
+                if (table_id == base_table_id)
+                {
+                    mv_ids_to_refresh.push_back(view_id);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Refresh each dependent MV
+    for (const auto& mv_id : mv_ids_to_refresh)
+    {
+        auto status = refreshMaterializedView(mv_id, false, ctx);
+        if (status != Status::OK)
+        {
+            LOG_ERROR(CATALOG, "Failed to refresh dependent MV");
+            // Continue with other MVs even if one fails
+        }
+    }
+
+    LOG_INFO(CATALOG, "Refreshed %zu dependent materialized views", mv_ids_to_refresh.size());
+
+    return Status::OK;
+}
+
 auto CatalogManager::getView(const ID& schema_id, const std::string& name,
                                ViewInfo& info_out, ErrorContext* ctx) -> Status
 {

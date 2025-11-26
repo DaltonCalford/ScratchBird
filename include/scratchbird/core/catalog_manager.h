@@ -342,6 +342,13 @@ namespace scratchbird::core
             std::mutex config_mutex;  // Protect ALTER SEQUENCE changes
         };
 
+        // P2-18: Materialized view refresh strategy
+        enum class MVRefreshStrategy : uint8_t {
+            COMPLETE = 0,       // Full refresh - truncate and repopulate (default)
+            INCREMENTAL = 1,    // Incremental refresh - only changed rows
+            FAST = 2            // Fast refresh using change log
+        };
+
         // View information (ALPHA Phase 1 - Views)
         struct ViewInfo {
             ID view_id;
@@ -358,6 +365,17 @@ namespace scratchbird::core
             bool materialized;              // True if this is a materialized view
             ID materialized_table_id;       // Physical table storing the materialized data (if materialized)
             uint64_t last_refresh_time;     // Timestamp of last REFRESH (0 if never refreshed)
+
+            // P2-18: Advanced refresh options
+            MVRefreshStrategy refresh_strategy;  // How to refresh this MV
+            bool refresh_on_commit;          // Refresh automatically on source table changes
+            std::vector<ID> base_table_ids;  // Tables this MV depends on (for incremental refresh)
+            ID change_log_table_id;          // Table tracking changes for fast refresh
+            bool supports_concurrent;        // Can be refreshed concurrently
+
+            ViewInfo() : check_option(false), materialized(false), last_refresh_time(0),
+                         refresh_strategy(MVRefreshStrategy::COMPLETE), refresh_on_commit(false),
+                         supports_concurrent(true) {}
         };
 
         // Generated column types (ALPHA Phase 1 - Constraint Features)
@@ -1128,6 +1146,22 @@ namespace scratchbird::core
 
         auto refreshMaterializedView(const ID& view_id, bool concurrently,
                                       ErrorContext* ctx = nullptr) -> Status;  // ALPHA Phase 1 - Materialized Views
+
+        // P2-18: Advanced refresh methods
+        auto refreshMaterializedViewWithStrategy(const ID& view_id, MVRefreshStrategy strategy,
+                                                 bool concurrently, ErrorContext* ctx = nullptr) -> Status;
+
+        auto setMVRefreshStrategy(const ID& view_id, MVRefreshStrategy strategy,
+                                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto setMVRefreshOnCommit(const ID& view_id, bool refresh_on_commit,
+                                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto getMVRefreshStatus(const ID& view_id, uint64_t& last_refresh_time,
+                                bool& is_stale, ErrorContext* ctx = nullptr) -> Status;
+
+        auto refreshDependentMVs(const ID& base_table_id,
+                                 ErrorContext* ctx = nullptr) -> Status;  // Cascade refresh
 
         auto getView(const ID& schema_id, const std::string& name,
                      ViewInfo& info_out, ErrorContext* ctx = nullptr) -> Status;
