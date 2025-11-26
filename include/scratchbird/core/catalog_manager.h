@@ -1967,6 +1967,11 @@ namespace scratchbird::core
             std::string procedure_name;
             bool enabled = true;  // Can be disabled without dropping
             uint64_t created_time = 0;
+
+            // P2-8: Statement-level trigger support
+            std::string old_table_alias;  // REFERENCING OLD TABLE AS name (empty if not specified)
+            std::string new_table_alias;  // REFERENCING NEW TABLE AS name (empty if not specified)
+            std::string when_expression;  // Optional WHEN condition (serialized bytecode)
         };
         
         // Trigger management methods

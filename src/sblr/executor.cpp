@@ -275,6 +275,71 @@ namespace scratchbird
             }
         };
 
+        // P2-8: Statement-level trigger context with transition tables
+        class Executor::StatementTriggerContext
+        {
+        public:
+            StatementTriggerContext(
+                const core::CatalogManager::TriggerInfo& trigger,
+                const core::CatalogManager::TableInfo& table_info,
+                const std::vector<core::CatalogManager::ColumnInfo>& columns,
+                std::vector<std::vector<Value>>* old_table,  // For UPDATE/DELETE (nullable)
+                std::vector<std::vector<Value>>* new_table   // For INSERT/UPDATE (nullable)
+            ) : trigger_(trigger), table_info_(table_info), columns_(columns),
+                old_table_(old_table), new_table_(new_table) {}
+
+            const core::CatalogManager::TriggerInfo& trigger() const { return trigger_; }
+            const core::CatalogManager::TableInfo& tableInfo() const { return table_info_; }
+
+            // Access OLD TABLE (transition table for affected rows before changes)
+            const std::vector<std::vector<Value>>* oldTable() const { return old_table_; }
+            size_t oldTableRowCount() const { return old_table_ ? old_table_->size() : 0; }
+
+            // Access NEW TABLE (transition table for affected rows after changes)
+            const std::vector<std::vector<Value>>* newTable() const { return new_table_; }
+            size_t newTableRowCount() const { return new_table_ ? new_table_->size() : 0; }
+
+            // Get column names for transition tables
+            const std::vector<core::CatalogManager::ColumnInfo>& columns() const { return columns_; }
+
+            // Get value from OLD TABLE at specific row and column
+            Value getOldTableValue(size_t row_idx, const std::string& column_name) const
+            {
+                if (!old_table_ || row_idx >= old_table_->size()) return Value::makeNull();
+                size_t col_idx = findColumnIndex(column_name);
+                if (col_idx == static_cast<size_t>(-1)) return Value::makeNull();
+                return (*old_table_)[row_idx][col_idx];
+            }
+
+            // Get value from NEW TABLE at specific row and column
+            Value getNewTableValue(size_t row_idx, const std::string& column_name) const
+            {
+                if (!new_table_ || row_idx >= new_table_->size()) return Value::makeNull();
+                size_t col_idx = findColumnIndex(column_name);
+                if (col_idx == static_cast<size_t>(-1)) return Value::makeNull();
+                return (*new_table_)[row_idx][col_idx];
+            }
+
+        private:
+            const core::CatalogManager::TriggerInfo& trigger_;
+            const core::CatalogManager::TableInfo& table_info_;
+            const std::vector<core::CatalogManager::ColumnInfo>& columns_;
+            std::vector<std::vector<Value>>* old_table_;
+            std::vector<std::vector<Value>>* new_table_;
+
+            size_t findColumnIndex(const std::string& column_name) const
+            {
+                for (size_t i = 0; i < columns_.size(); i++)
+                {
+                    if (columns_[i].column_name == column_name)
+                    {
+                        return i;
+                    }
+                }
+                return static_cast<size_t>(-1);
+            }
+        };
+
         // ===== ResultSet Implementation =====
 
         void ResultSet::addColumn(const std::string &name, core::DataType type)
@@ -10383,6 +10448,51 @@ namespace scratchbird
             TriggerProcedure procedure)
         {
             trigger_procedures_[name] = std::move(procedure);
+        }
+
+        // P2-8: Register statement-level trigger procedure
+        void Executor::registerStatementTriggerProcedure(
+            const std::string& name,
+            StatementTriggerProcedure procedure)
+        {
+            statement_trigger_procedures_[name] = std::move(procedure);
+        }
+
+        // P2-8: Fire statement-level trigger
+        bool Executor::fireStatementTrigger(const StatementTriggerContext& ctx)
+        {
+            const auto& trigger = ctx.trigger();
+
+            // Look up statement-level trigger procedure
+            auto it = statement_trigger_procedures_.find(trigger.procedure_name);
+            if (it == statement_trigger_procedures_.end())
+            {
+                // For Phase 2, just log warning if procedure not found
+                std::cerr << "Warning: Statement trigger procedure '"
+                          << trigger.procedure_name << "' not registered\n";
+                return true;  // Continue operation
+            }
+
+            // Execute procedure
+            try
+            {
+                bool should_continue = it->second(ctx);
+                return should_continue;
+            }
+            catch (const std::exception& e)
+            {
+                std::cerr << "Statement trigger '" << trigger.trigger_name
+                          << "' failed: " << e.what() << "\n";
+
+                // BEFORE triggers: failure prevents operation
+                if (trigger.timing == core::CatalogManager::TriggerTiming::BEFORE)
+                {
+                    return false;
+                }
+
+                // AFTER triggers: log error but continue
+                return true;
+            }
         }
 
         void Executor::executeMonitoringQuery(const std::string &table_name)

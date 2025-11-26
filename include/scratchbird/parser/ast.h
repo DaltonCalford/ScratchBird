@@ -2972,13 +2972,22 @@ namespace scratchbird
         enum class TriggerGranularity : uint8_t
         {
             FOR_EACH_ROW,
-            FOR_EACH_STATEMENT  // For future support
+            FOR_EACH_STATEMENT  // P2-8: Statement-level triggers
         };
 
-        // CREATE TRIGGER statement (Phase 2 Wave 2 - Agent C)
+        // P2-8: Transition table names for statement-level triggers
+        // REFERENCING OLD TABLE AS old_name NEW TABLE AS new_name
+        struct TransitionTableNames
+        {
+            StringPool::StringId old_table_name = 0;  // 0 = not specified
+            StringPool::StringId new_table_name = 0;  // 0 = not specified
+        };
+
+        // CREATE TRIGGER statement (Phase 2 Wave 2 - Agent C, P2-8: Statement-level)
         class CreateTriggerStmt : public Statement
         {
         public:
+            // Original constructor for row-level triggers
             CreateTriggerStmt(const SourceSpan &span,
                               StringPool::StringId trigger_name,
                               StringPool::StringId table_name,
@@ -2992,7 +3001,30 @@ namespace scratchbird
                   timing_(timing),
                   event_(event),
                   granularity_(granularity),
-                  procedure_name_(procedure_name)
+                  procedure_name_(procedure_name),
+                  when_condition_(nullptr)
+            {
+            }
+
+            // P2-8: Constructor with transition tables and WHEN condition
+            CreateTriggerStmt(const SourceSpan &span,
+                              StringPool::StringId trigger_name,
+                              StringPool::StringId table_name,
+                              TriggerTiming timing,
+                              TriggerEvent event,
+                              TriggerGranularity granularity,
+                              StringPool::StringId procedure_name,
+                              const TransitionTableNames& transition_tables,
+                              Expression* when_condition)
+                : Statement(ASTKind::CREATE_TRIGGER, span),
+                  trigger_name_(trigger_name),
+                  table_name_(table_name),
+                  timing_(timing),
+                  event_(event),
+                  granularity_(granularity),
+                  procedure_name_(procedure_name),
+                  transition_tables_(transition_tables),
+                  when_condition_(when_condition)
             {
             }
 
@@ -3003,6 +3035,16 @@ namespace scratchbird
             TriggerGranularity granularity() const { return granularity_; }
             StringPool::StringId procedureName() const { return procedure_name_; }
 
+            // P2-8: Transition table accessors
+            const TransitionTableNames& transitionTables() const { return transition_tables_; }
+            bool hasOldTable() const { return transition_tables_.old_table_name != 0; }
+            bool hasNewTable() const { return transition_tables_.new_table_name != 0; }
+            StringPool::StringId oldTableName() const { return transition_tables_.old_table_name; }
+            StringPool::StringId newTableName() const { return transition_tables_.new_table_name; }
+
+            // P2-8: WHEN condition accessor
+            Expression* whenCondition() const { return when_condition_; }
+
             void accept(ASTVisitor *visitor) override;
 
         private:
@@ -3012,6 +3054,8 @@ namespace scratchbird
             TriggerEvent event_;
             TriggerGranularity granularity_;
             StringPool::StringId procedure_name_;
+            TransitionTableNames transition_tables_;  // P2-8: Transition tables
+            Expression* when_condition_;              // P2-8: Optional WHEN condition
         };
 
         // DROP TRIGGER statement (Phase 2 Wave 2 - Agent C)
