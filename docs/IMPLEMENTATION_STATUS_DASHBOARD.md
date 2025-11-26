@@ -14,7 +14,7 @@
 | **P1 High Priority** | 15/15 | 0 | ✅ **100%** | 0 |
 | **P2 Medium Priority** | 25/25 | 0 | ✅ **100%** | 0 |
 | **P3 Low Priority** | 14/20 | 6 blocked | 🔄 **70%** | ~50 (blocked) |
-| **CRUD Operations** | 15/61 | 46 | 🔄 **25%** | 45-60 |
+| **CRUD Operations** | 52/61 | 9 | 🔄 **85%** | 10-15 |
 | **Data Loaders** | 0/2 | 2 | ❌ **0%** | 40-50 |
 | **Local Server** | 0/5 | 5 | ❌ **0%** | 120-160 |
 
@@ -84,15 +84,18 @@
    - All P1 High-priority items complete
    - All P2 Medium-priority items complete
 
-2. **CRUD Operations (46/61 remaining)** - 45-60 hours
+2. **Catalog Cleanup Phase A** - ✅ COMPLETE! (November 26, 2025) 🎉
+   - ✅ 37 CRUD methods implemented
+   - ✅ dropSchema(), Domain/UDR/Package/Emulation CRUD, updateRole/Group
+   - See [docs/planning/CATALOG_CLEANUP_PHASE_A_CRUD.md](planning/CATALOG_CLEANUP_PHASE_A_CRUD.md)
+
+3. **CRUD Operations (9/61 remaining)** - 10-15 hours
    - ❌ Timezone CRUD: updateTimezone, deleteTimezone
    - ❌ Charset CRUD: updateCharset, deleteCharset
    - ❌ Collation CRUD: deleteCollation, listCollationsForCharset
-   - ❌ Heap page helpers: findRecordInHeapPage, updateRecordInHeapPage, deleteRecordInHeapPage
-   - ❌ Multi-page version chains (3+ pages)
    - ❌ Statistics operations: analyzeColumn, getTableStatistics, dropStatistics
 
-3. **Data Loaders (0/2 agents)** - 40-50 hours
+4. **Data Loaders (0/2 agents)** - 40-50 hours
    - ❌ Timezone data loader (IANA tzdata 2024b present but not loaded)
    - ❌ Character set loader (39 charsets defined but not loaded)
    - Impact: Temporal operations and text handling incomplete
@@ -332,6 +335,7 @@ All critical, high, and medium priority items complete!
 
 | Date | Changes | Updated By |
 |------|---------|------------|
+| 2025-11-26 | Catalog Cleanup Phase A COMPLETE - 37 CRUD methods implemented | Claude Code |
 | 2025-11-26 | P3 70% COMPLETE - 14/20 items implemented, 6 blocked by Alpha 3/dependencies | Claude Code |
 | 2025-11-25 | P2 100% COMPLETE - All 25 medium-priority items implemented | Claude Code |
 | 2025-11-25 | P1 100% COMPLETE - All 15 high-priority items implemented | Claude Code |
@@ -340,4 +344,4 @@ All critical, high, and medium priority items complete!
 
 ---
 
-**Next Review:** December 1, 2025 (focus on Local Server Architecture - P3 blocked items await Alpha 3)
+**Next Review:** December 1, 2025 (focus on Catalog Cleanup Phases B-D, then Local Server Architecture)

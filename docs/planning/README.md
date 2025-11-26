@@ -16,12 +16,12 @@
 | Document | Status | Est. Hours | Description |
 |----------|--------|------------|-------------|
 | [CATALOG_CLEANUP_OVERVIEW.md](CATALOG_CLEANUP_OVERVIEW.md) | ACTIVE | - | Master plan and overview |
-| [CATALOG_CLEANUP_PHASE_A_CRUD.md](CATALOG_CLEANUP_PHASE_A_CRUD.md) | NOT STARTED | 48-63 | Complete missing CRUD operations |
+| [CATALOG_CLEANUP_PHASE_A_CRUD.md](CATALOG_CLEANUP_PHASE_A_CRUD.md) | ✅ COMPLETE | 48-63 | Complete missing CRUD operations (37 methods) |
 | [CATALOG_CLEANUP_PHASE_B_STRUCTURES.md](CATALOG_CLEANUP_PHASE_B_STRUCTURES.md) | NOT STARTED | 37-48 | Add structures (SchemaType, Synonyms, FDW, UDR) |
 | [CATALOG_CLEANUP_PHASE_C_PAGES.md](CATALOG_CLEANUP_PHASE_C_PAGES.md) | NOT STARTED | 30-43 | System table page allocation |
 | [CATALOG_CLEANUP_PHASE_D_VIRTUAL.md](CATALOG_CLEANUP_PHASE_D_VIRTUAL.md) | NOT STARTED | 38-52 | Virtual catalog + on-demand emulation |
 
-**Total Estimated Effort:** 153-206 hours
+**Total Estimated Effort:** 105-143 hours remaining (Phase A complete)
 
 ### Future Work
 | Document | Description |
@@ -57,9 +57,9 @@ See [archive/README.md](archive/README.md) for details.
 
 ### Catalog Cleanup Phases
 ```
-Phase A (CRUD)      ──┐
-Phase B (Structures) ─┼──► Phase D (Virtual Catalog) ──► Alpha Phase 2
-Phase C (Pages)     ──┘
+Phase A (CRUD) ✅ COMPLETE ──┐
+Phase B (Structures) ────────┼──► Phase D (Virtual Catalog) ──► Alpha Phase 2
+Phase C (Pages) ─────────────┘
 ```
 
 ### Key Files
@@ -92,15 +92,20 @@ Phase C (Pages)     ──┘
 
 ### Navigation Commands
 ```sql
-USE schema_path;          -- Change current schema
-CD ..;                    -- Parent schema
-CD ~;                     -- Home schema (users.{username})
-PWD;                      -- Show current schema
-SHOW TABLES LIKE '%';     -- List tables with filter
-LOCATE object_name;       -- Find object in search path
-SET SEARCH_PATH = '...';  -- Configure search path
+SET SCHEMA path;             -- Change to schema (absolute path)
+SET SCHEMA UP;               -- Go to parent schema
+SET SCHEMA UP.sibling;       -- Go to sibling (relative)
+SET SCHEMA .child;           -- Go to child (explicit relative)
+SET SCHEMA HOME;             -- Home schema (users.{username})
+SET SCHEMA ROOT;             -- Go to root schema
+SHOW SCHEMA;                 -- Show current schema name
+SHOW SCHEMA PATH;            -- Show full schema path
+SHOW TABLES LIKE '%';        -- List tables with filter
+SHOW TABLE name IN DETAIL;   -- Show detailed table info
+SHOW LOCATION OF object;     -- Find object in search path
+SET SEARCH PATH TO '...';    -- Configure search path
 ```
 
 ---
 
-**Next Action:** Begin implementation of CATALOG_CLEANUP_PHASE_A_CRUD.md
+**Next Action:** Begin implementation of CATALOG_CLEANUP_PHASE_B_STRUCTURES.md (Phase A complete!)
