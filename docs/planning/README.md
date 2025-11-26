@@ -9,7 +9,8 @@
 ### Architecture Reference
 | Document | Description |
 |----------|-------------|
-| [SCHEMA_ARCHITECTURE.md](SCHEMA_ARCHITECTURE.md) | **NEW** Hierarchical schema namespace design, synonym support |
+| [SCHEMA_ARCHITECTURE.md](SCHEMA_ARCHITECTURE.md) | Hierarchical schema namespace design, synonym support |
+| [SCHEMA_NAVIGATION_AND_SEARCH_PATH.md](SCHEMA_NAVIGATION_AND_SEARCH_PATH.md) | **NEW** Navigation commands, search path, system table locations |
 
 ### Catalog Cleanup (Current Priority)
 | Document | Status | Est. Hours | Description |
@@ -69,7 +70,14 @@ Phase C (Pages)     ──┘
 ### Schema Hierarchy
 ```
 / (root)
-├── sys/                  # System tables (security, catalog, config)
+├── sys/                  # System tables
+│   ├── catalog/          #   schemas, tables, columns, indexes...
+│   ├── security/         #   users, roles, permissions...
+│   ├── storage/          #   tablespaces...
+│   ├── transactions/     #   active_transactions, locks...
+│   ├── config/           #   settings, search_paths...
+│   └── monitoring/       #   connections, queries...
+├── information_schema/   # SQL standard views
 ├── users/{username}/     # User home directories
 ├── remote/
 │   ├── scratchbird/      # Remote ScratchBird mounts
@@ -78,7 +86,19 @@ Phase C (Pages)     ──┘
 │       ├── postgresql/{server}/{db}/pg_catalog/*
 │       ├── mysql/{server}/{db}/mysql/*
 │       └── mssql/{server}/{db}/sys/*
-└── public/               # Default schema
+├── public/               # Default schema
+└── temp/                 # Global temporary objects
+```
+
+### Navigation Commands
+```sql
+USE schema_path;          -- Change current schema
+CD ..;                    -- Parent schema
+CD ~;                     -- Home schema (users.{username})
+PWD;                      -- Show current schema
+SHOW TABLES LIKE '%';     -- List tables with filter
+LOCATE object_name;       -- Find object in search path
+SET SEARCH_PATH = '...';  -- Configure search path
 ```
 
 ---

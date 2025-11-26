@@ -242,11 +242,12 @@ Status resolveSchemaPath(const std::string& path, SchemaInfo& schema_out) {
 
 ## Related Documents
 
+- `SCHEMA_NAVIGATION_AND_SEARCH_PATH.md` - Navigation commands, search path, system table locations
 - `CATALOG_CLEANUP_PHASE_A_CRUD.md` - Add synonym CRUD
 - `CATALOG_CLEANUP_PHASE_B_STRUCTURES.md` - Add SynonymInfo structure
 - `CATALOG_CLEANUP_PHASE_D_VIRTUAL.md` - Update for on-demand view generation
 
 ---
 
-**Document Version:** 1.0
+**Document Version:** 1.1
 **Last Updated:** November 26, 2025
