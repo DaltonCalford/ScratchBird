@@ -89,6 +89,7 @@ namespace scratchbird
             {"PARTITION", TokenType::KW_PARTITION},
             {"ROWS", TokenType::KW_ROWS},
             {"RANGE", TokenType::KW_RANGE},
+            {"GROUPS", TokenType::KW_GROUPS},  // P2-9: GROUPS frame mode
             {"BETWEEN", TokenType::KW_BETWEEN},
             {"UNBOUNDED", TokenType::KW_UNBOUNDED},
             {"PRECEDING", TokenType::KW_PRECEDING},

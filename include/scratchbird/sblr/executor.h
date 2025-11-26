@@ -493,10 +493,18 @@ namespace scratchbird
                 std::vector<size_t> order_cols;       // Column indices for ORDER BY
                 std::vector<bool> order_asc;          // Sort directions
                 bool has_frame;
-                bool frame_is_rows;  // ROWS vs RANGE
+
+                // P2-9: Frame mode enum instead of bool
+                enum class FrameMode { ROWS, RANGE, GROUPS };
+                FrameMode frame_mode = FrameMode::RANGE;  // Default per SQL spec
+
                 int64_t frame_start_offset;  // -1 = UNBOUNDED PRECEDING, 0 = CURRENT ROW
                 int64_t frame_end_offset;    // -1 = UNBOUNDED FOLLOWING, 0 = CURRENT ROW
                 std::string output_column;
+
+                // P2-9: For LAG/LEAD offset and default value
+                int64_t lag_lead_offset = 1;  // Default offset for LAG/LEAD
+                Value lag_lead_default;       // Default value for LAG/LEAD
             };
 
             struct Partition

@@ -5056,14 +5056,18 @@ namespace scratchbird
         {
             current_result_->writeOpcode(Opcode::FRAME_CLAUSE);
 
-            // Emit frame mode (ROWS or RANGE)
-            if (spec->frameMode() == parser::FrameMode::ROWS)
+            // Emit frame mode (ROWS, RANGE, or GROUPS)
+            switch (spec->frameMode())
             {
-                current_result_->writeOpcode(Opcode::FRAME_ROWS);
-            }
-            else
-            {
-                current_result_->writeOpcode(Opcode::FRAME_RANGE);
+                case parser::FrameMode::ROWS:
+                    current_result_->writeOpcode(Opcode::FRAME_ROWS);
+                    break;
+                case parser::FrameMode::RANGE:
+                    current_result_->writeOpcode(Opcode::FRAME_RANGE);
+                    break;
+                case parser::FrameMode::GROUPS:
+                    current_result_->writeOpcode(Opcode::FRAME_GROUPS);  // P2-9
+                    break;
             }
 
             // Emit frame start boundary

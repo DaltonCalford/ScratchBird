@@ -6471,7 +6471,7 @@ namespace scratchbird
 
         void Parser::parseFrameClause(WindowSpec *spec)
         {
-            // Parse frame mode (ROWS or RANGE)
+            // Parse frame mode (ROWS, RANGE, or GROUPS)
             FrameMode mode;
             if (match(TokenType::KW_ROWS))
             {
@@ -6481,9 +6481,13 @@ namespace scratchbird
             {
                 mode = FrameMode::RANGE;
             }
+            else if (match(TokenType::KW_GROUPS))
+            {
+                mode = FrameMode::GROUPS;  // P2-9: GROUPS frame mode
+            }
             else
             {
-                error("Expected ROWS or RANGE for frame clause");
+                error("Expected ROWS, RANGE, or GROUPS for frame clause");
                 return;
             }
 

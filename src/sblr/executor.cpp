@@ -8767,9 +8767,20 @@ namespace scratchbird
                         error("Expected FRAME_CLAUSE opcode");
                     }
 
-                    // Read frame mode
+                    // Read frame mode (P2-9: Support ROWS, RANGE, GROUPS)
                     Opcode frame_mode_op = static_cast<Opcode>(readByte());
-                    spec.frame_is_rows = (frame_mode_op == Opcode::FRAME_ROWS);
+                    if (frame_mode_op == Opcode::FRAME_ROWS)
+                    {
+                        spec.frame_mode = WindowFunctionSpec::FrameMode::ROWS;
+                    }
+                    else if (frame_mode_op == Opcode::FRAME_RANGE)
+                    {
+                        spec.frame_mode = WindowFunctionSpec::FrameMode::RANGE;
+                    }
+                    else if (frame_mode_op == Opcode::FRAME_GROUPS)
+                    {
+                        spec.frame_mode = WindowFunctionSpec::FrameMode::GROUPS;
+                    }
 
                     // Read frame boundaries (simplified for now)
                     readByte(); // Frame start boundary type
