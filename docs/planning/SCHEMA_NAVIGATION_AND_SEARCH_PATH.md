@@ -1,7 +1,8 @@
 # Schema Navigation and Search Path Specification
 
 **Created:** November 26, 2025
-**Status:** DRAFT - NEEDS REVIEW
+**Updated:** November 26, 2025
+**Status:** DRAFT
 **Purpose:** Define schema navigation commands, search path system, and system table locations
 
 ---
@@ -229,7 +230,7 @@ The search path determines the order in which schemas are searched when resolvin
 
 When resolving an unqualified name (e.g., `SELECT * FROM employees`):
 
-1. **Current schema** (set by USE or CD command)
+1. **Current schema** (set by `SET CURRENT SCHEMA`)
 2. **User's personal search path** (user_settings.search_path)
 3. **Role's search path** (role_settings.search_path for active roles)
 4. **Client library's default path** (client_settings.search_path)
@@ -243,25 +244,25 @@ When resolving an unqualified name (e.g., `SELECT * FROM employees`):
 
 ```sql
 -- View current search path
-SHOW SEARCH_PATH;
+SHOW SEARCH PATH;
 
 -- Result:
 -- users.alice, public, sys.catalog
 
 -- Set search path for current session
-SET SEARCH_PATH = 'users.alice.projects, users.alice, public';
+SET SEARCH PATH TO 'users.alice.projects, users.alice, public';
 
 -- Set persistent search path for user
-ALTER USER alice SET SEARCH_PATH = 'users.alice, public, myapp';
+ALTER USER alice SET SEARCH PATH TO 'users.alice, public, myapp';
 
 -- Set search path for role
-ALTER ROLE developer SET SEARCH_PATH = 'dev, staging, public';
+ALTER ROLE developer SET SEARCH PATH TO 'dev, staging, public';
 
 -- Set client library default (stored in sys.config.client_settings)
 -- (typically set via connection string or client config file)
 
 -- Reset to default
-SET SEARCH_PATH = DEFAULT;
+SET SEARCH PATH TO DEFAULT;
 ```
 
 ### Search Path Storage
@@ -299,28 +300,62 @@ ALTER TABLE sys.security.sessions ADD COLUMN effective_search_path TEXT[];
 ### Schema Navigation
 
 ```sql
--- Set current schema (like 'cd' in filesystem)
-USE schema_name;
-USE users.alice.projects;
-CD schema_name;                    -- Alias for USE
-CD ..;                             -- Go to parent schema
-CD /;                              -- Go to root
-CD ~;                              -- Go to user's home (users.{username})
+-- Set current schema (absolute path)
+SET SCHEMA users.alice.projects;          -- Absolute path from root
+SET SCHEMA sys.catalog;                   -- Absolute path to system catalog
 
--- Show current schema (like 'pwd')
-SELECT CURRENT_SCHEMA();
-SHOW CURRENT_SCHEMA;
-PWD;                               -- Alias
+-- Set current schema (relative navigation)
+SET SCHEMA UP;                            -- Go to parent schema (like cd ..)
+SET SCHEMA UP.UP;                         -- Go up two levels
+SET SCHEMA subschema;                     -- Go to child schema (relative)
+SET SCHEMA UP.sibling;                    -- Go to sibling schema (up then down)
+SET SCHEMA UP.UP.other.path;              -- Complex relative navigation
 
--- Show current path
-SELECT CURRENT_PATH();             -- Returns full path like 'users.alice.projects'
+-- Explicit relative path (leading dot)
+SET SCHEMA .subschema.deeper;             -- Explicit relative from current
+SET SCHEMA .another_child;                -- Explicit relative to child
+
+-- Special locations
+SET SCHEMA ROOT;                          -- Go to root schema
+SET SCHEMA HOME;                          -- Go to user's home (users.{username})
+
+-- Show current schema
+SHOW SCHEMA;                              -- Show current schema name
+SHOW SCHEMA PATH;                         -- Show full path (e.g., 'users.alice.projects')
+SELECT CURRENT_SCHEMA();                  -- Function form for schema name
+SELECT CURRENT_SCHEMA_PATH();             -- Function form for full path
+```
+
+### Path Resolution Rules
+
+```
+Path Type        | Example                    | Resolution
+-----------------|----------------------------|------------------------------------------
+Absolute         | sys.catalog.tables         | Start from root, traverse down
+Relative (UP)    | UP.sibling                 | Go to parent, then to 'sibling' child
+Relative (dot)   | .child.grandchild          | From current schema, traverse down
+Child only       | mysubschema                | If child exists, go there; else error
+Special          | ROOT, HOME, UP             | Navigate to special location
+```
+
+**Examples:**
+```sql
+-- Current schema: users.alice.projects.webapp
+
+SET SCHEMA UP;                    -- Result: users.alice.projects
+SET SCHEMA UP.UP;                 -- Result: users.alice
+SET SCHEMA UP.mobile;             -- Result: users.alice.projects.mobile
+SET SCHEMA .api;                  -- Result: users.alice.projects.webapp.api
+SET SCHEMA sys.catalog;           -- Result: sys.catalog (absolute)
+SET SCHEMA HOME;                  -- Result: users.alice
+SET SCHEMA ROOT;                  -- Result: / (root)
 ```
 
 ### Listing Objects
 
 ```sql
 -- List objects in current schema
-SHOW;                              -- All objects
+SHOW OBJECTS;                      -- All objects
 SHOW TABLES;                       -- Tables only
 SHOW VIEWS;                        -- Views only
 SHOW INDEXES;                      -- Indexes only
@@ -329,7 +364,6 @@ SHOW FUNCTIONS;                    -- Functions only
 SHOW PROCEDURES;                   -- Procedures only
 SHOW TRIGGERS;                     -- Triggers only
 SHOW SCHEMAS;                      -- Child schemas only
-SHOW ALL;                          -- Everything including child schemas
 
 -- With filtering (LIKE pattern)
 SHOW TABLES LIKE 'emp%';
@@ -340,24 +374,28 @@ SHOW FUNCTIONS LIKE 'calc_%';
 SHOW TABLES IN sys.catalog;
 SHOW TABLES IN remote.emulated.firebird.localhost.employee;
 
--- Detailed information
+-- Detailed information about specific object
 SHOW TABLE employees;              -- Column info for specific table
+SHOW TABLE employees IN DETAIL;    -- Extended info including constraints, indexes
 SHOW FUNCTION calculate_total;     -- Parameter info for function
+SHOW FUNCTION calculate_total IN DETAIL;  -- With source code, dependencies
 SHOW INDEX idx_emp_name;           -- Index details
+SHOW DOMAIN email_address;         -- Domain definition
+SHOW DOMAIN email_address IN DETAIL;  -- With constraints, usage
 
 -- Show schema tree
-SHOW TREE;                         -- Show schema tree from current position
-SHOW TREE FROM /;                  -- Show full tree from root
-SHOW TREE DEPTH 2;                 -- Limit depth
+SHOW SCHEMA TREE;                  -- Show schema tree from current position
+SHOW SCHEMA TREE FROM ROOT;        -- Show full tree from root
+SHOW SCHEMA TREE DEPTH 2;          -- Limit depth
 ```
 
-### Path and Location Commands
+### Object Location Commands
 
 ```sql
--- Show where an object is located
-LOCATE employees;                  -- Find 'employees' in search path
-LOCATE TABLE employees;            -- Find table specifically
-LOCATE FUNCTION calculate_total;   -- Find function specifically
+-- Show where an object is located in search path
+SHOW LOCATION OF employees;        -- Find 'employees' in search path
+SHOW LOCATION OF TABLE employees;  -- Find table specifically
+SHOW LOCATION OF FUNCTION calculate_total;  -- Find function specifically
 
 -- Result:
 -- Found 'employees' at:
@@ -365,11 +403,11 @@ LOCATE FUNCTION calculate_total;   -- Find function specifically
 --   2. public.employees (TABLE)
 --   3. remote.emulated.firebird.localhost.hr.EMPLOYEE (SYNONYM)
 
--- Which object would be used?
-WHICH employees;                   -- Shows which one search path would resolve to
+-- Which object would be resolved by search path?
+SHOW RESOLVED employees;           -- Shows which one search path would resolve to
 -- Result: users.alice.employees (TABLE)
 
--- Show full path to object
+-- Show full path to object (function form)
 SELECT OBJECT_PATH('employees');   -- Returns 'users.alice.employees'
 ```
 
@@ -398,17 +436,16 @@ SHOW TRANSACTIONS;                 -- Active transactions
 ### Object Description
 
 ```sql
--- Describe object structure
-DESCRIBE employees;                -- Same as \d in psql
-DESC employees;                    -- Alias
-\d employees;                      -- PostgreSQL-style
+-- Show object structure (using SHOW with IN DETAIL)
+SHOW TABLE employees;              -- Basic table structure
+SHOW TABLE employees IN DETAIL;    -- Full details with constraints, indexes, triggers
 
--- Extended description
-DESCRIBE FULL employees;           -- Include storage, statistics
-DESCRIBE EXTENDED employees;       -- Include constraints, indexes, triggers
+-- Show schema details
+SHOW SCHEMA users.alice;           -- Schema info including object counts
+SHOW SCHEMA users.alice IN DETAIL; -- Extended info with permissions, settings
 
--- Describe schema
-DESCRIBE SCHEMA users.alice;       -- Schema details including object counts
+-- PostgreSQL compatibility (optional, in emulation mode)
+-- \d employees                    -- Maps to SHOW TABLE employees
 ```
 
 ---
@@ -559,15 +596,33 @@ auto getSchemaTree(const ID& start_schema_id, int max_depth,
 
 ### Parser Changes Needed
 
+**Note:** ScratchBird uses a context-aware parser. Only statement-starting keywords need to be reserved (CREATE, ALTER, DROP, SET, SHOW, SELECT, INSERT, UPDATE, DELETE, etc.). Words like SCHEMA, PATH, TABLE, DOMAIN, UP, HOME, ROOT are NOT reserved - the parser knows from context what to expect after each token.
+
 New SQL statements to parse:
-- `USE schema_path`
-- `CD schema_path`
-- `SHOW [object_type] [LIKE pattern] [IN schema]`
-- `SET SEARCH_PATH = path_list`
-- `LOCATE [object_type] name`
-- `WHICH name`
-- `DESCRIBE [FULL|EXTENDED] object`
-- `PWD`
+- `SET SCHEMA schema_path` - supports absolute, relative (UP.), dot-relative (.path), and special (ROOT, HOME, UP)
+- `SHOW SCHEMA` - current schema name
+- `SHOW SCHEMA PATH` - full path to current schema
+- `SHOW [object_type] [LIKE pattern] [IN schema] [IN DETAIL]`
+- `SHOW SCHEMA TREE [FROM ROOT] [DEPTH n]`
+- `SET SEARCH PATH TO path_list`
+- `SHOW SEARCH PATH`
+- `SHOW LOCATION OF [object_type] name`
+- `SHOW RESOLVED name`
+
+**Parser Context Examples:**
+```
+SET SCHEMA ...      -- After SET, parser expects: SCHEMA, SEARCH, or other SET targets
+                    -- After SET SCHEMA, parser expects: path | UP | ROOT | HOME
+SHOW SCHEMA ...     -- After SHOW, parser expects: SCHEMA, TABLE, TABLES, etc.
+                    -- After SHOW SCHEMA, parser expects: PATH | TREE | <nothing> | schema_name
+```
+
+Path parsing must handle:
+- Absolute paths: `sys.catalog.tables`
+- UP-relative paths: `UP`, `UP.UP`, `UP.sibling.child`
+- Dot-relative paths: `.child`, `.child.grandchild`
+- Special navigation: `ROOT`, `HOME`, `UP` (recognized by position, not reservation)
+- Single identifier: checked as child schema first, then as absolute root-level schema
 
 ### Executor Changes Needed
 
@@ -581,30 +636,44 @@ New built-in functions:
 
 ## Command Summary
 
+### SET Commands (Change State)
+
 | Command | Description | Example |
 |---------|-------------|---------|
-| `USE` / `CD` | Change current schema | `USE users.alice` |
-| `CD ..` | Go to parent schema | `CD ..` |
-| `CD /` | Go to root | `CD /` |
-| `CD ~` | Go to home | `CD ~` |
-| `PWD` | Show current schema | `PWD` |
-| `SHOW` | List objects | `SHOW TABLES LIKE 'emp%'` |
-| `SHOW TREE` | Show schema tree | `SHOW TREE DEPTH 3` |
-| `LOCATE` | Find object locations | `LOCATE TABLE employees` |
-| `WHICH` | Show resolved object | `WHICH employees` |
-| `DESCRIBE` | Object details | `DESCRIBE FULL employees` |
-| `SET SEARCH_PATH` | Set search path | `SET SEARCH_PATH = 'a, b, c'` |
-| `SHOW SEARCH_PATH` | Show search path | `SHOW SEARCH_PATH` |
+| `SET SCHEMA path` | Change to schema (absolute) | `SET SCHEMA users.alice` |
+| `SET SCHEMA UP` | Go to parent schema | `SET SCHEMA UP` |
+| `SET SCHEMA UP.path` | Relative from parent | `SET SCHEMA UP.sibling` |
+| `SET SCHEMA .path` | Relative from current | `SET SCHEMA .child.grandchild` |
+| `SET SCHEMA child` | Go to child schema | `SET SCHEMA subschema` |
+| `SET SCHEMA ROOT` | Go to root | `SET SCHEMA ROOT` |
+| `SET SCHEMA HOME` | Go to home | `SET SCHEMA HOME` |
+| `SET SEARCH PATH TO` | Set search path | `SET SEARCH PATH TO 'a, b, c'` |
+
+### SHOW Commands (Display Information)
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `SHOW SCHEMA` | Show current schema name | `SHOW SCHEMA` |
+| `SHOW SCHEMA PATH` | Show full path | `SHOW SCHEMA PATH` |
+| `SHOW SEARCH PATH` | Show search path | `SHOW SEARCH PATH` |
+| `SHOW TABLES` | List tables | `SHOW TABLES LIKE 'emp%'` |
+| `SHOW VIEWS` | List views | `SHOW VIEWS` |
+| `SHOW SCHEMAS` | List child schemas | `SHOW SCHEMAS` |
+| `SHOW SCHEMA TREE` | Show schema tree | `SHOW SCHEMA TREE DEPTH 3` |
+| `SHOW TABLE name` | Table details | `SHOW TABLE employees IN DETAIL` |
+| `SHOW DOMAIN name` | Domain details | `SHOW DOMAIN email IN DETAIL` |
+| `SHOW LOCATION OF` | Find object locations | `SHOW LOCATION OF TABLE employees` |
+| `SHOW RESOLVED` | Show resolved object | `SHOW RESOLVED employees` |
 
 ---
 
 ## Open Questions
 
-1. **Relative paths** - Should we support `./subschema` and `../sibling`?
-2. **Wildcards in paths** - Should `users.*/projects` match all users' projects?
-3. **Case sensitivity** - Are schema names case-sensitive? (Recommend: case-preserving, case-insensitive comparison)
-4. **Path separators** - Use `.` consistently? What about `::` for namespaces?
-5. **Auto-completion** - How should tab-completion work in CLI tools?
+1. **Wildcards in paths** - Should `users.*/projects` match all users' projects for SHOW commands?
+2. **Case sensitivity** - Are schema names case-sensitive? (Recommend: case-preserving, case-insensitive comparison)
+3. **Path separators** - Use `.` consistently? What about `::` for namespaces?
+4. **Auto-completion** - How should tab-completion work in CLI tools?
+5. **IN DETAIL output** - What format should detailed output use? (tabular, JSON, both?)
 
 ---
 
@@ -616,5 +685,8 @@ New built-in functions:
 
 ---
 
-**Document Version:** 1.0
+**Document Version:** 1.2
 **Last Updated:** November 26, 2025
+**Change Log:**
+- v1.2: Added relative path support (UP, UP.path, .path), simplified to SET SCHEMA / SHOW SCHEMA
+- v1.1: Converted navigation commands from directory-style (USE, CD, PWD) to SQL-style (SET/SHOW)

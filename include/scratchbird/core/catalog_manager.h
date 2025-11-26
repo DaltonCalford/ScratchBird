@@ -1006,6 +1006,10 @@ namespace scratchbird::core
 
         auto listSchemas(std::vector<SchemaInfo> &schemas, ErrorContext *ctx = nullptr) -> Status;
 
+        // Phase A CRUD: Drop schema with optional cascade
+        auto dropSchema(const ID &schema_id, bool cascade = false,
+                        ErrorContext *ctx = nullptr) -> Status;
+
         // Table operations
         auto createTable(const ID &schema_id, const std::string &table_name,
                          const std::vector<ColumnInfo> &columns, ID &table_id,
@@ -1203,6 +1207,168 @@ namespace scratchbird::core
                           ErrorContext* ctx = nullptr) -> Status;
 
         // ========================================================================
+        // Domain Operations (Phase A CRUD - Catalog Cleanup)
+        // ========================================================================
+
+        auto createDomain(const ID& schema_id, const std::string& domain_name,
+                          const std::string& base_type, const std::string& check_expr,
+                          bool not_null, ID& domain_id_out,
+                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto getDomain(const ID& domain_id, DomainInfo& info_out,
+                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto getDomainByName(const ID& schema_id, const std::string& domain_name,
+                             DomainInfo& info_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto updateDomain(const ID& domain_id,
+                          const std::optional<std::string>& new_check_expr,
+                          const std::optional<bool>& new_not_null,
+                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto dropDomain(const ID& domain_id, bool cascade = false,
+                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto listDomains(const ID& schema_id, std::vector<DomainInfo>& domains_out,
+                         ErrorContext* ctx = nullptr) -> Status;
+
+        // ========================================================================
+        // UDR Operations (Phase A CRUD - Catalog Cleanup)
+        // ========================================================================
+
+        auto createUDR(const ID& schema_id, const std::string& udr_name,
+                       const std::string& library_path, const std::string& entry_point,
+                       UDRType udr_type, const std::string& signature,
+                       ID& udr_id_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto getUDR(const ID& udr_id, UDRInfo& info_out,
+                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto getUDRByName(const ID& schema_id, const std::string& udr_name,
+                          UDRInfo& info_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto updateUDR(const ID& udr_id,
+                       const std::optional<std::string>& new_library_path,
+                       const std::optional<std::string>& new_entry_point,
+                       const std::optional<std::string>& new_signature,
+                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto dropUDR(const ID& udr_id, bool cascade = false,
+                     ErrorContext* ctx = nullptr) -> Status;
+
+        auto listUDRs(const ID& schema_id, std::vector<UDRInfo>& udrs_out,
+                      ErrorContext* ctx = nullptr) -> Status;
+
+        // ========================================================================
+        // Package Operations (Phase A CRUD - Catalog Cleanup)
+        // ========================================================================
+
+        auto createPackage(const ID& schema_id, const std::string& package_name,
+                           const std::string& package_header, const std::string& package_body,
+                           ID& package_id_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto getPackage(const ID& package_id, PackageInfo& info_out,
+                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto getPackageByName(const ID& schema_id, const std::string& package_name,
+                              PackageInfo& info_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto updatePackage(const ID& package_id,
+                           const std::optional<std::string>& new_header,
+                           const std::optional<std::string>& new_body,
+                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto dropPackage(const ID& package_id, bool cascade = false,
+                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto listPackages(const ID& schema_id, std::vector<PackageInfo>& packages_out,
+                          ErrorContext* ctx = nullptr) -> Status;
+
+        // ========================================================================
+        // Emulation Type Operations (Phase A CRUD - Catalog Cleanup)
+        // ========================================================================
+
+        auto createEmulationType(const std::string& emulation_name,
+                                 uint8_t version_major, uint8_t version_minor,
+                                 const std::string& mapping_rules,
+                                 ID& emulation_type_id_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto getEmulationType(const ID& emulation_type_id, EmulationTypeInfo& info_out,
+                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto getEmulationTypeByName(const std::string& emulation_name,
+                                    EmulationTypeInfo& info_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto updateEmulationType(const ID& emulation_type_id,
+                                 const std::optional<std::string>& new_mapping_rules,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto dropEmulationType(const ID& emulation_type_id,
+                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto listEmulationTypes(std::vector<EmulationTypeInfo>& types_out,
+                                ErrorContext* ctx = nullptr) -> Status;
+
+        // ========================================================================
+        // Emulation Server Operations (Phase A CRUD - Catalog Cleanup)
+        // ========================================================================
+
+        auto createEmulationServer(const std::string& server_name,
+                                   const ID& emulation_type_id,
+                                   const std::string& server_config,
+                                   ID& server_id_out,
+                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto getEmulationServer(const ID& server_id, EmulationServerInfo& info_out,
+                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto getEmulationServerByName(const std::string& server_name,
+                                      EmulationServerInfo& info_out,
+                                      ErrorContext* ctx = nullptr) -> Status;
+
+        auto updateEmulationServer(const ID& server_id,
+                                   const std::optional<std::string>& new_config,
+                                   const std::optional<bool>& is_active,
+                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto dropEmulationServer(const ID& server_id, bool cascade = false,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto listEmulationServers(std::vector<EmulationServerInfo>& servers_out,
+                                  ErrorContext* ctx = nullptr) -> Status;
+
+        // ========================================================================
+        // Emulated Database Operations (Phase A CRUD - Catalog Cleanup)
+        // ========================================================================
+
+        auto createEmulatedDatabase(const std::string& database_name,
+                                    const ID& server_id, const ID& schema_id,
+                                    const std::string& db_metadata,
+                                    ID& emulated_db_id_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto getEmulatedDatabase(const ID& emulated_db_id, EmulatedDatabaseInfo& info_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto getEmulatedDatabaseByName(const ID& server_id, const std::string& database_name,
+                                       EmulatedDatabaseInfo& info_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto updateEmulatedDatabase(const ID& emulated_db_id,
+                                    const std::optional<std::string>& new_metadata,
+                                    const std::optional<bool>& is_active,
+                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto dropEmulatedDatabase(const ID& emulated_db_id,
+                                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto listEmulatedDatabases(const ID& server_id,
+                                   std::vector<EmulatedDatabaseInfo>& databases_out,
+                                   ErrorContext* ctx = nullptr) -> Status;
+
+        // ========================================================================
         // Foreign Key Operations (ALPHA Phase A - FK Constraints)
         // ========================================================================
 
@@ -1335,6 +1501,13 @@ namespace scratchbird::core
 
         auto deleteRole(const ID& role_id, bool cascade = false, ErrorContext* ctx = nullptr) -> Status;
 
+        // Phase A CRUD: Update role metadata
+        auto updateRole(const ID& role_id, const std::optional<std::string>& new_name,
+                        const std::optional<ID>& new_owner_id,
+                        const std::optional<std::string>& new_metadata,
+                        const std::optional<bool>& is_active,
+                        ErrorContext* ctx = nullptr) -> Status;
+
         auto listRoles(std::vector<RoleInfo>& roles_out,
                       ErrorContext* ctx = nullptr) -> Status;
 
@@ -1363,6 +1536,13 @@ namespace scratchbird::core
                            ErrorContext* ctx = nullptr) -> Status;
 
         auto deleteGroup(const ID& group_id, bool cascade = false, ErrorContext* ctx = nullptr) -> Status;
+
+        // Phase A CRUD: Update group metadata
+        auto updateGroup(const ID& group_id, const std::optional<std::string>& new_name,
+                         const std::optional<GroupType>& new_type,
+                         const std::optional<std::string>& new_external_id,
+                         const std::optional<std::string>& new_metadata,
+                         ErrorContext* ctx = nullptr) -> Status;
 
         auto listGroups(std::vector<GroupInfo>& groups_out,
                        ErrorContext* ctx = nullptr) -> Status;
@@ -2542,6 +2722,7 @@ namespace scratchbird::core
 
         // Specific write/read methods using the generic helpers
         auto writeSchemaRecord(const SchemaInfo &schema, ErrorContext *ctx) -> Status;
+        auto deleteSchemaRecord(const ID &schema_id, ErrorContext *ctx) -> Status;  // Phase A CRUD
         auto readSchemaRecords(ErrorContext *ctx) -> Status;
         auto writeTableRecord(const TableInfo &table, ErrorContext *ctx) -> Status;
         auto deleteTableRecord(const ID &table_id, ErrorContext *ctx) -> Status;

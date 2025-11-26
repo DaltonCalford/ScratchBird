@@ -1722,6 +1722,189 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    // Phase A CRUD: Drop schema with optional cascade
+    auto CatalogManager::dropSchema(const ID &schema_id, bool cascade, ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // 1. Check if schema exists in cache
+        auto schema_it = schema_cache_.find(schema_id);
+        if (schema_it == schema_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found");
+            return Status::NOT_FOUND;
+        }
+
+        const SchemaInfo &schema_info = schema_it->second;
+
+        // 2. Check for dependent tables
+        std::vector<TableInfo> tables;
+        for (const auto &[id, table] : table_cache_)
+        {
+            if (table.schema_id == schema_id)
+            {
+                tables.push_back(table);
+            }
+        }
+
+        // 3. Check for dependent views
+        std::vector<ViewInfo> views;
+        for (const auto &[id, view] : view_cache_)
+        {
+            if (view.schema_id == schema_id)
+            {
+                views.push_back(view);
+            }
+        }
+
+        // 4. Check for dependent sequences
+        // Note: sequence_cache_ stores SequenceState which doesn't have schema_id
+        // We need to check the disk records or maintain a separate mapping
+        // For now, sequences are tracked by name lookup via getSequence(schema_id, name, ...)
+        // TODO: Add sequence listing by schema_id for complete cascade support
+        std::vector<ID> sequence_ids;
+        // Sequences are currently looked up by (schema_id, name), not enumerable by schema
+        // Skip sequence check for now - sequences will be orphaned if schema is dropped
+
+        // 5. Check for child schemas (schemas with this schema as parent)
+        std::vector<SchemaInfo> child_schemas;
+        for (const auto &[id, child] : schema_cache_)
+        {
+            if (child.parent_schema_id == schema_id && id != schema_id)
+            {
+                child_schemas.push_back(child);
+            }
+        }
+
+        // 6. If not cascade, fail if any dependents exist
+        if (!cascade)
+        {
+            if (!tables.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Schema has dependent tables - use CASCADE to drop them");
+                return Status::INVALID_ARGUMENT;
+            }
+            if (!views.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Schema has dependent views - use CASCADE to drop them");
+                return Status::INVALID_ARGUMENT;
+            }
+            // Note: sequence check skipped - see TODO above
+            if (!child_schemas.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Schema has child schemas - use CASCADE to drop them");
+                return Status::INVALID_ARGUMENT;
+            }
+        }
+
+        // 7. CASCADE: drop all dependents
+        if (cascade)
+        {
+            // Drop child schemas first (recursive)
+            for (const auto &child : child_schemas)
+            {
+                Status status = dropSchema(child.schema_id, true, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+
+            // Drop views
+            for (const auto &view : views)
+            {
+                Status status = dropView(view.view_id, true, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+
+            // Note: sequence dropping skipped - see TODO above
+
+            // Drop tables (which will cascade to their indexes)
+            for (const auto &table : tables)
+            {
+                Status status = dropTable(table.table_id, true, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+        }
+
+        // 8. Soft delete the schema record (mark is_valid = 0)
+        Status status = deleteSchemaRecord(schema_id, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // 9. Remove from cache
+        schema_cache_.erase(schema_it);
+        schema_count_--;
+
+        // 10. Update root page
+        status = writeCatalogRoot(ctx);
+        if (status == Status::OK)
+        {
+            db_->sync(ctx);
+        }
+
+        return Status::OK;
+    }
+
+    // Helper to delete schema record (mark is_valid = 0)
+    auto CatalogManager::deleteSchemaRecord(const ID &schema_id, ErrorContext *ctx) -> Status
+    {
+        BufferPool *bp = db_->buffer_pool();
+        void *page_data;
+        Status status = bp->pinPage(schemas_table_page_, &page_data, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+
+        uint16_t item_count = heap_page.getItemCount();
+        bool found = false;
+
+        auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+        for (uint16_t i = 0; i < item_count; ++i)
+        {
+            const uint8_t *tuple_data;
+            uint32_t tuple_size;
+
+            if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+            {
+                if (tuple_size >= sizeof(TupleHeader) + sizeof(SchemaRecord))
+                {
+                    const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                    uint8_t *mutable_tuple_data = mutable_page_data + offset;
+
+                    auto *record =
+                        reinterpret_cast<SchemaRecord *>(mutable_tuple_data + sizeof(TupleHeader));
+
+                    if (record->schema_id == schema_id && record->is_valid == 1)
+                    {
+                        record->is_valid = 0;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        bp->unpinPage(schemas_table_page_, found, ctx);
+
+        return found ? Status::OK : Status::NOT_FOUND;
+    }
+
     auto CatalogManager::createTable(const ID &schema_id, const std::string &table_name,
                                      const std::vector<ColumnInfo> &columns, ID &table_id,
                                      uint16_t tablespace_id, // Phase 2 Task 2.3
@@ -9903,6 +10086,119 @@ auto CatalogManager::listRoles(std::vector<RoleInfo>& roles_out,
                                                      filter, converter, ctx);
 }
 
+// Phase A CRUD: Update role metadata
+auto CatalogManager::updateRole(const ID& role_id, const std::optional<std::string>& new_name,
+                                const std::optional<ID>& new_owner_id,
+                                const std::optional<std::string>& new_metadata,
+                                const std::optional<bool>& is_active,
+                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Find existing role
+    RoleInfo existing;
+    Status status = getRole(role_id, existing, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    // Validate new name if provided
+    if (new_name.has_value())
+    {
+        status = UTF8Utils::validateStorageCapacity(new_name.value(),
+            CatalogConstants::MAX_IDENTIFIER_CHARS,
+            CatalogConstants::MAX_IDENTIFIER_BYTES);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Role name too long or invalid UTF-8");
+            return status;
+        }
+
+        // Check if new name conflicts with existing role
+        if (new_name.value() != existing.role_name)
+        {
+            RoleInfo conflict;
+            mutex_.unlock();
+            Status conflict_check = getRoleByName(new_name.value(), conflict, ctx);
+            mutex_.lock();
+            if (conflict_check == Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Role name already exists");
+                return Status::FILE_EXISTS;
+            }
+        }
+    }
+
+    // Update role record on disk
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    status = bp->pinPage(roles_table_page_, &page_data, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    bool found = false;
+
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(RoleRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                uint8_t *mutable_tuple_data = mutable_page_data + offset;
+
+                auto *record =
+                    reinterpret_cast<RoleRecord *>(mutable_tuple_data + sizeof(TupleHeader));
+
+                if (record->role_id == role_id && record->is_valid == 1)
+                {
+                    // Apply updates
+                    if (new_name.has_value())
+                    {
+                        std::string truncated = UTF8Utils::truncateToBytes(new_name.value(),
+                            sizeof(record->role_name));
+                        memset(record->role_name, 0, sizeof(record->role_name));
+                        strncpy(record->role_name, truncated.c_str(),
+                                sizeof(record->role_name) - 1);
+                    }
+                    if (new_owner_id.has_value())
+                    {
+                        record->owner_id = new_owner_id.value();
+                    }
+                    if (is_active.has_value())
+                    {
+                        record->is_active = is_active.value() ? 1 : 0;
+                    }
+                    // new_metadata is stored in TOAST - TODO Phase 1.4
+                    record->last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(roles_table_page_, found, ctx);
+
+    if (!found)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Role not found on disk");
+        return Status::NOT_FOUND;
+    }
+
+    return Status::OK;
+}
+
 // Role membership operations
 
 auto CatalogManager::grantRole(const ID& role_id, const ID& user_id, const ID& granted_by,
@@ -10291,6 +10587,136 @@ auto CatalogManager::listGroups(std::vector<GroupInfo>& groups_out,
 
     return readRecordsToVector<GroupRecord, GroupInfo>(groups_table_page_, groups_out,
                                                         filter, converter, ctx);
+}
+
+// Phase A CRUD: Update group metadata
+auto CatalogManager::updateGroup(const ID& group_id, const std::optional<std::string>& new_name,
+                                 const std::optional<GroupType>& new_type,
+                                 const std::optional<std::string>& new_external_id,
+                                 const std::optional<std::string>& new_metadata,
+                                 ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Find existing group
+    GroupInfo existing;
+    Status status = getGroup(group_id, existing, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    // Validate new name if provided
+    if (new_name.has_value())
+    {
+        status = UTF8Utils::validateStorageCapacity(new_name.value(),
+            CatalogConstants::MAX_IDENTIFIER_CHARS,
+            CatalogConstants::MAX_IDENTIFIER_BYTES);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Group name too long or invalid UTF-8");
+            return status;
+        }
+
+        // Check if new name conflicts with existing group
+        if (new_name.value() != existing.group_name)
+        {
+            GroupInfo conflict;
+            mutex_.unlock();
+            Status conflict_check = getGroupByName(new_name.value(), conflict, ctx);
+            mutex_.lock();
+            if (conflict_check == Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Group name already exists");
+                return Status::FILE_EXISTS;
+            }
+        }
+    }
+
+    // Validate external_id if provided
+    if (new_external_id.has_value())
+    {
+        status = UTF8Utils::validateStorageCapacity(new_external_id.value(),
+            CatalogConstants::MAX_IDENTIFIER_CHARS,
+            CatalogConstants::MAX_IDENTIFIER_BYTES);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "External ID too long or invalid UTF-8");
+            return status;
+        }
+    }
+
+    // Update group record on disk
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    status = bp->pinPage(groups_table_page_, &page_data, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    bool found = false;
+
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(GroupRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                uint8_t *mutable_tuple_data = mutable_page_data + offset;
+
+                auto *record =
+                    reinterpret_cast<GroupRecord *>(mutable_tuple_data + sizeof(TupleHeader));
+
+                if (record->group_id == group_id && record->is_valid == 1)
+                {
+                    // Apply updates
+                    if (new_name.has_value())
+                    {
+                        std::string truncated = UTF8Utils::truncateToBytes(new_name.value(),
+                            sizeof(record->group_name));
+                        memset(record->group_name, 0, sizeof(record->group_name));
+                        strncpy(record->group_name, truncated.c_str(),
+                                sizeof(record->group_name) - 1);
+                    }
+                    if (new_type.has_value())
+                    {
+                        record->group_type = static_cast<uint8_t>(new_type.value());
+                    }
+                    if (new_external_id.has_value())
+                    {
+                        std::string truncated = UTF8Utils::truncateToBytes(new_external_id.value(),
+                            sizeof(record->external_id));
+                        memset(record->external_id, 0, sizeof(record->external_id));
+                        strncpy(record->external_id, truncated.c_str(),
+                                sizeof(record->external_id) - 1);
+                    }
+                    // new_metadata is stored in TOAST - TODO Phase 1.4
+                    record->last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(groups_table_page_, found, ctx);
+
+    if (!found)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Group not found on disk");
+        return Status::NOT_FOUND;
+    }
+
+    return Status::OK;
 }
 
 // Group membership operations (supports nested groups)
@@ -12249,6 +12675,1580 @@ auto CatalogManager::setForeignKeyEnabled(const ID& fk_id, bool enabled,
     }
 
     return Status::OK;
+}
+
+// ============================================================================
+// Domain CRUD Operations (Phase A - Catalog Cleanup)
+// ============================================================================
+
+auto CatalogManager::createDomain(const ID& schema_id, const std::string& domain_name,
+                                  const std::string& base_type, const std::string& check_expr,
+                                  bool not_null, ID& domain_id_out,
+                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Validate schema exists
+    if (schema_cache_.find(schema_id) == schema_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found");
+        return Status::NOT_FOUND;
+    }
+
+    // Validate domain name
+    Status status = UTF8Utils::validateStorageCapacity(domain_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_BYTES);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Domain name too long or invalid UTF-8");
+        return status;
+    }
+
+    // Check if domain already exists in schema
+    DomainInfo existing;
+    mutex_.unlock();
+    status = getDomainByName(schema_id, domain_name, existing, ctx);
+    mutex_.lock();
+    if (status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Domain already exists");
+        return Status::FILE_EXISTS;
+    }
+
+    // Generate new domain ID
+    domain_id_out = generateUuidV7();
+
+    // Create domain record
+    DomainRecord domain_rec;
+    memset(&domain_rec, 0, sizeof(DomainRecord));
+    domain_rec.domain_id = domain_id_out;
+    domain_rec.schema_id = schema_id;
+
+    std::string truncated = UTF8Utils::truncateToBytes(domain_name, sizeof(domain_rec.domain_name));
+    strncpy(domain_rec.domain_name, truncated.c_str(), sizeof(domain_rec.domain_name) - 1);
+
+    domain_rec.owner_id = SecurityConstants::makeSystemUserID();  // TODO: Get current user
+    domain_rec.not_null = not_null ? 1 : 0;
+    domain_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    domain_rec.last_modified_time = domain_rec.created_time;
+    domain_rec.is_valid = 1;
+
+    // Store base_type and check_expr in TOAST if provided
+    uint64_t xmin = 0;  // TODO: Get current transaction ID
+    if (!base_type.empty())
+    {
+        status = storeStringInToast(base_type, xmin, domain_rec.base_type_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    if (!check_expr.empty())
+    {
+        status = storeStringInToast(check_expr, xmin, domain_rec.check_expr_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    // Write to disk
+    status = writeRecordToHeapPage(domains_table_page_, domain_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write domain record to disk");
+        return status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getDomain(const ID& domain_id, DomainInfo& info_out,
+                               ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&domain_id](const DomainRecord& rec) {
+        return rec.domain_id == domain_id && rec.is_valid == 1;
+    };
+
+    auto result = findRecordInHeapPage<DomainRecord>(domains_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+        return Status::NOT_FOUND;
+    }
+
+    // Convert to DomainInfo
+    info_out.domain_id = result.record.domain_id;
+    info_out.schema_id = result.record.schema_id;
+    info_out.domain_name = std::string(result.record.domain_name);
+    info_out.owner_id = result.record.owner_id;
+    info_out.not_null = result.record.not_null != 0;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    // Load base_type and check_expr from TOAST
+    uint64_t xmin = 0;  // TOAST read uses xmin for visibility
+    if (result.record.base_type_oid != 0)
+    {
+        loadStringFromToast(result.record.base_type_oid, xmin, info_out.base_type, ctx);
+    }
+    if (result.record.check_expr_oid != 0)
+    {
+        loadStringFromToast(result.record.check_expr_oid, xmin, info_out.check_expr, ctx);
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getDomainByName(const ID& schema_id, const std::string& domain_name,
+                                     DomainInfo& info_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&schema_id, &domain_name](const DomainRecord& rec) {
+        return rec.schema_id == schema_id &&
+               strcmp(rec.domain_name, domain_name.c_str()) == 0 &&
+               rec.is_valid == 1;
+    };
+
+    auto result = findRecordInHeapPage<DomainRecord>(domains_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+        return Status::NOT_FOUND;
+    }
+
+    // Convert to DomainInfo
+    info_out.domain_id = result.record.domain_id;
+    info_out.schema_id = result.record.schema_id;
+    info_out.domain_name = std::string(result.record.domain_name);
+    info_out.owner_id = result.record.owner_id;
+    info_out.not_null = result.record.not_null != 0;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    // Load base_type and check_expr from TOAST
+    uint64_t xmin = 0;  // TOAST read uses xmin for visibility
+    if (result.record.base_type_oid != 0)
+    {
+        loadStringFromToast(result.record.base_type_oid, xmin, info_out.base_type, ctx);
+    }
+    if (result.record.check_expr_oid != 0)
+    {
+        loadStringFromToast(result.record.check_expr_oid, xmin, info_out.check_expr, ctx);
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::updateDomain(const ID& domain_id,
+                                  const std::optional<std::string>& new_check_expr,
+                                  const std::optional<bool>& new_not_null,
+                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Find existing domain
+    DomainInfo existing;
+    Status status = getDomain(domain_id, existing, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    // Update domain record on disk
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    status = bp->pinPage(domains_table_page_, &page_data, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    bool found = false;
+
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(DomainRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                uint8_t *mutable_tuple_data = mutable_page_data + offset;
+
+                auto *record =
+                    reinterpret_cast<DomainRecord *>(mutable_tuple_data + sizeof(TupleHeader));
+
+                if (record->domain_id == domain_id && record->is_valid == 1)
+                {
+                    // Apply updates
+                    if (new_not_null.has_value())
+                    {
+                        record->not_null = new_not_null.value() ? 1 : 0;
+                    }
+                    if (new_check_expr.has_value())
+                    {
+                        // Update TOAST reference for check expression
+                        uint64_t xmin = 0;  // TODO: Get current transaction ID
+                        storeStringInToast(new_check_expr.value(), xmin, record->check_expr_oid, ctx);
+                    }
+                    record->last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(domains_table_page_, found, ctx);
+
+    if (!found)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found on disk");
+        return Status::NOT_FOUND;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::dropDomain(const ID& domain_id, bool cascade, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Find existing domain
+    DomainInfo existing;
+    Status status = getDomain(domain_id, existing, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    // TODO: Check for dependent columns using this domain
+    // If cascade, drop them; otherwise error if any exist
+
+    // Soft delete the domain record (mark is_valid = 0)
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    status = bp->pinPage(domains_table_page_, &page_data, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    bool found = false;
+
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(DomainRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                uint8_t *mutable_tuple_data = mutable_page_data + offset;
+
+                auto *record =
+                    reinterpret_cast<DomainRecord *>(mutable_tuple_data + sizeof(TupleHeader));
+
+                if (record->domain_id == domain_id && record->is_valid == 1)
+                {
+                    record->is_valid = 0;
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(domains_table_page_, found, ctx);
+
+    return found ? Status::OK : Status::NOT_FOUND;
+}
+
+auto CatalogManager::listDomains(const ID& schema_id, std::vector<DomainInfo>& domains_out,
+                                 ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    domains_out.clear();
+
+    auto filter = [&schema_id](const DomainRecord& rec) {
+        return rec.schema_id == schema_id && rec.is_valid == 1;
+    };
+    auto converter = [this, ctx](const DomainRecord& rec, DomainInfo& info) {
+        info.domain_id = rec.domain_id;
+        info.schema_id = rec.schema_id;
+        info.domain_name = std::string(rec.domain_name);
+        info.owner_id = rec.owner_id;
+        info.not_null = rec.not_null != 0;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+
+        // Load base_type and check_expr from TOAST
+        uint64_t xmin = 0;  // TOAST read uses xmin for visibility
+        if (rec.base_type_oid != 0)
+        {
+            loadStringFromToast(rec.base_type_oid, xmin, info.base_type, ctx);
+        }
+        if (rec.check_expr_oid != 0)
+        {
+            loadStringFromToast(rec.check_expr_oid, xmin, info.check_expr, ctx);
+        }
+    };
+
+    return readRecordsToVector<DomainRecord, DomainInfo>(domains_table_page_, domains_out,
+                                                          filter, converter, ctx);
+}
+
+// ============================================================================
+// UDR CRUD Operations (Phase A - Catalog Cleanup)
+// ============================================================================
+
+auto CatalogManager::createUDR(const ID& schema_id, const std::string& udr_name,
+                               const std::string& library_path, const std::string& entry_point,
+                               UDRType udr_type, const std::string& signature,
+                               ID& udr_id_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Validate schema exists
+    if (schema_cache_.find(schema_id) == schema_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found");
+        return Status::NOT_FOUND;
+    }
+
+    // Validate UDR name
+    Status status = UTF8Utils::validateStorageCapacity(udr_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS, CatalogConstants::MAX_IDENTIFIER_BYTES);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "UDR name too long or invalid UTF-8");
+        return status;
+    }
+
+    // Check if UDR already exists
+    UDRInfo existing;
+    mutex_.unlock();
+    status = getUDRByName(schema_id, udr_name, existing, ctx);
+    mutex_.lock();
+    if (status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "UDR already exists");
+        return Status::FILE_EXISTS;
+    }
+
+    // Generate new UDR ID
+    udr_id_out = generateUuidV7();
+
+    // Create UDR record
+    UDRRecord udr_rec;
+    memset(&udr_rec, 0, sizeof(UDRRecord));
+    udr_rec.udr_id = udr_id_out;
+    udr_rec.schema_id = schema_id;
+
+    std::string truncated = UTF8Utils::truncateToBytes(udr_name, sizeof(udr_rec.udr_name));
+    strncpy(udr_rec.udr_name, truncated.c_str(), sizeof(udr_rec.udr_name) - 1);
+
+    truncated = UTF8Utils::truncateToBytes(library_path, sizeof(udr_rec.library_path));
+    strncpy(udr_rec.library_path, truncated.c_str(), sizeof(udr_rec.library_path) - 1);
+
+    truncated = UTF8Utils::truncateToBytes(entry_point, sizeof(udr_rec.entry_point));
+    strncpy(udr_rec.entry_point, truncated.c_str(), sizeof(udr_rec.entry_point) - 1);
+
+    udr_rec.owner_id = SecurityConstants::makeSystemUserID();
+    udr_rec.udr_type = static_cast<uint8_t>(udr_type);
+    udr_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    udr_rec.last_modified_time = udr_rec.created_time;
+    udr_rec.is_valid = 1;
+
+    // Store signature in TOAST
+    uint64_t xmin = 0;
+    if (!signature.empty())
+    {
+        status = storeStringInToast(signature, xmin, udr_rec.signature_oid, ctx);
+        if (status != Status::OK) return status;
+    }
+
+    // Write to disk
+    status = writeRecordToHeapPage(udr_table_page_, udr_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write UDR record");
+        return status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getUDR(const ID& udr_id, UDRInfo& info_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&udr_id](const UDRRecord& rec) {
+        return rec.udr_id == udr_id && rec.is_valid == 1;
+    };
+
+    auto result = findRecordInHeapPage<UDRRecord>(udr_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR not found");
+        return Status::NOT_FOUND;
+    }
+
+    info_out.udr_id = result.record.udr_id;
+    info_out.schema_id = result.record.schema_id;
+    info_out.udr_name = std::string(result.record.udr_name);
+    info_out.owner_id = result.record.owner_id;
+    info_out.library_path = std::string(result.record.library_path);
+    info_out.entry_point = std::string(result.record.entry_point);
+    info_out.udr_type = static_cast<UDRType>(result.record.udr_type);
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    uint64_t xmin = 0;
+    if (result.record.signature_oid != 0)
+    {
+        loadStringFromToast(result.record.signature_oid, xmin, info_out.signature, ctx);
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getUDRByName(const ID& schema_id, const std::string& udr_name,
+                                  UDRInfo& info_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&schema_id, &udr_name](const UDRRecord& rec) {
+        return rec.schema_id == schema_id &&
+               strcmp(rec.udr_name, udr_name.c_str()) == 0 &&
+               rec.is_valid == 1;
+    };
+
+    auto result = findRecordInHeapPage<UDRRecord>(udr_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR not found");
+        return Status::NOT_FOUND;
+    }
+
+    info_out.udr_id = result.record.udr_id;
+    info_out.schema_id = result.record.schema_id;
+    info_out.udr_name = std::string(result.record.udr_name);
+    info_out.owner_id = result.record.owner_id;
+    info_out.library_path = std::string(result.record.library_path);
+    info_out.entry_point = std::string(result.record.entry_point);
+    info_out.udr_type = static_cast<UDRType>(result.record.udr_type);
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    uint64_t xmin = 0;
+    if (result.record.signature_oid != 0)
+    {
+        loadStringFromToast(result.record.signature_oid, xmin, info_out.signature, ctx);
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::updateUDR(const ID& udr_id,
+                               const std::optional<std::string>& new_library_path,
+                               const std::optional<std::string>& new_entry_point,
+                               const std::optional<std::string>& new_signature,
+                               ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    Status status = bp->pinPage(udr_table_page_, &page_data, ctx);
+    if (status != Status::OK) return status;
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    bool found = false;
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(UDRRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                auto *record = reinterpret_cast<UDRRecord *>(
+                    mutable_page_data + offset + sizeof(TupleHeader));
+
+                if (record->udr_id == udr_id && record->is_valid == 1)
+                {
+                    if (new_library_path.has_value())
+                    {
+                        std::string truncated = UTF8Utils::truncateToBytes(
+                            new_library_path.value(), sizeof(record->library_path));
+                        memset(record->library_path, 0, sizeof(record->library_path));
+                        strncpy(record->library_path, truncated.c_str(),
+                                sizeof(record->library_path) - 1);
+                    }
+                    if (new_entry_point.has_value())
+                    {
+                        std::string truncated = UTF8Utils::truncateToBytes(
+                            new_entry_point.value(), sizeof(record->entry_point));
+                        memset(record->entry_point, 0, sizeof(record->entry_point));
+                        strncpy(record->entry_point, truncated.c_str(),
+                                sizeof(record->entry_point) - 1);
+                    }
+                    if (new_signature.has_value())
+                    {
+                        uint64_t xmin = 0;
+                        storeStringInToast(new_signature.value(), xmin, record->signature_oid, ctx);
+                    }
+                    record->last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(udr_table_page_, found, ctx);
+    return found ? Status::OK : Status::NOT_FOUND;
+}
+
+auto CatalogManager::dropUDR(const ID& udr_id, bool cascade, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    Status status = bp->pinPage(udr_table_page_, &page_data, ctx);
+    if (status != Status::OK) return status;
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    bool found = false;
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(UDRRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                auto *record = reinterpret_cast<UDRRecord *>(
+                    mutable_page_data + offset + sizeof(TupleHeader));
+
+                if (record->udr_id == udr_id && record->is_valid == 1)
+                {
+                    record->is_valid = 0;
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(udr_table_page_, found, ctx);
+    return found ? Status::OK : Status::NOT_FOUND;
+}
+
+auto CatalogManager::listUDRs(const ID& schema_id, std::vector<UDRInfo>& udrs_out,
+                              ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    udrs_out.clear();
+
+    auto filter = [&schema_id](const UDRRecord& rec) {
+        return rec.schema_id == schema_id && rec.is_valid == 1;
+    };
+    auto converter = [this, ctx](const UDRRecord& rec, UDRInfo& info) {
+        info.udr_id = rec.udr_id;
+        info.schema_id = rec.schema_id;
+        info.udr_name = std::string(rec.udr_name);
+        info.owner_id = rec.owner_id;
+        info.library_path = std::string(rec.library_path);
+        info.entry_point = std::string(rec.entry_point);
+        info.udr_type = static_cast<UDRType>(rec.udr_type);
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        uint64_t xmin = 0;
+        if (rec.signature_oid != 0)
+            loadStringFromToast(rec.signature_oid, xmin, info.signature, ctx);
+    };
+
+    return readRecordsToVector<UDRRecord, UDRInfo>(udr_table_page_, udrs_out, filter, converter, ctx);
+}
+
+// ============================================================================
+// Package CRUD Operations (Phase A - Catalog Cleanup)
+// ============================================================================
+
+auto CatalogManager::createPackage(const ID& schema_id, const std::string& package_name,
+                                   const std::string& package_header, const std::string& package_body,
+                                   ID& package_id_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (schema_cache_.find(schema_id) == schema_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found");
+        return Status::NOT_FOUND;
+    }
+
+    Status status = UTF8Utils::validateStorageCapacity(package_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS, CatalogConstants::MAX_IDENTIFIER_BYTES);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Package name too long or invalid UTF-8");
+        return status;
+    }
+
+    PackageInfo existing;
+    mutex_.unlock();
+    status = getPackageByName(schema_id, package_name, existing, ctx);
+    mutex_.lock();
+    if (status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Package already exists");
+        return Status::FILE_EXISTS;
+    }
+
+    package_id_out = generateUuidV7();
+
+    PackageRecord pkg_rec;
+    memset(&pkg_rec, 0, sizeof(PackageRecord));
+    pkg_rec.package_id = package_id_out;
+    pkg_rec.schema_id = schema_id;
+
+    std::string truncated = UTF8Utils::truncateToBytes(package_name, sizeof(pkg_rec.package_name));
+    strncpy(pkg_rec.package_name, truncated.c_str(), sizeof(pkg_rec.package_name) - 1);
+
+    pkg_rec.owner_id = SecurityConstants::makeSystemUserID();
+    pkg_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    pkg_rec.last_modified_time = pkg_rec.created_time;
+    pkg_rec.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!package_header.empty())
+    {
+        status = storeStringInToast(package_header, xmin, pkg_rec.package_header_oid, ctx);
+        if (status != Status::OK) return status;
+    }
+    if (!package_body.empty())
+    {
+        status = storeStringInToast(package_body, xmin, pkg_rec.package_body_oid, ctx);
+        if (status != Status::OK) return status;
+    }
+
+    status = writeRecordToHeapPage(packages_table_page_, pkg_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write package record");
+        return status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getPackage(const ID& package_id, PackageInfo& info_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&package_id](const PackageRecord& rec) {
+        return rec.package_id == package_id && rec.is_valid == 1;
+    };
+
+    auto result = findRecordInHeapPage<PackageRecord>(packages_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Package not found");
+        return Status::NOT_FOUND;
+    }
+
+    info_out.package_id = result.record.package_id;
+    info_out.schema_id = result.record.schema_id;
+    info_out.package_name = std::string(result.record.package_name);
+    info_out.owner_id = result.record.owner_id;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    uint64_t xmin = 0;
+    if (result.record.package_header_oid != 0)
+        loadStringFromToast(result.record.package_header_oid, xmin, info_out.package_header, ctx);
+    if (result.record.package_body_oid != 0)
+        loadStringFromToast(result.record.package_body_oid, xmin, info_out.package_body, ctx);
+
+    return Status::OK;
+}
+
+auto CatalogManager::getPackageByName(const ID& schema_id, const std::string& package_name,
+                                      PackageInfo& info_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&schema_id, &package_name](const PackageRecord& rec) {
+        return rec.schema_id == schema_id &&
+               strcmp(rec.package_name, package_name.c_str()) == 0 &&
+               rec.is_valid == 1;
+    };
+
+    auto result = findRecordInHeapPage<PackageRecord>(packages_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Package not found");
+        return Status::NOT_FOUND;
+    }
+
+    info_out.package_id = result.record.package_id;
+    info_out.schema_id = result.record.schema_id;
+    info_out.package_name = std::string(result.record.package_name);
+    info_out.owner_id = result.record.owner_id;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    uint64_t xmin = 0;
+    if (result.record.package_header_oid != 0)
+        loadStringFromToast(result.record.package_header_oid, xmin, info_out.package_header, ctx);
+    if (result.record.package_body_oid != 0)
+        loadStringFromToast(result.record.package_body_oid, xmin, info_out.package_body, ctx);
+
+    return Status::OK;
+}
+
+auto CatalogManager::updatePackage(const ID& package_id,
+                                   const std::optional<std::string>& new_header,
+                                   const std::optional<std::string>& new_body,
+                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    Status status = bp->pinPage(packages_table_page_, &page_data, ctx);
+    if (status != Status::OK) return status;
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    bool found = false;
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(PackageRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                auto *record = reinterpret_cast<PackageRecord *>(
+                    mutable_page_data + offset + sizeof(TupleHeader));
+
+                if (record->package_id == package_id && record->is_valid == 1)
+                {
+                    uint64_t xmin = 0;
+                    if (new_header.has_value())
+                        storeStringInToast(new_header.value(), xmin, record->package_header_oid, ctx);
+                    if (new_body.has_value())
+                        storeStringInToast(new_body.value(), xmin, record->package_body_oid, ctx);
+                    record->last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(packages_table_page_, found, ctx);
+    return found ? Status::OK : Status::NOT_FOUND;
+}
+
+auto CatalogManager::dropPackage(const ID& package_id, bool cascade, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    Status status = bp->pinPage(packages_table_page_, &page_data, ctx);
+    if (status != Status::OK) return status;
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    bool found = false;
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(PackageRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                auto *record = reinterpret_cast<PackageRecord *>(
+                    mutable_page_data + offset + sizeof(TupleHeader));
+
+                if (record->package_id == package_id && record->is_valid == 1)
+                {
+                    record->is_valid = 0;
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(packages_table_page_, found, ctx);
+    return found ? Status::OK : Status::NOT_FOUND;
+}
+
+auto CatalogManager::listPackages(const ID& schema_id, std::vector<PackageInfo>& packages_out,
+                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    packages_out.clear();
+
+    auto filter = [&schema_id](const PackageRecord& rec) {
+        return rec.schema_id == schema_id && rec.is_valid == 1;
+    };
+    auto converter = [this, ctx](const PackageRecord& rec, PackageInfo& info) {
+        info.package_id = rec.package_id;
+        info.schema_id = rec.schema_id;
+        info.package_name = std::string(rec.package_name);
+        info.owner_id = rec.owner_id;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        uint64_t xmin = 0;
+        if (rec.package_header_oid != 0)
+            loadStringFromToast(rec.package_header_oid, xmin, info.package_header, ctx);
+        if (rec.package_body_oid != 0)
+            loadStringFromToast(rec.package_body_oid, xmin, info.package_body, ctx);
+    };
+
+    return readRecordsToVector<PackageRecord, PackageInfo>(packages_table_page_, packages_out,
+                                                           filter, converter, ctx);
+}
+
+// ============================================================================
+// Emulation Type CRUD Operations (Phase A - Catalog Cleanup)
+// ============================================================================
+
+auto CatalogManager::createEmulationType(const std::string& emulation_name,
+                                         uint8_t version_major, uint8_t version_minor,
+                                         const std::string& mapping_rules,
+                                         ID& emulation_type_id_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    EmulationTypeInfo existing;
+    mutex_.unlock();
+    Status status = getEmulationTypeByName(emulation_name, existing, ctx);
+    mutex_.lock();
+    if (status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Emulation type already exists");
+        return Status::FILE_EXISTS;
+    }
+
+    emulation_type_id_out = generateUuidV7();
+
+    EmulationTypeRecord rec;
+    memset(&rec, 0, sizeof(EmulationTypeRecord));
+    rec.emulation_type_id = emulation_type_id_out;
+    strncpy(rec.emulation_name, emulation_name.c_str(), sizeof(rec.emulation_name) - 1);
+    rec.version_major = version_major;
+    rec.version_minor = version_minor;
+    rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    rec.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!mapping_rules.empty())
+    {
+        status = storeStringInToast(mapping_rules, xmin, rec.mapping_rules_oid, ctx);
+        if (status != Status::OK) return status;
+    }
+
+    status = writeRecordToHeapPage(emulation_types_table_page_, rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write emulation type record");
+        return status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getEmulationType(const ID& emulation_type_id, EmulationTypeInfo& info_out,
+                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&emulation_type_id](const EmulationTypeRecord& rec) {
+        return rec.emulation_type_id == emulation_type_id && rec.is_valid == 1;
+    };
+
+    auto result = findRecordInHeapPage<EmulationTypeRecord>(emulation_types_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Emulation type not found");
+        return Status::NOT_FOUND;
+    }
+
+    info_out.emulation_type_id = result.record.emulation_type_id;
+    info_out.emulation_name = std::string(result.record.emulation_name);
+    info_out.version_major = result.record.version_major;
+    info_out.version_minor = result.record.version_minor;
+    info_out.created_time = result.record.created_time;
+
+    uint64_t xmin = 0;
+    if (result.record.mapping_rules_oid != 0)
+        loadStringFromToast(result.record.mapping_rules_oid, xmin, info_out.mapping_rules, ctx);
+
+    return Status::OK;
+}
+
+auto CatalogManager::getEmulationTypeByName(const std::string& emulation_name,
+                                            EmulationTypeInfo& info_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&emulation_name](const EmulationTypeRecord& rec) {
+        return strcmp(rec.emulation_name, emulation_name.c_str()) == 0 && rec.is_valid == 1;
+    };
+
+    auto result = findRecordInHeapPage<EmulationTypeRecord>(emulation_types_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Emulation type not found");
+        return Status::NOT_FOUND;
+    }
+
+    info_out.emulation_type_id = result.record.emulation_type_id;
+    info_out.emulation_name = std::string(result.record.emulation_name);
+    info_out.version_major = result.record.version_major;
+    info_out.version_minor = result.record.version_minor;
+    info_out.created_time = result.record.created_time;
+
+    uint64_t xmin = 0;
+    if (result.record.mapping_rules_oid != 0)
+        loadStringFromToast(result.record.mapping_rules_oid, xmin, info_out.mapping_rules, ctx);
+
+    return Status::OK;
+}
+
+auto CatalogManager::updateEmulationType(const ID& emulation_type_id,
+                                         const std::optional<std::string>& new_mapping_rules,
+                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    Status status = bp->pinPage(emulation_types_table_page_, &page_data, ctx);
+    if (status != Status::OK) return status;
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    bool found = false;
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(EmulationTypeRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                auto *record = reinterpret_cast<EmulationTypeRecord *>(
+                    mutable_page_data + offset + sizeof(TupleHeader));
+
+                if (record->emulation_type_id == emulation_type_id && record->is_valid == 1)
+                {
+                    if (new_mapping_rules.has_value())
+                    {
+                        uint64_t xmin = 0;
+                        storeStringInToast(new_mapping_rules.value(), xmin, record->mapping_rules_oid, ctx);
+                    }
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(emulation_types_table_page_, found, ctx);
+    return found ? Status::OK : Status::NOT_FOUND;
+}
+
+auto CatalogManager::dropEmulationType(const ID& emulation_type_id, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // TODO: Check for dependent emulation servers
+
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    Status status = bp->pinPage(emulation_types_table_page_, &page_data, ctx);
+    if (status != Status::OK) return status;
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    bool found = false;
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(EmulationTypeRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                auto *record = reinterpret_cast<EmulationTypeRecord *>(
+                    mutable_page_data + offset + sizeof(TupleHeader));
+
+                if (record->emulation_type_id == emulation_type_id && record->is_valid == 1)
+                {
+                    record->is_valid = 0;
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(emulation_types_table_page_, found, ctx);
+    return found ? Status::OK : Status::NOT_FOUND;
+}
+
+auto CatalogManager::listEmulationTypes(std::vector<EmulationTypeInfo>& types_out,
+                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    types_out.clear();
+
+    auto filter = [](const EmulationTypeRecord& rec) { return rec.is_valid == 1; };
+    auto converter = [this, ctx](const EmulationTypeRecord& rec, EmulationTypeInfo& info) {
+        info.emulation_type_id = rec.emulation_type_id;
+        info.emulation_name = std::string(rec.emulation_name);
+        info.version_major = rec.version_major;
+        info.version_minor = rec.version_minor;
+        info.created_time = rec.created_time;
+        uint64_t xmin = 0;
+        if (rec.mapping_rules_oid != 0)
+            loadStringFromToast(rec.mapping_rules_oid, xmin, info.mapping_rules, ctx);
+    };
+
+    return readRecordsToVector<EmulationTypeRecord, EmulationTypeInfo>(
+        emulation_types_table_page_, types_out, filter, converter, ctx);
+}
+
+// ============================================================================
+// Emulation Server CRUD Operations (Phase A - Catalog Cleanup)
+// ============================================================================
+
+auto CatalogManager::createEmulationServer(const std::string& server_name,
+                                           const ID& emulation_type_id,
+                                           const std::string& server_config,
+                                           ID& server_id_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    Status status = UTF8Utils::validateStorageCapacity(server_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS, CatalogConstants::MAX_IDENTIFIER_BYTES);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Server name too long or invalid UTF-8");
+        return status;
+    }
+
+    EmulationServerInfo existing;
+    mutex_.unlock();
+    status = getEmulationServerByName(server_name, existing, ctx);
+    mutex_.lock();
+    if (status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Emulation server already exists");
+        return Status::FILE_EXISTS;
+    }
+
+    server_id_out = generateUuidV7();
+
+    EmulationServerRecord rec;
+    memset(&rec, 0, sizeof(EmulationServerRecord));
+    rec.server_id = server_id_out;
+    std::string truncated = UTF8Utils::truncateToBytes(server_name, sizeof(rec.server_name));
+    strncpy(rec.server_name, truncated.c_str(), sizeof(rec.server_name) - 1);
+    rec.emulation_type_id = emulation_type_id;
+    rec.owner_id = SecurityConstants::makeSystemUserID();
+    rec.is_active = 1;
+    rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    rec.last_modified_time = rec.created_time;
+    rec.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!server_config.empty())
+    {
+        status = storeStringInToast(server_config, xmin, rec.server_config_oid, ctx);
+        if (status != Status::OK) return status;
+    }
+
+    status = writeRecordToHeapPage(emulation_servers_table_page_, rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write emulation server record");
+        return status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getEmulationServer(const ID& server_id, EmulationServerInfo& info_out,
+                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&server_id](const EmulationServerRecord& rec) {
+        return rec.server_id == server_id && rec.is_valid == 1;
+    };
+
+    auto result = findRecordInHeapPage<EmulationServerRecord>(emulation_servers_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Emulation server not found");
+        return Status::NOT_FOUND;
+    }
+
+    info_out.server_id = result.record.server_id;
+    info_out.server_name = std::string(result.record.server_name);
+    info_out.emulation_type_id = result.record.emulation_type_id;
+    info_out.owner_id = result.record.owner_id;
+    info_out.is_active = result.record.is_active != 0;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    uint64_t xmin = 0;
+    if (result.record.server_config_oid != 0)
+        loadStringFromToast(result.record.server_config_oid, xmin, info_out.server_config, ctx);
+
+    return Status::OK;
+}
+
+auto CatalogManager::getEmulationServerByName(const std::string& server_name,
+                                              EmulationServerInfo& info_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&server_name](const EmulationServerRecord& rec) {
+        return strcmp(rec.server_name, server_name.c_str()) == 0 && rec.is_valid == 1;
+    };
+
+    auto result = findRecordInHeapPage<EmulationServerRecord>(emulation_servers_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Emulation server not found");
+        return Status::NOT_FOUND;
+    }
+
+    info_out.server_id = result.record.server_id;
+    info_out.server_name = std::string(result.record.server_name);
+    info_out.emulation_type_id = result.record.emulation_type_id;
+    info_out.owner_id = result.record.owner_id;
+    info_out.is_active = result.record.is_active != 0;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    uint64_t xmin = 0;
+    if (result.record.server_config_oid != 0)
+        loadStringFromToast(result.record.server_config_oid, xmin, info_out.server_config, ctx);
+
+    return Status::OK;
+}
+
+auto CatalogManager::updateEmulationServer(const ID& server_id,
+                                           const std::optional<std::string>& new_config,
+                                           const std::optional<bool>& is_active,
+                                           ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    Status status = bp->pinPage(emulation_servers_table_page_, &page_data, ctx);
+    if (status != Status::OK) return status;
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    bool found = false;
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(EmulationServerRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                auto *record = reinterpret_cast<EmulationServerRecord *>(
+                    mutable_page_data + offset + sizeof(TupleHeader));
+
+                if (record->server_id == server_id && record->is_valid == 1)
+                {
+                    if (new_config.has_value())
+                    {
+                        uint64_t xmin = 0;
+                        storeStringInToast(new_config.value(), xmin, record->server_config_oid, ctx);
+                    }
+                    if (is_active.has_value())
+                        record->is_active = is_active.value() ? 1 : 0;
+                    record->last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(emulation_servers_table_page_, found, ctx);
+    return found ? Status::OK : Status::NOT_FOUND;
+}
+
+auto CatalogManager::dropEmulationServer(const ID& server_id, bool cascade, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // TODO: If cascade, drop all emulated databases on this server
+
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    Status status = bp->pinPage(emulation_servers_table_page_, &page_data, ctx);
+    if (status != Status::OK) return status;
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    bool found = false;
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(EmulationServerRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                auto *record = reinterpret_cast<EmulationServerRecord *>(
+                    mutable_page_data + offset + sizeof(TupleHeader));
+
+                if (record->server_id == server_id && record->is_valid == 1)
+                {
+                    record->is_valid = 0;
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(emulation_servers_table_page_, found, ctx);
+    return found ? Status::OK : Status::NOT_FOUND;
+}
+
+auto CatalogManager::listEmulationServers(std::vector<EmulationServerInfo>& servers_out,
+                                          ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    servers_out.clear();
+
+    auto filter = [](const EmulationServerRecord& rec) { return rec.is_valid == 1; };
+    auto converter = [this, ctx](const EmulationServerRecord& rec, EmulationServerInfo& info) {
+        info.server_id = rec.server_id;
+        info.server_name = std::string(rec.server_name);
+        info.emulation_type_id = rec.emulation_type_id;
+        info.owner_id = rec.owner_id;
+        info.is_active = rec.is_active != 0;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        uint64_t xmin = 0;
+        if (rec.server_config_oid != 0)
+            loadStringFromToast(rec.server_config_oid, xmin, info.server_config, ctx);
+    };
+
+    return readRecordsToVector<EmulationServerRecord, EmulationServerInfo>(
+        emulation_servers_table_page_, servers_out, filter, converter, ctx);
+}
+
+// ============================================================================
+// Emulated Database CRUD Operations (Phase A - Catalog Cleanup)
+// ============================================================================
+
+auto CatalogManager::createEmulatedDatabase(const std::string& database_name,
+                                            const ID& server_id, const ID& schema_id,
+                                            const std::string& db_metadata,
+                                            ID& emulated_db_id_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    Status status = UTF8Utils::validateStorageCapacity(database_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS, CatalogConstants::MAX_IDENTIFIER_BYTES);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Database name too long or invalid UTF-8");
+        return status;
+    }
+
+    EmulatedDatabaseInfo existing;
+    mutex_.unlock();
+    status = getEmulatedDatabaseByName(server_id, database_name, existing, ctx);
+    mutex_.lock();
+    if (status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Emulated database already exists");
+        return Status::FILE_EXISTS;
+    }
+
+    emulated_db_id_out = generateUuidV7();
+
+    EmulatedDatabaseRecord rec;
+    memset(&rec, 0, sizeof(EmulatedDatabaseRecord));
+    rec.emulated_db_id = emulated_db_id_out;
+    std::string truncated = UTF8Utils::truncateToBytes(database_name, sizeof(rec.database_name));
+    strncpy(rec.database_name, truncated.c_str(), sizeof(rec.database_name) - 1);
+    rec.server_id = server_id;
+    rec.schema_id = schema_id;
+    rec.owner_id = SecurityConstants::makeSystemUserID();
+    rec.is_active = 1;
+    rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    rec.last_modified_time = rec.created_time;
+    rec.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!db_metadata.empty())
+    {
+        status = storeStringInToast(db_metadata, xmin, rec.db_metadata_oid, ctx);
+        if (status != Status::OK) return status;
+    }
+
+    status = writeRecordToHeapPage(emulated_dbs_table_page_, rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write emulated database record");
+        return status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getEmulatedDatabase(const ID& emulated_db_id, EmulatedDatabaseInfo& info_out,
+                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&emulated_db_id](const EmulatedDatabaseRecord& rec) {
+        return rec.emulated_db_id == emulated_db_id && rec.is_valid == 1;
+    };
+
+    auto result = findRecordInHeapPage<EmulatedDatabaseRecord>(emulated_dbs_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Emulated database not found");
+        return Status::NOT_FOUND;
+    }
+
+    info_out.emulated_db_id = result.record.emulated_db_id;
+    info_out.database_name = std::string(result.record.database_name);
+    info_out.server_id = result.record.server_id;
+    info_out.schema_id = result.record.schema_id;
+    info_out.owner_id = result.record.owner_id;
+    info_out.is_active = result.record.is_active != 0;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    uint64_t xmin = 0;
+    if (result.record.db_metadata_oid != 0)
+        loadStringFromToast(result.record.db_metadata_oid, xmin, info_out.db_metadata, ctx);
+
+    return Status::OK;
+}
+
+auto CatalogManager::getEmulatedDatabaseByName(const ID& server_id, const std::string& database_name,
+                                               EmulatedDatabaseInfo& info_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&server_id, &database_name](const EmulatedDatabaseRecord& rec) {
+        return rec.server_id == server_id &&
+               strcmp(rec.database_name, database_name.c_str()) == 0 &&
+               rec.is_valid == 1;
+    };
+
+    auto result = findRecordInHeapPage<EmulatedDatabaseRecord>(emulated_dbs_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Emulated database not found");
+        return Status::NOT_FOUND;
+    }
+
+    info_out.emulated_db_id = result.record.emulated_db_id;
+    info_out.database_name = std::string(result.record.database_name);
+    info_out.server_id = result.record.server_id;
+    info_out.schema_id = result.record.schema_id;
+    info_out.owner_id = result.record.owner_id;
+    info_out.is_active = result.record.is_active != 0;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    uint64_t xmin = 0;
+    if (result.record.db_metadata_oid != 0)
+        loadStringFromToast(result.record.db_metadata_oid, xmin, info_out.db_metadata, ctx);
+
+    return Status::OK;
+}
+
+auto CatalogManager::updateEmulatedDatabase(const ID& emulated_db_id,
+                                            const std::optional<std::string>& new_metadata,
+                                            const std::optional<bool>& is_active,
+                                            ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    Status status = bp->pinPage(emulated_dbs_table_page_, &page_data, ctx);
+    if (status != Status::OK) return status;
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    bool found = false;
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(EmulatedDatabaseRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                auto *record = reinterpret_cast<EmulatedDatabaseRecord *>(
+                    mutable_page_data + offset + sizeof(TupleHeader));
+
+                if (record->emulated_db_id == emulated_db_id && record->is_valid == 1)
+                {
+                    if (new_metadata.has_value())
+                    {
+                        uint64_t xmin = 0;
+                        storeStringInToast(new_metadata.value(), xmin, record->db_metadata_oid, ctx);
+                    }
+                    if (is_active.has_value())
+                        record->is_active = is_active.value() ? 1 : 0;
+                    record->last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(emulated_dbs_table_page_, found, ctx);
+    return found ? Status::OK : Status::NOT_FOUND;
+}
+
+auto CatalogManager::dropEmulatedDatabase(const ID& emulated_db_id, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    Status status = bp->pinPage(emulated_dbs_table_page_, &page_data, ctx);
+    if (status != Status::OK) return status;
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    bool found = false;
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(EmulatedDatabaseRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                auto *record = reinterpret_cast<EmulatedDatabaseRecord *>(
+                    mutable_page_data + offset + sizeof(TupleHeader));
+
+                if (record->emulated_db_id == emulated_db_id && record->is_valid == 1)
+                {
+                    record->is_valid = 0;
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(emulated_dbs_table_page_, found, ctx);
+    return found ? Status::OK : Status::NOT_FOUND;
+}
+
+auto CatalogManager::listEmulatedDatabases(const ID& server_id,
+                                           std::vector<EmulatedDatabaseInfo>& databases_out,
+                                           ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    databases_out.clear();
+
+    auto filter = [&server_id](const EmulatedDatabaseRecord& rec) {
+        return rec.server_id == server_id && rec.is_valid == 1;
+    };
+    auto converter = [this, ctx](const EmulatedDatabaseRecord& rec, EmulatedDatabaseInfo& info) {
+        info.emulated_db_id = rec.emulated_db_id;
+        info.database_name = std::string(rec.database_name);
+        info.server_id = rec.server_id;
+        info.schema_id = rec.schema_id;
+        info.owner_id = rec.owner_id;
+        info.is_active = rec.is_active != 0;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        uint64_t xmin = 0;
+        if (rec.db_metadata_oid != 0)
+            loadStringFromToast(rec.db_metadata_oid, xmin, info.db_metadata, ctx);
+    };
+
+    return readRecordsToVector<EmulatedDatabaseRecord, EmulatedDatabaseInfo>(
+        emulated_dbs_table_page_, databases_out, filter, converter, ctx);
 }
 
 } // namespace scratchbird::core
