@@ -1,8 +1,8 @@
 # ScratchBird Project Context
 
-**Last Updated:** November 25, 2025 (P1 100% COMPLETE - Bulk loading bottom-up construction implemented!)
+**Last Updated:** November 25, 2025 (P2 100% COMPLETE - All 25 medium-priority items implemented!)
 **Current Phase:** Alpha 1 - Engine Functionality (Local Operations)
-**Progress:** ~85% of Alpha 1 (~14% of total project scope)
+**Progress:** ~90% of Alpha 1 (~15% of total project scope)
 **Project Type:** Educational/Research (no time constraints)
 **Detailed Status:** [IMPLEMENTATION_STATUS_DASHBOARD.md](docs/IMPLEMENTATION_STATUS_DASHBOARD.md)
 
@@ -11,15 +11,16 @@
 
 ---
 
-## Current Work: Alpha 1 Completion (~20% Remaining)
+## Current Work: Alpha 1 Completion (~15% Remaining)
 
-**Note:** Due to additional work items identified during development (improvement opportunities, server architecture requirements), Alpha 1 is now estimated at 80% complete with all missing functions, P0 critical issues, and most P1 high-priority improvements resolved.
+**Note:** Due to additional work items identified during development (improvement opportunities, server architecture requirements), Alpha 1 is now estimated at 85% complete with all missing functions, P0 critical issues, P1 high-priority improvements, and P2 medium-priority improvements resolved.
 
-**Focus:** ✅ Functions complete → ✅ P0 Critical Issues complete → ✅ P1 100% complete → P2-P3 Improvements → Server Architecture → CLI tools
+**Focus:** ✅ Functions complete → ✅ P0 Critical Issues complete → ✅ P1 100% complete → ✅ P2 100% complete → P3 Improvements → Server Architecture → CLI tools
 
 **Remaining Alpha 1 Work:**
 - ✅ P1 High-Priority (15/15 complete): All items completed including bulk loading bottom-up construction!
-- ⏳ P2-P3 Improvements (38 items): Performance, completeness, optimizations - 340-438 hours
+- ✅ P2 Medium-Priority (25/25 complete): All performance optimizations and feature completeness items done! 🎉
+- ⏳ P3 Low-Priority (13+ items): Enhancements, advanced features - 200+ hours
 - ❌ Local Server Architecture (5 phases): IPC, protocol, server, client library - 140-190 hours
 - ❌ CLI Tools (4 tools): sb_isql, sb_verify, sb_backup, sb_security - 90-110 hours
 
@@ -94,7 +95,7 @@ See [docs/planning/MISSING_FUNCTIONS_IMPLEMENTATION_STATUS.md](docs/planning/MIS
 
 ### What's Next 🚧
 
-**PRIORITY 3: P1-P3 Improvement Opportunities** (~360-470 hours / 9-12 weeks):
+**PRIORITY 3: P3 Improvement Opportunities** (~200+ hours / 5+ weeks):
 See [docs/audit/IMPROVEMENT_OPPORTUNITIES.md](docs/audit/IMPROVEMENT_OPPORTUNITIES.md) and [docs/IMPLEMENTATION_STATUS_DASHBOARD.md](docs/IMPLEMENTATION_STATUS_DASHBOARD.md) for complete details.
 
 - **P0 (Critical - 8 items):** ✅ 100% COMPLETE (8/8) - 0 hours remaining
@@ -113,19 +114,23 @@ See [docs/audit/IMPROVEMENT_OPPORTUNITIES.md](docs/audit/IMPROVEMENT_OPPORTUNITI
   - **All P1 items complete!**
   - See [docs/planning/IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md](docs/planning/IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md)
 
-- **P2 (Medium - 25 items):** 100-150 hours
-  - Performance optimizations (page table lock partitioning, dirty page counter, TOAST prefetching)
-  - Feature completeness (GENERATED columns, deferred constraints, statement-level triggers)
-  - Window function frames, statistical aggregates
-  - Testing & quality improvements
+- **P2 (Medium - 25 items):** ✅ 100% COMPLETE (25/25) - 0 hours remaining 🎉
+  - ✅ Performance: Page table lock partitioning, dirty page counter, TOAST prefetching, hash index resize
+  - ✅ Features: GENERATED columns, deferred constraints, statement-level triggers, MV refresh strategies
+  - ✅ Infrastructure: Query result caching, parallel query execution, prepared statement cache
+  - ✅ Operations: Connection pooling, backup/restore improvements, index advisor
+  - ✅ Quality: Edge case tests, concurrent transaction tests, benchmark suite, constraint enforcement tests
+  - ✅ Code: Role cycle detection, policy expression validation, error message context
+  - **All P2 items complete!**
+  - See [docs/planning/IMPROVEMENTS_P2_MEDIUM_PRIORITY_PLAN.md](docs/planning/IMPROVEMENTS_P2_MEDIUM_PRIORITY_PLAN.md)
 
-- **P3 (Low - 20+ items):** 200+ hours
+- **P3 (Low - 13+ items):** 200+ hours
   - Password expiration, MFA (requires Alpha 3)
   - DECIMAL fixed-point, SIMD vector operations
   - Advanced index features, partition pruning
   - Telemetry, structured logging, query profiler
 
-**Total Improvement Opportunities:** 48 remaining items (5 P1 + P2-P3 items after P0 completion)
+**Total Improvement Opportunities:** 13+ remaining items (P3 items after P0-P2 completion)
 
 **PRIORITY 4: Local Server Architecture** (~140-190 hours / 3.5-4.5 weeks):
 See [docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md](docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md) for complete details.
@@ -175,24 +180,26 @@ See [docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md](docs/planning/LOCAL_SERVER
    - ✅ Bulk loading - COMPLETE (bottom-up B-tree construction in btree.cpp:2837)
    - ✅ TRY/EXCEPT, cursors, stored procedure invocation (already implemented!)
 
-4. **Implement P2-P3 improvement opportunities** (340-438 hours / 8.5-11 weeks) - **CURRENT PRIORITY**
-   - P2 (Medium): Optimizations, completeness - 100-150 hours
-   - P3 (Low): Enhancements, advanced features - 200+ hours
+4. ✅ **Implement P2 medium-priority improvements** ✅ **COMPLETE** (November 25, 2025) 🎉
+   - 25/25 items complete - all performance and feature items done!
 
-5. **Implement local server architecture** (140-190 hours / 3.5-4.5 weeks)
+5. **Implement P3 low-priority improvements** (200+ hours / 5+ weeks) - CURRENT PRIORITY
+   - P3 (Low): 13+ items - enhancements, advanced features
+
+6. **Implement local server architecture** (140-190 hours / 3.5-4.5 weeks)
    - Phase 1: IPC infrastructure (Unix sockets, named pipes, TCP) - 40-50 hours
    - Phase 2: Wire protocol (message format, streaming) - 30-40 hours
    - Phase 3: Server implementation (sb_server process) - 40-50 hours
    - Phase 4: Client library (libscratchbird_client) - 20-30 hours
    - Phase 5: Integration & testing - 10-20 hours
 
-5. **Build command-line tools** (90-110 hours / 2.5-3 weeks)
+7. **Build command-line tools** (90-110 hours / 2.5-3 weeks)
    - sb_isql (interactive SQL shell)
    - sb_verify (database integrity checker)
    - sb_backup (backup/restore tool)
    - sb_security (user/role management tool)
 
-**Total Alpha 1 Remaining Work:** ~530-680 hours (13-17 weeks)
+**Total Alpha 1 Remaining Work:** ~430-500 hours (11-13 weeks)
 
 ---
 
@@ -391,7 +398,7 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 
 ## Summary
 
-**Current Focus:** Complete Alpha 1 (~22% remaining)
+**Current Focus:** Complete Alpha 1 (~15% remaining)
 
 **Immediate Work:**
 1. ✅ **Implement 30 missing functions** ✅ **COMPLETE** (~222 hours)
@@ -406,8 +413,11 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
    - Achievement: All 15 P1 items complete including bulk loading bottom-up construction
    - Result: Performance, PSQL features, and constraint operations all verified working
 
-4. **Implement P2-P3 improvement opportunities** (340-438 hours / 8.5-11 weeks) - **CURRENT PRIORITY**
-   - P2 (Medium): 25 items - optimizations, completeness
+4. ✅ **Implement P2 medium-priority improvements** ✅ **100% COMPLETE** (November 25, 2025) 🎉
+   - 25/25 items complete - all performance and feature items done!
+   - See [docs/planning/IMPROVEMENTS_P2_MEDIUM_PRIORITY_PLAN.md](docs/planning/IMPROVEMENTS_P2_MEDIUM_PRIORITY_PLAN.md)
+
+5. **Implement P3 low-priority improvements** (200+ hours / 5+ weeks) - **CURRENT PRIORITY**
    - P3 (Low): 13+ items - enhancements, advanced features
 
 5. **Implement local server architecture** (140-190 hours / 3.5-4.5 weeks) - AFTER improvements
@@ -420,7 +430,7 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
    - All tools connect via libscratchbird_client
 
 **Next Major Milestones:**
-1. Alpha 1 completion (~13-17 weeks total: 530-680 hours remaining)
+1. Alpha 1 completion (~11-13 weeks total: 430-500 hours remaining)
 2. Alpha 2: Multi-dialect parsers (PostgreSQL, MySQL, MSSQL, Firebird, ScratchBird)
 3. Alpha 3: Network protocols (libpq, MySQL, TDS, native)
 4. Beta 1-4: Distributed systems + NoSQL models
@@ -432,5 +442,5 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 ---
 
 **Last Updated:** November 25, 2025
-**Status:** Alpha 1 - 85% complete (~14% of total project)
-**Current Priority:** ✅ Functions (153/153) COMPLETE → ✅ P0 Critical (8/8) COMPLETE → ✅ P1 High (15/15) COMPLETE → P2-P3 Improvements (38 items) → Server architecture → CLI tools
+**Status:** Alpha 1 - 85% complete (~15% of total project)
+**Current Priority:** ✅ Functions (153/153) COMPLETE → ✅ P0 Critical (8/8) COMPLETE → ✅ P1 High (15/15) COMPLETE → ✅ P2 Medium (25/25) COMPLETE → P3 Low (13+ items) → Server architecture → CLI tools

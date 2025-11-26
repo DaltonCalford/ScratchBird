@@ -45,6 +45,7 @@
 #include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"  // For LOG_ERROR macro
+#include "scratchbird/sblr/query_result_cache.h"  // P2-19: Query Result Caching
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <iomanip>
@@ -3013,6 +3014,9 @@ namespace scratchbird
                 throw std::runtime_error("Permission denied: DROP TABLE " + table_name);
             }
 
+            // P2-19: Invalidate cached query results for this table before dropping
+            QueryResultCacheManager::getInstance().invalidateTable(table_info.table_id);
+
             // Drop the table using catalog manager
             ErrorContext ctx;
             status = db_->catalog_manager()->dropTable(table_info.table_id, cascade, &ctx);
@@ -3259,6 +3263,9 @@ namespace scratchbird
                 uint64_t job_id = db_->catalog_manager()->truncateTableAsync(table_info.table_id, table_name, xid, &ctx);
                 std::cout << "TRUNCATE TABLE job started (ID: " << job_id << ")" << std::endl;
             }
+
+            // P2-19: Invalidate cached query results for this table
+            QueryResultCacheManager::getInstance().invalidateTable(table_info.table_id);
         }
 
         // ========================================================================
@@ -5051,6 +5058,9 @@ namespace scratchbird
 
             // Success - tuple inserted
 
+            // P2-19: Invalidate cached query results for this table
+            QueryResultCacheManager::getInstance().invalidateTable(table_id);
+
             // Handle RETURNING clause if present (Alpha 1 - Advanced SQL)
             if (pc_ < bytecode_size_)
             {
@@ -5911,6 +5921,9 @@ namespace scratchbird
 
             // Note: Index updates are handled automatically by StorageEngine
             // in the updateTuple() method for MGA architecture
+
+            // P2-19: Invalidate cached query results for this table
+            QueryResultCacheManager::getInstance().invalidateTable(table_id);
         }
 
         void Executor::executeDelete()
@@ -6253,6 +6266,11 @@ namespace scratchbird
 
             // Note: Index cleanup is handled automatically by StorageEngine
             // in the deleteTuple() method for MGA architecture
+
+            // P2-19: Invalidate cached query results for this table
+            if (affected_count > 0) {
+                QueryResultCacheManager::getInstance().invalidateTable(table_id);
+            }
         }
 
         void Executor::executeMerge()
@@ -6714,6 +6732,11 @@ namespace scratchbird
                     }
                     break; // Only one WHEN NOT MATCHED BY SOURCE clause
                 }
+            }
+
+            // P2-19: Invalidate cached query results for target table
+            if (merge_affected_count > 0) {
+                QueryResultCacheManager::getInstance().invalidateTable(target_table_info.table_id);
             }
         }
 
