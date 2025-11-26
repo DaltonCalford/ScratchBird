@@ -4230,6 +4230,39 @@ namespace scratchbird
             }
         }
 
+        // P2-7: SET CONSTRAINTS statement
+        void BytecodeGenerator::visit(parser::SetConstraintsStmt *node)
+        {
+            // Emit extended opcode marker + SET_CONSTRAINTS opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SET_CONSTRAINTS));
+
+            // Write flags byte:
+            // bit 0 = all_constraints (true = ALL, false = named constraints)
+            // bit 1 = deferred (true = DEFERRED, false = IMMEDIATE)
+            uint8_t flags = 0;
+            if (node->allConstraints())
+            {
+                flags |= 0x01;
+            }
+            if (node->isDeferred())
+            {
+                flags |= 0x02;
+            }
+            current_result_->writeByte(flags);
+
+            // If not ALL, write constraint name count and names
+            if (!node->allConstraints())
+            {
+                const auto& names = node->constraintNames();
+                current_result_->writeByte(static_cast<uint8_t>(names.size()));
+                for (auto name_id : names)
+                {
+                    writeStringId(name_id);
+                }
+            }
+        }
+
         // Security Phase 3.4.4 - Row-Level Security Policy Statements
         void BytecodeGenerator::visit(parser::CreatePolicyStmt *node)
         {

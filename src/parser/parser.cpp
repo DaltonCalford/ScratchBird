@@ -422,6 +422,10 @@ namespace scratchbird
                     {
                         stmt = parseSetSessionAuth();
                     }
+                    else if (check(TokenType::KW_CONSTRAINTS))
+                    {
+                        stmt = parseSetConstraints();  // P2-7: SET CONSTRAINTS
+                    }
                     else
                     {
                         stmt = parseSetTransaction();  // Existing SET TRANSACTION handling
@@ -7483,6 +7487,62 @@ namespace scratchbird
 
             auto span = makeSpan(start_loc);
             return arena_.make<SetSessionAuthStmt>(span, username, is_reset);
+        }
+
+        // P2-7: SET CONSTRAINTS statement
+        Statement *Parser::parseSetConstraints()
+        {
+            // SET CONSTRAINTS { ALL | constraint_name [, ...] } { DEFERRED | IMMEDIATE }
+            auto start_loc = previous().location;  // previous() is KW_SET
+
+            if (!consume(TokenType::KW_CONSTRAINTS, "Expected CONSTRAINTS after SET"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            bool all_constraints = false;
+            std::vector<StringPool::StringId> constraint_names;
+
+            if (match(TokenType::KW_ALL))
+            {
+                all_constraints = true;
+            }
+            else
+            {
+                // Parse constraint name list
+                do
+                {
+                    if (!check(TokenType::IDENTIFIER))
+                    {
+                        error("Expected constraint name");
+                        synchronize();
+                        return nullptr;
+                    }
+                    constraint_names.push_back(current().value.string_id);
+                    advance();
+                } while (match(TokenType::COMMA));
+            }
+
+            // Parse DEFERRED or IMMEDIATE
+            bool deferred = false;
+            if (match(TokenType::KW_DEFERRED))
+            {
+                deferred = true;
+            }
+            else if (match(TokenType::KW_IMMEDIATE))
+            {
+                deferred = false;
+            }
+            else
+            {
+                error("Expected DEFERRED or IMMEDIATE");
+                synchronize();
+                return nullptr;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<SetConstraintsStmt>(span, all_constraints, constraint_names, deferred);
         }
 
         // Security Phase 3.4: Row-Level Security statements

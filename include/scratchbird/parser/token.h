@@ -359,7 +359,8 @@ namespace scratchbird
             KW_TO,     // Phase 2 Task 2.2
             KW_ADD,    // ALPHA Phase 1 - ALTER TABLE ADD COLUMN
             KW_TYPE,   // ALPHA Phase 1 - ALTER TABLE ALTER COLUMN TYPE
-            KW_CONSTRAINT, // ALPHA Phase C - Table-level constraints
+            KW_CONSTRAINT,  // ALPHA Phase C - Table-level constraints
+            KW_CONSTRAINTS, // P2-7: SET CONSTRAINTS statement (plural)
             KW_IDENTITY,   // ALPHA Phase 1 - IDENTITY columns (auto-increment)
             KW_GENERATED,  // ALPHA Phase 1 - GENERATED columns
             KW_ALWAYS,     // ALPHA Phase 1 - GENERATED ALWAYS AS IDENTITY

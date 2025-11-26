@@ -2046,6 +2046,16 @@ namespace scratchbird
             (void)node;
         }
 
+        // P2-7: SET CONSTRAINTS statement
+        void SemanticAnalyzer::visit(SetConstraintsStmt *node)
+        {
+            // Basic validation: if not ALL, must have at least one constraint name
+            if (!node->allConstraints() && node->constraintNames().empty())
+            {
+                reportError(node, "SET CONSTRAINTS requires ALL or at least one constraint name");
+            }
+        }
+
         // Security Phase 3.4: Row-level security policy statements
         // P2-16: Policy Expression Validation at CREATE POLICY time
         void SemanticAnalyzer::visit(CreatePolicyStmt *node)

@@ -303,7 +303,8 @@ namespace scratchbird
             {"TO", TokenType::KW_TO},         // Phase 2 Task 2.2
             {"ADD", TokenType::KW_ADD},       // ALPHA Phase 1 - ALTER TABLE ADD COLUMN
             {"TYPE", TokenType::KW_TYPE},     // ALPHA Phase 1 - ALTER TABLE ALTER COLUMN TYPE
-            {"CONSTRAINT", TokenType::KW_CONSTRAINT}, // ALPHA Phase C - Table constraints
+            {"CONSTRAINT", TokenType::KW_CONSTRAINT},   // ALPHA Phase C - Table constraints
+            {"CONSTRAINTS", TokenType::KW_CONSTRAINTS}, // P2-7: SET CONSTRAINTS
             {"IDENTITY", TokenType::KW_IDENTITY},     // ALPHA Phase 1 - IDENTITY columns
             {"GENERATED", TokenType::KW_GENERATED},   // ALPHA Phase 1 - GENERATED columns
             {"ALWAYS", TokenType::KW_ALWAYS},         // ALPHA Phase 1 - GENERATED ALWAYS

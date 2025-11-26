@@ -191,6 +191,7 @@ namespace scratchbird
             void visit(parser::RevokeRoleStmt *node) override;
             void visit(parser::SetRoleStmt *node) override;
             void visit(parser::SetSessionAuthStmt *node) override;
+            void visit(parser::SetConstraintsStmt *node) override;  // P2-7: SET CONSTRAINTS
             void visit(parser::CreatePolicyStmt *node) override;  // Security Phase 3.4.4
             void visit(parser::DropPolicyStmt *node) override;    // Security Phase 3.4.4
             void visit(parser::AlterTableRLSStmt *node) override; // Security Phase 3.4.4

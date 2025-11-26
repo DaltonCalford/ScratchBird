@@ -81,6 +81,7 @@ namespace scratchbird
             REVOKE_ROLE,       // REVOKE role FROM user/role [CASCADE | RESTRICT]
             SET_ROLE,          // SET ROLE rolename / RESET ROLE
             SET_SESSION_AUTH,  // SET SESSION AUTHORIZATION username / RESET SESSION AUTHORIZATION
+            SET_CONSTRAINTS,   // P2-7: SET CONSTRAINTS {ALL | constraint_name} {DEFERRED | IMMEDIATE}
             CREATE_POLICY,     // Security Phase 3.4: CREATE POLICY policy_name ON table_name
             DROP_POLICY,       // Security Phase 3.4: DROP POLICY policy_name ON table_name
             ALTER_TABLE_RLS,   // Security Phase 3.4: ALTER TABLE ... ENABLE/DISABLE ROW LEVEL SECURITY
@@ -3862,6 +3863,34 @@ namespace scratchbird
             bool is_reset_;
         };
 
+        // P2-7: SET CONSTRAINTS statement
+        // SET CONSTRAINTS { ALL | constraint_name [, ...] } { DEFERRED | IMMEDIATE }
+        class SetConstraintsStmt : public Statement
+        {
+        public:
+            SetConstraintsStmt(const SourceSpan& span,
+                              bool all_constraints,
+                              const std::vector<StringPool::StringId>& constraint_names,
+                              bool deferred)
+                : Statement(ASTKind::SET_CONSTRAINTS, span),
+                  all_constraints_(all_constraints),
+                  constraint_names_(constraint_names),
+                  deferred_(deferred)
+            {
+            }
+
+            bool allConstraints() const { return all_constraints_; }
+            const std::vector<StringPool::StringId>& constraintNames() const { return constraint_names_; }
+            bool isDeferred() const { return deferred_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            bool all_constraints_;  // true if ALL was specified
+            std::vector<StringPool::StringId> constraint_names_;  // empty if all_constraints_ is true
+            bool deferred_;  // true = DEFERRED, false = IMMEDIATE
+        };
+
         // Security Phase 3.4: CREATE POLICY
         // CREATE POLICY policy_name ON table_name
         //   [FOR { ALL | SELECT | INSERT | UPDATE | DELETE }]
@@ -4063,6 +4092,7 @@ namespace scratchbird
             virtual void visit(RevokeRoleStmt *node) = 0;
             virtual void visit(SetRoleStmt *node) = 0;
             virtual void visit(SetSessionAuthStmt *node) = 0;
+            virtual void visit(SetConstraintsStmt *node) = 0;   // P2-7: SET CONSTRAINTS
             virtual void visit(CreatePolicyStmt *node) = 0;     // Security Phase 3.4
             virtual void visit(DropPolicyStmt *node) = 0;       // Security Phase 3.4
             virtual void visit(AlterTableRLSStmt *node) = 0;    // Security Phase 3.4
@@ -4165,6 +4195,7 @@ namespace scratchbird
             void visit(RevokeRoleStmt *node) override;
             void visit(SetRoleStmt *node) override;
             void visit(SetSessionAuthStmt *node) override;
+            void visit(SetConstraintsStmt *node) override;
 
         private:
             std::ostream &out_;

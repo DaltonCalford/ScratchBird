@@ -538,6 +538,7 @@ namespace scratchbird
             // Session management opcodes
             EXT_SET_ROLE = 0xD5,           // SET ROLE rolename / RESET ROLE
             EXT_SET_SESSION_AUTH = 0xD6,   // SET SESSION AUTHORIZATION username / RESET SESSION AUTHORIZATION
+            EXT_SET_CONSTRAINTS = 0x4F,    // P2-7: SET CONSTRAINTS {ALL | names} {DEFERRED | IMMEDIATE}
 
             // Row-Level Security opcodes (Security Phase 3.4)
             EXT_CREATE_POLICY = 0xD7,      // CREATE POLICY policy_name ON table_name

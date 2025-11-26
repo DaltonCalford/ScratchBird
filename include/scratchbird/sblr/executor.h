@@ -646,6 +646,7 @@ namespace scratchbird
             void executeRevokeRole();        // Execute REVOKE role
             void executeSetRole();           // Execute SET ROLE / RESET ROLE
             void executeSetSessionAuth();    // Execute SET/RESET SESSION AUTHORIZATION
+            void executeSetConstraints();    // P2-7: Execute SET CONSTRAINTS
             void executeCreatePolicy();      // Execute CREATE POLICY (Security Phase 3.4.4)
             void executeDropPolicy();        // Execute DROP POLICY (Security Phase 3.4.4)
             void executeAlterTableRLS();     // Execute ALTER TABLE ... ROW LEVEL SECURITY (Security Phase 3.4.4)

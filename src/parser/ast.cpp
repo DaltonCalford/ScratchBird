@@ -1728,6 +1728,28 @@ namespace scratchbird
             }
         }
 
+        // P2-7: SET CONSTRAINTS statement
+        void ASTPrinter::visit(SetConstraintsStmt *node)
+        {
+            printIndent();
+            out_ << "SET CONSTRAINTS ";
+            if (node->allConstraints())
+            {
+                out_ << "ALL";
+            }
+            else
+            {
+                bool first = true;
+                for (auto name_id : node->constraintNames())
+                {
+                    if (!first) out_ << ", ";
+                    out_ << pool_.get(name_id);
+                    first = false;
+                }
+            }
+            out_ << (node->isDeferred() ? " DEFERRED" : " IMMEDIATE") << "\n";
+        }
+
         // Accept methods for security statements
         void CreateUserStmt::accept(ASTVisitor *visitor)
         {
@@ -1790,6 +1812,12 @@ namespace scratchbird
         }
 
         void SetSessionAuthStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        // P2-7: SET CONSTRAINTS statement
+        void SetConstraintsStmt::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);
         }

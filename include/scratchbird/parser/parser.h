@@ -153,6 +153,7 @@ namespace scratchbird
             Statement *parseRevoke();                // REVOKE privilege or role
             Statement *parseSetRole();               // SET ROLE or RESET ROLE
             Statement *parseSetSessionAuth();        // SET SESSION AUTHORIZATION or RESET
+            Statement *parseSetConstraints();        // P2-7: SET CONSTRAINTS
             Statement *parseCreatePolicy();          // Security Phase 3.4: CREATE POLICY
             Statement *parseDropPolicy();            // Security Phase 3.4: DROP POLICY
             Statement *parseAlterTableRLS(const SourceLocation& start_loc, StringPool::StringId table_name);  // Security Phase 3.4
