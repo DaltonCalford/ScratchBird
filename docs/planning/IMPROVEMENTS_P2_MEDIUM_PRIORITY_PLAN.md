@@ -1,9 +1,9 @@
 # Alpha 1 - Medium Priority Issues (P2) Implementation Plan
 
 **Created:** November 23, 2025
-**Status:** 🔄 In Progress (11/25 items complete)
+**Status:** 🔄 In Progress (14/25 items complete)
 **Priority:** P2 - MEDIUM
-**Estimated Effort:** 100-150 hours (~70 remaining)
+**Estimated Effort:** 100-150 hours (~50 remaining)
 **Target:** Beta 2
 **Dependencies:** P0 and P1 items should be complete ✅
 **Last Updated:** November 25, 2025
@@ -135,8 +135,9 @@ This plan covers 25 medium-priority issues focused on performance optimizations,
 ## AGENT C: TESTING & QUALITY
 
 **Total Effort:** 39-50 hours
+**Status:** 75% Complete (3/4 items)
 
-### P2-11: Edge Case Test Suite (8-10 hours)
+### P2-11: Edge Case Test Suite ✅ COMPLETE (Nov 25, 2025)
 **Coverage:**
 - NaN handling in all mathematical functions
 - Infinity handling in comparisons
@@ -145,8 +146,9 @@ This plan covers 25 medium-priority issues focused on performance optimizations,
 - Character encoding edge cases (UTF-8, invalid sequences)
 - Timezone edge cases
 - Leap seconds, daylight saving time
+**Implementation:** `tests/unit/test_edge_cases.cpp`
 
-### P2-12: Concurrent Transaction Tests (10-12 hours)
+### P2-12: Concurrent Transaction Tests ✅ COMPLETE (Nov 25, 2025)
 **Coverage:**
 - Concurrent INSERT/UPDATE/DELETE
 - Snapshot isolation verification
@@ -154,8 +156,9 @@ This plan covers 25 medium-priority issues focused on performance optimizations,
 - Lock escalation behavior
 - Read-write conflicts
 - Write-write conflicts
+**Implementation:** `tests/unit/test_concurrent_transactions.cpp`
 
-### P2-13: Performance Benchmark Suite (15-20 hours)
+### P2-13: Performance Benchmark Suite (15-20 hours) ⏳ PENDING
 **Benchmarks:**
 - TPC-H queries (all 22 queries)
 - TPC-C transaction processing
@@ -164,7 +167,7 @@ This plan covers 25 medium-priority issues focused on performance optimizations,
 - Aggregate performance (GROUP BY, window functions)
 - Join performance (nested loop, hash, merge)
 
-### P2-14: Constraint Enforcement Tests (6-8 hours)
+### P2-14: Constraint Enforcement Tests ✅ COMPLETE (Nov 25, 2025)
 **Coverage:**
 - CHECK constraint violations (all data types)
 - FK constraint violations (INSERT, UPDATE, DELETE)
@@ -172,6 +175,7 @@ This plan covers 25 medium-priority issues focused on performance optimizations,
 - NOT NULL constraint violations
 - IDENTITY column behavior (GENERATED ALWAYS vs BY DEFAULT)
 - Deferred constraint checking
+**Implementation:** `tests/unit/test_constraint_enforcement.cpp`
 
 ---
 
