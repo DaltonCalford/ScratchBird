@@ -2,7 +2,7 @@
 
 **Created:** November 26, 2025
 **Priority:** HIGH
-**Estimated Effort:** 30-40 hours
+**Estimated Effort:** 40-55 hours
 **Prerequisites:** None (can run parallel to Phase A)
 **Status:** NOT STARTED
 
@@ -10,11 +10,106 @@
 
 ## Overview
 
-This phase adds new catalog structures required for Alpha Phase 2 features. These structures support Foreign Data Wrappers (FDW), Distributed MVCC, and the UDR plugin system.
+This phase adds new catalog structures required for Alpha Phase 2 features. These structures support:
+- Hierarchical schema namespaces with unlimited depth
+- Synonyms for cross-schema object references
+- Foreign Data Wrappers (FDW) for remote server connections
+- Distributed MVCC server registry
+- UDR plugin system
+
+**Reference:** `SCHEMA_ARCHITECTURE.md` for hierarchical schema design.
 
 ---
 
 ## Task List
+
+### B-0: Schema Type and Synonym Structures (6-8 hours)
+
+Add structures to support hierarchical schemas and synonyms.
+
+**Location:** After SchemaInfo in catalog_manager.h
+
+**Schema Type Enum:**
+```cpp
+// Schema types for hierarchical namespace
+enum class SchemaType : uint8_t
+{
+    SYSTEM = 0,         // /sys/* - System management schemas
+    USER_HOME = 1,      // /users/{username}/* - User home directories
+    REMOTE_NATIVE = 2,  // /remote/scratchbird/* - Remote ScratchBird mounts
+    REMOTE_EMULATED = 3,// /remote/emulated/* - Emulated foreign servers
+    PUBLIC = 4,         // /public - Default public schema
+    APPLICATION = 5     // User-created application schemas
+};
+```
+
+**Update SchemaInfo:**
+```cpp
+struct SchemaInfo
+{
+    ID schema_id;
+    ID parent_schema_id;              // Parent schema (zero UUID for root)
+    std::string schema_name;          // Short name (not full path)
+    std::string full_path;            // Cached full dotted path (e.g., "remote.emulated.firebird")
+    SchemaType schema_type = SchemaType::APPLICATION;
+    ID owner_id;
+    uint16_t default_tablespace_id = 0;
+    uint16_t permissions = 0;
+    uint16_t default_charset = 0;
+    uint16_t reserved = 0;
+    uint32_t default_collation_id = 0;
+    uint32_t acl_oid = 0;
+    uint64_t created_time = 0;
+    uint64_t last_modified_time = 0;
+};
+```
+
+**Synonym Structure:**
+```cpp
+// Synonym - cross-schema pointer/alias
+struct SynonymInfo
+{
+    ID synonym_id;                    // UUID v7
+    ID schema_id;                     // Schema containing the synonym
+    std::string synonym_name;         // Local name for the synonym
+    std::string target_path;          // Full dotted path to target object
+    ObjectType target_type;           // TABLE, VIEW, SEQUENCE, PROCEDURE, FUNCTION, etc.
+    ID owner_id;
+    bool is_public = false;           // PUBLIC synonym (visible to all)
+    uint64_t created_time = 0;
+    uint64_t last_modified_time = 0;
+};
+```
+
+**CRUD Methods for Synonyms:**
+```cpp
+// Synonym operations
+auto createSynonym(const ID& schema_id, const std::string& synonym_name,
+                   const std::string& target_path, ObjectType target_type,
+                   bool is_public, ID& synonym_id_out,
+                   ErrorContext* ctx = nullptr) -> Status;
+auto getSynonym(const ID& synonym_id, SynonymInfo& synonym_out,
+                ErrorContext* ctx = nullptr) -> Status;
+auto getSynonymByName(const ID& schema_id, const std::string& synonym_name,
+                      SynonymInfo& synonym_out,
+                      ErrorContext* ctx = nullptr) -> Status;
+auto dropSynonym(const ID& synonym_id, ErrorContext* ctx = nullptr) -> Status;
+auto listSynonyms(const ID& schema_id, std::vector<SynonymInfo>& synonyms_out,
+                  ErrorContext* ctx = nullptr) -> Status;
+auto listPublicSynonyms(std::vector<SynonymInfo>& synonyms_out,
+                        ErrorContext* ctx = nullptr) -> Status;
+
+// Path resolution with synonym support
+auto resolveObjectPath(const std::string& path, ID& object_id_out,
+                       ObjectType& type_out, ErrorContext* ctx = nullptr) -> Status;
+auto getSchemaPath(const ID& schema_id, std::string& path_out,
+                   ErrorContext* ctx = nullptr) -> Status;
+auto createSchemaPath(const std::string& path, SchemaType type,
+                      ID& leaf_schema_id_out,
+                      ErrorContext* ctx = nullptr) -> Status;
+```
+
+---
 
 ### B-1: Foreign Data Wrapper Structures (10-12 hours)
 
@@ -288,7 +383,8 @@ enum class ObjectType : uint8_t
     SERVER_REGISTRY = 33,   // NEW
     UDR_ENGINE = 34,        // NEW
     UDR_MODULE = 35,        // NEW
-    CLUSTER = 36            // NEW (for distributed MVCC)
+    CLUSTER = 36,           // NEW (for distributed MVCC)
+    SYNONYM = 37            // NEW (cross-schema pointer)
 };
 ```
 
@@ -302,6 +398,12 @@ Add cache structures for new catalog objects.
 
 **Caches to Add:**
 ```cpp
+// Synonym caches
+std::unordered_map<ID, SynonymInfo> synonym_cache_;
+std::unordered_map<std::pair<ID, std::string>, ID, PairHash<ID, std::string>>
+    synonym_name_lookup_;  // (schema_id, name) -> synonym_id
+std::vector<ID> public_synonyms_;  // List of public synonym IDs
+
 // FDW caches
 std::unordered_map<ID, ForeignServerInfo> foreign_server_cache_;
 std::unordered_map<std::string, ID> foreign_server_name_to_id_;
@@ -319,6 +421,7 @@ std::unordered_map<ID, UDRModuleInfo> udr_module_cache_;
 std::unordered_map<std::string, ID> udr_module_name_to_id_;
 
 // Mutexes for new caches
+mutable std::mutex synonym_mutex_;
 mutable std::mutex foreign_server_mutex_;
 mutable std::mutex server_registry_mutex_;
 mutable std::mutex udr_engine_mutex_;
@@ -335,6 +438,9 @@ Add page ID variables for new system tables.
 
 **Variables to Add:**
 ```cpp
+// Synonym table page
+uint32_t synonyms_table_page_ = 0;
+
 // FDW system table pages
 uint32_t foreign_servers_table_page_ = 0;
 uint32_t foreign_tables_table_page_ = 0;
@@ -366,19 +472,25 @@ uint32_t udr_modules_table_page_ = 0;
 ## Checklist
 
 ### Implementation
+- [ ] B-0: Schema type enum and SynonymInfo structure
+- [ ] B-0: Synonym CRUD methods
+- [ ] B-0: Path resolution methods
 - [ ] B-1: FDW structures (ForeignServerInfo, ForeignTableInfo, UserMappingInfo)
 - [ ] B-2: ServerRegistryInfo structure
 - [ ] B-3: UDR structures (UDREngineInfo, UDRModuleInfo)
-- [ ] B-4: ObjectType enum extensions
-- [ ] B-5: Private member caches
-- [ ] B-6: System table page variables
+- [ ] B-4: ObjectType enum extensions (including SYNONYM)
+- [ ] B-5: Private member caches (including synonym cache)
+- [ ] B-6: System table page variables (including synonyms_table_page_)
 
 ### Testing
 - [ ] Compile with new structures
+- [ ] Test hierarchical schema path resolution
+- [ ] Test synonym creation and resolution
 - [ ] Verify no breaking changes
 
 ### Documentation
 - [ ] Update catalog_manager.h header comments
+- [ ] Reference SCHEMA_ARCHITECTURE.md
 
 ---
 
@@ -386,13 +498,14 @@ uint32_t udr_modules_table_page_ = 0;
 
 | Task | Est. Hours |
 |------|-----------|
+| B-0: Schema Type + Synonyms | 6-8 |
 | B-1: FDW Structures | 10-12 |
 | B-2: Server Registry | 8-10 |
 | B-3: UDR Engine/Module | 8-10 |
 | B-4: ObjectType Enum | 2-3 |
 | B-5: Private Caches | 2-3 |
 | B-6: Page Variables | 1-2 |
-| **Total** | **31-40 hours** |
+| **Total** | **37-48 hours** |
 
 ---
 

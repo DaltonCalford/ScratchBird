@@ -6,16 +6,21 @@
 
 ## Active Planning Documents
 
+### Architecture Reference
+| Document | Description |
+|----------|-------------|
+| [SCHEMA_ARCHITECTURE.md](SCHEMA_ARCHITECTURE.md) | **NEW** Hierarchical schema namespace design, synonym support |
+
 ### Catalog Cleanup (Current Priority)
 | Document | Status | Est. Hours | Description |
 |----------|--------|------------|-------------|
 | [CATALOG_CLEANUP_OVERVIEW.md](CATALOG_CLEANUP_OVERVIEW.md) | ACTIVE | - | Master plan and overview |
 | [CATALOG_CLEANUP_PHASE_A_CRUD.md](CATALOG_CLEANUP_PHASE_A_CRUD.md) | NOT STARTED | 48-63 | Complete missing CRUD operations |
-| [CATALOG_CLEANUP_PHASE_B_STRUCTURES.md](CATALOG_CLEANUP_PHASE_B_STRUCTURES.md) | NOT STARTED | 31-40 | Add missing structures for Phase 2 |
+| [CATALOG_CLEANUP_PHASE_B_STRUCTURES.md](CATALOG_CLEANUP_PHASE_B_STRUCTURES.md) | NOT STARTED | 37-48 | Add structures (SchemaType, Synonyms, FDW, UDR) |
 | [CATALOG_CLEANUP_PHASE_C_PAGES.md](CATALOG_CLEANUP_PHASE_C_PAGES.md) | NOT STARTED | 30-43 | System table page allocation |
-| [CATALOG_CLEANUP_PHASE_D_VIRTUAL.md](CATALOG_CLEANUP_PHASE_D_VIRTUAL.md) | NOT STARTED | 30-42 | Virtual catalog infrastructure |
+| [CATALOG_CLEANUP_PHASE_D_VIRTUAL.md](CATALOG_CLEANUP_PHASE_D_VIRTUAL.md) | NOT STARTED | 38-52 | Virtual catalog + on-demand emulation |
 
-**Total Estimated Effort:** 139-188 hours
+**Total Estimated Effort:** 153-206 hours
 
 ### Future Work
 | Document | Description |
@@ -60,6 +65,21 @@ Phase C (Pages)     ──┘
 - Main catalog: `include/scratchbird/core/catalog_manager.h`
 - Catalog indexes: `include/scratchbird/catalog/catalog_index.h`
 - Phase 2 specs: `/docs/specifications/Alpha Phase 2/`
+
+### Schema Hierarchy
+```
+/ (root)
+├── sys/                  # System tables (security, catalog, config)
+├── users/{username}/     # User home directories
+├── remote/
+│   ├── scratchbird/      # Remote ScratchBird mounts
+│   └── emulated/         # ON-DEMAND emulation
+│       ├── firebird/{server}/{db}/RDB$*
+│       ├── postgresql/{server}/{db}/pg_catalog/*
+│       ├── mysql/{server}/{db}/mysql/*
+│       └── mssql/{server}/{db}/sys/*
+└── public/               # Default schema
+```
 
 ---
 
