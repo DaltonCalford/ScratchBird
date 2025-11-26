@@ -1061,4 +1061,130 @@ namespace scratchbird::core
         // For now, all constraints start as IMMEDIATE (not deferred)
     }
 
+    // =========================================================================
+    // P2-21: Prepared Statement Cache Implementation
+    // =========================================================================
+
+    Status ConnectionContext::prepareStatement(const std::string& name,
+                                               const std::string& sql_text,
+                                               const std::vector<uint8_t>& bytecode,
+                                               const std::vector<uint16_t>& param_types,
+                                               ErrorContext* ctx)
+    {
+        // Check if name already exists
+        if (prepared_statements_.find(name) != prepared_statements_.end())
+        {
+            if (ctx)
+            {
+                ctx->code = Status::CONSTRAINT_VIOLATION;
+                ctx->message = "Prepared statement '" + name + "' already exists";
+            }
+            return Status::CONSTRAINT_VIOLATION;
+        }
+
+        // Check if we need to evict (LRU) before adding
+        if (max_prepared_statements_ > 0 &&
+            prepared_statements_.size() >= max_prepared_statements_)
+        {
+            evictOldestPreparedStatement();
+        }
+
+        // Create the prepared statement
+        PreparedStatement stmt;
+        stmt.name = name;
+        stmt.sql_text = sql_text;
+        stmt.bytecode = bytecode;
+        stmt.param_types = param_types;
+        stmt.param_count = param_types.size();
+        stmt.created_at = std::chrono::steady_clock::now();
+        stmt.last_used = stmt.created_at;
+        stmt.execution_count = 0;
+
+        prepared_statements_[name] = std::move(stmt);
+        return Status::OK;
+    }
+
+    ConnectionContext::PreparedStatement* ConnectionContext::getPreparedStatement(const std::string& name)
+    {
+        auto it = prepared_statements_.find(name);
+        if (it != prepared_statements_.end())
+        {
+            return &it->second;
+        }
+        return nullptr;
+    }
+
+    Status ConnectionContext::deallocatePreparedStatement(const std::string& name, ErrorContext* ctx)
+    {
+        if (name.empty())
+        {
+            // DEALLOCATE ALL
+            prepared_statements_.clear();
+            return Status::OK;
+        }
+
+        auto it = prepared_statements_.find(name);
+        if (it == prepared_statements_.end())
+        {
+            if (ctx)
+            {
+                ctx->code = Status::NOT_FOUND;
+                ctx->message = "Prepared statement '" + name + "' does not exist";
+            }
+            return Status::NOT_FOUND;
+        }
+
+        prepared_statements_.erase(it);
+        return Status::OK;
+    }
+
+    void ConnectionContext::recordStatementExecution(const std::string& name)
+    {
+        auto it = prepared_statements_.find(name);
+        if (it != prepared_statements_.end())
+        {
+            it->second.last_used = std::chrono::steady_clock::now();
+            it->second.execution_count++;
+        }
+    }
+
+    void ConnectionContext::getPreparedStatementStats(size_t& count, size_t& total_bytes) const
+    {
+        count = prepared_statements_.size();
+        total_bytes = 0;
+
+        for (const auto& [name, stmt] : prepared_statements_)
+        {
+            total_bytes += name.size();
+            total_bytes += stmt.sql_text.size();
+            total_bytes += stmt.bytecode.size();
+            total_bytes += stmt.param_types.size() * sizeof(uint16_t);
+            total_bytes += sizeof(PreparedStatement);  // Struct overhead
+        }
+    }
+
+    void ConnectionContext::evictOldestPreparedStatement()
+    {
+        if (prepared_statements_.empty())
+        {
+            return;
+        }
+
+        // Find the least recently used statement
+        auto oldest_it = prepared_statements_.begin();
+        auto oldest_time = oldest_it->second.last_used;
+
+        for (auto it = prepared_statements_.begin(); it != prepared_statements_.end(); ++it)
+        {
+            if (it->second.last_used < oldest_time)
+            {
+                oldest_time = it->second.last_used;
+                oldest_it = it;
+            }
+        }
+
+        // Evict it
+        prepared_statements_.erase(oldest_it);
+    }
+
 } // namespace scratchbird::core

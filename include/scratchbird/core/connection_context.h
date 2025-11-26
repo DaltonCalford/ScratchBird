@@ -397,11 +397,88 @@ namespace scratchbird::core
          */
         void initializeConstraintStates();
 
+        // P2-21: Prepared Statement Cache
+        /**
+         * Structure representing a prepared statement
+         */
+        struct PreparedStatement
+        {
+            std::string name;                           // Statement name/handle
+            std::string sql_text;                       // Original SQL text
+            std::vector<uint8_t> bytecode;              // Compiled SBLR bytecode
+            std::vector<uint16_t> param_types;          // Expected parameter types
+            size_t param_count;                         // Number of parameters
+            std::chrono::steady_clock::time_point created_at;  // When prepared
+            std::chrono::steady_clock::time_point last_used;   // Last execution time
+            uint64_t execution_count;                   // Times executed
+        };
+
+        /**
+         * Prepare a SQL statement for repeated execution
+         * @param name Statement name/handle
+         * @param sql_text SQL text to prepare
+         * @param bytecode Compiled bytecode
+         * @param param_types Parameter type hints
+         * @param ctx Error context
+         * @return Status code
+         */
+        Status prepareStatement(const std::string& name, const std::string& sql_text,
+                               const std::vector<uint8_t>& bytecode,
+                               const std::vector<uint16_t>& param_types,
+                               ErrorContext* ctx = nullptr);
+
+        /**
+         * Get a prepared statement by name
+         * @param name Statement name
+         * @return Pointer to PreparedStatement or nullptr if not found
+         */
+        PreparedStatement* getPreparedStatement(const std::string& name);
+
+        /**
+         * Deallocate a prepared statement
+         * @param name Statement name (empty string = deallocate ALL)
+         * @param ctx Error context
+         * @return Status code
+         */
+        Status deallocatePreparedStatement(const std::string& name, ErrorContext* ctx = nullptr);
+
+        /**
+         * Update last_used and execution_count for a statement
+         * @param name Statement name
+         */
+        void recordStatementExecution(const std::string& name);
+
+        /**
+         * Get prepared statement cache statistics
+         * @param count Output: number of cached statements
+         * @param total_bytes Output: approximate memory usage
+         */
+        void getPreparedStatementStats(size_t& count, size_t& total_bytes) const;
+
+        /**
+         * Set maximum number of cached prepared statements
+         * @param max_count Maximum statements (0 = unlimited)
+         */
+        void setMaxPreparedStatements(size_t max_count) { max_prepared_statements_ = max_count; }
+
+        /**
+         * Get maximum number of cached prepared statements
+         * @return Current limit
+         */
+        size_t getMaxPreparedStatements() const { return max_prepared_statements_; }
+
     private:
         // P2-7: Deferred constraint tracking
         std::unordered_map<ID, bool, IDHash> constraint_deferred_state_; // Per-constraint deferral
         std::vector<DeferredConstraintCheck> deferred_checks_;           // Pending checks
         bool all_constraints_deferred_ = false;                          // Global deferral flag
+
+        // P2-21: Prepared Statement Cache
+        std::unordered_map<std::string, PreparedStatement> prepared_statements_;
+        size_t max_prepared_statements_ = 100;  // Default limit
+
+        // LRU eviction helper
+        void evictOldestPreparedStatement();
     };
 
 } // namespace scratchbird::core
