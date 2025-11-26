@@ -879,19 +879,32 @@ namespace scratchbird
         public:
             // Forward declaration
             class TriggerContext;
+            class StatementTriggerContext;  // P2-8: Statement-level triggers
 
             // Trigger procedure type: takes TriggerContext, returns true to continue operation
             using TriggerProcedure = std::function<bool(const TriggerContext&)>;
 
+            // P2-8: Statement-level trigger procedure type
+            using StatementTriggerProcedure = std::function<bool(const StatementTriggerContext&)>;
+
             // Register a trigger procedure for testing
             void registerTriggerProcedure(const std::string& name, TriggerProcedure procedure);
+
+            // P2-8: Register a statement-level trigger procedure
+            void registerStatementTriggerProcedure(const std::string& name, StatementTriggerProcedure procedure);
 
         private:
             // Trigger procedure registry
             std::unordered_map<std::string, TriggerProcedure> trigger_procedures_;
 
+            // P2-8: Statement-level trigger procedure registry
+            std::unordered_map<std::string, StatementTriggerProcedure> statement_trigger_procedures_;
+
             // Fire a trigger for the given context
             bool fireTrigger(const TriggerContext& ctx);
+
+            // P2-8: Fire a statement-level trigger
+            bool fireStatementTrigger(const StatementTriggerContext& ctx);
         };
 
         // ============================================================================
