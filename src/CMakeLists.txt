@@ -160,13 +160,16 @@ set_target_properties(scratchbird_optimizer PROPERTIES
 target_link_libraries(scratchbird_core PUBLIC scratchbird_optimizer nlohmann_json::nlohmann_json)
 
 # ==============================================================================
-# Server Library: scratchbird_server (Local Server Architecture - Phase 1)
+# Server Library: scratchbird_server (Local Server Architecture - Phase 1 & 3)
 # ==============================================================================
-# IPC infrastructure for client-server communication
-# Supports: Unix domain sockets (Linux/macOS), Named pipes (Windows), TCP localhost
+# IPC infrastructure and server components for client-server communication
+# Phase 1: Unix domain sockets (Linux/macOS), Named pipes (Windows), TCP localhost
+# Phase 3: Session management, client handling, query execution
 
 file(GLOB SCRATCHBIRD_SERVER_SOURCES
-    server/*.cpp
+    server/ipc_*.cpp
+    server/server_session.cpp
+    server/scratchbird_server.cpp
 )
 
 add_library(scratchbird_server STATIC
@@ -177,9 +180,7 @@ target_include_directories(scratchbird_server PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
 
-target_link_libraries(scratchbird_server PUBLIC
-    scratchbird_core
-)
+# Note: Dependencies are added after scratchbird_protocol is defined (circular dependency resolution)
 
 # Platform-specific linking for server
 if(WIN32)
@@ -198,7 +199,7 @@ set_target_properties(scratchbird_server PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
-message(STATUS "Server library: scratchbird_server (IPC infrastructure)")
+message(STATUS "Server library: scratchbird_server (IPC + session management)")
 
 # ==============================================================================
 # Protocol Library: scratchbird_protocol (Local Server Architecture - Phase 2)
@@ -231,6 +232,38 @@ set_target_properties(scratchbird_protocol PROPERTIES
 
 message(STATUS "Protocol library: scratchbird_protocol (wire protocol)")
 
+# Add server dependencies (after protocol is defined to resolve circular dependency)
+target_link_libraries(scratchbird_server PUBLIC
+    scratchbird_core
+    scratchbird_protocol
+    scratchbird_sblr
+    scratchbird_parser
+)
+
+# ==============================================================================
+# sb_server Executable (Local Server Architecture - Phase 3)
+# ==============================================================================
+# Database server daemon
+
+add_executable(sb_server server/sb_server_main.cpp)
+
+target_link_libraries(sb_server PRIVATE
+    scratchbird_server
+    scratchbird_protocol
+    scratchbird_sblr
+    scratchbird_parser
+    scratchbird_optimizer
+    scratchbird_core
+)
+
+set_target_properties(sb_server PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+message(STATUS "Server executable: sb_server")
+
 # ==============================================================================
 # Main executable (placeholder)
 add_executable(scratchbird main.cpp)
@@ -255,7 +288,7 @@ set_target_properties(sb_charset_loader PROPERTIES
 )
 
 # Installation (for future use)
-install(TARGETS scratchbird sb_charset_loader scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer scratchbird_server scratchbird_protocol
+install(TARGETS scratchbird sb_server sb_charset_loader scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer scratchbird_server scratchbird_protocol
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
