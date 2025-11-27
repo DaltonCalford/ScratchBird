@@ -521,11 +521,4 @@ TEST(ServerRunningTest, NoServerRunning) {
     EXPECT_FALSE(running);
 }
 
-// ============================================================================
-// Main
-// ============================================================================
-
-int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+// Main provided by gtest_main
