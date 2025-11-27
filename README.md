@@ -7,12 +7,12 @@ A multi-model database platform using Firebird MGA (Multi-Generational Architect
 ## Current Status
 
 **Phase:** Alpha 1 - Engine Functionality (Local Operations)
-**Progress:** ~88% of Alpha 1 complete (~12% of total project)
-**Remaining:** ~230-300 hours (6-8 weeks for Local Server + CLI Tools)
-**Current Work:** ✅ Functions → ✅ P0-P3 → ✅ Catalog Cleanup ALL PHASES COMPLETE → 🔄 Local Server Architecture → CLI Tools
+**Progress:** ~92% of Alpha 1 complete (~8% of total project remaining)
+**Remaining:** ~160-210 hours (4-5 weeks for Local Server Phase 3-5 + CLI Tools)
+**Current Work:** ✅ Functions → ✅ P0-P3 → ✅ Catalog Cleanup → ✅ Phase 1-2 → 🔄 Phase 3-5 Server → CLI Tools
 **Started:** June 2025 (5 months of evening/weekend development)
 **Project Type:** Educational/Research (no time constraints)
-**Last Updated:** November 26, 2025 (Catalog Cleanup ALL PHASES COMPLETE - ~4,290 lines of virtual catalog infrastructure!)
+**Last Updated:** November 27, 2025 (Local Server Architecture Phase 2 COMPLETE - Wire Protocol!)
 
 **Detailed Status:** See [IMPLEMENTATION_STATUS_DASHBOARD.md](docs/IMPLEMENTATION_STATUS_DASHBOARD.md)
 
@@ -111,19 +111,19 @@ A multi-model database platform using Firebird MGA (Multi-Generational Architect
 
 ### What's Being Built 🚧
 
-**Current Work (Alpha 1 - ~12% remaining, ~230-300 hours):**
+**Current Work (Alpha 1 - ~8% remaining, ~160-210 hours):**
 
 - ✅ **Built-in Functions** ✅ **COMPLETE** (153/153) - See [archive](docs/planning/archive/)
 - ✅ **P0-P2 Improvements** ✅ **ALL COMPLETE** (48/48 items) - See [archive](docs/planning/archive/)
 - ✅ **P3 Low-Priority** 🔄 **70% COMPLETE** (14/20 items, 6 blocked by Alpha 3/dependencies)
 - ✅ **Catalog Cleanup** ✅ **ALL PHASES COMPLETE** (Phases A-D, ~4,290 lines)
+- ✅ **Local Server Phase 1** ✅ **COMPLETE** - IPC Infrastructure (22 tests passing)
+- ✅ **Local Server Phase 2** ✅ **COMPLETE** - Wire Protocol (37 tests passing)
 
-- 🔄 **NEXT: Local Server Architecture** (140-190 hours / 3.5-4.5 weeks)
-  - Transition from embedded to client-server model
-  - IPC infrastructure (Unix sockets, Named pipes, TCP localhost)
-  - Wire protocol (binary message format, result streaming)
-  - sb_server process (multi-threaded, session management)
-  - libscratchbird_client library (auto-start server, connection pooling)
+- 🔄 **NEXT: Local Server Architecture Phase 3-5** (70-100 hours / 2-2.5 weeks)
+  - **Phase 3:** sb_server process (multi-threaded, session management)
+  - **Phase 4:** libscratchbird_client library (auto-start server, connection pooling)
+  - **Phase 5:** Integration & testing
   - **Mandatory before CLI tools can function**
   - See [LOCAL_SERVER_ARCHITECTURE_PLAN.md](docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md)
 
@@ -134,20 +134,19 @@ A multi-model database platform using Firebird MGA (Multi-Generational Architect
   - sb_security (user/role management tool)
   - *To be started after server architecture*
 
-**Recently Completed (November 26, 2025):**
-- ✅ **Catalog Cleanup ALL PHASES** 🎉
-  - **Phase A:** 37 CRUD methods (dropSchema, Domain/UDR/Package/Emulation)
-  - **Phase B:** 46 method declarations, 11 new structures/enums (SchemaType, Synonyms, FDW)
-  - **Phase C:** 7 new system table pages allocated
-  - **Phase D:** Virtual catalog infrastructure (~4,290 lines)
-    - information_schema (12 SQL standard views)
-    - pg_catalog (12 PostgreSQL views)
-    - mysql.* (6 MySQL tables), sys.* (8 SQL Server views)
-    - EmulationViewGenerator for on-demand Firebird RDB$* views
-  - See [docs/planning/README.md](docs/planning/README.md) for details
+**Recently Completed (November 27, 2025):**
+- ✅ **Local Server Architecture Phase 2: Wire Protocol** 🎉
+  - `include/scratchbird/protocol/wire_protocol.h` - Protocol definitions (~750 lines)
+  - `src/protocol/wire_protocol.cpp` - Full implementation (~1,000 lines)
+  - `tests/unit/test_wire_protocol.cpp` - 37 unit tests (all passing)
+  - 12-byte message header, 22 message types, UUID v4 sessions
+  - Result streaming, transaction messages, ping/pong keepalive
+- ✅ **Local Server Architecture Phase 1: IPC Infrastructure** 🎉
+  - Unix domain sockets (Linux/macOS), Named pipes (Windows), TCP fallback
+  - Peer credential retrieval, connection statistics, server detection
+  - 22 unit tests (all passing)
+- ✅ **Catalog Cleanup ALL PHASES** 🎉 - See [docs/planning/README.md](docs/planning/README.md)
 - ✅ **P3 Low-Priority** (14/20 = 70% COMPLETE)
-  - 14 unblocked items: DECIMAL, SIMD, indexes, telemetry, logging, etc.
-  - 6 items blocked by Alpha 3 or dependencies
 - ✅ **P0-P2 Improvements** (48/48 = 100% COMPLETE)
 - ✅ **Built-in Functions** (153/153 = 100% COMPLETE)
 - ✅ Views (100% COMPLETE - materialized views with full data population)
