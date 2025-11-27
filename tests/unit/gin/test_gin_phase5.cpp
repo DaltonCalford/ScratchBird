@@ -166,6 +166,48 @@ void testOptimizedQueries()
         makeKey("rare"),
         makeKey("very_rare")};
 
+    // Debug: Test individual key queries first using findAll with single-element vectors
+    std::cout << "Debug: Testing individual key queries..." << std::endl;
+
+    // Debug: Check cardinality which uses estimateKeyCardinality
+    uint32_t common_card = index->estimateKeyCardinality(makeKey("common"), &ctx);
+    uint32_t rare_card = index->estimateKeyCardinality(makeKey("rare"), &ctx);
+    uint32_t very_rare_card = index->estimateKeyCardinality(makeKey("very_rare"), &ctx);
+    std::cout << "  Cardinalities - common: " << common_card << ", rare: " << rare_card << ", very_rare: " << very_rare_card << std::endl;
+
+    auto common_results = index->findAll({makeKey("common")}, 0, &ctx);
+    std::cout << "  common: " << common_results.size() << " results" << std::endl;
+    if (!common_results.empty()) {
+        std::cout << "    first 5 TIDs:";
+        for (size_t i = 0; i < std::min(size_t(5), common_results.size()); i++) {
+            std::cout << " (" << common_results[i].gpid << "," << common_results[i].slot << ")";
+        }
+        std::cout << std::endl;
+    }
+    auto rare_results = index->findAll({makeKey("rare")}, 0, &ctx);
+    std::cout << "  rare: " << rare_results.size() << " results" << std::endl;
+    if (!rare_results.empty()) {
+        std::cout << "    TIDs:";
+        for (const auto& t : rare_results) {
+            std::cout << " (" << t.gpid << "," << t.slot << ")";
+        }
+        std::cout << std::endl;
+    }
+    auto very_rare_results = index->findAll({makeKey("very_rare")}, 0, &ctx);
+    std::cout << "  very_rare: " << very_rare_results.size() << " results" << std::endl;
+    if (!very_rare_results.empty()) {
+        std::cout << "    TIDs:";
+        for (const auto& t : very_rare_results) {
+            std::cout << " (" << t.gpid << "," << t.slot << ")";
+        }
+        std::cout << std::endl;
+    }
+
+    // Debug: Test plain findAll first
+    std::cout << "Debug: Testing plain findAll..." << std::endl;
+    auto plain_results = index->findAll(keys, 0, &ctx);
+    std::cout << "Plain findAll returned " << plain_results.size() << " results" << std::endl;
+
     auto start = std::chrono::high_resolution_clock::now();
     auto results_opt = index->findAllOptimized(keys, options, &ctx);
     auto end = std::chrono::high_resolution_clock::now();

@@ -857,6 +857,8 @@ namespace scratchbird::core
         heap->header.generation = 1;
         heap->record_count = 0;
         heap->free_offset = sizeof(CatalogHeapPage);
+        heap->next_page = 0;  // No overflow page initially
+        heap->reserved = 0;
         heap->header.free_space = db_->page_size() - sizeof(CatalogHeapPage);
         heap->header.item_count = 0;
         heap->header.free_offset = sizeof(CatalogHeapPage);
@@ -1389,6 +1391,16 @@ namespace scratchbird::core
 
         DEBUG_LOG_DB("Security system bootstrap complete");
 
+        // Note: TOAST initialization is done separately via initializePolicyToast()
+        // to avoid mutex deadlock (TOAST manager calls getTable which needs mutex)
+
+        return Status::OK;
+    }
+
+    // Internal method to initialize TOAST for policy expressions
+    // MUST be called WITHOUT holding mutex_ to avoid deadlock
+    auto CatalogManager::initializePolicyToast(ErrorContext *ctx) -> Status
+    {
         // ========================================================================
         // Phase 3.4.8: Initialize TOAST table for Policy Expressions
         // ========================================================================
@@ -1407,10 +1419,13 @@ namespace scratchbird::core
         std::memcpy(policy_toast_table_id_.bytes.data(), POLICY_TOAST_UUID, 16);
 
         // Create ToastManager for policy expressions
+        LOG_INFO(STORAGE, "CatalogManager::initializePolicyToast - Creating TOAST manager");
         policy_toast_manager_ = std::make_unique<ToastManager>(db_, policy_toast_table_id_);
 
         // Initialize the TOAST table (creates pg_toast_<table_id> catalog table)
-        status = policy_toast_manager_->initialize(ctx);
+        LOG_INFO(STORAGE, "CatalogManager::initializePolicyToast - Initializing TOAST table");
+        Status status = policy_toast_manager_->initialize(ctx);
+        LOG_INFO(STORAGE, "CatalogManager::initializePolicyToast - TOAST initialization returned status=%d", static_cast<int>(status));
         if (status != Status::OK)
         {
             DEBUG_LOG_DB("Failed to initialize policy TOAST manager: " << static_cast<int>(status));
@@ -1428,103 +1443,126 @@ namespace scratchbird::core
 
     auto CatalogManager::load(ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        DEBUG_LOG_DB("Loading system catalog");
+        bool needs_toast_init = false;
 
-        // Try to read catalog root
-        Status status = readCatalogRoot(ctx);
-
-        if (status == Status::PAGE_CORRUPT)
+        // Use scoped block for mutex to allow TOAST init outside lock
         {
-            // Catalog not initialized yet, initialize it
-            DEBUG_LOG_DB("Catalog not found, initializing");
+            std::lock_guard<std::mutex> lock(mutex_);
+            DEBUG_LOG_DB("Loading system catalog");
 
-            return initialize(ctx);
-        }
-        if (status != Status::OK)
-        {
-            return status;
-        }
+            // Try to read catalog root
+            Status status = readCatalogRoot(ctx);
 
-        // If we successfully read catalog root, load the data
+            if (status == Status::PAGE_CORRUPT)
+            {
+                // Catalog not initialized yet, initialize it
+                DEBUG_LOG_DB("Catalog not found, initializing");
 
-        // Load schemas
-        status = readSchemaRecords(ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
-
-        // Load tables
-        status = readTableRecords(ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
-
-        // Load columns for each table
-        for (const auto &[table_id, table_info] : table_cache_)
-        {
-            status = readColumnRecords(table_info.table_id, ctx);
-            if (status != Status::OK)
+                status = initialize(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                // New database needs TOAST initialization
+                needs_toast_init = true;
+            }
+            else if (status != Status::OK)
             {
                 return status;
             }
-        }
-
-        // Load indexes
-        status = readIndexRecords(ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
-
-        // Phase 6.2: Load dependencies
-        status = readDependencyRecords(ctx);
-        if (status != Status::OK)
-        {
-            LOG_WARNING(CATALOG, "Failed to load dependencies: %d (continuing)", static_cast<int>(status));
-            // Don't fail catalog load if dependencies fail - they're not critical for basic operation
-        }
-        else
-        {
-            // Rebuild object_to_dependencies_ lookup map from cache
-            for (const auto &[dep_id, dep_info] : dependency_cache_)
+            else
             {
-                object_to_dependencies_.insert({dep_info.dependent_object_id, dep_id});
-                object_to_dependencies_.insert({dep_info.referenced_object_id, dep_id});
+                // If we successfully read catalog root, load the data
+
+                // Load schemas
+                status = readSchemaRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Load tables
+                status = readTableRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Load columns for each table
+                for (const auto &[table_id, table_info] : table_cache_)
+                {
+                    status = readColumnRecords(table_info.table_id, ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                }
+
+                // Load indexes
+                status = readIndexRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Phase 6.2: Load dependencies
+                status = readDependencyRecords(ctx);
+                if (status != Status::OK)
+                {
+                    LOG_WARNING(CATALOG, "Failed to load dependencies: %d (continuing)", static_cast<int>(status));
+                    // Don't fail catalog load if dependencies fail - they're not critical for basic operation
+                }
+                else
+                {
+                    // Rebuild object_to_dependencies_ lookup map from cache
+                    for (const auto &[dep_id, dep_info] : dependency_cache_)
+                    {
+                        object_to_dependencies_.insert({dep_info.dependent_object_id, dep_id});
+                        object_to_dependencies_.insert({dep_info.referenced_object_id, dep_id});
+                    }
+                    DEBUG_LOG_DB("Loaded " << dependency_cache_.size() << " dependencies");
+                }
+
+                // Phase 6.2: Load comments
+                status = readCommentRecords(ctx);
+                if (status != Status::OK)
+                {
+                    LOG_WARNING(CATALOG, "Failed to load comments: %d (continuing)", static_cast<int>(status));
+                    // Don't fail catalog load if comments fail - they're not critical
+                }
+                else
+                {
+                    DEBUG_LOG_DB("Loaded " << comment_cache_.size() << " comments");
+                }
+
+                // Phase D: Load foreign keys
+                status = readForeignKeyRecords(ctx);
+                if (status != Status::OK)
+                {
+                    LOG_WARNING(CATALOG, "Failed to load foreign keys: %d (continuing)", static_cast<int>(status));
+                    // Don't fail catalog load if FK load fails - they're not critical for basic operation
+                }
+                else
+                {
+                    DEBUG_LOG_DB("Loaded " << foreign_keys_cache_.size() << " foreign keys");
+                }
+
+                DEBUG_LOG_DB("Catalog loaded: " << schema_count_ << " schemas, " << table_count_
+                                                << " tables, " << dependency_cache_.size() << " dependencies, "
+                                                << comment_cache_.size() << " comments, "
+                                                << foreign_keys_cache_.size() << " foreign keys");
+
+                // Existing database also needs TOAST initialization (to load or create TOAST table)
+                needs_toast_init = true;
             }
-            DEBUG_LOG_DB("Loaded " << dependency_cache_.size() << " dependencies");
-        }
+        } // mutex released here
 
-        // Phase 6.2: Load comments
-        status = readCommentRecords(ctx);
-        if (status != Status::OK)
+        // Initialize TOAST outside mutex to avoid deadlock
+        // (ToastManager::initialize calls getTable which needs mutex)
+        if (needs_toast_init)
         {
-            LOG_WARNING(CATALOG, "Failed to load comments: %d (continuing)", static_cast<int>(status));
-            // Don't fail catalog load if comments fail - they're not critical
+            initializePolicyToast(ctx);
         }
-        else
-        {
-            DEBUG_LOG_DB("Loaded " << comment_cache_.size() << " comments");
-        }
-
-        // Phase D: Load foreign keys
-        status = readForeignKeyRecords(ctx);
-        if (status != Status::OK)
-        {
-            LOG_WARNING(CATALOG, "Failed to load foreign keys: %d (continuing)", static_cast<int>(status));
-            // Don't fail catalog load if FK load fails - they're not critical for basic operation
-        }
-        else
-        {
-            DEBUG_LOG_DB("Loaded " << foreign_keys_cache_.size() << " foreign keys");
-        }
-
-        DEBUG_LOG_DB("Catalog loaded: " << schema_count_ << " schemas, " << table_count_
-                                        << " tables, " << dependency_cache_.size() << " dependencies, "
-                                        << comment_cache_.size() << " comments, "
-                                        << foreign_keys_cache_.size() << " foreign keys");
 
         return Status::OK;
     }
@@ -2633,40 +2671,138 @@ namespace scratchbird::core
         return bp->unpinPage(CATALOG_ROOT_PAGE, false, ctx);
     }
 
-    // Helper to write a record to a catalog heap page
+    // Helper to write a record to a catalog heap page (with overflow page support)
     template <typename RecordType>
     auto CatalogManager::writeRecordToHeapPage(uint32_t page_id, const RecordType &record,
                                                ErrorContext *ctx) -> Status
     {
         BufferPool *bp = db_->buffer_pool();
-        void *page_buffer;
-        Status status = bp->pinPage(page_id, &page_buffer, ctx);
-        if (status != Status::OK)
+        PageManager *pm = db_->page_manager();
+        uint32_t current_page_id = page_id;
+        uint32_t iteration_count = 0;
+        constexpr uint32_t MAX_ITERATIONS = 1000;  // Safety limit
+
+        while (true)
         {
+            if (++iteration_count > MAX_ITERATIONS)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Too many iterations in writeRecordToHeapPage");
+                return Status::INVALID_ARGUMENT;
+            }
+            void *page_buffer;
+            Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+
+            // Check if we have space on this page
+            if (heap->free_offset + sizeof(RecordType) <= db_->page_size())
+            {
+                // Write record on this page
+                auto *dest_record = reinterpret_cast<RecordType *>(
+                    reinterpret_cast<uint8_t *>(page_buffer) + heap->free_offset);
+                memcpy(dest_record, &record, sizeof(RecordType));
+
+                heap->record_count++;
+                heap->free_offset += sizeof(RecordType);
+                heap->header.free_space -= sizeof(RecordType);
+                heap->header.generation++;
+
+                return bp->unpinPage(current_page_id, true, ctx);
+            }
+
+            // Page is full - check if there's an overflow page
+            if (heap->next_page != 0)
+            {
+                // Follow the chain to the next page
+                uint32_t next_page_id = heap->next_page;
+                bp->unpinPage(current_page_id, false, ctx);
+                current_page_id = next_page_id;
+                continue;
+            }
+
+            // No overflow page exists - save next_page info and unpin current page first
+            // to avoid holding too many pins during allocation
+            uint32_t saved_page_id = current_page_id;
+            LOG_INFO(STORAGE, "writeRecordToHeapPage: Page %u is full, allocating overflow page", saved_page_id);
+            bp->unpinPage(current_page_id, false, ctx);
+
+            // Allocate new overflow page using buffer pool
+            void *new_page_buffer = nullptr;
+            uint32_t new_page_id = 0;
+            LOG_INFO(STORAGE, "writeRecordToHeapPage: Calling bp->allocatePage()");
+            status = bp->allocatePage(&new_page_id, &new_page_buffer, ctx);
+            LOG_INFO(STORAGE, "writeRecordToHeapPage: bp->allocatePage() returned status=%d, page_id=%u",
+                     static_cast<int>(status), new_page_id);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            LOG_INFO(STORAGE, "writeRecordToHeapPage: Initializing overflow page %u", new_page_id);
+
+            // Initialize the new overflow page in the buffer pool
+            memset(new_page_buffer, 0, db_->page_size());
+            auto *new_heap = reinterpret_cast<CatalogHeapPage *>(new_page_buffer);
+
+            new_heap->header.magic = K_MAGIC_SBRD;
+            new_heap->header.version = 1;
+            new_heap->header.page_type = PAGE_TYPE_HEAP;
+            new_heap->header.page_size = db_->page_size();
+            new_heap->header.page_id = new_page_id;
+            new_heap->header.flags = 0;
+            memcpy(new_heap->header.database_uuid, db_->uuid().bytes.data(), 16);
+            new_heap->header.generation = 1;
+            new_heap->record_count = 0;
+            new_heap->free_offset = sizeof(CatalogHeapPage);
+            new_heap->next_page = 0;
+            new_heap->reserved = 0;
+            new_heap->header.free_space = db_->page_size() - sizeof(CatalogHeapPage);
+            new_heap->header.item_count = 0;
+            new_heap->header.free_offset = sizeof(CatalogHeapPage);
+
+            // Write the record directly to the new page
+            auto *dest_record = reinterpret_cast<RecordType *>(
+                reinterpret_cast<uint8_t *>(new_page_buffer) + new_heap->free_offset);
+            memcpy(dest_record, &record, sizeof(RecordType));
+            new_heap->record_count++;
+            new_heap->free_offset += sizeof(RecordType);
+            new_heap->header.free_space -= sizeof(RecordType);
+            new_heap->header.generation++;
+
+            LOG_INFO(STORAGE, "writeRecordToHeapPage: Unpinning new page %u", new_page_id);
+
+            // Unpin the new page (mark as dirty)
+            status = bp->unpinPage(new_page_id, true, ctx);
+            if (status != Status::OK)
+            {
+                LOG_INFO(STORAGE, "writeRecordToHeapPage: Failed to unpin new page: status=%d", static_cast<int>(status));
+                return status;
+            }
+
+            LOG_INFO(STORAGE, "writeRecordToHeapPage: Re-pinning original page %u", saved_page_id);
+
+            // Re-pin the original page to update its next_page pointer
+            status = bp->pinPage(saved_page_id, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                LOG_INFO(STORAGE, "writeRecordToHeapPage: Failed to re-pin: status=%d", static_cast<int>(status));
+                return status;
+            }
+            heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+
+            LOG_INFO(STORAGE, "writeRecordToHeapPage: Linking page %u -> %u", saved_page_id, new_page_id);
+
+            // Link the current page to the new overflow page
+            heap->next_page = new_page_id;
+            heap->header.generation++;
+            status = bp->unpinPage(saved_page_id, true, ctx);
+            LOG_INFO(STORAGE, "writeRecordToHeapPage: Overflow chain complete, status=%d", static_cast<int>(status));
             return status;
         }
-
-        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
-
-        // Check if we have space
-        if (heap->free_offset + sizeof(RecordType) > db_->page_size())
-        {
-            bp->unpinPage(page_id, false, ctx);
-            SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "Catalog heap page full");
-            return Status::INVALID_ARGUMENT;
-        }
-
-        // Write record
-        auto *dest_record = reinterpret_cast<RecordType *>(
-            reinterpret_cast<uint8_t *>(page_buffer) + heap->free_offset);
-        memcpy(dest_record, &record, sizeof(RecordType));
-
-        heap->record_count++;
-        heap->free_offset += sizeof(RecordType);
-        heap->header.free_space -= sizeof(RecordType);
-        heap->header.generation++;
-
-        return bp->unpinPage(page_id, true, ctx);
     }
 
     // ============================================================================
@@ -2899,41 +3035,52 @@ namespace scratchbird::core
     }
 
     template <typename RecordType, typename InfoType>
+    // Helper to read records from a catalog heap page into a vector
+    // Follows overflow page chain automatically
     inline auto CatalogManager::readRecordsToVector(
         uint32_t page_id, std::vector<InfoType> &results,
         std::function<bool(const RecordType &)> filter,
         std::function<void(const RecordType &, InfoType &)> converter, ErrorContext *ctx) -> Status
     {
         BufferPool *bp = db_->buffer_pool();
-        void *page_buffer;
-        Status status = bp->pinPage(page_id, &page_buffer, ctx);
-        if (status != Status::OK)
-        {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to read catalog heap page");
-            return status;
-        }
-
-        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
-
         results.clear();
-        uint32_t offset = sizeof(CatalogHeapPage);
+        uint32_t current_page_id = page_id;
 
-        for (uint32_t i = 0; i < heap->record_count; i++)
+        while (current_page_id != 0)
         {
-            auto *record =
-                reinterpret_cast<RecordType *>(reinterpret_cast<uint8_t *>(page_buffer) + offset);
-
-            if (record->is_valid && filter(*record))
+            void *page_buffer;
+            Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+            if (status != Status::OK)
             {
-                InfoType info;
-                converter(*record, info);
-                results.push_back(info);
+                SET_ERROR_CONTEXT(ctx, status, "Failed to read catalog heap page");
+                return status;
             }
 
-            offset += sizeof(RecordType);
+            auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+            uint32_t offset = sizeof(CatalogHeapPage);
+
+            for (uint32_t i = 0; i < heap->record_count; i++)
+            {
+                auto *record =
+                    reinterpret_cast<RecordType *>(reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+                if (record->is_valid && filter(*record))
+                {
+                    InfoType info;
+                    converter(*record, info);
+                    results.push_back(info);
+                }
+
+                offset += sizeof(RecordType);
+            }
+
+            // Move to next page in chain
+            uint32_t next_page = heap->next_page;
+            bp->unpinPage(current_page_id, false, ctx);
+            current_page_id = next_page;
         }
 
-        return bp->unpinPage(page_id, false, ctx);
+        return Status::OK;
     }
 
     auto CatalogManager::writeSchemaRecord(const SchemaInfo &schema, ErrorContext *ctx) -> Status

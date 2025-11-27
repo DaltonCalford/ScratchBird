@@ -362,18 +362,18 @@ void testFuzzyMatchingInfrastructure()
     status = index->mergePendingList(&ctx);
     assert(status == Status::OK);
 
-    // Test fuzzy matching (should return NOT_IMPLEMENTED)
-    std::cout << "Testing fuzzy matching (expecting NOT_IMPLEMENTED)...\n";
+    // Test fuzzy matching - now implemented!
+    std::cout << "Testing fuzzy matching...\n";
     std::string query = "helo";
     auto fuzzy_results = index->findFuzzyOptimized(query.data(), query.size(), 1, &ctx);
 
-    std::cout << "  Fuzzy query returned " << fuzzy_results.size() << " results\n";
-    std::cout << "  Expected: 0 (NOT_IMPLEMENTED)\n";
+    std::cout << "  Fuzzy query 'helo' (edit distance 1) returned " << fuzzy_results.size() << " results\n";
+    std::cout << "  Expected: 1 (matching 'hello')\n";
 
-    // Should return empty results since it's not yet implemented
-    assert(fuzzy_results.empty());
+    // Should find "hello" since "helo" is edit distance 1 from "hello"
+    assert(fuzzy_results.size() == 1);
 
-    std::cout << "✓ Fuzzy matching infrastructure in place (optimization pending)\n";
+    std::cout << "✓ Fuzzy matching working correctly\n";
 
     db.close();
 }

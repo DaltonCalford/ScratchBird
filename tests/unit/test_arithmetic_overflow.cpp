@@ -303,11 +303,22 @@ TEST(ArithmeticOverflow, Int64_LargeMultiplication)
     int64_t result;
 
     // Sqrt(INT64_MAX) ≈ 3.037e9
+    // INT64_MAX = 9223372036854775807
+    // 3037000499^2 = 9223372030926249001 (fits)
     int64_t sqrt_max = 3037000499LL;
 
-    // Should succeed
+    // Should succeed - sqrt_max * sqrt_max fits in INT64
     EXPECT_TRUE(safeMultiplyInt64(sqrt_max, sqrt_max, &result));
 
-    // Should fail
-    EXPECT_FALSE(safeMultiplyInt64(sqrt_max, sqrt_max + 1, &result));
+    // Should also succeed - sqrt_max * (sqrt_max + 1) still fits
+    // 3037000499 * 3037000500 = 9223372033963249500 < INT64_MAX
+    EXPECT_TRUE(safeMultiplyInt64(sqrt_max, sqrt_max + 1, &result));
+
+    // Should fail - use a value that actually overflows
+    // INT64_MAX / 2 * 3 will overflow
+    int64_t half_max = INT64_MAX / 2;
+    EXPECT_FALSE(safeMultiplyInt64(half_max, 3, &result));
+
+    // Also test near-boundary overflow
+    EXPECT_FALSE(safeMultiplyInt64(INT64_MAX / 10, 11, &result));
 }
