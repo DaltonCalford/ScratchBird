@@ -159,6 +159,79 @@ set_target_properties(scratchbird_optimizer PROPERTIES
 # Add optimizer dependency to core (after optimizer is defined)
 target_link_libraries(scratchbird_core PUBLIC scratchbird_optimizer nlohmann_json::nlohmann_json)
 
+# ==============================================================================
+# Server Library: scratchbird_server (Local Server Architecture - Phase 1)
+# ==============================================================================
+# IPC infrastructure for client-server communication
+# Supports: Unix domain sockets (Linux/macOS), Named pipes (Windows), TCP localhost
+
+file(GLOB SCRATCHBIRD_SERVER_SOURCES
+    server/*.cpp
+)
+
+add_library(scratchbird_server STATIC
+    ${SCRATCHBIRD_SERVER_SOURCES}
+)
+
+target_include_directories(scratchbird_server PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(scratchbird_server PUBLIC
+    scratchbird_core
+)
+
+# Platform-specific linking for server
+if(WIN32)
+    # Windows: Winsock2 for TCP, Advapi32 for security descriptors
+    target_link_libraries(scratchbird_server PUBLIC ws2_32 advapi32)
+endif()
+
+# Thread support for multi-client handling
+find_package(Threads REQUIRED)
+target_link_libraries(scratchbird_server PUBLIC Threads::Threads)
+
+set_target_properties(scratchbird_server PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE ON
+)
+
+message(STATUS "Server library: scratchbird_server (IPC infrastructure)")
+
+# ==============================================================================
+# Protocol Library: scratchbird_protocol (Local Server Architecture - Phase 2)
+# ==============================================================================
+# Wire protocol for client-server message encoding/decoding
+
+file(GLOB SCRATCHBIRD_PROTOCOL_SOURCES
+    protocol/*.cpp
+)
+
+add_library(scratchbird_protocol STATIC
+    ${SCRATCHBIRD_PROTOCOL_SOURCES}
+)
+
+target_include_directories(scratchbird_protocol PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(scratchbird_protocol PUBLIC
+    scratchbird_server
+    scratchbird_core
+)
+
+set_target_properties(scratchbird_protocol PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE ON
+)
+
+message(STATUS "Protocol library: scratchbird_protocol (wire protocol)")
+
+# ==============================================================================
 # Main executable (placeholder)
 add_executable(scratchbird main.cpp)
 
@@ -182,7 +255,7 @@ set_target_properties(sb_charset_loader PROPERTIES
 )
 
 # Installation (for future use)
-install(TARGETS scratchbird sb_charset_loader scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer
+install(TARGETS scratchbird sb_charset_loader scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer scratchbird_server scratchbird_protocol
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib

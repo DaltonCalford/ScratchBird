@@ -208,6 +208,7 @@ target_link_libraries(scratchbird_tests
     scratchbird_parser
     scratchbird_sblr
     scratchbird_optimizer
+    scratchbird_server
     GTest::gtest
     GTest::gtest_main
 )
@@ -228,6 +229,39 @@ gtest_discover_tests(scratchbird_tests)
 
 # Explicit add_test for validator
 add_test(NAME scratchbird_tests COMMAND scratchbird_tests)
+
+# ==============================================================================
+# IPC Server Infrastructure Tests (Local Server Architecture - Phase 1)
+# ==============================================================================
+add_executable(test_ipc_server unit/test_ipc_server.cpp)
+target_link_libraries(test_ipc_server
+    scratchbird_server
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+add_test(NAME IPC_ServerTests COMMAND test_ipc_server)
+set_tests_properties(IPC_ServerTests PROPERTIES
+    LABELS "server;ipc"
+    TIMEOUT 60
+)
+
+# ==============================================================================
+# Wire Protocol Tests (Local Server Architecture - Phase 2)
+# ==============================================================================
+add_executable(test_wire_protocol unit/test_wire_protocol.cpp)
+target_link_libraries(test_wire_protocol
+    scratchbird_protocol
+    scratchbird_server
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+add_test(NAME WireProtocolTests COMMAND test_wire_protocol)
+set_tests_properties(WireProtocolTests PROPERTIES
+    LABELS "server;protocol;wire"
+    TIMEOUT 60
+)
 
 # ThreadSanitizer (TSAN) Tests for Critical Race Conditions
 # These tests validate fixes for CRITICAL-1, CRITICAL-2, CRITICAL-3, HIGH-1, HIGH-2, etc.
