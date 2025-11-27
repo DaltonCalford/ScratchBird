@@ -29,13 +29,13 @@
 #include <chrono>
 #include <atomic>
 
-namespace scratchbird::optimizer {
-
 // Forward declarations
 namespace scratchbird::core {
     class Database;
     class CatalogManager;
 }
+
+namespace scratchbird::optimizer {
 
 using core::ID;
 using core::UuidV7Bytes;

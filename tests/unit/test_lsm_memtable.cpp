@@ -7,6 +7,7 @@
 #include "scratchbird/core/lsm_tree.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/proc_array.h"
+#include "scratchbird/core/transaction_manager.h"
 #include <cassert>
 #include <iostream>
 #include <thread>
@@ -494,5 +495,5 @@ int main()
 
     std::cout << "\n=== All Memtable Tests PASSED ===\n";
 
-    return;
+    return 0;
 }

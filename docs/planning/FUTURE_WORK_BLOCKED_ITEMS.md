@@ -148,33 +148,6 @@ These security features require the network layer implementation before they can
 
 ---
 
-## Local Server Architecture (Future Priority)
-
-**Original Plan:** LOCAL_SERVER_ARCHITECTURE_PLAN.md
-**Estimated Effort:** 140-190 hours
-**Status:** NOT STARTED
-
-This is a significant standalone feature that provides:
-- Local client-server architecture (sb_server)
-- IPC communication (Unix sockets, Named pipes, TCP localhost)
-- Wire protocol for local connections
-- Auto-start mechanism
-- Client library (libscratchbird_client)
-
-**Prerequisite for:**
-- Command-line tools (sb_isql, sb_verify, sb_backup, sb_security)
-
-**Phase Breakdown:**
-| Phase | Description | Effort |
-|-------|-------------|--------|
-| Phase 1 | IPC Infrastructure | 40-50 hours |
-| Phase 2 | Wire Protocol | 30-40 hours |
-| Phase 3 | Server Implementation | 40-50 hours |
-| Phase 4 | Client Library | 20-30 hours |
-| Phase 5 | Integration & Testing | 10-20 hours |
-
----
-
 ## Summary
 
 | Item | Blocker | Est. Hours | Priority |
@@ -188,10 +161,8 @@ This is a significant standalone feature that provides:
 | Window Function Args | Infrastructure | 8-12 | Low |
 | Window PARTITION BY | Frame Handling | 12-16 | Low |
 | NTH_VALUE | Arg Parsing | 4-6 | Low |
-| Local Server | None (standalone) | 140-190 | Next Major |
 
-**Total Blocked Hours:** ~170-240 hours (excluding Local Server)
-**Local Server Hours:** ~140-190 hours
+**Total Blocked Hours:** ~170-240 hours
 
 ---
 
@@ -201,9 +172,16 @@ This is a significant standalone feature that provides:
 - **P3-14:** After table partitioning is implemented in Alpha Phase 2
 - **P3-15, P3-20:** Can be started now but will be more effective with better statistics
 - **Window Function Enhancements:** Low priority - current implementations are functional
-- **Local Server:** Can be started as next major initiative after catalog cleanup
 
 ---
 
-**Document Version:** 1.0
+## Note on Local Server Architecture
+
+Local Server Architecture is **NO LONGER BLOCKED** - it is now the **NEXT PRIORITY** after completion of Catalog Cleanup (all 4 phases complete as of November 26, 2025).
+
+See [LOCAL_SERVER_ARCHITECTURE_PLAN.md](LOCAL_SERVER_ARCHITECTURE_PLAN.md) for the detailed implementation plan (~140-190 hours).
+
+---
+
+**Document Version:** 1.1
 **Last Updated:** November 26, 2025

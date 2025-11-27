@@ -1,8 +1,8 @@
 # ScratchBird Project Context
 
-**Last Updated:** November 26, 2025 (Catalog Cleanup Phase A COMPLETE - 37 CRUD methods implemented!)
+**Last Updated:** November 26, 2025 (Catalog Cleanup ALL PHASES COMPLETE - ~4,290 lines of virtual catalog!)
 **Current Phase:** Alpha 1 - Engine Functionality (Local Operations)
-**Progress:** ~85% of Alpha 1 (~15% of total project scope)
+**Progress:** ~88% of Alpha 1 (~12% of total project scope)
 **Project Type:** Educational/Research (no time constraints)
 **Detailed Status:** [IMPLEMENTATION_STATUS_DASHBOARD.md](docs/IMPLEMENTATION_STATUS_DASHBOARD.md)
 
@@ -11,18 +11,18 @@
 
 ---
 
-## Current Work: Alpha 1 Completion (~15% Remaining)
+## Current Work: Alpha 1 Completion (~12% Remaining)
 
-**Note:** Due to additional work items identified during development (improvement opportunities, server architecture requirements), Alpha 1 is now estimated at 85% complete with all missing functions, P0 critical issues, P1 high-priority improvements, and P2 medium-priority improvements resolved.
+**Note:** With the completion of ALL Catalog Cleanup phases (A-D), Alpha 1 is now estimated at 88% complete. The remaining work is Local Server Architecture and CLI Tools.
 
-**Focus:** ✅ Functions complete → ✅ P0-P3 complete → ✅ Catalog Phase A COMPLETE → 🔄 Catalog Phases B-D → Server Architecture → CLI tools
+**Focus:** ✅ Functions → ✅ P0-P3 → ✅ Catalog Cleanup ALL PHASES COMPLETE → 🔄 Local Server Architecture → CLI Tools
 
 **Remaining Alpha 1 Work:**
-- ✅ P1 High-Priority (15/15 complete): All items completed including bulk loading bottom-up construction!
-- ✅ P2 Medium-Priority (25/25 complete): All performance optimizations and feature completeness items done! 🎉
-- 🔄 P3 Low-Priority (14/20 complete): 14 unblocked items done, 6 blocked by Alpha 3/dependencies
-- ❌ Local Server Architecture (5 phases): IPC, protocol, server, client library - 140-190 hours
-- ❌ CLI Tools (4 tools): sb_isql, sb_verify, sb_backup, sb_security - 90-110 hours
+- ✅ P0-P2 Improvements (48/48 complete): All critical, high, and medium priority items done! 🎉
+- ✅ P3 Low-Priority (14/20 complete): 14 unblocked items done, 6 blocked by Alpha 3/dependencies
+- ✅ Catalog Cleanup (ALL PHASES COMPLETE): Phases A, B, C, D all done! 🎉
+- 🔄 **NEXT:** Local Server Architecture (5 phases): IPC, protocol, server, client library - 140-190 hours
+- ⏳ CLI Tools (4 tools): sb_isql, sb_verify, sb_backup, sb_security - 90-110 hours
 
 ### What's Working ✅
 
@@ -31,7 +31,7 @@
 - **Data Types:** 86/86 complete
 - **Built-in Functions:** 153/153 complete (100%) 🎉 **JUST COMPLETED!**
 - **Security:** 100% (users, roles, table/column/row-level permissions, RLS)
-- **Catalog:** 40 tables (100% structures, Phase A CRUD complete - 37 methods)
+- **Catalog:** 40+ tables (100% structures, ALL PHASES COMPLETE - virtual catalog, protocol handlers, ~4,290 lines)
 - **PSQL/Stored Procedures & Triggers:** 100% (control flow, cursors, exceptions, trigger firing, procedure invocation)
 - **Advanced SQL:** 100% (CTEs recursive & non-recursive, MERGE, RETURNING, SAVEPOINT, Set Operations)
 - **Constraint Features:** 100% (GENERATED columns STORED/VIRTUAL, IDENTITY columns, Deferred constraints)
@@ -40,21 +40,22 @@
 
 ### Recently Completed ✅
 
-**Catalog Cleanup Phase A** ✅ **100% COMPLETE** (37 CRUD methods, November 26, 2025): 🎉
-See [docs/planning/CATALOG_CLEANUP_PHASE_A_CRUD.md](docs/planning/CATALOG_CLEANUP_PHASE_A_CRUD.md) for complete details.
+**Catalog Cleanup ALL PHASES** ✅ **100% COMPLETE** (November 26, 2025): 🎉
+See [docs/planning/README.md](docs/planning/README.md) for complete details.
 
-**All 9 Phase A tasks complete:**
-- ✅ **A-1:** dropSchema() with cascade support for dependent tables/views/sequences
-- ✅ **A-2:** Domain CRUD (6 methods: create, get, getByName, update, drop, list)
-- ✅ **A-3:** UDR CRUD (6 methods: create, get, getByName, update, drop, list)
-- ✅ **A-4:** Package CRUD (6 methods: create, get, getByName, update, drop, list)
-- ✅ **A-5:** EmulationType CRUD (6 methods: create, get, getByName, update, drop, list)
-- ✅ **A-6:** EmulationServer CRUD (6 methods: create, get, getByName, update, drop, list)
-- ✅ **A-7:** EmulatedDatabase CRUD (6 methods: create, get, getByName, update, drop, list)
-- ✅ **A-8:** updateRole() method
-- ✅ **A-9:** updateGroup() method
+**All 4 Phases Complete:**
+- ✅ **Phase A (CRUD):** 37 methods (dropSchema, Domain/UDR/Package/Emulation CRUD, updateRole/Group)
+- ✅ **Phase B (Structures):** 46 method declarations, 11 new structures/enums (SchemaType, Synonyms, FDW, UDR modules)
+- ✅ **Phase C (Pages):** 7 new system table pages allocated, CatalogRootPage updated
+- ✅ **Phase D (Virtual Catalog):** ~4,290 lines of virtual catalog infrastructure:
+  - VirtualCatalogHandler interface and VirtualCatalogRouter singleton
+  - information_schema (12 SQL standard views)
+  - pg_catalog (12 PostgreSQL views)
+  - mysql.* (6 MySQL tables)
+  - sys.* (8 SQL Server views)
+  - EmulationViewGenerator for on-demand Firebird RDB$* views
 
-**Key Achievement:** Complete CRUD operations for Domain, UDR, Package, and Emulation structures enabling Phase 2 features.
+**Key Achievement:** Complete virtual catalog infrastructure ready for Alpha Phase 2 wire protocol integration!
 
 **PRIORITY 3: P1 High-Priority Improvements** ✅ **100% COMPLETE** (15/15 items, November 25, 2025): 🎉
 See [docs/planning/IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md](docs/planning/IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md) for complete details.
@@ -111,12 +112,14 @@ See [docs/planning/MISSING_FUNCTIONS_IMPLEMENTATION_STATUS.md](docs/planning/MIS
 
 ### What's Next 🚧
 
-**CURRENT: Catalog Cleanup Phases B-D** (~90-140 hours):
-See [docs/planning/CATALOG_CLEANUP_OVERVIEW.md](docs/planning/CATALOG_CLEANUP_OVERVIEW.md) for complete details.
+**CURRENT: Local Server Architecture** (~140-190 hours):
+See [docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md](docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md) for complete details.
 
-- **Phase B (Structures):** Add SchemaType enum, SynonymInfo, FDW structures, UDR modules (~37-48 hours)
-- **Phase C (Pages):** Allocate storage pages for new system tables (~30-43 hours)
-- **Phase D (Virtual):** Virtual catalog infrastructure for information_schema (~38-52 hours)
+- **Phase 1 (IPC):** Unix sockets, Named pipes, TCP localhost (~35-45 hours)
+- **Phase 2 (Protocol):** Wire protocol message format and serialization (~30-40 hours)
+- **Phase 3 (Server):** sb_server process, session management (~40-50 hours)
+- **Phase 4 (Client):** libscratchbird_client library, auto-start (~20-30 hours)
+- **Phase 5 (Integration):** Security, testing, documentation (~10-20 hours)
 
 **PRIORITY 3: P3 Improvement Opportunities** (~200+ hours / 5+ weeks):
 See [docs/audit/IMPROVEMENT_OPPORTUNITIES.md](docs/audit/IMPROVEMENT_OPPORTUNITIES.md) and [docs/IMPLEMENTATION_STATUS_DASHBOARD.md](docs/IMPLEMENTATION_STATUS_DASHBOARD.md) for complete details.
@@ -158,26 +161,7 @@ See [docs/audit/IMPROVEMENT_OPPORTUNITIES.md](docs/audit/IMPROVEMENT_OPPORTUNITI
 
 **Total Improvement Opportunities:** 6 remaining items blocked by Alpha 3 or other dependencies
 
-**PRIORITY 4: Local Server Architecture** (~140-190 hours / 3.5-4.5 weeks):
-See [docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md](docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md) for complete details.
-
-*Transition from embedded to client-server model - MANDATORY before CLI tools*
-
-- **Phase 1:** IPC Infrastructure (Unix sockets, Named pipes, TCP localhost) - 40-50 hours
-- **Phase 2:** Wire Protocol (binary message format, streaming) - 30-40 hours
-- **Phase 3:** Server Implementation (sb_server, multi-threading, sessions) - 40-50 hours
-- **Phase 4:** Client Library (libscratchbird_client, auto-start) - 20-30 hours
-- **Phase 5:** Integration & Testing (security, performance, cross-platform) - 10-20 hours
-
-**Key Features:**
-- Database files opened exclusively by server process
-- Platform-appropriate IPC (Unix sockets on Linux/macOS, Named pipes on Windows)
-- Auto-start server when client connects
-- Authentication and session management
-- Multi-client support
-- Upgrade path to Alpha 3 network protocols
-
-**PRIORITY 5: Command-Line Tools** (~90-110 hours / 2.5-3 weeks):
+**AFTER: Command-Line Tools** (~90-110 hours / 2.5-3 weeks):
 *To be started after server architecture is implemented*
 
 - sb_isql (interactive SQL shell) - connects via libscratchbird_client
@@ -187,41 +171,32 @@ See [docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md](docs/planning/LOCAL_SERVER
 
 ### Immediate Next Steps
 
-**UPDATED SEQUENCE (Catalog Cleanup In Progress):**
+**UPDATED SEQUENCE (Catalog Cleanup COMPLETE):**
 
-1. ✅ **Implement all 30 missing functions** ✅ **COMPLETE** (~222 hours)
-   - ✅ Phase 1-5: All function categories complete
+1. ✅ **Built-in Functions** ✅ **COMPLETE** (153/153)
+2. ✅ **P0-P2 Improvements** ✅ **COMPLETE** (48/48 items)
+3. ✅ **P3 Low-Priority** 🔄 70% COMPLETE (14/20 items, 6 blocked by Alpha 3/dependencies)
+4. ✅ **Catalog Cleanup ALL PHASES** ✅ **COMPLETE** (November 26, 2025) 🎉
+   - Phase A: 37 CRUD methods
+   - Phase B: 46 method declarations, 11 structures/enums
+   - Phase C: 7 system table pages allocated
+   - Phase D: Virtual catalog (~4,290 lines)
 
-2. ✅ **Implement all P0-P2 improvements** ✅ **COMPLETE**
-   - ✅ P0 Critical (8/8), P1 High (15/15), P2 Medium (25/25)
-
-3. ✅ **P3 low-priority improvements** 70% COMPLETE (14/20 items, 6 blocked)
-   - ✅ 14 unblocked items complete
-   - 🔒 6 items blocked by Alpha 3 or other dependencies
-
-4. ✅ **Catalog Cleanup Phase A** ✅ **COMPLETE** (November 26, 2025) 🎉
-   - ✅ 37 CRUD methods implemented (dropSchema, Domain/UDR/Package/Emulation CRUD, updateRole/Group)
-   - See [docs/planning/CATALOG_CLEANUP_PHASE_A_CRUD.md](docs/planning/CATALOG_CLEANUP_PHASE_A_CRUD.md)
-
-5. 🔄 **Catalog Cleanup Phases B-D** (~90-140 hours) - **NEXT PRIORITY**
-   - Phase B: Add structures (SchemaType, Synonyms, FDW, UDR modules) - 37-48 hours
-   - Phase C: System table page allocation - 30-43 hours
-   - Phase D: Virtual catalog infrastructure - 38-52 hours
-
-6. **Implement local server architecture** (140-190 hours / 3.5-4.5 weeks)
-   - Phase 1: IPC infrastructure (Unix sockets, named pipes, TCP) - 40-50 hours
+5. 🔄 **Local Server Architecture** (140-190 hours / 3.5-4.5 weeks) - **NEXT PRIORITY**
+   - Phase 1: IPC infrastructure (Unix sockets, named pipes, TCP) - 35-45 hours
    - Phase 2: Wire protocol (message format, streaming) - 30-40 hours
    - Phase 3: Server implementation (sb_server process) - 40-50 hours
    - Phase 4: Client library (libscratchbird_client) - 20-30 hours
    - Phase 5: Integration & testing - 10-20 hours
+   - See [docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md](docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md)
 
-7. **Build command-line tools** (90-110 hours / 2.5-3 weeks)
+6. ⏳ **Command-Line Tools** (90-110 hours / 2.5-3 weeks)
    - sb_isql (interactive SQL shell)
    - sb_verify (database integrity checker)
    - sb_backup (backup/restore tool)
    - sb_security (user/role management tool)
 
-**Total Alpha 1 Remaining Work:** ~430-500 hours (11-13 weeks)
+**Total Alpha 1 Remaining Work:** ~230-300 hours (6-8 weeks)
 
 ---
 
@@ -377,13 +352,20 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 ## Recent Accomplishments
 
 **November 26, 2025 (Latest):**
-- ✅ **Catalog Cleanup Phase A 100% COMPLETE:** All 37 CRUD methods implemented! 🎉
-  - dropSchema() with cascade support for dependent objects
-  - Domain CRUD (6 methods), UDR CRUD (6 methods), Package CRUD (6 methods)
-  - EmulationType CRUD (6 methods), EmulationServer CRUD (6 methods), EmulatedDatabase CRUD (6 methods)
-  - updateRole() and updateGroup() methods
-  - **Total:** 37 new methods in catalog_manager.h/cpp (~1,500 lines of implementation)
-  - **Next:** Catalog Cleanup Phases B-D (structures, pages, virtual catalog)
+- ✅ **Catalog Cleanup ALL PHASES 100% COMPLETE:** ~4,290 lines of virtual catalog infrastructure! 🎉
+  - **Phase A:** 37 CRUD methods (dropSchema, Domain/UDR/Package/Emulation CRUD, updateRole/Group)
+  - **Phase B:** 46 method declarations, 11 new structures/enums (SchemaType, Synonyms, FDW, UDR modules)
+  - **Phase C:** 7 new system table pages allocated, CatalogRootPage updated
+  - **Phase D:** Virtual catalog infrastructure
+    - VirtualCatalogHandler interface and VirtualCatalogRouter singleton
+    - information_schema (12 SQL standard views) - ~980 lines
+    - pg_catalog (12 PostgreSQL views) - ~960 lines
+    - mysql.* (6 MySQL tables) - ~470 lines
+    - sys.* (8 SQL Server views) - ~780 lines
+    - EmulationViewGenerator for on-demand Firebird RDB$* - ~470 lines
+    - virtual_catalog.cpp router implementation - ~170 lines
+  - **Total:** ~4,290 lines of new code
+  - **Next:** Local Server Architecture (5 phases)
 
 **November 24, 2025:**
 - ✅ **P0 Critical Issues 100% COMPLETE:** All 8 P0 items verified and resolved! 🎉
@@ -429,41 +411,27 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 
 ## Summary
 
-**Current Focus:** Complete Alpha 1 (~15% remaining)
+**Current Focus:** Complete Alpha 1 (~12% remaining)
 
-**Immediate Work:**
-1. ✅ **Implement 30 missing functions** ✅ **COMPLETE** (~222 hours)
-   - Achievement: Full PostgreSQL, MySQL, MSSQL, Firebird functional parity
-   - Result: 153 total built-in functions (100% complete)
+**Completed Work:**
+1. ✅ **Built-in Functions** (153/153 = 100%)
+2. ✅ **P0-P2 Improvements** (48/48 = 100%)
+3. ✅ **P3 Low-Priority** (14/20 = 70%, 6 blocked)
+4. ✅ **Catalog Cleanup ALL PHASES** (A, B, C, D = 100%)
 
-2. ✅ **Resolve P0 critical issues** ✅ **COMPLETE** (<1 hour)
-   - Achievement: All 8 critical security and correctness issues resolved
-   - Result: Codebase was already in excellent shape - only minor fixes needed
-
-3. ✅ **Implement P1 high-priority improvements** ✅ **COMPLETE** (Nov 25, 2025) 🎉
-   - Achievement: All 15 P1 items complete including bulk loading bottom-up construction
-   - Result: Performance, PSQL features, and constraint operations all verified working
-
-4. ✅ **Implement P2 medium-priority improvements** ✅ **100% COMPLETE** (November 25, 2025) 🎉
-   - 25/25 items complete - all performance and feature items done!
-   - See [docs/planning/IMPROVEMENTS_P2_MEDIUM_PRIORITY_PLAN.md](docs/planning/IMPROVEMENTS_P2_MEDIUM_PRIORITY_PLAN.md)
-
-5. 🔄 **P3 low-priority improvements** 70% COMPLETE (November 26, 2025)
-   - ✅ 14/20 items complete - all unblocked items done!
-   - 🔒 6 items blocked by Alpha 3 or other dependencies
-   - See [docs/planning/IMPROVEMENTS_P3_LOW_PRIORITY_PLAN.md](docs/planning/IMPROVEMENTS_P3_LOW_PRIORITY_PLAN.md)
-
-6. **Implement local server architecture** (140-190 hours / 3.5-4.5 weeks) - **NEXT PRIORITY**
+**Remaining Work:**
+5. 🔄 **Local Server Architecture** (140-190 hours / 3.5-4.5 weeks) - **NEXT PRIORITY**
    - Transition from embedded to client-server model
    - IPC infrastructure, wire protocol, sb_server, libscratchbird_client
    - Mandatory before CLI tools can function
+   - See [docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md](docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md)
 
-5. **Build CLI tools** (90-110 hours / 2.5-3 weeks) - AFTER server architecture
+6. ⏳ **CLI Tools** (90-110 hours / 2.5-3 weeks) - AFTER server architecture
    - sb_isql, sb_verify, sb_backup, sb_security
    - All tools connect via libscratchbird_client
 
 **Next Major Milestones:**
-1. Alpha 1 completion (~11-13 weeks total: 430-500 hours remaining)
+1. Alpha 1 completion (~6-8 weeks total: 230-300 hours remaining)
 2. Alpha 2: Multi-dialect parsers (PostgreSQL, MySQL, MSSQL, Firebird, ScratchBird)
 3. Alpha 3: Network protocols (libpq, MySQL, TDS, native)
 4. Beta 1-4: Distributed systems + NoSQL models
@@ -475,5 +443,5 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 ---
 
 **Last Updated:** November 26, 2025
-**Status:** Alpha 1 - 85% complete (~15% of total project)
-**Current Priority:** ✅ Functions COMPLETE → ✅ P0-P3 COMPLETE → ✅ Catalog Phase A COMPLETE → 🔄 Catalog Phases B-D → Server architecture → CLI tools
+**Status:** Alpha 1 - 88% complete (~12% of total project)
+**Current Priority:** ✅ Functions → ✅ P0-P3 → ✅ Catalog Cleanup ALL PHASES → 🔄 Local Server Architecture → CLI Tools

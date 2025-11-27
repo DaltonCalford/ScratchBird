@@ -7,6 +7,7 @@
 #include "scratchbird/core/lsm_tree.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/proc_array.h"
+#include "scratchbird/core/transaction_manager.h"
 #include <cassert>
 #include <iostream>
 #include <cstdio>
@@ -547,5 +548,5 @@ int main()
 
     std::cout << "\n=== All SSTable Reader Tests PASSED ===\n\n";
 
-    return;
+    return 0;
 }

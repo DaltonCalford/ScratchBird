@@ -80,7 +80,16 @@ namespace scratchbird::core
         uint32_t extensions_page;     // Page containing extensions table
         uint32_t foreign_keys_page;   // Page containing foreign keys table (Phase D - FK Persistence)
 
-        uint8_t reserved[3892];       // Padding for 16KB page (156 bytes used: 152 + 4 for foreign_keys_page)
+        // Phase B: Synonyms, FDW, Server Registry, UDR Engine/Module
+        uint32_t synonyms_page;           // Page containing synonyms table
+        uint32_t foreign_servers_page;    // Page containing foreign servers table
+        uint32_t foreign_tables_page;     // Page containing foreign tables table
+        uint32_t user_mappings_page;      // Page containing user mappings table
+        uint32_t server_registry_page;    // Page containing server registry table
+        uint32_t udr_engines_page;        // Page containing UDR engines table
+        uint32_t udr_modules_page;        // Page containing UDR modules table
+
+        uint8_t reserved[3864];       // Padding for 16KB page (184 bytes used: 156 + 28 for Phase B)
     };
 
     // Schema record on disk
@@ -1164,7 +1173,56 @@ namespace scratchbird::core
         status = db_->write_page(foreign_keys_table_page_, page_buffer.get(), ctx);
         if (status != Status::OK) return status;
 
-        DEBUG_LOG_DB("Allocated and initialized 15 new system tables (Phase 6.1 + FK)");
+        // Phase B: Synonyms table
+        status = pm->allocatePage(synonyms_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = synonyms_table_page_;
+        status = db_->write_page(synonyms_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Phase B: Foreign servers table (FDW)
+        status = pm->allocatePage(foreign_servers_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = foreign_servers_table_page_;
+        status = db_->write_page(foreign_servers_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Phase B: Foreign tables table (FDW)
+        status = pm->allocatePage(foreign_tables_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = foreign_tables_table_page_;
+        status = db_->write_page(foreign_tables_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Phase B: User mappings table (FDW)
+        status = pm->allocatePage(user_mappings_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = user_mappings_table_page_;
+        status = db_->write_page(user_mappings_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Phase B: Server registry table (Distributed MVCC)
+        status = pm->allocatePage(server_registry_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = server_registry_table_page_;
+        status = db_->write_page(server_registry_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Phase B: UDR engines table
+        status = pm->allocatePage(udr_engines_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = udr_engines_table_page_;
+        status = db_->write_page(udr_engines_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Phase B: UDR modules table
+        status = pm->allocatePage(udr_modules_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = udr_modules_table_page_;
+        status = db_->write_page(udr_modules_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        DEBUG_LOG_DB("Allocated and initialized 22 new system tables (Phase 6.1 + FK + Phase B)");
 
         // Update root page with table locations
         status = writeCatalogRoot(ctx);
@@ -2479,6 +2537,15 @@ namespace scratchbird::core
         root->emulated_dbs_page = emulated_dbs_table_page_;
         root->foreign_keys_page = foreign_keys_table_page_;
 
+        // Phase B: Synonyms, FDW, Server Registry, UDR Engine/Module
+        root->synonyms_page = synonyms_table_page_;
+        root->foreign_servers_page = foreign_servers_table_page_;
+        root->foreign_tables_page = foreign_tables_table_page_;
+        root->user_mappings_page = user_mappings_table_page_;
+        root->server_registry_page = server_registry_table_page_;
+        root->udr_engines_page = udr_engines_table_page_;
+        root->udr_modules_page = udr_modules_table_page_;
+
         return bp->unpinPage(CATALOG_ROOT_PAGE, true, ctx);
     }
 
@@ -2553,6 +2620,15 @@ namespace scratchbird::core
         emulation_servers_table_page_ = root->emulation_servers_page;
         emulated_dbs_table_page_ = root->emulated_dbs_page;
         foreign_keys_table_page_ = root->foreign_keys_page;
+
+        // Phase B: Synonyms, FDW, Server Registry, UDR Engine/Module
+        synonyms_table_page_ = root->synonyms_page;
+        foreign_servers_table_page_ = root->foreign_servers_page;
+        foreign_tables_table_page_ = root->foreign_tables_page;
+        user_mappings_table_page_ = root->user_mappings_page;
+        server_registry_table_page_ = root->server_registry_page;
+        udr_engines_table_page_ = root->udr_engines_page;
+        udr_modules_table_page_ = root->udr_modules_page;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, false, ctx);
     }

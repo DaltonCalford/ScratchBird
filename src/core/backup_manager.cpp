@@ -228,7 +228,7 @@ Status BackupManager::createBackup(const std::string& backup_path,
 
     // Update last backup info
     last_backup_time_ = header.backup_end_time;
-    generateUuidV7(last_backup_id_);
+    last_backup_id_ = generateUuidV7();
 
     if (progress) {
         progress->completed = true;
@@ -370,8 +370,8 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
                 if (!config.partial_restore) {
                     ::close(backup_fd);
                     ::close(target_fd);
-                    SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Page checksum mismatch");
-                    return Status::CORRUPTION;
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Page checksum mismatch");
+                    return Status::DATA_CORRUPTED;
                 }
                 LOG_ERROR(GENERAL, "Checksum mismatch for page %lu, skipping", entry.gpid);
                 continue;
@@ -379,7 +379,7 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
         }
 
         // Write to target database
-        uint32_t page_id = getPageId(entry.gpid);
+        uint32_t page_id = static_cast<uint32_t>(getPageNumber(entry.gpid));
         off_t offset = static_cast<off_t>(page_id) * header.page_size;
         ::lseek(target_fd, offset, SEEK_SET);
         ssize_t written = ::write(target_fd, page_data, entry.original_size);
@@ -527,8 +527,8 @@ Status BackupManager::verifyBackup(const std::string& backup_path,
     }
 
     if (errors > 0) {
-        SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Backup verification found errors");
-        return Status::CORRUPTION;
+        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Backup verification found errors");
+        return Status::DATA_CORRUPTED;
     }
 
     LOG_INFO(GENERAL, "Backup verification passed: %lu pages", header.total_pages);
@@ -654,8 +654,8 @@ Status BackupManager::readBackupHeader(int fd, BackupManifestHeader* header,
 
     // Validate magic
     if (std::memcmp(header->magic, BACKUP_MAGIC, 8) != 0) {
-        SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid backup file magic");
-        return Status::CORRUPTION;
+        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid backup file magic");
+        return Status::DATA_CORRUPTED;
     }
 
     // Validate version
@@ -708,8 +708,8 @@ Status BackupManager::decompressPage(const uint8_t* input, uint32_t input_size,
         uLongf dest_len = output_size;
         int ret = uncompress(output, &dest_len, input, input_size);
         if (ret != Z_OK) {
-            SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "zlib decompression failed");
-            return Status::CORRUPTION;
+            SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "zlib decompression failed");
+            return Status::DATA_CORRUPTED;
         }
         return Status::OK;
     }

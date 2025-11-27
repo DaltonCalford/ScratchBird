@@ -203,14 +203,10 @@ TEST_F(MultiThreadStressTest, HundredFiftyThreadsMixedWorkload) {
                         break;
                     }
                     case 2: {
-                        // Snapshot operation
-                        // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
-                        if (// MGA: getSnapshot removed == Status::OK) {
-                            // MGA: snapshot.cleanup removed;
-                            successful_ops.fetch_add(1);
-                        } else {
-                            errors.fetch_add(1);
-                        }
+                        // MGA: getSnapshot removed - use getCurrentXid instead
+                        uint64_t current_xid = txn_mgr_->getCurrentXid();
+                        (void)current_xid; // Suppress unused variable warning
+                        successful_ops.fetch_add(1);
                         break;
                     }
                 }

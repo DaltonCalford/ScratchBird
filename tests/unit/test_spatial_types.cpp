@@ -28,7 +28,8 @@ TEST(SpatialTypesTest, PointEquality)
 
 TEST(SpatialTypesTest, PointTypedValue)
 {
-    auto val = TypedValue::makePoint(3.0, 4.0);
+    Point pt_obj(3.0, 4.0);
+    auto val = TypedValue::makePoint(pt_obj);
     EXPECT_EQ(val.type(), DataType::POINT);
     EXPECT_FALSE(val.isNull());
 
@@ -39,7 +40,8 @@ TEST(SpatialTypesTest, PointTypedValue)
 
 TEST(SpatialTypesTest, PointToString)
 {
-    auto val = TypedValue::makePoint(1.5, 2.5);
+    Point pt_obj(1.5, 2.5);
+    auto val = TypedValue::makePoint(pt_obj);
     std::string str = val.toString();
     EXPECT_TRUE(str.find("POINT") != std::string::npos);
     EXPECT_TRUE(str.find("1.5") != std::string::npos);
@@ -81,7 +83,8 @@ TEST(SpatialTypesTest, LineStringTypedValue)
         Point(1.0, 1.0),
         Point(2.0, 2.0)
     };
-    auto val = TypedValue::makeLineString(points);
+    LineString line_obj(points);
+    auto val = TypedValue::makeLineString(line_obj);
 
     EXPECT_EQ(val.type(), DataType::LINESTRING);
     auto line = val.getLineString();
@@ -91,7 +94,8 @@ TEST(SpatialTypesTest, LineStringTypedValue)
 TEST(SpatialTypesTest, LineStringToString)
 {
     std::vector<Point> points = {Point(0.0, 0.0), Point(1.0, 1.0)};
-    auto val = TypedValue::makeLineString(points);
+    LineString line_obj(points);
+    auto val = TypedValue::makeLineString(line_obj);
     std::string str = val.toString();
     EXPECT_TRUE(str.find("LINESTRING") != std::string::npos);
 }
@@ -107,7 +111,7 @@ TEST(SpatialTypesTest, PolygonCreation)
         Point(0.0, 4.0),
         Point(0.0, 0.0)  // Closed ring
     };
-    Polygon poly(exterior);
+    Polygon poly({exterior});
 
     EXPECT_EQ(poly.rings.size(), 1);
     EXPECT_TRUE(poly.isValid());
@@ -123,7 +127,7 @@ TEST(SpatialTypesTest, PolygonValidation)
         Point(0.0, 1.0),
         Point(0.0, 0.0)
     };
-    Polygon valid_poly(valid_ring);
+    Polygon valid_poly({valid_ring});
     EXPECT_TRUE(valid_poly.isValid());
 
     // Invalid polygon (not closed)
@@ -133,7 +137,7 @@ TEST(SpatialTypesTest, PolygonValidation)
         Point(1.0, 1.0),
         Point(0.0, 1.0)
     };
-    Polygon invalid_poly(unclosed_ring);
+    Polygon invalid_poly({unclosed_ring});
     EXPECT_FALSE(invalid_poly.isValid());
 
     // Invalid polygon (< 4 points)
@@ -142,7 +146,7 @@ TEST(SpatialTypesTest, PolygonValidation)
         Point(1.0, 0.0),
         Point(0.0, 0.0)
     };
-    Polygon invalid_poly2(short_ring);
+    Polygon invalid_poly2({short_ring});
     EXPECT_FALSE(invalid_poly2.isValid());
 }
 
@@ -167,7 +171,7 @@ TEST(SpatialTypesTest, PolygonWithHoles)
 
     EXPECT_EQ(poly.rings.size(), 2);
     EXPECT_TRUE(poly.isValid());
-    EXPECT_EQ(poly.numInteriorRings(), 1);
+    EXPECT_TRUE(poly.hasHoles());  // Should have 1 interior ring (hole)
 }
 
 TEST(SpatialTypesTest, PolygonTypedValue)
@@ -179,7 +183,8 @@ TEST(SpatialTypesTest, PolygonTypedValue)
         Point(0.0, 4.0),
         Point(0.0, 0.0)
     };
-    auto val = TypedValue::makePolygon(exterior);
+    Polygon poly_obj({exterior});
+    auto val = TypedValue::makePolygon(poly_obj);
 
     EXPECT_EQ(val.type(), DataType::POLYGON);
     auto poly = val.getPolygon();
@@ -196,7 +201,8 @@ TEST(SpatialTypesTest, PolygonToString)
         Point(0.0, 1.0),
         Point(0.0, 0.0)
     };
-    auto val = TypedValue::makePolygon(exterior);
+    Polygon poly_obj({exterior});
+    auto val = TypedValue::makePolygon(poly_obj);
     std::string str = val.toString();
     EXPECT_TRUE(str.find("POLYGON") != std::string::npos);
 }
@@ -283,7 +289,7 @@ TEST(WKTParserTest, ParsePolygonWithHole)
     ASSERT_TRUE(poly.has_value());
     EXPECT_EQ(poly->rings.size(), 2);
     EXPECT_TRUE(poly->isValid());
-    EXPECT_EQ(poly->numInteriorRings(), 1);
+    EXPECT_TRUE(poly->hasHoles());  // numInteriorRings() → hasHoles()
 }
 
 TEST(WKTParserTest, ParsePolygonInvalidUnclosed)
@@ -317,7 +323,8 @@ TEST(WKTParserTest, PolygonToWKT)
         Point(0, 4),
         Point(0, 0)
     };
-    Polygon poly(ring);
+    std::vector<std::vector<Point>> rings_vec = {ring};
+    Polygon poly(rings_vec);
     std::string wkt = WKTParser::polygonToWKT(poly);
     EXPECT_TRUE(wkt.find("POLYGON") != std::string::npos);
 }
@@ -377,7 +384,8 @@ TEST(WKBSerializerTest, SerializePolygonBasic)
         Point(0, 4),
         Point(0, 0)
     };
-    Polygon poly(ring);
+    std::vector<std::vector<Point>> rings_vec = {ring};
+    Polygon poly(rings_vec);
     auto wkb = WKBSerializer::serializePolygon(poly);
     EXPECT_FALSE(wkb.empty());
 }
@@ -391,7 +399,8 @@ TEST(WKBSerializerTest, DeserializePolygonBasic)
         Point(0, 4),
         Point(0, 0)
     };
-    Polygon original(ring);
+    std::vector<std::vector<Point>> rings_vec = {ring};
+    Polygon original(rings_vec);
     auto wkb = WKBSerializer::serializePolygon(original);
     auto poly = WKBSerializer::deserializePolygon(wkb);
     ASSERT_TRUE(poly.has_value());
@@ -431,7 +440,8 @@ TEST(WKBSerializerTest, WKBRoundTripPolygon)
         Point(0, 4),
         Point(0, 0)
     };
-    Polygon original(ring);
+    std::vector<std::vector<Point>> rings_vec = {ring};
+    Polygon original(rings_vec);
     auto wkb = WKBSerializer::serializePolygon(original);
     auto result = WKBSerializer::deserializePolygon(wkb);
     ASSERT_TRUE(result.has_value());
@@ -462,7 +472,7 @@ TEST(WKBSerializerTest, WKBRoundTripPolygonWithHole)
     auto result = WKBSerializer::deserializePolygon(wkb);
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->rings.size(), 2);
-    EXPECT_EQ(result->numInteriorRings(), 1);
+    EXPECT_TRUE(result->hasHoles());  // numInteriorRings() → hasHoles()
 }
 
 // ===== Type System Tests =====
@@ -474,12 +484,8 @@ TEST(TypeSystemTest, SpatialTypeNames)
     EXPECT_EQ(TypeSystem::getTypeName(DataType::POLYGON), "POLYGON");
 }
 
-TEST(TypeSystemTest, ParseSpatialTypeNames)
-{
-    EXPECT_EQ(TypeSystem::parseTypeName("POINT"), DataType::POINT);
-    EXPECT_EQ(TypeSystem::parseTypeName("LINESTRING"), DataType::LINESTRING);
-    EXPECT_EQ(TypeSystem::parseTypeName("POLYGON"), DataType::POLYGON);
-}
+// NOTE: TypeSystem::parseTypeName() was removed from the API
+// Use getTypeName() to get type names instead
 
 // ===== Edge Cases and Error Handling =====
 

@@ -144,6 +144,10 @@ target_link_libraries(scratchbird_optimizer PUBLIC
     # Note: Not linking scratchbird_core to avoid circular dependency
     # scratchbird_core will link against scratchbird_optimizer instead
 )
+# Link OpenSSL if available for RAND_bytes in statistics_manager.cpp
+if(OPENSSL_FOUND)
+    target_link_libraries(scratchbird_optimizer PUBLIC OpenSSL::Crypto)
+endif()
 
 set_target_properties(scratchbird_optimizer PROPERTIES
     CXX_STANDARD 17

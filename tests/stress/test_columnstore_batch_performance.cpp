@@ -17,6 +17,7 @@
 #include <random>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 using namespace scratchbird::core;
 
@@ -97,7 +98,7 @@ void benchmarkRLEThroughput()
         return;
     }
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 10000, &ctx);
 
     // Generate test data: 1M INT32 values with high repetition
     const uint32_t ROW_COUNT = 1000000;
@@ -196,7 +197,7 @@ void benchmarkSIMDPredicate()
         return;
     }
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 100000, &ctx);
 
     // Generate test data: 1M INT32 values with uniform distribution
     const uint32_t ROW_COUNT = 1000000;
@@ -285,7 +286,7 @@ void benchmarkBatchScan()
         return;
     }
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 10000, &ctx);
 
     std::cout << "  Note: Batch scan API implemented but requires disk segments." << std::endl;
     std::cout << "  Full benchmark deferred to integration testing." << std::endl;

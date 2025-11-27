@@ -134,8 +134,9 @@ int main(int argc, char **argv)
     // Open database
     std::cout << "Opening database: " << db_path << "\n";
     ErrorContext ctx;
-    Database *db = Database::open(db_path.c_str(), &ctx);
-    if (!db)
+    Database db;
+    Status status = db.open(db_path, &ctx);
+    if (status != Status::OK)
     {
         std::cerr << "Error: Failed to open database: " << ctx.message << "\n";
         if (ctx.file && ctx.line > 0)
@@ -148,18 +149,16 @@ int main(int argc, char **argv)
     std::cout << "Database opened successfully\n\n";
 
     // Create timezone loader
-    CatalogManager *catalog = db->getCatalog();
+    CatalogManager *catalog = db.catalog_manager();
     if (!catalog)
     {
         std::cerr << "Error: Failed to get catalog from database\n";
-        delete db;
         return 1;
     }
 
     TimezoneLoader loader(catalog);
 
     // Load timezone data
-    Status status;
     if (!single_file.empty())
     {
         // Load single file
@@ -183,7 +182,6 @@ int main(int argc, char **argv)
         {
             std::cerr << "  at " << ctx.file << ":" << ctx.line << "\n";
         }
-        delete db;
         return 1;
     }
 
@@ -211,8 +209,7 @@ int main(int argc, char **argv)
         }
     }
 
-    // Cleanup
-    delete db;
+    // Database closes automatically when db goes out of scope
 
     std::cout << "\nDone!\n";
     return 0;
