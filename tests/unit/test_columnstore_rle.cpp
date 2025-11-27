@@ -149,7 +149,7 @@ void test_int32_basic()
                                              1024, CompressionType::RLE, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // Test data: [1, 1, 1, 2, 2, 3, 3, 3, 3]
@@ -203,7 +203,7 @@ void test_int64_basic()
                                              1024, CompressionType::RLE, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // Test data: Large INT64 values
@@ -248,7 +248,7 @@ void test_best_case_compression()
                                              1024, CompressionType::RLE, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // 10000 identical values
@@ -300,7 +300,7 @@ void test_worst_case_compression()
                                              1024, CompressionType::RLE, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // 1000 different values
@@ -356,7 +356,7 @@ void test_null_handling()
                                              1024, CompressionType::RLE, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // Test data: [1, NULL, NULL, 2, 2, NULL]
@@ -405,7 +405,7 @@ void test_empty_input()
                                              1024, CompressionType::RLE, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // Empty segment
@@ -449,7 +449,7 @@ void test_single_value()
                                              1024, CompressionType::RLE, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // Single value
@@ -493,7 +493,7 @@ void test_alternating_values()
                                              1024, CompressionType::RLE, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // Alternating: [1, 2, 1, 2, 1, 2, ...]
@@ -545,7 +545,7 @@ void test_large_dataset()
                                              1024, CompressionType::RLE, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // 1M values with 10 unique values (good RLE scenario)
@@ -604,7 +604,7 @@ void test_round_trip()
                                              1024, CompressionType::RLE, &root_page, &ctx);
     assert(status == Status::OK);
 
-    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, &ctx);
+    auto index = ColumnstoreIndex::open(db, index_uuid, root_page, 1024, &ctx);
     assert(index != nullptr);
 
     // Test data

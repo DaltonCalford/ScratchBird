@@ -46,27 +46,38 @@ void IndexAdvisor::initializeIndexStats()
     // Load all existing indexes from catalog
     auto now = std::chrono::steady_clock::now();
 
-    // Get all tables and their indexes
-    std::vector<CatalogManager::TableInfo> tables;
+    // Get all schemas first
+    std::vector<CatalogManager::SchemaInfo> schemas;
     ErrorContext ctx;
-    auto status = catalog_->listTables(tables, &ctx);
+    auto status = catalog_->listSchemas(schemas, &ctx);
     if (status != Status::OK) return;
 
-    for (const auto& table : tables) {
-        std::vector<CatalogManager::IndexInfo> indexes;
-        status = catalog_->getTableIndexes(table.table_id, indexes, &ctx);
+    // Get all tables from each schema
+    for (const auto& schema : schemas) {
+        std::vector<CatalogManager::TableInfo> tables;
+        status = catalog_->listTables(schema.schema_id, tables, &ctx);
         if (status != Status::OK) continue;
 
-        for (const auto& idx : indexes) {
-            IndexUsageStats stats;
-            stats.index_id = idx.index_id;
-            stats.table_id = table.table_id;
-            stats.index_name = idx.index_name;
-            stats.table_name = table.table_name;
-            stats.created_at = now; // Approximate
-            stats.is_primary_key = (idx.index_type == CatalogManager::IndexType::PRIMARY_KEY);
-            stats.is_unique = idx.is_unique;
-            index_stats_[idx.index_id] = stats;
+        for (const auto& table : tables) {
+            std::vector<CatalogManager::IndexInfo> indexes;
+            status = catalog_->listIndexesForTable(table.table_id, indexes, &ctx);
+            if (status != Status::OK) continue;
+
+            for (const auto& idx : indexes) {
+                IndexUsageStats stats;
+                stats.index_id = idx.index_id;
+                stats.table_id = table.table_id;
+                stats.index_name = idx.index_name;
+                stats.table_name = table.table_name;
+                stats.created_at = now; // Approximate
+                // Detect primary key by naming convention (pk_ prefix or _pk/_pkey suffix) AND uniqueness
+                stats.is_primary_key = idx.is_unique &&
+                    (idx.index_name.find("pk_") == 0 ||
+                     idx.index_name.find("_pk") != std::string::npos ||
+                     idx.index_name.find("_pkey") != std::string::npos);
+                stats.is_unique = idx.is_unique;
+                index_stats_[idx.index_id] = stats;
+            }
         }
     }
 }
@@ -209,19 +220,24 @@ Status IndexAdvisor::analyze(std::vector<IndexRecommendation>* recommendations,
         // Get table info
         CatalogManager::TableInfo table_info;
         ErrorContext local_ctx;
-        auto status = catalog_->getTableInfo(table_id, table_info, &local_ctx);
+        auto status = catalog_->getTable(table_id, table_info, &local_ctx);
         if (status != Status::OK) continue;
 
         table_stats.table_name = table_info.table_name;
 
+        // Get columns for this table
+        std::vector<CatalogManager::ColumnInfo> columns;
+        status = catalog_->getColumns(table_id, columns, &local_ctx);
+        if (status != Status::OK) continue;
+
         // Analyze columns for index candidates
         for (auto& [col_id, col_usage] : table_stats.columns) {
             // Get column info
-            auto col_it = std::find_if(table_info.columns.begin(), table_info.columns.end(),
+            auto col_it = std::find_if(columns.begin(), columns.end(),
                                       [&col_id](const CatalogManager::ColumnInfo& c) {
                                           return c.column_id == col_id;
                                       });
-            if (col_it != table_info.columns.end()) {
+            if (col_it != columns.end()) {
                 col_usage.column_name = col_it->column_name;
             }
 
@@ -321,18 +337,23 @@ Status IndexAdvisor::analyzeTable(const ID& table_id,
 
     // Get table info
     CatalogManager::TableInfo table_info;
-    auto status = catalog_->getTableInfo(table_id, table_info, ctx);
+    auto status = catalog_->getTable(table_id, table_info, ctx);
     if (status != Status::OK) return status;
 
     table_stats.table_name = table_info.table_name;
 
+    // Get columns for this table
+    std::vector<CatalogManager::ColumnInfo> columns;
+    status = catalog_->getColumns(table_id, columns, ctx);
+    if (status != Status::OK) return status;
+
     // Analyze each column
     for (auto& [col_id, col_usage] : table_stats.columns) {
-        auto col_it = std::find_if(table_info.columns.begin(), table_info.columns.end(),
+        auto col_it = std::find_if(columns.begin(), columns.end(),
                                   [&col_id](const CatalogManager::ColumnInfo& c) {
                                       return c.column_id == col_id;
                                   });
-        if (col_it != table_info.columns.end()) {
+        if (col_it != columns.end()) {
             col_usage.column_name = col_it->column_name;
         }
 
@@ -788,7 +809,7 @@ bool IndexAdvisor::isIndexExisting(const ID& table_id, const std::vector<ID>& co
     // Check if an index already covers these columns
     std::vector<CatalogManager::IndexInfo> indexes;
     ErrorContext ctx;
-    auto status = catalog_->getTableIndexes(table_id, indexes, &ctx);
+    auto status = catalog_->listIndexesForTable(table_id, indexes, &ctx);
     if (status != Status::OK) return false;
 
     for (const auto& idx : indexes) {

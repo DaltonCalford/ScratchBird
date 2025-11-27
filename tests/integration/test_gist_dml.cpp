@@ -35,6 +35,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/index_factory.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/proc_array.h"
 
 using namespace scratchbird::core;
 
@@ -199,16 +200,40 @@ protected:
         ASSERT_NE(nullptr, catalog_);
         ASSERT_NE(nullptr, storage_);
         ASSERT_NE(nullptr, txn_mgr_);
+
+        // Register backend for MGA
+        proc_id_ = ProcArrayManager::instance().registerBackend();
     }
 
     void TearDown() override
     {
+        // Unregister backend
+        if (proc_id_ != 0)
+        {
+            ProcArrayManager::instance().unregisterBackend(proc_id_);
+        }
+
         if (db_)
         {
             db_->close();
             db_.reset();
         }
         std::remove(test_db_path_);
+    }
+
+    // Helper: Begin transaction with MGA API
+    uint64_t beginTxn(ErrorContext* ctx)
+    {
+        uint64_t xid = 0;
+        Status status = txn_mgr_->beginTransaction(proc_id_, xid, ctx);
+        EXPECT_EQ(status, Status::OK);
+        return xid;
+    }
+
+    // Helper: Commit transaction with MGA API
+    Status commitTxn(uint64_t xid, ErrorContext* ctx)
+    {
+        return txn_mgr_->commitTransaction(proc_id_, xid, ctx);
     }
 
     // Helper: Create table with box column
@@ -305,7 +330,7 @@ protected:
 
         EXPECT_EQ(Status::OK, status) << "Failed to insert tuple: " << ctx.message;
 
-        return TID(page_id, item_id);
+        return TID(0, page_id, item_id);  // tablespace_id=0, page_number, slot
     }
 
     const char* test_db_path_;
@@ -313,6 +338,7 @@ protected:
     CatalogManager* catalog_;
     StorageEngine* storage_;
     TransactionManager* txn_mgr_;
+    uint32_t proc_id_ = 0;
 };
 
 /**
@@ -354,7 +380,7 @@ TEST_F(GiSTDMLTest, InsertUpdateIndex)
         BoxOperatorClass::serialize(box),
         GiSTStrategy::OVERLAPS,
         xid,
-        results,
+        &results,
         &ctx);
 
     EXPECT_EQ(Status::OK, status) << "Search failed: " << ctx.message;
@@ -409,7 +435,7 @@ TEST_F(GiSTDMLTest, UpdateUpdateIndex)
         BoxOperatorClass::serialize(old_box),
         GiSTStrategy::OVERLAPS,
         xid,
-        results,
+        &results,
         &ctx);
 
     // After update, old box should not be found
@@ -422,7 +448,7 @@ TEST_F(GiSTDMLTest, UpdateUpdateIndex)
         BoxOperatorClass::serialize(new_box),
         GiSTStrategy::OVERLAPS,
         xid,
-        results,
+        &results,
         &ctx);
 
     EXPECT_EQ(Status::OK, status);
@@ -465,7 +491,7 @@ TEST_F(GiSTDMLTest, DeleteMarkEntry)
         BoxOperatorClass::serialize(box),
         GiSTStrategy::OVERLAPS,
         xid,
-        results,
+        &results,
         &ctx);
 
     EXPECT_EQ(Status::OK, status);
@@ -512,7 +538,7 @@ TEST_F(GiSTDMLTest, MultipleOperationsConsistent)
         BoxOperatorClass::serialize(query_box),
         GiSTStrategy::OVERLAPS,
         xid,
-        results,
+        &results,
         &ctx);
 
     EXPECT_EQ(Status::OK, status);
@@ -536,17 +562,17 @@ TEST_F(GiSTDMLTest, ConsistentAfterCommit)
     ID index_id = createGiSTIndex(table_id, column_id);
 
     // Begin transaction
-    uint64_t xid = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t xid = beginTxn(&ctx);
 
     // Insert tuple
     BoxOperatorClass::Box box(0.0, 0.0, 10.0, 10.0);
     TID tid = insertTuple(table_id, box);
 
     // Commit transaction
-    txn_mgr_->commitTransaction(xid);
+    commitTxn(xid, &ctx);
 
     // Start new transaction and verify
-    uint64_t new_xid = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, false);
+    uint64_t new_xid = beginTxn(&ctx);
 
     CatalogManager::IndexType index_type;
     void* index_ptr = catalog_->getIndexPtr(index_id, &index_type);
@@ -559,12 +585,12 @@ TEST_F(GiSTDMLTest, ConsistentAfterCommit)
         BoxOperatorClass::serialize(box),
         GiSTStrategy::OVERLAPS,
         new_xid,
-        results,
+        &results,
         &ctx);
 
     EXPECT_EQ(Status::OK, status);
     EXPECT_EQ(1, results.size()) << "Committed entry should be visible";
 
-    txn_mgr_->commitTransaction(new_xid);
+    commitTxn(new_xid, &ctx);
 }
 

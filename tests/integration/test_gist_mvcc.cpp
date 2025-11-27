@@ -49,6 +49,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/proc_array.h"
 
 using namespace scratchbird::core;
 
@@ -211,12 +212,20 @@ protected:
         buffer_pool_ = db_->buffer_pool();
         ASSERT_NE(buffer_pool_, nullptr);
 
+        // Register backend to get proc_id
+        status = ProcArrayManager::registerBackend(&proc_id_, &ctx);
+        ASSERT_EQ(status, Status::OK);
+
         // Create box operator class
         opclass_ = std::make_shared<BoxOperatorClass>();
     }
 
     void TearDown() override
     {
+        // Unregister backend
+        if (proc_id_ > 0) {
+            ProcArrayManager::unregisterBackend(proc_id_);
+        }
         if (db_)
         {
             db_->close();
@@ -238,12 +247,10 @@ protected:
     }
 
     // Helper: Create TID
-    TID makeTID(uint64_t page, uint64_t slot)
+    TID makeTID(uint64_t page, uint16_t slot)
     {
-        TID tid;
-        tid.page_number = page;
-        tid.slot_number = slot;
-        return tid;
+        // Use default tablespace_id 0
+        return TID(0, page, slot);
     }
 
     const char* test_db_path_;
@@ -251,6 +258,20 @@ protected:
     TransactionManager* txn_mgr_;
     BufferPool* buffer_pool_;
     std::shared_ptr<BoxOperatorClass> opclass_;
+    uint32_t proc_id_ = 0;
+
+    // Helper: Begin transaction and return xid
+    uint64_t beginTxn(ErrorContext* ctx) {
+        uint64_t xid = 0;
+        Status status = txn_mgr_->beginTransaction(proc_id_, xid, ctx);
+        EXPECT_EQ(status, Status::OK);
+        return xid;
+    }
+
+    // Helper: Commit transaction
+    Status commitTxn(uint64_t xid, ErrorContext* ctx) {
+        return txn_mgr_->commitTransaction(proc_id_, xid, ctx);
+    }
 };
 
 // ============================================================================
@@ -260,9 +281,9 @@ TEST_F(GiSTMVCCTest, EmptyTreeSearch)
 {
     ErrorContext ctx;
 
-    ID index_uuid = UuidV7::generateBytes();
-    ID table_uuid = UuidV7::generateBytes();
-    std::vector<ID> column_ids = {UuidV7::generateBytes()};
+    ID index_uuid = generateUuidV7();
+    ID table_uuid = generateUuidV7();
+    std::vector<ID> column_ids = {generateUuidV7()};
 
     uint32_t root_page = 0;
     Status status = GiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
@@ -279,7 +300,7 @@ TEST_F(GiSTMVCCTest, EmptyTreeSearch)
     std::vector<uint8_t> query = BoxOperatorClass::serialize(
         BoxOperatorClass::Box(0, 0, 100, 100));
 
-    status = gist->search(query, GiSTStrategy::OVERLAPS, xid, results, &ctx);
+    status = gist->search(query, GiSTStrategy::OVERLAPS, xid, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
     EXPECT_EQ(results.size(), 0) << "Empty tree should return no results";
 }
@@ -291,9 +312,9 @@ TEST_F(GiSTMVCCTest, SingleElementMGAVisibility)
 {
     ErrorContext ctx;
 
-    ID index_uuid = UuidV7::generateBytes();
-    ID table_uuid = UuidV7::generateBytes();
-    std::vector<ID> column_ids = {UuidV7::generateBytes()};
+    ID index_uuid = generateUuidV7();
+    ID table_uuid = generateUuidV7();
+    std::vector<ID> column_ids = {generateUuidV7()};
 
     uint32_t root_page = 0;
     Status status = GiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
@@ -305,7 +326,7 @@ TEST_F(GiSTMVCCTest, SingleElementMGAVisibility)
     ASSERT_NE(gist, nullptr);
 
     // Start transaction T1
-    uint64_t xid1 = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid1 = beginTxn(&ctx);
     ASSERT_GT(xid1, 0);
 
     // Insert predicate in transaction T1
@@ -318,24 +339,24 @@ TEST_F(GiSTMVCCTest, SingleElementMGAVisibility)
     std::vector<TID> results;
     std::vector<uint8_t> query = BoxOperatorClass::serialize(
         BoxOperatorClass::Box(0, 0, 100, 100));
-    status = gist->search(query, GiSTStrategy::OVERLAPS, xid1, results, &ctx);
+    status = gist->search(query, GiSTStrategy::OVERLAPS, xid1, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
     EXPECT_GE(results.size(), 0) << "Own changes should be visible (or implementation pending)";
 
     // Commit transaction T1
-    status = txn_mgr_->commitTransaction(xid1, &ctx);
+    status = commitTxn(xid1, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Start transaction T2 (after T1 commits)
-    uint64_t xid2 = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid2 = beginTxn(&ctx);
 
     // Search from T2 (should see committed entry)
     results.clear();
-    status = gist->search(query, GiSTStrategy::OVERLAPS, xid2, results, &ctx);
+    status = gist->search(query, GiSTStrategy::OVERLAPS, xid2, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
     // Implementation-dependent: may return 0 or 1
 
-    status = txn_mgr_->commitTransaction(xid2, &ctx);
+    status = commitTxn(xid2, &ctx);
     ASSERT_EQ(status, Status::OK);
 }
 
@@ -346,9 +367,9 @@ TEST_F(GiSTMVCCTest, MultipleElementsOverlapSearch)
 {
     ErrorContext ctx;
 
-    ID index_uuid = UuidV7::generateBytes();
-    ID table_uuid = UuidV7::generateBytes();
-    std::vector<ID> column_ids = {UuidV7::generateBytes()};
+    ID index_uuid = generateUuidV7();
+    ID table_uuid = generateUuidV7();
+    std::vector<ID> column_ids = {generateUuidV7()};
 
     uint32_t root_page = 0;
     Status status = GiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
@@ -359,7 +380,7 @@ TEST_F(GiSTMVCCTest, MultipleElementsOverlapSearch)
                                 opclass_, root_page, &ctx);
     ASSERT_NE(gist, nullptr);
 
-    uint64_t xid = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid = beginTxn(&ctx);
 
     // Insert 4 boxes in different quadrants
     status = gist->insert(createBox(0, 0, 50, 50), makeTID(1, 0), xid, &ctx);
@@ -378,11 +399,11 @@ TEST_F(GiSTMVCCTest, MultipleElementsOverlapSearch)
     std::vector<TID> results;
     std::vector<uint8_t> query = BoxOperatorClass::serialize(
         BoxOperatorClass::Box(25, 25, 75, 75));
-    status = gist->search(query, GiSTStrategy::OVERLAPS, xid, results, &ctx);
+    status = gist->search(query, GiSTStrategy::OVERLAPS, xid, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
     // Implementation-dependent: may return 0-4 results
 
-    status = txn_mgr_->commitTransaction(xid, &ctx);
+    status = commitTxn(xid, &ctx);
     ASSERT_EQ(status, Status::OK);
 }
 
@@ -393,9 +414,9 @@ TEST_F(GiSTMVCCTest, LogicalDeletionXmax)
 {
     ErrorContext ctx;
 
-    ID index_uuid = UuidV7::generateBytes();
-    ID table_uuid = UuidV7::generateBytes();
-    std::vector<ID> column_ids = {UuidV7::generateBytes()};
+    ID index_uuid = generateUuidV7();
+    ID table_uuid = generateUuidV7();
+    std::vector<ID> column_ids = {generateUuidV7()};
 
     uint32_t root_page = 0;
     Status status = GiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
@@ -407,16 +428,16 @@ TEST_F(GiSTMVCCTest, LogicalDeletionXmax)
     ASSERT_NE(gist, nullptr);
 
     // Insert predicate in T1
-    uint64_t xid1 = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid1 = beginTxn(&ctx);
     GiSTPredicate pred = createPoint(50, 50);
     TID tid = makeTID(1, 0);
     status = gist->insert(pred, tid, xid1, &ctx);
     ASSERT_EQ(status, Status::OK);
-    status = txn_mgr_->commitTransaction(xid1, &ctx);
+    status = commitTxn(xid1, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Delete in T2 (sets xmax)
-    uint64_t xid2 = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid2 = beginTxn(&ctx);
     status = gist->remove(pred, tid, xid2, &ctx);
     EXPECT_EQ(status, Status::OK);
 
@@ -424,21 +445,21 @@ TEST_F(GiSTMVCCTest, LogicalDeletionXmax)
     std::vector<TID> results;
     std::vector<uint8_t> query = BoxOperatorClass::serialize(
         BoxOperatorClass::Box(0, 0, 100, 100));
-    status = gist->search(query, GiSTStrategy::OVERLAPS, xid2, results, &ctx);
+    status = gist->search(query, GiSTStrategy::OVERLAPS, xid2, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
     // Implementation-dependent: may filter by xmax
 
-    status = txn_mgr_->commitTransaction(xid2, &ctx);
+    status = commitTxn(xid2, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Search from T3 (after T2 commits, should not see entry)
-    uint64_t xid3 = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid3 = beginTxn(&ctx);
     results.clear();
-    status = gist->search(query, GiSTStrategy::OVERLAPS, xid3, results, &ctx);
+    status = gist->search(query, GiSTStrategy::OVERLAPS, xid3, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
     // Entry should be filtered by xmax visibility
 
-    status = txn_mgr_->commitTransaction(xid3, &ctx);
+    status = commitTxn(xid3, &ctx);
     ASSERT_EQ(status, Status::OK);
 }
 
@@ -449,9 +470,9 @@ TEST_F(GiSTMVCCTest, RepeatableReadIsolation)
 {
     ErrorContext ctx;
 
-    ID index_uuid = UuidV7::generateBytes();
-    ID table_uuid = UuidV7::generateBytes();
-    std::vector<ID> column_ids = {UuidV7::generateBytes()};
+    ID index_uuid = generateUuidV7();
+    ID table_uuid = generateUuidV7();
+    std::vector<ID> column_ids = {generateUuidV7()};
 
     uint32_t root_page = 0;
     Status status = GiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
@@ -463,39 +484,39 @@ TEST_F(GiSTMVCCTest, RepeatableReadIsolation)
     ASSERT_NE(gist, nullptr);
 
     // Insert initial predicate
-    uint64_t xid_setup = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid_setup = beginTxn(&ctx);
     status = gist->insert(createPoint(50, 50), makeTID(1, 0), xid_setup, &ctx);
     ASSERT_EQ(status, Status::OK);
-    status = txn_mgr_->commitTransaction(xid_setup, &ctx);
+    status = commitTxn(xid_setup, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Start REPEATABLE READ transaction
-    uint64_t xid_rr = txn_mgr_->beginTransaction(IsolationLevel::REPEATABLE_READ, &ctx);
+    uint64_t xid_rr = beginTxn(&ctx);
     ASSERT_GT(xid_rr, 0);
 
     // First search
     std::vector<TID> results1;
     std::vector<uint8_t> query = BoxOperatorClass::serialize(
         BoxOperatorClass::Box(0, 0, 100, 100));
-    status = gist->search(query, GiSTStrategy::OVERLAPS, xid_rr, results1, &ctx);
+    status = gist->search(query, GiSTStrategy::OVERLAPS, xid_rr, &results1, &ctx);
     EXPECT_EQ(status, Status::OK);
     size_t count1 = results1.size();
 
     // Another transaction inserts new predicate
-    uint64_t xid_other = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid_other = beginTxn(&ctx);
     status = gist->insert(createPoint(75, 75), makeTID(1, 1), xid_other, &ctx);
     ASSERT_EQ(status, Status::OK);
-    status = txn_mgr_->commitTransaction(xid_other, &ctx);
+    status = commitTxn(xid_other, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Second search from REPEATABLE READ (should see same snapshot)
     std::vector<TID> results2;
-    status = gist->search(query, GiSTStrategy::OVERLAPS, xid_rr, results2, &ctx);
+    status = gist->search(query, GiSTStrategy::OVERLAPS, xid_rr, &results2, &ctx);
     EXPECT_EQ(status, Status::OK);
     // Note: GiST uses current_xid for TIP-based visibility, so behavior depends on implementation
     // In pure TIP model, it checks if xmin < current_xid and committed
 
-    status = txn_mgr_->commitTransaction(xid_rr, &ctx);
+    status = commitTxn(xid_rr, &ctx);
     ASSERT_EQ(status, Status::OK);
 }
 
@@ -506,9 +527,9 @@ TEST_F(GiSTMVCCTest, GarbageCollectionDeadEntries)
 {
     ErrorContext ctx;
 
-    ID index_uuid = UuidV7::generateBytes();
-    ID table_uuid = UuidV7::generateBytes();
-    std::vector<ID> column_ids = {UuidV7::generateBytes()};
+    ID index_uuid = generateUuidV7();
+    ID table_uuid = generateUuidV7();
+    std::vector<ID> column_ids = {generateUuidV7()};
 
     uint32_t root_page = 0;
     Status status = GiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
@@ -522,37 +543,37 @@ TEST_F(GiSTMVCCTest, GarbageCollectionDeadEntries)
     // Insert and delete 10 entries
     for (int i = 0; i < 10; i++)
     {
-        uint64_t xid_insert = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+        uint64_t xid_insert = beginTxn(&ctx);
         GiSTPredicate pred = createPoint(i * 10, i * 10);
         TID tid = makeTID(1, i);
         status = gist->insert(pred, tid, xid_insert, &ctx);
         EXPECT_EQ(status, Status::OK);
-        status = txn_mgr_->commitTransaction(xid_insert, &ctx);
+        status = commitTxn(xid_insert, &ctx);
         ASSERT_EQ(status, Status::OK);
 
         // Immediately delete
-        uint64_t xid_delete = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+        uint64_t xid_delete = beginTxn(&ctx);
         status = gist->remove(pred, tid, xid_delete, &ctx);
         EXPECT_EQ(status, Status::OK);
-        status = txn_mgr_->commitTransaction(xid_delete, &ctx);
+        status = commitTxn(xid_delete, &ctx);
         ASSERT_EQ(status, Status::OK);
     }
 
     // Run garbage collection
-    uint64_t oldest_xid = txn_mgr_->getOldestActiveTransactionId();
+    uint64_t oldest_xid = txn_mgr_->getOldestActiveXid();
     status = gist->removeDeadEntries(oldest_xid, &ctx);
     EXPECT_EQ(status, Status::OK);
 
     // Verify entries are removed (search should return 0)
-    uint64_t xid_check = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid_check = beginTxn(&ctx);
     std::vector<TID> results;
     std::vector<uint8_t> query = BoxOperatorClass::serialize(
         BoxOperatorClass::Box(0, 0, 1000, 1000));
-    status = gist->search(query, GiSTStrategy::OVERLAPS, xid_check, results, &ctx);
+    status = gist->search(query, GiSTStrategy::OVERLAPS, xid_check, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
     // After GC, deleted entries should not appear
 
-    status = txn_mgr_->commitTransaction(xid_check, &ctx);
+    status = commitTxn(xid_check, &ctx);
     ASSERT_EQ(status, Status::OK);
 }
 
@@ -563,9 +584,9 @@ TEST_F(GiSTMVCCTest, TransactionIdParameterValidation)
 {
     ErrorContext ctx;
 
-    ID index_uuid = UuidV7::generateBytes();
-    ID table_uuid = UuidV7::generateBytes();
-    std::vector<ID> column_ids = {UuidV7::generateBytes()};
+    ID index_uuid = generateUuidV7();
+    ID table_uuid = generateUuidV7();
+    std::vector<ID> column_ids = {generateUuidV7()};
 
     uint32_t root_page = 0;
     Status status = GiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
@@ -591,7 +612,7 @@ TEST_F(GiSTMVCCTest, TransactionIdParameterValidation)
         BoxOperatorClass::Box(0, 0, 100, 100));
 
     // This compiles → API uses TransactionId ✅
-    status = gist->search(query, GiSTStrategy::OVERLAPS, xid, results, &ctx);
+    status = gist->search(query, GiSTStrategy::OVERLAPS, xid, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
 
     // This compiles → API uses TransactionId ✅

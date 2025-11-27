@@ -712,12 +712,4 @@ TEST_F(BooleanEdgeCaseTest, PointerToBool)
     EXPECT_FALSE(static_cast<bool>(null_ptr));
 }
 
-// =============================================================================
-// MAIN
-// =============================================================================
-
-int main(int argc, char** argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+// Note: main() is provided by GTest::gtest_main (linked in CMakeLists.txt)

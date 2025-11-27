@@ -21,6 +21,8 @@
 #include <set>
 #include <functional>
 #include <cstdint>
+#include <thread>
+#include <mutex>
 
 // =============================================================================
 // CONSTRAINT TYPES
@@ -609,12 +611,4 @@ TEST_F(IdentityColumnTest, ConcurrentIdentity_NoDuplicates)
     EXPECT_EQ(num_threads * ids_per_thread, ids.size());
 }
 
-// =============================================================================
-// MAIN
-// =============================================================================
-
-int main(int argc, char** argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+// Note: main() is provided by GTest::gtest_main (linked in CMakeLists.txt)

@@ -114,12 +114,9 @@ TEST_F(HelgrindRaceTest, TransactionManagerLockOrdering) {
                         conn->commit(&ctx);
                     }
                 } else if (i % 3 == 1) {
-                    // getSnapshot: acquires mutex_ then ProcArray::array_lock
-                    // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
-                    Status s = // MGA: getSnapshot removed;
-                    if (s == Status::OK) {
-                        // MGA: snapshot.cleanup removed;
-                    }
+                    // MGA: getSnapshot removed - use getCurrentXid instead
+                    uint64_t current_xid = txn_mgr_->getCurrentXid();
+                    (void)current_xid; // Suppress unused variable warning
                 } else {
                     // getTransactionState: acquires mutex_ for cache access
                     TransactionState state;
@@ -200,12 +197,10 @@ TEST_F(HelgrindRaceTest, ReadWriteLockValidation) {
             ErrorContext ctx;
 
             for (int i = 0; i < ITERATIONS; ++i) {
-                // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
-                Status s = // MGA: getSnapshot removed;
-                if (s == Status::OK) {
-                    reader_ops.fetch_add(1);
-                    // MGA: snapshot.cleanup removed;
-                }
+                // MGA: getSnapshot removed - use getCurrentXid instead
+                uint64_t current_xid = txn_mgr_->getCurrentXid();
+                (void)current_xid; // Suppress unused variable warning
+                reader_ops.fetch_add(1);
                 std::this_thread::yield();
             }
         });
@@ -326,12 +321,10 @@ TEST_F(HelgrindRaceTest, MixedWorkloadNoRaces) {
                         break;
                     }
                     case 1: {
-                        // Snapshot
-                        // MGA: Snapshot removed - uint64_t current_xid = txn_mgr_->getCurrentXid();
-                        if (// MGA: getSnapshot removed == Status::OK) {
-                            // MGA: snapshot.cleanup removed;
-                            total_ops.fetch_add(1);
-                        }
+                        // MGA: getSnapshot removed - use getCurrentXid instead
+                        uint64_t current_xid = txn_mgr_->getCurrentXid();
+                        (void)current_xid; // Suppress unused variable warning
+                        total_ops.fetch_add(1);
                         break;
                     }
                     case 2: {

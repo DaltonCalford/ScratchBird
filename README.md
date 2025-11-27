@@ -7,12 +7,12 @@ A multi-model database platform using Firebird MGA (Multi-Generational Architect
 ## Current Status
 
 **Phase:** Alpha 1 - Engine Functionality (Local Operations)
-**Progress:** ~85% of Alpha 1 complete (~15% of total project)
-**Remaining:** ~430-500 hours (11-13 weeks for blocking work)
-**Current Work:** ✅ Functions Complete → ✅ P0-P3 Complete → 🔄 Catalog Cleanup Phase A (COMPLETE) → Phases B-D → Server Architecture → CLI Tools
+**Progress:** ~88% of Alpha 1 complete (~12% of total project)
+**Remaining:** ~230-300 hours (6-8 weeks for Local Server + CLI Tools)
+**Current Work:** ✅ Functions → ✅ P0-P3 → ✅ Catalog Cleanup ALL PHASES COMPLETE → 🔄 Local Server Architecture → CLI Tools
 **Started:** June 2025 (5 months of evening/weekend development)
 **Project Type:** Educational/Research (no time constraints)
-**Last Updated:** November 26, 2025 (Catalog Cleanup Phase A COMPLETE - 37 CRUD methods implemented!)
+**Last Updated:** November 26, 2025 (Catalog Cleanup ALL PHASES COMPLETE - ~4,290 lines of virtual catalog infrastructure!)
 
 **Detailed Status:** See [IMPLEMENTATION_STATUS_DASHBOARD.md](docs/IMPLEMENTATION_STATUS_DASHBOARD.md)
 
@@ -67,13 +67,20 @@ A multi-model database platform using Firebird MGA (Multi-Generational Architect
 - Password hashing (BCrypt)
 - Permission cache with LRU eviction
 
-#### Catalog System (40 tables)
-- 18-level schema hierarchy
+#### Catalog System (40 tables) - ALL PHASES COMPLETE 🎉
+- 18-level schema hierarchy with synonym support
 - UUIDv7 identifiers (RFC 9562)
-- 32 object types
-- Full CRUD for security tables (8/8)
-- Core tables (10/10 structures defined)
-- **Phase A CRUD complete:** dropSchema, Domain/UDR/Package/Emulation CRUD (37 methods)
+- 32+ object types (extended with FDW, UDR modules, Server Registry)
+- Full CRUD for all catalog structures
+- **Phase A:** 37 CRUD methods (dropSchema, Domain/UDR/Package/Emulation)
+- **Phase B:** 46 method declarations, 11 new structures/enums
+- **Phase C:** 7 new system table pages allocated
+- **Phase D:** Virtual catalog infrastructure (~4,290 lines)
+  - information_schema (12 SQL standard views)
+  - pg_catalog (12 PostgreSQL views)
+  - mysql.* (6 MySQL tables)
+  - sys.* (8 SQL Server views)
+  - On-demand Firebird RDB$* emulation
 
 #### PSQL/Stored Procedures & Triggers (100%) 🎉
 - Variable scope management and operations
@@ -104,41 +111,14 @@ A multi-model database platform using Firebird MGA (Multi-Generational Architect
 
 ### What's Being Built 🚧
 
-**Current Work (Alpha 1 - ~15% remaining, ~430-500 hours):**
+**Current Work (Alpha 1 - ~12% remaining, ~230-300 hours):**
 
-- ✅ **PRIORITY 1: Missing Functions** ✅ **COMPLETE** (~222 hours)
-  - 30+ functions added for full PostgreSQL/MySQL/MSSQL/Firebird compatibility
-  - All 5 phases complete: Quick Wins, Regression, Advanced Grouping, Window Functions, Misc
-  - See [MISSING_FUNCTIONS_IMPLEMENTATION_STATUS.md](docs/planning/MISSING_FUNCTIONS_IMPLEMENTATION_STATUS.md)
+- ✅ **Built-in Functions** ✅ **COMPLETE** (153/153) - See [archive](docs/planning/archive/)
+- ✅ **P0-P2 Improvements** ✅ **ALL COMPLETE** (48/48 items) - See [archive](docs/planning/archive/)
+- ✅ **P3 Low-Priority** 🔄 **70% COMPLETE** (14/20 items, 6 blocked by Alpha 3/dependencies)
+- ✅ **Catalog Cleanup** ✅ **ALL PHASES COMPLETE** (Phases A-D, ~4,290 lines)
 
-- ✅ **PRIORITY 2: P0 Critical Issues** ✅ **COMPLETE** (<1 hour actual work)
-  - 8 items: Security (password policy, account lockout, audit logging)
-  - Correctness (arithmetic overflow, NaN/Infinity, GIN MGA bug, sequences, charsets)
-  - **All P0 items were already implemented!** Only minor enhancements needed
-  - See [IMPROVEMENTS_P0_CRITICAL_PLAN.md](docs/planning/IMPROVEMENTS_P0_CRITICAL_PLAN.md)
-
-- ✅ **PRIORITY 3: P1 High-Priority Improvements** - 100% COMPLETE (15/15 items) 🎉
-  - ✅ **Agent A (PSQL)**: 100% complete - TRY/EXCEPT, Cursors, Stored Procedures, MERGE, RETURNING
-  - ✅ **Agent B (Performance)**: 100% complete - XID Wraparound, CLOG O(1), Index FK Lookups, Bulk Loading
-  - ✅ **Agent C (Constraints)**: 100% complete - SQLSTATE, FK Actions, Constraints CRUD, Statistics & ANALYZE
-  - See [IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md](docs/planning/IMPROVEMENTS_P1_HIGH_PRIORITY_PLAN.md)
-
-- ✅ **PRIORITY 4: P2 Medium-Priority Improvements** - 100% COMPLETE (25/25 items) 🎉
-  - ✅ Performance: Page table lock partitioning, dirty page counter, TOAST prefetching, hash index resize
-  - ✅ Features: GENERATED columns, deferred constraints, statement-level triggers, MV refresh strategies
-  - ✅ Infrastructure: Query result caching, parallel query execution, prepared statement cache
-  - ✅ Operations: Connection pooling, backup/restore improvements, index advisor
-  - ✅ Quality: Edge case tests, concurrent transaction tests, benchmark suite
-  - See [IMPROVEMENTS_P2_MEDIUM_PRIORITY_PLAN.md](docs/planning/IMPROVEMENTS_P2_MEDIUM_PRIORITY_PLAN.md)
-
-- 🔄 **PRIORITY 5: P3 Low-Priority Improvements** (14/20 complete, 6 blocked)
-  - ✅ 14 unblocked items complete: Password expiration, DECIMAL optimization, SIMD vector ops
-  - ✅ Columnstore enhancements, HNSW quantization, LSM compression, Bitmap RLE
-  - ✅ TIP compaction, Catalog B-tree indexes, CSE optimization, Telemetry, Structured logging, Query profiler
-  - 🔒 6 items blocked: MFA, IP whitelisting, certificate auth (require Alpha 3), partition pruning, MV rewriting, join ordering
-  - See [IMPROVEMENTS_P3_LOW_PRIORITY_PLAN.md](docs/planning/IMPROVEMENTS_P3_LOW_PRIORITY_PLAN.md)
-
-- ⏳ **PRIORITY 2.5: Local Server Architecture** (140-190 hours / 3.5-4.5 weeks)
+- 🔄 **NEXT: Local Server Architecture** (140-190 hours / 3.5-4.5 weeks)
   - Transition from embedded to client-server model
   - IPC infrastructure (Unix sockets, Named pipes, TCP localhost)
   - Wire protocol (binary message format, result streaming)
@@ -147,46 +127,32 @@ A multi-model database platform using Firebird MGA (Multi-Generational Architect
   - **Mandatory before CLI tools can function**
   - See [LOCAL_SERVER_ARCHITECTURE_PLAN.md](docs/planning/LOCAL_SERVER_ARCHITECTURE_PLAN.md)
 
-- ⏳ **PRIORITY 3: Command-Line Tools** (90-110 hours / 2.5-3 weeks)
-  - sb_isql (interactive SQL shell) - connects via libscratchbird_client
-  - sb_verify (database integrity checker) - connects via libscratchbird_client
-  - sb_backup (backup/restore tool) - connects via libscratchbird_client
-  - sb_security (user/role management tool) - connects via libscratchbird_client
+- ⏳ **Command-Line Tools** (90-110 hours / 2.5-3 weeks)
+  - sb_isql (interactive SQL shell)
+  - sb_verify (database integrity checker)
+  - sb_backup (backup/restore tool)
+  - sb_security (user/role management tool)
   - *To be started after server architecture*
 
-**Recently Completed:**
-- ✅ **Catalog Cleanup Phase A** (37 CRUD methods, November 26, 2025) 🎉
-  - ✅ dropSchema() with cascade support
-  - ✅ Domain CRUD (6 methods), UDR CRUD (6 methods), Package CRUD (6 methods)
-  - ✅ EmulationType CRUD (6 methods), EmulationServer CRUD (6 methods), EmulatedDatabase CRUD (6 methods)
-  - ✅ updateRole(), updateGroup() methods
-  - See [CATALOG_CLEANUP_PHASE_A_CRUD.md](docs/planning/CATALOG_CLEANUP_PHASE_A_CRUD.md)
-- 🔄 **P3 Low-Priority Improvements** (14/20 = 70% COMPLETE, November 26, 2025)
-  - ✅ Password expiration, view security context
-  - ✅ DECIMAL fixed-point, SIMD vector operations
-  - ✅ Columnstore enhancements, HNSW quantization, LSM compression, Bitmap RLE
-  - ✅ TIP compaction, Catalog B-tree indexes
-  - ✅ Common subexpression elimination, Telemetry, Structured logging, Query profiler
-  - 🔒 6 items blocked by Alpha 3 or other dependencies
-- ✅ **P2 Medium-Priority Improvements** (25/25 = 100% COMPLETE, November 25, 2025) 🎉
-  - Performance optimizations, query result caching, parallel execution
-  - Connection pooling, backup/restore improvements, index advisor
-  - All testing and quality improvements complete
-- ✅ **P1 High-Priority Improvements** (15/15 = 100% COMPLETE, November 25, 2025) 🎉
-  - All PSQL features, constraint operations, performance items complete
-  - Bulk loading bottom-up B-tree construction complete
-  - Statistics & ANALYZE fully wired
-- ✅ **P0 Critical Issues** (8/8 = 100% COMPLETE, November 24, 2025) 🎉
-  - All critical security and correctness issues resolved
-  - Password policy, account lockout, audit logging
-  - Arithmetic overflow, NaN/Infinity handling, GIN MGA compliance
-- ✅ **Built-in Functions** (153/153 = 100% COMPLETE) 🎉
-  - All missing functions implemented (~222 hours, November 2025)
-  - ROLLUP/CUBE/GROUPING SETS for OLAP analytics
-  - Statistical regression functions (9 functions)
-- ✅ Views (100% COMPLETE - materialized views with full data population) 🎉
+**Recently Completed (November 26, 2025):**
+- ✅ **Catalog Cleanup ALL PHASES** 🎉
+  - **Phase A:** 37 CRUD methods (dropSchema, Domain/UDR/Package/Emulation)
+  - **Phase B:** 46 method declarations, 11 new structures/enums (SchemaType, Synonyms, FDW)
+  - **Phase C:** 7 new system table pages allocated
+  - **Phase D:** Virtual catalog infrastructure (~4,290 lines)
+    - information_schema (12 SQL standard views)
+    - pg_catalog (12 PostgreSQL views)
+    - mysql.* (6 MySQL tables), sys.* (8 SQL Server views)
+    - EmulationViewGenerator for on-demand Firebird RDB$* views
+  - See [docs/planning/README.md](docs/planning/README.md) for details
+- ✅ **P3 Low-Priority** (14/20 = 70% COMPLETE)
+  - 14 unblocked items: DECIMAL, SIMD, indexes, telemetry, logging, etc.
+  - 6 items blocked by Alpha 3 or dependencies
+- ✅ **P0-P2 Improvements** (48/48 = 100% COMPLETE)
+- ✅ **Built-in Functions** (153/153 = 100% COMPLETE)
+- ✅ Views (100% COMPLETE - materialized views with full data population)
 
-**After Alpha 1 (~89% of project remaining):**
+**After Alpha 1 (~88% of project remaining):**
 
 See **[OFFICIAL_ROADMAP.md](OFFICIAL_ROADMAP.md)** for comprehensive details:
 

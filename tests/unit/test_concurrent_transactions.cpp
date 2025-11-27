@@ -645,12 +645,4 @@ TEST_F(ThroughputTest, MixedReadWrite_Throughput)
     SUCCEED() << "Throughput: " << ops_per_sec << " ops/sec";
 }
 
-// =============================================================================
-// MAIN
-// =============================================================================
-
-int main(int argc, char** argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
-}
+// Note: main() is provided by GTest::gtest_main (linked in CMakeLists.txt)

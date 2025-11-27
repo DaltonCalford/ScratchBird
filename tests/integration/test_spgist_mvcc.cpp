@@ -54,6 +54,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/proc_array.h"
 
 using namespace scratchbird::core;
 
@@ -251,15 +252,39 @@ protected:
 
         // Create quad-tree operator class
         opclass_ = std::make_shared<QuadTreeOperatorClass>();
+
+        // Register backend for MGA
+        proc_id_ = ProcArrayManager::instance().registerBackend();
     }
 
     void TearDown() override
     {
+        // Unregister backend
+        if (proc_id_ != 0)
+        {
+            ProcArrayManager::instance().unregisterBackend(proc_id_);
+        }
+
         if (db_)
         {
             db_->close();
         }
         std::remove(test_db_path_);
+    }
+
+    // Helper: Begin transaction with MGA API
+    uint64_t beginTxn(ErrorContext* ctx)
+    {
+        uint64_t xid = 0;
+        Status status = txn_mgr_->beginTransaction(proc_id_, xid, ctx);
+        EXPECT_EQ(status, Status::OK);
+        return xid;
+    }
+
+    // Helper: Commit transaction with MGA API
+    Status commitTxn(uint64_t xid, ErrorContext* ctx)
+    {
+        return txn_mgr_->commitTransaction(proc_id_, xid, ctx);
     }
 
     // Helper: Create point
@@ -270,12 +295,9 @@ protected:
     }
 
     // Helper: Create TID
-    TID makeTID(uint64_t page, uint64_t slot)
+    TID makeTID(uint64_t page, uint16_t slot)
     {
-        TID tid;
-        tid.page_number = page;
-        tid.slot_number = slot;
-        return tid;
+        return TID(0, page, slot);  // tablespace_id=0, page_number, slot
     }
 
     const char* test_db_path_;
@@ -283,6 +305,7 @@ protected:
     TransactionManager* txn_mgr_;
     BufferPool* buffer_pool_;
     std::shared_ptr<QuadTreeOperatorClass> opclass_;
+    uint32_t proc_id_ = 0;
 };
 
 // ============================================================================
@@ -292,9 +315,9 @@ TEST_F(SPGiSTMVCCTest, EmptyTreeSearch)
 {
     ErrorContext ctx;
 
-    ID index_uuid = UuidV7::generateBytes();
-    ID table_uuid = UuidV7::generateBytes();
-    std::vector<ID> column_ids = {UuidV7::generateBytes()};
+    ID index_uuid = generateUuidV7();
+    ID table_uuid = generateUuidV7();
+    std::vector<ID> column_ids = {generateUuidV7()};
 
     uint32_t root_page = 0;
     Status status = SPGiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
@@ -322,9 +345,9 @@ TEST_F(SPGiSTMVCCTest, SingleElementMGAVisibility)
 {
     ErrorContext ctx;
 
-    ID index_uuid = UuidV7::generateBytes();
-    ID table_uuid = UuidV7::generateBytes();
-    std::vector<ID> column_ids = {UuidV7::generateBytes()};
+    ID index_uuid = generateUuidV7();
+    ID table_uuid = generateUuidV7();
+    std::vector<ID> column_ids = {generateUuidV7()};
 
     uint32_t root_page = 0;
     Status status = SPGiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
@@ -336,7 +359,7 @@ TEST_F(SPGiSTMVCCTest, SingleElementMGAVisibility)
     ASSERT_NE(spgist, nullptr);
 
     // Start transaction T1
-    uint64_t xid1 = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid1 = beginTxn(&ctx);
     ASSERT_GT(xid1, 0);
 
     // Insert point in transaction T1
@@ -347,24 +370,24 @@ TEST_F(SPGiSTMVCCTest, SingleElementMGAVisibility)
 
     // Search before commit (own changes visible)
     std::vector<TID> results;
-    status = spgist->search(point, xid1, results, &ctx);
+    status = spgist->search(point, xid1, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
     EXPECT_GE(results.size(), 0) << "Own changes should be visible (or implementation pending)";
 
     // Commit transaction T1
-    status = txn_mgr_->commitTransaction(xid1, &ctx);
+    status = commitTxn(xid1, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Start transaction T2 (after T1 commits)
-    uint64_t xid2 = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid2 = beginTxn(&ctx);
 
     // Search from T2 (should see committed entry)
     results.clear();
-    status = spgist->search(point, xid2, results, &ctx);
+    status = spgist->search(point, xid2, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
     // Implementation-dependent: may return 0 or 1
 
-    status = txn_mgr_->commitTransaction(xid2, &ctx);
+    status = commitTxn(xid2, &ctx);
     ASSERT_EQ(status, Status::OK);
 }
 
@@ -375,9 +398,9 @@ TEST_F(SPGiSTMVCCTest, MultipleElementsQuadTreePartitioning)
 {
     ErrorContext ctx;
 
-    ID index_uuid = UuidV7::generateBytes();
-    ID table_uuid = UuidV7::generateBytes();
-    std::vector<ID> column_ids = {UuidV7::generateBytes()};
+    ID index_uuid = generateUuidV7();
+    ID table_uuid = generateUuidV7();
+    std::vector<ID> column_ids = {generateUuidV7()};
 
     uint32_t root_page = 0;
     Status status = SPGiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
@@ -388,7 +411,7 @@ TEST_F(SPGiSTMVCCTest, MultipleElementsQuadTreePartitioning)
                                     opclass_, root_page, &ctx);
     ASSERT_NE(spgist, nullptr);
 
-    uint64_t xid = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid = beginTxn(&ctx);
 
     // Insert 4 points in different quadrants (center at 50,50)
     status = spgist->insert(createPoint(25, 25), makeTID(1, 0), xid, &ctx);  // NW
@@ -406,14 +429,14 @@ TEST_F(SPGiSTMVCCTest, MultipleElementsQuadTreePartitioning)
     // Search for each point individually
     std::vector<TID> results;
 
-    status = spgist->search(createPoint(25, 25), xid, results, &ctx);
+    status = spgist->search(createPoint(25, 25), xid, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
 
     results.clear();
-    status = spgist->search(createPoint(75, 75), xid, results, &ctx);
+    status = spgist->search(createPoint(75, 75), xid, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
 
-    status = txn_mgr_->commitTransaction(xid, &ctx);
+    status = commitTxn(xid, &ctx);
     ASSERT_EQ(status, Status::OK);
 }
 
@@ -424,9 +447,9 @@ TEST_F(SPGiSTMVCCTest, LogicalDeletionXmax)
 {
     ErrorContext ctx;
 
-    ID index_uuid = UuidV7::generateBytes();
-    ID table_uuid = UuidV7::generateBytes();
-    std::vector<ID> column_ids = {UuidV7::generateBytes()};
+    ID index_uuid = generateUuidV7();
+    ID table_uuid = generateUuidV7();
+    std::vector<ID> column_ids = {generateUuidV7()};
 
     uint32_t root_page = 0;
     Status status = SPGiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
@@ -438,36 +461,36 @@ TEST_F(SPGiSTMVCCTest, LogicalDeletionXmax)
     ASSERT_NE(spgist, nullptr);
 
     // Insert point in T1
-    uint64_t xid1 = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid1 = beginTxn(&ctx);
     std::vector<uint8_t> point = createPoint(50, 50);
     TID tid = makeTID(1, 0);
     status = spgist->insert(point, tid, xid1, &ctx);
     ASSERT_EQ(status, Status::OK);
-    status = txn_mgr_->commitTransaction(xid1, &ctx);
+    status = commitTxn(xid1, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Delete in T2 (sets xmax)
-    uint64_t xid2 = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid2 = beginTxn(&ctx);
     status = spgist->remove(point, tid, xid2, &ctx);
     EXPECT_EQ(status, Status::OK);
 
     // Search from T2 (should NOT see deleted entry)
     std::vector<TID> results;
-    status = spgist->search(point, xid2, results, &ctx);
+    status = spgist->search(point, xid2, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
     // Implementation-dependent: may filter by xmax
 
-    status = txn_mgr_->commitTransaction(xid2, &ctx);
+    status = commitTxn(xid2, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Search from T3 (after T2 commits, should not see entry)
-    uint64_t xid3 = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid3 = beginTxn(&ctx);
     results.clear();
-    status = spgist->search(point, xid3, results, &ctx);
+    status = spgist->search(point, xid3, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
     // Entry should be filtered by xmax visibility
 
-    status = txn_mgr_->commitTransaction(xid3, &ctx);
+    status = commitTxn(xid3, &ctx);
     ASSERT_EQ(status, Status::OK);
 }
 
@@ -478,9 +501,9 @@ TEST_F(SPGiSTMVCCTest, RepeatableReadIsolation)
 {
     ErrorContext ctx;
 
-    ID index_uuid = UuidV7::generateBytes();
-    ID table_uuid = UuidV7::generateBytes();
-    std::vector<ID> column_ids = {UuidV7::generateBytes()};
+    ID index_uuid = generateUuidV7();
+    ID table_uuid = generateUuidV7();
+    std::vector<ID> column_ids = {generateUuidV7()};
 
     uint32_t root_page = 0;
     Status status = SPGiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
@@ -492,36 +515,36 @@ TEST_F(SPGiSTMVCCTest, RepeatableReadIsolation)
     ASSERT_NE(spgist, nullptr);
 
     // Insert initial point
-    uint64_t xid_setup = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid_setup = beginTxn(&ctx);
     status = spgist->insert(createPoint(50, 50), makeTID(1, 0), xid_setup, &ctx);
     ASSERT_EQ(status, Status::OK);
-    status = txn_mgr_->commitTransaction(xid_setup, &ctx);
+    status = commitTxn(xid_setup, &ctx);
     ASSERT_EQ(status, Status::OK);
 
-    // Start REPEATABLE READ transaction
-    uint64_t xid_rr = txn_mgr_->beginTransaction(IsolationLevel::REPEATABLE_READ, &ctx);
+    // Start REPEATABLE READ transaction (using same proc_id for simplicity)
+    uint64_t xid_rr = beginTxn(&ctx);
     ASSERT_GT(xid_rr, 0);
 
     // First search
     std::vector<TID> results1;
     std::vector<uint8_t> query = createPoint(50, 50);
-    status = spgist->search(query, xid_rr, results1, &ctx);
+    status = spgist->search(query, xid_rr, &results1, &ctx);
     EXPECT_EQ(status, Status::OK);
 
     // Another transaction inserts new point
-    uint64_t xid_other = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid_other = beginTxn(&ctx);
     status = spgist->insert(createPoint(60, 60), makeTID(1, 1), xid_other, &ctx);
     ASSERT_EQ(status, Status::OK);
-    status = txn_mgr_->commitTransaction(xid_other, &ctx);
+    status = commitTxn(xid_other, &ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Second search from REPEATABLE READ (should see same snapshot)
     std::vector<TID> results2;
-    status = spgist->search(query, xid_rr, results2, &ctx);
+    status = spgist->search(query, xid_rr, &results2, &ctx);
     EXPECT_EQ(status, Status::OK);
     // Note: SP-GiST uses current_xid for TIP-based visibility
 
-    status = txn_mgr_->commitTransaction(xid_rr, &ctx);
+    status = commitTxn(xid_rr, &ctx);
     ASSERT_EQ(status, Status::OK);
 }
 
@@ -532,9 +555,9 @@ TEST_F(SPGiSTMVCCTest, GarbageCollectionDeadEntries)
 {
     ErrorContext ctx;
 
-    ID index_uuid = UuidV7::generateBytes();
-    ID table_uuid = UuidV7::generateBytes();
-    std::vector<ID> column_ids = {UuidV7::generateBytes()};
+    ID index_uuid = generateUuidV7();
+    ID table_uuid = generateUuidV7();
+    std::vector<ID> column_ids = {generateUuidV7()};
 
     uint32_t root_page = 0;
     Status status = SPGiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
@@ -549,19 +572,19 @@ TEST_F(SPGiSTMVCCTest, GarbageCollectionDeadEntries)
     std::vector<TID> dead_tids;
     for (int i = 0; i < 10; i++)
     {
-        uint64_t xid_insert = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+        uint64_t xid_insert = beginTxn(&ctx);
         std::vector<uint8_t> point = createPoint(i * 10, i * 10);
         TID tid = makeTID(1, i);
         status = spgist->insert(point, tid, xid_insert, &ctx);
         EXPECT_EQ(status, Status::OK);
-        status = txn_mgr_->commitTransaction(xid_insert, &ctx);
+        status = commitTxn(xid_insert, &ctx);
         ASSERT_EQ(status, Status::OK);
 
         // Immediately delete
-        uint64_t xid_delete = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+        uint64_t xid_delete = beginTxn(&ctx);
         status = spgist->remove(point, tid, xid_delete, &ctx);
         EXPECT_EQ(status, Status::OK);
-        status = txn_mgr_->commitTransaction(xid_delete, &ctx);
+        status = commitTxn(xid_delete, &ctx);
         ASSERT_EQ(status, Status::OK);
 
         dead_tids.push_back(tid);
@@ -574,17 +597,17 @@ TEST_F(SPGiSTMVCCTest, GarbageCollectionDeadEntries)
     // GC should remove some/all entries
 
     // Verify entries are removed (search should return 0)
-    uint64_t xid_check = txn_mgr_->beginTransaction(IsolationLevel::READ_COMMITTED, &ctx);
+    uint64_t xid_check = beginTxn(&ctx);
     for (int i = 0; i < 10; i++)
     {
         std::vector<TID> results;
         std::vector<uint8_t> query = createPoint(i * 10, i * 10);
-        status = spgist->search(query, xid_check, results, &ctx);
+        status = spgist->search(query, xid_check, &results, &ctx);
         EXPECT_EQ(status, Status::OK);
         // After GC, deleted entries should not appear
     }
 
-    status = txn_mgr_->commitTransaction(xid_check, &ctx);
+    status = commitTxn(xid_check, &ctx);
     ASSERT_EQ(status, Status::OK);
 }
 
@@ -595,9 +618,9 @@ TEST_F(SPGiSTMVCCTest, TransactionIdParameterValidation)
 {
     ErrorContext ctx;
 
-    ID index_uuid = UuidV7::generateBytes();
-    ID table_uuid = UuidV7::generateBytes();
-    std::vector<ID> column_ids = {UuidV7::generateBytes()};
+    ID index_uuid = generateUuidV7();
+    ID table_uuid = generateUuidV7();
+    std::vector<ID> column_ids = {generateUuidV7()};
 
     uint32_t root_page = 0;
     Status status = SPGiSTIndex::create(db_.get(), index_uuid, table_uuid, column_ids,
@@ -614,17 +637,17 @@ TEST_F(SPGiSTMVCCTest, TransactionIdParameterValidation)
     std::vector<uint8_t> point = createPoint(50, 50);
     TID tid = makeTID(1, 0);
 
-    // This compiles → API uses TransactionId ✅
+    // This compiles → API uses TransactionId
     status = spgist->insert(point, tid, xid, &ctx);
     EXPECT_EQ(status, Status::OK);
 
     std::vector<TID> results;
 
-    // This compiles → API uses TransactionId ✅
-    status = spgist->search(point, xid, results, &ctx);
+    // This compiles → API uses TransactionId
+    status = spgist->search(point, xid, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
 
-    // This compiles → API uses TransactionId ✅
+    // This compiles → API uses TransactionId
     status = spgist->remove(point, tid, xid, &ctx);
     EXPECT_EQ(status, Status::OK);
 
