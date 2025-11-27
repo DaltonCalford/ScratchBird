@@ -37,15 +37,65 @@ namespace scratchbird
                 output[3] = static_cast<uint8_t>(value & 0xFF);
                 return 4;
             }
-            else
+            else if (value <= VARBYTE_5_BYTE_MAX)
             {
-                // 5 bytes: 11110000 xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx
-                output[0] = 0xF0;
+                // 5 bytes: 11110xxx xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx
+                output[0] = 0xF0 | static_cast<uint8_t>(value >> 32);
                 output[1] = static_cast<uint8_t>((value >> 24) & 0xFF);
                 output[2] = static_cast<uint8_t>((value >> 16) & 0xFF);
                 output[3] = static_cast<uint8_t>((value >> 8) & 0xFF);
                 output[4] = static_cast<uint8_t>(value & 0xFF);
                 return 5;
+            }
+            else if (value <= VARBYTE_6_BYTE_MAX)
+            {
+                // 6 bytes: 111110xx xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx
+                output[0] = 0xF8 | static_cast<uint8_t>(value >> 40);
+                output[1] = static_cast<uint8_t>((value >> 32) & 0xFF);
+                output[2] = static_cast<uint8_t>((value >> 24) & 0xFF);
+                output[3] = static_cast<uint8_t>((value >> 16) & 0xFF);
+                output[4] = static_cast<uint8_t>((value >> 8) & 0xFF);
+                output[5] = static_cast<uint8_t>(value & 0xFF);
+                return 6;
+            }
+            else if (value <= VARBYTE_7_BYTE_MAX)
+            {
+                // 7 bytes: 1111110x xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx
+                output[0] = 0xFC | static_cast<uint8_t>(value >> 48);
+                output[1] = static_cast<uint8_t>((value >> 40) & 0xFF);
+                output[2] = static_cast<uint8_t>((value >> 32) & 0xFF);
+                output[3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+                output[4] = static_cast<uint8_t>((value >> 16) & 0xFF);
+                output[5] = static_cast<uint8_t>((value >> 8) & 0xFF);
+                output[6] = static_cast<uint8_t>(value & 0xFF);
+                return 7;
+            }
+            else if (value <= VARBYTE_8_BYTE_MAX)
+            {
+                // 8 bytes: 11111110 xxxxxxxx * 7
+                output[0] = 0xFE;
+                output[1] = static_cast<uint8_t>((value >> 48) & 0xFF);
+                output[2] = static_cast<uint8_t>((value >> 40) & 0xFF);
+                output[3] = static_cast<uint8_t>((value >> 32) & 0xFF);
+                output[4] = static_cast<uint8_t>((value >> 24) & 0xFF);
+                output[5] = static_cast<uint8_t>((value >> 16) & 0xFF);
+                output[6] = static_cast<uint8_t>((value >> 8) & 0xFF);
+                output[7] = static_cast<uint8_t>(value & 0xFF);
+                return 8;
+            }
+            else
+            {
+                // 9 bytes: 11111111 xxxxxxxx * 8 (full 64-bit)
+                output[0] = 0xFF;
+                output[1] = static_cast<uint8_t>((value >> 56) & 0xFF);
+                output[2] = static_cast<uint8_t>((value >> 48) & 0xFF);
+                output[3] = static_cast<uint8_t>((value >> 40) & 0xFF);
+                output[4] = static_cast<uint8_t>((value >> 32) & 0xFF);
+                output[5] = static_cast<uint8_t>((value >> 24) & 0xFF);
+                output[6] = static_cast<uint8_t>((value >> 16) & 0xFF);
+                output[7] = static_cast<uint8_t>((value >> 8) & 0xFF);
+                output[8] = static_cast<uint8_t>(value & 0xFF);
+                return 9;
             }
         }
 
@@ -82,14 +132,63 @@ namespace scratchbird
                              input[3];
                 return 4;
             }
-            else if ((first & VARBYTE_4_BYTE_MASK) == 0xF0)
+            else if ((first & VARBYTE_5_BYTE_MASK) == 0xF0)
             {
-                // 5 bytes: 11110000 xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx
-                *value_out = (static_cast<uint64_t>(input[1]) << 24) |
+                // 5 bytes: 11110xxx xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx
+                *value_out = (static_cast<uint64_t>(first & 0x07) << 32) |
+                             (static_cast<uint64_t>(input[1]) << 24) |
                              (static_cast<uint64_t>(input[2]) << 16) |
                              (static_cast<uint64_t>(input[3]) << 8) |
                              input[4];
                 return 5;
+            }
+            else if ((first & VARBYTE_6_BYTE_MASK) == 0xF8)
+            {
+                // 6 bytes: 111110xx xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx
+                *value_out = (static_cast<uint64_t>(first & 0x03) << 40) |
+                             (static_cast<uint64_t>(input[1]) << 32) |
+                             (static_cast<uint64_t>(input[2]) << 24) |
+                             (static_cast<uint64_t>(input[3]) << 16) |
+                             (static_cast<uint64_t>(input[4]) << 8) |
+                             input[5];
+                return 6;
+            }
+            else if ((first & VARBYTE_7_BYTE_MASK) == 0xFC)
+            {
+                // 7 bytes: 1111110x xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx
+                *value_out = (static_cast<uint64_t>(first & 0x01) << 48) |
+                             (static_cast<uint64_t>(input[1]) << 40) |
+                             (static_cast<uint64_t>(input[2]) << 32) |
+                             (static_cast<uint64_t>(input[3]) << 24) |
+                             (static_cast<uint64_t>(input[4]) << 16) |
+                             (static_cast<uint64_t>(input[5]) << 8) |
+                             input[6];
+                return 7;
+            }
+            else if (first == VARBYTE_8_BYTE_PREFIX)
+            {
+                // 8 bytes: 11111110 xxxxxxxx * 7
+                *value_out = (static_cast<uint64_t>(input[1]) << 48) |
+                             (static_cast<uint64_t>(input[2]) << 40) |
+                             (static_cast<uint64_t>(input[3]) << 32) |
+                             (static_cast<uint64_t>(input[4]) << 24) |
+                             (static_cast<uint64_t>(input[5]) << 16) |
+                             (static_cast<uint64_t>(input[6]) << 8) |
+                             input[7];
+                return 8;
+            }
+            else if (first == VARBYTE_9_BYTE_PREFIX)
+            {
+                // 9 bytes: 11111111 xxxxxxxx * 8 (full 64-bit)
+                *value_out = (static_cast<uint64_t>(input[1]) << 56) |
+                             (static_cast<uint64_t>(input[2]) << 48) |
+                             (static_cast<uint64_t>(input[3]) << 40) |
+                             (static_cast<uint64_t>(input[4]) << 32) |
+                             (static_cast<uint64_t>(input[5]) << 24) |
+                             (static_cast<uint64_t>(input[6]) << 16) |
+                             (static_cast<uint64_t>(input[7]) << 8) |
+                             input[8];
+                return 9;
             }
             else
             {
@@ -115,8 +214,8 @@ namespace scratchbird
                 // Calculate delta (first TID is stored as-is)
                 uint64_t delta = (i == 0) ? tids[i] : (tids[i] - prev_tid);
 
-                // Check if we have enough space (worst case: 5 bytes)
-                if (bytes_written + 5 > max_bytes)
+                // Check if we have enough space (worst case: 9 bytes for full 64-bit)
+                if (bytes_written + 9 > max_bytes)
                 {
                     // Not enough space - return 0 to indicate failure
                     return 0;
@@ -188,9 +287,25 @@ namespace scratchbird
                 {
                     estimated_bytes += 4;
                 }
-                else
+                else if (delta <= VARBYTE_5_BYTE_MAX)
                 {
                     estimated_bytes += 5;
+                }
+                else if (delta <= VARBYTE_6_BYTE_MAX)
+                {
+                    estimated_bytes += 6;
+                }
+                else if (delta <= VARBYTE_7_BYTE_MAX)
+                {
+                    estimated_bytes += 7;
+                }
+                else if (delta <= VARBYTE_8_BYTE_MAX)
+                {
+                    estimated_bytes += 8;
+                }
+                else
+                {
+                    estimated_bytes += 9;
                 }
 
                 prev_tid = tids[i];

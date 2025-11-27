@@ -175,13 +175,15 @@ namespace scratchbird::core
         constexpr uint32_t PROGRESS_CALLBACK_INTERVAL_PAGES = 100;
     }
 
-    // Simple heap page for catalog tables
+    // Simple heap page for catalog tables (supports overflow pages)
     struct CatalogHeapPage
     {
         PageHeader header;
         uint32_t record_count;
         uint32_t free_offset;
-        uint8_t data[]; // Variable length records
+        uint32_t next_page;     // Next page in chain (0 = no more pages)
+        uint32_t reserved;      // Alignment padding
+        uint8_t data[];         // Variable length records
     };
 
     /**
@@ -2833,6 +2835,9 @@ namespace scratchbird::core
         auto writeCatalogRoot(ErrorContext *ctx) -> Status;
         auto readCatalogRoot(ErrorContext *ctx) -> Status;
 
+        // Initialize TOAST for policy expressions (called without mutex to avoid deadlock)
+        auto initializePolicyToast(ErrorContext *ctx) -> Status;
+
         // Helper to write a record to a catalog heap page
         template <typename RecordType>
         auto writeRecordToHeapPage(uint32_t page_id, const RecordType &record, ErrorContext *ctx)
@@ -2861,114 +2866,143 @@ namespace scratchbird::core
         };
 
         // Helper to find a record in a catalog heap page matching a predicate
+        // Follows overflow page chain automatically
         template <typename RecordType, typename Predicate>
         auto findRecordInHeapPage(uint32_t page_id, Predicate predicate, ErrorContext *ctx)
             -> FindResult<RecordType>
         {
             BufferPool *bp = db_->buffer_pool();
-            void *page_buffer;
+            uint32_t current_page_id = page_id;
 
-            Status status = bp->pinPage(page_id, &page_buffer, ctx);
-            if (status != Status::OK)
+            while (current_page_id != 0)
             {
-                SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
-                return {status, 0, RecordType{}};
-            }
-
-            auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
-            uint32_t offset = sizeof(CatalogHeapPage);
-
-            for (uint32_t i = 0; i < heap->record_count; i++)
-            {
-                auto *record = reinterpret_cast<RecordType *>(
-                    reinterpret_cast<uint8_t *>(page_buffer) + offset);
-
-                if (predicate(*record))
+                void *page_buffer;
+                Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+                if (status != Status::OK)
                 {
-                    RecordType found = *record;
-                    bp->unpinPage(page_id, false, ctx);
-                    return {Status::OK, i, found};
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
+                    return {status, 0, RecordType{}};
                 }
 
-                offset += sizeof(RecordType);
+                auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+                uint32_t offset = sizeof(CatalogHeapPage);
+
+                for (uint32_t i = 0; i < heap->record_count; i++)
+                {
+                    auto *record = reinterpret_cast<RecordType *>(
+                        reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+                    if (predicate(*record))
+                    {
+                        RecordType found = *record;
+                        bp->unpinPage(current_page_id, false, ctx);
+                        return {Status::OK, i, found};
+                    }
+
+                    offset += sizeof(RecordType);
+                }
+
+                // Move to next page in chain
+                uint32_t next_page = heap->next_page;
+                bp->unpinPage(current_page_id, false, ctx);
+                current_page_id = next_page;
             }
 
-            bp->unpinPage(page_id, false, ctx);
             SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Record not found in catalog page");
             return {Status::NOT_FOUND, 0, RecordType{}};
         }
 
         // Helper to scan all records in a catalog heap page
+        // Follows overflow page chain automatically
         template <typename RecordType, typename InfoType, typename Converter>
         auto scanHeapPage(uint32_t page_id, std::vector<InfoType> &results, Converter converter,
                           ErrorContext *ctx) -> Status
         {
             BufferPool *bp = db_->buffer_pool();
-            void *page_buffer;
+            uint32_t current_page_id = page_id;
 
-            Status status = bp->pinPage(page_id, &page_buffer, ctx);
-            if (status != Status::OK)
+            while (current_page_id != 0)
             {
-                SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
-                return status;
-            }
-
-            auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
-            uint32_t offset = sizeof(CatalogHeapPage);
-
-            for (uint32_t i = 0; i < heap->record_count; i++)
-            {
-                auto *record = reinterpret_cast<RecordType *>(
-                    reinterpret_cast<uint8_t *>(page_buffer) + offset);
-
-                if (record->is_valid)
+                void *page_buffer;
+                Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+                if (status != Status::OK)
                 {
-                    InfoType info;
-                    converter(*record, info);
-                    results.push_back(info);
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
+                    return status;
                 }
 
-                offset += sizeof(RecordType);
+                auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+                uint32_t offset = sizeof(CatalogHeapPage);
+
+                for (uint32_t i = 0; i < heap->record_count; i++)
+                {
+                    auto *record = reinterpret_cast<RecordType *>(
+                        reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+                    if (record->is_valid)
+                    {
+                        InfoType info;
+                        converter(*record, info);
+                        results.push_back(info);
+                    }
+
+                    offset += sizeof(RecordType);
+                }
+
+                // Move to next page in chain
+                uint32_t next_page = heap->next_page;
+                bp->unpinPage(current_page_id, false, ctx);
+                current_page_id = next_page;
             }
 
-            return bp->unpinPage(page_id, false, ctx);
+            return Status::OK;
         }
 
         // Helper to scan filtered records in a catalog heap page
+        // Follows overflow page chain automatically
         template <typename RecordType, typename InfoType, typename Filter, typename Converter>
         auto scanHeapPageWithFilter(uint32_t page_id, std::vector<InfoType> &results,
                                    Filter filter, Converter converter, ErrorContext *ctx) -> Status
         {
             BufferPool *bp = db_->buffer_pool();
-            void *page_buffer;
+            uint32_t current_page_id = page_id;
 
-            Status status = bp->pinPage(page_id, &page_buffer, ctx);
-            if (status != Status::OK)
+            while (current_page_id != 0)
             {
-                SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
-                return status;
-            }
-
-            auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
-            uint32_t offset = sizeof(CatalogHeapPage);
-
-            for (uint32_t i = 0; i < heap->record_count; i++)
-            {
-                auto *record = reinterpret_cast<RecordType *>(
-                    reinterpret_cast<uint8_t *>(page_buffer) + offset);
-
-                // Only process valid records that match the filter
-                if (record->is_valid && filter(*record))
+                void *page_buffer;
+                Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+                if (status != Status::OK)
                 {
-                    InfoType info;
-                    converter(*record, info);
-                    results.push_back(info);
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
+                    return status;
                 }
 
-                offset += sizeof(RecordType);
+                auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+                uint32_t offset = sizeof(CatalogHeapPage);
+
+                for (uint32_t i = 0; i < heap->record_count; i++)
+                {
+                    auto *record = reinterpret_cast<RecordType *>(
+                        reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+                    // Only process valid records that match the filter
+                    if (record->is_valid && filter(*record))
+                    {
+                        InfoType info;
+                        converter(*record, info);
+                        results.push_back(info);
+                    }
+
+                    offset += sizeof(RecordType);
+                }
+
+                // Move to next page in chain
+                uint32_t next_page = heap->next_page;
+                bp->unpinPage(current_page_id, false, ctx);
+                current_page_id = next_page;
             }
 
-            return bp->unpinPage(page_id, false, ctx);
+            return Status::OK;
         }
 
         // Helper to update a record in a catalog heap page
@@ -3005,6 +3039,7 @@ namespace scratchbird::core
         }
 
         // Helper to read records from a catalog heap page
+        // Follows overflow page chain automatically
         template <typename RecordType, typename InfoType, typename KeyType, typename Converter,
                   typename KeyExtractor>
         auto readRecordsFromHeapPage(uint32_t page_id, std::unordered_map<KeyType, InfoType> &cache,
@@ -3012,35 +3047,44 @@ namespace scratchbird::core
                                      ErrorContext *ctx) -> Status
         {
             BufferPool *bp = db_->buffer_pool();
-            void *page_buffer;
-            Status status = bp->pinPage(page_id, &page_buffer, ctx);
-            if (status != Status::OK)
-            {
-                SET_ERROR_CONTEXT(ctx, status, "Failed to read catalog heap page");
-                return status;
-            }
-
-            auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
-
             cache.clear();
-            uint32_t offset = sizeof(CatalogHeapPage);
+            uint32_t current_page_id = page_id;
 
-            for (uint32_t i = 0; i < heap->record_count; i++)
+            while (current_page_id != 0)
             {
-                auto *record = reinterpret_cast<RecordType *>(
-                    reinterpret_cast<uint8_t *>(page_buffer) + offset);
-
-                if (record->is_valid)
+                void *page_buffer;
+                Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+                if (status != Status::OK)
                 {
-                    InfoType info;
-                    converter(*record, info);
-                    cache[key_extractor(info)] = info;
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to read catalog heap page");
+                    return status;
                 }
 
-                offset += sizeof(RecordType);
+                auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+                uint32_t offset = sizeof(CatalogHeapPage);
+
+                for (uint32_t i = 0; i < heap->record_count; i++)
+                {
+                    auto *record = reinterpret_cast<RecordType *>(
+                        reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+                    if (record->is_valid)
+                    {
+                        InfoType info;
+                        converter(*record, info);
+                        cache[key_extractor(info)] = info;
+                    }
+
+                    offset += sizeof(RecordType);
+                }
+
+                // Move to next page in chain
+                uint32_t next_page = heap->next_page;
+                bp->unpinPage(current_page_id, false, ctx);
+                current_page_id = next_page;
             }
 
-            return bp->unpinPage(page_id, false, ctx);
+            return Status::OK;
         }
 
         // Helper to read records from a catalog heap page

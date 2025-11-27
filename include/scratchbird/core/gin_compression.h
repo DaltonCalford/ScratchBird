@@ -24,7 +24,11 @@ namespace scratchbird
          * - 128-16383:       2 bytes: 10xxxxxx xxxxxxxx
          * - 16384-2097151:   3 bytes: 110xxxxx xxxxxxxx xxxxxxxx
          * - 2097152-268435455: 4 bytes: 1110xxxx xxxxxxxx xxxxxxxx xxxxxxxx
-         * - 268435456+:      5 bytes: 11110000 xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx
+         * - 268435456-2^36:  5 bytes: 11110xxx xxxxxxxx xxxxxxxx xxxxxxxx xxxxxxxx
+         * - 2^36-2^44:       6 bytes: 111110xx xxxxxxxx...
+         * - 2^44-2^52:       7 bytes: 1111110x xxxxxxxx...
+         * - 2^52-2^60:       8 bytes: 11111110 xxxxxxxx...
+         * - 2^60+:           9 bytes: 11111111 xxxxxxxx * 8 (full 64-bit)
          */
 
         // Constants for varbyte encoding thresholds
@@ -32,12 +36,21 @@ namespace scratchbird
         constexpr uint64_t VARBYTE_2_BYTE_MAX = 16383ULL;
         constexpr uint64_t VARBYTE_3_BYTE_MAX = 2097151ULL;
         constexpr uint64_t VARBYTE_4_BYTE_MAX = 268435455ULL;
+        constexpr uint64_t VARBYTE_5_BYTE_MAX = 68719476735ULL;        // 2^36 - 1
+        constexpr uint64_t VARBYTE_6_BYTE_MAX = 17592186044415ULL;     // 2^44 - 1
+        constexpr uint64_t VARBYTE_7_BYTE_MAX = 4503599627370495ULL;   // 2^52 - 1
+        constexpr uint64_t VARBYTE_8_BYTE_MAX = 1152921504606846975ULL; // 2^60 - 1
 
         // Masks for decoding
         constexpr uint8_t VARBYTE_1_BYTE_MASK = 0x80; // 10000000
         constexpr uint8_t VARBYTE_2_BYTE_MASK = 0xC0; // 11000000
         constexpr uint8_t VARBYTE_3_BYTE_MASK = 0xE0; // 11100000
         constexpr uint8_t VARBYTE_4_BYTE_MASK = 0xF0; // 11110000
+        constexpr uint8_t VARBYTE_5_BYTE_MASK = 0xF8; // 11111000
+        constexpr uint8_t VARBYTE_6_BYTE_MASK = 0xFC; // 11111100
+        constexpr uint8_t VARBYTE_7_BYTE_MASK = 0xFE; // 11111110
+        constexpr uint8_t VARBYTE_8_BYTE_PREFIX = 0xFE; // 11111110
+        constexpr uint8_t VARBYTE_9_BYTE_PREFIX = 0xFF; // 11111111
 
         /**
          * Encode a single uint64_t value using varbyte encoding.

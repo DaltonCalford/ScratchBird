@@ -424,7 +424,7 @@ namespace scratchbird::core
         mutable std::mutex mutex_;
 
         // Catalog page
-        static constexpr uint32_t DOMAINS_TABLE_PAGE = 8;  // After INDEXES_TABLE_PAGE
+        static constexpr uint32_t DOMAINS_TABLE_PAGE = 10;  // After TABLESPACE_FILES_TABLE_PAGE (page 9)
         uint32_t domains_table_page_ = DOMAINS_TABLE_PAGE;
 
         // In-memory cache

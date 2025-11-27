@@ -212,10 +212,12 @@ TEST_F(Alpha101Test, CreateDatabase_FileExists)
 
 TEST_F(Alpha101Test, CreateDatabase_InvalidPageSize)
 {
-    // 64K and 128K are not supported in Alpha
-    ASSERT_NE(Database::create("test.db", 65536), Status::OK);
-    ASSERT_NE(Database::create("test.db", 131072), Status::OK);
-    ASSERT_NE(Database::create("test.db", 4096), Status::OK);
+    // Only 8192, 16384, 32768, 65536, and 131072 are valid page sizes
+    // Test invalid page sizes
+    ASSERT_NE(Database::create("test.db", 4096), Status::OK);   // Too small
+    ASSERT_NE(Database::create("test.db", 1024), Status::OK);   // Too small
+    ASSERT_NE(Database::create("test.db", 262144), Status::OK); // Too large (256K)
+    ASSERT_NE(Database::create("test.db", 12345), Status::OK);  // Not a power of 2
 }
 
 TEST_F(Alpha101Test, OpenDatabase_FileNotFound)

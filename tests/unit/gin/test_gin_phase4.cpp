@@ -30,7 +30,7 @@ void test_find_all_basic()
 {
     std::cout << "Test: findAll() basic AND operation\n";
 
-    const char *db_path = "/tmp/test_gin_phase4_db1";
+    const char *db_path = "test_gin_phase4_db1";
     std::remove(db_path);
 
     ErrorContext ctx;
@@ -78,12 +78,18 @@ void test_find_all_basic()
     status = gin_index->mergePendingList(&ctx);
     assert(status == Status::OK);
 
-    std::cout << "  Testing AND queries...\n";
+    std::cout << "  Testing AND queries...\n" << std::flush;
 
     // Query: apple AND banana -> should return docs 1, 3
     std::vector<std::vector<uint8_t>> keys_ab = {stringToKey("apple"), stringToKey("banana")};
     auto results_ab = gin_index->findAll(keys_ab, 0, &ctx);
-    std::cout << "    apple AND banana: " << results_ab.size() << " results\n";
+    std::cout << "    apple AND banana: " << results_ab.size() << " results" << std::endl;
+    for (const auto& tid : results_ab) {
+        std::cout << "      TID: (gpid=" << tid.gpid << ", slot=" << tid.slot << ")" << std::endl;
+    }
+    if (results_ab.size() != 2) {
+        std::cerr << "ERROR: Expected 2 results but got " << results_ab.size() << std::endl;
+    }
     assert(results_ab.size() == 2);
     std::set<TID> expected_ab = {TID{1, 1}, TID{1, 3}};
     assert(std::set<TID>(results_ab.begin(), results_ab.end()) == expected_ab);
@@ -117,7 +123,7 @@ void test_find_any_basic()
 {
     std::cout << "Test: findAny() basic OR operation\n";
 
-    const char *db_path = "/tmp/test_gin_phase4_db2";
+    const char *db_path = "test_gin_phase4_db2";
     std::remove(db_path);
 
     ErrorContext ctx;
@@ -197,7 +203,7 @@ void test_complex_queries()
 {
     std::cout << "Test: Complex multi-key queries\n";
 
-    const char *db_path = "/tmp/test_gin_phase4_db3";
+    const char *db_path = "test_gin_phase4_db3";
     std::remove(db_path);
 
     ErrorContext ctx;
@@ -269,7 +275,7 @@ void test_large_scale_multi_key()
 {
     std::cout << "Test: Large-scale multi-key operations\n";
 
-    const char *db_path = "/tmp/test_gin_phase4_db4";
+    const char *db_path = "test_gin_phase4_db4";
     std::remove(db_path);
 
     ErrorContext ctx;
@@ -330,7 +336,7 @@ void test_edge_cases()
 {
     std::cout << "Test: Edge cases\n";
 
-    const char *db_path = "/tmp/test_gin_phase4_db5";
+    const char *db_path = "test_gin_phase4_db5";
     std::remove(db_path);
 
     ErrorContext ctx;
