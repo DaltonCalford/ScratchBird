@@ -241,6 +241,42 @@ target_link_libraries(scratchbird_server PUBLIC
 )
 
 # ==============================================================================
+# Client Library: scratchbird_client (Local Server Architecture - Phase 4)
+# ==============================================================================
+# Client library for connecting to ScratchBird server
+# Provides Connection, ResultSet, PreparedStatement, and ConnectionPool classes
+
+file(GLOB SCRATCHBIRD_CLIENT_SOURCES
+    client/*.cpp
+)
+
+add_library(scratchbird_client STATIC
+    ${SCRATCHBIRD_CLIENT_SOURCES}
+)
+
+target_include_directories(scratchbird_client PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+target_link_libraries(scratchbird_client PUBLIC
+    scratchbird_protocol
+    scratchbird_server
+    scratchbird_core
+)
+
+# Thread support for connection pooling
+target_link_libraries(scratchbird_client PUBLIC Threads::Threads)
+
+set_target_properties(scratchbird_client PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE ON
+)
+
+message(STATUS "Client library: scratchbird_client (connection, result sets, pooling)")
+
+# ==============================================================================
 # sb_server Executable (Local Server Architecture - Phase 3)
 # ==============================================================================
 # Database server daemon
@@ -288,7 +324,7 @@ set_target_properties(sb_charset_loader PROPERTIES
 )
 
 # Installation (for future use)
-install(TARGETS scratchbird sb_server sb_charset_loader scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer scratchbird_server scratchbird_protocol
+install(TARGETS scratchbird sb_server sb_charset_loader scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer scratchbird_server scratchbird_protocol scratchbird_client
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
