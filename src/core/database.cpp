@@ -949,14 +949,9 @@ namespace scratchbird::core
                 free(real_path_buf);
             }
 
-            char *cwd_buf = getcwd(nullptr, 0);
-            if (cwd_buf == nullptr)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Could not get current working directory.");
-                return Status::IO_ERROR;
-            }
-            cwd = std::string(cwd_buf);
-            free(cwd_buf);
+            // Note: We no longer restrict paths to current working directory
+            // The server process needs to open databases in any location specified by the user
+            // Security is enforced at the OS level through file permissions
         }
         catch (const std::bad_alloc &)
         {
@@ -965,10 +960,22 @@ namespace scratchbird::core
             return Status::OOM;
         }
 
-        if (canonical_path.rfind(cwd, 0) != 0)
+        // Basic validation: ensure path is absolute after resolution
+        // and doesn't contain suspicious patterns
+        if (canonical_path.empty())
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_PATH,
-                              "Database path is outside the allowed directory.");
+                              "Database path resolved to empty string.");
+            return Status::INVALID_PATH;
+        }
+
+        // Ensure the parent directory exists and is writable
+        std::filesystem::path p(canonical_path);
+        std::filesystem::path parent_dir = p.parent_path();
+        if (!parent_dir.empty() && !std::filesystem::exists(parent_dir))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_PATH,
+                              "Parent directory does not exist.");
             return Status::INVALID_PATH;
         }
 

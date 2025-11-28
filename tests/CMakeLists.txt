@@ -107,6 +107,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_type_serialization.cpp$")  
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_type_conversions.cpp$")  # TypedValue geometry API
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_type_system.cpp$")  # TypedValue geometry API
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_timezone.cpp$")  # TypeConverter API
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_client_connection.cpp$")  # Has separate test target
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/types/test_interval_type.cpp$")  # TypedValue API
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/types/test_money_type.cpp$")  # TypeSystem API
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/types/test_new_types_standalone.cpp$")  # TypedValue API
