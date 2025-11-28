@@ -38,7 +38,7 @@ Database* createTestDatabase()
     Status status = Database::create(test_db_path, 8192, &ctx);
     if (status != Status::OK)
     {
-        fprintf(stderr, "Failed to create test database: %s\n", ctx.message);
+        fprintf(stderr, "Failed to create test database: %s\n", ctx.message.c_str());
         return nullptr;
     }
 
@@ -46,7 +46,7 @@ Database* createTestDatabase()
     status = db->open(test_db_path, &ctx);
     if (status != Status::OK)
     {
-        fprintf(stderr, "Failed to open test database: %s\n", ctx.message);
+        fprintf(stderr, "Failed to open test database: %s\n", ctx.message.c_str());
         delete db;
         return nullptr;
     }

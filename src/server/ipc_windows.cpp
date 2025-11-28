@@ -81,7 +81,7 @@ static std::string getLastErrorString() {
 // Named Pipe Connection Implementation
 // ============================================================================
 
-class NamedPipeConnection : public IPCConnection {
+class NamedPipeConnection final : public IPCConnection {
 public:
     explicit NamedPipeConnection(HANDLE pipe, const std::string& remote_addr)
         : pipe_(pipe)
@@ -304,7 +304,7 @@ private:
 // Named Pipe Server Implementation
 // ============================================================================
 
-class NamedPipeServer : public IPCServer {
+class NamedPipeServer final : public IPCServer {
 public:
     explicit NamedPipeServer(const IPCServerConfig& config)
         : config_(config)
@@ -503,7 +503,7 @@ private:
 // Named Pipe Client Implementation
 // ============================================================================
 
-class NamedPipeClient : public IPCClient {
+class NamedPipeClient final : public IPCClient {
 public:
     explicit NamedPipeClient(const IPCClientConfig& config)
         : config_(config)

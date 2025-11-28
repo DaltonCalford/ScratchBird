@@ -912,7 +912,8 @@ namespace scratchbird::core
         }
 
         TransactionState state;
-        if (getTransactionState(xid, state, nullptr) != Status::OK)
+        Status get_status = getTransactionState(xid, state, nullptr);
+        if (get_status != Status::OK)
         {
             // Error getting state, for old transactions assume committed
             if (xid < current_xid)
@@ -922,7 +923,7 @@ namespace scratchbird::core
             return false;
         }
 
-        return state == TransactionState::COMMITTED;
+        return (state == TransactionState::COMMITTED);
     }
 
     auto TransactionManager::isVersionVisible(uint64_t version_xid, uint64_t reader_xid) -> bool

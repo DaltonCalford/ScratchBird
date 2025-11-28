@@ -2586,6 +2586,10 @@ namespace scratchbird::core
 
 
     private:
+        // Internal helper functions (assume mutex_ is already held)
+        auto getColumnInternal(const ID &table_id, const std::string &column_name,
+                               ColumnInfo &info, ErrorContext *ctx) -> Status;
+
         Database *db_;
         mutable std::mutex mutex_;
 

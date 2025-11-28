@@ -8,6 +8,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/compression.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/logger.h"
 #include <cstring>
 #include <algorithm>
 

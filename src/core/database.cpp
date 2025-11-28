@@ -358,8 +358,11 @@ namespace scratchbird::core
         header->system_catalog_page = 1;
 
         // Initialize transaction info
-        header->next_transaction_id = 3;   // Start after FROZEN_XID (2)
-        header->oldest_transaction_id = 3; // OIT - initially same as next
+        // Use DEFAULT_INITIAL_XID + 1 for next_xid so that DEFAULT_INITIAL_XID is a valid fallback
+        // This ensures tuples inserted without a proper transaction (fallback to DEFAULT_INITIAL_XID)
+        // will pass visibility checks (xid < next_xid)
+        header->next_transaction_id = config::DEFAULT_INITIAL_XID + 1;
+        header->oldest_transaction_id = config::DEFAULT_INITIAL_XID; // OIT - lowest valid user XID
         header->oldest_active_xid = 0;     // OAT - 0 means no active transactions
         header->oldest_snapshot = 0;       // OST - 0 means no snapshot transactions
         header->latest_completed_xid = 0;
@@ -757,6 +760,16 @@ namespace scratchbird::core
         {
             close();
             return status;
+        }
+
+        // Mark DEFAULT_INITIAL_XID as committed in CLOG
+        // This allows tuples inserted without a proper transaction (using fallback XID)
+        // to be visible after recovery/restart
+        status = clog_->setStatus(config::DEFAULT_INITIAL_XID, ClogStatus::COMMITTED, ctx);
+        if (status != Status::OK)
+        {
+            LOG_WARNING(STORAGE, "Failed to mark DEFAULT_INITIAL_XID as committed in CLOG");
+            // Non-fatal - continue initialization
         }
 
         // Initialize sweep manager

@@ -124,7 +124,7 @@ static void setSocketTimeout(socket_t sock, uint32_t timeout_ms, bool for_recv) 
 // TCP Connection Implementation
 // ============================================================================
 
-class TCPConnection : public IPCConnection {
+class TCPConnection final : public IPCConnection {
 public:
     explicit TCPConnection(socket_t sock, const std::string& remote_addr)
         : sock_(sock)
@@ -358,7 +358,7 @@ private:
 // TCP Server Implementation
 // ============================================================================
 
-class TCPServer : public IPCServer {
+class TCPServer final : public IPCServer {
 public:
     explicit TCPServer(const IPCServerConfig& config)
         : config_(config)
@@ -564,7 +564,7 @@ private:
 // TCP Client Implementation
 // ============================================================================
 
-class TCPClient : public IPCClient {
+class TCPClient final : public IPCClient {
 public:
     explicit TCPClient(const IPCClientConfig& config)
         : config_(config)

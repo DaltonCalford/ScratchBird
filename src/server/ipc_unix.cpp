@@ -47,7 +47,7 @@ namespace server {
 // Unix Socket Connection Implementation
 // ============================================================================
 
-class UnixSocketConnection : public IPCConnection {
+class UnixSocketConnection final : public IPCConnection {
 public:
     explicit UnixSocketConnection(int fd, const std::string& remote_addr)
         : fd_(fd)
@@ -290,7 +290,7 @@ private:
 // Unix Socket Server Implementation
 // ============================================================================
 
-class UnixSocketServer : public IPCServer {
+class UnixSocketServer final : public IPCServer {
 public:
     explicit UnixSocketServer(const IPCServerConfig& config)
         : config_(config)
@@ -523,7 +523,7 @@ private:
 // Unix Socket Client Implementation
 // ============================================================================
 
-class UnixSocketClient : public IPCClient {
+class UnixSocketClient final : public IPCClient {
 public:
     explicit UnixSocketClient(const IPCClientConfig& config)
         : config_(config)

@@ -896,15 +896,18 @@ namespace scratchbird::core
 
         // PHASE 1, TASK 1.2.5: Use GPID-based TID fields
         // CRITICAL: Set back_version to point BACKWARD to back version
-        // Build TID for back version (same page, but different offset)
+        // Build TID for back version
+        // For same-page: back_version_page_id == header()->page_id
+        // For cross-page: back_version_page_id == the new page allocated above
         // For Alpha simplification: Store back version offset directly in slot field
         // (This is a temporary approach - full implementation would use proper item pointers)
-        uint32_t page_id = header()->page_id;
-        GPID page_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
-        new_primary_hdr->back_version_gpid = page_gpid;
+        GPID back_version_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(back_version_page_id));
+        new_primary_hdr->back_version_gpid = back_version_gpid;
         new_primary_hdr->back_version_slot = static_cast<uint16_t>(back_version_offset); // Temporary: use offset as slot
 
-        new_primary_hdr->setTID(page_gpid, old_item_id); // Same item ID (stable!)
+        // Set primary TID to current page and item ID (stable!)
+        GPID primary_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(header()->page_id));
+        new_primary_hdr->setTID(primary_gpid, old_item_id); // Same item ID (stable!)
         new_primary_hdr->infomask = 0; // Clear flags (new primary version)
         // Note: We don't set HEAP_HOT_UPDATED here - that's for index update optimization
         // MGA provides stable TIDs naturally, so indexes don't need updating regardless

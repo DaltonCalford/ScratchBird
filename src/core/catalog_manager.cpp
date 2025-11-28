@@ -2176,10 +2176,10 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto CatalogManager::getColumn(const ID &table_id, const std::string &column_name,
-                                   ColumnInfo &info, ErrorContext *ctx) -> Status
+    // Internal helper that assumes mutex_ is already held
+    auto CatalogManager::getColumnInternal(const ID &table_id, const std::string &column_name,
+                                           ColumnInfo &info, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
         auto it = column_cache_.find(table_id);
         if (it == column_cache_.end())
         {
@@ -2200,6 +2200,13 @@ namespace scratchbird::core
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                           ("Column not found: " + column_name).c_str());
         return Status::INVALID_ARGUMENT;
+    }
+
+    auto CatalogManager::getColumn(const ID &table_id, const std::string &column_name,
+                                   ColumnInfo &info, ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return getColumnInternal(table_id, column_name, info, ctx);
     }
 
     auto CatalogManager::createIndex(const ID &table_id, const std::string &index_name,
@@ -2230,11 +2237,12 @@ namespace scratchbird::core
         }
 
         // Resolve column names to column IDs
+        // NOTE: Use getColumnInternal since we already hold mutex_
         std::vector<ID> column_ids;
         for (const auto &col_name : column_names)
         {
             ColumnInfo col_info;
-            Status status = getColumn(table_id, col_name, col_info, ctx);
+            Status status = getColumnInternal(table_id, col_name, col_info, ctx);
             if (status != Status::OK)
             {
                 return status;
@@ -2342,6 +2350,7 @@ namespace scratchbird::core
         }
 
         // Resolve column names to column IDs (if not an expression index)
+        // NOTE: Use getColumnInternal since we already hold mutex_
         std::vector<ID> column_ids;
         if (!expression_data.empty())
         {
@@ -2355,7 +2364,7 @@ namespace scratchbird::core
             for (const auto &col_name : column_names)
             {
                 ColumnInfo col_info;
-                Status status = getColumn(table_id, col_name, col_info, ctx);
+                Status status = getColumnInternal(table_id, col_name, col_info, ctx);
                 if (status != Status::OK)
                 {
                     return status;

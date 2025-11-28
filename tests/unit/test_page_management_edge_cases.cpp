@@ -53,10 +53,12 @@ protected:
 
         // Seek to page and corrupt data
         off_t offset = page_id * 16384 + corruption_offset;
-        lseek(fd, offset, SEEK_SET);
+        off_t result = lseek(fd, offset, SEEK_SET);
+        ASSERT_EQ(result, offset) << "Failed to seek to corruption offset";
 
         uint8_t garbage[] = {0xDE, 0xAD, 0xBE, 0xEF};
-        write(fd, garbage, sizeof(garbage));
+        ssize_t written = write(fd, garbage, sizeof(garbage));
+        ASSERT_EQ(written, static_cast<ssize_t>(sizeof(garbage))) << "Failed to write corruption data";
 
         close(fd);
     }

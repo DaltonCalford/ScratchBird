@@ -16,6 +16,7 @@
 #include "scratchbird/core/columnstore.h"
 #include "scratchbird/core/fulltext_index.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/logger.h"
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <cstring>

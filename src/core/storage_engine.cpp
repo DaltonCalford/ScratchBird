@@ -527,7 +527,8 @@ namespace scratchbird::core
         {
             // Check visibility
             const auto *hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
-            if (!isVisible(hdr->xmin, hdr->xmax, getCurrentXid()))
+            uint64_t cur_xid = getCurrentXid();
+            if (!isVisible(hdr->xmin, hdr->xmax, cur_xid))
             {
                 status = Status::NOT_FOUND;
                 SET_ERROR_CONTEXT(ctx, status, "Tuple not visible");
@@ -1324,10 +1325,13 @@ namespace scratchbird::core
             return lock_status;
         }
 
-        // Get current XID from transaction manager
-        uint64_t xmax = (db_->transaction_manager() != nullptr)
-                            ? db_->transaction_manager()->getCurrentXid()
-                            : config::DEFAULT_INITIAL_XID;
+        // Get current XID from connection context (same approach as insertTuple)
+        uint64_t xmax = ConnectionContext::getCurrentTransactionId();
+        if (xmax == 0)
+        {
+            // No active connection context - use fallback XID
+            xmax = config::DEFAULT_INITIAL_XID;
+        }
         uint64_t new_xmin = xmax; // New version gets same XID as update
 
         // Pin the page
@@ -1340,7 +1344,9 @@ namespace scratchbird::core
         }
 
         // Try to update tuple on same page
-        HeapPage heap_page(page_data, db_->page_size());
+        // Use full constructor with database to enable cross-page back versions
+        ToastManager *toast_mgr = getOrCreateToastManager(table_id, ctx);
+        HeapPage heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
         uint16_t new_item_id;
 
         status = heap_page.updateTuple(item_id, new_tuple_data, new_tuple_size, xmax, new_xmin,
