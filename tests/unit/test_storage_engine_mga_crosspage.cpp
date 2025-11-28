@@ -6,6 +6,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/tid.h"
 #include "scratchbird/core/gpid.h"
+#include "scratchbird/core/catalog_manager.h"
 #include <cstring>
 #include <filesystem>
 #include <vector>
@@ -36,6 +37,42 @@ protected:
     {
         std::filesystem::remove("test_mga_crosspage.db");
     }
+
+    // Helper: Create a test table and return its ID
+    ID createTestTable(Database& db, const std::string& table_name, ErrorContext* ctx = nullptr) {
+        CatalogManager* catalog = db.catalog_manager();
+        EXPECT_NE(catalog, nullptr);
+
+        // Create a test schema first
+        ID schema_id;
+        Status status = catalog->createSchema("test_schema", "test_user", schema_id, ctx);
+        // Schema may already exist from previous test, that's OK
+        if (status != Status::OK && status != Status::DUPLICATE_OBJECT) {
+            EXPECT_EQ(status, Status::OK) << "Failed to create schema";
+        }
+        if (status == Status::DUPLICATE_OBJECT) {
+            // Get existing schema
+            CatalogManager::SchemaInfo schema_info;
+            status = catalog->getSchema("test_schema", schema_info, ctx);
+            EXPECT_EQ(status, Status::OK) << "Failed to get existing schema";
+            schema_id = schema_info.schema_id;
+        }
+
+        // Create table with a simple column
+        std::vector<CatalogManager::ColumnInfo> columns;
+        CatalogManager::ColumnInfo col;
+        col.column_name = "data";
+        col.data_type = 25; // TEXT type
+        col.max_length = 0;
+        col.nullable = true;
+        columns.push_back(col);
+
+        ID table_id;
+        status = catalog->createTable(schema_id, table_name, columns, table_id, 0, ctx);
+        EXPECT_EQ(status, Status::OK) << "Failed to create table: " << table_name;
+
+        return table_id;
+    }
 };
 
 // SPRINT 0: Test cross-page UPDATE preserves TID (Firebird MGA principle)
@@ -51,22 +88,27 @@ TEST_F(StorageEngineMGATest, CrossPageUpdatePreservesTID)
     Database db;
     ASSERT_EQ(db.open("test_mga_crosspage.db"), Status::OK);
 
-    StorageEngine engine(&db);
+    // Create a test table in the catalog (required for StorageEngine methods)
+    ErrorContext ctx;
+    ID table_id = createTestTable(db, "test_crosspage", &ctx);
+
+    StorageEngine* engine = db.storage_engine();
+    ASSERT_NE(engine, nullptr);
 
     // Step 1: Insert tuple with SMALL data
     std::vector<uint8_t> small_data(50, 0xAA);
     uint32_t original_page_id;
     uint16_t original_item_id;
 
-    Status status = engine.insertTuple(
-        makeTestUUID(1),
+    Status status = engine->insertTuple(
+        table_id,
         small_data.data(),
         small_data.size(),
         &original_page_id,
         &original_item_id,
-        nullptr
+        &ctx
     );
-    ASSERT_EQ(status, Status::OK) << "Failed to insert initial small tuple";
+    ASSERT_EQ(status, Status::OK) << "Failed to insert initial small tuple: " << ctx.message;
 
     // Record original TID
     GPID original_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(original_page_id));
@@ -77,17 +119,17 @@ TEST_F(StorageEngineMGATest, CrossPageUpdatePreservesTID)
     uint32_t new_page_id;
     uint16_t new_item_id;
 
-    status = engine.updateTuple(
-        makeTestUUID(1),
+    status = engine->updateTuple(
+        table_id,
         original_page_id,
         original_item_id,
         large_data.data(),
         large_data.size(),
         &new_page_id,
         &new_item_id,
-        nullptr
+        &ctx
     );
-    ASSERT_EQ(status, Status::OK) << "Failed to update with large data (cross-page)";
+    ASSERT_EQ(status, Status::OK) << "Failed to update with large data (cross-page): " << ctx.message;
 
     TID new_tid(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(new_page_id)), new_item_id);
 
@@ -101,8 +143,8 @@ TEST_F(StorageEngineMGATest, CrossPageUpdatePreservesTID)
 
     // CRITICAL ASSERTION 2: Data must be correct at ORIGINAL location
     Tuple read_tuple;
-    status = engine.getTuple(original_page_id, original_item_id, &read_tuple, nullptr);
-    ASSERT_EQ(status, Status::OK) << "Failed to read tuple at original TID";
+    status = engine->getTuple(original_page_id, original_item_id, &read_tuple, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to read tuple at original TID: " << ctx.message;
     EXPECT_EQ(read_tuple.data_size, large_data.size())
         << "Tuple data size mismatch after cross-page UPDATE";
 
@@ -121,39 +163,44 @@ TEST_F(StorageEngineMGATest, SamePageUpdatePreservesTID)
     Database db;
     ASSERT_EQ(db.open("test_mga_crosspage.db"), Status::OK);
 
-    StorageEngine engine(&db);
+    // Create a test table in the catalog
+    ErrorContext ctx;
+    ID table_id = createTestTable(db, "test_samepage", &ctx);
+
+    StorageEngine* engine = db.storage_engine();
+    ASSERT_NE(engine, nullptr);
 
     // Insert small tuple
     std::vector<uint8_t> small_data(50, 0xAA);
     uint32_t original_page_id;
     uint16_t original_item_id;
 
-    Status status = engine.insertTuple(
-        makeTestUUID(1),
+    Status status = engine->insertTuple(
+        table_id,
         small_data.data(),
         small_data.size(),
         &original_page_id,
         &original_item_id,
-        nullptr
+        &ctx
     );
-    ASSERT_EQ(status, Status::OK);
+    ASSERT_EQ(status, Status::OK) << "Failed to insert: " << ctx.message;
 
     // Update with another small tuple (same-page update)
     std::vector<uint8_t> small_data2(60, 0xBB);
     uint32_t new_page_id;
     uint16_t new_item_id;
 
-    status = engine.updateTuple(
-        makeTestUUID(1),
+    status = engine->updateTuple(
+        table_id,
         original_page_id,
         original_item_id,
         small_data2.data(),
         small_data2.size(),
         &new_page_id,
         &new_item_id,
-        nullptr
+        &ctx
     );
-    ASSERT_EQ(status, Status::OK);
+    ASSERT_EQ(status, Status::OK) << "Failed to update: " << ctx.message;
 
     // Same-page UPDATE should also preserve TID
     EXPECT_EQ(original_page_id, new_page_id)
@@ -163,8 +210,8 @@ TEST_F(StorageEngineMGATest, SamePageUpdatePreservesTID)
 
     // Verify data is correct
     Tuple read_tuple;
-    status = engine.getTuple(original_page_id, original_item_id, &read_tuple, nullptr);
-    ASSERT_EQ(status, Status::OK);
+    status = engine->getTuple(original_page_id, original_item_id, &read_tuple, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to read: " << ctx.message;
     EXPECT_EQ(read_tuple.data_size, small_data2.size());
 
     db.close();
@@ -178,17 +225,22 @@ TEST_F(StorageEngineMGATest, MultipleUpdatesCreateBackwardChain)
     Database db;
     ASSERT_EQ(db.open("test_mga_crosspage.db"), Status::OK);
 
-    StorageEngine engine(&db);
+    // Create a test table in the catalog
+    ErrorContext ctx;
+    ID table_id = createTestTable(db, "test_multiupdate", &ctx);
+
+    StorageEngine* engine = db.storage_engine();
+    ASSERT_NE(engine, nullptr);
 
     // Insert initial small tuple
     std::vector<uint8_t> data1(50, 0x11);
     uint32_t page_id;
     uint16_t item_id;
 
-    Status status = engine.insertTuple(
-        makeTestUUID(1), data1.data(), data1.size(), &page_id, &item_id, nullptr
+    Status status = engine->insertTuple(
+        table_id, data1.data(), data1.size(), &page_id, &item_id, &ctx
     );
-    ASSERT_EQ(status, Status::OK);
+    ASSERT_EQ(status, Status::OK) << "Failed to insert: " << ctx.message;
 
     TID original_tid(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
 
@@ -197,10 +249,10 @@ TEST_F(StorageEngineMGATest, MultipleUpdatesCreateBackwardChain)
     uint32_t page_id2;
     uint16_t item_id2;
 
-    status = engine.updateTuple(
-        makeTestUUID(1), page_id, item_id, data2.data(), data2.size(), &page_id2, &item_id2, nullptr
+    status = engine->updateTuple(
+        table_id, page_id, item_id, data2.data(), data2.size(), &page_id2, &item_id2, &ctx
     );
-    ASSERT_EQ(status, Status::OK);
+    ASSERT_EQ(status, Status::OK) << "Failed first update: " << ctx.message;
 
     // TID should be stable
     EXPECT_EQ(page_id, page_id2);
@@ -211,10 +263,10 @@ TEST_F(StorageEngineMGATest, MultipleUpdatesCreateBackwardChain)
     uint32_t page_id3;
     uint16_t item_id3;
 
-    status = engine.updateTuple(
-        makeTestUUID(1), page_id2, item_id2, data3.data(), data3.size(), &page_id3, &item_id3, nullptr
+    status = engine->updateTuple(
+        table_id, page_id2, item_id2, data3.data(), data3.size(), &page_id3, &item_id3, &ctx
     );
-    ASSERT_EQ(status, Status::OK);
+    ASSERT_EQ(status, Status::OK) << "Failed second update: " << ctx.message;
 
     // TID should still be stable
     EXPECT_EQ(page_id, page_id3);
@@ -222,8 +274,8 @@ TEST_F(StorageEngineMGATest, MultipleUpdatesCreateBackwardChain)
 
     // Verify final data is correct at ORIGINAL TID
     Tuple read_tuple;
-    status = engine.getTuple(page_id, item_id, &read_tuple, nullptr);
-    ASSERT_EQ(status, Status::OK);
+    status = engine->getTuple(page_id, item_id, &read_tuple, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to read: " << ctx.message;
     EXPECT_EQ(read_tuple.data_size, data3.size());
     EXPECT_EQ(memcmp(read_tuple.data, data3.data(), data3.size()), 0);
 
