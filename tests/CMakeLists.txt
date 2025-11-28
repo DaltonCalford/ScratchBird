@@ -263,6 +263,41 @@ set_tests_properties(WireProtocolTests PROPERTIES
     TIMEOUT 60
 )
 
+# Client Library Tests (Local Server Architecture - Phase 4)
+# ==============================================================================
+add_executable(test_client_connection unit/test_client_connection.cpp)
+target_link_libraries(test_client_connection
+    scratchbird_client
+    scratchbird_protocol
+    scratchbird_server
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+add_test(NAME ClientConnectionTests COMMAND test_client_connection)
+set_tests_properties(ClientConnectionTests PROPERTIES
+    LABELS "client;connection;pool"
+    TIMEOUT 120
+)
+
+# Client-Server Integration Tests (Local Server Architecture - Phase 4/5)
+# ==============================================================================
+# NOTE: These tests spawn a real sb_server process
+add_executable(test_client_server_integration integration/test_client_server_integration.cpp)
+target_link_libraries(test_client_server_integration
+    scratchbird_client
+    scratchbird_protocol
+    scratchbird_server
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+add_test(NAME ClientServerIntegrationTests COMMAND test_client_server_integration)
+set_tests_properties(ClientServerIntegrationTests PROPERTIES
+    LABELS "integration;client;server"
+    TIMEOUT 60
+)
+
 # ThreadSanitizer (TSAN) Tests for Critical Race Conditions
 # These tests validate fixes for CRITICAL-1, CRITICAL-2, CRITICAL-3, HIGH-1, HIGH-2, etc.
 

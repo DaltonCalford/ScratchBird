@@ -759,7 +759,9 @@ public:
 
 Connection::Connection() : impl_(std::make_unique<ConnectionImpl>()) {}
 Connection::~Connection() {
-    disconnect();
+    if (impl_) {
+        disconnect();
+    }
 }
 
 Connection::Connection(Connection&& other) noexcept = default;
@@ -812,11 +814,13 @@ void Connection::disconnect() {
 }
 
 bool Connection::isConnected() const {
+    if (!impl_) return false;
     return impl_->state_ == ConnectionState::CONNECTED ||
            impl_->state_ == ConnectionState::IN_TRANSACTION;
 }
 
 ConnectionState Connection::getState() const {
+    if (!impl_) return ConnectionState::DISCONNECTED;
     return impl_->state_;
 }
 

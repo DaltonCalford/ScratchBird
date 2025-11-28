@@ -1,6 +1,6 @@
 # ScratchBird Planning Documents
 
-**Last Updated:** November 27, 2025 (Audit Issues Fixed)
+**Last Updated:** November 28, 2025 (Phase 4 Client Library ~85% Complete)
 
 ---
 
@@ -12,15 +12,17 @@
 | [SCHEMA_ARCHITECTURE.md](SCHEMA_ARCHITECTURE.md) | Hierarchical schema namespace design, synonym support |
 | [SCHEMA_NAVIGATION_AND_SEARCH_PATH.md](SCHEMA_NAVIGATION_AND_SEARCH_PATH.md) | Navigation commands, search path, system table locations |
 
-### Local Server Architecture 🔄 IN PROGRESS (Phase 1-3 Complete!)
+### Local Server Architecture 🔄 IN PROGRESS (Phase 1-4 ~85% Complete!)
 | Document | Status | Est. Hours | Description |
 |----------|--------|------------|-------------|
-| [LOCAL_SERVER_ARCHITECTURE_PLAN.md](LOCAL_SERVER_ARCHITECTURE_PLAN.md) | 🔄 IN PROGRESS | 30-50 remaining | Local client-server architecture |
+| [LOCAL_SERVER_ARCHITECTURE_PLAN.md](LOCAL_SERVER_ARCHITECTURE_PLAN.md) | 🔄 IN PROGRESS | 10-20 remaining | Local client-server architecture |
 | Phase 1: IPC Infrastructure | ✅ COMPLETE | - | Unix sockets, Named pipes, TCP localhost (22 tests) |
 | Phase 2: Wire Protocol | ✅ COMPLETE | - | Binary message format, result streaming (37 tests) |
 | Phase 3: Server Process | ✅ COMPLETE | - | sb_server daemon, session management |
-| Phase 4: Client Library | ❌ Not started | 20-30 | libscratchbird_client, auto-start |
+| Phase 4: Client Library | ✅ ~85% COMPLETE | - | libscratchbird_client, auto-start (36 unit + 6 integration tests) |
 | Phase 5: Integration | ❌ Not started | 10-20 | Security, testing, documentation |
+
+**Total Server Tests: 95 passing** (22 IPC + 37 wire protocol + 36 client)
 
 ### Catalog Cleanup ✅ ALL PHASES COMPLETE
 | Document | Status | Est. Hours | Description |
@@ -57,8 +59,8 @@ See [archive/README.md](archive/README.md) for details.
 ## Implementation Priority
 
 1. ~~**Catalog Cleanup** (Phases A-D)~~ - ✅ COMPLETE
-2. ~~**Local Server Phase 1-3** (IPC + Wire Protocol + sb_server)~~ - ✅ COMPLETE (59 tests)
-3. 🔄 **Local Server Phase 4-5** (Client Library, Integration) - ~30-50 hours remaining
+2. ~~**Local Server Phase 1-4** (IPC + Wire Protocol + sb_server + Client Library)~~ - ✅ ~85% COMPLETE (95 tests)
+3. 🔄 **Local Server Phase 5** (Integration Testing) - ~10-20 hours remaining
 4. **CLI Tools** (sb_isql, sb_verify, sb_backup, sb_security) - 90-110 hours
 5. **Future Blocked Items** - After Alpha Phase 2/3 complete
 
@@ -125,10 +127,13 @@ SET SEARCH PATH TO '...';    -- Configure search path
 ### Key Server Files (New)
 - IPC layer: `include/scratchbird/server/ipc_server.h`
 - Wire protocol: `include/scratchbird/protocol/wire_protocol.h`
+- Client library: `include/scratchbird/client/connection.h`
 - IPC implementations: `src/server/ipc_unix.cpp`, `ipc_windows.cpp`, `ipc_tcp.cpp`
 - Protocol codec: `src/protocol/wire_protocol.cpp`
-- Tests: `tests/unit/test_ipc_server.cpp`, `tests/unit/test_wire_protocol.cpp`
+- Client implementation: `src/client/connection.cpp`
+- Tests: `tests/unit/test_ipc_server.cpp` (22), `tests/unit/test_wire_protocol.cpp` (37), `tests/unit/test_client_connection.cpp` (36)
+- Integration tests: `tests/integration/test_client_server_integration.cpp` (6)
 
 ---
 
-**Status:** 🔄 Local Server Architecture IN PROGRESS - Phase 1-3 Complete (59 tests passing), Audit Issues Fixed
+**Status:** 🔄 Local Server Architecture IN PROGRESS - Phase 1-4 ~85% Complete (95 tests passing)
