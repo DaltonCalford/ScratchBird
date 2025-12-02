@@ -388,10 +388,51 @@ namespace scratchbird::core
                 // Perform group commit as leader
                 status = performGroupCommit(&waiter, ctx);
 
-                // Mark group commit complete
+                // Mark group commit complete and handle any stragglers
+                // There's a race window where followers can join the queue after
+                // performGroupCommit's final drain but before we set group_commit_in_progress_ = false.
+                // We must process those stragglers to avoid deadlock.
+                std::vector<CommitWaiter *> stragglers;
                 {
                     std::lock_guard<std::mutex> lock(group_commit_mutex_);
+                    // Collect any stragglers that arrived after final drain
+                    while (!commit_queue_.empty())
+                    {
+                        stragglers.push_back(commit_queue_.back());
+                        commit_queue_.pop_back();
+                    }
                     group_commit_in_progress_ = false;
+                }
+
+                // Process stragglers outside the lock
+                // Stragglers have CLOG entries but NOT TIP entries - we must write TIP for them
+                if (!stragglers.empty())
+                {
+                    // Build batch for TIP writes
+                    std::vector<std::pair<uint64_t, TransactionState>> straggler_batch;
+                    straggler_batch.reserve(stragglers.size());
+                    for (auto *straggler : stragglers)
+                    {
+                        straggler_batch.push_back({straggler->xid, straggler->state});
+                    }
+
+                    // Write TIP entries for stragglers
+                    Status straggler_status = writeTipEntriesBatch(straggler_batch, ctx);
+                    if (straggler_status == Status::OK)
+                    {
+                        straggler_status = db_->sync(ctx);
+                    }
+
+                    // Wake stragglers with result
+                    for (auto *straggler : stragglers)
+                    {
+                        std::lock_guard<std::mutex> lock(straggler->cv_mutex);
+                        straggler->result = straggler_status;
+                        straggler->completed = true;
+                        straggler->cv.notify_one();
+                    }
+                    // Update statistics to count stragglers
+                    group_commit_total_xids_.fetch_add(stragglers.size(), std::memory_order_relaxed);
                 }
             }
             else
@@ -499,10 +540,51 @@ namespace scratchbird::core
                 // Perform group commit as leader (handles both commits and rollbacks)
                 status = performGroupCommit(&waiter, ctx);
 
-                // Mark group commit complete
+                // Mark group commit complete and handle any stragglers
+                // There's a race window where followers can join the queue after
+                // performGroupCommit's final drain but before we set group_commit_in_progress_ = false.
+                // We must process those stragglers to avoid deadlock.
+                std::vector<CommitWaiter *> stragglers;
                 {
                     std::lock_guard<std::mutex> lock(group_commit_mutex_);
+                    // Collect any stragglers that arrived after final drain
+                    while (!commit_queue_.empty())
+                    {
+                        stragglers.push_back(commit_queue_.back());
+                        commit_queue_.pop_back();
+                    }
                     group_commit_in_progress_ = false;
+                }
+
+                // Process stragglers outside the lock
+                // Stragglers have CLOG entries but NOT TIP entries - we must write TIP for them
+                if (!stragglers.empty())
+                {
+                    // Build batch for TIP writes
+                    std::vector<std::pair<uint64_t, TransactionState>> straggler_batch;
+                    straggler_batch.reserve(stragglers.size());
+                    for (auto *straggler : stragglers)
+                    {
+                        straggler_batch.push_back({straggler->xid, straggler->state});
+                    }
+
+                    // Write TIP entries for stragglers
+                    Status straggler_status = writeTipEntriesBatch(straggler_batch, ctx);
+                    if (straggler_status == Status::OK)
+                    {
+                        straggler_status = db_->sync(ctx);
+                    }
+
+                    // Wake stragglers with result
+                    for (auto *straggler : stragglers)
+                    {
+                        std::lock_guard<std::mutex> lock(straggler->cv_mutex);
+                        straggler->result = straggler_status;
+                        straggler->completed = true;
+                        straggler->cv.notify_one();
+                    }
+                    // Update statistics to count stragglers
+                    group_commit_total_xids_.fetch_add(stragglers.size(), std::memory_order_relaxed);
                 }
             }
             else

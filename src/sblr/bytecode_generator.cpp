@@ -328,7 +328,7 @@ namespace scratchbird
                 for (size_t i = 0; i < expressions.size(); i++)
                 {
                     // For now, use generic placeholder
-                    // TODO: Implement Expression::toString() for proper display
+                    // Phase 4 Enhancement: Implement Expression::toString() for proper display
                     std::string expr_str = "<expression_" + std::to_string(i) + ">";
                     current_result_->writeString(expr_str);
                 }
@@ -866,6 +866,7 @@ namespace scratchbird
             for (auto col_id : node->columns())
             {
                 current_result_->writeOpcode(Opcode::COLUMN_REF);
+                writeStringId(0);  // No qualifier for INSERT column list
                 writeStringId(col_id);
             }
 
@@ -1009,6 +1010,7 @@ namespace scratchbird
                     if (item.alias != 0)
                     {
                         current_result_->writeOpcode(Opcode::COLUMN_REF);
+                        writeStringId(0);  // No qualifier for alias
                         writeStringId(item.alias);
                     }
                 }
@@ -1017,7 +1019,15 @@ namespace scratchbird
             current_result_->writeOpcode(Opcode::END_LIST);
 
             // Write table name or CTE reference (Phase 2 Wave 2)
-            if (isActiveCTE(node->tableName()))
+            // NOTE: node->tableName() returns 0 if there's no FROM clause (constant expression SELECT)
+            if (node->tableName() == 0)
+            {
+                // No FROM clause - constant expression SELECT (e.g., SELECT 1, SELECT 1+1)
+                // Use TABLE_REF with empty string to indicate no table
+                current_result_->writeOpcode(Opcode::TABLE_REF);
+                current_result_->writeString("");  // Empty string (4-byte length = 0, no data)
+            }
+            else if (isActiveCTE(node->tableName()))
             {
                 // This is a CTE reference
                 current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
@@ -1148,8 +1158,9 @@ namespace scratchbird
             for (const auto &assignment : node->assignments())
             {
                 current_result_->writeOpcode(Opcode::ASSIGNMENT);
-                // Write column name
+                // Write column name (with empty qualifier)
                 current_result_->writeOpcode(Opcode::COLUMN_REF);
+                writeStringId(0);  // No qualifier for UPDATE column
                 writeStringId(assignment.column_name);
                 // Write value expression
                 generateExpression(assignment.value);
@@ -3749,8 +3760,9 @@ namespace scratchbird
         {
             current_result_->writeOpcode(Opcode::COLUMN_DEF);
 
-            // Write column name
+            // Write column name (with empty qualifier)
             current_result_->writeOpcode(Opcode::COLUMN_REF);
+            writeStringId(0);  // No qualifier for column definition
             writeStringId(node->name());
 
             // Write data type
@@ -4448,6 +4460,7 @@ namespace scratchbird
                     if (item.alias != 0)
                     {
                         current_result_->writeOpcode(Opcode::COLUMN_REF);
+                        writeStringId(0);  // No qualifier for alias
                         writeStringId(item.alias);
                     }
                 }
@@ -4496,6 +4509,7 @@ namespace scratchbird
                     if (item.alias != 0)
                     {
                         current_result_->writeOpcode(Opcode::COLUMN_REF);
+                        writeStringId(0);  // No qualifier for alias
                         writeStringId(item.alias);
                     }
                 }
@@ -5035,7 +5049,7 @@ namespace scratchbird
                 for (auto* expr : order_by)
                 {
                     generateExpression(expr);
-                    // TODO: Emit sort direction and nulls handling
+                    // Phase 4 Enhancement: Emit sort direction and nulls handling
                     // This would require WindowSpec to store OrderByItem info
                 }
             }
@@ -5471,7 +5485,6 @@ namespace scratchbird
 
                     case Opcode::LITERAL_STRING:
                     case Opcode::TABLE_REF:
-                    case Opcode::COLUMN_REF:
                         if (pos + 4 <= bytecode.size())
                         {
                             uint32_t len = readInt32(&bytecode[pos]);
@@ -5486,6 +5499,61 @@ namespace scratchbird
                             else
                             {
                                 ss << " <INCOMPLETE STRING>";
+                                incomplete = true;
+                            }
+                        }
+                        else
+                        {
+                            ss << " <INCOMPLETE>";
+                            incomplete = true;
+                        }
+                        break;
+
+                    case Opcode::COLUMN_REF:
+                        // COLUMN_REF has two strings: qualifier (may be empty) and column name
+                        if (pos + 4 <= bytecode.size())
+                        {
+                            // Read qualifier
+                            uint32_t qual_len = readInt32(&bytecode[pos]);
+                            pos += 4;
+                            if (pos + qual_len <= bytecode.size())
+                            {
+                                std::string qualifier(reinterpret_cast<const char *>(&bytecode[pos]), qual_len);
+                                pos += qual_len;
+
+                                // Read column name
+                                if (pos + 4 <= bytecode.size())
+                                {
+                                    uint32_t name_len = readInt32(&bytecode[pos]);
+                                    pos += 4;
+                                    if (pos + name_len <= bytecode.size())
+                                    {
+                                        std::string name(reinterpret_cast<const char *>(&bytecode[pos]), name_len);
+                                        pos += name_len;
+                                        if (!qualifier.empty())
+                                        {
+                                            ss << " \"" << qualifier << "\".\"" << name << "\"";
+                                        }
+                                        else
+                                        {
+                                            ss << " \"" << name << "\"";
+                                        }
+                                    }
+                                    else
+                                    {
+                                        ss << " <INCOMPLETE NAME>";
+                                        incomplete = true;
+                                    }
+                                }
+                                else
+                                {
+                                    ss << " <INCOMPLETE NAME LENGTH>";
+                                    incomplete = true;
+                                }
+                            }
+                            else
+                            {
+                                ss << " <INCOMPLETE QUALIFIER>";
                                 incomplete = true;
                             }
                         }
@@ -5952,7 +6020,7 @@ namespace scratchbird
             patchJump(else_label, jump_patch_offset);
 
             // Generate ELSIF clauses (stub)
-            // TODO: Implement ELSIF generation
+            // Phase 4 Enhancement: Implement ELSIF generation for PL/pgSQL
 
             // Generate ELSE statements
             for (auto *stmt : node->elseStatements())

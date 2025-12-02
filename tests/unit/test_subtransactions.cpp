@@ -24,7 +24,7 @@ TEST(SubtransactionsTest, Comprehensive) {
     std::cout << "\n=== Test: Subtransaction/Savepoint Support (Issue 2.15) ===" << std::endl;
 
     // Create test database
-    const char *db_path = "test_subtransactions.db";
+    const char *db_path = "/tmp/test_subtransactions.db";
     std::remove(db_path);
 
     ErrorContext err_ctx;

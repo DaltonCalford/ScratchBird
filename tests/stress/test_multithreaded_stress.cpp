@@ -46,7 +46,7 @@ using namespace scratchbird::core;
 class MultiThreadStressTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_db_path_ = "test_multithreaded_stress.db";
+        test_db_path_ = "/tmp/test_multithreaded_stress.db";
         std::remove(test_db_path_);
 
         ErrorContext ctx;

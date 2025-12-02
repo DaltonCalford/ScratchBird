@@ -40,7 +40,7 @@ namespace scratchbird::core
         page_header_->btr_suffix_total = 0;
         page_header_->btr_compression = static_cast<uint8_t>(BTreeCompressionType::NONE);
         page_header_->btr_min_prefix_len = 0;
-        page_header_->btr_xmin = 0; // TODO: Integrate with transaction manager
+        page_header_->btr_xmin = 0; // Phase 3 Enhancement: Set from ConnectionContext::getCurrentTransactionId()
         page_header_->btr_xmax = 0;
         page_header_->btr_lsn = 0;
         // btr_high_water starts at end of page, nodes grow downward from there
@@ -70,7 +70,7 @@ namespace scratchbird::core
 
         // Populate the new node
         new_node->btn_flags = 0;
-        new_node->btn_prefix_len = 0; // TODO: Implement prefix compression
+        new_node->btn_prefix_len = 0; // Phase 3 Enhancement: Implement prefix compression for space savings
         new_node->btn_suffix_trunc = 0;
         new_node->btn_key_len = key.size();
         new_node->btn_tuple_count = 1;
@@ -316,7 +316,7 @@ namespace scratchbird::core
             // The page prefix is stored after the page header (implementation detail)
             // For now, we'll return the compressed key and let caller handle it
             // Full implementation would extract page prefix and concatenate
-            key_out = compressed_key; // TODO: Add full decompression
+            key_out = compressed_key; // Phase 3 Enhancement: Add full decompression (prepend page prefix)
         }
         else
         {

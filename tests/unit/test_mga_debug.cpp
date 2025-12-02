@@ -30,7 +30,7 @@ protected:
 
     void cleanup_test_files()
     {
-        std::filesystem::remove("test_mga_debug.db");
+        std::filesystem::remove("/tmp/test_mga_debug.db");
         std::filesystem::remove("/tmp/test_tmp_path.sbdb");
     }
 };
@@ -72,11 +72,11 @@ TEST_F(MGADebugTest, CreateDatabaseInTmpPath)
 TEST_F(MGADebugTest, DebugInsertTuple)
 {
     std::cerr << "DEBUG: Creating database...\n";
-    ASSERT_EQ(Database::create("test_mga_debug.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create("/tmp/test_mga_debug.db", 8192), Status::OK);
 
     std::cerr << "DEBUG: Opening database...\n";
     Database db;
-    ASSERT_EQ(db.open("test_mga_debug.db"), Status::OK);
+    ASSERT_EQ(db.open("/tmp/test_mga_debug.db"), Status::OK);
 
     std::cerr << "DEBUG: Getting catalog_manager...\n";
     CatalogManager* catalog = db.catalog_manager();

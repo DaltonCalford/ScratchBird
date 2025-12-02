@@ -357,7 +357,7 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, ConcurrentLargePageAccess)
 {
     ErrorContext ctx;
     const uint32_t page_size = 131072u; // 128KB
-    const std::string db_path = "test_agent_c_concurrent.db";
+    const std::string db_path = "/tmp/test_agent_c_concurrent.db";
 
     // Create database
     ASSERT_EQ(Database::create(db_path, page_size, &ctx), Status::OK);
@@ -808,7 +808,7 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, OutOfMemoryConditions)
 
     // Simulate low memory conditions by allocating many large pages
     const uint32_t page_size = 131072u; // 128KB
-    const std::string db_path = "test_agent_c_oom.db";
+    const std::string db_path = "/tmp/test_agent_c_oom.db";
 
     ASSERT_EQ(Database::create(db_path, page_size, &ctx), Status::OK);
 

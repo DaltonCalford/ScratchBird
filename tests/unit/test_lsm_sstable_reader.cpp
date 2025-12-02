@@ -117,7 +117,7 @@ void testPointQuery()
     std::cout << "\n=== Test 2: Point Query (get) ===\n";
 
     // Create database for transaction manager
-    std::string db_path = "test_sstable_reader_db";
+    std::string db_path = "/tmp/test_sstable_reader_db";
     std::system(("rm -rf " + db_path + "*").c_str());
 
     Database *db = new Database();
@@ -224,7 +224,7 @@ void testRangeScan()
     std::cout << "\n=== Test 3: Range Scan ===\n";
 
     // Create database
-    std::string db_path = "test_sstable_reader_scan_db";
+    std::string db_path = "/tmp/test_sstable_reader_scan_db";
     std::remove((db_path + ".db").c_str());
 
     Database *db = new Database();
@@ -340,7 +340,7 @@ void testBloomFilterOptimization()
     std::cout << "\n=== Test 4: Bloom Filter Optimization ===\n";
 
     // Create database
-    std::string db_path = "test_sstable_reader_bloom_db";
+    std::string db_path = "/tmp/test_sstable_reader_bloom_db";
     std::remove((db_path + ".db").c_str());
 
     Database *db = new Database();
@@ -437,7 +437,7 @@ void testWriteReadRoundtrip()
     std::cout << "\n=== Test 5: Write/Read Roundtrip (1000 entries) ===\n";
 
     // Create database
-    std::string db_path = "test_sstable_reader_roundtrip_db";
+    std::string db_path = "/tmp/test_sstable_reader_roundtrip_db";
     std::remove((db_path + ".db").c_str());
 
     Database *db = new Database();

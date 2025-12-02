@@ -17,6 +17,7 @@
 #include <cstring>
 #include <sstream>
 #include <iomanip>
+#include <iostream>
 
 namespace scratchbird {
 namespace server {
@@ -497,8 +498,29 @@ core::Status ServerSession::sendResultSet(const sblr::ResultSet* results, core::
             if (val.isNull()) {
                 values.push_back(protocol::ProtocolCodec::ColumnValue(nullptr));
             } else {
-                // Convert to string representation for now
-                values.push_back(protocol::ProtocolCodec::ColumnValue::fromString(val.toString()));
+                // Convert value to binary format based on type
+                switch (val.type()) {
+                    case core::DataType::INT32:
+                        values.push_back(protocol::ProtocolCodec::ColumnValue::fromInt32(val.getInt32()));
+                        break;
+                    case core::DataType::INT64:
+                        values.push_back(protocol::ProtocolCodec::ColumnValue::fromInt64(val.getInt64()));
+                        break;
+                    case core::DataType::FLOAT32:
+                    case core::DataType::FLOAT64:
+                        values.push_back(protocol::ProtocolCodec::ColumnValue::fromDouble(val.getFloat64()));
+                        break;
+                    case core::DataType::BOOLEAN:
+                        values.push_back(protocol::ProtocolCodec::ColumnValue::fromBool(val.getBool()));
+                        break;
+                    case core::DataType::VARCHAR:
+                    case core::DataType::TEXT:
+                    case core::DataType::CHAR:
+                    default:
+                        // Fall back to string representation for text and other types
+                        values.push_back(protocol::ProtocolCodec::ColumnValue::fromString(val.toString()));
+                        break;
+                }
             }
         }
 
@@ -550,8 +572,37 @@ bool ServerSession::authenticate(const std::string& username, const std::string&
     core::ErrorContext ctx;
     core::CatalogManager::UserInfo user;
     core::Status status = catalog->getUserByName(username, user, &ctx);
+
     if (status != core::Status::OK) {
-        // User not found
+        // User not found - check if this is a fresh database with only the SYSTEM user
+        // In that case, allow local authentication bypass for initial setup
+        std::vector<core::CatalogManager::UserInfo> all_users;
+        core::Status list_status = catalog->listUsers(all_users, &ctx);
+
+        // Check if the only user is SYSTEM (bootstrap state)
+        bool only_system_user = false;
+        if (list_status == core::Status::OK) {
+            if (all_users.empty()) {
+                only_system_user = true;  // No users at all
+            } else if (all_users.size() == 1 && all_users[0].username == "SYSTEM") {
+                only_system_user = true;  // Only SYSTEM user exists
+            }
+        }
+
+        if (only_system_user) {
+            // Fresh database with no real users (only SYSTEM) - allow bootstrap authentication
+            // Grant superuser access to allow initial security profile creation
+            user_id = core::generateUuidV7();
+            is_superuser = true;
+            return true;
+        }
+
+        // Real users exist but this one wasn't found - authentication fails
+        return false;
+    }
+
+    // Found the user - check if it's the SYSTEM user (cannot login directly)
+    if (user.username == "SYSTEM") {
         return false;
     }
 

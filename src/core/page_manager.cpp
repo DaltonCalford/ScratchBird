@@ -206,10 +206,11 @@ namespace scratchbird::core
         // Eager FSM flush: Flush periodically to avoid data loss on crash
         // Flush every 100 allocations to balance safety and performance
         // Note: Counter is protected by mutex_ which is already held
+        // Use flushUnlocked() since we already hold the mutex (avoid deadlock)
         if (++alloc_counter_ >= 100)
         {
             alloc_counter_ = 0;
-            Status flush_status = flush(ctx);
+            Status flush_status = flushUnlocked(ctx);
             if (flush_status != Status::OK)
             {
                 // Log warning but don't fail the allocation
@@ -254,10 +255,11 @@ namespace scratchbird::core
         // Eager FSM flush: Flush periodically to avoid data loss on crash
         // Flush every 100 frees to balance safety and performance
         // Note: Counter is protected by mutex_ which is already held
+        // Use flushUnlocked() since we already hold the mutex (avoid deadlock)
         if (++free_counter_ >= 100)
         {
             free_counter_ = 0;
-            Status flush_status = flush(ctx);
+            Status flush_status = flushUnlocked(ctx);
             if (flush_status != Status::OK)
             {
                 // Log warning but don't fail the free operation
@@ -386,6 +388,18 @@ namespace scratchbird::core
         }
 
         std::lock_guard<std::mutex> lock(mutex_);
+        return flushUnlocked(ctx);
+    }
+
+    auto PageManager::flushUnlocked(ErrorContext *ctx) -> Status
+    {
+        // Internal flush method - caller must hold mutex_
+        // This is used by allocatePage() and freePage() for periodic FSM flushing
+
+        if (!dirty_)
+        {
+            return Status::OK;
+        }
 
         auto buffer = std::make_unique<uint8_t[]>(page_size_);
         if (!buffer)
@@ -1165,6 +1179,17 @@ namespace scratchbird::core
                 static_cast<unsigned long>(initial_total_pages),
                 static_cast<unsigned long>(config.prealloc_pages),
                 config.prealloc_pages);
+
+        // Initialize metrics for the new tablespace
+        {
+            std::lock_guard<std::mutex> lock(tablespace_fsm_mutex_);
+            TablespaceMetrics &metrics = tablespace_metrics_[tablespace_id];
+            metrics.extension_count = 0;
+            metrics.failed_extension_count = 0;
+            metrics.total_pages_added = 0;
+            metrics.last_extension_time = 0;
+            metrics.first_extension_time = 0;
+        }
 
         return Status::OK;
     }

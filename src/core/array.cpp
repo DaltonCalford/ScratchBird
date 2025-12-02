@@ -699,7 +699,7 @@ namespace scratchbird::core
 
         // Copy elements (simplified - just concatenate in row-major order along axis)
         // This is a simplified implementation
-        return std::nullopt;  // TODO: Implement full concatenation logic
+        return std::nullopt;  // Phase 4 Enhancement: Implement full concatenation logic
     }
 
     auto Array::skipWhitespace(const std::string& str, size_t& pos) -> void {

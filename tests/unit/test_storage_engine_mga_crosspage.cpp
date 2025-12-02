@@ -35,7 +35,7 @@ protected:
 
     void cleanup_test_files()
     {
-        std::filesystem::remove("test_mga_crosspage.db");
+        std::filesystem::remove("/tmp/test_mga_crosspage.db");
     }
 
     // Helper: Create a test table and return its ID
@@ -84,10 +84,10 @@ TEST_F(StorageEngineMGATest, CrossPageUpdatePreservesTID)
     // Setup: Create database with small page size to force cross-page back versioning
     // Using 8KB pages with tuple sizes under TOAST threshold (2048 bytes for 8KB pages)
     // We test MGA principle: TID remains stable even when back version goes to different page
-    ASSERT_EQ(Database::create("test_mga_crosspage.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create("/tmp/test_mga_crosspage.db", 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("test_mga_crosspage.db"), Status::OK);
+    ASSERT_EQ(db.open("/tmp/test_mga_crosspage.db"), Status::OK);
 
     // Create a test table in the catalog (required for StorageEngine methods)
     ErrorContext ctx;
@@ -165,10 +165,10 @@ TEST_F(StorageEngineMGATest, CrossPageUpdatePreservesTID)
 // SPRINT 0: Test that same-page UPDATE still works correctly
 TEST_F(StorageEngineMGATest, SamePageUpdatePreservesTID)
 {
-    ASSERT_EQ(Database::create("test_mga_crosspage.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create("/tmp/test_mga_crosspage.db", 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("test_mga_crosspage.db"), Status::OK);
+    ASSERT_EQ(db.open("/tmp/test_mga_crosspage.db"), Status::OK);
 
     // Create a test table in the catalog
     ErrorContext ctx;
@@ -227,10 +227,10 @@ TEST_F(StorageEngineMGATest, SamePageUpdatePreservesTID)
 // SPRINT 0: Test multiple updates create proper version chain with TID stability
 TEST_F(StorageEngineMGATest, MultipleUpdatesCreateBackwardChain)
 {
-    ASSERT_EQ(Database::create("test_mga_crosspage.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create("/tmp/test_mga_crosspage.db", 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("test_mga_crosspage.db"), Status::OK);
+    ASSERT_EQ(db.open("/tmp/test_mga_crosspage.db"), Status::OK);
 
     // Create a test table in the catalog
     ErrorContext ctx;
@@ -295,10 +295,10 @@ TEST_F(StorageEngineMGATest, MultipleUpdatesCreateBackwardChain)
 // SPRINT 0: Test that overwriteTuple() properly handles size changes
 TEST_F(StorageEngineMGATest, OverwriteTupleHandlesSizeChanges)
 {
-    ASSERT_EQ(Database::create("test_mga_crosspage.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create("/tmp/test_mga_crosspage.db", 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("test_mga_crosspage.db"), Status::OK);
+    ASSERT_EQ(db.open("/tmp/test_mga_crosspage.db"), Status::OK);
 
     // Use manual page buffer to test HeapPage::overwriteTuple() directly
     uint8_t *primary_buffer = new (std::nothrow) uint8_t[8192];

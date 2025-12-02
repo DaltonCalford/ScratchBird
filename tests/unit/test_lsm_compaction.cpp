@@ -61,7 +61,7 @@ void testKWayMerge()
     std::cout << "\n=== Test 1: K-way Merge of 3 SSTables ===\n";
 
     // Create database and transaction manager
-    std::string db_path = "test_lsm_compaction_kway.db";
+    std::string db_path = "/tmp/test_lsm_compaction_kway.db";
     std::remove(db_path.c_str());
 
     Database *db = new Database();
@@ -157,7 +157,7 @@ void testDeduplication()
     std::cout << "\n=== Test 2: Deduplication (Keep Newest Version) ===\n";
 
     // Create database
-    std::string db_path = "test_lsm_compaction_dedup.db";
+    std::string db_path = "/tmp/test_lsm_compaction_dedup.db";
     std::remove(db_path.c_str());
 
     Database *db = new Database();
@@ -225,7 +225,7 @@ void testTombstoneRemoval()
     std::cout << "\n=== Test 3: Tombstone Removal ===\n";
 
     // Create database
-    std::string db_path = "test_lsm_compaction_tombstone.db";
+    std::string db_path = "/tmp/test_lsm_compaction_tombstone.db";
     std::remove(db_path.c_str());
 
     Database *db = new Database();
@@ -284,7 +284,7 @@ void testGarbageCollection()
     std::cout << "\n=== Test 4: Garbage Collection (MGA Rules) ===\n";
 
     // Create database
-    std::string db_path = "test_lsm_compaction_gc.db";
+    std::string db_path = "/tmp/test_lsm_compaction_gc.db";
     std::remove(db_path.c_str());
 
     Database *db = new Database();
@@ -342,7 +342,7 @@ void testLevelManagement()
     std::cout << "\n=== Test 5: Level Management ===\n";
 
     // Create database
-    std::string db_path = "test_lsm_compaction_level.db";
+    std::string db_path = "/tmp/test_lsm_compaction_level.db";
     std::remove(db_path.c_str());
 
     Database *db = new Database();

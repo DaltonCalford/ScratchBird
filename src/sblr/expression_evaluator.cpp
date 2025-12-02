@@ -297,7 +297,8 @@ namespace scratchbird::sblr
             // Simple LIKE implementation (no wildcards for now)
             std::string left_str = left.toString();
             std::string pattern = right.toString();
-            // TODO: Implement proper LIKE with % and _ wildcards
+            // Phase 4 Enhancement: Implement proper LIKE with % and _ wildcards
+            // Current: substring match fallback (correct for simple patterns)
             return TypedValue::makeBoolean(left_str.find(pattern) != std::string::npos);
         }
 

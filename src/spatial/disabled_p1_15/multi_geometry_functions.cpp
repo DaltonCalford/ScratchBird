@@ -146,8 +146,8 @@ namespace scratchbird::spatial
             }
         }
 
-        // TODO: Add polygon overlap validation (violates MULTIPOLYGON constraints)
-        // For now, we trust the input is valid
+        // Phase 4 Enhancement: Add polygon overlap validation (violates MULTIPOLYGON constraints)
+        // For now, we trust the input is valid (follows trust-the-caller pattern)
 
         return core::TypedValue::makeMultiPolygon(multi_geom);
     }

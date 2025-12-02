@@ -37,7 +37,7 @@ TEST(ClogChecksumTest, Comprehensive) {
     {
         std::cout << "Test 2: CLOG page checksum creation... ";
 
-        const char *db_path = "test_clog_checksum.sbrd";
+        const char *db_path = "/tmp/test_clog_checksum.sbrd";
         std::remove(db_path);
 
         ErrorContext ctx;

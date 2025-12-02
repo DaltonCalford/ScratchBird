@@ -42,7 +42,7 @@ using namespace scratchbird::core;
 class ExceptionSafetyTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_db_path_ = "test_exception_safety.db";
+        test_db_path_ = "/tmp/test_exception_safety.db";
         std::remove(test_db_path_);
 
         ErrorContext ctx;

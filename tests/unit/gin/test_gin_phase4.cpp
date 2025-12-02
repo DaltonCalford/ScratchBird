@@ -30,7 +30,7 @@ void test_find_all_basic()
 {
     std::cout << "Test: findAll() basic AND operation\n";
 
-    const char *db_path = "test_gin_phase4_db1";
+    const char *db_path = "/tmp/test_gin_phase4_db1";
     std::remove(db_path);
 
     ErrorContext ctx;
@@ -123,7 +123,7 @@ void test_find_any_basic()
 {
     std::cout << "Test: findAny() basic OR operation\n";
 
-    const char *db_path = "test_gin_phase4_db2";
+    const char *db_path = "/tmp/test_gin_phase4_db2";
     std::remove(db_path);
 
     ErrorContext ctx;
@@ -203,7 +203,7 @@ void test_complex_queries()
 {
     std::cout << "Test: Complex multi-key queries\n";
 
-    const char *db_path = "test_gin_phase4_db3";
+    const char *db_path = "/tmp/test_gin_phase4_db3";
     std::remove(db_path);
 
     ErrorContext ctx;
@@ -275,7 +275,7 @@ void test_large_scale_multi_key()
 {
     std::cout << "Test: Large-scale multi-key operations\n";
 
-    const char *db_path = "test_gin_phase4_db4";
+    const char *db_path = "/tmp/test_gin_phase4_db4";
     std::remove(db_path);
 
     ErrorContext ctx;
@@ -336,7 +336,7 @@ void test_edge_cases()
 {
     std::cout << "Test: Edge cases\n";
 
-    const char *db_path = "test_gin_phase4_db5";
+    const char *db_path = "/tmp/test_gin_phase4_db5";
     std::remove(db_path);
 
     ErrorContext ctx;

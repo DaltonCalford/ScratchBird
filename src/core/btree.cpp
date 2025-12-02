@@ -311,16 +311,13 @@ namespace scratchbird::core
                        ErrorContext *ctx)
         -> Status
     {
-        // Phase 3 TODO: TOAST detoasting for index keys
-        // ARCHITECTURAL LIMITATION: Indexes don't have ToastManager reference
-        // Solution requires one of:
-        // 1. Pass ToastManager* as parameter to insert() (breaks API)
-        // 2. Store ToastManager* in BTree class (requires table_id lookup)
-        // 3. Detoast at higher level (StorageEngine/QueryExecutor) before calling insert()
-        //
-        // Recommended approach: Option 3 - detoast keys before index insert
-        // Current behavior: If key contains TOAST pointer, indexes pointer bytes (INCORRECT)
-        // This will be fixed in a future architectural enhancement.
+        // TOAST Detoasting: Keys are detoasted at higher level before insert
+        // StorageEngine uses IndexKeyExtractor::extractKey() which calls
+        // toast_mgr->detoastIfNeeded() to expand TOAST pointers before indexing.
+        // This follows Option 3 from the original architectural analysis:
+        // - BTree::insert() receives pre-detoasted keys from StorageEngine
+        // - IndexKeyExtractor caches detoasted values for efficiency
+        // - No ToastManager reference needed in index classes
 
         // Find the appropriate leaf page for this key
         uint64_t leaf_page_num;
@@ -587,9 +584,9 @@ namespace scratchbird::core
         BufferPool *bp = db_->buffer_pool();
         LockManager *lock_mgr = db_->lock_manager();
 
-        // TODO(concurrency): Get proc_id from thread-local storage or connection context
-        // For now, use proc_id=0 for single-user mode (Alpha implementation)
-        const uint32_t proc_id = 0;
+        // Get proc_id from ConnectionContext (thread-local storage)
+        int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
+        const uint32_t proc_id = (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0;
 
         uint64_t previous_page_num = 0; // For lock coupling
 
@@ -1283,8 +1280,9 @@ namespace scratchbird::core
             // CRITICAL FIX: Acquire lock before modifying to prevent race condition
             if (old_right_sibling != 0)
             {
-                // TODO(concurrency): Get proc_id from thread-local storage or connection context
-                const uint32_t proc_id = 0;
+                // Get proc_id from ConnectionContext (thread-local storage)
+                int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
+                const uint32_t proc_id = (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0;
                 LockManager *lock_mgr = db_->lock_manager();
 
                 // Acquire exclusive lock on old right sibling before modification
@@ -1523,8 +1521,9 @@ namespace scratchbird::core
             // CRITICAL FIX: Acquire lock before modifying to prevent race condition
             if (old_right_sibling != 0)
             {
-                // TODO(concurrency): Get proc_id from thread-local storage or connection context
-                const uint32_t proc_id = 0;
+                // Get proc_id from ConnectionContext (thread-local storage)
+                int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
+                const uint32_t proc_id = (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0;
                 LockManager *lock_mgr = db_->lock_manager();
 
                 // Acquire exclusive lock on old right sibling before modification
@@ -2291,7 +2290,7 @@ namespace scratchbird::core
             {
                 // Log warning but don't fail the merge - pages are already merged
                 // The parent inconsistency will be detected during validation
-                // TODO: Consider implementing parent merge if parent becomes underutilized
+                // Phase 3 Enhancement: Consider implementing parent merge if parent becomes underutilized
             }
         }
 

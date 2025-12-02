@@ -577,6 +577,9 @@ private:
     Database *db_;
     SBColumnstoreIndex index_info_;
 
+    // Last segment page cache - avoids O(n) traversal when appending segments
+    uint32_t last_segment_page_ = 0;
+
     // Insert buffering (per-column buffers)
     struct BufferedValue
     {

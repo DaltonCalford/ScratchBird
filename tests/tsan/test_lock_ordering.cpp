@@ -39,7 +39,7 @@ using namespace scratchbird::core;
 class TSANLockOrderingTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_db_path_ = "test_tsan_lock_ordering.db";
+        test_db_path_ = "/tmp/test_tsan_lock_ordering.db";
         std::remove(test_db_path_);
 
         ErrorContext ctx;
@@ -204,7 +204,9 @@ TEST_F(TSANLockOrderingTest, MixedOperations) {
  * is incorrect.
  */
 TEST_F(TSANLockOrderingTest, HighContentionStress) {
-    const int NUM_THREADS = 150;
+    // Reduced from 150 to 80 threads to stay well under DEFAULT_MAX_BACKENDS (100)
+    // The test's purpose is to detect deadlocks, not test max capacity
+    const int NUM_THREADS = 80;
     const int ITERATIONS = 30;
 
     std::atomic<int> errors{0};

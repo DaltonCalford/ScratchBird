@@ -23,6 +23,20 @@ protected:
         ParseResult() : expr(nullptr) {}
     };
 
+    // Parse result for two predicates using the same StringPool
+    struct ParseResultPair {
+        std::unique_ptr<Lexer> lexer1;
+        std::unique_ptr<Lexer> lexer2;
+        std::unique_ptr<ASTArena> arena;
+        std::unique_ptr<Parser> parser1;
+        std::unique_ptr<Parser> parser2;
+        Expression *expr1;
+        Expression *expr2;
+        StringPool shared_pool;
+
+        ParseResultPair() : expr1(nullptr), expr2(nullptr) {}
+    };
+
     ParseResult parsePredicate(const std::string &pred_str)
     {
         ParseResult result;
@@ -48,6 +62,50 @@ protected:
         result.expr = select_stmt->whereClause();
         return result;
     }
+
+    // Parse two predicates using the same StringPool for proper comparison
+    // This simulates real-world usage where both predicates come from the same database
+    ParseResultPair parsePredicatePair(const std::string &pred1, const std::string &pred2)
+    {
+        ParseResultPair result;
+
+        // Parse first predicate
+        std::string sql1 = "SELECT * FROM t WHERE " + pred1;
+        result.lexer1 = std::make_unique<Lexer>(sql1);
+        result.arena = std::make_unique<ASTArena>();
+        result.parser1 = std::make_unique<Parser>(*result.lexer1, *result.arena);
+
+        auto parse_result1 = result.parser1->parseStatement();
+        if (!parse_result1.success())
+        {
+            return result;
+        }
+
+        auto *select1 = dynamic_cast<SelectStmt *>(parse_result1.statement());
+        if (select1 && select1->whereClause())
+        {
+            result.expr1 = select1->whereClause();
+        }
+
+        // Parse second predicate - use same arena but new lexer/parser
+        std::string sql2 = "SELECT * FROM t WHERE " + pred2;
+        result.lexer2 = std::make_unique<Lexer>(sql2);
+        result.parser2 = std::make_unique<Parser>(*result.lexer2, *result.arena);
+
+        auto parse_result2 = result.parser2->parseStatement();
+        if (!parse_result2.success())
+        {
+            return result;
+        }
+
+        auto *select2 = dynamic_cast<SelectStmt *>(parse_result2.statement());
+        if (select2 && select2->whereClause())
+        {
+            result.expr2 = select2->whereClause();
+        }
+
+        return result;
+    }
 };
 
 // ============================================================================
@@ -62,7 +120,9 @@ TEST_F(PredicateMatcherTest, ExactMatchEquality)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, ExactMatchComparison)
@@ -73,7 +133,9 @@ TEST_F(PredicateMatcherTest, ExactMatchComparison)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 // ============================================================================
@@ -88,7 +150,9 @@ TEST_F(PredicateMatcherTest, RangeImplicationGreater)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, RangeImplicationLess)
@@ -99,7 +163,9 @@ TEST_F(PredicateMatcherTest, RangeImplicationLess)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, RangeImplicationGreaterEqual)
@@ -110,7 +176,9 @@ TEST_F(PredicateMatcherTest, RangeImplicationGreaterEqual)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, RangeImplicationLessEqual)
@@ -121,7 +189,9 @@ TEST_F(PredicateMatcherTest, RangeImplicationLessEqual)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, RangeDoesNotImplyWeaker)
@@ -132,7 +202,9 @@ TEST_F(PredicateMatcherTest, RangeDoesNotImplyWeaker)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                           &result_query.parser->stringPool(),
+                                           &result_index.parser->stringPool()));
 }
 
 // ============================================================================
@@ -147,7 +219,9 @@ TEST_F(PredicateMatcherTest, EqualityImpliesGreater)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, EqualityImpliesLess)
@@ -158,7 +232,9 @@ TEST_F(PredicateMatcherTest, EqualityImpliesLess)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, EqualityImpliesGreaterEqual)
@@ -169,7 +245,9 @@ TEST_F(PredicateMatcherTest, EqualityImpliesGreaterEqual)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, EqualityImpliesLessEqual)
@@ -180,7 +258,9 @@ TEST_F(PredicateMatcherTest, EqualityImpliesLessEqual)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, EqualityDoesNotImplyWrongRange)
@@ -191,7 +271,9 @@ TEST_F(PredicateMatcherTest, EqualityDoesNotImplyWrongRange)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                           &result_query.parser->stringPool(),
+                                           &result_index.parser->stringPool()));
 }
 
 // ============================================================================
@@ -206,7 +288,9 @@ TEST_F(PredicateMatcherTest, ConjunctInAND)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, ConjunctInMultipleAND)
@@ -217,7 +301,9 @@ TEST_F(PredicateMatcherTest, ConjunctInMultipleAND)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, ConjunctRightSide)
@@ -228,7 +314,9 @@ TEST_F(PredicateMatcherTest, ConjunctRightSide)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, NoConjunctInOR)
@@ -239,7 +327,9 @@ TEST_F(PredicateMatcherTest, NoConjunctInOR)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                           &result_query.parser->stringPool(),
+                                           &result_index.parser->stringPool()));
 }
 
 // ============================================================================
@@ -254,7 +344,9 @@ TEST_F(PredicateMatcherTest, DifferentEquality)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                           &result_query.parser->stringPool(),
+                                           &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, DifferentColumn)
@@ -265,7 +357,9 @@ TEST_F(PredicateMatcherTest, DifferentColumn)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                           &result_query.parser->stringPool(),
+                                           &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, CompletelyDifferent)
@@ -276,7 +370,9 @@ TEST_F(PredicateMatcherTest, CompletelyDifferent)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                           &result_query.parser->stringPool(),
+                                           &result_index.parser->stringPool()));
 }
 
 // ============================================================================
@@ -291,7 +387,9 @@ TEST_F(PredicateMatcherTest, ContainsConjunctSimple)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::containsConjunct(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::containsConjunct(result_query.expr, result_index.expr,
+                                                   &result_query.parser->stringPool(),
+                                                   &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, ContainsConjunctNested)
@@ -302,7 +400,9 @@ TEST_F(PredicateMatcherTest, ContainsConjunctNested)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::containsConjunct(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::containsConjunct(result_query.expr, result_index.expr,
+                                                   &result_query.parser->stringPool(),
+                                                   &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, DoesNotContainConjunct)
@@ -313,7 +413,9 @@ TEST_F(PredicateMatcherTest, DoesNotContainConjunct)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_FALSE(PredicateMatcher::containsConjunct(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_FALSE(PredicateMatcher::containsConjunct(result_query.expr, result_index.expr,
+                                                    &result_query.parser->stringPool(),
+                                                    &result_index.parser->stringPool()));
 }
 
 // ============================================================================
@@ -354,7 +456,9 @@ TEST_F(PredicateMatcherTest, RealWorldActiveUsersFilter)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, RealWorldRecentOrdersFilter)
@@ -365,7 +469,9 @@ TEST_F(PredicateMatcherTest, RealWorldRecentOrdersFilter)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, RealWorldExpensiveProductsFilter)
@@ -376,7 +482,9 @@ TEST_F(PredicateMatcherTest, RealWorldExpensiveProductsFilter)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, RealWorldCannotUseWrongDateRange)
@@ -387,7 +495,9 @@ TEST_F(PredicateMatcherTest, RealWorldCannotUseWrongDateRange)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                           &result_query.parser->stringPool(),
+                                           &result_index.parser->stringPool()));
 }
 
 // ============================================================================
@@ -402,7 +512,9 @@ TEST_F(PredicateMatcherTest, StringRangeImplication)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, StringEqualityImpliesRange)
@@ -413,7 +525,9 @@ TEST_F(PredicateMatcherTest, StringEqualityImpliesRange)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 // ============================================================================
@@ -428,7 +542,9 @@ TEST_F(PredicateMatcherTest, FloatRangeImplication)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }
 
 TEST_F(PredicateMatcherTest, IntegerRangeImplication)
@@ -439,5 +555,7 @@ TEST_F(PredicateMatcherTest, IntegerRangeImplication)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr, &result_query.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
+                                          &result_query.parser->stringPool(),
+                                          &result_index.parser->stringPool()));
 }

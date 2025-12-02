@@ -117,6 +117,10 @@ namespace scratchbird::core
         const ID& getActiveRoleId() const { return active_role_id_; }
         bool isSuperuser() const { return is_superuser_; }
 
+        // Schema context queries (Phase 2.1 - Executor Schema Operations)
+        const ID& getCurrentSchemaId() const { return current_schema_id_; }
+        void setCurrentSchemaId(const ID& schema_id) { current_schema_id_ = schema_id; }
+
         // Security context types (Phase 3.1 - SQL Object Permissions)
         enum class SecurityMode : uint8_t
         {
@@ -218,6 +222,9 @@ namespace scratchbird::core
         ID current_user_id_;    // Authenticated user UUID
         ID active_role_id_;     // Active role UUID (from SET ROLE), zero if none
         bool is_superuser_;     // Cached superuser flag for performance
+
+        // Schema context (Phase 2.1 - Executor Schema Operations)
+        ID current_schema_id_;  // Current schema UUID (default: PUBLIC schema)
 
         // Security context stack (Phase 3.1 - SQL Object Permissions)
         // SecurityMode and SecurityContext types defined in public section above

@@ -25,7 +25,7 @@ protected:
 
     void cleanup_test_files()
     {
-        std::filesystem::remove("test_autoextend.db");
+        std::filesystem::remove("/tmp/test_autoextend.db");
         std::filesystem::remove("test_ts_autoextend.sbts");
         std::filesystem::remove("test_ts_maxsize.sbts");
         std::filesystem::remove("test_ts_concurrent.sbts");
@@ -37,10 +37,10 @@ protected:
 TEST_F(TablespaceAutoextendTest, AutoextendOnAllocation)
 {
     // Create database
-    ASSERT_EQ(Database::create("test_autoextend.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create("/tmp/test_autoextend.db", 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("test_autoextend.db"), Status::OK);
+    ASSERT_EQ(db.open("/tmp/test_autoextend.db"), Status::OK);
 
     PageManager *page_mgr = db.page_manager();
     ASSERT_NE(page_mgr, nullptr);
@@ -104,10 +104,10 @@ TEST_F(TablespaceAutoextendTest, AutoextendOnAllocation)
 // Test 2: MAXSIZE enforcement
 TEST_F(TablespaceAutoextendTest, MaxsizeEnforcement)
 {
-    ASSERT_EQ(Database::create("test_autoextend.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create("/tmp/test_autoextend.db", 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("test_autoextend.db"), Status::OK);
+    ASSERT_EQ(db.open("/tmp/test_autoextend.db"), Status::OK);
 
     PageManager *page_mgr = db.page_manager();
     ASSERT_NE(page_mgr, nullptr);
@@ -167,10 +167,10 @@ TEST_F(TablespaceAutoextendTest, MaxsizeEnforcement)
 // Test 3: Concurrent allocations triggering extension (thread safety)
 TEST_F(TablespaceAutoextendTest, ConcurrentExtension)
 {
-    ASSERT_EQ(Database::create("test_autoextend.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create("/tmp/test_autoextend.db", 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("test_autoextend.db"), Status::OK);
+    ASSERT_EQ(db.open("/tmp/test_autoextend.db"), Status::OK);
 
     PageManager *page_mgr = db.page_manager();
     ASSERT_NE(page_mgr, nullptr);
@@ -259,10 +259,10 @@ TEST_F(TablespaceAutoextendTest, ConcurrentExtension)
 // Test 4: Extension failure handling (autoextend disabled)
 TEST_F(TablespaceAutoextendTest, AutoextendDisabled)
 {
-    ASSERT_EQ(Database::create("test_autoextend.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create("/tmp/test_autoextend.db", 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("test_autoextend.db"), Status::OK);
+    ASSERT_EQ(db.open("/tmp/test_autoextend.db"), Status::OK);
 
     PageManager *page_mgr = db.page_manager();
     ASSERT_NE(page_mgr, nullptr);
@@ -311,10 +311,10 @@ TEST_F(TablespaceAutoextendTest, AutoextendDisabled)
 // Test 5: Verify statistics tracking
 TEST_F(TablespaceAutoextendTest, StatisticsTracking)
 {
-    ASSERT_EQ(Database::create("test_autoextend.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create("/tmp/test_autoextend.db", 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("test_autoextend.db"), Status::OK);
+    ASSERT_EQ(db.open("/tmp/test_autoextend.db"), Status::OK);
 
     PageManager *page_mgr = db.page_manager();
     CatalogManager *catalog = db.catalog_manager();

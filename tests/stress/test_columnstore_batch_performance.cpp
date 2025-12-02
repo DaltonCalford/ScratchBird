@@ -44,7 +44,7 @@ private:
 // Create test database
 Database *createTestDatabase()
 {
-    std::string db_path = "columnstore_batch_perf_test.db";
+    std::string db_path = "/tmp/columnstore_batch_perf_test.db";
     std::remove(db_path.c_str());
 
     ErrorContext ctx;

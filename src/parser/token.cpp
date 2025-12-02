@@ -7,6 +7,8 @@ namespace scratchbird
     {
 
         // String pool implementation
+        // IMPORTANT: IDs start at 1, not 0. ID 0 is reserved as "no value" / "empty".
+        // This allows code to use `if (string_id == 0)` to check for missing/empty strings.
         StringPool::StringId StringPool::intern(std::string_view str)
         {
             // Check if already interned
@@ -16,8 +18,8 @@ namespace scratchbird
                 return it->second;
             }
 
-            // Add new string
-            StringId id = static_cast<StringId>(strings_.size());
+            // Add new string - IDs start at 1 (0 is reserved for "no value")
+            StringId id = static_cast<StringId>(strings_.size() + 1);
             strings_.emplace_back(str);
 
             // Update lookup with string_view pointing to the stored string
@@ -28,14 +30,25 @@ namespace scratchbird
 
         std::string_view StringPool::get(StringId id) const
         {
-            // Bounds check instead of assert (works in release builds)
-            if (id >= strings_.size())
+            // ID 0 is reserved for "no value" - return empty string
+            // IDs start at 1, so we need to subtract 1 to get the array index
+            if (id == 0)
+            {
+                static const std::string empty_str;
+                return std::string_view(empty_str);
+            }
+
+            // Convert 1-based ID to 0-based index
+            size_t index = id - 1;
+
+            // Bounds check (works in release builds)
+            if (index >= strings_.size())
             {
                 // Return empty string_view for invalid IDs instead of crashing
                 static const std::string empty_str;
                 return std::string_view(empty_str);
             }
-            return strings_[id];
+            return strings_[index];
         }
 
         void StringPool::clear()
@@ -311,6 +324,14 @@ namespace scratchbird
                     return "TSRANGE";
                 case TokenType::KW_TSTZRANGE:
                     return "TSTZRANGE";
+
+                // Text functions with special syntax
+                case TokenType::KW_POSITION:
+                    return "POSITION";
+                case TokenType::KW_OVERLAY:
+                    return "OVERLAY";
+                case TokenType::KW_PLACING:
+                    return "PLACING";
 
                 default:
                     return "UNKNOWN";

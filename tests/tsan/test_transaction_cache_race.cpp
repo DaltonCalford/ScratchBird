@@ -21,7 +21,7 @@ using namespace scratchbird::core;
 class TSANTransactionCacheTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_db_path_ = "test_tsan_transaction_cache.db";
+        test_db_path_ = "/tmp/test_tsan_transaction_cache.db";
         std::remove(test_db_path_);
 
         ErrorContext ctx;

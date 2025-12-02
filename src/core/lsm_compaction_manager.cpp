@@ -21,6 +21,7 @@
 #include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/lsm_thread_pool.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/logger.h"
 #include <algorithm>
 #include <queue>
 #include <cstring>
@@ -38,6 +39,8 @@ namespace core
 
 LSMCompactionManager::LSMCompactionManager(TransactionManager *txn_mgr, bool enable_parallel)
     : txn_mgr_(txn_mgr),
+      index_path_("/tmp/scratchbird"),
+      block_size_(4096),
       parallel_enabled_(enable_parallel)
 {
     // Initialize 4 levels (0-3)
@@ -174,14 +177,26 @@ Status LSMCompactionManager::selectCompactionTask(CompactionTask *task_out,
         task_out->target_level = 1;
         task_out->source_sstables = levels_[0].sstable_paths;
 
-        // Find overlapping Level 1 SSTables
-        // TODO: Implement key range overlap detection
-        // For now, include all Level 1 SSTables (conservative approach)
-        task_out->overlapping_sstables = levels_[1].sstable_paths;
+        // Find overlapping Level 1 SSTables using key range detection
+        // First, determine min/max keys from source SSTables
+        std::vector<uint8_t> min_key, max_key;
+        for (const auto &path : task_out->source_sstables)
+        {
+            SSTableReader reader(path);
+            if (reader.open(ctx) == Status::OK)
+            {
+                auto sst_min = reader.getMinKey();
+                auto sst_max = reader.getMaxKey();
+                if (min_key.empty() || sst_min < min_key) min_key = sst_min;
+                if (max_key.empty() || sst_max > max_key) max_key = sst_max;
+                reader.close(ctx);
+            }
+        }
+        // Find overlapping SSTables in target level
+        findOverlappingSSTables(1, min_key, max_key, &task_out->overlapping_sstables);
 
-        // Set OIT for garbage collection
-        // TODO: Get actual OIT from TransactionManager
-        task_out->oit = 0;
+        // Set OIT for garbage collection from TransactionManager
+        task_out->oit = txn_mgr_ ? txn_mgr_->getOldestXid() : 0;
 
         return Status::OK;
     }
@@ -198,12 +213,24 @@ Status LSMCompactionManager::selectCompactionTask(CompactionTask *task_out,
             task_out->source_sstables.push_back(levels_[1].sstable_paths.front());
         }
 
-        // Find overlapping Level 2 SSTables
-        // TODO: Implement key range overlap detection
-        // For now, include all Level 2 SSTables (conservative approach)
-        task_out->overlapping_sstables = levels_[2].sstable_paths;
+        // Find overlapping Level 2 SSTables using key range detection
+        std::vector<uint8_t> min_key, max_key;
+        for (const auto &path : task_out->source_sstables)
+        {
+            SSTableReader reader(path);
+            if (reader.open(ctx) == Status::OK)
+            {
+                auto sst_min = reader.getMinKey();
+                auto sst_max = reader.getMaxKey();
+                if (min_key.empty() || sst_min < min_key) min_key = sst_min;
+                if (max_key.empty() || sst_max > max_key) max_key = sst_max;
+                reader.close(ctx);
+            }
+        }
+        findOverlappingSSTables(2, min_key, max_key, &task_out->overlapping_sstables);
 
-        task_out->oit = 0;
+        // Set OIT for garbage collection from TransactionManager
+        task_out->oit = txn_mgr_ ? txn_mgr_->getOldestXid() : 0;
 
         return Status::OK;
     }
@@ -220,10 +247,24 @@ Status LSMCompactionManager::selectCompactionTask(CompactionTask *task_out,
             task_out->source_sstables.push_back(levels_[2].sstable_paths.front());
         }
 
-        // Find overlapping Level 3 SSTables
-        task_out->overlapping_sstables = levels_[3].sstable_paths;
+        // Find overlapping Level 3 SSTables using key range detection
+        std::vector<uint8_t> min_key, max_key;
+        for (const auto &path : task_out->source_sstables)
+        {
+            SSTableReader reader(path);
+            if (reader.open(ctx) == Status::OK)
+            {
+                auto sst_min = reader.getMinKey();
+                auto sst_max = reader.getMaxKey();
+                if (min_key.empty() || sst_min < min_key) min_key = sst_min;
+                if (max_key.empty() || sst_max > max_key) max_key = sst_max;
+                reader.close(ctx);
+            }
+        }
+        findOverlappingSSTables(3, min_key, max_key, &task_out->overlapping_sstables);
 
-        task_out->oit = 0;
+        // Set OIT for garbage collection from TransactionManager
+        task_out->oit = txn_mgr_ ? txn_mgr_->getOldestXid() : 0;
 
         return Status::OK;
     }
@@ -256,11 +297,10 @@ Status LSMCompactionManager::executeCompaction(const CompactionTask &task,
         return Status::OK;
     }
 
-    // Generate output SSTable path
-    // TODO: Use proper path generation based on target level
-    std::string output_sstable = "/tmp/scratchbird/compacted_" +
+    // Generate output SSTable path using configured index path
+    std::string output_sstable = index_path_ + "/L" +
                                 std::to_string(task.target_level) + "_" +
-                                std::to_string(std::time(nullptr)) + ".sst";
+                                std::to_string(std::time(nullptr)) + "_compacted.sst";
 
     // Execute k-way merge
     Status s = kWayMerge(input_sstables, output_sstable, task.oit, ctx);
@@ -373,9 +413,54 @@ void LSMCompactionManager::findOverlappingSSTables(
 
     overlapping_out->clear();
 
-    // TODO: Implement proper key range overlap detection
-    // For now, return all SSTables at the level (conservative approach)
-    *overlapping_out = levels_[level].sstable_paths;
+    // If source keys are empty, return all SSTables at this level (conservative)
+    if (min_key.empty() && max_key.empty())
+    {
+        *overlapping_out = levels_[level].sstable_paths;
+        return;
+    }
+
+    // Check each SSTable in the target level for key range overlap
+    // Two ranges [a,b] and [c,d] overlap if: a <= d AND c <= b
+    for (const auto &sst_path : levels_[level].sstable_paths)
+    {
+        SSTableReader reader(sst_path);
+        if (reader.open(nullptr) != Status::OK)
+        {
+            // If we can't read the SSTable, include it conservatively
+            overlapping_out->push_back(sst_path);
+            continue;
+        }
+
+        auto sst_min = reader.getMinKey();
+        auto sst_max = reader.getMaxKey();
+        reader.close(nullptr);
+
+        // Check for overlap: source[min,max] overlaps with sst[sst_min,sst_max]
+        // Overlap exists if: min_key <= sst_max AND sst_min <= max_key
+        bool overlaps = true;
+        if (!min_key.empty() && !sst_max.empty())
+        {
+            // min_key > sst_max means no overlap (source starts after SSTable ends)
+            if (min_key > sst_max)
+            {
+                overlaps = false;
+            }
+        }
+        if (!max_key.empty() && !sst_min.empty())
+        {
+            // sst_min > max_key means no overlap (SSTable starts after source ends)
+            if (sst_min > max_key)
+            {
+                overlaps = false;
+            }
+        }
+
+        if (overlaps)
+        {
+            overlapping_out->push_back(sst_path);
+        }
+    }
 }
 
 // Merge entry for priority queue
@@ -441,8 +526,8 @@ Status LSMCompactionManager::kWayMerge(const std::vector<std::string> &input_sst
         readers.push_back(std::move(reader));
     }
 
-    // Step 2: Create output SSTable writer
-    SSTableWriter writer(output_sstable, 4096);  // TODO: Use configurable block size
+    // Step 2: Create output SSTable writer with configurable block size
+    SSTableWriter writer(output_sstable, block_size_);
     Status s = writer.open(ctx);
     if (s != Status::OK)
     {
@@ -586,10 +671,9 @@ Status LSMCompactionManager::kWayMerge(const std::vector<std::string> &input_sst
         return s;
     }
 
-    // Log compaction statistics
-    // TODO: Add proper logging
-    // printf("K-way merge complete: %lu entries written, %lu duplicates skipped, %lu GC'd\n",
-    //        entries_written, entries_skipped_duplicate, entries_skipped_gc);
+    // Log compaction statistics using structured logging
+    LOG_INFO(STORAGE, "LSM k-way merge complete: %lu entries written, %lu duplicates skipped, %lu garbage collected",
+             entries_written, entries_skipped_duplicate, entries_skipped_gc);
 
     return Status::OK;
 }

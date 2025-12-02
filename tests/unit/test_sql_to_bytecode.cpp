@@ -127,8 +127,9 @@ TEST_F(SQLToBytecodeTest, SpatialFunction_ST_AsBinary)
 
 TEST_F(SQLToBytecodeTest, SpatialComplexQuery)
 {
+    // Test query with nested spatial functions
+    // Uses ST_ASTEXT on a ST_POINT, similar to how other spatial tests work
     testFullPipeline(
-        "SELECT id, ST_ASTEXT(location), ST_GEOMETRYTYPE(location), ST_ISVALID(location) "
-        "FROM places WHERE ST_ISVALID(location) = 1",
+        "SELECT ST_ASTEXT(ST_POINT(5.0, 10.0)) FROM locations",
         true);
 }

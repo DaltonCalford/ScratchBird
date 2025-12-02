@@ -41,7 +41,7 @@ protected:
     void SetUp() override
     {
         // Create temporary test database
-        test_db_path_ = "test_bytecode_executor.db";
+        test_db_path_ = "/tmp/test_bytecode_executor.db";
         std::filesystem::remove_all(test_db_path_);
 
         core::ErrorContext ctx;

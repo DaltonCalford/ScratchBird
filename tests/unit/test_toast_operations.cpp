@@ -33,7 +33,7 @@ protected:
 
     void SetUp() override
     {
-        test_db_path_ = "test_toast_ops.db";
+        test_db_path_ = "/tmp/test_toast_ops.db";
         std::filesystem::remove(test_db_path_);
 
         ErrorContext ctx;

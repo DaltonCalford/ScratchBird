@@ -68,7 +68,7 @@ class GinDMLTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path_ = "test_gin_dml.db";
+        test_db_path_ = "/tmp/test_gin_dml.db";
         std::remove(test_db_path_);
 
         ErrorContext ctx;

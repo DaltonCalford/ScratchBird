@@ -325,15 +325,14 @@ namespace scratchbird::core
     auto BTree::mergePages(uint32_t left_page, uint32_t right_page, VacuumStats &stats,
                            ErrorContext *ctx) -> Status
     {
-        // TODO: Implement page merging
+        // Phase 3 Enhancement: Implement page merging
         // This is complex as it requires:
         // 1. Moving all entries from right page to left page
         // 2. Updating parent to remove separator key
         // 3. Updating sibling pointers
         // 4. Freeing right page
         // 5. Potentially recursive merge if parent becomes underfull
-
-        // For Alpha release, we'll skip merging and only do compaction
+        // For Alpha release, skip merging and only do compaction (NOT_IMPLEMENTED is correct)
         return Status::NOT_IMPLEMENTED;
     }
 

@@ -320,6 +320,14 @@ namespace scratchbird::core
         auto findFreePage() const -> uint32_t;
         void buildFsmPageBuffer(uint8_t *buffer);
 
+        /**
+         * flushUnlocked - Internal flush method (caller must hold mutex_)
+         *
+         * This is used by allocatePage() and freePage() for periodic FSM flushing
+         * when the caller already holds the mutex.
+         */
+        auto flushUnlocked(ErrorContext *ctx = nullptr) -> Status;
+
         // FSM page structure
         struct FSMPage
         {

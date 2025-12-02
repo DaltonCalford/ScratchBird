@@ -21,7 +21,7 @@ class ToastCrashRecoveryMGATest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        db_path_ = "test_toast_crash_recovery_mga.db";
+        db_path_ = "/tmp/test_toast_crash_recovery_mga.db";
 
         // Create test database
         ErrorContext ctx;

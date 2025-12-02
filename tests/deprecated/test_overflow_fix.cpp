@@ -19,7 +19,7 @@ int main()
     // Test 1: Normal extension works
     {
         std::cout << "Test 1: Normal extension... ";
-        const char *db_path = "test_overflow_1.sbrd";
+        const char *db_path = "/tmp/test_overflow_1.sbrd";
         std::remove(db_path);
 
         ErrorContext ctx;
@@ -61,7 +61,7 @@ int main()
     // Test 2: Huge extension is rejected (overflow protection)
     {
         std::cout << "Test 2: Overflow detection... ";
-        const char *db_path = "test_overflow_2.sbrd";
+        const char *db_path = "/tmp/test_overflow_2.sbrd";
         std::remove(db_path);
 
         ErrorContext ctx;
@@ -115,7 +115,7 @@ int main()
     // Test 3: Multiple small extensions work correctly
     {
         std::cout << "Test 3: Multiple extensions... ";
-        const char *db_path = "test_overflow_3.sbrd";
+        const char *db_path = "/tmp/test_overflow_3.sbrd";
         std::remove(db_path);
 
         ErrorContext ctx;

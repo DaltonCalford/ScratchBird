@@ -43,7 +43,7 @@ using namespace scratchbird::core;
 class HelgrindRaceTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_db_path_ = "test_helgrind_races.db";
+        test_db_path_ = "/tmp/test_helgrind_races.db";
         std::remove(test_db_path_);
 
         ErrorContext ctx;

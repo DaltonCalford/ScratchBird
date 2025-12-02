@@ -265,6 +265,11 @@ private:
      * Write event to catalog (if catalog available)
      */
     Status writeEventToCatalog(const AuditEvent& event, ErrorContext* ctx);
+
+    /**
+     * Flush buffered events (internal, caller must hold mutex_)
+     */
+    Status flushUnlocked(ErrorContext* ctx);
 };
 
 }  // namespace core

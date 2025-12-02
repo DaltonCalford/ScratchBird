@@ -7,6 +7,7 @@
 
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/database.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::core;
 
@@ -18,14 +19,13 @@ using namespace scratchbird::core;
 class BufferPoolConcurrencyTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // Create a temporary database for testing
-        test_db_path_ = "test_buffer_pool_concurrency.sbrd";
-        std::filesystem::remove(test_db_path_);
+        // Create a unique database path for test isolation (parallel execution)
+        test_db_file_ = std::make_unique<scratchbird::testing::TestDatabaseFile>("test_buffer_pool_concurrency", ".sbrd");
 
-        auto status = Database::create(test_db_path_, 16384, nullptr);
+        auto status = Database::create(test_db_file_->path(), 16384, nullptr);
         ASSERT_EQ(status, Status::OK) << "Failed to create test database";
 
-        status = db_.open(test_db_path_, nullptr);
+        status = db_.open(test_db_file_->path(), nullptr);
         ASSERT_EQ(status, Status::OK) << "Failed to open test database";
 
         buffer_pool_ = db_.buffer_pool();
@@ -34,10 +34,10 @@ protected:
 
     void TearDown() override {
         db_.close();
-        std::filesystem::remove(test_db_path_);
+        // TestDatabaseFile will cleanup automatically on destruction
     }
 
-    std::string test_db_path_;
+    std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_db_file_;
     Database db_;
     BufferPool* buffer_pool_ = nullptr;
 };

@@ -156,7 +156,7 @@ namespace scratchbird::optimizer
 
         // Additional CPU cost for k-way merge if range scan
         // For now, assume simple lookup (no merge overhead)
-        // TODO: Add merge cost for range scans in future
+        // Phase 4 Enhancement: Add merge cost for range scans in future
 
         // Heap fetch cost: same as B-Tree
         double effective_heap_pages;

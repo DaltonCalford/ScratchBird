@@ -19,7 +19,7 @@ int main()
     std::cout << "=== Columnstore Simple E2E Test ===\n";
 
     // Create database
-    std::string db_path = "columnstore_simple_e2e.db";
+    std::string db_path = "/tmp/columnstore_simple_e2e.db";
     std::remove(db_path.c_str());
 
     ErrorContext ctx;

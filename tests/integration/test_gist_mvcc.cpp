@@ -195,7 +195,7 @@ class GiSTMVCCTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path_ = "test_gist_mvcc.db";
+        test_db_path_ = "/tmp/test_gist_mvcc.db";
         std::remove(test_db_path_);
 
         ErrorContext ctx;
@@ -212,9 +212,16 @@ protected:
         buffer_pool_ = db_->buffer_pool();
         ASSERT_NE(buffer_pool_, nullptr);
 
+        // Initialize ProcArray for transaction support
+        status = db_->initializeProcArray(16, &ctx);
+        if (status != Status::OK && status != Status::INVALID_ARGUMENT) {
+            // INVALID_ARGUMENT means already initialized, which is OK
+            ASSERT_EQ(status, Status::OK) << "Failed to initialize ProcArray: " << ctx.message;
+        }
+
         // Register backend to get proc_id
         status = ProcArrayManager::registerBackend(&proc_id_, &ctx);
-        ASSERT_EQ(status, Status::OK);
+        ASSERT_EQ(status, Status::OK) << "Failed to register backend: " << ctx.message;
 
         // Create box operator class
         opclass_ = std::make_shared<BoxOperatorClass>();
@@ -222,9 +229,11 @@ protected:
 
     void TearDown() override
     {
-        // Unregister backend
-        if (proc_id_ > 0) {
-            ProcArrayManager::unregisterBackend(proc_id_);
+        ErrorContext ctx;
+        // Unregister backend first before closing database
+        if (proc_id_ != UINT32_MAX) {
+            ProcArrayManager::unregisterBackend(proc_id_, &ctx);
+            proc_id_ = UINT32_MAX;
         }
         if (db_)
         {
@@ -258,7 +267,7 @@ protected:
     TransactionManager* txn_mgr_;
     BufferPool* buffer_pool_;
     std::shared_ptr<BoxOperatorClass> opclass_;
-    uint32_t proc_id_ = 0;
+    uint32_t proc_id_ = UINT32_MAX;
 
     // Helper: Begin transaction and return xid
     uint64_t beginTxn(ErrorContext* ctx) {

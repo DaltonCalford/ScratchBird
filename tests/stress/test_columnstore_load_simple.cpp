@@ -41,7 +41,7 @@ int main()
     std::cout << "Testing insert and scan performance with 50K rows\n\n";
 
     // Create database
-    std::string db_path = "columnstore_load_simple.db";
+    std::string db_path = "/tmp/columnstore_load_simple.db";
     std::remove(db_path.c_str());
 
     ErrorContext ctx;

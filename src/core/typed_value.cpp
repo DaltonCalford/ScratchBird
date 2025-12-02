@@ -890,6 +890,37 @@ namespace scratchbird::core
                     return complex_data_->macaddr8->toString();
                 }
                 return "MACADDR8(?)";
+            case DataType::DATERANGE:
+            case DataType::TSRANGE:
+            case DataType::TSTZRANGE:
+                if (complex_data_ && complex_data_->range_data) {
+                    auto* range = static_cast<Range<int64_t>*>(complex_data_->range_data.get());
+                    return range->toString();
+                }
+                return "<empty range>";
+            case DataType::INT4RANGE:
+                if (complex_data_ && complex_data_->range_data) {
+                    auto* range = static_cast<Range<int32_t>*>(complex_data_->range_data.get());
+                    return range->toString();
+                }
+                return "<empty range>";
+            case DataType::INT8RANGE:
+            case DataType::NUMRANGE:
+                if (complex_data_ && complex_data_->range_data) {
+                    auto* range = static_cast<Range<int64_t>*>(complex_data_->range_data.get());
+                    return range->toString();
+                }
+                return "<empty range>";
+            case DataType::TSVECTOR:
+                if (complex_data_ && complex_data_->tsvector) {
+                    return complex_data_->tsvector->toString();
+                }
+                return "<empty tsvector>";
+            case DataType::TSQUERY:
+                if (complex_data_ && complex_data_->tsquery) {
+                    return complex_data_->tsquery->toString();
+                }
+                return "<empty tsquery>";
             default:
                 return "<" + std::string(TypeSystem::getTypeName(type_)) + ">";
         }

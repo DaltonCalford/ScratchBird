@@ -19,7 +19,7 @@ class BTreeCompressionTest : public ::testing::Test {
 protected:
     void SetUp() override {
         // Create a temporary database for testing in current directory (allowed by security policy)
-        test_db_path_ = "test_btree_compression.db";
+        test_db_path_ = "/tmp/test_btree_compression.db";
 
         // Remove old test database if it exists
         if (std::filesystem::exists(test_db_path_)) {

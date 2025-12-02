@@ -18,6 +18,7 @@
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::core;
 
@@ -26,26 +27,26 @@ class GarbageCollectorTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        // Clean up test files
-        remove("test_gc.db");
+        // Generate unique database path for this test
+        test_db_ = std::make_unique<scratchbird::testing::TestDatabaseFile>("test_gc");
     }
 
     void TearDown() override
     {
-        // Clean up test files
-        remove("test_gc.db");
+        // TestDatabaseFile automatically cleans up
+        test_db_.reset();
     }
 
     // Helper: Create database and initialize GC
     bool createTestDatabase(Database& db)
     {
         ErrorContext ctx;
-        if (Database::create("test_gc.db", 16384, &ctx) != Status::OK)
+        if (Database::create(test_db_->path(), 16384, &ctx) != Status::OK)
         {
             return false;
         }
 
-        if (db.open("test_gc.db", &ctx) != Status::OK)
+        if (db.open(test_db_->path(), &ctx) != Status::OK)
         {
             return false;
         }
@@ -59,6 +60,8 @@ protected:
 
         return true;
     }
+
+    std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_db_;
 };
 
 // ========== Basic Functionality Tests ==========

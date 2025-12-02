@@ -19,7 +19,7 @@ int main()
     std::cout << "=== Testing Issue 1.18: Page Manager Race Condition ===" << std::endl;
     std::cout << std::endl;
 
-    const char *db_path = "test_page_manager_race.sbrd";
+    const char *db_path = "/tmp/test_page_manager_race.sbrd";
     std::remove(db_path);
 
     ErrorContext ctx;

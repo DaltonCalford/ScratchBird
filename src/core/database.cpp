@@ -99,6 +99,18 @@ namespace scratchbird::core
         // Now delete page manager
         page_manager_.reset();
 
+        // Flush the database header page (page 0) before closing
+        // The header is stored in header_buffer_ and may have been modified during operation
+        // (e.g., next_xid, next_oid, catalog_initialized, etc.)
+        // write_page() will recalculate the checksum before writing
+        if (header_buffer_ && fd_ >= 0)
+        {
+            ErrorContext ctx;
+            write_page(0, header_buffer_.get(), &ctx);
+            // Sync to ensure data is persisted
+            sync(&ctx);
+        }
+
         // LOW-1 FIX: header_buffer_ automatically cleaned up by std::unique_ptr
         header_ = nullptr;        // Invalidate pointer (was pointing into header_buffer_)
         header_buffer_.reset();   // Release memory (automatic, but explicit for clarity)

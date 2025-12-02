@@ -101,6 +101,15 @@ namespace scratchbird
                 return current_token_.type == type;
             }
 
+            // Check if current token can be used as an identifier (includes unreserved keywords)
+            bool isIdentifierOrUnreservedKeyword() const;
+
+            // Get the string_id from current token if it's an identifier or unreserved keyword
+            StringPool::StringId getIdentifierStringId();
+
+            // Check if next token (lookahead) is a left parenthesis
+            bool peekIsLeftParen() const;
+
             // Error handling
             void error(const std::string &message);
             void synchronize();
@@ -200,6 +209,8 @@ namespace scratchbird
             FrameBoundary parseFrameBoundary();
 
             // Expression parsers (parseExpression now public for RLS Phase 3.4.7)
+            Expression *parseOr();
+            Expression *parseAnd();
             Expression *parseComparison();
             Expression *parseTerm();
             Expression *parseFactor();

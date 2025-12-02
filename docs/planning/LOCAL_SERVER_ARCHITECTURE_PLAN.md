@@ -981,7 +981,7 @@ Client                          Server
 
 ---
 
-### Phase 4: Client Library (20-30 hours) ✅ MOSTLY COMPLETE
+### Phase 4: Client Library (20-30 hours) ✅ COMPLETE
 
 **Completed:**
 - [x] `libscratchbird_client` static library
@@ -989,7 +989,7 @@ Client                          Server
 - [x] ResultSet class
 - [x] PreparedStatement class
 - [x] ConnectionPool class
-- [x] Auto-start mechanism (implemented, needs server fixes)
+- [x] Auto-start mechanism
 - [x] Error handling
 - [x] Connection pooling
 
@@ -998,7 +998,7 @@ Client                          Server
 - `src/client/connection.cpp` ✅
 - Static library (`libscratchbird_client.a`) ✅
 
-**Tests (95 tests total):**
+**Tests (95+ tests total):**
 - [x] Connection open/close (7 tests)
 - [x] Query execution (5 tests)
 - [x] Result set iteration (3 tests)
@@ -1006,11 +1006,7 @@ Client                          Server
 - [x] Prepared statements (4 tests)
 - [x] Connection pooling (4 tests)
 - [x] Error handling (4 tests)
-- [x] Integration tests (6 tests - skip if server unavailable)
-
-**Remaining:**
-- Server database initialization needs fixes for full integration testing
-- Auto-start mechanism blocked by server startup issues
+- [x] Integration tests (7 tests)
 
 ---
 
@@ -1159,12 +1155,16 @@ tests/
 | Phase 1 | IPC Infrastructure | 40-50 hours | ✅ COMPLETE |
 | Phase 2 | Wire Protocol | 30-40 hours | ✅ COMPLETE |
 | Phase 3 | Server Implementation | 40-50 hours | ✅ COMPLETE |
-| Phase 4 | Client Library | 20-30 hours | ✅ MOSTLY COMPLETE (36 unit + 6 integration tests) |
+| Phase 4 | Client Library | 20-30 hours | ✅ COMPLETE (36 unit + 7 integration tests) |
 | Phase 5 | Integration & Testing | 10-20 hours | ❌ Pending |
-| **Total** | | **140-190 hours** | **~85% Complete** |
+| **Total** | | **140-190 hours** | **~90% Complete** |
 
 **Original estimate:** 140-190 hours (3.5-4.5 weeks)
-**Remaining work:** 10-20 hours - Phase 5 (integration testing, docs) + server fixes
+**Remaining work:** 10-20 hours - Phase 5 (integration testing, docs)
+
+**CLI Tools:** ✅ **100% COMPLETE** (November 28, 2025)
+- All 4 CLI tools (sb_isql, sb_verify, sb_backup, sb_security) built and tested
+- Located in `src/cli/` directory
 
 ---
 
@@ -1175,10 +1175,13 @@ tests/
 - PRIORITY 2: Improvement Opportunities (430-540 hours)
 - Specifically: P0-3 (Security Audit Logging) should be done first
 
-**After This Work:**
-- PRIORITY 3: Command-Line Tools (90-110 hours)
-  - sb_isql, sb_verify, sb_backup, sb_security
-  - All will use `libscratchbird_client`
+**After This Work:** ✅ **COMPLETE**
+- ✅ Command-Line Tools (90-110 hours estimated, completed November 28, 2025)
+  - ✅ sb_isql - Interactive SQL shell (~750 lines)
+  - ✅ sb_verify - Database verification (~510 lines)
+  - ✅ sb_backup - Backup/restore (~550 lines)
+  - ✅ sb_security - Security administration (~800 lines)
+  - All tools built and tested!
 
 ---
 

@@ -46,7 +46,7 @@ int main()
     {
         std::cout << "Test 3: Concurrent snapshot creation (no deadlock)... ";
 
-        const char *db_path = "test_txn_deadlock.sbrd";
+        const char *db_path = "/tmp/test_txn_deadlock.sbrd";
         std::remove(db_path);
 
         ErrorContext ctx;

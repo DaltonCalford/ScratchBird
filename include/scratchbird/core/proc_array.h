@@ -3,6 +3,7 @@
 #include "scratchbird/core/status.h"
 #include <cstdint>
 #include <vector>
+#include <atomic>
 #include <pthread.h>
 
 namespace scratchbird::core
@@ -140,7 +141,7 @@ namespace scratchbird::core
         static auto getInstance() -> ProcArray *;
 
     private:
-        static ProcArray *proc_array_;
+        static std::atomic<ProcArray *> proc_array_;
         static Database *database_;
 
         // Helper: Get PCB by proc_id

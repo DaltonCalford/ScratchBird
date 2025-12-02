@@ -41,7 +41,7 @@ using namespace scratchbird::core;
 class BufferPoolExhaustionTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_db_path_ = "test_buffer_pool_exhaustion.db";
+        test_db_path_ = "/tmp/test_buffer_pool_exhaustion.db";
         std::remove(test_db_path_);
 
         ErrorContext ctx;

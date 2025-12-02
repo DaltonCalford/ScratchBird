@@ -13,14 +13,14 @@
 namespace scratchbird {
 namespace core {
 
-    ColumnstoreIndex::ColumnstoreIndex(Database *db, const UuidV7Bytes &index_uuid, uint32_t meta_page)
+    ColumnstoreIndexSimple::ColumnstoreIndexSimple(Database *db, const UuidV7Bytes &index_uuid, uint32_t meta_page)
         : db_(db), index_uuid_(index_uuid), meta_page_(meta_page)
     {
     }
 
-    ColumnstoreIndex::~ColumnstoreIndex() = default;
+    ColumnstoreIndexSimple::~ColumnstoreIndexSimple() = default;
 
-    Status ColumnstoreIndex::create(Database *db, const UuidV7Bytes &index_uuid,
+    Status ColumnstoreIndexSimple::create(Database *db, const UuidV7Bytes &index_uuid,
                                     uint32_t *meta_page_out, ErrorContext *ctx)
     {
         // Allocate meta page for segment catalog
@@ -44,12 +44,12 @@ namespace core {
         return Status::OK;
     }
 
-    std::unique_ptr<ColumnstoreIndex> ColumnstoreIndex::open(Database *db,
+    std::unique_ptr<ColumnstoreIndexSimple> ColumnstoreIndexSimple::open(Database *db,
                                                               const UuidV7Bytes &index_uuid,
                                                               uint32_t meta_page,
                                                               ErrorContext *ctx)
     {
-        auto index = std::make_unique<ColumnstoreIndex>(db, index_uuid, meta_page);
+        auto index = std::make_unique<ColumnstoreIndexSimple>(db, index_uuid, meta_page);
 
         // Load segment catalog from meta page
         Status status = index->loadSegmentCatalog(ctx);
@@ -62,7 +62,7 @@ namespace core {
         return index;
     }
 
-    Status ColumnstoreIndex::insertColumn(uint16_t column_id, uint32_t row_count,
+    Status ColumnstoreIndexSimple::insertColumn(uint16_t column_id, uint32_t row_count,
                                           const std::vector<uint8_t> &column_data,
                                           ErrorContext *ctx)
     {
@@ -144,7 +144,7 @@ namespace core {
         return status;
     }
 
-    Status ColumnstoreIndex::scanColumn(uint16_t column_id, uint32_t start_row, uint32_t end_row,
+    Status ColumnstoreIndexSimple::scanColumn(uint16_t column_id, uint32_t start_row, uint32_t end_row,
                                         std::vector<uint8_t> *data_out, ErrorContext *ctx)
     {
         if (data_out)
@@ -223,7 +223,7 @@ namespace core {
         return Status::OK;
     }
 
-    Status ColumnstoreIndex::vacuum(ErrorContext *ctx)
+    Status ColumnstoreIndexSimple::vacuum(ErrorContext *ctx)
     {
         // Vacuum: Compact segments, remove deleted data
         // In production:
@@ -236,7 +236,7 @@ namespace core {
         return Status::OK;
     }
 
-    Status ColumnstoreIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
+    Status ColumnstoreIndexSimple::removeDeadEntries(const std::vector<TID> &dead_tids,
                                                uint64_t *entries_removed_out,
                                                uint64_t *pages_modified_out,
                                                ErrorContext *ctx)
@@ -266,7 +266,7 @@ namespace core {
     // Helper Methods
     // ========================================================================
 
-    Status ColumnstoreIndex::compressRLE(const std::vector<uint8_t>& data,
+    Status ColumnstoreIndexSimple::compressRLE(const std::vector<uint8_t>& data,
                                          std::vector<uint8_t>* compressed,
                                          ErrorContext* ctx)
     {
@@ -312,7 +312,7 @@ namespace core {
         return Status::OK;
     }
 
-    Status ColumnstoreIndex::decompressRLE(const std::vector<uint8_t>& compressed,
+    Status ColumnstoreIndexSimple::decompressRLE(const std::vector<uint8_t>& compressed,
                                            uint32_t row_count,
                                            std::vector<uint8_t>* data,
                                            ErrorContext* ctx)
@@ -356,7 +356,7 @@ namespace core {
         return Status::OK;
     }
 
-    Status ColumnstoreIndex::loadSegmentCatalog(ErrorContext* ctx)
+    Status ColumnstoreIndexSimple::loadSegmentCatalog(ErrorContext* ctx)
     {
         // In production: read segment catalog from meta_page_
         // Format: [num_columns:2] [for each column: column_id:2, num_segments:4, segments...]
@@ -367,7 +367,7 @@ namespace core {
         return Status::OK;
     }
 
-    Status ColumnstoreIndex::saveSegmentCatalog(ErrorContext* ctx)
+    Status ColumnstoreIndexSimple::saveSegmentCatalog(ErrorContext* ctx)
     {
         // In production: write segment catalog to meta_page_
         // Serialize all segments to disk
@@ -376,7 +376,7 @@ namespace core {
         return Status::OK;
     }
 
-    ColumnstoreIndex::ColumnSegment* ColumnstoreIndex::findSegment(uint16_t column_id, uint32_t row)
+    ColumnstoreIndexSimple::ColumnSegment* ColumnstoreIndexSimple::findSegment(uint16_t column_id, uint32_t row)
     {
         auto it = column_segments_.find(column_id);
         if (it == column_segments_.end())

@@ -63,7 +63,9 @@ TEST_F(ExpressionMatcherTest, ExactMatchLiteral)
     ASSERT_NE(result2.expr, nullptr);
 
     // Use result1's StringPool since both expressions should match structurally
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                           &result1.parser->stringPool(),
+                                           &result2.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, ExactMatchIdentifier)
@@ -74,7 +76,9 @@ TEST_F(ExpressionMatcherTest, ExactMatchIdentifier)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                           &result1.parser->stringPool(),
+                                           &result2.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, ExactMatchFunctionCall)
@@ -85,7 +89,9 @@ TEST_F(ExpressionMatcherTest, ExactMatchFunctionCall)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                           &result1.parser->stringPool(),
+                                           &result2.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, ExactMatchBinaryOp)
@@ -96,7 +102,9 @@ TEST_F(ExpressionMatcherTest, ExactMatchBinaryOp)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                           &result1.parser->stringPool(),
+                                           &result2.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, ExactMatchComplex)
@@ -107,7 +115,9 @@ TEST_F(ExpressionMatcherTest, ExactMatchComplex)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                           &result1.parser->stringPool(),
+                                           &result2.parser->stringPool()));
 }
 
 // ============================================================================
@@ -122,7 +132,9 @@ TEST_F(ExpressionMatcherTest, CommutativeAddition)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                           &result1.parser->stringPool(),
+                                           &result2.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, CommutativeMultiplication)
@@ -133,7 +145,9 @@ TEST_F(ExpressionMatcherTest, CommutativeMultiplication)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                           &result1.parser->stringPool(),
+                                           &result2.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, CommutativeEquality)
@@ -144,7 +158,9 @@ TEST_F(ExpressionMatcherTest, CommutativeEquality)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                           &result1.parser->stringPool(),
+                                           &result2.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, NonCommutativeSubtraction)
@@ -155,7 +171,9 @@ TEST_F(ExpressionMatcherTest, NonCommutativeSubtraction)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                            &result1.parser->stringPool(),
+                                            &result2.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, NonCommutativeDivision)
@@ -166,7 +184,9 @@ TEST_F(ExpressionMatcherTest, NonCommutativeDivision)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                            &result1.parser->stringPool(),
+                                            &result2.parser->stringPool()));
 }
 
 // ============================================================================
@@ -181,7 +201,9 @@ TEST_F(ExpressionMatcherTest, NoMatchDifferentLiterals)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                            &result1.parser->stringPool(),
+                                            &result2.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, NoMatchDifferentIdentifiers)
@@ -192,7 +214,9 @@ TEST_F(ExpressionMatcherTest, NoMatchDifferentIdentifiers)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                            &result1.parser->stringPool(),
+                                            &result2.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, NoMatchDifferentFunctions)
@@ -203,7 +227,9 @@ TEST_F(ExpressionMatcherTest, NoMatchDifferentFunctions)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                            &result1.parser->stringPool(),
+                                            &result2.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, NoMatchDifferentOperators)
@@ -214,7 +240,9 @@ TEST_F(ExpressionMatcherTest, NoMatchDifferentOperators)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                            &result1.parser->stringPool(),
+                                            &result2.parser->stringPool()));
 }
 
 // ============================================================================
@@ -229,7 +257,9 @@ TEST_F(ExpressionMatcherTest, CanUseExactMatch)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
+                                                              &result_query.parser->stringPool(),
+                                                              &result_index.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::EXACT_MATCH);
 }
 
@@ -241,7 +271,9 @@ TEST_F(ExpressionMatcherTest, CanUseRangeScanGreater)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
+                                                              &result_query.parser->stringPool(),
+                                                              &result_index.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::RANGE_SCAN);
 }
 
@@ -253,7 +285,9 @@ TEST_F(ExpressionMatcherTest, CanUseRangeScanLess)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
+                                                              &result_query.parser->stringPool(),
+                                                              &result_index.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::RANGE_SCAN);
 }
 
@@ -265,7 +299,9 @@ TEST_F(ExpressionMatcherTest, CanUseLikePrefixScan)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
+                                                              &result_query.parser->stringPool(),
+                                                              &result_index.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::RANGE_SCAN);
 }
 
@@ -277,7 +313,9 @@ TEST_F(ExpressionMatcherTest, CannotUseLikeSuffixScan)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
+                                                              &result_query.parser->stringPool(),
+                                                              &result_index.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::NO_MATCH);
 }
 
@@ -289,7 +327,9 @@ TEST_F(ExpressionMatcherTest, CannotUseDifferentExpression)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
+                                                              &result_query.parser->stringPool(),
+                                                              &result_index.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::NO_MATCH);
 }
 
@@ -305,7 +345,9 @@ TEST_F(ExpressionMatcherTest, CaseInsensitiveColumnNames)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                           &result1.parser->stringPool(),
+                                           &result2.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, CaseInsensitiveFunctionNames)
@@ -316,7 +358,9 @@ TEST_F(ExpressionMatcherTest, CaseInsensitiveFunctionNames)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                           &result1.parser->stringPool(),
+                                           &result2.parser->stringPool()));
 }
 
 // ============================================================================
@@ -331,7 +375,9 @@ TEST_F(ExpressionMatcherTest, ComplexArithmeticExpression)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                           &result1.parser->stringPool(),
+                                           &result2.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, NestedFunctionCalls)
@@ -342,7 +388,9 @@ TEST_F(ExpressionMatcherTest, NestedFunctionCalls)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                           &result1.parser->stringPool(),
+                                           &result2.parser->stringPool()));
 }
 
 TEST_F(ExpressionMatcherTest, MultipleArguments)
@@ -353,7 +401,9 @@ TEST_F(ExpressionMatcherTest, MultipleArguments)
     ASSERT_NE(result1.expr, nullptr);
     ASSERT_NE(result2.expr, nullptr);
 
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr, &result1.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
+                                           &result1.parser->stringPool(),
+                                           &result2.parser->stringPool()));
 }
 
 // ============================================================================
@@ -394,7 +444,9 @@ TEST_F(ExpressionMatcherTest, RealWorldLowerEmailIndex)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
+                                                              &result_query.parser->stringPool(),
+                                                              &result_index.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::EXACT_MATCH);
 }
 
@@ -406,7 +458,9 @@ TEST_F(ExpressionMatcherTest, RealWorldExtractYearIndex)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
+                                                              &result_query.parser->stringPool(),
+                                                              &result_index.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::EXACT_MATCH);
 }
 
@@ -418,6 +472,8 @@ TEST_F(ExpressionMatcherTest, RealWorldComputedPriceIndex)
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
 
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr, &result_query.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
+                                                              &result_query.parser->stringPool(),
+                                                              &result_index.parser->stringPool());
     EXPECT_EQ(match_type, ExpressionMatchType::RANGE_SCAN);
 }

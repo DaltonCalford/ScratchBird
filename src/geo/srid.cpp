@@ -190,8 +190,8 @@ bool SRIDRegistry::loadFromPROJ(int epsg_code) {
         metadata.units = "degrees";
     } else {
         // For projected CRS, default to meters
-        // TODO: Extract actual units from PROJ coordinate system once API is available
-        metadata.units = "meters";
+        // Phase 4 Enhancement: Extract actual units from PROJ coordinate system once API is available
+        metadata.units = "meters";  // Default is safe for most projected CRS
     }
 
     // Clean up

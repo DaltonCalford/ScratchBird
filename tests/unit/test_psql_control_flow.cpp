@@ -39,7 +39,7 @@ protected:
     void SetUp() override
     {
         // Create temporary test database
-        test_db_path_ = "test_psql_control_flow.db";
+        test_db_path_ = "/tmp/test_psql_control_flow.db";
         std::filesystem::remove_all(test_db_path_);
 
         core::ErrorContext ctx;

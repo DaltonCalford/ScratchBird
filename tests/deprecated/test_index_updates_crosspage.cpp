@@ -129,7 +129,7 @@ protected:
         return *reinterpret_cast<const uint32_t*>(tuple.data());
     }
 
-    const std::string test_db_path_ = "test_index_updates_crosspage.db";
+    const std::string test_db_path_ = "/tmp/test_index_updates_crosspage.db";
     std::unique_ptr<Database> db_;
     ID schema_id_;
     ID table_id_;

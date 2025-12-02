@@ -68,12 +68,14 @@ namespace scratchbird::optimizer
          *
          * @param query_pred Predicate from query WHERE clause
          * @param index_pred Predicate from filtered index WHERE clause
-         * @param string_pool String pool for string ID resolution
+         * @param query_pool String pool for query predicate
+         * @param index_pool String pool for index predicate (optional, defaults to query_pool)
          * @return true if query_pred implies index_pred
          */
         static bool implies(const Expression *query_pred,
                            const Expression *index_pred,
-                           const StringPool *string_pool);
+                           const StringPool *query_pool,
+                           const StringPool *index_pool = nullptr);
 
         /**
          * Check if query predicate contains (implies) index predicate as a conjunct
@@ -87,12 +89,14 @@ namespace scratchbird::optimizer
          *
          * @param query_pred Query predicate (may contain AND clauses)
          * @param index_pred Index predicate
-         * @param string_pool String pool
+         * @param query_pool String pool for query predicate
+         * @param index_pool String pool for index predicate (optional, defaults to query_pool)
          * @return true if index_pred appears as conjunct in query_pred
          */
         static bool containsConjunct(const Expression *query_pred,
                                      const Expression *index_pred,
-                                     const StringPool *string_pool);
+                                     const StringPool *query_pool,
+                                     const StringPool *index_pool = nullptr);
 
     private:
         /**
@@ -102,7 +106,8 @@ namespace scratchbird::optimizer
          */
         static bool predicatesEqual(const Expression *pred1,
                                     const Expression *pred2,
-                                    const StringPool *string_pool);
+                                    const StringPool *query_pool,
+                                    const StringPool *index_pool);
 
         /**
          * Check if query range implies index range
@@ -114,12 +119,14 @@ namespace scratchbird::optimizer
          *
          * @param query_binop Query comparison (e.g., age > 30)
          * @param index_binop Index comparison (e.g., age > 18)
-         * @param string_pool String pool
+         * @param query_pool String pool for query predicate
+         * @param index_pool String pool for index predicate
          * @return true if query range implies index range
          */
         static bool rangeImplies(const BinaryOpExpr *query_binop,
                                 const BinaryOpExpr *index_binop,
-                                const StringPool *string_pool);
+                                const StringPool *query_pool,
+                                const StringPool *index_pool);
 
         /**
          * Check if NOT NULL predicate is implied
@@ -130,12 +137,14 @@ namespace scratchbird::optimizer
          *
          * @param query_pred Query predicate
          * @param index_not_null Index predicate (col IS NOT NULL)
-         * @param string_pool String pool
+         * @param query_pool String pool for query predicate
+         * @param index_pool String pool for index predicate
          * @return true if query implies NOT NULL
          */
         static bool impliesNotNull(const Expression *query_pred,
                                    const Expression *index_not_null,
-                                   const StringPool *string_pool);
+                                   const StringPool *query_pool,
+                                   const StringPool *index_pool);
 
         /**
          * Extract column identifier from expression if possible
@@ -153,7 +162,8 @@ namespace scratchbird::optimizer
          *  1 if lit1 > lit2
          *  INT_MIN if incomparable (different types, NULL, etc.)
          */
-        static int compareLiterals(const LiteralExpr *lit1, const LiteralExpr *lit2);
+        static int compareLiterals(const LiteralExpr *lit1, const LiteralExpr *lit2,
+                                   const StringPool *pool1, const StringPool *pool2);
 
         /**
          * Check if operator implies NOT NULL

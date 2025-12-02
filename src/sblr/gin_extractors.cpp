@@ -23,10 +23,11 @@ GinExtractorRegistry::GinExtractorRegistry() {
     // Register array extractor (ID 1)
     registerExtractor(static_cast<uint16_t>(GinExtractorId::ARRAY), arrayExtractor);
 
-    // TODO: Add more extractors as needed:
+    // Phase 4 Enhancement: Add more extractors as needed:
     // - TEXT_TSVECTOR (ID 2) - for full-text search
     // - JSONB_PATH (ID 3) - for JSONB path extraction
     // - JSONB_VALUE (ID 4) - for JSONB value extraction
+    // Current extractors (DEFAULT, ARRAY) cover common use cases
 }
 
 // Register a key extractor

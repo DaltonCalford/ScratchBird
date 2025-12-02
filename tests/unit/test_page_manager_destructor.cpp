@@ -40,20 +40,23 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/error_context.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::core;
 
 class PageManagerDestructorTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_db_path_ = "test_page_manager_destructor.db";
-        std::remove(test_db_path_);
+        // Create a unique database path for test isolation (parallel execution)
+        test_db_file_ = std::make_unique<scratchbird::testing::TestDatabaseFile>("test_pm_destructor", ".db");
+        test_db_path_ = test_db_file_->c_str();
     }
 
     void TearDown() override {
-        std::remove(test_db_path_);
+        // TestDatabaseFile will cleanup automatically on destruction
     }
 
+    std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_db_file_;
     const char* test_db_path_;
 };
 

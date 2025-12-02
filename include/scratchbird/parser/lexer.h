@@ -94,6 +94,7 @@ namespace scratchbird
             Token scanIdentifier();
             Token scanNumber();
             Token scanString();
+            Token scanQuotedIdentifier();
             Token scanOperator();
             void scanComment();
 

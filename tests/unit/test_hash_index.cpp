@@ -14,7 +14,7 @@ protected:
     void SetUp() override
     {
         // Create test database
-        test_db_path = "test_hash_index.db";
+        test_db_path = "/tmp/test_hash_index.db";
 
         // Remove if exists
         if (std::filesystem::exists(test_db_path))

@@ -21,8 +21,11 @@ static void write_file(const char *path, const std::vector<uint8_t> &data)
 
 TEST(ErrorPaths, InvalidPageSize)
 {
-    EXPECT_FALSE(isValidAlphaPageSize(4096));
-    EXPECT_FALSE(isValidAlphaPageSize(65536));
+    // Valid page sizes: 8192, 16384, 32768, 65536, 131072
+    EXPECT_FALSE(isValidAlphaPageSize(4096));    // Too small
+    EXPECT_FALSE(isValidAlphaPageSize(262144));  // Too large (> 128KB)
+    EXPECT_TRUE(isValidAlphaPageSize(65536));    // 64KB is valid
+    EXPECT_TRUE(isValidAlphaPageSize(131072));   // 128KB is valid
 }
 
 TEST(ErrorPaths, CorruptedMagic)

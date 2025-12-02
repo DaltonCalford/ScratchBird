@@ -28,7 +28,7 @@ class StatisticalFunctionsTest : public ::testing::Test
 {
 protected:
     std::shared_ptr<core::Database> db;
-    std::string test_db_path = "test_stats.db";
+    std::string test_db_path = "/tmp/test_stats.db";
 
     void SetUp() override
     {

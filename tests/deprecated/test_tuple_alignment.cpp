@@ -24,7 +24,7 @@ int main()
 {
     std::cout << "=== Testing Issue 1.15: Tuple Header Alignment ===\n" << std::endl;
 
-    const char *db_path = "test_tuple_alignment.sbrd";
+    const char *db_path = "/tmp/test_tuple_alignment.sbrd";
     std::remove(db_path);
 
     ErrorContext ctx;

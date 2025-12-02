@@ -66,8 +66,8 @@ namespace scratchbird::core
         // Calculate transaction gap
         uint64_t gap = (ost > oit) ? (ost - oit) : 0;
 
-        // TODO: Read sweep_interval from config
-        // For now, use hardcoded default of 20000
+        // Phase 4 Enhancement: Read sweep_interval from config
+        // For now, use hardcoded default of 20000 (safe default value)
         uint32_t sweep_interval = config::DEFAULT_SWEEP_INTERVAL;
 
         // Trigger sweep if gap exceeds threshold
@@ -221,7 +221,7 @@ namespace scratchbird::core
         // 4. Compact pages if needed
         // 5. Update indexes
 
-        // TODO: Implement space reclamation in future iteration
+        // Phase 4 Enhancement: Implement space reclamation in future iteration
         // For now, rely on cooperative/background GC for space reclamation
 
         LOG_INFO(VACUUM, "Space reclamation not yet implemented (new_oit=%lu)", new_oit);

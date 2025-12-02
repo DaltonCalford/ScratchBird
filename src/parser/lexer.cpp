@@ -148,6 +148,9 @@ namespace scratchbird
             {"TIMESTAMP", TokenType::KW_TIMESTAMP},
             {"INTERVAL", TokenType::KW_INTERVAL},
             {"EXTRACT", TokenType::KW_EXTRACT},
+            {"POSITION", TokenType::KW_POSITION},  // POSITION(substring IN string) syntax
+            {"OVERLAY", TokenType::KW_OVERLAY},    // OVERLAY(...PLACING...FROM...) syntax
+            {"PLACING", TokenType::KW_PLACING},    // Used with OVERLAY
 
             // Boolean
             {"BOOLEAN", TokenType::KW_BOOLEAN},
@@ -452,6 +455,12 @@ namespace scratchbird
                 return scanString();
             }
 
+            // Double-quoted identifiers (SQL standard)
+            if (ch == '"')
+            {
+                return scanQuotedIdentifier();
+            }
+
             // Comments
             if (ch == '-' && peekChar() == '-')
             {
@@ -651,16 +660,30 @@ namespace scratchbird
             advance(); // Skip opening quote
 
             std::string value;
-            while (current_pos_ < input_.size() && currentChar() != '\'')
+            while (current_pos_ < input_.size())
             {
-                if (currentChar() == '\\')
+                if (currentChar() == '\'')
+                {
+                    // Check for SQL-style escaped quote ('')
+                    if (peekChar() == '\'')
+                    {
+                        // This is an escaped single quote - add one quote and skip both
+                        value += '\'';
+                        advance(); // Skip first quote
+                        advance(); // Skip second quote
+                        continue;
+                    }
+                    // This is the closing quote
+                    break;
+                }
+                else if (currentChar() == '\\')
                 {
                     advance();
                     if (current_pos_ >= input_.size())
                     {
                         return makeError("Unterminated string literal");
                     }
-                    // Simple escape sequences
+                    // Simple escape sequences (C-style)
                     switch (currentChar())
                     {
                         case 'n':
@@ -700,6 +723,47 @@ namespace scratchbird
             size_t length = current_pos_ - start_pos;
             StringPool::StringId id = string_pool_.intern(value);
             return Token::makeString(start_loc, length, id);
+        }
+
+        Token Lexer::scanQuotedIdentifier()
+        {
+            SourceLocation start_loc = currentLocation();
+            size_t start_pos = current_pos_;
+
+            advance(); // Skip opening double-quote
+
+            std::string value;
+            while (current_pos_ < input_.size() && currentChar() != '"')
+            {
+                if (currentChar() == '"' && peekChar() == '"')
+                {
+                    // Escaped double-quote ("") -> single double-quote
+                    value += '"';
+                    advance();
+                    advance();
+                }
+                else
+                {
+                    value += currentChar();
+                    advance();
+                }
+            }
+
+            if (current_pos_ >= input_.size())
+            {
+                return makeError("Unterminated quoted identifier");
+            }
+
+            advance(); // Skip closing double-quote
+
+            if (value.empty())
+            {
+                return makeError("Empty quoted identifier");
+            }
+
+            size_t length = current_pos_ - start_pos;
+            StringPool::StringId id = string_pool_.intern(value);
+            return Token::makeIdentifier(start_loc, length, id);
         }
 
         Token Lexer::scanOperator()

@@ -13,23 +13,30 @@ namespace scratchbird::optimizer
 
     bool PredicateMatcher::implies(const Expression *query_pred,
                                     const Expression *index_pred,
-                                    const StringPool *string_pool)
+                                    const StringPool *query_pool,
+                                    const StringPool *index_pool)
     {
+        // If index_pool not provided, use query_pool for both
+        if (!index_pool)
+        {
+            index_pool = query_pool;
+        }
+
         // Null check
-        if (!query_pred || !index_pred || !string_pool)
+        if (!query_pred || !index_pred || !query_pool)
         {
             return false;
         }
 
         // Case 1: Exact match (query_pred == index_pred)
-        if (predicatesEqual(query_pred, index_pred, string_pool))
+        if (predicatesEqual(query_pred, index_pred, query_pool, index_pool))
         {
             return true;
         }
 
         // Case 2: Query contains index predicate as conjunct
         // Example: (a = 1 AND b = 2) implies (b = 2)
-        if (containsConjunct(query_pred, index_pred, string_pool))
+        if (containsConjunct(query_pred, index_pred, query_pool, index_pool))
         {
             return true;
         }
@@ -42,7 +49,7 @@ namespace scratchbird::optimizer
             auto *query_binop = static_cast<const BinaryOpExpr *>(query_pred);
             auto *index_binop = static_cast<const BinaryOpExpr *>(index_pred);
 
-            if (rangeImplies(query_binop, index_binop, string_pool))
+            if (rangeImplies(query_binop, index_binop, query_pool, index_pool))
             {
                 return true;
             }
@@ -50,7 +57,7 @@ namespace scratchbird::optimizer
 
         // Case 4: NOT NULL implication
         // Example: "col = 5" implies "col IS NOT NULL"
-        if (impliesNotNull(query_pred, index_pred, string_pool))
+        if (impliesNotNull(query_pred, index_pred, query_pool, index_pool))
         {
             return true;
         }
@@ -60,9 +67,16 @@ namespace scratchbird::optimizer
 
     bool PredicateMatcher::containsConjunct(const Expression *query_pred,
                                             const Expression *index_pred,
-                                            const StringPool *string_pool)
+                                            const StringPool *query_pool,
+                                            const StringPool *index_pool)
     {
-        if (!query_pred || !index_pred || !string_pool)
+        // If index_pool not provided, use query_pool for both
+        if (!index_pool)
+        {
+            index_pool = query_pool;
+        }
+
+        if (!query_pred || !index_pred || !query_pool)
         {
             return false;
         }
@@ -74,7 +88,7 @@ namespace scratchbird::optimizer
         // Check if any conjunct matches index predicate
         for (const Expression *conjunct : conjuncts)
         {
-            if (predicatesEqual(conjunct, index_pred, string_pool))
+            if (predicatesEqual(conjunct, index_pred, query_pool, index_pool))
             {
                 return true;
             }
@@ -89,15 +103,17 @@ namespace scratchbird::optimizer
 
     bool PredicateMatcher::predicatesEqual(const Expression *pred1,
                                            const Expression *pred2,
-                                           const StringPool *string_pool)
+                                           const StringPool *query_pool,
+                                           const StringPool *index_pool)
     {
         // Use ExpressionMatcher for structural equality
-        return ExpressionMatcher::matches(pred1, pred2, string_pool);
+        return ExpressionMatcher::matches(pred1, pred2, query_pool, index_pool);
     }
 
     bool PredicateMatcher::rangeImplies(const BinaryOpExpr *query_binop,
                                         const BinaryOpExpr *index_binop,
-                                        const StringPool *string_pool)
+                                        const StringPool *query_pool,
+                                        const StringPool *index_pool)
     {
         // Both must be comparison operators
         using parser::BinaryOp;
@@ -122,7 +138,7 @@ namespace scratchbird::optimizer
         }
 
         // Columns must match
-        if (!ExpressionMatcher::matches(query_col, index_col, string_pool))
+        if (!ExpressionMatcher::matches(query_col, index_col, query_pool, index_pool))
         {
             return false;
         }
@@ -137,7 +153,7 @@ namespace scratchbird::optimizer
         const LiteralExpr *query_lit = static_cast<const LiteralExpr *>(query_right);
         const LiteralExpr *index_lit = static_cast<const LiteralExpr *>(index_right);
 
-        int cmp = compareLiterals(query_lit, index_lit);
+        int cmp = compareLiterals(query_lit, index_lit, query_pool, index_pool);
         if (cmp == std::numeric_limits<int>::min())
         {
             // Incomparable literals
@@ -214,14 +230,15 @@ namespace scratchbird::optimizer
 
     bool PredicateMatcher::impliesNotNull(const Expression *query_pred,
                                           const Expression *index_not_null,
-                                          const StringPool *string_pool)
+                                          const StringPool *query_pool,
+                                          const StringPool *index_pool)
     {
         // Check if index predicate is "col IS NOT NULL"
         // In AST, this might be represented as a UnaryOp or specific node type
         // For now, we'll handle the common case where query_pred uses a column
         // with an operator that implies NOT NULL
 
-        if (!query_pred || !index_not_null || !string_pool)
+        if (!query_pred || !index_not_null || !query_pool)
         {
             return false;
         }
@@ -275,7 +292,8 @@ namespace scratchbird::optimizer
         return nullptr;
     }
 
-    int PredicateMatcher::compareLiterals(const LiteralExpr *lit1, const LiteralExpr *lit2)
+    int PredicateMatcher::compareLiterals(const LiteralExpr *lit1, const LiteralExpr *lit2,
+                                           const StringPool *pool1, const StringPool *pool2)
     {
         if (!lit1 || !lit2)
         {
@@ -310,7 +328,14 @@ namespace scratchbird::optimizer
 
         case parser::LiteralExpr::LiteralType::STRING:
         {
-            // Compare StringIds directly (we don't have StringPool here)
+            // Resolve StringIds using the respective StringPools
+            if (pool1 && pool2)
+            {
+                std::string str1(pool1->get(lit1->stringValue()));
+                std::string str2(pool2->get(lit2->stringValue()));
+                return str1.compare(str2);
+            }
+            // Fallback: compare StringIds directly (only works if same pool)
             StringPool::StringId val1 = lit1->stringValue();
             StringPool::StringId val2 = lit2->stringValue();
             if (val1 < val2) return -1;

@@ -323,8 +323,90 @@ set_target_properties(sb_charset_loader PROPERTIES
     CXX_EXTENSIONS NO
 )
 
+# ==============================================================================
+# CLI Tools (CLI Administration Suite)
+# ==============================================================================
+
+# sb_isql - Interactive SQL Shell
+add_executable(sb_isql cli/sb_isql.cpp)
+
+target_link_libraries(sb_isql PRIVATE
+    scratchbird_client
+    scratchbird_protocol
+    scratchbird_server
+    scratchbird_sblr
+    scratchbird_parser
+    scratchbird_optimizer
+    scratchbird_core
+)
+
+set_target_properties(sb_isql PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+message(STATUS "CLI tool: sb_isql (interactive SQL shell)")
+
+# sb_verify - Database Verification Tool
+add_executable(sb_verify cli/sb_verify.cpp)
+
+target_link_libraries(sb_verify PRIVATE
+    scratchbird_core
+    scratchbird_sblr
+    scratchbird_parser
+    scratchbird_optimizer
+)
+
+set_target_properties(sb_verify PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+message(STATUS "CLI tool: sb_verify (database verification)")
+
+# sb_backup - Backup/Restore Tool
+add_executable(sb_backup cli/sb_backup.cpp)
+
+target_link_libraries(sb_backup PRIVATE
+    scratchbird_core
+    scratchbird_sblr
+    scratchbird_parser
+    scratchbird_optimizer
+)
+
+set_target_properties(sb_backup PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+message(STATUS "CLI tool: sb_backup (backup/restore)")
+
+# sb_security - Security Administration Tool
+add_executable(sb_security cli/sb_security.cpp)
+
+target_link_libraries(sb_security PRIVATE
+    scratchbird_client
+    scratchbird_protocol
+    scratchbird_server
+    scratchbird_sblr
+    scratchbird_parser
+    scratchbird_optimizer
+    scratchbird_core
+)
+
+set_target_properties(sb_security PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+message(STATUS "CLI tool: sb_security (security administration)")
+
 # Installation (for future use)
-install(TARGETS scratchbird sb_server sb_charset_loader scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer scratchbird_server scratchbird_protocol scratchbird_client
+install(TARGETS scratchbird sb_server sb_charset_loader sb_isql sb_verify sb_backup sb_security scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer scratchbird_server scratchbird_protocol scratchbird_client
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib

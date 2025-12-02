@@ -30,7 +30,7 @@ using namespace scratchbird;
 class AdvancedGroupingTest : public ::testing::Test {
 protected:
     std::unique_ptr<core::Database> db_;
-    const std::string db_path_ = "test_advanced_grouping_db";
+    const std::string db_path_ = "/tmp/test_advanced_grouping_db";
 
     void SetUp() override {
         // Clean up any existing database

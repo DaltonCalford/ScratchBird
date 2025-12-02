@@ -598,9 +598,9 @@ namespace scratchbird::core
             ID parent_table_id;                // Referenced table
             std::vector<std::string> child_columns;  // FK column names in child table
             std::vector<std::string> parent_columns; // Referenced column names in parent
-            FKAction on_delete;                // Action on DELETE of parent row
-            FKAction on_update;                // Action on UPDATE of parent key
-            FKMatchType match_type;            // Match type (SIMPLE, FULL, PARTIAL)
+            FKAction on_delete = FKAction::NO_ACTION;      // Action on DELETE of parent row
+            FKAction on_update = FKAction::NO_ACTION;      // Action on UPDATE of parent key
+            FKMatchType match_type = FKMatchType::SIMPLE;  // Match type (SIMPLE, FULL, PARTIAL)
             bool is_enabled = true;            // Can be disabled temporarily
 
             // ALPHA Phase 1 - Deferred constraint checking

@@ -38,9 +38,9 @@ Status AuditLogger::logEvent(AuditEvent& event, ErrorContext* ctx)
     // Add to buffer
     buffer_.push_back(event);
 
-    // Flush if buffer is full
+    // Flush if buffer is full (use unlocked version since we hold mutex)
     if (buffer_.size() >= MAX_BUFFER_SIZE) {
-        return flush(ctx);
+        return flushUnlocked(ctx);
     }
 
     return Status::OK;
@@ -53,18 +53,16 @@ Status AuditLogger::writeEventToCatalog(const AuditEvent& event, ErrorContext* c
         return Status::OK;
     }
 
-    // TODO P0-3 Phase 2: Implement catalog table write
-    // For now, just store in memory buffer
+    // Phase 4 Enhancement (P0-3 Phase 2): Implement catalog table write
+    // For now, just store in memory buffer (events not persisted)
     // Future: Write to pg_audit_log catalog table
 
     return Status::OK;
 }
 
-Status AuditLogger::flush(ErrorContext* ctx)
+Status AuditLogger::flushUnlocked(ErrorContext* ctx)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    // Write all buffered events to catalog
+    // Internal flush method - caller must hold mutex_
     for (const auto& event : buffer_) {
         Status status = writeEventToCatalog(event, ctx);
         if (status != Status::OK) {
@@ -76,6 +74,12 @@ Status AuditLogger::flush(ErrorContext* ctx)
     // In production, this would be cleared after writing to catalog
 
     return Status::OK;
+}
+
+Status AuditLogger::flush(ErrorContext* ctx)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return flushUnlocked(ctx);
 }
 
 Status AuditLogger::queryAuditLog(
@@ -129,16 +133,21 @@ Status AuditLogger::queryAuditLog(
         matching_events.push_back(event);
     }
 
-    // Sort by timestamp
+    // Sort by timestamp, with event_id as secondary key for consistent ordering
+    // when timestamps are equal (events logged within same millisecond)
     if (query.descending) {
         std::sort(matching_events.begin(), matching_events.end(),
                  [](const AuditEvent& a, const AuditEvent& b) {
-                     return a.timestamp > b.timestamp;
+                     if (a.timestamp != b.timestamp)
+                         return a.timestamp > b.timestamp;
+                     return a.event_id > b.event_id;  // Higher ID = more recent
                  });
     } else {
         std::sort(matching_events.begin(), matching_events.end(),
                  [](const AuditEvent& a, const AuditEvent& b) {
-                     return a.timestamp < b.timestamp;
+                     if (a.timestamp != b.timestamp)
+                         return a.timestamp < b.timestamp;
+                     return a.event_id < b.event_id;  // Lower ID = older
                  });
     }
 

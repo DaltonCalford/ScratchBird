@@ -41,7 +41,7 @@ void testSingleInsertRetrieve()
     std::cout << "\n=== Test 1: Single Insert/Retrieve ===\n";
 
     // Create database for TransactionManager
-    std::string db_path = "lsm_test_single.db";
+    std::string db_path = "/tmp/lsm_test_single.db";
     std::remove(db_path.c_str());
 
     ErrorContext ctx;
@@ -85,7 +85,7 @@ void testMultipleInsertsSortedOrder()
 {
     std::cout << "\n=== Test 2: Multiple Inserts (Sorted Order) ===\n";
 
-    std::string db_path = "lsm_test_multi.db";
+    std::string db_path = "/tmp/lsm_test_multi.db";
     std::remove(db_path.c_str());
 
     ErrorContext ctx;
@@ -130,7 +130,7 @@ void testUpdateExistingKey()
 {
     std::cout << "\n=== Test 3: Update Existing Key ===\n";
 
-    std::string db_path = "lsm_test_update.db";
+    std::string db_path = "/tmp/lsm_test_update.db";
     std::remove(db_path.c_str());
 
     ErrorContext ctx;
@@ -185,7 +185,7 @@ void testDeleteKey()
 {
     std::cout << "\n=== Test 4: Delete Key (Tombstone) ===\n";
 
-    std::string db_path = "lsm_test_delete.db";
+    std::string db_path = "/tmp/lsm_test_delete.db";
     std::remove(db_path.c_str());
 
     ErrorContext ctx;
@@ -232,7 +232,7 @@ void testRangeScan()
 {
     std::cout << "\n=== Test 5: Range Scan ===\n";
 
-    std::string db_path = "lsm_test_scan.db";
+    std::string db_path = "/tmp/lsm_test_scan.db";
     std::remove(db_path.c_str());
 
     ErrorContext ctx;
@@ -286,7 +286,7 @@ void testMGAVisibility()
 {
     std::cout << "\n=== Test 6: MGA Visibility Filtering ===\n";
 
-    std::string db_path = "lsm_test_mga.db";
+    std::string db_path = "/tmp/lsm_test_mga.db";
     std::remove(db_path.c_str());
 
     ErrorContext ctx;
@@ -375,7 +375,7 @@ void testMemtableFull()
 {
     std::cout << "\n=== Test 7: Memtable Full Detection ===\n";
 
-    std::string db_path = "lsm_test_full.db";
+    std::string db_path = "/tmp/lsm_test_full.db";
     std::remove(db_path.c_str());
 
     ErrorContext ctx;
@@ -422,7 +422,7 @@ void testThreadSafety()
 {
     std::cout << "\n=== Test 8: Thread Safety (10 threads) ===\n";
 
-    std::string db_path = "lsm_test_threads.db";
+    std::string db_path = "/tmp/lsm_test_threads.db";
     std::remove(db_path.c_str());
 
     ErrorContext ctx;

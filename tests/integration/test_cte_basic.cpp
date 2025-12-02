@@ -42,7 +42,7 @@ protected:
     void SetUp() override
     {
         // Create temporary test database
-        test_db_path_ = "test_cte_basic.db";
+        test_db_path_ = "/tmp/test_cte_basic.db";
         std::filesystem::remove_all(test_db_path_);
 
         core::ErrorContext ctx;

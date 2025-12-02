@@ -46,8 +46,8 @@ void testLargeDataset()
 {
     std::cout << "\n=== Test 1: Large Dataset (1000 keys, multiple flushes) ===\n";
 
-    std::string index_path = "lsm_test_large";
-    std::string db_path = "lsm_test_large.db";
+    std::string index_path = "/tmp/lsm_test_large";
+    std::string db_path = "/tmp/lsm_test_large.db";
     removeDirectory(index_path);
     std::remove(db_path.c_str());
 
@@ -121,8 +121,8 @@ void testManualFlush()
 {
     std::cout << "\n=== Test 2: Manual Flush and Verification ===\n";
 
-    std::string index_path = "lsm_test_flush";
-    std::string db_path = "lsm_test_flush.db";
+    std::string index_path = "/tmp/lsm_test_flush";
+    std::string db_path = "/tmp/lsm_test_flush.db";
     removeDirectory(index_path);
     std::remove(db_path.c_str());
 
@@ -206,8 +206,8 @@ void testUpdates()
 {
     std::cout << "\n=== Test 3: Update Operations ===\n";
 
-    std::string index_path = "lsm_test_updates";
-    std::string db_path = "lsm_test_updates.db";
+    std::string index_path = "/tmp/lsm_test_updates";
+    std::string db_path = "/tmp/lsm_test_updates.db";
     removeDirectory(index_path);
     std::remove(db_path.c_str());
 
@@ -281,8 +281,8 @@ void testCompactionTrigger()
 {
     std::cout << "\n=== Test 4: Compaction Trigger ===\n";
 
-    std::string index_path = "lsm_test_compaction";
-    std::string db_path = "lsm_test_compaction.db";
+    std::string index_path = "/tmp/lsm_test_compaction";
+    std::string db_path = "/tmp/lsm_test_compaction.db";
     removeDirectory(index_path);
     std::remove(db_path.c_str());
 

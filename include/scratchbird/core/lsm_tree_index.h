@@ -315,10 +315,18 @@ public:
     void setParallelCompaction(bool enable);
     bool isParallelEnabled() const { return parallel_enabled_; }
 
+    // Configuration setters
+    void setIndexPath(const std::string &path) { index_path_ = path; }
+    void setBlockSize(size_t block_size) { block_size_ = block_size; }
+
 private:
     TransactionManager *txn_mgr_;
     std::vector<LevelMetadata> levels_;
     std::mutex mutex_;
+
+    // Configuration
+    std::string index_path_;  // Base path for SSTable files
+    size_t block_size_;       // SSTable block size (default 4096)
 
     // Parallel compaction
     bool parallel_enabled_;

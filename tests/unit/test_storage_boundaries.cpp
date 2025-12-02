@@ -18,6 +18,7 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
+#include "test_helpers.h"
 #include <filesystem>
 #include <vector>
 #include <cstring>
@@ -29,24 +30,24 @@ class StorageBoundariesTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path_ = "test_boundaries.db";
-        std::filesystem::remove(test_db_path_);
+        // Generate unique database path for this test
+        test_db_ = std::make_unique<scratchbird::testing::TestDatabaseFile>("test_boundaries");
     }
 
     void TearDown() override
     {
         db_.reset();
-        std::filesystem::remove(test_db_path_);
+        test_db_.reset();
     }
 
     void createDatabase(uint32_t page_size)
     {
         ErrorContext ctx;
-        ASSERT_EQ(Database::create(test_db_path_.string(), page_size, &ctx), Status::OK)
+        ASSERT_EQ(Database::create(test_db_->path(), page_size, &ctx), Status::OK)
             << ctx.message;
 
         db_ = std::make_unique<Database>();
-        ASSERT_EQ(db_->open(test_db_path_.string(), &ctx), Status::OK)
+        ASSERT_EQ(db_->open(test_db_->path(), &ctx), Status::OK)
             << ctx.message;
     }
 
@@ -59,7 +60,7 @@ protected:
         return data;
     }
 
-    std::filesystem::path test_db_path_;
+    std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_db_;
     std::unique_ptr<Database> db_;
 };
 

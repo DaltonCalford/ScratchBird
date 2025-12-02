@@ -29,7 +29,7 @@ using namespace scratchbird;
 class SimpleTest {
 private:
     std::unique_ptr<core::Database> db_;
-    const std::string db_path_ = "test_rollup_simple_db";
+    const std::string db_path_ = "/tmp/test_rollup_simple_db";
     int test_count_ = 0;
     int passed_count_ = 0;
 

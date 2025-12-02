@@ -52,6 +52,8 @@ ColumnstoreIndex::ColumnstoreIndex(Database *db, SBColumnstoreIndex index_info)
 {
 }
 
+ColumnstoreIndex::~ColumnstoreIndex() = default;
+
 // ============================================================================
 // Factory Methods
 // ============================================================================
@@ -544,12 +546,21 @@ Status ColumnstoreIndex::getStats(ColumnstoreStats *stats_out, ErrorContext *ctx
 
         auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
 
-        // Collect statistics from this segment
-        total_segments++;
-        total_rows += page->cs_row_count;
+        // Only count non-continuation pages as logical segments
+        // Continuation pages are part of multi-page segments and should not be counted separately
+        bool is_continuation = (page->cs_flags & static_cast<uint16_t>(ColumnstoreFlags::CONTINUATION)) != 0;
+
+        if (!is_continuation)
+        {
+            // Collect statistics from this segment (first page only)
+            total_segments++;
+            total_rows += page->cs_row_count;
+            total_uncompressed += page->cs_uncompressed_size;
+            total_nulls += page->cs_null_count;
+        }
+
+        // Always count compressed bytes (from all pages in multi-page segments)
         total_compressed += page->cs_compressed_size;
-        total_uncompressed += page->cs_uncompressed_size;
-        total_nulls += page->cs_null_count;
 
         // Move to next segment
         uint32_t next_page = page->cs_next_segment;
@@ -2735,43 +2746,48 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
         return Status::INVALID_ARGUMENT;
     }
 
-    // Find the last segment in the chain
+    // Find the last page of the new segment (for multi-page segments)
+    // The new segment might span multiple pages linked via cs_next_segment
+    uint32_t new_segment_last_page = new_segment_page;
+    {
+        void *page_buffer = nullptr;
+        Status pin_status = buffer_pool->pinPage(new_segment_last_page, &page_buffer, ctx);
+        if (pin_status != Status::OK)
+            return pin_status;
+
+        auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
+
+        // Follow the chain to find the last page of this segment
+        while (page->cs_next_segment != 0)
+        {
+            uint32_t next_page = page->cs_next_segment;
+            buffer_pool->unpinPage(new_segment_last_page, false, ctx);
+
+            new_segment_last_page = next_page;
+            pin_status = buffer_pool->pinPage(new_segment_last_page, &page_buffer, ctx);
+            if (pin_status != Status::OK)
+                return pin_status;
+            page = static_cast<const SBColumnstorePage *>(page_buffer);
+        }
+
+        buffer_pool->unpinPage(new_segment_last_page, false, ctx);
+    }
+
+    // Link new segment to the chain using cached last segment page (O(1) instead of O(n))
     if (index_info_.idx_root_page == 0)
     {
         // This is the first segment - make it the root
         index_info_.idx_root_page = new_segment_page;
+        last_segment_page_ = new_segment_last_page;
     }
     else
     {
-        // Traverse to find the last segment
-        uint32_t current_page = index_info_.idx_root_page;
-        uint32_t prev_page = 0;
-
-        while (current_page != 0)
-        {
-            void *page_buffer = nullptr;
-            Status pin_status = buffer_pool->pinPage(current_page, &page_buffer, ctx);
-            if (pin_status != Status::OK)
-                return pin_status;
-
-            auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
-            uint32_t next_page = page->cs_next_segment;
-
-            buffer_pool->unpinPage(current_page, false, ctx);
-
-            if (next_page == 0)
-            {
-                // Found the last segment
-                prev_page = current_page;
-                break;
-            }
-
-            current_page = next_page;
-        }
+        // Use cached last_segment_page_ instead of traversing entire chain
+        uint32_t prev_page = last_segment_page_;
 
         if (prev_page != 0)
         {
-            // Link previous segment to new segment
+            // Link previous segment's last page to new segment's first page
             void *page_buffer = nullptr;
             Status link_status = buffer_pool->pinPage(prev_page, &page_buffer, ctx);
             if (link_status != Status::OK)
@@ -2782,7 +2798,7 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
 
             buffer_pool->unpinPage(prev_page, true, ctx);  // Mark dirty
 
-            // Set prev pointer in new segment
+            // Set prev pointer in new segment's first page
             Status new_pin_status = buffer_pool->pinPage(new_segment_page, &page_buffer, ctx);
             if (new_pin_status != Status::OK)
                 return new_pin_status;
@@ -2792,6 +2808,9 @@ Status ColumnstoreIndex::flushSegment(const ID &column_uuid, ErrorContext *ctx)
 
             buffer_pool->unpinPage(new_segment_page, true, ctx);  // Mark dirty
         }
+
+        // Update cached last segment page to the last page of the new segment
+        last_segment_page_ = new_segment_last_page;
     }
 
     // Update index statistics
@@ -2878,9 +2897,11 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
     }
 
     const uint32_t BATCH_SIZE = 1024;
+    const uint32_t MAX_SEGMENTS = 10000;  // Safety limit to prevent infinite loops
+    uint32_t segments_processed = 0;
 
     // Traverse segments until we have a full batch or reach the end
-    while (iterator->current_segment_page != 0 && batch_out->count < BATCH_SIZE)
+    while (iterator->current_segment_page != 0 && batch_out->count < BATCH_SIZE && segments_processed < MAX_SEGMENTS)
     {
         // Load segment if not cached
         if (!iterator->segment_cached)
@@ -2901,15 +2922,17 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
         {
             // Entire segment is invisible, skip to next
             void *page_buffer = nullptr;
-            Status status = buffer_pool->pinPage(iterator->current_segment_page, &page_buffer, ctx);
+            uint32_t old_page = iterator->current_segment_page;
+            Status status = buffer_pool->pinPage(old_page, &page_buffer, ctx);
             if (status != Status::OK)
                 return status;
 
             auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
             iterator->current_segment_page = page->cs_next_segment;
-            buffer_pool->unpinPage(iterator->current_segment_page, false, ctx);
+            buffer_pool->unpinPage(old_page, false, ctx);
 
             iterator->segment_cached = false;
+            segments_processed++;
             continue;
         }
 
@@ -2919,15 +2942,17 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
         {
             // Skip this segment entirely
             void *page_buffer = nullptr;
-            Status status = buffer_pool->pinPage(iterator->current_segment_page, &page_buffer, ctx);
+            uint32_t old_page = iterator->current_segment_page;
+            Status status = buffer_pool->pinPage(old_page, &page_buffer, ctx);
             if (status != Status::OK)
                 return status;
 
             auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
             iterator->current_segment_page = page->cs_next_segment;
-            buffer_pool->unpinPage(iterator->current_segment_page, false, ctx);
+            buffer_pool->unpinPage(old_page, false, ctx);
 
             iterator->segment_cached = false;
+            segments_processed++;
             continue;
         }
 
@@ -3015,16 +3040,18 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
         {
             // Move to next segment
             void *page_buffer = nullptr;
-            Status status = buffer_pool->pinPage(iterator->current_segment_page, &page_buffer, ctx);
+            uint32_t old_page = iterator->current_segment_page;
+            Status status = buffer_pool->pinPage(old_page, &page_buffer, ctx);
             if (status != Status::OK)
                 return status;
 
             auto *page = static_cast<const SBColumnstorePage *>(page_buffer);
             iterator->current_segment_page = page->cs_next_segment;
-            buffer_pool->unpinPage(iterator->current_segment_page, false, ctx);
+            buffer_pool->unpinPage(old_page, false, ctx);
 
             iterator->segment_cached = false;
             iterator->offset_in_segment = 0;
+            segments_processed++;
 
             // Check if we've reached the end
             if (iterator->current_segment_page == 0)
@@ -3033,6 +3060,12 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
                 break;
             }
         }
+    }
+
+    // Safety: if we hit the segment limit, mark scan as complete to avoid infinite loops
+    if (segments_processed >= MAX_SEGMENTS)
+    {
+        iterator->scan_complete = true;
     }
 
     batch_out->data_type = iterator->segment_cached ?

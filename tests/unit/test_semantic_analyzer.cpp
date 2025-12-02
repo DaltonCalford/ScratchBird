@@ -99,7 +99,7 @@ protected:
 TEST_F(SemanticAnalyzerTest, CreateTableValid)
 {
     expectSuccess("CREATE TABLE users (id INTEGER NOT NULL, name VARCHAR(50))");
-    expectSuccess("CREATE TABLE products (id BIGINT, price DOUBLE, desc VARCHAR(255))");
+    expectSuccess("CREATE TABLE products (id BIGINT, price DOUBLE, description VARCHAR(255))");
 }
 
 TEST_F(SemanticAnalyzerTest, CreateTableDuplicateColumn)

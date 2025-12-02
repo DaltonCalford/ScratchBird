@@ -20,7 +20,7 @@ protected:
     void SetUp() override
     {
         // Create a temporary database for testing
-        test_db_path_ = "test_charset_loader.sbrd";
+        test_db_path_ = "/tmp/test_charset_loader.sbrd";
         std::filesystem::remove(test_db_path_);
 
         auto status = Database::create(test_db_path_, 16384, nullptr);

@@ -45,7 +45,7 @@ int main()
     {
         std::cout << "Test 3: Heap page free space calculation... ";
 
-        const char *db_path = "test_heap_free_space.sbrd";
+        const char *db_path = "/tmp/test_heap_free_space.sbrd";
         std::remove(db_path);
 
         ErrorContext ctx;
@@ -150,7 +150,7 @@ int main()
     {
         std::cout << "Test 4: Fill page to capacity (boundary test)... ";
 
-        const char *db_path = "test_heap_capacity.sbrd";
+        const char *db_path = "/tmp/test_heap_capacity.sbrd";
         std::remove(db_path);
 
         ErrorContext ctx;

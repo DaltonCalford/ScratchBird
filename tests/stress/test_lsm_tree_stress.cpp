@@ -53,7 +53,7 @@ void testWritePerformance()
     std::cout << "\n=== Test 1: Write Performance (100K keys) ===\n";
 
     std::string index_path = "lsm_stress_write";
-    std::string db_path = "lsm_stress_write.db";
+    std::string db_path = "/tmp/lsm_stress_write.db";
     removeDirectory(index_path);
     std::remove(db_path.c_str());
 
@@ -121,7 +121,7 @@ void testReadPerformance()
     std::cout << "\n=== Test 2: Read Performance (50K random reads) ===\n";
 
     std::string index_path = "lsm_stress_read";
-    std::string db_path = "lsm_stress_read.db";
+    std::string db_path = "/tmp/lsm_stress_read.db";
     removeDirectory(index_path);
     std::remove(db_path.c_str());
 
@@ -206,7 +206,7 @@ void testMixedWorkload()
     std::cout << "\n=== Test 3: Mixed Workload (80% reads, 20% writes) ===\n";
 
     std::string index_path = "lsm_stress_mixed";
-    std::string db_path = "lsm_stress_mixed.db";
+    std::string db_path = "/tmp/lsm_stress_mixed.db";
     removeDirectory(index_path);
     std::remove(db_path.c_str());
 
@@ -312,7 +312,7 @@ void testDataIntegrity()
     std::cout << "\n=== Test 4: Data Integrity (25K keys) ===\n";
 
     std::string index_path = "lsm_stress_integrity";
-    std::string db_path = "lsm_stress_integrity.db";
+    std::string db_path = "/tmp/lsm_stress_integrity.db";
     removeDirectory(index_path);
     std::remove(db_path.c_str());
 

@@ -47,7 +47,7 @@ using namespace scratchbird::core;
 class ConcurrentPageAccessTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_db_path_ = "test_concurrent_page_access.db";
+        test_db_path_ = "/tmp/test_concurrent_page_access.db";
         std::remove(test_db_path_);
 
         ErrorContext ctx;

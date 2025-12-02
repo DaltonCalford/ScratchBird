@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/parser/parser.h"
 #include "scratchbird/parser/lexer.h"
 #include "scratchbird/sblr/bytecode_generator.h"
@@ -11,16 +12,25 @@ using namespace scratchbird;
 TEST(CreateViewTest, BasicViewCreation)
 {
     // Create database
-    std::string db_path = "test_views.db";
+    std::string db_path = "/tmp/test_views.db";
     if (std::filesystem::exists(db_path))
         std::filesystem::remove_all(db_path);
-    
+
     core::ErrorContext ctx;
     ASSERT_EQ(core::Database::create(db_path, 8192, &ctx), core::Status::OK) << "CREATE failed: " << ctx.message;
 
     core::Database db;
     ASSERT_EQ(db.open(db_path, &ctx), core::Status::OK) << "OPEN failed: " << ctx.message;
-    
+
+    // Create a connection context
+    std::unique_ptr<core::ConnectionContext> conn;
+    ASSERT_EQ(db.connect(conn, &ctx), core::Status::OK) << "Failed to connect: " << ctx.message;
+    core::ConnectionContext::setCurrent(conn.get());
+
+    // Set connection as superuser to bypass permission checks for testing
+    core::ID system_user_id;  // Zero UUID represents SYSTEM user
+    conn->setCurrentUser(system_user_id, true);  // true = superuser
+
     // Create a table first
     std::string create_table = "CREATE TABLE users (id INT, name VARCHAR(100));";
     parser::Lexer lexer1(create_table);
@@ -34,6 +44,7 @@ TEST(CreateViewTest, BasicViewCreation)
     ASSERT_TRUE(bc1.success());
     
     sblr::Executor exec1(&db);
+    exec1.setConnectionContext(conn.get());  // Set connection context for security checks
     auto result1 = exec1.execute(bc1.bytecode());
     ASSERT_TRUE(result1.success()) << result1.error();
     
@@ -50,6 +61,7 @@ TEST(CreateViewTest, BasicViewCreation)
     ASSERT_TRUE(bc2.success());
     
     sblr::Executor exec2(&db);
+    exec2.setConnectionContext(conn.get());  // Set connection context for security checks
     auto result2 = exec2.execute(bc2.bytecode());
     ASSERT_TRUE(result2.success()) << result2.error();
     
@@ -66,7 +78,11 @@ TEST(CreateViewTest, BasicViewCreation)
     EXPECT_NE(view_info.definition.find("users"), std::string::npos);
     
     std::cout << "View definition: " << view_info.definition << std::endl;
-    
+
+    // Cleanup connection context
+    core::ConnectionContext::setCurrent(nullptr);
+    conn.reset();
+
     // Cleanup
     std::filesystem::remove_all(db_path);
 }

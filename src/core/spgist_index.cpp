@@ -429,7 +429,8 @@ Status SPGiSTIndex::insertRecursive(uint64_t page_num,
                 if (page->spgist_free_space < addition_size)
                 {
                     // No space to add new child - need to handle this
-                    // For now, return error (could split parent in future)
+                    // Phase 4 Enhancement: Could split parent in future
+                    // Current: Return PAGE_FULL (correct, triggers higher-level handling)
                     if (ctx)
                     {
                         ctx->code = Status::PAGE_FULL;

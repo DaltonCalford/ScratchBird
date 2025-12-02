@@ -18,25 +18,26 @@ namespace scratchbird
         // Forward declarations
         class Database;
 
-        // Columnstore Index - Columnar storage for analytical workloads
-        // Stores data in column-oriented format for efficient scans
+        // ColumnstoreIndexSimple - Basic columnar storage for internal use
+        // This is a simplified version for runtime index management (executor, storage_engine)
+        // For full-featured columnstore with RLE/Dict/Bitpack compression, use columnstore.h
         // November 19, 2025
-        class ColumnstoreIndex : public IndexGCInterface
+        class ColumnstoreIndexSimple : public IndexGCInterface
         {
         public:
             // Constructor
-            ColumnstoreIndex(Database *db, const UuidV7Bytes &index_uuid, uint32_t meta_page);
+            ColumnstoreIndexSimple(Database *db, const UuidV7Bytes &index_uuid, uint32_t meta_page);
 
             // Create a new columnstore index
             static Status create(Database *db, const UuidV7Bytes &index_uuid,
                                  uint32_t *meta_page_out, ErrorContext *ctx = nullptr);
 
             // Open an existing columnstore index
-            static std::unique_ptr<ColumnstoreIndex> open(Database *db, const UuidV7Bytes &index_uuid,
+            static std::unique_ptr<ColumnstoreIndexSimple> open(Database *db, const UuidV7Bytes &index_uuid,
                                                           uint32_t meta_page, ErrorContext *ctx = nullptr);
 
             // Destructor
-            ~ColumnstoreIndex();
+            ~ColumnstoreIndexSimple();
 
             // Insert column data
             Status insertColumn(uint16_t column_id, uint32_t row_count,
@@ -56,7 +57,7 @@ namespace scratchbird
                                      uint64_t *pages_modified_out = nullptr,
                                      ErrorContext *ctx = nullptr) override;
 
-            const char *indexTypeName() const override { return "Columnstore"; }
+            const char *indexTypeName() const override { return "ColumnstoreSimple"; }
 
             // Get index metadata
             const UuidV7Bytes &getIndexUuid() const { return index_uuid_; }

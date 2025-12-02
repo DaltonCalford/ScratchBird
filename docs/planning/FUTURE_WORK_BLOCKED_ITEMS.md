@@ -81,36 +81,40 @@ These security features require the network layer implementation before they can
 
 ---
 
-### P3-15: Materialized View Rewriting (40-50 hours)
-**Blocker:** Requires query cost estimation/statistics
-**Original Plan:** IMPROVEMENTS_P3_LOW_PRIORITY_PLAN.md
+### P3-15: Materialized View Rewriting ✅ COMPLETE
+**Status:** IMPLEMENTED - November 28, 2025
 
-**Features:**
-- Automatic MV selection for queries
-- Query pattern matching
+**Implementation:**
+- `include/scratchbird/optimizer/mv_rewriter.h` - MV rewriter header
+- `src/optimizer/mv_rewriter.cpp` - Full implementation
+- `tests/test_mv_rewriter.cpp` - 9 unit tests (all passing)
+
+**Features Implemented:**
+- QueryPattern extraction from SELECT statements
+- MVCandidate finding and cost comparison
+- Subsumption checking (exact match and superset)
 - Cost-based MV selection
-- MV substitution in query plan
-
-**Dependencies:**
-- P1-10: Statistics & ANALYZE (COMPLETE)
-- Query cost model refinement
-- MV dependency tracking
+- Query rewriting to use MVs
+- Staleness tolerance configuration
+- Statistics tracking (attempts, successes, cost savings)
 
 ---
 
-### P3-20: Join Ordering Optimization (25-30 hours)
-**Blocker:** Requires cardinality estimates
-**Original Plan:** IMPROVEMENTS_P3_LOW_PRIORITY_PLAN.md
+### P3-20: Join Ordering Optimization ✅ COMPLETE
+**Status:** IMPLEMENTED - November 28, 2025
 
-**Features:**
-- Cost-based join ordering
-- Dynamic programming or greedy algorithm
-- Multi-way join optimization
+**Implementation:**
+- `include/scratchbird/optimizer/join_ordering.h` - Join ordering header
+- `src/optimizer/join_ordering.cpp` - Full implementation
+- `tests/test_join_ordering.cpp` - 5 unit tests (all passing)
 
-**Dependencies:**
-- P1-10: Statistics & ANALYZE (COMPLETE)
-- Accurate cardinality estimation
-- Join selectivity estimates
+**Features Implemented:**
+- Dynamic programming join order optimizer (Selinger-style)
+- Greedy fallback for queries with >12 tables
+- RelationInfo and JoinEdge structures
+- Cost-based join costing
+- Selectivity estimation integration
+- O(3^N) DP algorithm with O(2^N) memoization
 
 ---
 
@@ -150,38 +154,46 @@ These security features require the network layer implementation before they can
 
 ## Summary
 
-| Item | Blocker | Est. Hours | Priority |
-|------|---------|------------|----------|
-| P3-2: MFA | Alpha 3 (Network) | 40-50 | Medium |
-| P3-3: IP Whitelisting | Alpha 3 (Network) | 8-10 | Medium |
-| P3-4: Certificate Auth | Alpha 3 (Network) | 20-25 | Medium |
-| P3-14: Partition Pruning | Table Partitioning | 30-40 | Medium |
-| P3-15: MV Rewriting | Cost Model | 40-50 | Low |
-| P3-20: Join Ordering | Cardinality Est. | 25-30 | Low |
-| Window Function Args | Infrastructure | 8-12 | Low |
-| Window PARTITION BY | Frame Handling | 12-16 | Low |
-| NTH_VALUE | Arg Parsing | 4-6 | Low |
+| Item | Blocker | Est. Hours | Priority | Status |
+|------|---------|------------|----------|--------|
+| P3-2: MFA | Alpha 3 (Network) | 40-50 | Medium | BLOCKED |
+| P3-3: IP Whitelisting | Alpha 3 (Network) | 8-10 | Medium | BLOCKED |
+| P3-4: Certificate Auth | Alpha 3 (Network) | 20-25 | Medium | BLOCKED |
+| P3-14: Partition Pruning | Table Partitioning | 30-40 | Medium | BLOCKED |
+| P3-15: MV Rewriting | N/A | 40-50 | Low | ✅ **COMPLETE** |
+| P3-20: Join Ordering | N/A | 25-30 | Low | ✅ **COMPLETE** |
+| Window Function Args | Infrastructure | 8-12 | Low | DEFERRED |
+| Window PARTITION BY | Frame Handling | 12-16 | Low | DEFERRED |
+| NTH_VALUE | Arg Parsing | 4-6 | Low | DEFERRED |
 
-**Total Blocked Hours:** ~170-240 hours
+**Hard Blocked Hours:** ~100-125 hours (Alpha 3 network + partitioning)
+**Completed:** ~65-80 hours (P3-15 + P3-20) - November 28, 2025
 
 ---
 
 ## When to Revisit
 
-- **P3-2, P3-3, P3-4:** After Alpha Phase 3 network layer is implemented
-- **P3-14:** After table partitioning is implemented in Alpha Phase 2
-- **P3-15, P3-20:** Can be started now but will be more effective with better statistics
-- **Window Function Enhancements:** Low priority - current implementations are functional
+- **P3-2, P3-3, P3-4:** After Alpha Phase 3 network layer is implemented (BLOCKED)
+- **P3-14:** After table partitioning syntax/catalog is implemented (BLOCKED)
+- **P3-15, P3-20:** ✅ **COMPLETE** - Implemented November 28, 2025
+- **Window Function Enhancements:** Low priority - current implementations are functional (DEFERRED)
 
 ---
 
-## Note on Local Server Architecture
+## Note on Alpha 1 Status
 
-Local Server Architecture is **NO LONGER BLOCKED** - it is now the **NEXT PRIORITY** after completion of Catalog Cleanup (all 4 phases complete as of November 26, 2025).
+**Alpha 1 is COMPLETE!** (November 28, 2025)
 
-See [LOCAL_SERVER_ARCHITECTURE_PLAN.md](LOCAL_SERVER_ARCHITECTURE_PLAN.md) for the detailed implementation plan (~140-190 hours).
+- ✅ Local Server Architecture - All 5 phases complete
+- ✅ CLI Tools - All 4 tools implemented and tested
+- ✅ CODE_COMPLETION_MASTER_PLAN - 135/135 items (100%)
+- ✅ P0-P2 Improvements - 48/48 complete
+- ✅ Catalog Cleanup - All 4 phases complete
+
+**Next Phase:** Alpha 2 - Parser Separation
+See [OFFICIAL_ROADMAP.md](/OFFICIAL_ROADMAP.md) for details.
 
 ---
 
-**Document Version:** 1.1
-**Last Updated:** November 26, 2025
+**Document Version:** 1.3
+**Last Updated:** November 28, 2025 - Alpha 1 complete, P3-15 and P3-20 completed

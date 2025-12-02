@@ -22,7 +22,7 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
     std::cout << "=== Testing Issue 1.10: B-Tree Rightmost Child Validation ===" << std::endl;
     std::cout << std::endl;
 
-    const char *db_path = "test_btree_rightmost.sbrd";
+    const char *db_path = "/tmp/test_btree_rightmost.sbrd";
     std::remove(db_path);
 
     // Test 1: Create a B-tree and verify root initialization

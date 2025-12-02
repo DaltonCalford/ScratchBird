@@ -7,6 +7,7 @@
 #include "scratchbird/parser/semantic_analyzer.h"
 #include "scratchbird/sblr/bytecode_generator.h"
 #include "scratchbird/sblr/executor.h"
+#include "test_helpers.h"
 #include <filesystem>
 
 using namespace scratchbird;
@@ -20,11 +21,9 @@ class SweepMechanismTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        // Create test database
-        test_db_path_ = "test_sweep_mechanism.sbrd";
-
-        // Clean up any existing test database
-        std::filesystem::remove(test_db_path_);
+        // Create unique database path for test isolation (parallel execution)
+        test_db_file_ = std::make_unique<scratchbird::testing::TestDatabaseFile>("test_sweep_mechanism", ".sbrd");
+        test_db_path_ = test_db_file_->path();
 
         // Create new database
         ErrorContext err_ctx;
@@ -40,11 +39,10 @@ protected:
     {
         // Close database
         db_.close();
-
-        // Clean up test database
-        std::filesystem::remove(test_db_path_);
+        // TestDatabaseFile will cleanup automatically on destruction
     }
 
+    std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_db_file_;
     std::string test_db_path_;
     Database db_;
 };

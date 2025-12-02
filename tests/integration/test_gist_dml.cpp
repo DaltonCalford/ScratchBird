@@ -180,7 +180,7 @@ class GiSTDMLTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path_ = "test_gist_dml.db";
+        test_db_path_ = "/tmp/test_gist_dml.db";
         std::remove(test_db_path_);
 
         // Register box operator class

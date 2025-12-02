@@ -233,7 +233,7 @@ class SPGiSTMVCCTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path_ = "test_spgist_mvcc.db";
+        test_db_path_ = "/tmp/test_spgist_mvcc.db";
         std::remove(test_db_path_);
 
         ErrorContext ctx;

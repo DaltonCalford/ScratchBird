@@ -55,7 +55,7 @@ using namespace scratchbird::core;
 class ExceptionInjectionTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_db_path_ = "test_exception_injection.db";
+        test_db_path_ = "/tmp/test_exception_injection.db";
         std::remove(test_db_path_);
 
         ErrorContext ctx;

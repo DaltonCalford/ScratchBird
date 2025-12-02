@@ -109,6 +109,132 @@ namespace scratchbird
             return SourceSpan(start, end);
         }
 
+        // Check if current token can be used as an identifier in expression context.
+        // This includes IDENTIFIER tokens plus "unreserved keywords" that are type names
+        // or other keywords that can safely serve as column/table names.
+        bool Parser::isIdentifierOrUnreservedKeyword() const
+        {
+            TokenType t = current_token_.type;
+
+            // Regular identifier
+            if (t == TokenType::IDENTIFIER)
+                return true;
+
+            // Type keywords - these are "unreserved" and can be used as identifiers
+            // in expression context (e.g., SELECT text FROM table1 where "text" is a column)
+            switch (t)
+            {
+                // Numeric types
+                case TokenType::KW_INT:
+                case TokenType::KW_INTEGER:
+                case TokenType::KW_SMALLINT:
+                case TokenType::KW_BIGINT:
+                case TokenType::KW_TINYINT:
+                case TokenType::KW_INT128:
+                case TokenType::KW_UINT8:
+                case TokenType::KW_UINT16:
+                case TokenType::KW_UINT32:
+                case TokenType::KW_UINT64:
+                case TokenType::KW_REAL:
+                case TokenType::KW_FLOAT:
+                case TokenType::KW_DOUBLE:
+                case TokenType::KW_DECIMAL:
+                case TokenType::KW_NUMERIC:
+                case TokenType::KW_MONEY:
+                // String types
+                case TokenType::KW_CHAR:
+                case TokenType::KW_CHARACTER:
+                case TokenType::KW_VARCHAR:
+                case TokenType::KW_TEXT:
+                // Binary types
+                case TokenType::KW_BINARY:
+                case TokenType::KW_VARBINARY:
+                case TokenType::KW_BLOB:
+                case TokenType::KW_BYTEA:
+                // Date/Time types
+                case TokenType::KW_DATE:
+                case TokenType::KW_TIME:
+                case TokenType::KW_TIMESTAMP:
+                case TokenType::KW_INTERVAL:
+                // Boolean
+                case TokenType::KW_BOOLEAN:
+                case TokenType::KW_BOOL:
+                // Special types
+                case TokenType::KW_UUID:
+                case TokenType::KW_JSON:
+                case TokenType::KW_JSONB:
+                case TokenType::KW_XML:
+                case TokenType::KW_VECTOR:
+                // Spatial types
+                case TokenType::KW_POINT:
+                case TokenType::KW_LINESTRING:
+                case TokenType::KW_POLYGON:
+                case TokenType::KW_MULTIPOINT:
+                case TokenType::KW_MULTILINESTRING:
+                case TokenType::KW_MULTIPOLYGON:
+                case TokenType::KW_GEOMETRYCOLLECTION:
+                // Range types
+                case TokenType::KW_INT4RANGE:
+                case TokenType::KW_INT8RANGE:
+                case TokenType::KW_NUMRANGE:
+                case TokenType::KW_DATERANGE:
+                case TokenType::KW_TSRANGE:
+                case TokenType::KW_TSTZRANGE:
+                // Other unreserved keywords that can be identifiers
+                case TokenType::KW_TYPE:
+                case TokenType::KW_ZONE:
+                case TokenType::KW_LEVEL:
+                case TokenType::KW_KEY:
+                case TokenType::KW_RANGE:
+                case TokenType::KW_ROWS:
+                case TokenType::KW_ROW:
+                case TokenType::KW_OVER:
+                case TokenType::KW_PARTITION:
+                case TokenType::KW_PRECEDING:
+                case TokenType::KW_FOLLOWING:
+                case TokenType::KW_UNBOUNDED:
+                case TokenType::KW_CURRENT:
+                case TokenType::KW_POSITION:  // Can be column name when not followed by '('
+                case TokenType::KW_OVERLAY:   // Can be column name when not followed by '('
+                case TokenType::KW_PLACING:   // Rarely a column but can be
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        // Check if next token (lookahead) is a left parenthesis
+        bool Parser::peekIsLeftParen() const
+        {
+            // Use the lexer's peek functionality
+            Token next = const_cast<Lexer&>(lexer_).peekToken();
+            return next.type == TokenType::LEFT_PAREN;
+        }
+
+        // Get the string_id for an identifier or unreserved keyword token.
+        // For keywords, interns the keyword text into the string pool.
+        StringPool::StringId Parser::getIdentifierStringId()
+        {
+            if (current_token_.type == TokenType::IDENTIFIER)
+            {
+                return current_token_.value.string_id;
+            }
+
+            // For keywords, we need to intern the keyword text
+            const char* keyword_text = tokenTypeToString(current_token_.type);
+            // tokenTypeToString returns things like "KW_TEXT" - we need just "TEXT"
+            // But actually for column names we want lowercase versions
+            std::string keyword_name(keyword_text);
+            // Skip the "KW_" prefix if present
+            if (keyword_name.substr(0, 3) == "KW_")
+            {
+                keyword_name = keyword_name.substr(3);
+            }
+            // Convert to lowercase for standard SQL identifier behavior
+            std::transform(keyword_name.begin(), keyword_name.end(), keyword_name.begin(), ::tolower);
+            return lexer_.stringPool().intern(keyword_name);
+        }
+
         uint8_t Parser::mapExtractFieldName(const std::string &field_name)
         {
             // Convert to lowercase for case-insensitive matching
@@ -1890,7 +2016,7 @@ namespace scratchbird
         Parameter* Parser::parseParameter()
         {
             // Check for IN/OUT/INOUT - not yet in lexer, so default to IN
-            // TODO: Add IN/OUT/INOUT token support
+            // Phase 3 Enhancement: Add IN/OUT/INOUT token support to lexer for full stored procedure syntax
             ParameterMode mode = ParameterMode::IN;
 
             // Parameter name
@@ -2188,7 +2314,7 @@ namespace scratchbird
                 advance();
                 level = RaiseStmt::Level::EXCEPTION;
             }
-            // TODO: Add NOTICE, WARNING tokens when needed
+            // Phase 3 Enhancement: Add NOTICE, WARNING tokens when needed for RAISE statement levels
 
             // Parse message expression
             Expression *message = parseExpression();
@@ -2266,30 +2392,36 @@ namespace scratchbird
 
             std::vector<StringPool::StringId> columns;
 
-            // Parse column list
-            if (!consume(TokenType::LEFT_PAREN, "Expected '(' after table name"))
+            // Parse optional column list
+            // If we see '(' followed by an identifier, it's a column list
+            // If we see VALUES directly, no column list
+            if (check(TokenType::LEFT_PAREN) && !check(TokenType::KW_VALUES))
             {
-                synchronize();
-                return nullptr;
-            }
+                advance(); // consume '('
 
-            do
-            {
-                if (!check(TokenType::IDENTIFIER))
+                // Check if this is actually a column list or if VALUES follows
+                // (this handles the edge case of no column list)
+                if (!check(TokenType::KW_VALUES))
                 {
-                    error("Expected column name, but got " +
-                          std::string(tokenTypeToString(current().type)));
-                    synchronize();
-                    return nullptr;
-                }
-                columns.push_back(current().value.string_id);
-                advance();
-            } while (match(TokenType::COMMA));
+                    do
+                    {
+                        if (!check(TokenType::IDENTIFIER) && !isIdentifierOrUnreservedKeyword())
+                        {
+                            error("Expected column name, but got " +
+                                  std::string(tokenTypeToString(current().type)));
+                            synchronize();
+                            return nullptr;
+                        }
+                        columns.push_back(isIdentifierOrUnreservedKeyword() ? getIdentifierStringId() : current().value.string_id);
+                        advance();
+                    } while (match(TokenType::COMMA));
 
-            if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after column list"))
-            {
-                synchronize();
-                return nullptr;
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after column list"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+                }
             }
 
             if (!consume(TokenType::KW_VALUES, "Expected VALUES"))
@@ -2324,7 +2456,8 @@ namespace scratchbird
                 return nullptr;
             }
 
-            if (columns.size() != values.size())
+            // Only validate column/value count if columns were explicitly specified
+            if (!columns.empty() && columns.size() != values.size())
             {
                 error("Column count doesn't match value count");
                 return nullptr;
@@ -2390,20 +2523,35 @@ namespace scratchbird
                     }
 
                     StringPool::StringId alias = 0;
-                    // TODO: Parse AS alias if needed
+                    // Parse AS alias if present (e.g., SELECT 1 AS value)
+                    if (match(TokenType::KW_AS))
+                    {
+                        if (check(TokenType::IDENTIFIER))
+                        {
+                            alias = current().value.string_id;
+                            advance();
+                        }
+                        else
+                        {
+                            error("Expected alias identifier after AS");
+                            synchronize();
+                            return nullptr;
+                        }
+                    }
 
                     select_list.push_back(SelectItem(expr, alias));
                 } while (match(TokenType::COMMA));
             }
 
-            if (!consume(TokenType::KW_FROM, "Expected FROM"))
+            // FROM clause is optional - allows SELECT 1, SELECT 1+1, etc.
+            FromClause from_clause;
+            bool has_from = false;
+            if (match(TokenType::KW_FROM))
             {
-                synchronize();
-                return nullptr;
+                has_from = true;
+                // Parse FROM clause with potential JOINs (Phase 1 Task 3.1)
+                from_clause = parseFromClause();
             }
-
-            // Parse FROM clause with potential JOINs (Phase 1 Task 3.1)
-            FromClause from_clause = parseFromClause();
 
             Expression *where_clause = nullptr;
             if (match(TokenType::KW_WHERE))
@@ -2425,14 +2573,20 @@ namespace scratchbird
                 // Use constructor with WITH clause
                 stmt = arena_.make<SelectStmt>(span, with_clause, std::move(select_list), std::move(from_clause), where_clause);
             }
-            else if (!from_clause.joins.empty())
+            else if (has_from && !from_clause.joins.empty())
             {
                 stmt = arena_.make<SelectStmt>(span, std::move(select_list), std::move(from_clause), where_clause);
             }
-            else
+            else if (has_from)
             {
                 // Legacy path - single table
                 stmt = arena_.make<SelectStmt>(span, std::move(select_list), from_clause.base_table.table_name, where_clause);
+            }
+            else
+            {
+                // No FROM clause - constant expression SELECT (e.g., SELECT 1)
+                // Use empty string for table name
+                stmt = arena_.make<SelectStmt>(span, std::move(select_list), 0, where_clause);
             }
 
             // Parse GROUP BY clause (Phase 1 Task 4.1)
@@ -2575,31 +2729,124 @@ namespace scratchbird
         }
 
         // Parse table reference with optional alias (Phase 1 Task 3.1)
+        // Supports: table_name, table_name alias, (SELECT ...) alias, function_call(args) [alias]
         TableRef Parser::parseTableRef()
         {
-            if (!check(TokenType::IDENTIFIER))
+            auto start_loc = current().location;
+
+            // Check for derived table (subquery): (SELECT ...)
+            if (match(TokenType::LEFT_PAREN))
+            {
+                // Check if this is a SELECT subquery
+                if (match(TokenType::KW_SELECT))
+                {
+                    SelectStmt *subquery = dynamic_cast<SelectStmt *>(parseSelect());
+                    if (!subquery)
+                    {
+                        error("Failed to parse derived table subquery");
+                        synchronize();
+                        return TableRef();
+                    }
+
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after derived table subquery"))
+                    {
+                        synchronize();
+                        return TableRef();
+                    }
+
+                    // Derived tables require an alias in SQL
+                    StringPool::StringId alias = 0;
+                    if (match(TokenType::KW_AS) || check(TokenType::IDENTIFIER) || isIdentifierOrUnreservedKeyword())
+                    {
+                        if (check(TokenType::IDENTIFIER) || isIdentifierOrUnreservedKeyword())
+                        {
+                            alias = isIdentifierOrUnreservedKeyword() ? getIdentifierStringId() : current().value.string_id;
+                            advance();
+                        }
+                    }
+
+                    // Use the new TableRef constructor for subqueries
+                    return TableRef(subquery, alias);
+                }
+                else
+                {
+                    // Not a subquery - this could be a table-valued function call
+                    // For now, report an error (table-valued functions require more work)
+                    error("Expected SELECT in derived table subquery");
+                    synchronize();
+                    return TableRef();
+                }
+            }
+
+            // Check for identifier or unreserved keyword as table name (or function name)
+            if (!check(TokenType::IDENTIFIER) && !isIdentifierOrUnreservedKeyword())
             {
                 error("Expected table name, but got " +
                       std::string(tokenTypeToString(current().type)));
                 synchronize();
-                return TableRef(0);
+                return TableRef();
             }
 
-            StringPool::StringId table_name = current().value.string_id;
+            StringPool::StringId name = isIdentifierOrUnreservedKeyword() ? getIdentifierStringId() : current().value.string_id;
             advance();
 
-            // Check for optional alias (AS keyword is optional in SQL)
-            StringPool::StringId alias = 0;
-            if (match(TokenType::KW_AS) || check(TokenType::IDENTIFIER))
+            // Check if this is a table-valued function call: NAME(args...)
+            if (check(TokenType::LEFT_PAREN))
             {
-                if (check(TokenType::IDENTIFIER))
+                advance(); // consume '('
+
+                // Parse function arguments
+                std::vector<Expression *> args;
+                if (!check(TokenType::RIGHT_PAREN))
                 {
-                    alias = current().value.string_id;
+                    do
+                    {
+                        auto *arg = parseExpression();
+                        if (!arg)
+                        {
+                            synchronize();
+                            return TableRef();
+                        }
+                        args.push_back(arg);
+                    } while (match(TokenType::COMMA));
+                }
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after function arguments"))
+                {
+                    synchronize();
+                    return TableRef();
+                }
+
+                // Create FunctionCallExpr for the table-valued function
+                auto span = makeSpan(start_loc, previous().location);
+                auto *func_call = arena_.make<FunctionCallExpr>(span, name, std::move(args));
+
+                // Check for optional alias
+                StringPool::StringId alias = 0;
+                if (match(TokenType::KW_AS) || check(TokenType::IDENTIFIER) || isIdentifierOrUnreservedKeyword())
+                {
+                    if (check(TokenType::IDENTIFIER) || isIdentifierOrUnreservedKeyword())
+                    {
+                        alias = isIdentifierOrUnreservedKeyword() ? getIdentifierStringId() : current().value.string_id;
+                        advance();
+                    }
+                }
+
+                return TableRef(func_call, alias);
+            }
+
+            // Regular table name - check for optional alias (AS keyword is optional in SQL)
+            StringPool::StringId alias = 0;
+            if (match(TokenType::KW_AS) || check(TokenType::IDENTIFIER) || isIdentifierOrUnreservedKeyword())
+            {
+                if (check(TokenType::IDENTIFIER) || isIdentifierOrUnreservedKeyword())
+                {
+                    alias = isIdentifierOrUnreservedKeyword() ? getIdentifierStringId() : current().value.string_id;
                     advance();
                 }
             }
 
-            return TableRef(table_name, alias);
+            return TableRef(name, alias);
         }
 
         // Parse FROM clause with optional JOINs (Phase 1 Task 3.1)
@@ -5192,7 +5439,47 @@ namespace scratchbird
 
         Expression *Parser::parseExpression()
         {
-            return parseComparison();
+            return parseOr();
+        }
+
+        Expression *Parser::parseOr()
+        {
+            auto *expr = parseAnd();
+            if (!expr)
+                return nullptr;
+
+            while (match(TokenType::KW_OR))
+            {
+                auto *right = parseAnd();
+                if (!right)
+                    return nullptr;
+
+                SourceSpan span = expr->span();
+                span.end = right->span().end;
+                expr = arena_.make<BinaryOpExpr>(span, BinaryOp::OR, expr, right);
+            }
+
+            return expr;
+        }
+
+        Expression *Parser::parseAnd()
+        {
+            auto *expr = parseComparison();
+            if (!expr)
+                return nullptr;
+
+            while (match(TokenType::KW_AND))
+            {
+                auto *right = parseComparison();
+                if (!right)
+                    return nullptr;
+
+                SourceSpan span = expr->span();
+                span.end = right->span().end;
+                expr = arena_.make<BinaryOpExpr>(span, BinaryOp::AND, expr, right);
+            }
+
+            return expr;
         }
 
         Expression *Parser::parseComparison()
@@ -5441,6 +5728,28 @@ namespace scratchbird
         {
             auto start_loc = current().location;
 
+            // Handle unary minus: convert -expr to (0 - expr)
+            if (match(TokenType::MINUS))
+            {
+                auto *operand = parsePrimary();  // Recursively parse the operand
+                if (!operand)
+                    return nullptr;
+
+                // Create a zero literal
+                auto *zero = arena_.make<LiteralExpr>(makeSpan(start_loc, start_loc), LiteralExpr::INTEGER);
+                zero->setIntValue(0);
+
+                // Return (0 - operand)
+                auto span = makeSpan(start_loc, operand->span().end);
+                return arena_.make<BinaryOpExpr>(span, BinaryOp::SUBTRACT, zero, operand);
+            }
+
+            // Handle unary plus: just parse the operand (plus is a no-op)
+            if (match(TokenType::PLUS))
+            {
+                return parsePrimary();  // Recursively parse the operand
+            }
+
             if (match(TokenType::INTEGER_LITERAL))
             {
                 auto span = makeSpan(start_loc, previous().location);
@@ -5537,6 +5846,104 @@ namespace scratchbird
 
                 auto span = makeSpan(start_loc, end_loc);
                 return arena_.make<ExtractExpr>(span, field_id, field_name, source_expr);
+            }
+
+            // POSITION(substring IN string) - SQL standard syntax
+            // Only match if followed by '(' - otherwise fall through to identifier case
+            if (check(TokenType::KW_POSITION))
+            {
+                // Peek ahead to see if '(' follows
+                Token next = lexer_.peekToken();
+                if (next.type == TokenType::LEFT_PAREN)
+                {
+                    advance(); // consume POSITION
+                    advance(); // consume '('
+
+                    // Parse the substring expression - use parseTerm to avoid IN being consumed
+                    // as part of the "IN predicate" logic in parseComparison
+                    auto *substring = parseTerm();
+                    if (!substring)
+                        return nullptr;
+
+                    // Expect KW_IN keyword
+                    if (!consume(TokenType::KW_IN, "Expected IN in POSITION expression"))
+                        return nullptr;
+
+                    // Parse the string expression - can use full parseExpression here
+                    auto *string_expr = parseTerm();
+                    if (!string_expr)
+                        return nullptr;
+
+                    auto end_loc = current().location;
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after POSITION expression"))
+                        return nullptr;
+
+                    // Create POSITION as a function call with 2 args: (substring, string)
+                    // This matches the STRPOS(string, substring) semantics but with reversed argument order
+                    StringPool::StringId func_name = stringPool().intern("position");
+                    std::vector<Expression*> args = {substring, string_expr};
+                    auto span = makeSpan(start_loc, end_loc);
+                    return arena_.make<FunctionCallExpr>(span, func_name, std::move(args));
+                }
+                // If no '(' follows, fall through to identifier handling below
+            }
+
+            // OVERLAY(string PLACING replacement FROM start [FOR length]) - SQL standard syntax
+            // Only match if followed by '(' - otherwise fall through to identifier case
+            if (check(TokenType::KW_OVERLAY))
+            {
+                // Peek ahead to see if '(' follows
+                Token next = lexer_.peekToken();
+                if (next.type == TokenType::LEFT_PAREN)
+                {
+                    advance(); // consume OVERLAY
+                    advance(); // consume '('
+
+                    // Parse the target string expression
+                    auto *target_string = parseExpression();
+                    if (!target_string)
+                        return nullptr;
+
+                    // Expect PLACING keyword
+                    if (!consume(TokenType::KW_PLACING, "Expected PLACING in OVERLAY expression"))
+                        return nullptr;
+
+                    // Parse the replacement string
+                    auto *replacement = parseExpression();
+                    if (!replacement)
+                        return nullptr;
+
+                    // Expect FROM keyword
+                    if (!consume(TokenType::KW_FROM, "Expected FROM in OVERLAY expression"))
+                        return nullptr;
+
+                    // Parse the start position
+                    auto *start_pos = parseExpression();
+                    if (!start_pos)
+                        return nullptr;
+
+                    // Optional FOR length clause
+                    Expression *length = nullptr;
+                    if (match(TokenType::KW_FOR))
+                    {
+                        length = parseExpression();
+                        if (!length)
+                            return nullptr;
+                    }
+
+                    auto end_loc = current().location;
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after OVERLAY expression"))
+                        return nullptr;
+
+                    // Create OVERLAY as a function call: (target, replacement, start[, length])
+                    StringPool::StringId func_name = stringPool().intern("overlay");
+                    std::vector<Expression*> args = {target_string, replacement, start_pos};
+                    if (length)
+                        args.push_back(length);
+                    auto span = makeSpan(start_loc, end_loc);
+                    return arena_.make<FunctionCallExpr>(span, func_name, std::move(args));
+                }
+                // If no '(' follows, fall through to identifier handling below
             }
 
             // Aggregate functions (Phase 1 Task 4.1, Phase 2 Task 12)
@@ -6007,9 +6414,11 @@ namespace scratchbird
                 return arena_.make<FunctionCallExpr>(span, func_name, args);
             }
 
-            if (check(TokenType::IDENTIFIER))
+            // Check for identifiers and unreserved keywords (type names, etc.)
+            // that can be used as column names or function calls
+            if (isIdentifierOrUnreservedKeyword())
             {
-                auto name = current().value.string_id;
+                auto name = getIdentifierStringId();
                 advance();
 
                 // Check for qualified name (table.column) - Phase 1 Task 3.1
@@ -6018,13 +6427,13 @@ namespace scratchbird
                     // This is a qualified identifier
                     StringPool::StringId qualifier = name;
 
-                    if (!check(TokenType::IDENTIFIER))
+                    if (!isIdentifierOrUnreservedKeyword())
                     {
                         error("Expected column name after '.'");
                         return nullptr;
                     }
 
-                    StringPool::StringId column_name = current().value.string_id;
+                    StringPool::StringId column_name = getIdentifierStringId();
                     advance();
 
                     auto span = makeSpan(start_loc, previous().location);

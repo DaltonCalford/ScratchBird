@@ -1217,7 +1217,7 @@ namespace scratchbird
                 stats.load_factor = (static_cast<double>(stats.num_tuples) / max_entries) * 100.0;
             }
 
-            stats.num_overflow_pages = 0; // TODO: Count overflow pages
+            stats.num_overflow_pages = 0; // Phase 3 Enhancement: Count overflow pages
 
             return stats;
         }

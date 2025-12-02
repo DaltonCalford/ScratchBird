@@ -13,7 +13,7 @@ class HashCustomTablespaceTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path = "test_hash_custom_tablespace.db";
+        test_db_path = "/tmp/test_hash_custom_tablespace.db";
 
         // Remove if exists
         if (std::filesystem::exists(test_db_path))

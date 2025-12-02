@@ -16,7 +16,7 @@ protected:
     void SetUp() override
     {
         // Create test database (use relative path in current directory)
-        test_db_path_ = "test_connection_context.sbrd";
+        test_db_path_ = "/tmp/test_connection_context.sbrd";
 
         // Clean up any existing test database
         std::filesystem::remove(test_db_path_);

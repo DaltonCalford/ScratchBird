@@ -272,8 +272,10 @@ namespace scratchbird
             KW_TRY_CAST,
             KW_AS,
 
-            // Extraction
+            // Extraction and text functions with special syntax
             KW_EXTRACT,
+            KW_POSITION,   // POSITION(substring IN string)
+            KW_OVERLAY,    // OVERLAY(string PLACING replacement FROM start [FOR length])
 
             // Pattern matching
             KW_LIKE,
@@ -310,6 +312,7 @@ namespace scratchbird
             KW_SHARED,
             KW_PROTECTED,
             KW_FOR,
+            KW_PLACING,    // OVERLAY...PLACING syntax
             KW_OUTSTANDING,
             KW_LOCK,
             KW_TIMEOUT,

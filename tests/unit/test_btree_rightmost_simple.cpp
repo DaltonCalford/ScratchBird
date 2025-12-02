@@ -42,7 +42,7 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
     {
         std::cout << "Test 3: Create B-tree and verify initialization... ";
 
-        const char *db_path = "test_btree_simple.sbrd";
+        const char *db_path = "/tmp/test_btree_simple.sbrd";
         std::remove(db_path);
 
         ErrorContext ctx;
@@ -113,7 +113,7 @@ TEST(BtreeRightmostSimpleTest, Comprehensive) {
     {
         std::cout << "Test 4: Internal page rightmost_child field works... ";
 
-        const char *db_path = "test_btree_internal.sbrd";
+        const char *db_path = "/tmp/test_btree_internal.sbrd";
         std::remove(db_path);
 
         ErrorContext ctx;

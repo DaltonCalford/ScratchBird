@@ -23,13 +23,13 @@ protected:
     {
         // Create test database
         ErrorContext ctx;
-        Status status = Database::create("test_toast_gc.db", 8192, &ctx);
+        Status status = Database::create("/tmp/test_toast_gc.db", 8192, &ctx);
         if (status != Status::OK && status != Status::ERROR_EXISTS) {
             FAIL() << "Failed to create database: " << ctx.message;
         }
 
         db_ = std::make_unique<Database>();
-        status = db_->open("test_toast_gc.db", &ctx);
+        status = db_->open("/tmp/test_toast_gc.db", &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.message;
 
         storage_ = db_->storage_engine();

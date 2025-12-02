@@ -469,7 +469,7 @@ namespace scratchbird::core
 
             default:
                 // For now, fall back to binary comparison
-                // TODO: Implement full UCA and locale-specific comparison
+                // Phase 4 Enhancement: Implement full UCA and locale-specific comparison
                 return utf8::compare_bin(s1, len1, s2, len2);
         }
     }
@@ -766,7 +766,7 @@ namespace scratchbird::core
         auto compare_ci(const uint8_t *s1, uint32_t len1, const uint8_t *s2, uint32_t len2) -> int
         {
             // Simple ASCII case-insensitive comparison
-            // TODO: Implement proper Unicode case folding
+            // Phase 4 Enhancement: Implement proper Unicode case folding
             uint32_t min_len = std::min(len1, len2);
             for (uint32_t i = 0; i < min_len; ++i)
             {

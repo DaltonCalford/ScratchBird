@@ -19,11 +19,11 @@ protected:
     {
         // Create test database
         core::ErrorContext ctx;
-        auto status = core::Database::create("test_math_functions.db", 16384, &ctx);
+        auto status = core::Database::create("/tmp/test_math_functions.db", 16384, &ctx);
         ASSERT_TRUE(status == core::Status::OK) << "Failed to create database: " << ctx.message;
 
         db = std::make_unique<core::Database>();
-        status = db->open("test_math_functions.db", &ctx);
+        status = db->open("/tmp/test_math_functions.db", &ctx);
         ASSERT_TRUE(status == core::Status::OK) << "Failed to open database: " << ctx.message;
     }
 
@@ -31,7 +31,7 @@ protected:
     {
         db.reset();
         // Clean up test database
-        std::remove("test_math_functions.db");
+        std::remove("/tmp/test_math_functions.db");
     }
 
     // Helper to execute a simple SELECT statement and get the result
@@ -66,7 +66,21 @@ protected:
         EXPECT_EQ(result_set->columnCount(), 1) << "Expected 1 column";
         if (result_set->rowCount() != 1 || result_set->columnCount() != 1) return 0.0;
 
-        return result_set->getValue(0, 0).toDouble();
+        // Convert to double with type coercion (handles INT32, INT64, FLOAT32, FLOAT64)
+        auto val = result_set->getValue(0, 0);
+        switch (val.type()) {
+            case core::DataType::INT32:
+                return static_cast<double>(val.getInt32());
+            case core::DataType::INT64:
+                return static_cast<double>(val.getInt64());
+            case core::DataType::FLOAT32:
+                return static_cast<double>(val.getFloat32());
+            case core::DataType::FLOAT64:
+                return val.getFloat64();
+            default:
+                EXPECT_TRUE(false) << "Unexpected type: " << static_cast<int>(val.type());
+                return 0.0;
+        }
     }
 };
 

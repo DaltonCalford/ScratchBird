@@ -18,11 +18,21 @@ protected:
         {
             std::filesystem::remove(test_db_path_);
         }
+        // Also remove lock file
+        if (std::filesystem::exists(test_db_path_ + "-lock"))
+        {
+            std::filesystem::remove(test_db_path_ + "-lock");
+        }
 
-        db_ = std::make_unique<Database>();
+        // First create the database file using the static method
         ErrorContext ctx;
-        Status status = db_->create(test_db_path_, 16384, &ctx);
+        Status status = Database::create(test_db_path_, 16384, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to create database: " << ctx.message;
+
+        // Then open it
+        db_ = std::make_unique<Database>();
+        status = db_->open(test_db_path_, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to open database: " << ctx.message;
     }
 
     void TearDown() override
@@ -31,6 +41,10 @@ protected:
         if (std::filesystem::exists(test_db_path_))
         {
             std::filesystem::remove(test_db_path_);
+        }
+        if (std::filesystem::exists(test_db_path_ + "-lock"))
+        {
+            std::filesystem::remove(test_db_path_ + "-lock");
         }
     }
 
@@ -341,6 +355,7 @@ TEST_F(CharsetCatalogTest, ListCollationsForCharset)
     }
 }
 
+// P0-8: Enabled after implementing updateCollation
 TEST_F(CharsetCatalogTest, UpdateCollation)
 {
     ErrorContext ctx;

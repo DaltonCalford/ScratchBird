@@ -11,12 +11,19 @@ namespace scratchbird::optimizer
 
     bool ExpressionMatcher::matches(const Expression *query_expr,
                                      const Expression *index_expr,
-                                     const StringPool *string_pool)
+                                     const StringPool *query_pool,
+                                     const StringPool *index_pool)
     {
         // Null check
         if (!query_expr || !index_expr)
         {
             return false;
+        }
+
+        // If index_pool not provided, use query_pool for both
+        if (!index_pool)
+        {
+            index_pool = query_pool;
         }
 
         // Must be same expression type
@@ -30,47 +37,53 @@ namespace scratchbird::optimizer
         {
         case ASTKind::LITERAL:
             return matchLiteral(static_cast<const LiteralExpr *>(query_expr),
-                               static_cast<const LiteralExpr *>(index_expr));
+                               static_cast<const LiteralExpr *>(index_expr),
+                               query_pool, index_pool);
 
         case ASTKind::IDENTIFIER:
             return matchIdentifier(static_cast<const IdentifierExpr *>(query_expr),
                                   static_cast<const IdentifierExpr *>(index_expr),
-                                  string_pool);
+                                  query_pool, index_pool);
 
         case ASTKind::BINARY_OP:
             return matchBinaryOp(static_cast<const BinaryOpExpr *>(query_expr),
                                 static_cast<const BinaryOpExpr *>(index_expr),
-                                string_pool);
+                                query_pool, index_pool);
 
         case ASTKind::FUNCTION_CALL:
             return matchFunctionCall(static_cast<const FunctionCallExpr *>(query_expr),
                                     static_cast<const FunctionCallExpr *>(index_expr),
-                                    string_pool);
+                                    query_pool, index_pool);
 
         case ASTKind::CAST:
             return matchCast(static_cast<const CastExpr *>(query_expr),
                             static_cast<const CastExpr *>(index_expr),
-                            string_pool);
+                            query_pool, index_pool);
 
         case ASTKind::CASE:
             return matchCase(static_cast<const CaseExpr *>(query_expr),
                             static_cast<const CaseExpr *>(index_expr),
-                            string_pool);
+                            query_pool, index_pool);
 
         case ASTKind::AGGREGATE_FUNC:
             return matchAggregate(static_cast<const AggregateExpr *>(query_expr),
                                  static_cast<const AggregateExpr *>(index_expr),
-                                 string_pool);
+                                 query_pool, index_pool);
 
         case ASTKind::COALESCE:
             return matchCoalesce(static_cast<const CoalesceExpr *>(query_expr),
                                 static_cast<const CoalesceExpr *>(index_expr),
-                                string_pool);
+                                query_pool, index_pool);
 
         case ASTKind::NULLIF:
             return matchNullIf(static_cast<const NullIfExpr *>(query_expr),
                               static_cast<const NullIfExpr *>(index_expr),
-                              string_pool);
+                              query_pool, index_pool);
+
+        case ASTKind::EXTRACT:
+            return matchExtract(static_cast<const ExtractExpr *>(query_expr),
+                               static_cast<const ExtractExpr *>(index_expr),
+                               query_pool, index_pool);
 
         default:
             // Unsupported expression type
@@ -80,10 +93,17 @@ namespace scratchbird::optimizer
 
     ExpressionMatchType ExpressionMatcher::canUse(const Expression *query_expr,
                                                    const Expression *index_expr,
-                                                   const StringPool *string_pool)
+                                                   const StringPool *query_pool,
+                                                   const StringPool *index_pool)
     {
+        // If index_pool not provided, use query_pool for both
+        if (!index_pool)
+        {
+            index_pool = query_pool;
+        }
+
         // Exact match?
-        if (matches(query_expr, index_expr, string_pool))
+        if (matches(query_expr, index_expr, query_pool, index_pool))
         {
             return ExpressionMatchType::EXACT_MATCH;
         }
@@ -98,14 +118,14 @@ namespace scratchbird::optimizer
             const Expression *left = bin_op->left();
             const Expression *right = bin_op->right();
 
-            if (matches(left, index_expr, string_pool))
+            if (matches(left, index_expr, query_pool, index_pool))
             {
-                return isOperatorCompatible(op, left, right, index_expr, string_pool);
+                return isOperatorCompatible(op, left, right, index_expr, query_pool, index_pool);
             }
-            else if (matches(right, index_expr, string_pool))
+            else if (matches(right, index_expr, query_pool, index_pool))
             {
                 // Swap operands conceptually and check
-                return isOperatorCompatible(op, right, left, index_expr, string_pool);
+                return isOperatorCompatible(op, right, left, index_expr, query_pool, index_pool);
             }
         }
 
@@ -116,7 +136,8 @@ namespace scratchbird::optimizer
                                                                 const Expression *left_expr,
                                                                 const Expression *right_expr,
                                                                 const Expression *index_expr,
-                                                                const StringPool *string_pool)
+                                                                const StringPool *query_pool,
+                                                                const StringPool *index_pool)
     {
         // left_expr matches index_expr, check if operator is index-compatible
 
@@ -143,7 +164,7 @@ namespace scratchbird::optimizer
             if (right_expr->kind() == ASTKind::LITERAL)
             {
                 auto *lit = static_cast<const LiteralExpr *>(right_expr);
-                if (isLikePrefixScan(lit))
+                if (isLikePrefixScan(lit, query_pool))
                 {
                     return ExpressionMatchType::RANGE_SCAN;
                 }
@@ -163,7 +184,8 @@ namespace scratchbird::optimizer
     // Type-Specific Matchers
     // ========================================================================
 
-    bool ExpressionMatcher::matchLiteral(const LiteralExpr *q, const LiteralExpr *i)
+    bool ExpressionMatcher::matchLiteral(const LiteralExpr *q, const LiteralExpr *i,
+                                         const StringPool *q_pool, const StringPool *i_pool)
     {
         // Must have same literal type
         if (q->literalType() != i->literalType())
@@ -183,6 +205,14 @@ namespace scratchbird::optimizer
             return q->floatValue() == i->floatValue();
 
         case LiteralType::STRING:
+            // Resolve StringIds and compare actual content
+            if (q_pool && i_pool)
+            {
+                std::string q_str(q_pool->get(q->stringValue()));
+                std::string i_str(i_pool->get(i->stringValue()));
+                return q_str == i_str;
+            }
+            // Fallback: compare StringIds directly (only works if same pool)
             return q->stringValue() == i->stringValue();
 
         case LiteralType::NULL_LITERAL:
@@ -195,16 +225,17 @@ namespace scratchbird::optimizer
 
     bool ExpressionMatcher::matchIdentifier(const IdentifierExpr *q,
                                            const IdentifierExpr *i,
-                                           const StringPool *pool)
+                                           const StringPool *q_pool,
+                                           const StringPool *i_pool)
     {
-        if (!pool)
+        if (!q_pool || !i_pool)
         {
             return false;
         }
 
-        // Compare column names (resolve StringIds)
-        std::string q_name(pool->get(q->name()));
-        std::string i_name(pool->get(i->name()));
+        // Compare column names (resolve StringIds from respective pools)
+        std::string q_name(q_pool->get(q->name()));
+        std::string i_name(i_pool->get(i->name()));
 
         // Case-insensitive comparison (PostgreSQL behavior)
         return strcasecmp(q_name.c_str(), i_name.c_str()) == 0;
@@ -212,7 +243,8 @@ namespace scratchbird::optimizer
 
     bool ExpressionMatcher::matchBinaryOp(const BinaryOpExpr *q,
                                          const BinaryOpExpr *i,
-                                         const StringPool *pool)
+                                         const StringPool *q_pool,
+                                         const StringPool *i_pool)
     {
         BinaryOp q_op = q->op();
         BinaryOp i_op = i->op();
@@ -229,7 +261,7 @@ namespace scratchbird::optimizer
         const Expression *i_right = i->right();
 
         // Try direct match
-        if (matches(q_left, i_left, pool) && matches(q_right, i_right, pool))
+        if (matches(q_left, i_left, q_pool, i_pool) && matches(q_right, i_right, q_pool, i_pool))
         {
             return true;
         }
@@ -237,7 +269,7 @@ namespace scratchbird::optimizer
         // If commutative, try swapped
         if (isCommutativeOperator(q_op))
         {
-            if (matches(q_left, i_right, pool) && matches(q_right, i_left, pool))
+            if (matches(q_left, i_right, q_pool, i_pool) && matches(q_right, i_left, q_pool, i_pool))
             {
                 return true;
             }
@@ -248,16 +280,17 @@ namespace scratchbird::optimizer
 
     bool ExpressionMatcher::matchFunctionCall(const FunctionCallExpr *q,
                                              const FunctionCallExpr *i,
-                                             const StringPool *pool)
+                                             const StringPool *q_pool,
+                                             const StringPool *i_pool)
     {
-        if (!pool)
+        if (!q_pool || !i_pool)
         {
             return false;
         }
 
         // Function names must match (case-insensitive)
-        std::string q_func(pool->get(q->name()));
-        std::string i_func(pool->get(i->name()));
+        std::string q_func(q_pool->get(q->name()));
+        std::string i_func(i_pool->get(i->name()));
 
         if (strcasecmp(q_func.c_str(), i_func.c_str()) != 0)
         {
@@ -276,7 +309,7 @@ namespace scratchbird::optimizer
         // All arguments must match
         for (size_t idx = 0; idx < q_args.size(); idx++)
         {
-            if (!matches(q_args[idx], i_args[idx], pool))
+            if (!matches(q_args[idx], i_args[idx], q_pool, i_pool))
             {
                 return false;
             }
@@ -287,7 +320,8 @@ namespace scratchbird::optimizer
 
     bool ExpressionMatcher::matchCast(const CastExpr *q,
                                      const CastExpr *i,
-                                     const StringPool *pool)
+                                     const StringPool *q_pool,
+                                     const StringPool *i_pool)
     {
         // Target type must match (compare type field of TypeName)
         if (q->targetType().type != i->targetType().type)
@@ -296,12 +330,13 @@ namespace scratchbird::optimizer
         }
 
         // Expression must match
-        return matches(q->expr(), i->expr(), pool);
+        return matches(q->expr(), i->expr(), q_pool, i_pool);
     }
 
     bool ExpressionMatcher::matchCase(const CaseExpr *q,
                                      const CaseExpr *i,
-                                     const StringPool *pool)
+                                     const StringPool *q_pool,
+                                     const StringPool *i_pool)
     {
         // Number of WHEN clauses must match
         const auto &q_whens = q->whenClauses();
@@ -316,13 +351,13 @@ namespace scratchbird::optimizer
         for (size_t idx = 0; idx < q_whens.size(); idx++)
         {
             // Condition must match
-            if (!matches(q_whens[idx].condition, i_whens[idx].condition, pool))
+            if (!matches(q_whens[idx].condition, i_whens[idx].condition, q_pool, i_pool))
             {
                 return false;
             }
 
             // Result must match
-            if (!matches(q_whens[idx].result, i_whens[idx].result, pool))
+            if (!matches(q_whens[idx].result, i_whens[idx].result, q_pool, i_pool))
             {
                 return false;
             }
@@ -339,7 +374,7 @@ namespace scratchbird::optimizer
 
         if (q_else && i_else)
         {
-            if (!matches(q_else, i_else, pool))
+            if (!matches(q_else, i_else, q_pool, i_pool))
             {
                 return false;
             }
@@ -350,7 +385,8 @@ namespace scratchbird::optimizer
 
     bool ExpressionMatcher::matchAggregate(const AggregateExpr *q,
                                           const AggregateExpr *i,
-                                          const StringPool *pool)
+                                          const StringPool *q_pool,
+                                          const StringPool *i_pool)
     {
         // Aggregate function must match
         if (q->func() != i->func())
@@ -369,7 +405,7 @@ namespace scratchbird::optimizer
 
         if (q_arg && i_arg)
         {
-            if (!matches(q_arg, i_arg, pool))
+            if (!matches(q_arg, i_arg, q_pool, i_pool))
             {
                 return false;
             }
@@ -386,7 +422,8 @@ namespace scratchbird::optimizer
 
     bool ExpressionMatcher::matchCoalesce(const CoalesceExpr *q,
                                          const CoalesceExpr *i,
-                                         const StringPool *pool)
+                                         const StringPool *q_pool,
+                                         const StringPool *i_pool)
     {
         // Number of arguments must match
         const auto &q_args = q->args();
@@ -400,7 +437,7 @@ namespace scratchbird::optimizer
         // All arguments must match in order
         for (size_t idx = 0; idx < q_args.size(); idx++)
         {
-            if (!matches(q_args[idx], i_args[idx], pool))
+            if (!matches(q_args[idx], i_args[idx], q_pool, i_pool))
             {
                 return false;
             }
@@ -411,11 +448,27 @@ namespace scratchbird::optimizer
 
     bool ExpressionMatcher::matchNullIf(const NullIfExpr *q,
                                        const NullIfExpr *i,
-                                       const StringPool *pool)
+                                       const StringPool *q_pool,
+                                       const StringPool *i_pool)
     {
         // Both expressions must match
-        return matches(q->expr1(), i->expr1(), pool) &&
-               matches(q->expr2(), i->expr2(), pool);
+        return matches(q->expr1(), i->expr1(), q_pool, i_pool) &&
+               matches(q->expr2(), i->expr2(), q_pool, i_pool);
+    }
+
+    bool ExpressionMatcher::matchExtract(const ExtractExpr *q,
+                                        const ExtractExpr *i,
+                                        const StringPool *q_pool,
+                                        const StringPool *i_pool)
+    {
+        // Field IDs must match (e.g., YEAR, MONTH, DAY, etc.)
+        if (q->fieldId() != i->fieldId())
+        {
+            return false;
+        }
+
+        // Source expressions must match
+        return matches(q->source(), i->source(), q_pool, i_pool);
     }
 
     // ========================================================================
@@ -460,7 +513,7 @@ namespace scratchbird::optimizer
         }
     }
 
-    bool ExpressionMatcher::isLikePrefixScan(const LiteralExpr *pattern)
+    bool ExpressionMatcher::isLikePrefixScan(const LiteralExpr *pattern, const StringPool *pool)
     {
         using LiteralType = parser::LiteralExpr::LiteralType;
 
@@ -469,9 +522,45 @@ namespace scratchbird::optimizer
             return false;
         }
 
-        // StringId needs to be resolved to get actual string
-        // For now, we can't easily check the pattern without a string pool
-        // Return false conservatively
+        if (!pool)
+        {
+            return false;
+        }
+
+        // Get the actual pattern string
+        std::string_view pattern_str = pool->get(pattern->stringValue());
+
+        if (pattern_str.empty())
+        {
+            return false;
+        }
+
+        // A prefix scan pattern starts with non-wildcard characters and ends with %
+        // Examples: 'test%' (valid), '%test' (invalid), 'te%st' (valid but limited)
+        // For simplicity, we check if pattern doesn't start with % and has some prefix chars
+
+        // Pattern starting with % is a suffix/contains scan, not prefix
+        if (pattern_str[0] == '%' || pattern_str[0] == '_')
+        {
+            return false;
+        }
+
+        // Check if there's at least one character before any wildcard
+        // and the pattern ends with % (typical prefix pattern)
+        size_t wildcard_pos = pattern_str.find('%');
+        if (wildcard_pos == std::string_view::npos)
+        {
+            // No wildcard at all - this is exact match, not prefix scan
+            // But LIKE without wildcards behaves like =, so it's still usable
+            return true;
+        }
+
+        // Has a prefix before the wildcard - this is a prefix scan
+        if (wildcard_pos > 0)
+        {
+            return true;
+        }
+
         return false;
     }
 

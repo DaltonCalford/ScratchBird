@@ -23,6 +23,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::core;
 
@@ -31,24 +32,33 @@ class SecurityTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        // Clean up test files
-        cleanup_test_files();
+        // Create unique paths for test isolation (parallel execution)
+        test_security_file_ = std::make_unique<scratchbird::testing::TestDatabaseFile>("test_security", ".db");
+        test_symlink_file_ = std::make_unique<scratchbird::testing::TestDatabaseFile>("test_symlink", ".db");
+        test_truncated_file_ = std::make_unique<scratchbird::testing::TestDatabaseFile>("test_truncated", ".db");
+        test_concurrent_file_ = std::make_unique<scratchbird::testing::TestDatabaseFile>("test_concurrent", ".db");
+
+        // Store paths for convenient access
+        test_security_path_ = test_security_file_->path();
+        test_symlink_path_ = test_symlink_file_->path();
+        test_truncated_path_ = test_truncated_file_->path();
+        test_concurrent_path_ = test_concurrent_file_->path();
     }
 
     void TearDown() override
     {
-        cleanup_test_files();
+        // TestDatabaseFile will cleanup automatically on destruction
     }
 
-    void cleanup_test_files()
-    {
-        remove("test_security.db");
-        remove("../test_traversal.db");
-        remove("/tmp/test_security.db");
-        remove("test_symlink.db");
-        remove("test_truncated.db");
-        remove("test_concurrent.db");
-    }
+    std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_security_file_;
+    std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_symlink_file_;
+    std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_truncated_file_;
+    std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_concurrent_file_;
+
+    std::string test_security_path_;
+    std::string test_symlink_path_;
+    std::string test_truncated_path_;
+    std::string test_concurrent_path_;
 
     // Helper to create a truncated database file
     void create_truncated_db(const char *path, size_t size)
@@ -124,15 +134,15 @@ TEST_F(SecurityTest, PathTraversal_AbsolutePath)
 TEST_F(SecurityTest, PathTraversal_SymbolicLink)
 {
     // Create a symbolic link pointing outside
-    symlink("/etc/passwd", "test_symlink.db");
+    symlink("/etc/passwd", test_symlink_path_.c_str());
 
     Database db;
-    Status status = db.open("test_symlink.db");
+    Status status = db.open(test_symlink_path_);
 
     // This should fail but error handling might not be specific
     EXPECT_NE(status, Status::OK) << "Should not open symbolic links";
 
-    unlink("test_symlink.db");
+    unlink(test_symlink_path_.c_str());
 }
 
 // ============================================================================
@@ -147,16 +157,24 @@ TEST_F(SecurityTest, PathTraversal_SymbolicLink)
 TEST_F(SecurityTest, Catalog_Idempotency)
 {
     // Create database first
-    ASSERT_EQ(Database::create("test_security.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create(test_security_path_, 8192), Status::OK);
+
+    // Get the baseline schema count (system schemas) and then add one
+    size_t expected_schema_count = 0;
 
     // Open database to access catalog
     {
         Database db;
-        ASSERT_EQ(db.open("test_security.db"), Status::OK);
+        ASSERT_EQ(db.open(test_security_path_), Status::OK);
 
         // Catalog should be initialized automatically
         CatalogManager *catalog = db.catalog_manager();
         ASSERT_NE(catalog, nullptr);
+
+        // Get baseline schema count (system schemas from hierarchical architecture)
+        std::vector<CatalogManager::SchemaInfo> schemas;
+        ASSERT_EQ(catalog->listSchemas(schemas), Status::OK);
+        expected_schema_count = schemas.size() + 1;  // +1 for test_schema we'll create
 
         // Create a test schema
         ID schema_id;
@@ -168,7 +186,7 @@ TEST_F(SecurityTest, Catalog_Idempotency)
     // Open again - catalog should persist
     {
         Database db;
-        ASSERT_EQ(db.open("test_security.db"), Status::OK);
+        ASSERT_EQ(db.open(test_security_path_), Status::OK);
 
         CatalogManager *catalog = db.catalog_manager();
         ASSERT_NE(catalog, nullptr);
@@ -187,7 +205,7 @@ TEST_F(SecurityTest, Catalog_Idempotency)
     for (int i = 0; i < 5; i++)
     {
         Database db;
-        ASSERT_EQ(db.open("test_security.db"), Status::OK);
+        ASSERT_EQ(db.open(test_security_path_), Status::OK);
 
         CatalogManager *catalog = db.catalog_manager();
 
@@ -195,8 +213,8 @@ TEST_F(SecurityTest, Catalog_Idempotency)
         std::vector<CatalogManager::SchemaInfo> schemas;
         ASSERT_EQ(catalog->listSchemas(schemas), Status::OK);
 
-        // Should have system schema + test_schema = 2
-        EXPECT_EQ(schemas.size(), 2u) << "Schema count should not change on repeated opens";
+        // Should have system schemas + test_schema (count determined at runtime)
+        EXPECT_EQ(schemas.size(), expected_schema_count) << "Schema count should not change on repeated opens";
     }
 }
 
@@ -208,7 +226,7 @@ TEST_F(SecurityTest, Catalog_Idempotency)
 TEST_F(SecurityTest, Catalog_ConcurrentAccess)
 {
     // Create database
-    ASSERT_EQ(Database::create("test_security.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create(test_security_path_, 8192), Status::OK);
 
     // Note: Current implementation is single-threaded
     // This test documents expected behavior
@@ -221,9 +239,14 @@ TEST_F(SecurityTest, Catalog_ConcurrentAccess)
 
     // Basic concurrent schema creation test
     Database db;
-    ASSERT_EQ(db.open("test_security.db"), Status::OK);
+    ASSERT_EQ(db.open(test_security_path_), Status::OK);
 
     CatalogManager *catalog = db.catalog_manager();
+
+    // Get baseline count of system schemas
+    std::vector<CatalogManager::SchemaInfo> baseline_schemas;
+    ASSERT_EQ(catalog->listSchemas(baseline_schemas), Status::OK);
+    size_t baseline_count = baseline_schemas.size();
 
     // Create schemas sequentially (single-threaded)
     for (int i = 0; i < 5; i++)
@@ -236,7 +259,7 @@ TEST_F(SecurityTest, Catalog_ConcurrentAccess)
     // Verify all created
     std::vector<CatalogManager::SchemaInfo> schemas;
     ASSERT_EQ(catalog->listSchemas(schemas), Status::OK);
-    EXPECT_EQ(schemas.size(), 6u); // system + 5 test schemas
+    EXPECT_EQ(schemas.size(), baseline_count + 5); // baseline system schemas + 5 test schemas
 }
 
 // ============================================================================
@@ -273,10 +296,15 @@ TEST_F(SecurityTest, ErrorContext_Population)
  */
 TEST_F(SecurityTest, ErrorContext_CatalogOperations)
 {
+    // First create, then close and reopen to ensure catalog is properly initialized
+    ASSERT_EQ(Database::create(test_security_path_, 8192), Status::OK);
+
     Database db;
-    ASSERT_EQ(db.create("test_security.db", 8192), Status::OK);
+    ASSERT_EQ(db.open(test_security_path_), Status::OK);
 
     CatalogManager *catalog = db.catalog_manager();
+    ASSERT_NE(catalog, nullptr) << "CatalogManager should be initialized after open";
+
     ErrorContext ctx;
 
     // Try to get non-existent schema
@@ -298,9 +326,12 @@ TEST_F(SecurityTest, ErrorContext_CatalogOperations)
  */
 TEST_F(SecurityTest, ConcurrentAccess_TwoProcesses)
 {
-    // Parent process creates and opens database
+    // First create the database (create() is static and closes the file)
+    ASSERT_EQ(Database::create(test_concurrent_path_, 16384), Status::OK);
+
+    // Now open it to acquire the exclusive lock
     Database db1;
-    ASSERT_EQ(db1.create("test_concurrent.db", 16384), Status::OK);
+    ASSERT_EQ(db1.open(test_concurrent_path_), Status::OK);
 
     // Fork a child process
     pid_t pid = fork();
@@ -310,7 +341,7 @@ TEST_F(SecurityTest, ConcurrentAccess_TwoProcesses)
         // Child process - try to open same database
         Database db2;
         ErrorContext ctx;
-        Status status = db2.open("test_concurrent.db", &ctx);
+        Status status = db2.open(test_concurrent_path_, &ctx);
 
         // Should fail due to exclusive lock
         if (status != Status::OK)
@@ -349,7 +380,7 @@ TEST_F(SecurityTest, ConcurrentAccess_LockReleaseOnCrash)
     {
         // Child process - open database and "crash"
         Database db;
-        db.create("test_concurrent.db", 16384);
+        db.create(test_concurrent_path_, 16384);
         // Simulate crash - exit without closing
         _exit(0);
     }
@@ -364,7 +395,7 @@ TEST_F(SecurityTest, ConcurrentAccess_LockReleaseOnCrash)
 
         // Now parent should be able to open the database
         Database db;
-        Status open_status = db.open("test_concurrent.db");
+        Status open_status = db.open(test_concurrent_path_);
 
         EXPECT_EQ(open_status, Status::OK) << "Lock should be released after process termination";
 
@@ -387,11 +418,11 @@ TEST_F(SecurityTest, ConcurrentAccess_LockReleaseOnCrash)
 TEST_F(SecurityTest, ShortRead_TruncatedHeader)
 {
     // Create a truncated database file (only 100 bytes instead of full header)
-    create_truncated_db("test_truncated.db", 100);
+    create_truncated_db(test_truncated_path_.c_str(), 100);
 
     Database db;
     ErrorContext ctx;
-    Status status = db.open("test_truncated.db", &ctx);
+    Status status = db.open(test_truncated_path_, &ctx);
 
     // Should fail due to incomplete header
     EXPECT_NE(status, Status::OK) << "Should detect truncated header file";
@@ -414,11 +445,11 @@ TEST_F(SecurityTest, ShortRead_PartialPage)
     // Create a valid database first
     {
         Database db;
-        ASSERT_EQ(db.create("test_truncated.db", 8192), Status::OK);
+        ASSERT_EQ(db.create(test_truncated_path_, 8192), Status::OK);
     }
 
     // Truncate the file to simulate partial page
-    int fd = open("test_truncated.db", O_RDWR);
+    int fd = open(test_truncated_path_.c_str(), O_RDWR);
     if (fd >= 0)
     {
         // Truncate to 4096 bytes (half a page for 8192 page size)
@@ -429,7 +460,7 @@ TEST_F(SecurityTest, ShortRead_PartialPage)
     // Try to open truncated database
     Database db;
     ErrorContext ctx;
-    Status status = db.open("test_truncated.db", &ctx);
+    Status status = db.open(test_truncated_path_, &ctx);
 
     // Should detect the truncation
     EXPECT_NE(status, Status::OK) << "Should detect partial page read";
@@ -448,11 +479,11 @@ TEST_F(SecurityTest, ShortRead_PartialPage)
 TEST_F(SecurityTest, ShortRead_UnexpectedEOF)
 {
     // Create empty file
-    create_truncated_db("test_truncated.db", 0);
+    create_truncated_db(test_truncated_path_.c_str(), 0);
 
     Database db;
     ErrorContext ctx;
-    Status status = db.open("test_truncated.db", &ctx);
+    Status status = db.open(test_truncated_path_, &ctx);
 
     // Should fail on empty file
     EXPECT_NE(status, Status::OK) << "Should handle empty file (immediate EOF)";

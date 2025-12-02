@@ -238,8 +238,9 @@ TEST(CRC32C_Comprehensive, InitialAndFinalXOR)
     // These should be different
     EXPECT_NE(crc_no_xor, crc_with_xor) << "Initial/final XOR should affect result";
 
-    // The correct spec-compliant value includes XOR
-    EXPECT_EQ(crc_with_xor, 0xB63CFBCDU) << "CRC32C of {0x01,0x02,0x03,0x04} should be 0xB63CFBCD";
+    // The correct CRC32C (Castagnoli) spec-compliant value for {0x01,0x02,0x03,0x04}
+    // Verified against standard test vector "123456789" -> 0xE3069283
+    EXPECT_EQ(crc_with_xor, 0x29308CF4U) << "CRC32C of {0x01,0x02,0x03,0x04} should be 0x29308CF4";
 }
 
 // Test incremental checksum calculation (two-part computation)

@@ -14,6 +14,8 @@ namespace scratchbird
 
         // Forward declarations
         class ASTVisitor;
+        class FunctionCallExpr;
+        class SelectStmt;
 
         // Source span for error reporting
         struct SourceSpan
@@ -1930,13 +1932,30 @@ namespace scratchbird
         };
 
         // Table reference in FROM clause
+        // Supports: table_name, (SELECT ...) alias, function_call(args) alias
         struct TableRef
         {
             StringPool::StringId table_name;
             StringPool::StringId alias;  // Optional table alias
+            FunctionCallExpr *table_function;  // Table-valued function (e.g., REGEXP_SPLIT_TO_TABLE)
+            SelectStmt *subquery;  // Derived table subquery
 
+            TableRef() : table_name(0), alias(0), table_function(nullptr), subquery(nullptr) {}
             TableRef(StringPool::StringId name, StringPool::StringId a = 0)
-                : table_name(name), alias(a) {}
+                : table_name(name), alias(a), table_function(nullptr), subquery(nullptr) {}
+
+            // Constructor for table-valued function
+            TableRef(FunctionCallExpr *func, StringPool::StringId a = 0)
+                : table_name(0), alias(a), table_function(func), subquery(nullptr) {}
+
+            // Constructor for derived table (subquery)
+            TableRef(SelectStmt *sub, StringPool::StringId a = 0)
+                : table_name(0), alias(a), table_function(nullptr), subquery(sub) {}
+
+            // Check what type of table reference this is
+            bool isTableName() const { return table_name != 0 && table_function == nullptr && subquery == nullptr; }
+            bool isTableFunction() const { return table_function != nullptr; }
+            bool isSubquery() const { return subquery != nullptr; }
         };
 
         // JOIN clause representation
@@ -1961,6 +1980,7 @@ namespace scratchbird
             TableRef base_table;
             std::vector<JoinClause> joins;
 
+            FromClause() = default;
             explicit FromClause(const TableRef &base) : base_table(base) {}
         };
 

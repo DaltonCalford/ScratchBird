@@ -32,7 +32,7 @@ using namespace scratchbird::core;
 class TSANBufferPoolTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_db_path_ = "test_tsan_buffer_pool.db";
+        test_db_path_ = "/tmp/test_tsan_buffer_pool.db";
         std::remove(test_db_path_);
 
         ErrorContext ctx;

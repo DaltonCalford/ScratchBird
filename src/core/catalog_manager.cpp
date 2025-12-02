@@ -1786,9 +1786,17 @@ namespace scratchbird::core
                                    ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        // Convert search name to lowercase for case-insensitive comparison
+        std::string search_lower = schema_name;
+        std::transform(search_lower.begin(), search_lower.end(), search_lower.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
         for (const auto &[id, schema_info] : schema_cache_)
         {
-            if (schema_info.schema_name == schema_name)
+            // Convert schema name to lowercase for comparison
+            std::string name_lower = schema_info.schema_name;
+            std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(),
+                           [](unsigned char c) { return std::tolower(c); });
+            if (name_lower == search_lower)
             {
                 info = schema_info;
                 return Status::OK;
@@ -4012,9 +4020,48 @@ namespace scratchbird::core
                                          const CollationCatalogInfo &col_info, ErrorContext *ctx)
         -> Status
     {
-        // TODO: Needs findRecordInHeapPage and updateRecordInHeapPage helper functions
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "updateCollation not fully implemented");
-        return Status::NOT_IMPLEMENTED;
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        // Step 1: Find existing collation record
+        auto predicate = [collation_id](const CollationRecord &rec)
+        { return rec.collation_id == collation_id && rec.is_valid; };
+
+        auto result = findRecordInHeapPage<CollationRecord>(collation_defs_table_page_, predicate, ctx);
+        if (result.status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Collation not found for update");
+            return Status::NOT_FOUND;
+        }
+
+        // Step 2: Prepare updated record
+        CollationRecord updated = result.record;
+
+        // Update fields from col_info
+        std::memset(updated.name, 0, sizeof(updated.name));
+        std::memcpy(updated.name, col_info.name.c_str(),
+                    std::min(col_info.name.size(), sizeof(updated.name) - 1));
+
+        std::memset(updated.locale, 0, sizeof(updated.locale));
+        std::memcpy(updated.locale, col_info.locale,
+                    std::min(std::strlen(col_info.locale), sizeof(updated.locale) - 1));
+
+        updated.charset_id = col_info.charset_id;
+        updated.collation_type = col_info.collation_type;
+        updated.strength = col_info.strength;
+        updated.pad_space = col_info.pad_space;
+        updated.is_default = col_info.is_default;
+        updated.last_modified_time = static_cast<uint64_t>(std::time(nullptr));
+
+        // Step 3: Update record in heap page using slot index (in-place update - Firebird MGA)
+        Status status = updateRecordInHeapPage(collation_defs_table_page_, result.slot_index,
+                                               updated, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        DEBUG_LOG_DB("Updated collation: " << col_info.name << " (ID: " << collation_id << ")");
+        return Status::OK;
     }
 
     auto CatalogManager::getCollation(uint32_t collation_id, CollationCatalogInfo &info,

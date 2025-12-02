@@ -5,6 +5,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/uuidv7.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::core;
 
@@ -13,68 +14,73 @@ class Alpha101Test : public ::testing::Test
 protected:
     void SetUp() override
     {
-        // Clean up any test files from previous runs
-        remove("test_8k.db");
-        remove("test_16k.db");
-        remove("test_32k.db");
-        remove("test.db");
+        // Generate unique database paths for this test
+        test_db_8k_ = std::make_unique<scratchbird::testing::TestDatabaseFile>("test_8k");
+        test_db_16k_ = std::make_unique<scratchbird::testing::TestDatabaseFile>("test_16k");
+        test_db_32k_ = std::make_unique<scratchbird::testing::TestDatabaseFile>("test_32k");
+        test_db_ = std::make_unique<scratchbird::testing::TestDatabaseFile>("test");
     }
 
     void TearDown() override
     {
-        // Clean up test files
-        remove("test_8k.db");
-        remove("test_16k.db");
-        remove("test_32k.db");
-        remove("test.db");
+        // TestDatabaseFile automatically cleans up
+        test_db_8k_.reset();
+        test_db_16k_.reset();
+        test_db_32k_.reset();
+        test_db_.reset();
     }
 
-    bool file_exists(const char *path)
+    bool file_exists(const std::string& path)
     {
         struct stat st;
-        return stat(path, &st) == 0;
+        return stat(path.c_str(), &st) == 0;
     }
 
-    size_t get_file_size(const char *path)
+    size_t get_file_size(const std::string& path)
     {
         struct stat st;
-        if (stat(path, &st) == 0)
+        if (stat(path.c_str(), &st) == 0)
         {
             return st.st_size;
         }
         return 0;
     }
+
+    std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_db_8k_;
+    std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_db_16k_;
+    std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_db_32k_;
+    std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_db_;
 };
 
 // Test database creation with different page sizes
 TEST_F(Alpha101Test, CreateDatabase_8K)
 {
-    ASSERT_EQ(Database::create("test_8k.db", 8192), Status::OK);
-    ASSERT_TRUE(file_exists("test_8k.db"));
-    ASSERT_EQ(get_file_size("test_8k.db"), 8192 * 3); // 3 pages: header, catalog, FSM
+    ASSERT_EQ(Database::create(test_db_8k_->path(), 8192), Status::OK);
+    ASSERT_TRUE(file_exists(test_db_8k_->path()));
+    ASSERT_EQ(get_file_size(test_db_8k_->path()), 8192 * 3); // 3 pages: header, catalog, FSM
 }
 
 TEST_F(Alpha101Test, CreateDatabase_16K)
 {
-    ASSERT_EQ(Database::create("test_16k.db", 16384), Status::OK);
-    ASSERT_TRUE(file_exists("test_16k.db"));
-    ASSERT_EQ(get_file_size("test_16k.db"), 16384 * 3); // 3 pages: header, catalog, FSM
+    ASSERT_EQ(Database::create(test_db_16k_->path(), 16384), Status::OK);
+    ASSERT_TRUE(file_exists(test_db_16k_->path()));
+    ASSERT_EQ(get_file_size(test_db_16k_->path()), 16384 * 3); // 3 pages: header, catalog, FSM
 }
 
 TEST_F(Alpha101Test, CreateDatabase_32K)
 {
-    ASSERT_EQ(Database::create("test_32k.db", 32768), Status::OK);
-    ASSERT_TRUE(file_exists("test_32k.db"));
-    ASSERT_EQ(get_file_size("test_32k.db"), 32768 * 3); // 3 pages: header, catalog, FSM
+    ASSERT_EQ(Database::create(test_db_32k_->path(), 32768), Status::OK);
+    ASSERT_TRUE(file_exists(test_db_32k_->path()));
+    ASSERT_EQ(get_file_size(test_db_32k_->path()), 32768 * 3); // 3 pages: header, catalog, FSM
 }
 
 // Test header validation for each page size
 TEST_F(Alpha101Test, ValidateHeader_8K)
 {
-    Database::create("test.db", 8192);
+    Database::create(test_db_->path(), 8192);
 
     // Read header directly
-    std::ifstream file("test.db", std::ios::binary);
+    std::ifstream file(test_db_->path(), std::ios::binary);
     ASSERT_TRUE(file.is_open());
 
     uint8_t buffer[8192];
@@ -92,9 +98,9 @@ TEST_F(Alpha101Test, ValidateHeader_8K)
 
 TEST_F(Alpha101Test, ValidateHeader_16K)
 {
-    Database::create("test.db", 16384);
+    Database::create(test_db_->path(), 16384);
 
-    std::ifstream file("test.db", std::ios::binary);
+    std::ifstream file(test_db_->path(), std::ios::binary);
     ASSERT_TRUE(file.is_open());
 
     uint8_t buffer[16384];
@@ -112,9 +118,9 @@ TEST_F(Alpha101Test, ValidateHeader_16K)
 
 TEST_F(Alpha101Test, ValidateHeader_32K)
 {
-    Database::create("test.db", 32768);
+    Database::create(test_db_->path(), 32768);
 
-    std::ifstream file("test.db", std::ios::binary);
+    std::ifstream file(test_db_->path(), std::ios::binary);
     ASSERT_TRUE(file.is_open());
 
     uint8_t buffer[32768];
@@ -133,10 +139,10 @@ TEST_F(Alpha101Test, ValidateHeader_32K)
 // Test system catalog initialization
 TEST_F(Alpha101Test, SystemCatalogInitialization)
 {
-    Database::create("test.db", 16384);
+    Database::create(test_db_->path(), 16384);
 
     // Read catalog page (Page 1)
-    std::ifstream file("test.db", std::ios::binary);
+    std::ifstream file(test_db_->path(), std::ios::binary);
     ASSERT_TRUE(file.is_open());
 
     // Skip header page
@@ -183,9 +189,9 @@ TEST_F(Alpha101Test, SystemCatalogInitialization)
 // Test UUID v7 generation
 TEST_F(Alpha101Test, UUIDv7Generation)
 {
-    Database::create("test.db", 16384);
+    Database::create(test_db_->path(), 16384);
 
-    std::ifstream file("test.db", std::ios::binary);
+    std::ifstream file(test_db_->path(), std::ios::binary);
     ASSERT_TRUE(file.is_open());
 
     uint8_t buffer[16384];
@@ -206,18 +212,18 @@ TEST_F(Alpha101Test, UUIDv7Generation)
 // Test error paths
 TEST_F(Alpha101Test, CreateDatabase_FileExists)
 {
-    ASSERT_EQ(Database::create("test.db", 16384), Status::OK);
-    ASSERT_EQ(Database::create("test.db", 16384), Status::FILE_EXISTS);
+    ASSERT_EQ(Database::create(test_db_->path(), 16384), Status::OK);
+    ASSERT_EQ(Database::create(test_db_->path(), 16384), Status::FILE_EXISTS);
 }
 
 TEST_F(Alpha101Test, CreateDatabase_InvalidPageSize)
 {
     // Only 8192, 16384, 32768, 65536, and 131072 are valid page sizes
     // Test invalid page sizes
-    ASSERT_NE(Database::create("test.db", 4096), Status::OK);   // Too small
-    ASSERT_NE(Database::create("test.db", 1024), Status::OK);   // Too small
-    ASSERT_NE(Database::create("test.db", 262144), Status::OK); // Too large (256K)
-    ASSERT_NE(Database::create("test.db", 12345), Status::OK);  // Not a power of 2
+    ASSERT_NE(Database::create(test_db_->path(), 4096), Status::OK);   // Too small
+    ASSERT_NE(Database::create(test_db_->path(), 1024), Status::OK);   // Too small
+    ASSERT_NE(Database::create(test_db_->path(), 262144), Status::OK); // Too large (256K)
+    ASSERT_NE(Database::create(test_db_->path(), 12345), Status::OK);  // Not a power of 2
 }
 
 TEST_F(Alpha101Test, OpenDatabase_FileNotFound)
@@ -228,10 +234,10 @@ TEST_F(Alpha101Test, OpenDatabase_FileNotFound)
 
 TEST_F(Alpha101Test, OpenDatabase_Success)
 {
-    ASSERT_EQ(Database::create("test.db", 16384), Status::OK);
+    ASSERT_EQ(Database::create(test_db_->path(), 16384), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("test.db"), Status::OK);
+    ASSERT_EQ(db.open(test_db_->path()), Status::OK);
     ASSERT_TRUE(db.is_open());
     ASSERT_EQ(db.page_size(), 16384);
 }
@@ -239,10 +245,10 @@ TEST_F(Alpha101Test, OpenDatabase_Success)
 // Test checksum validation
 TEST_F(Alpha101Test, ChecksumValidation)
 {
-    Database::create("test.db", 16384);
+    Database::create(test_db_->path(), 16384);
 
     // Corrupt the file
-    std::fstream file("test.db", std::ios::binary | std::ios::in | std::ios::out);
+    std::fstream file(test_db_->path(), std::ios::binary | std::ios::in | std::ios::out);
     ASSERT_TRUE(file.is_open());
 
     // Corrupt a byte after the checksum field
@@ -253,16 +259,16 @@ TEST_F(Alpha101Test, ChecksumValidation)
 
     // Try to open - should fail with checksum mismatch
     Database db;
-    ASSERT_EQ(db.open("test.db"), Status::CHECKSUM_MISMATCH);
+    ASSERT_EQ(db.open(test_db_->path()), Status::CHECKSUM_MISMATCH);
 }
 
 // Test page read/write
 TEST_F(Alpha101Test, PageReadWrite)
 {
-    Database::create("test.db", 16384);
+    Database::create(test_db_->path(), 16384);
 
     Database db;
-    ASSERT_EQ(db.open("test.db"), Status::OK);
+    ASSERT_EQ(db.open(test_db_->path()), Status::OK);
 
     // Read page 0
     uint8_t buffer[16384];

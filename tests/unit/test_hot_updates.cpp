@@ -29,7 +29,7 @@ TEST(HotUpdatesTest, Comprehensive) {
     std::cout << "\n=== Test: HOT Update Implementation (Issue 2.16) ===\n" << std::endl;
 
     // Create test database
-    const char *db_path = "test_hot_updates.db";
+    const char *db_path = "/tmp/test_hot_updates.db";
     std::remove(db_path);
 
     ErrorContext err_ctx;

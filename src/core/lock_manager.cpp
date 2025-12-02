@@ -100,9 +100,10 @@ namespace scratchbird::core
         // granted_counts if the mode was already granted. This was incorrect for
         // self-conflicting modes (SHARE_ROW_EXCLUSIVE, EXCLUSIVE, ACCESS_EXCLUSIVE).
         //
-        // TODO: Implement proper per-proc-id lock tracking to support:
+        // Phase 3 Enhancement: Implement proper per-proc-id lock tracking to support:
         //   1. Recursive locking (same proc_id acquiring same mode multiple times)
         //   2. Fast-path for non-conflicting modes (multiple ACCESS_SHARE holders)
+        // Current implementation uses conflict checking for all requests (correct but slower)
         //
         // For now, all lock requests go through conflict checking below.
 

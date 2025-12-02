@@ -234,10 +234,12 @@ TEST_F(IntegerEdgeCaseTest, Modulo_EdgeCases)
         EXPECT_EQ(Status::DIVISION_BY_ZERO, ctx.code);
     }
 
-    // MIN % -1 (would require division that overflows)
+    // MIN % -1 = 0 (this does NOT overflow, unlike MIN / -1)
+    // Any number modulo 1 or -1 is always 0
     {
         ErrorContext ctx;
-        EXPECT_FALSE(safeModuloInt64(MIN_I64, -1, &result, &ctx));
+        EXPECT_TRUE(safeModuloInt64(MIN_I64, -1, &result, &ctx));
+        EXPECT_EQ(0, result);
     }
 
     // Normal modulo
@@ -461,7 +463,7 @@ TEST_F(UTF8EncodingTest, InvalidSequences_Detection)
     EXPECT_EQ(2, truncated.size());
 
     // Invalid continuation byte
-    std::string bad_cont = "\xE0\x00\x80";  // NULL is not a valid continuation
+    std::string bad_cont("\xE0\x00\x80", 3);  // NULL is not a valid continuation
     EXPECT_EQ(3, bad_cont.size());
 
     // Surrogate pair (invalid in UTF-8)

@@ -29,7 +29,7 @@ class BTreeIteratorTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path_ = "test_btree_iter.db";
+        test_db_path_ = "/tmp/test_btree_iter.db";
         std::filesystem::remove(test_db_path_);
 
         ErrorContext ctx;

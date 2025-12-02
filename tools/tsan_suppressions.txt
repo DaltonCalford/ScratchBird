@@ -1,0 +1,13 @@
+# ThreadSanitizer suppression file for ScratchBird
+#
+# These suppressions are for false positives that TSAN cannot properly analyze
+# due to complex synchronization patterns.
+
+# ProcArrayManager initialization race: TSAN doesn't understand that the
+# atomic store with release ordering after memset/pthread_mutex_init
+# synchronizes-with the atomic load with acquire ordering before
+# pthread_mutex_lock. The happens-before relationship is correct:
+#   memset -> pthread_mutex_init -> store(release) -> load(acquire) -> pthread_mutex_lock
+# But TSAN only sees: memset racing with pthread_mutex_lock
+race:ProcArrayManager::initialize
+race:memset*ProcArrayManager

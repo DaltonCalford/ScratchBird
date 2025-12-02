@@ -136,27 +136,32 @@ TEST_F(HeapPageTest, TupleOperations)
     HeapPage page(page_buffer_, page_size_);
     ASSERT_EQ(page.initialize(1, nullptr), Status::OK);
 
-    // Test various tuple sizes
-    std::vector<size_t> tuple_sizes = {10, 50, 100, 500, 1000};
+    // Test various body sizes (tuple size = header + body)
+    std::vector<size_t> body_sizes = {10, 50, 100, 500, 1000};
     std::vector<uint16_t> item_ids;
 
-    for (size_t size : tuple_sizes)
+    for (size_t body_size : body_sizes)
     {
-        std::vector<uint8_t> data(size);
-        for (size_t i = 0; i < size; i++)
+        // Create buffer that includes space for TupleHeader + body
+        // insertTuple expects the full tuple buffer including header space
+        std::vector<uint8_t> tuple_buffer(sizeof(TupleHeader) + body_size);
+
+        // Initialize the body portion (after header)
+        uint8_t *body_ptr = tuple_buffer.data() + sizeof(TupleHeader);
+        for (size_t i = 0; i < body_size; i++)
         {
-            data[i] = (i + size) & 0xFF;
+            body_ptr[i] = (i + body_size) & 0xFF;
         }
 
         uint16_t item_id;
-        Status status = page.insertTuple(data.data(), data.size() + sizeof(TupleHeader),
-                                          100 + size, &item_id, nullptr);
-        ASSERT_EQ(status, Status::OK) << "Failed to insert " << size << " byte tuple";
+        Status status = page.insertTuple(tuple_buffer.data(), tuple_buffer.size(),
+                                          100 + body_size, &item_id, nullptr);
+        ASSERT_EQ(status, Status::OK) << "Failed to insert " << body_size << " byte body tuple";
         item_ids.push_back(item_id);
     }
 
     // Verify all tuples can be retrieved correctly
-    for (size_t i = 0; i < tuple_sizes.size(); i++)
+    for (size_t i = 0; i < body_sizes.size(); i++)
     {
         const uint8_t *retrieved_data;
         uint32_t retrieved_size;
@@ -164,13 +169,13 @@ TEST_F(HeapPageTest, TupleOperations)
         ASSERT_EQ(status, Status::OK) << "Failed to retrieve tuple " << i;
 
         // Size should include header
-        EXPECT_EQ(retrieved_size, tuple_sizes[i] + sizeof(TupleHeader));
+        EXPECT_EQ(retrieved_size, body_sizes[i] + sizeof(TupleHeader));
 
-        // Verify data integrity
+        // Verify body data integrity (skip header)
         const uint8_t *tuple_body = retrieved_data + sizeof(TupleHeader);
-        for (size_t j = 0; j < tuple_sizes[i]; j++)
+        for (size_t j = 0; j < body_sizes[i]; j++)
         {
-            EXPECT_EQ(tuple_body[j], (j + tuple_sizes[i]) & 0xFF)
+            EXPECT_EQ(tuple_body[j], (j + body_sizes[i]) & 0xFF)
                 << "Data mismatch at byte " << j << " of tuple " << i;
         }
     }
@@ -187,14 +192,16 @@ TEST_F(HeapPageTest, FreeSpaceCalculation)
     EXPECT_EQ(initial_free_space, expected_free);
 
     // Insert a tuple and verify free space decreases
-    std::vector<uint8_t> tuple_data(100, 0xCC);
+    // Create buffer with header + 100 bytes body
+    const size_t body_size = 100;
+    std::vector<uint8_t> tuple_data(sizeof(TupleHeader) + body_size, 0xCC);
     uint16_t item_id;
-    ASSERT_EQ(page.insertTuple(tuple_data.data(), tuple_data.size() + sizeof(TupleHeader), 100,
-                                &item_id, nullptr),
+    ASSERT_EQ(page.insertTuple(tuple_data.data(), tuple_data.size(), 100, &item_id, nullptr),
               Status::OK);
 
     uint32_t after_insert_free = page.getFreeSpace();
-    uint32_t space_used = sizeof(ItemPointer) + tuple_data.size() + sizeof(TupleHeader);
+    // Space used includes ItemPointer + total tuple size (header + body)
+    uint32_t space_used = sizeof(ItemPointer) + sizeof(TupleHeader) + body_size;
     EXPECT_EQ(after_insert_free, initial_free_space - space_used);
 }
 
@@ -208,10 +215,10 @@ TEST_F(HeapPageTest, DeletedTupleHandling)
     std::vector<uint16_t> item_ids;
     for (int i = 0; i < 5; i++)
     {
-        std::vector<uint8_t> data(100, i);
+        // Create buffer with header + 100 bytes body
+        std::vector<uint8_t> tuple_data(sizeof(TupleHeader) + 100, i);
         uint16_t item_id;
-        ASSERT_EQ(page.insertTuple(data.data(), data.size() + sizeof(TupleHeader), 100, &item_id,
-                                    nullptr),
+        ASSERT_EQ(page.insertTuple(tuple_data.data(), tuple_data.size(), 100, &item_id, nullptr),
                   Status::OK);
         item_ids.push_back(item_id);
     }

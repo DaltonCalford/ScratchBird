@@ -18,7 +18,7 @@ class HeapPageMemoryTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path_ = "test_heap_page_memory.sbrd";
+        test_db_path_ = "/tmp/test_heap_page_memory.sbrd";
         std::filesystem::remove(test_db_path_);
 
         auto status = Database::create(test_db_path_, 16384, nullptr);

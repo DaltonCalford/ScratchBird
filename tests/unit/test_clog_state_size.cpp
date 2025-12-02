@@ -119,7 +119,7 @@ TEST(ClogStateSizeTest, Comprehensive) {
     {
         std::cout << "Test 4: Test CLOG setStatus/getStatus with all 4 states... ";
 
-        const char *db_path = "test_clog_state_size.sbrd";
+        const char *db_path = "/tmp/test_clog_state_size.sbrd";
         std::remove(db_path);
 
         ErrorContext ctx;
@@ -184,7 +184,7 @@ TEST(ClogStateSizeTest, Comprehensive) {
     {
         std::cout << "Test 5: Verify space efficiency (4 txns/byte = 65536 txns/page)... ";
 
-        const char *db_path = "test_clog_state_size2.sbrd";
+        const char *db_path = "/tmp/test_clog_state_size2.sbrd";
         std::remove(db_path);
 
         ErrorContext ctx;

@@ -70,12 +70,14 @@ namespace scratchbird::optimizer
          *
          * @param query_expr Expression from WHERE clause
          * @param index_expr Expression from index definition
-         * @param string_pool String pool for string ID resolution
+         * @param query_pool String pool for query expression (for resolving StringIds)
+         * @param index_pool String pool for index expression (optional, defaults to query_pool)
          * @return true if exact structural match
          */
         static bool matches(const Expression *query_expr,
                            const Expression *index_expr,
-                           const StringPool *string_pool);
+                           const StringPool *query_pool,
+                           const StringPool *index_pool = nullptr);
 
         /**
          * Check if query expression can use index expression
@@ -84,12 +86,14 @@ namespace scratchbird::optimizer
          *
          * @param query_expr Expression from WHERE clause
          * @param index_expr Expression from index definition
-         * @param string_pool String pool for string ID resolution
+         * @param query_pool String pool for query expression
+         * @param index_pool String pool for index expression (optional, defaults to query_pool)
          * @return Match type (EXACT_MATCH, RANGE_SCAN, or NO_MATCH)
          */
         static ExpressionMatchType canUse(const Expression *query_expr,
                                            const Expression *index_expr,
-                                           const StringPool *string_pool);
+                                           const StringPool *query_pool,
+                                           const StringPool *index_pool = nullptr);
 
         /**
          * Check if operator is compatible with indexed expression
@@ -106,39 +110,44 @@ namespace scratchbird::optimizer
          * @param left_expr Left operand
          * @param right_expr Right operand
          * @param index_expr Index expression
-         * @param string_pool String pool
+         * @param query_pool String pool for query expression
+         * @param index_pool String pool for index expression
          * @return Match type
          */
         static ExpressionMatchType isOperatorCompatible(BinaryOp op,
                                                         const Expression *left_expr,
                                                         const Expression *right_expr,
                                                         const Expression *index_expr,
-                                                        const StringPool *string_pool);
+                                                        const StringPool *query_pool,
+                                                        const StringPool *index_pool);
 
     private:
         // Type-specific matchers
-        static bool matchLiteral(const LiteralExpr *q, const LiteralExpr *i);
+        static bool matchLiteral(const LiteralExpr *q, const LiteralExpr *i,
+                                const StringPool *q_pool, const StringPool *i_pool);
         static bool matchIdentifier(const IdentifierExpr *q, const IdentifierExpr *i,
-                                    const StringPool *pool);
+                                    const StringPool *q_pool, const StringPool *i_pool);
         static bool matchBinaryOp(const BinaryOpExpr *q, const BinaryOpExpr *i,
-                                 const StringPool *pool);
+                                 const StringPool *q_pool, const StringPool *i_pool);
         static bool matchFunctionCall(const FunctionCallExpr *q, const FunctionCallExpr *i,
-                                     const StringPool *pool);
+                                     const StringPool *q_pool, const StringPool *i_pool);
         static bool matchCast(const CastExpr *q, const CastExpr *i,
-                             const StringPool *pool);
+                             const StringPool *q_pool, const StringPool *i_pool);
         static bool matchCase(const CaseExpr *q, const CaseExpr *i,
-                             const StringPool *pool);
+                             const StringPool *q_pool, const StringPool *i_pool);
         static bool matchAggregate(const AggregateExpr *q, const AggregateExpr *i,
-                                  const StringPool *pool);
+                                  const StringPool *q_pool, const StringPool *i_pool);
         static bool matchCoalesce(const CoalesceExpr *q, const CoalesceExpr *i,
-                                 const StringPool *pool);
+                                 const StringPool *q_pool, const StringPool *i_pool);
         static bool matchNullIf(const NullIfExpr *q, const NullIfExpr *i,
-                               const StringPool *pool);
+                               const StringPool *q_pool, const StringPool *i_pool);
+        static bool matchExtract(const ExtractExpr *q, const ExtractExpr *i,
+                                const StringPool *q_pool, const StringPool *i_pool);
 
         // Helper methods
         static bool isCommutativeOperator(BinaryOp op);
         static bool isComparisonOperator(BinaryOp op);
-        static bool isLikePrefixScan(const LiteralExpr *pattern);
+        static bool isLikePrefixScan(const LiteralExpr *pattern, const StringPool *pool);
         static ExpressionMatchType getMatchTypeForOperator(BinaryOp op);
     };
 

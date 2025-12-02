@@ -103,12 +103,12 @@ namespace scratchbird::core
 
             tz_info.dst_start_month = static_cast<uint8_t>(start.month);
             tz_info.dst_start_week = calculateWeekOfMonth(start.day);
-            tz_info.dst_start_day = 0; // TODO: Calculate day of week
+            tz_info.dst_start_day = 0; // Phase 4 Enhancement: Calculate day of week from date
             tz_info.dst_start_hour = static_cast<uint8_t>(start.hour);
 
             tz_info.dst_end_month = static_cast<uint8_t>(end.month);
             tz_info.dst_end_week = calculateWeekOfMonth(end.day);
-            tz_info.dst_end_day = 0; // TODO: Calculate day of week
+            tz_info.dst_end_day = 0; // Phase 4 Enhancement: Calculate day of week from date
             tz_info.dst_end_hour = static_cast<uint8_t>(end.hour);
 
             // Calculate DST offset (typically +60 minutes)
@@ -289,7 +289,7 @@ namespace scratchbird::core
 
     auto TimezoneLoader::clearAllTimezones(ErrorContext *ctx) -> Status
     {
-        // TODO: Implement when CatalogManager provides a clearAllTimezones method
+        // Phase 4 Enhancement: Implement when CatalogManager provides a clearAllTimezones method
         SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
                           "clearAllTimezones not implemented in CatalogManager");
         return Status::NOT_IMPLEMENTED;
@@ -299,7 +299,7 @@ namespace scratchbird::core
                                                 size_t &with_dst_count,
                                                 ErrorContext *ctx) -> Status
     {
-        // TODO: Implement when CatalogManager provides methods to iterate timezones
+        // Phase 4 Enhancement: Implement when CatalogManager provides methods to iterate timezones
         SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
                           "getLoadedTimezoneStats not implemented");
         return Status::NOT_IMPLEMENTED;

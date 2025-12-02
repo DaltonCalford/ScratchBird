@@ -51,7 +51,7 @@ void execute_sql(core::Database* db, const std::string& sql) {
 }
 
 int main() {
-    const std::string db_path = "test_views_db";
+    const std::string db_path = "/tmp/test_views_db";
 
     // Clean up any existing database
     std::filesystem::remove_all(db_path);

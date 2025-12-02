@@ -285,8 +285,8 @@ namespace sblr {
 
             case IndexType::GIST:
                 // GiST index has incomplete type issues - not fully integrated yet
-                // TODO: Complete GiST index integration and enable proper cleanup
-                // For now, leak the memory to avoid incomplete type errors
+                // Phase 3 Enhancement: Complete GiST index integration and enable proper cleanup
+                // For now, leak the memory to avoid incomplete type errors (temporary memory leak)
                 break;
 
             case IndexType::SPGIST:
@@ -310,7 +310,7 @@ namespace sblr {
                 break;
 
             case IndexType::COLUMNSTORE:
-                delete static_cast<core::ColumnstoreIndex*>(ptr);
+                delete static_cast<core::ColumnstoreIndexSimple*>(ptr);
                 break;
 
             case IndexType::LSM:
