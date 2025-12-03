@@ -20,6 +20,8 @@ namespace scratchbird::core
           current_user_id_(), // Zero UUID - will be set during authentication
           active_role_id_(),  // Zero UUID - no role active initially
           is_superuser_(false), // Will be set during authentication
+          session_user_id_(),   // WP-5 EXEC-M3: Zero UUID - set on first setCurrentUser() call
+          session_is_superuser_(false),  // WP-5 EXEC-M3: Set on first setCurrentUser() call
           isolation_level_(IsolationLevel::SNAPSHOT) // Default to SNAPSHOT
           ,
           is_read_only_(false), wait_for_locks_(true) // Default: wait for locks
@@ -36,6 +38,7 @@ namespace scratchbird::core
         std::memset(&current_user_id_, 0, sizeof(current_user_id_));
         std::memset(&active_role_id_, 0, sizeof(active_role_id_));
         std::memset(&current_schema_id_, 0, sizeof(current_schema_id_));
+        std::memset(&session_user_id_, 0, sizeof(session_user_id_));  // WP-5 EXEC-M3
         // Note: current_schema_id_ will be set to PUBLIC schema during initialize()
     }
 
@@ -67,6 +70,8 @@ namespace scratchbird::core
           current_xid_(other.current_xid_), xact_start_time_(other.xact_start_time_),
           current_user_id_(other.current_user_id_), active_role_id_(other.active_role_id_),
           is_superuser_(other.is_superuser_),
+          session_user_id_(other.session_user_id_),  // WP-5 EXEC-M3
+          session_is_superuser_(other.session_is_superuser_),  // WP-5 EXEC-M3
           current_schema_id_(other.current_schema_id_),
           isolation_level_(other.isolation_level_), is_read_only_(other.is_read_only_),
           wait_for_locks_(other.wait_for_locks_),
@@ -85,7 +90,9 @@ namespace scratchbird::core
         std::memset(&other.current_user_id_, 0, sizeof(other.current_user_id_));
         std::memset(&other.active_role_id_, 0, sizeof(other.active_role_id_));
         std::memset(&other.current_schema_id_, 0, sizeof(other.current_schema_id_));
+        std::memset(&other.session_user_id_, 0, sizeof(other.session_user_id_));  // WP-5 EXEC-M3
         other.is_superuser_ = false;
+        other.session_is_superuser_ = false;  // WP-5 EXEC-M3
     }
 
     ConnectionContext &ConnectionContext::operator=(ConnectionContext &&other) noexcept
@@ -114,6 +121,8 @@ namespace scratchbird::core
             current_user_id_ = other.current_user_id_;
             active_role_id_ = other.active_role_id_;
             is_superuser_ = other.is_superuser_;
+            session_user_id_ = other.session_user_id_;  // WP-5 EXEC-M3
+            session_is_superuser_ = other.session_is_superuser_;  // WP-5 EXEC-M3
             current_schema_id_ = other.current_schema_id_;
             isolation_level_ = other.isolation_level_;
             is_read_only_ = other.is_read_only_;
@@ -134,7 +143,9 @@ namespace scratchbird::core
             std::memset(&other.current_user_id_, 0, sizeof(other.current_user_id_));
             std::memset(&other.active_role_id_, 0, sizeof(other.active_role_id_));
             std::memset(&other.current_schema_id_, 0, sizeof(other.current_schema_id_));
+            std::memset(&other.session_user_id_, 0, sizeof(other.session_user_id_));  // WP-5 EXEC-M3
             other.is_superuser_ = false;
+            other.session_is_superuser_ = false;  // WP-5 EXEC-M3
         }
         return *this;
     }
@@ -893,6 +904,17 @@ namespace scratchbird::core
 
     void ConnectionContext::setCurrentUser(const ID& user_id, bool is_superuser)
     {
+        // WP-5 EXEC-M3: Initialize session user on first call (authentication)
+        // Session user is the original authenticated user and never changes
+        static const ID zero_id{};
+        if (session_user_id_ == zero_id)
+        {
+            session_user_id_ = user_id;
+            session_is_superuser_ = is_superuser;
+            LOG_DEBUG(TRANSACTION, "Set session user: proc_id=%u, session_user_id=%s, session_is_superuser=%d",
+                      proc_id_, user_id.toString().c_str(), is_superuser);
+        }
+
         current_user_id_ = user_id;
         is_superuser_ = is_superuser;
 

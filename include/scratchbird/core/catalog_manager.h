@@ -147,6 +147,33 @@ namespace scratchbird::core
     };
 
     /**
+     * MigrationHistoryInfo - Persisted record of completed table migrations
+     *
+     * WP-2 CAT-L2: Migration history persistence
+     *
+     * This structure records completed migrations for audit and diagnostics.
+     * Unlike TableMigrationState (in-memory only), this is persisted to disk.
+     */
+    struct MigrationHistoryInfo
+    {
+        ID history_id;              // Unique history record ID
+        ID migration_id;            // Original migration ID
+        ID table_id;                // Table that was migrated
+        uint16_t source_tablespace; // Source tablespace ID
+        uint16_t target_tablespace; // Target tablespace ID
+        MigrationPhase final_phase; // Final phase (COMPLETE, FAILED, ABORTED)
+        uint64_t migration_xid;     // XID when migration started
+        uint32_t total_pages;       // Total pages migrated
+        uint32_t pages_copied;      // Pages actually copied
+        uint64_t start_time;        // Timestamp when migration started
+        uint64_t end_time;          // Timestamp when migration completed/failed
+        uint32_t catch_up_iterations; // Number of catch-up iterations
+        uint64_t total_bytes_copied;  // Total bytes copied
+        uint8_t is_valid;           // MGA: 1 = valid, 0 = deleted
+        uint8_t padding[7];         // Alignment padding
+    };
+
+    /**
      * Table Migration Batch Processing Constants
      *
      * These constants control memory usage during table migration to prevent
@@ -348,6 +375,7 @@ namespace scratchbird::core
         // In-memory sequence state for atomic operations
         struct SequenceState {
             ID sequence_id;
+            ID schema_id;  // WP-2 CAT-M1: Track schema for cascade drop
             std::string name;  // Sequence name (for cleanup in drop)
             std::atomic<int64_t> current_value;
             int64_t increment_by;
@@ -433,6 +461,7 @@ namespace scratchbird::core
             uint8_t storage_type = 0;       // TOAST storage strategy
             bool with_timezone = false;     // For TIMESTAMP: WITH TIME ZONE
             uint16_t charset = 0;           // Character set (0 = inherit from table)
+            ID domain_id;                   // WP-2 CAT-M7: Domain ID (zero if not domain-based)
             uint16_t timezone_hint = 0;     // Timezone ID for display (0 = use connection default)
             uint32_t collation_id = 0;      // Collation ID (0 = inherit from table)
             std::string default_value;      // Serialized default (simple literals)
@@ -701,6 +730,26 @@ namespace scratchbird::core
             std::string external_id;    // AD/LDAP group ID (empty if local)
             GroupType group_type = GroupType::LOCAL;
             std::string group_metadata;  // JSON metadata (stored in TOAST on disk)
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        // WP-2 CAT-L1: Authentication method for group mappings
+        enum class AuthMethod : uint8_t
+        {
+            LDAP = 1,
+            KERBEROS = 2,
+            ACTIVE_DIRECTORY = 3
+        };
+
+        // WP-2 CAT-L1: Group mapping for external authentication
+        struct GroupMappingInfo
+        {
+            ID mapping_id;
+            std::string external_group_name;  // LDAP DN, Kerberos principal, AD SID
+            AuthMethod auth_method = AuthMethod::LDAP;
+            bool auto_create_users = false;  // Auto-create users on first login
+            ID internal_group_id;  // Maps to internal GroupInfo
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
         };
@@ -1309,6 +1358,10 @@ namespace scratchbird::core
         auto getSequenceIdByName(const std::string& name, ID& id_out,
                                  ErrorContext* ctx = nullptr) -> Status;
 
+        // WP-2 CAT-M1: List sequences by schema for CASCADE support
+        auto listSequencesBySchema(const ID& schema_id, std::vector<ID>& sequence_ids_out,
+                                   ErrorContext* ctx = nullptr) -> Status;
+
         // View operations (ALPHA Phase 1 - Views)
         auto createView(const ID& schema_id, const std::string& name,
                         const std::string& definition, bool or_replace, bool check_option,
@@ -1402,6 +1455,11 @@ namespace scratchbird::core
 
         auto listDomains(const ID& schema_id, std::vector<DomainInfo>& domains_out,
                          ErrorContext* ctx = nullptr) -> Status;
+
+        // WP-2 CAT-M7: Find columns using a specific domain for DROP DOMAIN dependency check
+        auto findColumnsByDomain(const ID& domain_id,
+                                 std::vector<std::pair<ID, std::string>>& table_column_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
 
         // ========================================================================
         // UDR Operations (Phase A CRUD - Catalog Cleanup)
@@ -1719,6 +1777,13 @@ namespace scratchbird::core
                                 ConstraintInfo& constraint_out,
                                 ErrorContext* ctx = nullptr) -> Status;
 
+        // WP-5 EXEC-M4: Find a constraint by name globally (for SET CONSTRAINTS named)
+        // Searches all tables for a constraint with the given name.
+        // Returns first match if name is unique, or errors if ambiguous.
+        auto findConstraintByNameGlobal(const std::string& constraint_name,
+                                       ConstraintInfo& constraint_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+
         // Get all constraints for a table
         auto getConstraintsForTable(const ID& table_id,
                                    std::vector<ConstraintInfo>& constraints_out,
@@ -1851,6 +1916,36 @@ namespace scratchbird::core
                           ErrorContext* ctx = nullptr) -> Status;
 
         // ========================================================================
+        // WP-2 CAT-L1: Group Mapping CRUD Operations
+        // ========================================================================
+
+        auto createGroupMapping(const std::string& external_group_name,
+                               AuthMethod auth_method, bool auto_create_users,
+                               const ID& internal_group_id, ID& mapping_id_out,
+                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto getGroupMapping(const ID& mapping_id, GroupMappingInfo& mapping_out,
+                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto getGroupMappingByName(const std::string& external_group_name,
+                                  AuthMethod auth_method,
+                                  GroupMappingInfo& mapping_out,
+                                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto listGroupMappings(std::vector<GroupMappingInfo>& mappings_out,
+                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto listGroupMappingsForGroup(const ID& internal_group_id,
+                                      std::vector<GroupMappingInfo>& mappings_out,
+                                      ErrorContext* ctx = nullptr) -> Status;
+
+        auto deleteGroupMapping(const ID& mapping_id,
+                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto deleteGroupMappingsForGroup(const ID& internal_group_id,
+                                        ErrorContext* ctx = nullptr) -> Status;
+
+        // ========================================================================
         // Session & Permission Operations (Phase 1.4 - Security System)
         // ========================================================================
 
@@ -1897,6 +1992,12 @@ namespace scratchbird::core
         auto revokePermission(const ID& object_id, PermissionObjectType object_type,
                              const ID& grantee_id, GranteeType grantee_type,
                              uint32_t privileges, ErrorContext* ctx = nullptr) -> Status;
+
+        // WP-5 EXEC-M5: Revoke permission with CASCADE support
+        // When cascade=true, also revokes permissions that the grantee had granted to others
+        auto revokePermissionCascade(const ID& object_id, PermissionObjectType object_type,
+                                    const ID& grantee_id, GranteeType grantee_type,
+                                    uint32_t privileges, ErrorContext* ctx = nullptr) -> Status;
 
         auto hasPermission(const ID& user_id, const ID& object_id,
                           PermissionObjectType object_type, Privilege privilege,
@@ -2341,6 +2442,57 @@ namespace scratchbird::core
          */
         auto completeMigration(const ID &migration_id, ErrorContext *ctx = nullptr) -> Status;
 
+        // =====================================================================
+        // WP-2 CAT-L2: Migration History CRUD
+        // =====================================================================
+
+        /**
+         * recordMigrationHistory - Persist a migration record to history table
+         *
+         * @param state Completed migration state to persist
+         * @param ctx Error context
+         * @return Status::OK on success
+         *
+         * Called automatically by completeMigration().
+         * Records are never deleted, only marked invalid for garbage collection.
+         */
+        auto recordMigrationHistory(const TableMigrationState &state,
+                                   ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * getMigrationHistory - Get a specific migration history record
+         *
+         * @param history_id History record ID
+         * @param info_out Output structure
+         * @param ctx Error context
+         * @return Status::OK if found, Status::NOT_FOUND otherwise
+         */
+        auto getMigrationHistory(const ID &history_id,
+                                MigrationHistoryInfo *info_out,
+                                ErrorContext *ctx = nullptr) -> Status;
+
+        /**
+         * listMigrationHistory - List all migration history records
+         *
+         * @param ctx Error context
+         * @return Vector of migration history records
+         *
+         * Returns all valid history records sorted by start_time descending.
+         */
+        auto listMigrationHistory(ErrorContext *ctx = nullptr)
+            -> std::vector<MigrationHistoryInfo>;
+
+        /**
+         * listMigrationHistoryForTable - List migration history for a specific table
+         *
+         * @param table_id Table ID
+         * @param ctx Error context
+         * @return Vector of migration history records for the table
+         */
+        auto listMigrationHistoryForTable(const ID &table_id,
+                                         ErrorContext *ctx = nullptr)
+            -> std::vector<MigrationHistoryInfo>;
+
         /**
          * getTableIndexes - Get all indexes for a table
          *
@@ -2584,11 +2736,24 @@ namespace scratchbird::core
         auto listProcedures(std::vector<ProcedureInfo> &procedures_out,
                            ErrorContext *ctx = nullptr) -> Status;
 
+        // WP-5 EXEC-M6: Public TOAST loading for CHECK expressions and other catalog expressions
+        // Load a string from TOAST storage using its OID
+        // @param oid TOAST value ID
+        // @param xmin Transaction ID for visibility (use 0 for catalog operations)
+        // @param str_out Output string
+        // @param ctx Error context
+        // @return Status::OK on success
+        auto loadStringFromToast(uint32_t oid, uint64_t xmin,
+                                std::string& str_out, ErrorContext* ctx = nullptr) -> Status;
 
     private:
         // Internal helper functions (assume mutex_ is already held)
         auto getColumnInternal(const ID &table_id, const std::string &column_name,
                                ColumnInfo &info, ErrorContext *ctx) -> Status;
+
+        // WP-2 CAT-M3: Extract column references from expression bytecode
+        static void extractColumnRefsFromBytecode(const std::vector<uint8_t>& bytecode,
+                                                   std::vector<std::string>& column_names_out);
 
         Database *db_;
         mutable std::mutex mutex_;
@@ -2694,14 +2859,12 @@ namespace scratchbird::core
         // TODO Phase 6: Implement full user lookup from Users table
         auto resolveOwnerUUID(const std::string &owner_name) -> ID;
 
-        // TOAST helpers for storing/loading strings (Phase 3.4.6 - RLS Expression Storage)
+        // TOAST helpers for storing strings (Phase 3.4.6 - RLS Expression Storage)
         // Store a string in TOAST and return its OID
         auto storeStringInToast(const std::string& str, uint64_t xmin,
                                uint32_t& oid_out, ErrorContext* ctx = nullptr) -> Status;
 
-        // Load a string from TOAST using its OID
-        auto loadStringFromToast(uint32_t oid, uint64_t xmin,
-                                std::string& str_out, ErrorContext* ctx = nullptr) -> Status;
+        // Note: loadStringFromToast is in public section (WP-5 EXEC-M6)
 
         // Index TID update helper (Phase 4 Task 4.1.5)
         // Updates all index entries for a table to reference new GPIDs after table migration
@@ -2834,6 +2997,7 @@ namespace scratchbird::core
         uint32_t server_registry_table_page_ = 0;   // Server registry (Phase B - Distributed MVCC)
         uint32_t udr_engines_table_page_ = 0;       // UDR engines (Phase B - UDR Plugin)
         uint32_t udr_modules_table_page_ = 0;       // UDR modules (Phase B - UDR Plugin)
+        uint32_t migration_history_table_page_ = 0; // Migration history (WP-2 CAT-L2)
 
         // Internal methods
         auto writeCatalogRoot(ErrorContext *ctx) -> Status;
@@ -2841,6 +3005,29 @@ namespace scratchbird::core
 
         // Initialize TOAST for policy expressions (called without mutex to avoid deadlock)
         auto initializePolicyToast(ErrorContext *ctx) -> Status;
+
+        /**
+         * getMVRefreshSQL - Get SQL statements to refresh a materialized view
+         *
+         * WP-2 CAT-1/2: MV refresh implementation (executed at caller layer)
+         *
+         * @param view_id View ID
+         * @param delete_sql_out Output for DELETE statement
+         * @param insert_sql_out Output for INSERT statement
+         * @param ctx Error context
+         * @return Status::OK on success
+         *
+         * Returns the SQL statements needed to refresh a materialized view:
+         * 1. DELETE FROM <storage_table> - Clear existing data
+         * 2. INSERT INTO <storage_table> <view_definition> - Repopulate
+         *
+         * The caller (typically Executor) is responsible for executing these.
+         * This design avoids circular dependencies between core and sblr.
+         */
+        auto getMVRefreshSQL(const ID &view_id,
+                            std::string &delete_sql_out,
+                            std::string &insert_sql_out,
+                            ErrorContext *ctx = nullptr) -> Status;
 
         // Helper to write a record to a catalog heap page
         template <typename RecordType>

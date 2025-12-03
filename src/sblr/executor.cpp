@@ -103,6 +103,63 @@ namespace scratchbird
             }
         }
 
+        // ===== SQL LIKE Pattern Matching Helper =====
+        // WP-4 EXEC-L2: Implement full SQL LIKE pattern matching
+        // Supports: % (any sequence), _ (single char), \ (escape)
+        static bool matchSqlLike(const std::string& str, const std::string& pattern, char escape = '\\') {
+            size_t s = 0, p = 0;
+            size_t star_p = std::string::npos, star_s = 0;
+
+            while (s < str.size()) {
+                if (p < pattern.size()) {
+                    // Check for escape character
+                    if (escape != '\0' && pattern[p] == escape && p + 1 < pattern.size()) {
+                        p++;
+                        if (str[s] == pattern[p]) {
+                            s++;
+                            p++;
+                            continue;
+                        }
+                        // Escaped char doesn't match
+                        if (star_p != std::string::npos) {
+                            p = star_p + 1;
+                            s = ++star_s;
+                            continue;
+                        }
+                        return false;
+                    }
+
+                    if (pattern[p] == '%') {
+                        star_p = p++;
+                        star_s = s;
+                        continue;
+                    }
+
+                    if (pattern[p] == '_' || pattern[p] == str[s]) {
+                        s++;
+                        p++;
+                        continue;
+                    }
+                }
+
+                // Mismatch - backtrack to last %
+                if (star_p != std::string::npos) {
+                    p = star_p + 1;
+                    s = ++star_s;
+                    continue;
+                }
+
+                return false;
+            }
+
+            // Skip trailing % in pattern
+            while (p < pattern.size() && pattern[p] == '%') {
+                p++;
+            }
+
+            return p == pattern.size();
+        }
+
         // ===== JSON Helper Functions =====
 
         // Parse JSONPath expression ($.field.subfield[0].nested)
@@ -4675,22 +4732,67 @@ namespace scratchbird
 
                 // For STORED generated columns, we need to compute the value
                 // The generation_expression contains serialized bytecode
-                // For now, mark as placeholder - full implementation requires expression evaluation
-                // Phase 3 Enhancement: Deserialize generation_expression bytecode and evaluate against current row values
-                // This requires creating an ExpressionEvaluator to process the stored bytecode
+                // WP-5 EXEC-9: Evaluate GENERATED column expressions
                 if (!col.generation_expression.empty())
                 {
-                    // Placeholder: For complex expressions, we'd need to:
-                    // 1. Deserialize the bytecode from hex string
-                    // 2. Create an ExpressionEvaluator
-                    // 3. Evaluate against the current values vector
-                    // 4. Store the result
+                    // Deserialize the bytecode from hex string
+                    std::vector<uint8_t> expr_bytecode = hexToBytes(col.generation_expression);
+                    if (expr_bytecode.empty())
+                    {
+                        DEBUG_LOG_DB("Failed to deserialize GENERATED expression for column "
+                                   << col.column_name << " - using NULL");
+                        col_names.push_back(col.column_name);
+                        col_indices.push_back(i);
+                        values.push_back(Value::makeNull());
+                        continue;
+                    }
 
-                    // For now, insert NULL as placeholder for GENERATED columns
-                    // This allows the schema to be created and used
+                    // Save execution state
+                    const uint8_t *saved_bytecode = bytecode_;
+                    size_t saved_bytecode_size = bytecode_size_;
+                    size_t saved_pc = pc_;
+                    const std::vector<Value> *saved_row_values = current_row_values_;
+                    const std::vector<core::CatalogManager::ColumnInfo> *saved_row_columns = current_row_columns_;
+
+                    // Set up row context for column references in the expression
+                    // The expression can reference columns that have values in the current INSERT
+                    current_row_values_ = &values;
+                    current_row_columns_ = &all_columns;
+
+                    // Set up bytecode for expression evaluation
+                    bytecode_ = expr_bytecode.data();
+                    bytecode_size_ = expr_bytecode.size();
+                    pc_ = 0;
+
+                    Value generated_val = Value::makeNull();
+                    try
+                    {
+                        // Evaluate the GENERATED expression
+                        evaluateExpression();
+
+                        // Get result from stack
+                        if (!stack_.empty())
+                        {
+                            generated_val = stack_.top();
+                            stack_.pop();
+                        }
+                    }
+                    catch (...)
+                    {
+                        DEBUG_LOG_DB("GENERATED expression evaluation failed for column "
+                                   << col.column_name << " - using NULL");
+                    }
+
+                    // Restore execution state
+                    bytecode_ = saved_bytecode;
+                    bytecode_size_ = saved_bytecode_size;
+                    pc_ = saved_pc;
+                    current_row_values_ = saved_row_values;
+                    current_row_columns_ = saved_row_columns;
+
                     col_names.push_back(col.column_name);
                     col_indices.push_back(i);
-                    values.push_back(Value::makeNull());
+                    values.push_back(generated_val);
                 }
             }
 
@@ -6973,8 +7075,20 @@ namespace scratchbird
             if (val_y.isNull() || val_x.isNull())
                 return;
 
-            // Phase 4 Enhancement: Handle DISTINCT for 2-variable functions if needed
-            // Note: DISTINCT doesn't make much sense for CORR/COVAR (skipped)
+            // WP-5 EXEC-M9/L6: Handle DISTINCT for 2-variable functions
+            // While DISTINCT doesn't make mathematical sense for correlation/covariance
+            // (duplicate points should contribute to the statistical measure),
+            // SQL standard allows DISTINCT on any aggregate, so we support it.
+            // Use composite key format: "y_value\0x_value" to track distinct pairs.
+            if (distinct)
+            {
+                // Create composite key with null separator to avoid collision
+                // e.g., values "1" and "23" vs "12" and "3" both become "1\023" without separator
+                std::string key = val_y.toString() + '\0' + val_x.toString();
+                if (distinct_values.find(key) != distinct_values.end())
+                    return; // Already seen this (y, x) pair
+                distinct_values.insert(key);
+            }
 
             double x = val_x.toDouble();
             double y = val_y.toDouble();
@@ -7244,6 +7358,109 @@ namespace scratchbird
                 h ^= std::hash<std::string>{}(v.toString()) + 0x9e3779b9 + (h << 6) + (h >> 2);
             }
             return h;
+        }
+
+        // EXEC-14: Execute aggregate function in scalar/expression context
+        // When an aggregate opcode (AGG_SUM, AGG_MAX, etc.) is encountered during
+        // expression evaluation without top-level AGG_INIT, this function executes
+        // the aggregate inline by scanning the current table and returning a single value.
+        // func_type: 0=COUNT, 1=SUM, 2=AVG, 3=MIN, 4=MAX, 5=ARRAY_AGG
+        Value Executor::executeScalarAggregate(uint8_t func_type, size_t arg_expr_pc)
+        {
+            // We need a table context to scan
+            if (current_table_.empty())
+            {
+                error("Aggregate function used in expression context requires a table. "
+                      "Use a subquery like: SELECT (SELECT MAX(col) FROM table)");
+            }
+
+            // Look up schema and table info from catalog
+            core::CatalogManager::SchemaInfo schema_info;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                error("Failed to get PUBLIC schema for scalar aggregate");
+            }
+
+            core::CatalogManager::TableInfo table_info;
+            status = db_->catalog_manager()->getTable(schema_info.schema_id, current_table_, table_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                error("Table not found for scalar aggregate: " + current_table_);
+            }
+
+            // Get column info
+            std::vector<core::CatalogManager::ColumnInfo> all_columns;
+            status = db_->catalog_manager()->getColumns(table_info.table_id, all_columns, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                error("Failed to get columns for table: " + current_table_);
+            }
+
+            // Map func_type to AggregateAccumulator::AggFunc
+            // func_type: 0=COUNT, 1=SUM, 2=AVG, 3=MIN, 4=MAX, 5=ARRAY_AGG
+            AggregateAccumulator::AggFunc func;
+            switch (func_type)
+            {
+                case 0: func = AggregateAccumulator::AggFunc::COUNT; break;
+                case 1: func = AggregateAccumulator::AggFunc::SUM; break;
+                case 2: func = AggregateAccumulator::AggFunc::AVG; break;
+                case 3: func = AggregateAccumulator::AggFunc::MIN; break;
+                case 4: func = AggregateAccumulator::AggFunc::MAX; break;
+                case 5: func = AggregateAccumulator::AggFunc::ARRAY_AGG; break;
+                default: error("Invalid aggregate function type");
+            }
+
+            // Create accumulator for the aggregate function
+            AggregateAccumulator accumulator(func, false);  // No DISTINCT support for now
+
+            // Create table scan iterator
+            auto scan_iter = db_->storage_engine()->createScan(table_info.table_id, nullptr);
+            if (!scan_iter)
+            {
+                error("Failed to create table scan for scalar aggregate");
+            }
+
+            // Scan all rows and accumulate
+            core::Tuple tuple;
+            while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+            {
+                // Deserialize tuple
+                std::vector<Value> row_values;
+                if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
+                {
+                    continue;  // Skip malformed tuples
+                }
+
+                // Evaluate the argument expression at the saved PC
+                size_t saved_pc = pc_;
+                pc_ = arg_expr_pc;
+                current_row_values_ = &row_values;
+                current_row_columns_ = &all_columns;
+
+                try
+                {
+                    evaluateExpression();
+                    Value arg_val = pop();
+                    current_row_values_ = nullptr;
+                    current_row_columns_ = nullptr;
+                    pc_ = saved_pc;
+
+                    // Accumulate the value
+                    accumulator.accumulate(arg_val);
+                }
+                catch (...)
+                {
+                    current_row_values_ = nullptr;
+                    current_row_columns_ = nullptr;
+                    pc_ = saved_pc;
+                    throw;
+                }
+            }
+
+            // Return finalized result
+            return accumulator.finalize();
         }
 
         void Executor::executeAggregate(
@@ -8771,14 +8988,57 @@ namespace scratchbird
                         error("Unknown window function opcode");
                 }
 
-                // Read function arguments (these would need to be evaluated per row)
-                // For now, we'll skip detailed parsing and just note the structure
+                // WP-5 EXEC-12: Read and evaluate function arguments
+                // Arguments are inline bytecode expressions that need to be evaluated
                 uint32_t arg_count = readInt32();
                 for (uint32_t a = 0; a < arg_count; a++)
                 {
-                    // Skip argument expressions for now
-                    // TODO: Parse and store argument expressions
-                    error("Window function argument parsing not fully implemented");
+                    // Evaluate the argument expression - it's inline in the bytecode stream
+                    evaluateExpression();
+
+                    // Get result from stack and store in spec.args
+                    if (!stack_.empty())
+                    {
+                        spec.args.push_back(stack_.top());
+                        stack_.pop();
+                    }
+                    else
+                    {
+                        // Expression produced no result - use NULL
+                        spec.args.push_back(Value::makeNull());
+                    }
+                }
+
+                // For LAG/LEAD functions, extract offset and default from args
+                if (spec.func_type == WindowFunctionSpec::FuncType::LAG ||
+                    spec.func_type == WindowFunctionSpec::FuncType::LEAD)
+                {
+                    // LAG/LEAD(expr [, offset [, default]])
+                    // args[0] = value expression (evaluated per row later)
+                    // args[1] = offset (integer, default 1)
+                    // args[2] = default value (default NULL)
+                    if (spec.args.size() >= 2)
+                    {
+                        // Extract offset
+                        const Value& offset_val = spec.args[1];
+                        if (!offset_val.isNull())
+                        {
+                            // Accept INT32 or INT64 for offset
+                            if (offset_val.type() == DataType::INT32)
+                            {
+                                spec.lag_lead_offset = static_cast<int64_t>(offset_val.getInt32());
+                            }
+                            else if (offset_val.type() == DataType::INT64)
+                            {
+                                spec.lag_lead_offset = offset_val.getInt64();
+                            }
+                        }
+                    }
+                    if (spec.args.size() >= 3)
+                    {
+                        // Extract default value
+                        spec.lag_lead_default = spec.args[2];
+                    }
                 }
 
                 // Parse window specification
@@ -8795,11 +9055,53 @@ namespace scratchbird
                     {
                         error("Expected PARTITION_BY opcode");
                     }
-                    // For now, assume column references
-                    // TODO: Full expression support
+                    // WP-5 EXEC-M8: Read partition expressions
+                    // For COLUMN_REF expressions, extract the column name and resolve to index
+                    // For complex expressions, we need full expression evaluation (Phase 4)
                     for (uint32_t p = 0; p < partition_count; p++)
                     {
-                        spec.partition_cols.push_back(p); // Placeholder
+                        Opcode expr_op = static_cast<Opcode>(readByte());
+                        if (expr_op == Opcode::COLUMN_REF)
+                        {
+                            // COLUMN_REF format: [opcode] [qualifier_len:4] [qualifier] [name_len:4] [name]
+                            std::string qualifier = readString(); // Usually empty
+                            std::string col_name = readString();
+
+                            // Look up column index in input result set
+                            // The input result set has column names from the SELECT list
+                            size_t col_idx = 0;
+                            bool found = false;
+                            if (input_result_set)
+                            {
+                                for (size_t c = 0; c < input_result_set->columnCount(); c++)
+                                {
+                                    if (input_result_set->columnName(c) == col_name)
+                                    {
+                                        col_idx = c;
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!found)
+                            {
+                                // Column not found in result set - use position as fallback
+                                col_idx = p;
+                                DEBUG_LOG_DB("PARTITION BY column '" << col_name
+                                           << "' not found in result set, using position " << p);
+                            }
+                            spec.partition_cols.push_back(col_idx);
+                        }
+                        else
+                        {
+                            // Complex expression - not yet supported for PARTITION BY
+                            // Full expression support would require evaluating the expression
+                            // for each row during window execution
+                            // For now, report error - user should use simple column references
+                            error("PARTITION BY with complex expressions (opcode " +
+                                  std::to_string(static_cast<int>(expr_op)) +
+                                  ") is not yet supported. Please use simple column references.");
+                        }
                     }
                 }
 
@@ -8811,10 +9113,46 @@ namespace scratchbird
                     {
                         error("Expected WINDOW_ORDER_BY opcode");
                     }
+                    // WP-5 EXEC-M8: Read order expressions (same approach as PARTITION BY)
                     for (uint32_t o = 0; o < order_count; o++)
                     {
-                        spec.order_cols.push_back(o); // Placeholder
-                        spec.order_asc.push_back(true); // Placeholder
+                        Opcode expr_op = static_cast<Opcode>(readByte());
+                        if (expr_op == Opcode::COLUMN_REF)
+                        {
+                            std::string qualifier = readString();
+                            std::string col_name = readString();
+
+                            // Look up column index in input result set
+                            size_t col_idx = 0;
+                            bool found = false;
+                            if (input_result_set)
+                            {
+                                for (size_t c = 0; c < input_result_set->columnCount(); c++)
+                                {
+                                    if (input_result_set->columnName(c) == col_name)
+                                    {
+                                        col_idx = c;
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!found)
+                            {
+                                col_idx = o;
+                                DEBUG_LOG_DB("ORDER BY column '" << col_name
+                                           << "' not found in result set, using position " << o);
+                            }
+                            spec.order_cols.push_back(col_idx);
+                        }
+                        else
+                        {
+                            error("ORDER BY with complex expressions (opcode " +
+                                  std::to_string(static_cast<int>(expr_op)) +
+                                  ") is not yet supported. Please use simple column references.");
+                        }
+                        // Default sort direction: ascending
+                        spec.order_asc.push_back(true);
                     }
                 }
 
@@ -8939,34 +9277,42 @@ namespace scratchbird
                     }
                     else if (spec.func_type == WindowFunctionSpec::FuncType::LAG)
                     {
-                        // LAG(expr, offset, default) - access value from previous row
-                        // Simplified: offset = 1 (default), access first column
-                        // Full implementation would require argument parsing for expr and offset
-                        if (row_idx > 0 && input_result_set->columnCount() > 0)
+                        // WP-5 EXEC-12/13: LAG(expr, offset, default) - access value from previous row
+                        // spec.lag_lead_offset set from args[1] during parsing (default 1)
+                        // spec.lag_lead_default set from args[2] during parsing (default NULL)
+                        // Note: Current simplified implementation uses first column for expr
+                        int64_t offset = spec.lag_lead_offset;
+
+                        // Calculate target row (row_idx - offset)
+                        if (offset >= 0 && static_cast<size_t>(offset) <= row_idx && input_result_set->columnCount() > 0)
                         {
-                            // Get value from previous row, first column
-                            result = input_result_set->getValue(row_idx - 1, 0);
+                            size_t target_row = row_idx - static_cast<size_t>(offset);
+                            result = input_result_set->getValue(target_row, 0);
                         }
                         else
                         {
-                            // First row or no columns - return NULL
-                            result = core::TypedValue::makeNull();
+                            // Target row is before beginning of frame - return default
+                            result = spec.lag_lead_default;
                         }
                     }
                     else if (spec.func_type == WindowFunctionSpec::FuncType::LEAD)
                     {
-                        // LEAD(expr, offset, default) - access value from next row
-                        // Simplified: offset = 1 (default), access first column
-                        // Full implementation would require argument parsing for expr and offset
-                        if (row_idx + 1 < input_result_set->rowCount() && input_result_set->columnCount() > 0)
+                        // WP-5 EXEC-12/13: LEAD(expr, offset, default) - access value from next row
+                        // spec.lag_lead_offset set from args[1] during parsing (default 1)
+                        // spec.lag_lead_default set from args[2] during parsing (default NULL)
+                        // Note: Current simplified implementation uses first column for expr
+                        int64_t offset = spec.lag_lead_offset;
+
+                        // Calculate target row (row_idx + offset)
+                        size_t target_row = row_idx + static_cast<size_t>(offset);
+                        if (offset >= 0 && target_row < input_result_set->rowCount() && input_result_set->columnCount() > 0)
                         {
-                            // Get value from next row, first column
-                            result = input_result_set->getValue(row_idx + 1, 0);
+                            result = input_result_set->getValue(target_row, 0);
                         }
                         else
                         {
-                            // Last row or no columns - return NULL
-                            result = core::TypedValue::makeNull();
+                            // Target row is beyond end of frame - return default
+                            result = spec.lag_lead_default;
                         }
                     }
                     else if (spec.func_type == WindowFunctionSpec::FuncType::FIRST_VALUE)
@@ -9002,11 +9348,47 @@ namespace scratchbird
                     }
                     else if (spec.func_type == WindowFunctionSpec::FuncType::NTH_VALUE)
                     {
-                        // NTH_VALUE(expr, n) - nth value in window frame
-                        // Requires argument parsing to get 'n' parameter
-                        // TODO: Implement once window function argument parsing is available
-                        // For now, return NULL as a clear indicator of incomplete implementation
-                        result = core::TypedValue::makeNull();
+                        // WP-5 EXEC-13: NTH_VALUE(expr, n) - nth value in window frame
+                        // args[0] = expr (value expression)
+                        // args[1] = n (position, 1-based)
+                        // Note: Current simplified implementation uses first column for expr
+                        // and gets the nth row in the result set as the frame
+
+                        // Default to 1 if no argument provided
+                        int64_t nth = 1;
+                        if (spec.args.size() >= 2 && !spec.args[1].isNull())
+                        {
+                            if (spec.args[1].type() == DataType::INT32)
+                            {
+                                nth = static_cast<int64_t>(spec.args[1].getInt32());
+                            }
+                            else if (spec.args[1].type() == DataType::INT64)
+                            {
+                                nth = spec.args[1].getInt64();
+                            }
+                        }
+
+                        // NTH_VALUE uses 1-based indexing (n=1 is first value)
+                        // Return NULL if n < 1 (invalid) or n > frame size
+                        if (nth < 1)
+                        {
+                            result = core::TypedValue::makeNull();
+                        }
+                        else
+                        {
+                            // Convert to 0-based index
+                            size_t nth_idx = static_cast<size_t>(nth - 1);
+
+                            if (nth_idx < input_result_set->rowCount() && input_result_set->columnCount() > 0)
+                            {
+                                result = input_result_set->getValue(nth_idx, 0);
+                            }
+                            else
+                            {
+                                // n is beyond frame size - return NULL
+                                result = core::TypedValue::makeNull();
+                            }
+                        }
                     }
                     else
                     {
@@ -11340,8 +11722,8 @@ namespace scratchbird
                     break;
                 }
 
-                // Aggregate functions (Note: proper aggregation requires SELECT-level support)
-                // These implementations assume aggregation context is handled by caller
+                // Aggregate functions (EXEC-14: Scalar aggregate support)
+                // When encountered in expression context, execute as inline single-group aggregation
                 case Opcode::AGG_SUM:
                 case Opcode::AGG_AVG:
                 case Opcode::AGG_MIN:
@@ -11355,11 +11737,68 @@ namespace scratchbird
                         error("Aggregate function expects 1 argument");
                     }
 
-                    // For now, just evaluate the argument expression
-                    // Full aggregation support requires refactoring SELECT execution
-                    // to accumulate values across rows
-                    error("Aggregate functions require full aggregation support (not yet "
-                          "implemented in executor)");
+                    // EXEC-14: Execute aggregate inline by scanning the current table
+                    // The argument expression starts at the current PC
+                    size_t arg_expr_pc = pc_;
+
+                    // Map opcode to func_type: 0=COUNT, 1=SUM, 2=AVG, 3=MIN, 4=MAX, 5=ARRAY_AGG
+                    uint8_t func_type;
+                    switch (op)
+                    {
+                        case Opcode::AGG_COUNT: func_type = 0; break;
+                        case Opcode::AGG_SUM: func_type = 1; break;
+                        case Opcode::AGG_AVG: func_type = 2; break;
+                        case Opcode::AGG_MIN: func_type = 3; break;
+                        case Opcode::AGG_MAX: func_type = 4; break;
+                        case Opcode::ARRAY_AGG: func_type = 5; break;
+                        default:
+                            error("Unexpected aggregate opcode");
+                    }
+
+                    // Skip over the argument expression in the bytecode stream
+                    // We need to find where the expression ends to continue after the aggregate
+                    int depth = 0;
+                    while (pc_ < bytecode_size_)
+                    {
+                        Opcode skip_op = static_cast<Opcode>(readByte());
+
+                        if (skip_op == Opcode::LITERAL_INT32)
+                        {
+                            pc_ += 4;
+                            depth++;
+                        }
+                        else if (skip_op == Opcode::LITERAL_INT64)
+                        {
+                            pc_ += 8;
+                            depth++;
+                        }
+                        else if (skip_op == Opcode::LITERAL_DOUBLE)
+                        {
+                            pc_ += 8;
+                            depth++;
+                        }
+                        else if (skip_op == Opcode::LITERAL_STRING || skip_op == Opcode::COLUMN_REF)
+                        {
+                            uint32_t len = readInt32();
+                            pc_ += len;
+                            depth++;
+                        }
+                        else if (skip_op == Opcode::LITERAL_NULL)
+                        {
+                            depth++;
+                        }
+                        else if (skip_op >= Opcode::EXPR_ADD && skip_op <= Opcode::EXPR_OR)
+                        {
+                            depth--;  // Binary operators consume 2, produce 1
+                        }
+
+                        if (depth == 1)
+                            break;  // Found complete expression
+                    }
+
+                    // Execute the scalar aggregate
+                    Value result = executeScalarAggregate(func_type, arg_expr_pc);
+                    push(result);
                     break;
                 }
 
@@ -13249,7 +13688,58 @@ namespace scratchbird
                                         {
                                             oss << spatial::WKTParser::polygonToWKT(g->getPolygon());
                                         }
-                                        // Phase 4 Enhancement: Handle nested multi-geometry types if needed
+                                        // WP-4 EXEC-L3: Handle multi-geometry types in GEOMETRYCOLLECTION
+                                        else if (g->type() == core::DataType::MULTIPOINT)
+                                        {
+                                            core::MultiPoint mp = g->getMultiPoint();
+                                            oss << "MULTIPOINT(";
+                                            for (size_t k = 0; k < mp.points.size(); k++)
+                                            {
+                                                if (k > 0) oss << ", ";
+                                                oss << mp.points[k].x << " " << mp.points[k].y;
+                                            }
+                                            oss << ")";
+                                        }
+                                        else if (g->type() == core::DataType::MULTILINESTRING)
+                                        {
+                                            core::MultiLineString mls = g->getMultiLineString();
+                                            oss << "MULTILINESTRING(";
+                                            for (size_t k = 0; k < mls.linestrings.size(); k++)
+                                            {
+                                                if (k > 0) oss << ", ";
+                                                oss << "(";
+                                                for (size_t l = 0; l < mls.linestrings[k].points.size(); l++)
+                                                {
+                                                    if (l > 0) oss << ", ";
+                                                    oss << mls.linestrings[k].points[l].x << " " << mls.linestrings[k].points[l].y;
+                                                }
+                                                oss << ")";
+                                            }
+                                            oss << ")";
+                                        }
+                                        else if (g->type() == core::DataType::MULTIPOLYGON)
+                                        {
+                                            core::MultiPolygon mpoly = g->getMultiPolygon();
+                                            oss << "MULTIPOLYGON(";
+                                            for (size_t k = 0; k < mpoly.polygons.size(); k++)
+                                            {
+                                                if (k > 0) oss << ", ";
+                                                oss << "(";
+                                                for (size_t l = 0; l < mpoly.polygons[k].rings.size(); l++)
+                                                {
+                                                    if (l > 0) oss << ", ";
+                                                    oss << "(";
+                                                    for (size_t m = 0; m < mpoly.polygons[k].rings[l].size(); m++)
+                                                    {
+                                                        if (m > 0) oss << ", ";
+                                                        oss << mpoly.polygons[k].rings[l][m].x << " " << mpoly.polygons[k].rings[l][m].y;
+                                                    }
+                                                    oss << ")";
+                                                }
+                                                oss << ")";
+                                            }
+                                            oss << ")";
+                                        }
                                     }
                                     oss << ")";
                                     wkt = oss.str();
@@ -19998,33 +20488,57 @@ namespace scratchbird
                 static_cast<core::CatalogManager::PermissionObjectType>(object_type_byte);
 
             // Look up object ID based on object type
-            // Phase 2.1: Get current schema from connection context
-            // Note: Schema-qualified name handling (schema.table) requires parser updates (Phase 2 Enhancement)
+            // WP-5 EXEC-M10/L5: Support schema-qualified names (schema.object)
             core::ID object_id;
             if (object_type == core::CatalogManager::PermissionObjectType::TABLE)
             {
-                // Get current schema from connection context
-                core::ID schema_id;
-                if (conn_ctx_)
+                // WP-5 EXEC-M10/L5: Parse schema-qualified name (schema.table)
+                std::string schema_name;
+                std::string table_name = object_name;
+                size_t dot_pos = object_name.find('.');
+                if (dot_pos != std::string::npos)
                 {
-                    schema_id = conn_ctx_->getCurrentSchemaId();
+                    schema_name = object_name.substr(0, dot_pos);
+                    table_name = object_name.substr(dot_pos + 1);
                 }
-                // If not set, use PUBLIC schema
-                core::ID zero_id;
-                std::memset(&zero_id, 0, sizeof(zero_id));
-                if (std::memcmp(&schema_id, &zero_id, sizeof(core::ID)) == 0)
+
+                // Resolve schema ID
+                core::ID schema_id;
+                if (!schema_name.empty())
                 {
-                    core::CatalogManager::SchemaInfo public_schema;
-                    auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", public_schema, nullptr);
-                    if (schema_status == core::Status::OK)
+                    // Use explicit schema from qualified name
+                    core::CatalogManager::SchemaInfo schema_info;
+                    auto schema_status = db_->catalog_manager()->getSchema(schema_name, schema_info, &err_ctx);
+                    if (schema_status != core::Status::OK)
                     {
-                        schema_id = public_schema.schema_id;
+                        error("Schema '" + schema_name + "' not found");
+                    }
+                    schema_id = schema_info.schema_id;
+                }
+                else
+                {
+                    // No schema qualifier - use connection context or PUBLIC
+                    if (conn_ctx_)
+                    {
+                        schema_id = conn_ctx_->getCurrentSchemaId();
+                    }
+                    // If not set, use PUBLIC schema
+                    core::ID zero_id;
+                    std::memset(&zero_id, 0, sizeof(zero_id));
+                    if (std::memcmp(&schema_id, &zero_id, sizeof(core::ID)) == 0)
+                    {
+                        core::CatalogManager::SchemaInfo public_schema;
+                        auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", public_schema, nullptr);
+                        if (schema_status == core::Status::OK)
+                        {
+                            schema_id = public_schema.schema_id;
+                        }
                     }
                 }
 
                 core::CatalogManager::TableInfo table_info;
                 auto get_obj_status = db_->catalog_manager()->getTable(
-                    schema_id, object_name, table_info, &err_ctx);
+                    schema_id, table_name, table_info, &err_ctx);
                 if (get_obj_status != core::Status::OK)
                 {
                     error("Table '" + object_name + "' not found");
@@ -20045,9 +20559,64 @@ namespace scratchbird
                     }
                 }
             }
+            else if (object_type == core::CatalogManager::PermissionObjectType::SCHEMA)
+            {
+                // WP-5 EXEC-M7: Schema object lookup
+                core::CatalogManager::SchemaInfo schema_info;
+                auto get_obj_status = db_->catalog_manager()->getSchema(object_name, schema_info, &err_ctx);
+                if (get_obj_status != core::Status::OK)
+                {
+                    error("Schema '" + object_name + "' not found");
+                }
+                object_id = schema_info.schema_id;
+            }
+            else if (object_type == core::CatalogManager::PermissionObjectType::SEQUENCE)
+            {
+                // WP-5 EXEC-M7: Sequence object lookup
+                core::ID seq_id;
+                auto get_obj_status = db_->catalog_manager()->getSequenceIdByName(object_name, seq_id, &err_ctx);
+                if (get_obj_status != core::Status::OK)
+                {
+                    error("Sequence '" + object_name + "' not found");
+                }
+                object_id = seq_id;
+            }
+            else if (object_type == core::CatalogManager::PermissionObjectType::FUNCTION)
+            {
+                // WP-5 EXEC-M7: Function object lookup
+                core::CatalogManager::FunctionInfo func_info;
+                auto get_obj_status = db_->catalog_manager()->getFunction(object_name, func_info, &err_ctx);
+                if (get_obj_status != core::Status::OK)
+                {
+                    error("Function '" + object_name + "' not found");
+                }
+                object_id = func_info.function_id;
+            }
+            else if (object_type == core::CatalogManager::PermissionObjectType::PROCEDURE)
+            {
+                // WP-5 EXEC-M7: Procedure object lookup
+                core::CatalogManager::ProcedureInfo proc_info;
+                auto get_obj_status = db_->catalog_manager()->getProcedure(object_name, proc_info, &err_ctx);
+                if (get_obj_status != core::Status::OK)
+                {
+                    error("Procedure '" + object_name + "' not found");
+                }
+                object_id = proc_info.procedure_id;
+            }
+            else if (object_type == core::CatalogManager::PermissionObjectType::VIEW)
+            {
+                // WP-5 EXEC-M7: View object lookup
+                core::ID view_id;
+                auto get_obj_status = db_->catalog_manager()->getViewIdByName(object_name, view_id, &err_ctx);
+                if (get_obj_status != core::Status::OK)
+                {
+                    error("View '" + object_name + "' not found");
+                }
+                object_id = view_id;
+            }
             else
             {
-                // TODO: Implement lookup for other object types
+                // DATABASE, DOMAIN not yet supported
                 error("Object type not yet supported: " + std::to_string(object_type_byte));
             }
 
@@ -20177,33 +20746,57 @@ namespace scratchbird
                 static_cast<core::CatalogManager::PermissionObjectType>(object_type_byte);
 
             // Look up object ID based on object type
-            // Phase 2.1: Get current schema from connection context
-            // Note: Schema-qualified name handling (schema.table) requires parser updates (Phase 2 Enhancement)
+            // WP-5 EXEC-M10/L5: Support schema-qualified names (schema.object) for REVOKE
             core::ID object_id;
             if (object_type == core::CatalogManager::PermissionObjectType::TABLE)
             {
-                // Get current schema from connection context
-                core::ID schema_id;
-                if (conn_ctx_)
+                // WP-5 EXEC-M10/L5: Parse schema-qualified name (schema.table)
+                std::string schema_name;
+                std::string table_name = object_name;
+                size_t dot_pos = object_name.find('.');
+                if (dot_pos != std::string::npos)
                 {
-                    schema_id = conn_ctx_->getCurrentSchemaId();
+                    schema_name = object_name.substr(0, dot_pos);
+                    table_name = object_name.substr(dot_pos + 1);
                 }
-                // If not set, use PUBLIC schema
-                core::ID zero_id;
-                std::memset(&zero_id, 0, sizeof(zero_id));
-                if (std::memcmp(&schema_id, &zero_id, sizeof(core::ID)) == 0)
+
+                // Resolve schema ID
+                core::ID schema_id;
+                if (!schema_name.empty())
                 {
-                    core::CatalogManager::SchemaInfo public_schema;
-                    auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", public_schema, nullptr);
-                    if (schema_status == core::Status::OK)
+                    // Use explicit schema from qualified name
+                    core::CatalogManager::SchemaInfo schema_info;
+                    auto schema_status = db_->catalog_manager()->getSchema(schema_name, schema_info, &err_ctx);
+                    if (schema_status != core::Status::OK)
                     {
-                        schema_id = public_schema.schema_id;
+                        error("Schema '" + schema_name + "' not found");
+                    }
+                    schema_id = schema_info.schema_id;
+                }
+                else
+                {
+                    // No schema qualifier - use connection context or PUBLIC
+                    if (conn_ctx_)
+                    {
+                        schema_id = conn_ctx_->getCurrentSchemaId();
+                    }
+                    // If not set, use PUBLIC schema
+                    core::ID zero_id;
+                    std::memset(&zero_id, 0, sizeof(zero_id));
+                    if (std::memcmp(&schema_id, &zero_id, sizeof(core::ID)) == 0)
+                    {
+                        core::CatalogManager::SchemaInfo public_schema;
+                        auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", public_schema, nullptr);
+                        if (schema_status == core::Status::OK)
+                        {
+                            schema_id = public_schema.schema_id;
+                        }
                     }
                 }
 
                 core::CatalogManager::TableInfo table_info;
                 auto get_obj_status = db_->catalog_manager()->getTable(
-                    schema_id, object_name, table_info, &err_ctx);
+                    schema_id, table_name, table_info, &err_ctx);
                 if (get_obj_status != core::Status::OK)
                 {
                     error("Table '" + object_name + "' not found");
@@ -20224,9 +20817,64 @@ namespace scratchbird
                     }
                 }
             }
+            else if (object_type == core::CatalogManager::PermissionObjectType::SCHEMA)
+            {
+                // WP-5 EXEC-M7: Schema object lookup
+                core::CatalogManager::SchemaInfo schema_info;
+                auto get_obj_status = db_->catalog_manager()->getSchema(object_name, schema_info, &err_ctx);
+                if (get_obj_status != core::Status::OK)
+                {
+                    error("Schema '" + object_name + "' not found");
+                }
+                object_id = schema_info.schema_id;
+            }
+            else if (object_type == core::CatalogManager::PermissionObjectType::SEQUENCE)
+            {
+                // WP-5 EXEC-M7: Sequence object lookup
+                core::ID seq_id;
+                auto get_obj_status = db_->catalog_manager()->getSequenceIdByName(object_name, seq_id, &err_ctx);
+                if (get_obj_status != core::Status::OK)
+                {
+                    error("Sequence '" + object_name + "' not found");
+                }
+                object_id = seq_id;
+            }
+            else if (object_type == core::CatalogManager::PermissionObjectType::FUNCTION)
+            {
+                // WP-5 EXEC-M7: Function object lookup
+                core::CatalogManager::FunctionInfo func_info;
+                auto get_obj_status = db_->catalog_manager()->getFunction(object_name, func_info, &err_ctx);
+                if (get_obj_status != core::Status::OK)
+                {
+                    error("Function '" + object_name + "' not found");
+                }
+                object_id = func_info.function_id;
+            }
+            else if (object_type == core::CatalogManager::PermissionObjectType::PROCEDURE)
+            {
+                // WP-5 EXEC-M7: Procedure object lookup
+                core::CatalogManager::ProcedureInfo proc_info;
+                auto get_obj_status = db_->catalog_manager()->getProcedure(object_name, proc_info, &err_ctx);
+                if (get_obj_status != core::Status::OK)
+                {
+                    error("Procedure '" + object_name + "' not found");
+                }
+                object_id = proc_info.procedure_id;
+            }
+            else if (object_type == core::CatalogManager::PermissionObjectType::VIEW)
+            {
+                // WP-5 EXEC-M7: View object lookup
+                core::ID view_id;
+                auto get_obj_status = db_->catalog_manager()->getViewIdByName(object_name, view_id, &err_ctx);
+                if (get_obj_status != core::Status::OK)
+                {
+                    error("View '" + object_name + "' not found");
+                }
+                object_id = view_id;
+            }
             else
             {
-                // TODO: Implement lookup for other object types
+                // DATABASE, DOMAIN not yet supported
                 error("Object type not yet supported: " + std::to_string(object_type_byte));
             }
 
@@ -20298,11 +20946,19 @@ namespace scratchbird
             else
             {
                 // Table-level permission
-                // Phase 2 Enhancement: CASCADE option (revoke from grantees of this grantee)
-                // requires catalog manager changes to track and cascade permission revocations
-                status = db_->catalog_manager()->revokePermission(
-                    object_id, object_type, grantee_id, grantee_type,
-                    privileges, &err_ctx);
+                // WP-5 EXEC-M5: Use CASCADE method if cascade flag is set
+                if (cascade)
+                {
+                    status = db_->catalog_manager()->revokePermissionCascade(
+                        object_id, object_type, grantee_id, grantee_type,
+                        privileges, &err_ctx);
+                }
+                else
+                {
+                    status = db_->catalog_manager()->revokePermission(
+                        object_id, object_type, grantee_id, grantee_type,
+                        privileges, &err_ctx);
+                }
 
                 if (status != core::Status::OK)
                 {
@@ -20517,23 +21173,38 @@ namespace scratchbird
                 error("Permission denied: SET SESSION AUTHORIZATION (superuser only)");
             }
 
-            // Phase 2 Enhancement: Session user tracking
-            // SET SESSION AUTHORIZATION requires:
-            // 1. Tracking the "original" connection user separately from "effective" user
-            // 2. RESET SESSION AUTHORIZATION restores to the original user
-            // 3. ConnectionContext needs original_user_id_ field
-            //
-            // Current behavior: Reject with informative error
+            // WP-5 EXEC-M3: Session user tracking
+            // SET SESSION AUTHORIZATION changes the effective user
+            // RESET SESSION AUTHORIZATION restores to the original session user
             if (is_reset)
             {
-                // RESET SESSION AUTHORIZATION: Not yet implemented
-                error("RESET SESSION AUTHORIZATION not yet implemented (requires session user tracking)");
+                // RESET SESSION AUTHORIZATION: Restore to session user
+                auto session_user_id = conn_ctx_->getSessionUserId();
+                bool session_is_superuser = conn_ctx_->isSessionSuperuser();
+
+                conn_ctx_->setCurrentUser(session_user_id, session_is_superuser);
+
+                DEBUG_LOG_DB("RESET SESSION AUTHORIZATION: restored to session user "
+                           << session_user_id.toString());
             }
             else
             {
-                // SET SESSION AUTHORIZATION: Not yet implemented
+                // SET SESSION AUTHORIZATION username
                 std::string username = readString();
-                error("SET SESSION AUTHORIZATION not yet implemented (requires session user tracking)");
+
+                // Look up user by name
+                core::CatalogManager::UserInfo user_info;
+                auto status = db_->catalog_manager()->getUserByName(username, user_info, nullptr);
+                if (status != core::Status::OK)
+                {
+                    error("User '" + username + "' does not exist");
+                }
+
+                // Change effective user (note: this won't reset session_user since it's already set)
+                conn_ctx_->setCurrentUser(user_info.user_id, user_info.is_superuser);
+
+                DEBUG_LOG_DB("SET SESSION AUTHORIZATION: changed to user '" << username
+                           << "' (id=" << user_info.user_id.toString() << ")");
             }
         }
 
@@ -20559,24 +21230,40 @@ namespace scratchbird
             else
             {
                 // SET CONSTRAINTS name1, name2, ... DEFERRED/IMMEDIATE
-                // We need to find each constraint by name and set its deferral state
+                // WP-5 EXEC-M4: Look up each constraint by name and set its deferral state
                 uint8_t name_count = readByte();
                 for (uint8_t i = 0; i < name_count; i++)
                 {
                     std::string constraint_name = readString();
 
-                    // Look up the constraint by name - requires a global constraint name index
-                    // For P2-7 partial implementation, we support SET CONSTRAINTS ALL
-                    // Named constraints would require iterating all tables or a name index
-                    //
-                    // Full implementation would need either:
-                    // 1. A global constraint name index in the catalog
-                    // 2. Qualified constraint names (schema.table.constraint_name)
-                    //
-                    // For now, named constraints are deferred to a future enhancement
-                    (void)constraint_name;
-                    error("SET CONSTRAINTS with named constraints not yet fully implemented. "
-                          "Use 'SET CONSTRAINTS ALL DEFERRED' or 'SET CONSTRAINTS ALL IMMEDIATE' for now.");
+                    // Look up the constraint by name globally
+                    core::CatalogManager::ConstraintInfo constraint;
+                    core::ErrorContext err_ctx;
+                    core::Status status = db_->catalog_manager()->findConstraintByNameGlobal(
+                        constraint_name, constraint, &err_ctx);
+
+                    if (status == core::Status::NOT_FOUND)
+                    {
+                        error("Constraint '" + constraint_name + "' does not exist");
+                    }
+                    else if (status == core::Status::INVALID_ARGUMENT)
+                    {
+                        // Ambiguous constraint name
+                        error(err_ctx.message);
+                    }
+                    else if (status != core::Status::OK)
+                    {
+                        error("Error looking up constraint '" + constraint_name + "': " + err_ctx.message);
+                    }
+
+                    // Check if constraint is deferrable
+                    if (!constraint.is_deferrable)
+                    {
+                        error("Constraint '" + constraint_name + "' is not deferrable");
+                    }
+
+                    // Set the constraint's deferral state for this transaction
+                    conn_ctx_->setConstraintDeferred(constraint.constraint_id, deferred);
                 }
             }
 
@@ -20940,10 +21627,8 @@ namespace scratchbird
                 // Apply LIKE pattern if provided
                 if (!like_pattern.empty())
                 {
-                    // Simple pattern matching: % = wildcard
-                    // Phase 4 Enhancement: Implement full SQL LIKE pattern matching
-                    // Current: substring match (correct for most use cases)
-                    if (table.table_name.find(like_pattern) == std::string::npos)
+                    // WP-4 EXEC-L2: Full SQL LIKE pattern matching (%, _, \)
+                    if (!matchSqlLike(table.table_name, like_pattern))
                     {
                         continue;
                     }
@@ -20987,8 +21672,8 @@ namespace scratchbird
                 // Apply LIKE pattern if provided
                 if (!like_pattern.empty())
                 {
-                    // Simple pattern matching
-                    if (schema.schema_name.find(like_pattern) == std::string::npos)
+                    // WP-4 EXEC-L2: Full SQL LIKE pattern matching
+                    if (!matchSqlLike(schema.schema_name, like_pattern))
                     {
                         continue;
                     }
@@ -21053,7 +21738,8 @@ namespace scratchbird
                 // Apply LIKE pattern if provided
                 if (!like_pattern.empty())
                 {
-                    if (col.column_name.find(like_pattern) == std::string::npos)
+                    // WP-4 EXEC-L2: Full SQL LIKE pattern matching
+                    if (!matchSqlLike(col.column_name, like_pattern))
                     {
                         continue;
                     }
@@ -22208,30 +22894,30 @@ namespace scratchbird
             // Prefer direct check_expr field (hex bytecode) over TOAST OID
             std::string expr_hex = column.check_expr;
 
-            // If check_expr is empty but check_expr_oid is set, try to load from TOAST
-            // SECURITY FIX (Nov 19, 2025): Reject instead of allowing to prevent bypass
+            // WP-5 EXEC-M6: If check_expr is empty but check_expr_oid is set, load from TOAST
             if (expr_hex.empty() && column.check_expr_oid != 0)
             {
-                // CONSERVATIVE APPROACH: Reject the operation when CHECK expression is in TOAST
-                // but TOAST loading not implemented. This prevents security bypass.
-                // Phase 2 Enhancement: TOAST loading for catalog expressions
-                //   Implementation would require:
-                //   1. Get TOAST manager for catalog table (sb_columns)
-                //   2. Construct ToastPointer from check_expr_oid
-                //   3. Call detoastValue() to retrieve expression bytecode
-                //   4. Use retrieved bytecode for evaluation
-                //
-                // Current behavior: Fail-safe rejection (security-correct)
-                DEBUG_LOG_DB("CHECK constraint on column " << column.column_name
-                           << " uses TOAST (check_expr_oid=" << column.check_expr_oid
-                           << ") - TOAST loading not yet implemented");
+                // Load the CHECK expression from TOAST storage using CatalogManager
+                // Uses xmin=0 for catalog visibility (catalog operations use transaction 0)
+                core::ErrorContext toast_ctx;
+                core::Status toast_status = db_->catalog_manager()->loadStringFromToast(
+                    column.check_expr_oid, 0, expr_hex, &toast_ctx);
 
-                // Fail-safe: Reject to prevent security bypass
-                // (Large CHECK expressions should not silently bypass enforcement)
-                error("CHECK constraint on column '" + column.column_name +
-                      "' uses TOAST storage which is not yet supported. "
-                      "Please recreate the constraint with a simpler expression.");
-                return false; // Never reached (error() throws), but explicit for clarity
+                if (toast_status != core::Status::OK)
+                {
+                    // SECURITY FIX: If TOAST loading fails, reject to prevent bypass
+                    DEBUG_LOG_DB("Failed to load CHECK constraint from TOAST for column "
+                               << column.column_name << " (check_expr_oid="
+                               << column.check_expr_oid << ") - denying row");
+                    error("CHECK constraint on column '" + column.column_name +
+                          "' could not be loaded from storage. "
+                          "Database may need repair or constraint may be corrupted.");
+                    return false;
+                }
+
+                DEBUG_LOG_DB("Loaded CHECK constraint from TOAST for column " << column.column_name
+                           << " (check_expr_oid=" << column.check_expr_oid
+                           << ", loaded " << expr_hex.size() << " bytes)");
             }
 
             // Skip if expression is still empty (no CHECK constraint at all)
@@ -22831,54 +23517,16 @@ namespace scratchbird
                                        std::string(child_table.table_name));
 
                             // Get DEFAULT values for FK columns
+                            // WP-5 EXEC-10: Use evaluateDefaultValue() to handle complex defaults (NOW(), RANDOM(), etc.)
                             std::vector<Value> default_values;
                             for (size_t i = 0; i < fk_col_indices.size(); i++)
                             {
                                 size_t col_idx = fk_col_indices[i];
                                 const auto& col_info = child_columns[col_idx];
 
-                                // Check if column has a DEFAULT value
-                                if (col_info.default_value.empty())
-                                {
-                                    // No DEFAULT defined - use NULL
-                                    default_values.push_back(Value::makeNull());
-                                }
-                                else
-                                {
-                                    // Parse simple default value (literals only for Phase B)
-                                    // Phase 3 Enhancement: Evaluate default_expr bytecode for complex defaults (NOW(), RANDOM(), etc.)
-                                    core::DataType col_type = static_cast<core::DataType>(col_info.data_type);
-                                    Value default_val;
-
-                                    try
-                                    {
-                                        switch (col_type)
-                                        {
-                                            case core::DataType::INT32:
-                                                default_val = Value::makeInt32(std::stoi(col_info.default_value));
-                                                break;
-                                            case core::DataType::INT64:
-                                                default_val = Value::makeInt64(std::stoll(col_info.default_value));
-                                                break;
-                                            case core::DataType::FLOAT64:
-                                                default_val = Value::makeFloat64(std::stod(col_info.default_value));
-                                                break;
-                                            case core::DataType::VARCHAR:
-                                                default_val = Value::makeVarchar(col_info.default_value);
-                                                break;
-                                            default:
-                                                default_val = Value::makeNull();
-                                                break;
-                                        }
-                                    }
-                                    catch (...)
-                                    {
-                                        // Parsing failed - use NULL
-                                        default_val = Value::makeNull();
-                                    }
-
-                                    default_values.push_back(default_val);
-                                }
+                                // Use evaluateDefaultValue which handles both bytecode and literal defaults
+                                Value default_val = evaluateDefaultValue(col_info);
+                                default_values.push_back(default_val);
                             }
 
                             // For each matching child row, set FK columns to DEFAULT
@@ -23205,54 +23853,16 @@ namespace scratchbird
                                        std::string(child_table.table_name));
 
                             // Get DEFAULT values for FK columns
+                            // WP-5 EXEC-10: Use evaluateDefaultValue() to handle complex defaults (NOW(), RANDOM(), etc.)
                             std::vector<Value> default_values;
                             for (size_t i = 0; i < fk_col_indices.size(); i++)
                             {
                                 size_t col_idx = fk_col_indices[i];
                                 const auto& col_info = child_columns[col_idx];
 
-                                // Check if column has a DEFAULT value
-                                if (col_info.default_value.empty())
-                                {
-                                    // No DEFAULT defined - use NULL
-                                    default_values.push_back(Value::makeNull());
-                                }
-                                else
-                                {
-                                    // Parse simple default value (literals only for Phase B)
-                                    // Phase 3 Enhancement: Evaluate default_expr bytecode for complex defaults (NOW(), RANDOM(), etc.)
-                                    core::DataType col_type = static_cast<core::DataType>(col_info.data_type);
-                                    Value default_val;
-
-                                    try
-                                    {
-                                        switch (col_type)
-                                        {
-                                            case core::DataType::INT32:
-                                                default_val = Value::makeInt32(std::stoi(col_info.default_value));
-                                                break;
-                                            case core::DataType::INT64:
-                                                default_val = Value::makeInt64(std::stoll(col_info.default_value));
-                                                break;
-                                            case core::DataType::FLOAT64:
-                                                default_val = Value::makeFloat64(std::stod(col_info.default_value));
-                                                break;
-                                            case core::DataType::VARCHAR:
-                                                default_val = Value::makeVarchar(col_info.default_value);
-                                                break;
-                                            default:
-                                                default_val = Value::makeNull();
-                                                break;
-                                        }
-                                    }
-                                    catch (...)
-                                    {
-                                        // Parsing failed - use NULL
-                                        default_val = Value::makeNull();
-                                    }
-
-                                    default_values.push_back(default_val);
-                                }
+                                // Use evaluateDefaultValue which handles both bytecode and literal defaults
+                                Value default_val = evaluateDefaultValue(col_info);
+                                default_values.push_back(default_val);
                             }
 
                             // For each matching child row, set FK columns to DEFAULT
@@ -23666,44 +24276,305 @@ namespace scratchbird
 
         void Executor::executeStdDevSamp()
         {
-            // Phase 4 Enhancement: Implement as aggregate function with Welford's algorithm
-            // Note: Aggregate version at line 7039 already works; this is for scalar context
-            error("STDDEV_SAMP scalar function not yet implemented - use as aggregate");
+            // WP-4 EXEC-1: Scalar STDDEV_SAMP for array input
+            Value input = stack_.top(); stack_.pop();
+
+            if (input.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            if (input.type() != core::DataType::ARRAY)
+            {
+                error("STDDEV_SAMP scalar requires an ARRAY argument");
+                return;
+            }
+
+            const auto& arr = input.getArray();
+            size_t n = 0;
+            double mean = 0.0;
+            double m2 = 0.0;
+
+            // Welford's online algorithm for numerical stability
+            for (const auto& elem : arr)
+            {
+                if (elem.isNull()) continue;
+                double val = coerceToDouble(elem);
+                n++;
+                double delta = val - mean;
+                mean += delta / static_cast<double>(n);
+                double delta2 = val - mean;
+                m2 += delta * delta2;
+            }
+
+            // STDDEV_SAMP requires at least 2 values
+            if (n < 2)
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            double variance = m2 / static_cast<double>(n - 1);
+            stack_.push(Value::makeFloat64(std::sqrt(variance)));
         }
 
         void Executor::executeStdDevPop()
         {
-            // Phase 4 Enhancement: Implement as aggregate function with Welford's algorithm
-            // Note: Aggregate version at line 7044 already works; this is for scalar context
-            error("STDDEV_POP scalar function not yet implemented - use as aggregate");
+            // WP-4 EXEC-2: Scalar STDDEV_POP for array input
+            Value input = stack_.top(); stack_.pop();
+
+            if (input.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            if (input.type() != core::DataType::ARRAY)
+            {
+                error("STDDEV_POP scalar requires an ARRAY argument");
+                return;
+            }
+
+            const auto& arr = input.getArray();
+            size_t n = 0;
+            double mean = 0.0;
+            double m2 = 0.0;
+
+            // Welford's online algorithm for numerical stability
+            for (const auto& elem : arr)
+            {
+                if (elem.isNull()) continue;
+                double val = coerceToDouble(elem);
+                n++;
+                double delta = val - mean;
+                mean += delta / static_cast<double>(n);
+                double delta2 = val - mean;
+                m2 += delta * delta2;
+            }
+
+            if (n == 0)
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            double variance = m2 / static_cast<double>(n);
+            stack_.push(Value::makeFloat64(std::sqrt(variance)));
         }
 
         void Executor::executeVarSamp()
         {
-            // Phase 4 Enhancement: Implement as aggregate function with Welford's algorithm
-            // Note: Aggregate version at line 7030 already works; this is for scalar context
-            error("VAR_SAMP scalar function not yet implemented - use as aggregate");
+            // WP-4 EXEC-3: Scalar VAR_SAMP for array input
+            Value input = stack_.top(); stack_.pop();
+
+            if (input.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            if (input.type() != core::DataType::ARRAY)
+            {
+                error("VAR_SAMP scalar requires an ARRAY argument");
+                return;
+            }
+
+            const auto& arr = input.getArray();
+            size_t n = 0;
+            double mean = 0.0;
+            double m2 = 0.0;
+
+            // Welford's online algorithm for numerical stability
+            for (const auto& elem : arr)
+            {
+                if (elem.isNull()) continue;
+                double val = coerceToDouble(elem);
+                n++;
+                double delta = val - mean;
+                mean += delta / static_cast<double>(n);
+                double delta2 = val - mean;
+                m2 += delta * delta2;
+            }
+
+            // VAR_SAMP requires at least 2 values
+            if (n < 2)
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            double variance = m2 / static_cast<double>(n - 1);
+            stack_.push(Value::makeFloat64(variance));
         }
 
         void Executor::executeVarPop()
         {
-            // Phase 4 Enhancement: Implement as aggregate function with Welford's algorithm
-            // Note: Aggregate version at line 7035 already works; this is for scalar context
-            error("VAR_POP scalar function not yet implemented - use as aggregate");
+            // WP-4 EXEC-4: Scalar VAR_POP for array input
+            Value input = stack_.top(); stack_.pop();
+
+            if (input.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            if (input.type() != core::DataType::ARRAY)
+            {
+                error("VAR_POP scalar requires an ARRAY argument");
+                return;
+            }
+
+            const auto& arr = input.getArray();
+            size_t n = 0;
+            double mean = 0.0;
+            double m2 = 0.0;
+
+            // Welford's online algorithm for numerical stability
+            for (const auto& elem : arr)
+            {
+                if (elem.isNull()) continue;
+                double val = coerceToDouble(elem);
+                n++;
+                double delta = val - mean;
+                mean += delta / static_cast<double>(n);
+                double delta2 = val - mean;
+                m2 += delta * delta2;
+            }
+
+            if (n == 0)
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            double variance = m2 / static_cast<double>(n);
+            stack_.push(Value::makeFloat64(variance));
         }
 
         void Executor::executeCorr()
         {
-            // Phase 4 Enhancement: Implement CORR correlation coefficient function
-            // Requires tracking sum_x, sum_y, sum_xy, sum_x2, sum_y2, count
-            error("CORR function not yet implemented");
+            // WP-4 EXEC-5: CORR correlation coefficient for two arrays
+            Value y_input = stack_.top(); stack_.pop();
+            Value x_input = stack_.top(); stack_.pop();
+
+            if (x_input.isNull() || y_input.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            if (x_input.type() != core::DataType::ARRAY || y_input.type() != core::DataType::ARRAY)
+            {
+                error("CORR requires two ARRAY arguments");
+                return;
+            }
+
+            const auto& arr_x = x_input.getArray();
+            const auto& arr_y = y_input.getArray();
+
+            if (arr_x.size() != arr_y.size())
+            {
+                error("CORR requires arrays of equal length");
+                return;
+            }
+
+            // Two-pass algorithm for numerical stability (online algorithm for correlation is complex)
+            // First pass: calculate means
+            size_t n = 0;
+            double sum_x = 0.0, sum_y = 0.0;
+            for (size_t i = 0; i < arr_x.size(); i++)
+            {
+                if (arr_x[i].isNull() || arr_y[i].isNull()) continue;
+                sum_x += coerceToDouble(arr_x[i]);
+                sum_y += coerceToDouble(arr_y[i]);
+                n++;
+            }
+
+            if (n < 2)
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            double mean_x = sum_x / static_cast<double>(n);
+            double mean_y = sum_y / static_cast<double>(n);
+
+            // Second pass: calculate covariance and standard deviations
+            double sum_xy = 0.0, sum_x2 = 0.0, sum_y2 = 0.0;
+            for (size_t i = 0; i < arr_x.size(); i++)
+            {
+                if (arr_x[i].isNull() || arr_y[i].isNull()) continue;
+                double dx = coerceToDouble(arr_x[i]) - mean_x;
+                double dy = coerceToDouble(arr_y[i]) - mean_y;
+                sum_xy += dx * dy;
+                sum_x2 += dx * dx;
+                sum_y2 += dy * dy;
+            }
+
+            double denom = std::sqrt(sum_x2 * sum_y2);
+            if (denom == 0.0)
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            double corr = sum_xy / denom;
+            stack_.push(Value::makeFloat64(corr));
         }
 
         void Executor::executeCovarPop()
         {
-            // Phase 4 Enhancement: Implement COVAR_POP covariance function
-            // Note: Aggregate version at line 7070 already works; this is for scalar context
-            error("COVAR_POP scalar function not yet implemented - use as aggregate");
+            // WP-4 EXEC-6: COVAR_POP population covariance for two arrays
+            Value y_input = stack_.top(); stack_.pop();
+            Value x_input = stack_.top(); stack_.pop();
+
+            if (x_input.isNull() || y_input.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            if (x_input.type() != core::DataType::ARRAY || y_input.type() != core::DataType::ARRAY)
+            {
+                error("COVAR_POP requires two ARRAY arguments");
+                return;
+            }
+
+            const auto& arr_x = x_input.getArray();
+            const auto& arr_y = y_input.getArray();
+
+            if (arr_x.size() != arr_y.size())
+            {
+                error("COVAR_POP requires arrays of equal length");
+                return;
+            }
+
+            // Online algorithm for covariance (parallel to Welford's)
+            size_t n = 0;
+            double mean_x = 0.0, mean_y = 0.0;
+            double c = 0.0;  // Co-moment
+
+            for (size_t i = 0; i < arr_x.size(); i++)
+            {
+                if (arr_x[i].isNull() || arr_y[i].isNull()) continue;
+                double x = coerceToDouble(arr_x[i]);
+                double y = coerceToDouble(arr_y[i]);
+                n++;
+                double dx = x - mean_x;
+                mean_x += dx / static_cast<double>(n);
+                mean_y += (y - mean_y) / static_cast<double>(n);
+                c += dx * (y - mean_y);
+            }
+
+            if (n == 0)
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            double covar = c / static_cast<double>(n);
+            stack_.push(Value::makeFloat64(covar));
         }
 
         // ========================================================================
@@ -24554,8 +25425,56 @@ namespace scratchbird
                         }
                         return;
                     }
+                    case ExtractField::CLOCK_SEQ:
+                    {
+                        // WP-4 EXEC-M1: UUID clock sequence (v1 only)
+                        // For UUIDv1, clock_seq is in bytes 8-9 (13 bits of clock_seq_hi_and_reserved + clock_seq_low)
+                        int version = core::TypeExtractor::extractUUIDVersion(uuid);
+                        if (version != 1)
+                        {
+                            push(Value::makeNull());  // clock_seq only meaningful for UUIDv1
+                            return;
+                        }
+                        if (uuid.size() < 10)
+                        {
+                            push(Value::makeNull());
+                            return;
+                        }
+                        // clock_seq_hi_and_reserved is byte 8 (lower 6 bits)
+                        // clock_seq_low is byte 9
+                        int32_t clock_seq = ((uuid[8] & 0x3F) << 8) | uuid[9];
+                        push(Value::makeInt32(clock_seq));
+                        return;
+                    }
+                    case ExtractField::NODE:
+                    {
+                        // WP-4 EXEC-M1: UUID node (v1 only) - MAC address in bytes 10-15
+                        int version = core::TypeExtractor::extractUUIDVersion(uuid);
+                        if (version != 1)
+                        {
+                            push(Value::makeNull());  // node only meaningful for UUIDv1
+                            return;
+                        }
+                        if (uuid.size() < 16)
+                        {
+                            push(Value::makeNull());
+                            return;
+                        }
+                        // Format as MAC address string: xx:xx:xx:xx:xx:xx
+                        static const char hex_chars[] = "0123456789abcdef";
+                        std::string mac;
+                        mac.reserve(17);
+                        for (size_t i = 10; i < 16; i++)
+                        {
+                            if (i > 10) mac.push_back(':');
+                            mac.push_back(hex_chars[(uuid[i] >> 4) & 0x0F]);
+                            mac.push_back(hex_chars[uuid[i] & 0x0F]);
+                        }
+                        push(Value::makeVarchar(mac));
+                        return;
+                    }
                     default:
-                        error("Field '" + std::to_string(field_id) + "' not yet implemented for UUID type");
+                        error("Field '" + std::to_string(field_id) + "' not supported for UUID type");
                         return;
                 }
             }
@@ -24581,8 +25500,17 @@ namespace scratchbird
                         case ExtractField::UPPER:
                             push(Value::makeInt32(static_cast<int32_t>(array.size())));
                             return;
+                        case ExtractField::DIMS:
+                        {
+                            // WP-4 EXEC-M2: Return array of dimension sizes
+                            // For 1D array, return ARRAY[size]
+                            std::vector<core::TypedValue> dims;
+                            dims.push_back(Value::makeInt32(static_cast<int32_t>(array.size())));
+                            push(Value::makeArray(dims));
+                            return;
+                        }
                         default:
-                            error("Field '" + std::to_string(field_id) + "' not yet implemented for ARRAY type");
+                            error("Field '" + std::to_string(field_id) + "' not supported for ARRAY type");
                             return;
                     }
                 } catch (const std::exception& e) {
@@ -24613,20 +25541,270 @@ namespace scratchbird
             }
             else
             {
-                error("EXTRACT not yet supported for this data type");
+                // WP-4 EXEC-L4: Clear error message for unsupported EXTRACT type/field combinations
+                std::string type_name = dataTypeToString(source_type);
+                error("EXTRACT not supported for " + type_name + " type. "
+                      "Supported types: DATE, TIME, TIMESTAMP, INTERVAL, UUID, ARRAY, GEOMETRY (POINT)");
             }
         }
 
         void Executor::executeEncode()
         {
-            // Phase 4 Enhancement: Implement ENCODE(data, format) - base64, hex, escape
-            error("ENCODE not yet implemented");
+            // WP-4 EXEC-7: ENCODE(data bytea, format text) -> text
+            Value format_val = stack_.top(); stack_.pop();
+            Value data_val = stack_.top(); stack_.pop();
+
+            if (data_val.isNull() || format_val.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            std::string format = format_val.toString();
+            std::transform(format.begin(), format.end(), format.begin(), ::tolower);
+
+            // Get data as bytes
+            std::vector<uint8_t> data;
+            if (data_val.type() == core::DataType::BYTEA || data_val.type() == core::DataType::BLOB ||
+                data_val.type() == core::DataType::BINARY || data_val.type() == core::DataType::VARBINARY)
+            {
+                data = data_val.getUUID();  // getUUID() returns binary_data_ for binary types
+            }
+            else
+            {
+                // Treat string as raw bytes
+                std::string str = data_val.toString();
+                data.assign(str.begin(), str.end());
+            }
+
+            std::string result;
+            if (format == "hex")
+            {
+                // Hex encoding
+                static const char hex_chars[] = "0123456789abcdef";
+                result.reserve(data.size() * 2);
+                for (uint8_t byte : data)
+                {
+                    result.push_back(hex_chars[(byte >> 4) & 0x0F]);
+                    result.push_back(hex_chars[byte & 0x0F]);
+                }
+            }
+            else if (format == "base64")
+            {
+                // Base64 encoding
+                static const char base64_chars[] =
+                    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                result.reserve(((data.size() + 2) / 3) * 4);
+
+                size_t i = 0;
+                while (i + 2 < data.size())
+                {
+                    uint32_t val = (static_cast<uint32_t>(data[i]) << 16) |
+                                   (static_cast<uint32_t>(data[i + 1]) << 8) |
+                                   static_cast<uint32_t>(data[i + 2]);
+                    result.push_back(base64_chars[(val >> 18) & 0x3F]);
+                    result.push_back(base64_chars[(val >> 12) & 0x3F]);
+                    result.push_back(base64_chars[(val >> 6) & 0x3F]);
+                    result.push_back(base64_chars[val & 0x3F]);
+                    i += 3;
+                }
+
+                if (i + 1 == data.size())
+                {
+                    // 1 byte remaining
+                    uint32_t val = static_cast<uint32_t>(data[i]) << 16;
+                    result.push_back(base64_chars[(val >> 18) & 0x3F]);
+                    result.push_back(base64_chars[(val >> 12) & 0x3F]);
+                    result.push_back('=');
+                    result.push_back('=');
+                }
+                else if (i + 2 == data.size())
+                {
+                    // 2 bytes remaining
+                    uint32_t val = (static_cast<uint32_t>(data[i]) << 16) |
+                                   (static_cast<uint32_t>(data[i + 1]) << 8);
+                    result.push_back(base64_chars[(val >> 18) & 0x3F]);
+                    result.push_back(base64_chars[(val >> 12) & 0x3F]);
+                    result.push_back(base64_chars[(val >> 6) & 0x3F]);
+                    result.push_back('=');
+                }
+            }
+            else if (format == "escape")
+            {
+                // PostgreSQL escape encoding: non-printable as \nnn octal
+                result.reserve(data.size());
+                for (uint8_t byte : data)
+                {
+                    if (byte == '\\')
+                    {
+                        result.append("\\\\");
+                    }
+                    else if (byte >= 32 && byte < 127)
+                    {
+                        result.push_back(static_cast<char>(byte));
+                    }
+                    else
+                    {
+                        result.push_back('\\');
+                        result.push_back('0' + ((byte >> 6) & 0x07));
+                        result.push_back('0' + ((byte >> 3) & 0x07));
+                        result.push_back('0' + (byte & 0x07));
+                    }
+                }
+            }
+            else
+            {
+                error("Unknown encoding format: " + format + " (use 'hex', 'base64', or 'escape')");
+                return;
+            }
+
+            stack_.push(Value::makeText(result));
         }
 
         void Executor::executeDecode()
         {
-            // Phase 4 Enhancement: Implement DECODE(text, format) - base64, hex, escape
-            error("DECODE not yet implemented");
+            // WP-4 EXEC-8: DECODE(text, format text) -> bytea
+            Value format_val = stack_.top(); stack_.pop();
+            Value text_val = stack_.top(); stack_.pop();
+
+            if (text_val.isNull() || format_val.isNull())
+            {
+                stack_.push(Value::makeNull());
+                return;
+            }
+
+            std::string format = format_val.toString();
+            std::transform(format.begin(), format.end(), format.begin(), ::tolower);
+            std::string text = text_val.toString();
+
+            std::vector<uint8_t> result;
+            if (format == "hex")
+            {
+                // Hex decoding
+                if (text.size() % 2 != 0)
+                {
+                    error("Invalid hex string: odd length");
+                    return;
+                }
+
+                result.reserve(text.size() / 2);
+                for (size_t i = 0; i < text.size(); i += 2)
+                {
+                    char hi = text[i];
+                    char lo = text[i + 1];
+
+                    auto hex_val = [](char c) -> int {
+                        if (c >= '0' && c <= '9') return c - '0';
+                        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                        return -1;
+                    };
+
+                    int hi_val = hex_val(hi);
+                    int lo_val = hex_val(lo);
+
+                    if (hi_val < 0 || lo_val < 0)
+                    {
+                        error("Invalid hex character in string");
+                        return;
+                    }
+
+                    result.push_back(static_cast<uint8_t>((hi_val << 4) | lo_val));
+                }
+            }
+            else if (format == "base64")
+            {
+                // Base64 decoding
+                auto base64_val = [](char c) -> int {
+                    if (c >= 'A' && c <= 'Z') return c - 'A';
+                    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+                    if (c >= '0' && c <= '9') return c - '0' + 52;
+                    if (c == '+') return 62;
+                    if (c == '/') return 63;
+                    if (c == '=') return -1;  // Padding
+                    return -2;  // Invalid
+                };
+
+                // Remove whitespace
+                text.erase(std::remove_if(text.begin(), text.end(), ::isspace), text.end());
+
+                if (text.size() % 4 != 0)
+                {
+                    error("Invalid base64 string: length not multiple of 4");
+                    return;
+                }
+
+                result.reserve((text.size() / 4) * 3);
+                for (size_t i = 0; i < text.size(); i += 4)
+                {
+                    int v0 = base64_val(text[i]);
+                    int v1 = base64_val(text[i + 1]);
+                    int v2 = base64_val(text[i + 2]);
+                    int v3 = base64_val(text[i + 3]);
+
+                    if (v0 < 0 || v1 < 0 || v2 == -2 || v3 == -2)
+                    {
+                        error("Invalid base64 character");
+                        return;
+                    }
+
+                    result.push_back(static_cast<uint8_t>((v0 << 2) | (v1 >> 4)));
+
+                    if (v2 >= 0)
+                    {
+                        result.push_back(static_cast<uint8_t>(((v1 & 0x0F) << 4) | (v2 >> 2)));
+
+                        if (v3 >= 0)
+                        {
+                            result.push_back(static_cast<uint8_t>(((v2 & 0x03) << 6) | v3));
+                        }
+                    }
+                }
+            }
+            else if (format == "escape")
+            {
+                // PostgreSQL escape decoding
+                result.reserve(text.size());
+                for (size_t i = 0; i < text.size(); i++)
+                {
+                    if (text[i] == '\\' && i + 1 < text.size())
+                    {
+                        if (text[i + 1] == '\\')
+                        {
+                            result.push_back('\\');
+                            i++;
+                        }
+                        else if (i + 3 < text.size() &&
+                                 text[i + 1] >= '0' && text[i + 1] <= '3' &&
+                                 text[i + 2] >= '0' && text[i + 2] <= '7' &&
+                                 text[i + 3] >= '0' && text[i + 3] <= '7')
+                        {
+                            // Octal escape
+                            uint8_t val = static_cast<uint8_t>(
+                                ((text[i + 1] - '0') << 6) |
+                                ((text[i + 2] - '0') << 3) |
+                                (text[i + 3] - '0'));
+                            result.push_back(val);
+                            i += 3;
+                        }
+                        else
+                        {
+                            result.push_back(static_cast<uint8_t>(text[i]));
+                        }
+                    }
+                    else
+                    {
+                        result.push_back(static_cast<uint8_t>(text[i]));
+                    }
+                }
+            }
+            else
+            {
+                error("Unknown decoding format: " + format + " (use 'hex', 'base64', or 'escape')");
+                return;
+            }
+
+            stack_.push(Value::makeUUID(result));  // makeUUID creates binary/bytea type
         }
 
         // ============================================================================
@@ -25618,11 +26796,16 @@ namespace scratchbird
 
                 case IndexType::GIST:
                 {
-                    // GiST index has incomplete type issues - not fully integrated yet
-                    // TODO: Complete GiST index integration
-                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
-                                      "GiST index operations not yet fully supported");
-                    return core::Status::NOT_SUPPORTED;
+                    // WP-5 EXEC-11: GiST index integration
+                    auto gist = core::GiSTIndex::open(db_, index_uuid, index_info.root_page, ctx);
+                    if (gist)
+                    {
+                        // Create GiSTPredicate from key bytes
+                        // The operator class is loaded from the registry when the index is opened
+                        core::GiSTPredicate predicate(key, 0);  // opclass_id 0 = use index's opclass
+                        return gist->insert(predicate, tid, xmin, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
                 }
 
                 case IndexType::SPGIST:
@@ -25779,11 +26962,14 @@ namespace scratchbird
 
                 case IndexType::GIST:
                 {
-                    // GiST index has incomplete type issues - not fully integrated yet
-                    // TODO: Complete GiST index integration
-                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
-                                      "GiST index operations not yet fully supported");
-                    return core::Status::NOT_SUPPORTED;
+                    // WP-5 EXEC-11: GiST index integration
+                    auto gist = core::GiSTIndex::open(db_, index_uuid, index_info.root_page, ctx);
+                    if (gist)
+                    {
+                        // GiST search uses raw key bytes and defaults to OVERLAPS strategy
+                        return gist->search(key, core::GiSTStrategy::OVERLAPS, current_xid, results_out, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
                 }
 
                 case IndexType::SPGIST:
@@ -25949,11 +27135,15 @@ namespace scratchbird
 
                 case IndexType::GIST:
                 {
-                    // GiST index has incomplete type issues - not fully integrated yet
-                    // TODO: Complete GiST index integration
-                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
-                                      "GiST index operations not yet fully supported");
-                    return core::Status::NOT_SUPPORTED;
+                    // WP-5 EXEC-11: GiST index integration
+                    auto gist = core::GiSTIndex::open(db_, index_uuid, index_info.root_page, ctx);
+                    if (gist)
+                    {
+                        // Create GiSTPredicate from key bytes
+                        core::GiSTPredicate predicate(key, 0);
+                        return gist->remove(predicate, tid, xmax, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
                 }
 
                 case IndexType::SPGIST:
@@ -26128,11 +27318,22 @@ namespace scratchbird
 
                 case IndexType::GIST:
                 {
-                    // GiST index has incomplete type issues - not fully integrated yet
-                    // TODO: Complete GiST index integration
-                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
-                                      "GiST index operations not yet fully supported");
-                    return core::Status::NOT_SUPPORTED;
+                    // WP-5 EXEC-11: GiST index integration
+                    auto gist = core::GiSTIndex::open(db_, index_uuid, index_info.root_page, ctx);
+                    if (gist)
+                    {
+                        // GiST scan uses start_key as the search predicate
+                        if (!start_key)
+                        {
+                            if (ctx) {
+                                ctx->set(core::Status::INVALID_ARGUMENT, "GiST scan requires search predicate",
+                                        __FILE__, __LINE__, __func__);
+                            }
+                            return core::Status::INVALID_ARGUMENT;
+                        }
+                        return gist->search(*start_key, core::GiSTStrategy::OVERLAPS, current_xid, results_out, ctx);
+                    }
+                    return core::Status::INTERNAL_ERROR;
                 }
 
                 case IndexType::SPGIST:

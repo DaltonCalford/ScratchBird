@@ -1,6 +1,6 @@
 # ScratchBird Project Context
 
-**Last Updated:** December 2, 2025 (All tests passing, OOM tests fixed, test path cleanup complete)
+**Last Updated:** December 3, 2025 (EXEC-14 scalar aggregates implemented, WP5 in progress)
 **Current Phase:** Alpha 1 - Engine Functionality (Local Operations) ✅ **COMPLETE**
 **Progress:** 100% of Alpha 1 complete (test suite: 1020/1020 = 100% pass rate)
 **Project Type:** Educational/Research (no time constraints)
@@ -447,7 +447,15 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 
 ## Recent Accomplishments
 
-**November 27, 2025 (Latest):**
+**December 3, 2025 (Latest):**
+- ✅ **EXEC-14: Aggregates in Scalar Context** - Work Package 5 task completed
+  - Added `executeScalarAggregate()` helper function to executor
+  - Supports COUNT, SUM, AVG, MIN, MAX, ARRAY_AGG in scalar expression context
+  - Modified: `include/scratchbird/sblr/executor.h`, `src/sblr/executor.cpp`
+  - Verification: Build passes, aggregate tests pass
+  - See [WORKPACKAGE_WP5_EXEC_FEATURES.md](docs/planning/WORKPACKAGE_WP5_EXEC_FEATURES.md)
+
+**November 27, 2025:**
 - ✅ **Audit Report Issues FIXED:** All items from docs/audit/REPORT.md addressed! 🎉
   - MGA cross-page back version GPID bug fixed (heap_page.cpp:904)
   - Transaction visibility issues fixed (XID initialization, CLOG marking)
@@ -543,6 +551,7 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 
 ---
 
-**Last Updated:** December 2, 2025
+**Last Updated:** December 3, 2025
 **Status:** Alpha 1 - ✅ **100% COMPLETE** (1020/1020 tests passing, all disabled tests fixed)
 **Current Priority:** ✅ Functions → ✅ P0-P3 → ✅ Catalog Cleanup → ✅ Phases 1-5 → ✅ CLI Tools → ✅ Code Completion 100%
+**Current Work:** Work Package 5 (SQL Executor Features) - EXEC-14 complete

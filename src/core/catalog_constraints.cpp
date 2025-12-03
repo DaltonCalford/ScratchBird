@@ -94,6 +94,44 @@ auto CatalogManager::getConstraintByName(const ID& table_id,
     return getConstraint(it->second, constraint_out, ctx);
 }
 
+// WP-5 EXEC-M4: Find a constraint by name globally (for SET CONSTRAINTS named)
+auto CatalogManager::findConstraintByNameGlobal(const std::string& constraint_name,
+                                                ConstraintInfo& constraint_out,
+                                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(constraints_cache_mutex_);
+
+    // Search all constraints in the cache for a matching name
+    std::vector<const ConstraintInfo*> matches;
+    for (const auto& [constraint_id, constraint] : constraints_cache_)
+    {
+        if (constraint.constraint_name == constraint_name)
+        {
+            matches.push_back(&constraint);
+        }
+    }
+
+    if (matches.empty())
+    {
+        std::string error_msg = "Constraint '" + constraint_name + "' not found";
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, error_msg.c_str());
+        return Status::NOT_FOUND;
+    }
+
+    if (matches.size() > 1)
+    {
+        // Ambiguous - multiple constraints with the same name exist
+        std::string error_msg = "Constraint name '" + constraint_name +
+                               "' is ambiguous - exists on multiple tables";
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Exactly one match found
+    constraint_out = *matches[0];
+    return Status::OK;
+}
+
 // P1-9: Get all constraints for a table
 auto CatalogManager::getConstraintsForTable(const ID& table_id,
                                            std::vector<ConstraintInfo>& constraints_out,

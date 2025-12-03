@@ -189,6 +189,26 @@ namespace scratchbird::core
         auto preallocatePages(uint16_t tablespace_id, uint32_t num_pages,
                              ErrorContext *ctx = nullptr) -> Status;
 
+        /**
+         * updateTablespaceHeader - Update tablespace header (page 0) with new settings
+         *
+         * WP-2 CAT-M4/M5: Persist autoextend settings and name to tablespace file
+         *
+         * @param tablespace_id Tablespace ID (1-65535, 0 = primary reserved)
+         * @param name New tablespace name (nullptr = no change)
+         * @param autoextend_enabled New autoextend setting (nullptr = no change)
+         * @param autoextend_size_mb New autoextend size in MB (nullptr = no change)
+         * @param max_size_mb New max size in MB (nullptr = no change)
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         */
+        auto updateTablespaceHeader(uint16_t tablespace_id,
+                                   const char* name,
+                                   const uint32_t* autoextend_enabled,
+                                   const uint32_t* autoextend_size_mb,
+                                   const uint64_t* max_size_mb,
+                                   ErrorContext *ctx = nullptr) -> Status;
+
         // Get total number of pages
         auto totalPages() const -> uint32_t
         {

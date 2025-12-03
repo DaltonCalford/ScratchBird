@@ -117,6 +117,12 @@ namespace scratchbird::core
         const ID& getActiveRoleId() const { return active_role_id_; }
         bool isSuperuser() const { return is_superuser_; }
 
+        // WP-5 EXEC-M3: Session user tracking for SET/RESET SESSION AUTHORIZATION
+        // Session user is the original authenticated user, never changes during session
+        // Current user is the effective user, can be changed by SET SESSION AUTHORIZATION
+        const ID& getSessionUserId() const { return session_user_id_; }
+        bool isSessionSuperuser() const { return session_is_superuser_; }
+
         // Schema context queries (Phase 2.1 - Executor Schema Operations)
         const ID& getCurrentSchemaId() const { return current_schema_id_; }
         void setCurrentSchemaId(const ID& schema_id) { current_schema_id_ = schema_id; }
@@ -219,9 +225,13 @@ namespace scratchbird::core
         std::chrono::microseconds xact_start_time_; // Transaction start time
 
         // Security context (Phase 2 - Security System)
-        ID current_user_id_;    // Authenticated user UUID
+        ID current_user_id_;    // Effective user UUID (can be changed by SET SESSION AUTHORIZATION)
         ID active_role_id_;     // Active role UUID (from SET ROLE), zero if none
-        bool is_superuser_;     // Cached superuser flag for performance
+        bool is_superuser_;     // Cached superuser flag for performance (for current_user)
+
+        // WP-5 EXEC-M3: Session user tracking for SET/RESET SESSION AUTHORIZATION
+        ID session_user_id_;         // Original authenticated user UUID (never changes)
+        bool session_is_superuser_;  // Original superuser flag (never changes)
 
         // Schema context (Phase 2.1 - Executor Schema Operations)
         ID current_schema_id_;  // Current schema UUID (default: PUBLIC schema)

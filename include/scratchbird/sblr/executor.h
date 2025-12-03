@@ -373,6 +373,13 @@ namespace scratchbird
                                         size_t where_start_pc,
                                         size_t where_end_pc);
 
+            // EXEC-14: Scalar aggregate execution helper (for aggregates in expression context)
+            // When an aggregate opcode is encountered in expression evaluation without
+            // top-level AGG_INIT, this executes the aggregate inline by scanning
+            // the current table context and returning a single scalar value.
+            // func_type: 0=COUNT, 1=SUM, 2=AVG, 3=MIN, 4=MAX, 5=ARRAY_AGG
+            Value executeScalarAggregate(uint8_t func_type, size_t arg_expr_pc);
+
             // Sorting execution helper (Phase 1 Task 1.6.4)
             void executeSort(std::unique_ptr<ResultSet> input_result_set);
 

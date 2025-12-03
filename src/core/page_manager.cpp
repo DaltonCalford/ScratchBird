@@ -1748,6 +1748,91 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    // === WP-2 CAT-M4/M5: Update Tablespace Header ===
+
+    Status PageManager::updateTablespaceHeader(uint16_t tablespace_id,
+                                               const char* name,
+                                               const uint32_t* autoextend_enabled,
+                                               const uint32_t* autoextend_size_mb,
+                                               const uint64_t* max_size_mb,
+                                               ErrorContext *ctx)
+    {
+        // Validate inputs
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "Cannot update tablespace 0 header (primary database)");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (tablespace_id == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                             "Invalid tablespace ID: 0 is reserved");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        // Get file descriptor for this tablespace
+        int fd = db_->getTablespaceFd(tablespace_id);
+        if (fd < 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                             ("Tablespace " + std::to_string(tablespace_id) +
+                              " not found (not open)").c_str());
+            return Status::NOT_FOUND;
+        }
+
+        // Read current header
+        auto header_buffer = std::make_unique<uint8_t[]>(page_size_);
+        ssize_t bytes_read = ::pread(fd, header_buffer.get(), page_size_, 0);
+        if (bytes_read != static_cast<ssize_t>(page_size_))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                             ("Failed to read tablespace header for tablespace " +
+                              std::to_string(tablespace_id)).c_str());
+            return Status::IO_ERROR;
+        }
+
+        auto *header = reinterpret_cast<TablespaceHeader *>(header_buffer.get());
+
+        // Update fields if provided
+        if (name != nullptr)
+        {
+            std::strncpy(header->tablespace_name, name, sizeof(header->tablespace_name) - 1);
+            header->tablespace_name[sizeof(header->tablespace_name) - 1] = '\0';
+        }
+
+        if (autoextend_enabled != nullptr)
+        {
+            header->autoextend_enabled = *autoextend_enabled;
+        }
+
+        if (autoextend_size_mb != nullptr)
+        {
+            header->autoextend_size_mb = *autoextend_size_mb;
+        }
+
+        if (max_size_mb != nullptr)
+        {
+            header->max_size_mb = *max_size_mb;
+        }
+
+        // Write updated header back
+        ssize_t bytes_written = ::pwrite(fd, header_buffer.get(), page_size_, 0);
+        if (bytes_written != static_cast<ssize_t>(page_size_))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                             ("Failed to write tablespace header for tablespace " +
+                              std::to_string(tablespace_id)).c_str());
+            return Status::IO_ERROR;
+        }
+
+        // Sync to disk
+        ::fsync(fd);
+
+        return Status::OK;
+    }
+
     // === PHASE 3, TASK 3.2.1: Preallocate Pages ===
 
     Status PageManager::preallocatePages(uint16_t tablespace_id, uint32_t num_pages, ErrorContext *ctx)
