@@ -2,6 +2,7 @@
 #include "scratchbird/sblr/opcodes.h"  // For ExtractField enum
 #include <sstream>
 #include <algorithm>  // For std::transform
+#include <cstring>    // For strlen
 
 namespace scratchbird
 {
@@ -88,6 +89,8 @@ namespace scratchbird
                     case TokenType::KW_COMMIT:
                     case TokenType::KW_ROLLBACK:
                     case TokenType::KW_SWEEP:
+                    case TokenType::KW_SAVEPOINT:
+                    case TokenType::KW_RELEASE:
                         // Found a recovery point - don't consume it, let normal parsing continue
                         return;
                     default:
@@ -358,14 +361,29 @@ namespace scratchbird
                     {
                         stmt = parseCreatePolicy();
                     }
-                    // Trigger support will be added by Agent C
-                    // else if (check(TokenType::KW_TRIGGER))
-                    // {
-                    //     stmt = parseCreateTrigger();
-                    // }
+                    else if (check(TokenType::KW_TYPE))  // User Defined Types
+                    {
+                        stmt = parseCreateType();
+                    }
+                    else if (check(TokenType::KW_DOMAIN))  // Domain Types
+                    {
+                        stmt = parseCreateDomain();
+                    }
+                    else if (check(TokenType::KW_TRIGGER))  // PSQL Triggers
+                    {
+                        stmt = parseCreateTrigger();
+                    }
+                    else if (check(TokenType::KW_FUNCTION))  // PSQL Functions
+                    {
+                        stmt = parseCreateFunction();
+                    }
+                    else if (check(TokenType::KW_PROCEDURE))  // PSQL Procedures
+                    {
+                        stmt = parseCreateProcedure();
+                    }
                     else
                     {
-                        error("Expected TABLE, INDEX, UNIQUE INDEX, SEQUENCE, VIEW, USER, ROLE, GROUP, POLICY, or TABLESPACE after CREATE");
+                        error("Expected TABLE, INDEX, SEQUENCE, VIEW, USER, ROLE, GROUP, POLICY, TYPE, DOMAIN, TRIGGER, FUNCTION, PROCEDURE, or TABLESPACE after CREATE");
                         synchronize();
                     }
                 }
@@ -410,10 +428,8 @@ namespace scratchbird
                 {
                     stmt = parseStartTransaction();
                 }
-                else if (match(TokenType::KW_SET))
-                {
-                    stmt = parseSetTransaction();
-                }
+                // SET statement handling is done later with full dispatch for
+                // SET TRANSACTION, SET ROLE, SET SESSION, SET SQL DIALECT, SET NAMES, etc.
                 else if (match(TokenType::KW_COMMIT))
                 {
                     stmt = parseCommit();
@@ -425,6 +441,14 @@ namespace scratchbird
                 else if (match(TokenType::KW_SWEEP))
                 {
                     stmt = parseSweep();
+                }
+                else if (match(TokenType::KW_SAVEPOINT))
+                {
+                    stmt = parseSavepoint();
+                }
+                else if (match(TokenType::KW_RELEASE))
+                {
+                    stmt = parseReleaseSavepoint();
                 }
                 else if (match(TokenType::KW_ALTER))
                 {
@@ -490,14 +514,13 @@ namespace scratchbird
                     {
                         stmt = parseDropPolicy();
                     }
-                    // Trigger support will be added by Agent C
-                    // else if (check(TokenType::KW_TRIGGER))
-                    // {
-                    //     stmt = parseDropTrigger();
-                    // }
+                    else if (check(TokenType::KW_TRIGGER))  // PSQL Triggers
+                    {
+                        stmt = parseDropTrigger();
+                    }
                     else
                     {
-                        error("Expected TABLE, INDEX, SEQUENCE, VIEW, USER, ROLE, GROUP, POLICY, or TABLESPACE after DROP");
+                        error("Expected TABLE, INDEX, SEQUENCE, VIEW, USER, ROLE, GROUP, POLICY, TRIGGER, or TABLESPACE after DROP");
                         synchronize();
                     }
                 }
@@ -552,6 +575,18 @@ namespace scratchbird
                     {
                         stmt = parseSetConstraints();  // P2-7: SET CONSTRAINTS
                     }
+                    else if (check(TokenType::KW_SQL))
+                    {
+                        stmt = parseSetSqlDialect();  // Firebird ISQL: SET SQL DIALECT N
+                    }
+                    else if (check(TokenType::KW_NAMES))
+                    {
+                        stmt = parseSetNames();  // SET NAMES 'charset'
+                    }
+                    else if (check(TokenType::KW_LOCAL_TIMEOUT))
+                    {
+                        stmt = parseSetLocalTimeout();  // SET LOCAL_TIMEOUT N
+                    }
                     else
                     {
                         stmt = parseSetTransaction();  // Existing SET TRANSACTION handling
@@ -581,6 +616,11 @@ namespace scratchbird
                 else if (match(TokenType::KW_DESCRIBE) || match(TokenType::KW_DESC))
                 {
                     stmt = parseDescribeStatement();
+                }
+                // PSQL - CALL statement to invoke stored procedures
+                else if (match(TokenType::KW_CALL))
+                {
+                    stmt = parseCallStatement();
                 }
                 else if (isAtEnd())
                 {
@@ -1430,9 +1470,27 @@ namespace scratchbird
             }
             else if (match(TokenType::KW_CHECK))
             {
-                // CHECK constraints - not yet implemented
-                error("CHECK table constraints not yet implemented");
-                return nullptr;
+                // WP-6 PARSE-1: CHECK table constraint
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after CHECK"))
+                {
+                    return nullptr;
+                }
+
+                // Parse the CHECK expression
+                Expression *check_expr = parseExpression();
+                if (!check_expr)
+                {
+                    error("Expected expression in CHECK constraint");
+                    return nullptr;
+                }
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after CHECK expression"))
+                {
+                    return nullptr;
+                }
+
+                auto span = makeSpan(start_loc);
+                return arena_.make<CheckTableConstraint>(span, check_expr, constraint_name);
             }
             else
             {
@@ -1690,15 +1748,18 @@ namespace scratchbird
         {
             // CREATE TRIGGER trigger_name BEFORE|AFTER INSERT|UPDATE|DELETE ON table_name
             // FOR EACH ROW EXECUTE PROCEDURE procedure_name()
-            
+            // OR database trigger:
+            // CREATE TRIGGER trigger_name [ACTIVE|INACTIVE] ON {CONNECT|DISCONNECT|TRANSACTION START|COMMIT|ROLLBACK}
+            // [POSITION n] AS procedure_name()
+
             auto start_loc = previous().location;
-            
+
             // Consume TRIGGER keyword
             if (!consume(TokenType::KW_TRIGGER, "Expected TRIGGER keyword"))
             {
                 return nullptr;
             }
-            
+
             // Get trigger name
             if (!check(TokenType::IDENTIFIER))
             {
@@ -1707,8 +1768,18 @@ namespace scratchbird
             }
             StringPool::StringId trigger_name = current().value.string_id;
             advance();
-            
-            // Parse timing: BEFORE or AFTER
+
+            // Check if this is a database trigger (ACTIVE, INACTIVE, or ON for database events)
+            // Database triggers: ON CONNECT, ON DISCONNECT, ON TRANSACTION START/COMMIT/ROLLBACK
+            // Table triggers: BEFORE/AFTER INSERT/UPDATE/DELETE ON table_name
+            if (check(TokenType::KW_ACTIVE) || check(TokenType::KW_INACTIVE) || check(TokenType::KW_ON))
+            {
+                // This is a database trigger - delegate to parseCreateDatabaseTrigger
+                // We need to pass the trigger_name and start_loc since we already parsed them
+                return parseCreateDatabaseTriggerImpl(start_loc, trigger_name);
+            }
+
+            // Parse timing: BEFORE or AFTER (for table triggers)
             TriggerTiming timing;
             if (match(TokenType::KW_BEFORE))
             {
@@ -1836,6 +1907,165 @@ namespace scratchbird
             
             auto span = SourceSpan(start_loc, previous().location);
             return arena_.make<DropTriggerStmt>(span, trigger_name, if_exists);
+        }
+
+        // Database Triggers (Firebird-style ON CONNECT, ON DISCONNECT, etc.)
+        Statement *Parser::parseCreateDatabaseTrigger()
+        {
+            // This is the entry point when called directly (not common)
+            // Usually parseCreateTrigger detects database triggers and calls parseCreateDatabaseTriggerImpl
+            auto start_loc = previous().location;
+
+            // Consume TRIGGER keyword
+            if (!consume(TokenType::KW_TRIGGER, "Expected TRIGGER keyword"))
+            {
+                return nullptr;
+            }
+
+            // Get trigger name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected trigger name after CREATE TRIGGER");
+                return nullptr;
+            }
+            StringPool::StringId trigger_name = current().value.string_id;
+            advance();
+
+            return parseCreateDatabaseTriggerImpl(start_loc, trigger_name);
+        }
+
+        Statement *Parser::parseCreateDatabaseTriggerImpl(const SourceLocation &start_loc,
+                                                           StringPool::StringId trigger_name)
+        {
+            // CREATE TRIGGER trigger_name [ACTIVE | INACTIVE]
+            // ON {CONNECT | DISCONNECT | TRANSACTION START | TRANSACTION COMMIT | TRANSACTION ROLLBACK}
+            // [POSITION n] AS procedure_name()
+
+            // Parse optional ACTIVE/INACTIVE
+            bool active = true; // Default is ACTIVE
+            if (match(TokenType::KW_ACTIVE))
+            {
+                active = true;
+            }
+            else if (match(TokenType::KW_INACTIVE))
+            {
+                active = false;
+            }
+
+            // Expect ON keyword
+            if (!consume(TokenType::KW_ON, "Expected ON after trigger name or ACTIVE/INACTIVE"))
+            {
+                return nullptr;
+            }
+
+            // Parse database event
+            DatabaseTriggerEvent event;
+            if (match(TokenType::KW_CONNECT))
+            {
+                event = DatabaseTriggerEvent::ON_CONNECT;
+            }
+            else if (match(TokenType::KW_DISCONNECT))
+            {
+                event = DatabaseTriggerEvent::ON_DISCONNECT;
+            }
+            else if (match(TokenType::KW_TRANSACTION))
+            {
+                // ON TRANSACTION START | COMMIT | ROLLBACK
+                if (match(TokenType::KW_START))
+                {
+                    event = DatabaseTriggerEvent::ON_TRANSACTION_START;
+                }
+                else if (match(TokenType::KW_COMMIT))
+                {
+                    event = DatabaseTriggerEvent::ON_TRANSACTION_COMMIT;
+                }
+                else if (match(TokenType::KW_ROLLBACK))
+                {
+                    event = DatabaseTriggerEvent::ON_TRANSACTION_ROLLBACK;
+                }
+                else
+                {
+                    error("Expected START, COMMIT, or ROLLBACK after TRANSACTION");
+                    return nullptr;
+                }
+            }
+            else
+            {
+                error("Expected CONNECT, DISCONNECT, or TRANSACTION after ON");
+                return nullptr;
+            }
+
+            // Parse optional POSITION n
+            int32_t position = 0; // Default position
+            if (match(TokenType::KW_POSITION))
+            {
+                if (!check(TokenType::INTEGER_LITERAL))
+                {
+                    error("Expected integer after POSITION");
+                    return nullptr;
+                }
+                position = static_cast<int32_t>(current().value.int_value);
+                advance();
+            }
+
+            // Parse AS or EXECUTE PROCEDURE
+            StringPool::StringId procedure_name = 0;
+            if (match(TokenType::KW_AS))
+            {
+                // AS procedure_name()
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected procedure name after AS");
+                    return nullptr;
+                }
+                procedure_name = current().value.string_id;
+                advance();
+
+                // Optional parentheses: procedure_name()
+                if (match(TokenType::LEFT_PAREN))
+                {
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after procedure name"))
+                    {
+                        return nullptr;
+                    }
+                }
+            }
+            else if (match(TokenType::KW_EXECUTE))
+            {
+                // EXECUTE PROCEDURE procedure_name()
+                if (!consume(TokenType::KW_PROCEDURE, "Expected PROCEDURE after EXECUTE"))
+                {
+                    return nullptr;
+                }
+                if (!check(TokenType::IDENTIFIER))
+                {
+                    error("Expected procedure name after EXECUTE PROCEDURE");
+                    return nullptr;
+                }
+                procedure_name = current().value.string_id;
+                advance();
+
+                // Optional parentheses: procedure_name()
+                if (match(TokenType::LEFT_PAREN))
+                {
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after procedure name"))
+                    {
+                        return nullptr;
+                    }
+                }
+            }
+            else
+            {
+                error("Expected AS or EXECUTE PROCEDURE after database trigger definition");
+                return nullptr;
+            }
+
+            // Optional semicolon
+            match(TokenType::SEMICOLON);
+
+            auto span = SourceSpan(start_loc, previous().location);
+            return arena_.make<CreateDatabaseTriggerStmt>(span, trigger_name, event,
+                                                           active, position, procedure_name);
         }
 
         // ===== PSQL - Stored Procedures and Functions (Phase 2 Task 10.2) =====
@@ -2332,10 +2562,70 @@ namespace scratchbird
 
         Statement *Parser::parseAssignmentOrCall()
         {
-            // identifier := expression  OR  identifier(args)
-            // For now, just return nullptr as we need := operator in lexer
-            error("Assignment statements require := operator (not yet implemented in lexer)");
-            return nullptr;
+            // WP-6 PARSE-2: identifier := expression  OR  identifier(args)
+            auto start_loc = current().location;
+
+            // Get the identifier
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected identifier at start of assignment or call");
+                return nullptr;
+            }
+            StringPool::StringId var_name = current().value.string_id;
+            advance();
+
+            // Check for := (assignment) or ( (call)
+            if (match(TokenType::COLON_EQUALS))
+            {
+                // Assignment: identifier := expression
+                Expression *value = parseExpression();
+                if (!value)
+                {
+                    error("Expected expression after ':='");
+                    return nullptr;
+                }
+
+                auto span = SourceSpan(start_loc, previous().location);
+                return arena_.make<AssignmentStmt>(span, var_name, value);
+            }
+            else if (match(TokenType::LEFT_PAREN))
+            {
+                // Procedure/function call: identifier(args)
+                // For standalone procedure calls, use PERFORM syntax or wrap in assignment
+                // Parse arguments
+                std::vector<Expression *> args;
+                if (!check(TokenType::RIGHT_PAREN))
+                {
+                    do
+                    {
+                        Expression *arg = parseExpression();
+                        if (!arg)
+                        {
+                            error("Expected expression in argument list");
+                            return nullptr;
+                        }
+                        args.push_back(arg);
+                    } while (match(TokenType::COMMA));
+                }
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after arguments"))
+                {
+                    return nullptr;
+                }
+
+                // For procedure calls without assignment target, create a FunctionCallExpr
+                // and wrap it in an AssignmentStmt with empty variable (0) to indicate
+                // "execute for side effects only"
+                auto span = SourceSpan(start_loc, previous().location);
+                auto *func_call = arena_.make<FunctionCallExpr>(span, var_name, std::move(args));
+                // Use StringPool::StringId 0 to indicate "no assignment target" (procedure call)
+                return arena_.make<AssignmentStmt>(span, 0, func_call);
+            }
+            else
+            {
+                error("Expected ':=' or '(' after identifier in procedural statement");
+                return nullptr;
+            }
         }
 
         std::vector<ExceptionHandler*> Parser::parseExceptionHandlers()
@@ -2430,38 +2720,59 @@ namespace scratchbird
                 return nullptr;
             }
 
-            if (!consume(TokenType::LEFT_PAREN, "Expected '(' after VALUES"))
-            {
-                synchronize();
-                return nullptr;
-            }
+            std::vector<std::vector<Expression *>> value_rows;
 
-            std::vector<Expression *> values;
-
-            // Parse value list
+            // Parse multiple value tuples: (val1, val2), (val3, val4), ...
             do
             {
-                auto *expr = parseExpression();
-                if (!expr)
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' for value tuple"))
                 {
                     synchronize();
                     return nullptr;
                 }
-                values.push_back(expr);
-            } while (match(TokenType::COMMA));
 
-            if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after value list"))
-            {
-                synchronize();
-                return nullptr;
-            }
+                std::vector<Expression *> values;
 
-            // Only validate column/value count if columns were explicitly specified
-            if (!columns.empty() && columns.size() != values.size())
-            {
-                error("Column count doesn't match value count");
-                return nullptr;
-            }
+                // Parse value list within this tuple
+                do
+                {
+                    auto *expr = parseExpression();
+                    if (!expr)
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+                    values.push_back(expr);
+                } while (match(TokenType::COMMA));
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after value list"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                // Validate column/value count if columns were explicitly specified
+                if (!columns.empty() && columns.size() != values.size())
+                {
+                    error("Column count (" + std::to_string(columns.size()) +
+                          ") doesn't match value count (" + std::to_string(values.size()) +
+                          ") in row " + std::to_string(value_rows.size() + 1));
+                    return nullptr;
+                }
+
+                // Validate all rows have the same number of values
+                if (!value_rows.empty() && value_rows[0].size() != values.size())
+                {
+                    error("All value tuples must have the same number of values. "
+                          "Row 1 has " + std::to_string(value_rows[0].size()) +
+                          " values, but row " + std::to_string(value_rows.size() + 1) +
+                          " has " + std::to_string(values.size()) + " values");
+                    return nullptr;
+                }
+
+                value_rows.push_back(std::move(values));
+
+            } while (match(TokenType::COMMA));  // Continue if there's another value tuple
 
             // Parse optional RETURNING clause (Alpha 1 - Advanced SQL)
             bool has_returning = false;
@@ -2495,15 +2806,126 @@ namespace scratchbird
                 }
             }
 
+            // Parse optional ON CONFLICT clause (UPSERT)
+            OnConflictClause on_conflict;
+            on_conflict.action = OnConflictAction::NONE;
+            on_conflict.where_clause = nullptr;
+
+            if (match(TokenType::KW_ON))
+            {
+                if (!consume(TokenType::KW_CONFLICT, "Expected CONFLICT after ON"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                // Parse optional conflict target: (column1, column2, ...)
+                if (match(TokenType::LEFT_PAREN))
+                {
+                    do
+                    {
+                        if (!check(TokenType::IDENTIFIER) && !isIdentifierOrUnreservedKeyword())
+                        {
+                            error("Expected column name in ON CONFLICT target");
+                            synchronize();
+                            return nullptr;
+                        }
+                        on_conflict.conflict_columns.push_back(
+                            isIdentifierOrUnreservedKeyword() ? getIdentifierStringId() : current().value.string_id);
+                        advance();
+                    } while (match(TokenType::COMMA));
+
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after conflict columns"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+                }
+
+                if (!consume(TokenType::KW_DO, "Expected DO after ON CONFLICT"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                if (match(TokenType::KW_NOTHING))
+                {
+                    on_conflict.action = OnConflictAction::DO_NOTHING;
+                }
+                else if (match(TokenType::KW_UPDATE))
+                {
+                    on_conflict.action = OnConflictAction::DO_UPDATE;
+
+                    if (!consume(TokenType::KW_SET, "Expected SET after DO UPDATE"))
+                    {
+                        synchronize();
+                        return nullptr;
+                    }
+
+                    // Parse SET column = value, ...
+                    do
+                    {
+                        if (!check(TokenType::IDENTIFIER) && !isIdentifierOrUnreservedKeyword())
+                        {
+                            error("Expected column name in ON CONFLICT DO UPDATE SET");
+                            synchronize();
+                            return nullptr;
+                        }
+                        on_conflict.update_columns.push_back(
+                            isIdentifierOrUnreservedKeyword() ? getIdentifierStringId() : current().value.string_id);
+                        advance();
+
+                        if (!consume(TokenType::EQUAL, "Expected '=' after column name"))
+                        {
+                            synchronize();
+                            return nullptr;
+                        }
+
+                        auto *value_expr = parseExpression();
+                        if (!value_expr)
+                        {
+                            synchronize();
+                            return nullptr;
+                        }
+                        on_conflict.update_values.push_back(value_expr);
+                    } while (match(TokenType::COMMA));
+
+                    // Parse optional WHERE clause for DO UPDATE
+                    if (match(TokenType::KW_WHERE))
+                    {
+                        on_conflict.where_clause = parseExpression();
+                        if (!on_conflict.where_clause)
+                        {
+                            synchronize();
+                            return nullptr;
+                        }
+                    }
+                }
+                else
+                {
+                    error("Expected NOTHING or UPDATE after DO");
+                    synchronize();
+                    return nullptr;
+                }
+            }
+
             auto span = makeSpan(start_loc);
-            return arena_.make<InsertStmt>(span, table_name, std::move(columns), std::move(values),
-                                         has_returning, std::move(returning_columns));
+            auto *stmt = arena_.make<InsertStmt>(span, table_name, std::move(columns), std::move(value_rows),
+                                                has_returning, std::move(returning_columns));
+            if (on_conflict.action != OnConflictAction::NONE)
+            {
+                stmt->setOnConflict(on_conflict);
+            }
+            return stmt;
         }
 
         // Helper: Parse SELECT core (without ORDER BY/LIMIT for set operations)
         SelectStmt *Parser::parseSelectCore(WithClause *with_clause, const SourceLocation &start_loc)
         {
             std::vector<SelectItem> select_list;
+
+            // Check for DISTINCT modifier (Alpha 1 - SELECT DISTINCT support)
+            bool is_distinct = match(TokenType::KW_DISTINCT);
 
             // Parse select list
             if (check(TokenType::STAR))
@@ -2587,6 +3009,12 @@ namespace scratchbird
                 // No FROM clause - constant expression SELECT (e.g., SELECT 1)
                 // Use empty string for table name
                 stmt = arena_.make<SelectStmt>(span, std::move(select_list), 0, where_clause);
+            }
+
+            // Set DISTINCT flag if present (Alpha 1 - SELECT DISTINCT support)
+            if (is_distinct)
+            {
+                stmt->setDistinct(true);
             }
 
             // Parse GROUP BY clause (Phase 1 Task 4.1)
@@ -2734,7 +3162,10 @@ namespace scratchbird
         {
             auto start_loc = current().location;
 
-            // Check for derived table (subquery): (SELECT ...)
+            // Check for LATERAL keyword (correlated subquery in FROM)
+            bool is_lateral = match(TokenType::KW_LATERAL);
+
+            // Check for derived table (subquery): (SELECT ...) or LATERAL (SELECT ...)
             if (match(TokenType::LEFT_PAREN))
             {
                 // Check if this is a SELECT subquery
@@ -2765,8 +3196,8 @@ namespace scratchbird
                         }
                     }
 
-                    // Use the new TableRef constructor for subqueries
-                    return TableRef(subquery, alias);
+                    // Use the new TableRef constructor for subqueries with lateral support
+                    return TableRef(subquery, alias, is_lateral);
                 }
                 else
                 {
@@ -2776,6 +3207,14 @@ namespace scratchbird
                     synchronize();
                     return TableRef();
                 }
+            }
+
+            // LATERAL must be followed by a subquery
+            if (is_lateral)
+            {
+                error("LATERAL must be followed by a subquery");
+                synchronize();
+                return TableRef();
             }
 
             // Check for identifier or unreserved keyword as table name (or function name)
@@ -4053,6 +4492,116 @@ namespace scratchbird
                                                    std::move(table_reservations));
         }
 
+        Statement *Parser::parseSetSqlDialect()
+        {
+            // SET SQL DIALECT N (where N is 1, 2, or 3)
+            auto start_loc = previous().location;
+
+            // Consume SQL keyword
+            if (!consume(TokenType::KW_SQL, "Expected SQL after SET"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Consume DIALECT keyword
+            if (!consume(TokenType::KW_DIALECT, "Expected DIALECT after SET SQL"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse dialect number (1, 2, or 3)
+            if (!check(TokenType::INTEGER_LITERAL))
+            {
+                error("Expected dialect number (1, 2, or 3) after SET SQL DIALECT");
+                synchronize();
+                return nullptr;
+            }
+
+            int64_t dialect_value = current().value.int_value;
+            advance();
+
+            if (dialect_value < 1 || dialect_value > 3)
+            {
+                error("SQL dialect must be 1, 2, or 3");
+                synchronize();
+                return nullptr;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<SetSqlDialectStmt>(span, static_cast<uint8_t>(dialect_value));
+        }
+
+        Statement *Parser::parseSetNames()
+        {
+            // SET NAMES 'charset' or SET NAMES charset
+            auto start_loc = previous().location;
+
+            // Consume NAMES keyword
+            if (!consume(TokenType::KW_NAMES, "Expected NAMES after SET"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse charset name (string literal or identifier)
+            StringPool::StringId charset_name = 0;
+            if (check(TokenType::STRING_LITERAL))
+            {
+                charset_name = current().value.string_id;
+                advance();
+            }
+            else if (check(TokenType::IDENTIFIER))
+            {
+                charset_name = current().value.string_id;
+                advance();
+            }
+            else
+            {
+                error("Expected charset name after SET NAMES");
+                synchronize();
+                return nullptr;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<SetNamesStmt>(span, charset_name);
+        }
+
+        Statement *Parser::parseSetLocalTimeout()
+        {
+            // SET LOCAL_TIMEOUT N (where N is timeout in seconds)
+            auto start_loc = previous().location;
+
+            // Consume LOCAL_TIMEOUT keyword
+            if (!consume(TokenType::KW_LOCAL_TIMEOUT, "Expected LOCAL_TIMEOUT after SET"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse timeout value
+            if (!check(TokenType::INTEGER_LITERAL))
+            {
+                error("Expected timeout value (integer seconds) after SET LOCAL_TIMEOUT");
+                synchronize();
+                return nullptr;
+            }
+
+            int64_t timeout_value = current().value.int_value;
+            advance();
+
+            if (timeout_value < 0)
+            {
+                error("Timeout value must be non-negative");
+                synchronize();
+                return nullptr;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<SetLocalTimeoutStmt>(span, static_cast<uint32_t>(timeout_value));
+        }
+
         Statement *Parser::parseCommit()
         {
             // COMMIT
@@ -4064,11 +4613,72 @@ namespace scratchbird
 
         Statement *Parser::parseRollback()
         {
-            // ROLLBACK
+            // ROLLBACK [TO [SAVEPOINT] name]
             auto start_loc = previous().location;
+
+            // Check for ROLLBACK TO [SAVEPOINT] name
+            if (match(TokenType::KW_TO))
+            {
+                // Optional SAVEPOINT keyword
+                match(TokenType::KW_SAVEPOINT);
+
+                if (!check(TokenType::IDENTIFIER) && !isIdentifierOrUnreservedKeyword())
+                {
+                    error("Expected savepoint name after ROLLBACK TO");
+                    synchronize();
+                    return nullptr;
+                }
+                StringPool::StringId sp_name = isIdentifierOrUnreservedKeyword() ? getIdentifierStringId() : current().value.string_id;
+                advance();
+
+                auto span = makeSpan(start_loc);
+                return arena_.make<RollbackToSavepointStmt>(span, sp_name);
+            }
 
             auto span = makeSpan(start_loc);
             return arena_.make<RollbackStmt>(span);
+        }
+
+        Statement *Parser::parseSavepoint()
+        {
+            // SAVEPOINT name
+            auto start_loc = previous().location;
+
+            if (!check(TokenType::IDENTIFIER) && !isIdentifierOrUnreservedKeyword())
+            {
+                error("Expected savepoint name after SAVEPOINT");
+                synchronize();
+                return nullptr;
+            }
+            StringPool::StringId sp_name = isIdentifierOrUnreservedKeyword() ? getIdentifierStringId() : current().value.string_id;
+            advance();
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<SavepointStmt>(span, sp_name);
+        }
+
+        Statement *Parser::parseReleaseSavepoint()
+        {
+            // RELEASE SAVEPOINT name (already consumed RELEASE)
+            auto start_loc = previous().location;
+
+            if (!consume(TokenType::KW_SAVEPOINT, "Expected SAVEPOINT after RELEASE"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            if (!check(TokenType::IDENTIFIER) && !isIdentifierOrUnreservedKeyword())
+            {
+                error("Expected savepoint name after RELEASE SAVEPOINT");
+                synchronize();
+                return nullptr;
+            }
+            StringPool::StringId sp_name = isIdentifierOrUnreservedKeyword() ? getIdentifierStringId() : current().value.string_id;
+            advance();
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<ReleaseSavepointStmt>(span, sp_name);
         }
 
         Statement *Parser::parseSweep()
@@ -4086,67 +4696,446 @@ namespace scratchbird
             return arena_.make<SweepStmt>(span);
         }
 
+        Statement *Parser::parseCreateType()
+        {
+            // CREATE TYPE name AS (field1 type1, field2 type2, ...)  -- Composite
+            // CREATE TYPE name AS ENUM ('val1', 'val2', ...)         -- Enum
+            // CREATE TYPE name AS RANGE (SUBTYPE = typename)         -- Range
+            auto start_loc = current().location;
+
+            if (!consume(TokenType::KW_TYPE, "Expected TYPE after CREATE"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            if (!check(TokenType::IDENTIFIER) && !isIdentifierOrUnreservedKeyword())
+            {
+                error("Expected type name after CREATE TYPE");
+                synchronize();
+                return nullptr;
+            }
+            StringPool::StringId type_name = isIdentifierOrUnreservedKeyword() ? getIdentifierStringId() : current().value.string_id;
+            advance();
+
+            if (!consume(TokenType::KW_AS, "Expected AS after type name"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Determine which type kind
+            if (match(TokenType::KW_ENUM))
+            {
+                // ENUM type: CREATE TYPE name AS ENUM ('val1', 'val2', ...)
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after ENUM"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                auto span = makeSpan(start_loc);
+                auto *stmt = arena_.make<CreateTypeStmt>(span, type_name, UserTypeKind::ENUM);
+
+                do
+                {
+                    if (!check(TokenType::STRING_LITERAL))
+                    {
+                        error("Expected string literal for enum value");
+                        synchronize();
+                        return nullptr;
+                    }
+                    stmt->addEnumValue(current().value.string_id);
+                    advance();
+                } while (match(TokenType::COMMA));
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after enum values"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                return stmt;
+            }
+            else if (match(TokenType::KW_RANGE))
+            {
+                // RANGE type: CREATE TYPE name AS RANGE (SUBTYPE = typename)
+                // Note: For now, RANGE types are parsed but need runtime support
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after RANGE"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                // Parse SUBTYPE = typename
+                if (!consume(TokenType::KW_SUBTYPE, "Expected SUBTYPE in RANGE definition"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                if (!consume(TokenType::EQUAL, "Expected '=' after SUBTYPE"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                // Parse the base type for the range
+                TypeName base_type = parseTypeName();
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after RANGE definition"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                auto span = makeSpan(start_loc);
+                auto *stmt = arena_.make<CreateTypeStmt>(span, type_name, UserTypeKind::RANGE);
+                // Store the range base type as a single field (subtype)
+                stmt->addField(lexer_.stringPool().intern("subtype"), base_type.toTypeInfo());
+                return stmt;
+            }
+            else
+            {
+                // COMPOSITE type: CREATE TYPE name AS (field1 type1, ...)
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' for composite type definition"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                auto span = makeSpan(start_loc);
+                auto *stmt = arena_.make<CreateTypeStmt>(span, type_name, UserTypeKind::COMPOSITE);
+
+                do
+                {
+                    if (!check(TokenType::IDENTIFIER) && !isIdentifierOrUnreservedKeyword())
+                    {
+                        error("Expected field name in composite type");
+                        synchronize();
+                        return nullptr;
+                    }
+                    StringPool::StringId field_name = isIdentifierOrUnreservedKeyword() ? getIdentifierStringId() : current().value.string_id;
+                    advance();
+
+                    TypeName field_type = parseTypeName();
+                    stmt->addField(field_name, field_type.toTypeInfo());
+                } while (match(TokenType::COMMA));
+
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after composite type fields"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+
+                return stmt;
+            }
+        }
+
+        Statement *Parser::parseCreateDomain()
+        {
+            // CREATE DOMAIN name AS data_type [DEFAULT expr] [NOT NULL] [CHECK (condition)]
+            auto start_loc = current().location;
+
+            if (!consume(TokenType::KW_DOMAIN, "Expected DOMAIN after CREATE"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            if (!check(TokenType::IDENTIFIER) && !isIdentifierOrUnreservedKeyword())
+            {
+                error("Expected domain name after CREATE DOMAIN");
+                synchronize();
+                return nullptr;
+            }
+            StringPool::StringId domain_name = isIdentifierOrUnreservedKeyword() ? getIdentifierStringId() : current().value.string_id;
+            advance();
+
+            if (!consume(TokenType::KW_AS, "Expected AS after domain name"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            TypeName base_type = parseTypeName();
+
+            auto span = makeSpan(start_loc);
+            auto *stmt = arena_.make<CreateDomainStmt>(span, domain_name, base_type.toTypeInfo());
+
+            // Parse optional DEFAULT
+            if (match(TokenType::KW_DEFAULT))
+            {
+                Expression *default_expr = parseExpression();
+                if (!default_expr)
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                stmt->setDefault(default_expr);
+            }
+
+            // Parse optional NOT NULL
+            if (match(TokenType::KW_NOT))
+            {
+                if (!consume(TokenType::KW_NULL, "Expected NULL after NOT"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                stmt->setNotNull(true);
+            }
+
+            // Parse optional CHECK constraint
+            if (match(TokenType::KW_CHECK))
+            {
+                if (!consume(TokenType::LEFT_PAREN, "Expected '(' after CHECK"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                Expression *check_expr = parseExpression();
+                if (!check_expr)
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after CHECK condition"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                stmt->setCheck(check_expr);
+            }
+
+            return stmt;
+        }
+
         Statement *Parser::parseShowStatement()
         {
-            // SHOW TABLES [FROM database] [LIKE 'pattern']
+            // Basic SHOW commands (Alpha 1):
+            // SHOW TABLES [IN schema_path | IN PATH] [LIKE 'pattern'] [IN DETAIL]
             // SHOW DATABASES [LIKE 'pattern']
             // SHOW COLUMNS FROM table [LIKE 'pattern']
             // SHOW INDEXES FROM table
             // SHOW CREATE TABLE table
+            //
+            // Extended SHOW commands (Firebird ISQL compatibility):
+            // SHOW TABLE [name] [IN schema_path | IN PATH] [IN DETAIL]
+            // SHOW INDEX [name] [IN schema_path | IN PATH] [IN DETAIL]
+            // ... etc for all object types
+            //
+            // Schema navigation commands:
+            // SHOW SCHEMA PATH          - full path to current schema
+            // SHOW SCHEMA TREE [DEPTH n] - schema hierarchy
+            // SHOW SEARCH PATH          - current search path
+            // SHOW LOCATION OF [type] name - find object in search path
+            // SHOW RESOLVED name        - which object search path resolves to
+            // SHOW OBJECTS              - all objects in current schema
+
             auto start_loc = previous().location;
 
+            // Helper lambda to check for contextual keywords (PATH, TREE, DEPTH, etc.)
+            // These are not reserved and are lexed as identifiers
+            auto matchContextual = [&](const char* keyword) -> bool {
+                if (check(TokenType::IDENTIFIER))
+                {
+                    std::string_view val = stringPool().get(current().value.string_id);
+                    // Case-insensitive comparison
+                    if (val.size() == strlen(keyword))
+                    {
+                        bool match = true;
+                        for (size_t i = 0; i < val.size(); i++)
+                        {
+                            if (std::toupper(val[i]) != std::toupper(keyword[i]))
+                            {
+                                match = false;
+                                break;
+                            }
+                        }
+                        if (match)
+                        {
+                            advance();
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            };
+
+            auto checkContextual = [&](const char* keyword) -> bool {
+                if (check(TokenType::IDENTIFIER))
+                {
+                    std::string_view val = stringPool().get(current().value.string_id);
+                    if (val.size() == strlen(keyword))
+                    {
+                        bool result = true;
+                        for (size_t i = 0; i < val.size(); i++)
+                        {
+                            if (std::toupper(val[i]) != std::toupper(keyword[i]))
+                            {
+                                result = false;
+                                break;
+                            }
+                        }
+                        return result;
+                    }
+                }
+                return false;
+            };
+
             ShowObjectType object_type;
-            StringPool::StringId table_name = 0;
+            StringPool::StringId object_name = 0;
             StringPool::StringId database_name = 0;
             StringPool::StringId like_pattern = 0;
+            ShowSchemaScope schema_scope = ShowSchemaScope::CURRENT;
+            StringPool::StringId schema_path = 0;
+            bool in_detail = false;
+            uint32_t tree_depth = 0;
+
+            // Helper lambda for parsing optional object name
+            // Accepts both identifiers and keywords (since keywords like 'public', 'admin' can be object names)
+            auto parseOptionalName = [&]() -> StringPool::StringId {
+                if (check(TokenType::IDENTIFIER))
+                {
+                    // Skip contextual keywords that have special meaning in SHOW
+                    if (checkContextual("PATH") || checkContextual("DETAIL") ||
+                        checkContextual("TREE") || checkContextual("DEPTH") ||
+                        checkContextual("SEARCH") || checkContextual("OF") ||
+                        checkContextual("RESOLVED") || checkContextual("OBJECTS"))
+                    {
+                        return 0;
+                    }
+                    StringPool::StringId name = current().value.string_id;
+                    advance();
+                    return name;
+                }
+                // Also accept keywords that might be used as object names
+                // But exclude reserved keywords that have special meaning
+                if (current().type >= TokenType::KW_SELECT && current().type <= TokenType::KW_VERSION &&
+                    current().type != TokenType::KW_IN &&
+                    current().type != TokenType::KW_LIKE)
+                {
+                    // It's a keyword - intern it as a name
+                    std::string keyword_str(tokenTypeToString(current().type));
+                    std::transform(keyword_str.begin(), keyword_str.end(), keyword_str.begin(), ::tolower);
+                    StringPool::StringId name = lexer_.stringPool().intern(keyword_str);
+                    advance();
+                    return name;
+                }
+                return 0;
+            };
+
+            // Helper lambda for parsing schema path (dot-separated identifiers)
+            auto parseSchemaPath = [&]() -> StringPool::StringId {
+                std::string path;
+                bool first = true;
+                while (check(TokenType::IDENTIFIER) ||
+                       (current().type >= TokenType::KW_SELECT && current().type <= TokenType::KW_VERSION &&
+                        current().type != TokenType::KW_IN &&
+                        current().type != TokenType::KW_LIKE))
+                {
+                    // Skip contextual keywords in identifier position
+                    if (check(TokenType::IDENTIFIER) &&
+                        (checkContextual("PATH") || checkContextual("DETAIL") ||
+                         checkContextual("TREE") || checkContextual("DEPTH")))
+                    {
+                        break;
+                    }
+
+                    if (!first) path += ".";
+                    first = false;
+
+                    if (check(TokenType::IDENTIFIER))
+                    {
+                        path += lexer_.stringPool().get(current().value.string_id);
+                    }
+                    else
+                    {
+                        std::string keyword_str(tokenTypeToString(current().type));
+                        std::transform(keyword_str.begin(), keyword_str.end(), keyword_str.begin(), ::tolower);
+                        path += keyword_str;
+                    }
+                    advance();
+
+                    if (!match(TokenType::DOT))
+                    {
+                        break;
+                    }
+                }
+                if (path.empty()) return 0;
+                return lexer_.stringPool().intern(path);
+            };
+
+            // Helper lambda for parsing optional LIKE pattern
+            auto parseOptionalLike = [&]() -> StringPool::StringId {
+                if (match(TokenType::KW_LIKE))
+                {
+                    if (!check(TokenType::STRING_LITERAL))
+                    {
+                        error("Expected string pattern after LIKE");
+                        return 0;
+                    }
+                    StringPool::StringId pattern = current().value.string_id;
+                    advance();
+                    return pattern;
+                }
+                return 0;
+            };
+
+            // Helper lambda for parsing optional IN schema_path | IN PATH | IN DETAIL clauses
+            auto parseInClauses = [&]() {
+                while (match(TokenType::KW_IN))
+                {
+                    if (matchContextual("PATH"))
+                    {
+                        // IN PATH - search in all schemas in search path
+                        schema_scope = ShowSchemaScope::IN_PATH;
+                    }
+                    else if (matchContextual("DETAIL"))
+                    {
+                        // IN DETAIL - show extended information
+                        in_detail = true;
+                    }
+                    else
+                    {
+                        // IN schema_path - specific schema
+                        schema_path = parseSchemaPath();
+                        if (schema_path == 0)
+                        {
+                            error("Expected schema path, PATH, or DETAIL after IN");
+                            return;
+                        }
+                        schema_scope = ShowSchemaScope::IN_SCHEMA;
+                    }
+                }
+            };
 
             // Determine what to show
             if (match(TokenType::KW_TABLES))
             {
                 object_type = ShowObjectType::TABLES;
 
-                // Optional: FROM database
+                // Optional: FROM database (legacy syntax, treated as IN schema)
                 if (match(TokenType::KW_FROM))
                 {
-                    if (!check(TokenType::IDENTIFIER))
+                    schema_path = parseSchemaPath();
+                    if (schema_path == 0)
                     {
-                        error("Expected database name after FROM");
+                        error("Expected schema path after FROM");
                         synchronize();
                         return nullptr;
                     }
-                    database_name = current().value.string_id;
-                    advance();
+                    schema_scope = ShowSchemaScope::IN_SCHEMA;
                 }
 
-                // Optional: LIKE 'pattern'
-                if (match(TokenType::KW_LIKE))
-                {
-                    if (!check(TokenType::STRING_LITERAL))
-                    {
-                        error("Expected string pattern after LIKE");
-                        synchronize();
-                        return nullptr;
-                    }
-                    like_pattern = current().value.string_id;
-                    advance();
-                }
+                parseInClauses();
+                like_pattern = parseOptionalLike();
+                parseInClauses();  // Allow IN clauses after LIKE too
             }
-            else if (match(TokenType::KW_DATABASES) || match(TokenType::KW_SCHEMAS))
+            else if (match(TokenType::KW_DATABASES))
             {
                 object_type = ShowObjectType::DATABASES;
-
-                // Optional: LIKE 'pattern'
-                if (match(TokenType::KW_LIKE))
-                {
-                    if (!check(TokenType::STRING_LITERAL))
-                    {
-                        error("Expected string pattern after LIKE");
-                        synchronize();
-                        return nullptr;
-                    }
-                    like_pattern = current().value.string_id;
-                    advance();
-                }
+                like_pattern = parseOptionalLike();
             }
             else if (match(TokenType::KW_COLUMNS))
             {
@@ -4159,27 +5148,16 @@ namespace scratchbird
                     return nullptr;
                 }
 
-                if (!check(TokenType::IDENTIFIER))
+                object_name = parseSchemaPath();  // Can be qualified: schema.table
+                if (object_name == 0)
                 {
                     error("Expected table name after FROM");
                     synchronize();
                     return nullptr;
                 }
-                table_name = current().value.string_id;
-                advance();
 
-                // Optional: LIKE 'pattern'
-                if (match(TokenType::KW_LIKE))
-                {
-                    if (!check(TokenType::STRING_LITERAL))
-                    {
-                        error("Expected string pattern after LIKE");
-                        synchronize();
-                        return nullptr;
-                    }
-                    like_pattern = current().value.string_id;
-                    advance();
-                }
+                like_pattern = parseOptionalLike();
+                parseInClauses();
             }
             else if (match(TokenType::KW_INDEXES))
             {
@@ -4192,14 +5170,14 @@ namespace scratchbird
                     return nullptr;
                 }
 
-                if (!check(TokenType::IDENTIFIER))
+                object_name = parseSchemaPath();  // Can be qualified: schema.table
+                if (object_name == 0)
                 {
                     error("Expected table name after FROM");
                     synchronize();
                     return nullptr;
                 }
-                table_name = current().value.string_id;
-                advance();
+                parseInClauses();
             }
             else if (match(TokenType::KW_CREATE))
             {
@@ -4212,24 +5190,285 @@ namespace scratchbird
 
                 object_type = ShowObjectType::CREATE_TABLE;
 
-                if (!check(TokenType::IDENTIFIER))
+                object_name = parseSchemaPath();  // Can be qualified: schema.table
+                if (object_name == 0)
                 {
                     error("Expected table name after SHOW CREATE TABLE");
                     synchronize();
                     return nullptr;
                 }
-                table_name = current().value.string_id;
-                advance();
+            }
+            // Schema navigation commands (before other SCHEMA handling)
+            // These use contextual keywords (SEARCH, LOCATION, RESOLVED, OBJECTS)
+            else if (matchContextual("SEARCH"))
+            {
+                // SHOW SEARCH PATH
+                if (!matchContextual("PATH"))
+                {
+                    error("Expected PATH after SHOW SEARCH");
+                    synchronize();
+                    return nullptr;
+                }
+                object_type = ShowObjectType::SEARCH_PATH;
+            }
+            else if (match(TokenType::KW_LOCATION) || matchContextual("LOCATION"))
+            {
+                // SHOW LOCATION OF [type] name
+                object_type = ShowObjectType::LOCATION;
+                if (!matchContextual("OF"))
+                {
+                    error("Expected OF after SHOW LOCATION");
+                    synchronize();
+                    return nullptr;
+                }
+                // Optional object type qualifier
+                if (match(TokenType::KW_TABLE) || match(TokenType::KW_VIEW) ||
+                    match(TokenType::KW_FUNCTION) || match(TokenType::KW_PROCEDURE) ||
+                    match(TokenType::KW_SEQUENCE) || match(TokenType::KW_INDEX) ||
+                    match(TokenType::KW_TRIGGER) || match(TokenType::KW_DOMAIN))
+                {
+                    // Store type in database_name field (repurposed)
+                    std::string type_str(tokenTypeToString(previous().type));
+                    std::transform(type_str.begin(), type_str.end(), type_str.begin(), ::tolower);
+                    database_name = lexer_.stringPool().intern(type_str);
+                }
+                object_name = parseOptionalName();
+                if (object_name == 0)
+                {
+                    error("Expected object name after SHOW LOCATION OF");
+                    synchronize();
+                    return nullptr;
+                }
+            }
+            else if (matchContextual("RESOLVED"))
+            {
+                // SHOW RESOLVED name
+                object_type = ShowObjectType::RESOLVED;
+                object_name = parseOptionalName();
+                if (object_name == 0)
+                {
+                    error("Expected object name after SHOW RESOLVED");
+                    synchronize();
+                    return nullptr;
+                }
+            }
+            else if (matchContextual("OBJECTS"))
+            {
+                // SHOW OBJECTS [IN schema_path | IN PATH] [LIKE 'pattern']
+                object_type = ShowObjectType::OBJECTS;
+                parseInClauses();
+                like_pattern = parseOptionalLike();
+                parseInClauses();
+            }
+            // Extended SHOW commands (Firebird ISQL compatibility)
+            else if (match(TokenType::KW_TABLE))
+            {
+                // SHOW TABLE [name] [IN schema | IN PATH] [IN DETAIL]
+                object_type = ShowObjectType::TABLE;
+                object_name = parseOptionalName();
+                parseInClauses();
+                like_pattern = parseOptionalLike();
+                parseInClauses();
+            }
+            else if (match(TokenType::KW_INDEX))
+            {
+                // SHOW INDEX [name] [IN schema | IN PATH] [IN DETAIL]
+                object_type = ShowObjectType::INDEX;
+                object_name = parseOptionalName();
+                parseInClauses();
+                like_pattern = parseOptionalLike();
+                parseInClauses();
+            }
+            else if (match(TokenType::KW_TRIGGER))
+            {
+                // SHOW TRIGGER [name] [IN schema | IN PATH] [IN DETAIL]
+                object_type = ShowObjectType::TRIGGER;
+                object_name = parseOptionalName();
+                parseInClauses();
+            }
+            else if (match(TokenType::KW_PROCEDURE))
+            {
+                // SHOW PROCEDURE [name] [IN schema | IN PATH] [IN DETAIL]
+                object_type = ShowObjectType::PROCEDURE;
+                object_name = parseOptionalName();
+                parseInClauses();
+            }
+            else if (match(TokenType::KW_FUNCTION))
+            {
+                // SHOW FUNCTION [name] [IN schema | IN PATH] [IN DETAIL]
+                object_type = ShowObjectType::FUNCTION;
+                object_name = parseOptionalName();
+                parseInClauses();
+            }
+            else if (match(TokenType::KW_VIEW))
+            {
+                // SHOW VIEW [name] [IN schema | IN PATH] [IN DETAIL]
+                object_type = ShowObjectType::VIEW;
+                object_name = parseOptionalName();
+                parseInClauses();
+            }
+            else if (match(TokenType::KW_DOMAIN))
+            {
+                // SHOW DOMAIN [name] [IN schema | IN PATH] [IN DETAIL]
+                object_type = ShowObjectType::DOMAIN;
+                object_name = parseOptionalName();
+                parseInClauses();
+            }
+            else if (match(TokenType::KW_GENERATOR) || match(TokenType::KW_SEQUENCE))
+            {
+                // SHOW GENERATOR [name] / SHOW SEQUENCE [name]
+                object_type = ShowObjectType::GENERATOR;
+                object_name = parseOptionalName();
+                parseInClauses();
+            }
+            else if (match(TokenType::KW_SCHEMA))
+            {
+                // SHOW SCHEMA - multiple variants:
+                // SHOW SCHEMA           - current schema name
+                // SHOW SCHEMA PATH      - full path to current schema
+                // SHOW SCHEMA TREE [DEPTH n] [FROM ROOT] - schema hierarchy
+                // SHOW SCHEMA name [IN DETAIL] - schema details
+                if (matchContextual("PATH"))
+                {
+                    object_type = ShowObjectType::SCHEMA_PATH;
+                }
+                else if (matchContextual("TREE"))
+                {
+                    object_type = ShowObjectType::SCHEMA_TREE;
+                    // Optional: DEPTH n
+                    if (matchContextual("DEPTH"))
+                    {
+                        if (!check(TokenType::INTEGER_LITERAL))
+                        {
+                            error("Expected integer after DEPTH");
+                            synchronize();
+                            return nullptr;
+                        }
+                        tree_depth = static_cast<uint32_t>(current().value.int_value);
+                        advance();
+                    }
+                    // Optional: FROM ROOT
+                    if (match(TokenType::KW_FROM))
+                    {
+                        if (!matchContextual("ROOT"))
+                        {
+                            error("Expected ROOT after FROM in SHOW SCHEMA TREE");
+                            synchronize();
+                            return nullptr;
+                        }
+                        // Signal "from root" by setting schema_path to "/"
+                        schema_path = lexer_.stringPool().intern("/");
+                    }
+                }
+                else
+                {
+                    object_type = ShowObjectType::SCHEMA;
+                    object_name = parseOptionalName();
+                    parseInClauses();
+                }
+            }
+            else if (match(TokenType::KW_ROLE))
+            {
+                // SHOW ROLE [name]
+                object_type = ShowObjectType::ROLE;
+                object_name = parseOptionalName();
+                parseInClauses();
+            }
+            else if (match(TokenType::KW_GRANTS))
+            {
+                // SHOW GRANTS [FOR object]
+                object_type = ShowObjectType::GRANTS;
+                if (match(TokenType::KW_FOR))
+                {
+                    object_name = parseOptionalName();
+                    if (object_name == 0)
+                    {
+                        error("Expected object name after SHOW GRANTS FOR");
+                        synchronize();
+                        return nullptr;
+                    }
+                }
+                else
+                {
+                    object_name = parseOptionalName();
+                }
+                parseInClauses();
+            }
+            else if (match(TokenType::KW_CHECKS))
+            {
+                // SHOW CHECKS [table]
+                object_type = ShowObjectType::CHECKS;
+                object_name = parseOptionalName();
+                parseInClauses();
+            }
+            else if (match(TokenType::KW_COLLATIONS))
+            {
+                // SHOW COLLATIONS [LIKE 'pattern']
+                object_type = ShowObjectType::COLLATIONS;
+                like_pattern = parseOptionalLike();
+            }
+            else if (match(TokenType::KW_COMMENTS))
+            {
+                // SHOW COMMENTS [object]
+                object_type = ShowObjectType::COMMENTS;
+                object_name = parseOptionalName();
+                parseInClauses();
+            }
+            else if (match(TokenType::KW_DEPENDENCIES))
+            {
+                // SHOW DEPENDENCIES obj
+                object_type = ShowObjectType::DEPENDENCIES;
+                object_name = parseOptionalName();
+                parseInClauses();
+            }
+            else if (match(TokenType::KW_PACKAGE))
+            {
+                // SHOW PACKAGE [name]
+                object_type = ShowObjectType::PACKAGE;
+                object_name = parseOptionalName();
+                parseInClauses();
+            }
+            else if (match(TokenType::KW_SYSTEM))
+            {
+                // SHOW SYSTEM
+                object_type = ShowObjectType::SYSTEM;
+                parseInClauses();
+            }
+            else if (match(TokenType::KW_SQL))
+            {
+                // SHOW SQL DIALECT
+                if (!consume(TokenType::KW_DIALECT, "Expected DIALECT after SHOW SQL"))
+                {
+                    synchronize();
+                    return nullptr;
+                }
+                object_type = ShowObjectType::SQL_DIALECT;
+            }
+            else if (match(TokenType::KW_VERSION))
+            {
+                // SHOW VERSION
+                object_type = ShowObjectType::VERSION;
+            }
+            else if (match(TokenType::KW_DATABASE))
+            {
+                // SHOW DATABASE
+                object_type = ShowObjectType::DATABASE;
             }
             else
             {
-                error("Expected TABLES, DATABASES, COLUMNS, INDEXES, or CREATE after SHOW");
+                error("Expected TABLES, DATABASES, COLUMNS, INDEXES, CREATE, TABLE, INDEX, "
+                      "TRIGGER, PROCEDURE, FUNCTION, VIEW, DOMAIN, GENERATOR, SEQUENCE, "
+                      "SCHEMA, ROLE, GRANTS, CHECKS, COLLATIONS, COMMENTS, DEPENDENCIES, "
+                      "PACKAGE, SYSTEM, SQL DIALECT, VERSION, DATABASE, SEARCH PATH, "
+                      "LOCATION OF, RESOLVED, or OBJECTS after SHOW");
                 synchronize();
                 return nullptr;
             }
 
             auto span = makeSpan(start_loc);
-            return arena_.make<ShowStmt>(span, object_type, table_name, database_name, like_pattern);
+            return arena_.make<ShowStmt>(span, object_type, object_name, database_name,
+                                         like_pattern, schema_scope, schema_path,
+                                         in_detail, tree_depth);
         }
 
         Statement *Parser::parseDescribeStatement()
@@ -4250,6 +5489,58 @@ namespace scratchbird
 
             auto span = makeSpan(start_loc);
             return arena_.make<DescribeStmt>(span, table_name);
+        }
+
+        Statement *Parser::parseCallStatement()
+        {
+            // CALL procedure_name(arg1, arg2, ...)
+            // Note: KW_CALL has already been consumed by parseStatement()
+            auto start_loc = previous().location;
+
+            // Parse procedure name
+            if (!check(TokenType::IDENTIFIER))
+            {
+                error("Expected procedure name after CALL");
+                synchronize();
+                return nullptr;
+            }
+
+            StringPool::StringId proc_name = current().value.string_id;
+            advance();
+
+            // Parse argument list
+            std::vector<Expression*> arguments;
+
+            if (!consume(TokenType::LEFT_PAREN, "Expected '(' after procedure name"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            // Parse arguments (comma-separated expressions)
+            if (!check(TokenType::RIGHT_PAREN))
+            {
+                do
+                {
+                    Expression* arg = parseExpression();
+                    if (arg == nullptr)
+                    {
+                        error("Expected expression in procedure argument list");
+                        synchronize();
+                        return nullptr;
+                    }
+                    arguments.push_back(arg);
+                } while (match(TokenType::COMMA));
+            }
+
+            if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after procedure arguments"))
+            {
+                synchronize();
+                return nullptr;
+            }
+
+            auto span = makeSpan(start_loc);
+            return arena_.make<CallStmt>(span, proc_name, std::move(arguments));
         }
 
         Statement *Parser::parseCreateTablespace()
@@ -4416,7 +5707,7 @@ namespace scratchbird
 
         Statement *Parser::parseDropIndex()
         {
-            // DROP INDEX [IF EXISTS] name
+            // DROP INDEX [IF EXISTS] name [CASCADE | RESTRICT]
             auto start_loc = previous().location;
 
             if (!consume(TokenType::KW_INDEX, "Expected INDEX after DROP"))
@@ -4447,8 +5738,19 @@ namespace scratchbird
             StringPool::StringId index_name = current().value.string_id;
             advance();
 
+            // Parse optional CASCADE or RESTRICT clause
+            DropIndexStmt::DropBehavior drop_behavior = DropIndexStmt::DropBehavior::RESTRICT;
+            if (match(TokenType::KW_CASCADE))
+            {
+                drop_behavior = DropIndexStmt::DropBehavior::CASCADE;
+            }
+            else if (match(TokenType::KW_RESTRICT))
+            {
+                drop_behavior = DropIndexStmt::DropBehavior::RESTRICT;
+            }
+
             auto span = makeSpan(start_loc);
-            return arena_.make<DropIndexStmt>(span, index_name, if_exists);
+            return arena_.make<DropIndexStmt>(span, index_name, if_exists, drop_behavior);
         }
 
         Statement *Parser::parseTruncateTable()
@@ -5595,11 +6897,32 @@ namespace scratchbird
                     }
                     else
                     {
-                        // IN with value list: IN (1, 2, 3)
-                        // For now, we'll parse this as a series of OR comparisons
-                        // This is a simplified implementation
-                        error("IN with value list not yet implemented - use subquery");
-                        return nullptr;
+                        // WP-6 PARSE-3: IN with value list: IN (1, 2, 3)
+                        // Parse the value list and create an ArrayLiteral
+                        std::vector<Expression *> values;
+                        do
+                        {
+                            Expression *value = parseExpression();
+                            if (!value)
+                            {
+                                error("Expected expression in IN value list");
+                                return nullptr;
+                            }
+                            values.push_back(value);
+                        } while (match(TokenType::COMMA));
+
+                        if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after IN value list"))
+                            return nullptr;
+
+                        // Create an ArrayLiteral to hold the values
+                        auto array_span = makeSpan(expr->span().start, previous().location);
+                        auto *value_list = arena_.make<ArrayLiteral>(array_span, values);
+
+                        // Create the IN/NOT IN expression using BinaryOpExpr
+                        BinaryOp bin_op = is_not ? BinaryOp::NOT_IN : BinaryOp::IN;
+                        auto span = makeSpan(expr->span().start, previous().location);
+                        expr = arena_.make<BinaryOpExpr>(span, bin_op, expr, value_list);
+                        continue;
                     }
                 }
                 else
@@ -5949,10 +7272,12 @@ namespace scratchbird
             // Aggregate functions (Phase 1 Task 4.1, Phase 2 Task 12)
             if (match(TokenType::KW_COUNT) || match(TokenType::KW_SUM) ||
                 match(TokenType::KW_AVG) || match(TokenType::KW_MIN) || match(TokenType::KW_MAX) ||
-                match(TokenType::KW_ARRAY_AGG))
+                match(TokenType::KW_ARRAY_AGG) || match(TokenType::KW_STRING_AGG) ||
+                match(TokenType::KW_GROUP_CONCAT))
             {
                 TokenType agg_type = previous().type;
                 AggregateFunc agg_func;
+                bool is_string_agg = false;
 
                 switch (agg_type)
                 {
@@ -5974,6 +7299,11 @@ namespace scratchbird
                 case TokenType::KW_ARRAY_AGG:
                     agg_func = AggregateFunc::ARRAY_AGG;
                     break;
+                case TokenType::KW_STRING_AGG:
+                case TokenType::KW_GROUP_CONCAT:
+                    agg_func = AggregateFunc::STRING_AGG;
+                    is_string_agg = true;
+                    break;
                 default:
                     error("Unknown aggregate function");
                     return nullptr;
@@ -5991,6 +7321,7 @@ namespace scratchbird
 
                 // Parse argument (or * for COUNT(*))
                 Expression *arg = nullptr;
+                Expression *separator = nullptr;
                 if (match(TokenType::STAR))
                 {
                     // COUNT(*) - arg remains nullptr
@@ -6005,14 +7336,64 @@ namespace scratchbird
                     arg = parseExpression();
                     if (!arg)
                         return nullptr;
+
+                    // For STRING_AGG, parse separator: STRING_AGG(expr, separator)
+                    if (is_string_agg && match(TokenType::COMMA))
+                    {
+                        separator = parseExpression();
+                        if (!separator)
+                            return nullptr;
+                    }
                 }
 
                 auto end_loc = current().location;
                 if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after aggregate function"))
                     return nullptr;
 
-                auto span = makeSpan(start_loc, end_loc);
-                return arena_.make<AggregateExpr>(span, agg_func, arg, distinct);
+                auto *agg_expr = arena_.make<AggregateExpr>(makeSpan(start_loc, end_loc), agg_func, arg, distinct);
+
+                // Set separator for STRING_AGG
+                if (separator)
+                {
+                    agg_expr->setSeparator(separator);
+                }
+
+                // Parse optional ORDER BY within aggregate: STRING_AGG(expr, sep ORDER BY col)
+                // Or WITHIN GROUP (ORDER BY col) for certain syntaxes
+                if (is_string_agg && match(TokenType::KW_ORDER))
+                {
+                    if (!consume(TokenType::KW_BY, "Expected BY after ORDER"))
+                        return nullptr;
+                    do
+                    {
+                        Expression *order_expr = parseExpression();
+                        if (!order_expr)
+                            return nullptr;
+                        bool ascending = true;
+                        if (match(TokenType::KW_DESC))
+                            ascending = false;
+                        else
+                            match(TokenType::KW_ASC); // Optional ASC
+                        agg_expr->addOrderBy(order_expr, ascending);
+                    } while (match(TokenType::COMMA));
+                }
+
+                // Parse optional FILTER clause: aggregate(...) FILTER (WHERE condition)
+                if (match(TokenType::KW_FILTER))
+                {
+                    if (!consume(TokenType::LEFT_PAREN, "Expected '(' after FILTER"))
+                        return nullptr;
+                    if (!consume(TokenType::KW_WHERE, "Expected WHERE after FILTER ("))
+                        return nullptr;
+                    Expression *filter_expr = parseExpression();
+                    if (!filter_expr)
+                        return nullptr;
+                    agg_expr->setFilter(filter_expr);
+                    if (!consume(TokenType::RIGHT_PAREN, "Expected ')' after FILTER condition"))
+                        return nullptr;
+                }
+
+                return agg_expr;
             }
 
             // Window functions (Phase 1 Task 6)
@@ -6020,7 +7401,8 @@ namespace scratchbird
                 match(TokenType::KW_DENSE_RANK) || match(TokenType::KW_LAG) ||
                 match(TokenType::KW_LEAD) || match(TokenType::KW_FIRST_VALUE) ||
                 match(TokenType::KW_LAST_VALUE) || match(TokenType::KW_NTH_VALUE) ||
-                match(TokenType::KW_CUME_DIST) || match(TokenType::KW_PERCENT_RANK))
+                match(TokenType::KW_CUME_DIST) || match(TokenType::KW_PERCENT_RANK) ||
+                match(TokenType::KW_NTILE))
             {
                 TokenType win_type = previous().type;
                 WindowFunc win_func;
@@ -6056,6 +7438,9 @@ namespace scratchbird
                     break;
                 case TokenType::KW_PERCENT_RANK:
                     win_func = WindowFunc::PERCENT_RANK;
+                    break;
+                case TokenType::KW_NTILE:
+                    win_func = WindowFunc::NTILE;
                     break;
                 default:
                     error("Unknown window function");
@@ -7328,10 +8713,32 @@ namespace scratchbird
                     StringPool::StringId grantee_name = current().value.string_id;
                     advance();
 
+                    // WP-6 PARSE-L1: Parse optional WITH ADMIN OPTION
+                    bool with_admin_option = false;
+                    if (check(TokenType::KW_WITH))
+                    {
+                        Token next = lexer_.peekToken();
+                        if (next.type == TokenType::KW_ADMIN)
+                        {
+                            advance(); // consume WITH
+                            advance(); // consume ADMIN
+                            if (match(TokenType::KW_OPTION))
+                            {
+                                with_admin_option = true;
+                            }
+                            else
+                            {
+                                error("Expected OPTION after WITH ADMIN");
+                                synchronize();
+                                return nullptr;
+                            }
+                        }
+                    }
+
                     auto span = makeSpan(start_loc);
                     return arena_.make<GrantRoleStmt>(span, role_for_grant,
                                                      GrantRoleStmt::GranteeType::USER,
-                                                     grantee_name);
+                                                     grantee_name, with_admin_option);
                 }
                 else
                 {

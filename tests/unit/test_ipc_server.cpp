@@ -16,6 +16,7 @@
 #include <chrono>
 #include <atomic>
 #include <cstring>
+#include <unistd.h>
 
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/core/error_context.h"
@@ -167,9 +168,12 @@ TEST_F(IPCServerCreationTest, CreateClientWithDefaultMethod) {
 class TCPIntegrationTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // Use unique port for each test to avoid port conflicts
-        static std::atomic<uint16_t> port_counter{15500};
-        test_port_ = port_counter++;
+        // Use unique port for each test to avoid port conflicts during parallel execution
+        // Each process gets a unique port range based on its PID
+        // PID % 1000 gives us 1000 port ranges of 10 ports each
+        static std::atomic<uint16_t> port_counter{0};
+        uint16_t base_port = 20000 + (static_cast<uint16_t>(getpid()) % 1000) * 10;
+        test_port_ = base_port + (port_counter++ % 10);
     }
 
     void TearDown() override {}

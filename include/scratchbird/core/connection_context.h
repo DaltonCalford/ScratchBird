@@ -127,6 +127,12 @@ namespace scratchbird::core
         const ID& getCurrentSchemaId() const { return current_schema_id_; }
         void setCurrentSchemaId(const ID& schema_id) { current_schema_id_ = schema_id; }
 
+        // Schema navigation support (hierarchical schemas)
+        const std::string& current_schema() const { return current_schema_name_; }
+        void set_current_schema(const std::string& schema) { current_schema_name_ = schema; }
+        const std::vector<std::string>& search_path() const { return search_path_; }
+        void set_search_path(const std::vector<std::string>& paths) { search_path_ = paths; }
+
         // Security context types (Phase 3.1 - SQL Object Permissions)
         enum class SecurityMode : uint8_t
         {
@@ -205,6 +211,34 @@ namespace scratchbird::core
             return lock_timeout_seconds_;
         }
 
+        // Session settings (Firebird ISQL compatibility)
+        void set_sql_dialect(uint8_t dialect)
+        {
+            sql_dialect_ = dialect;
+        }
+        uint8_t sql_dialect() const
+        {
+            return sql_dialect_;
+        }
+
+        void set_charset(const std::string& charset)
+        {
+            charset_ = charset;
+        }
+        const std::string& charset() const
+        {
+            return charset_;
+        }
+
+        void set_statement_timeout(uint32_t timeout_seconds)
+        {
+            statement_timeout_seconds_ = timeout_seconds;
+        }
+        uint32_t statement_timeout() const
+        {
+            return statement_timeout_seconds_;
+        }
+
         // Table reservation (for SNAPSHOT TABLE STABILITY)
         struct TableReservation
         {
@@ -236,6 +270,10 @@ namespace scratchbird::core
         // Schema context (Phase 2.1 - Executor Schema Operations)
         ID current_schema_id_;  // Current schema UUID (default: PUBLIC schema)
 
+        // Schema navigation support (hierarchical schemas)
+        std::string current_schema_name_ = "public";  // Current schema name
+        std::vector<std::string> search_path_ = {"public"};  // Schema search path
+
         // Security context stack (Phase 3.1 - SQL Object Permissions)
         // SecurityMode and SecurityContext types defined in public section above
         std::vector<SecurityContext> security_stack_;
@@ -245,6 +283,11 @@ namespace scratchbird::core
         bool is_read_only_;              // Is transaction read-only?
         bool wait_for_locks_;            // Wait for locks or fail immediately?
         uint32_t lock_timeout_seconds_;  // Lock timeout (0 = no wait, UINT32_MAX = wait forever)
+
+        // Session settings (Firebird ISQL compatibility)
+        uint8_t sql_dialect_ = 3;             // SQL dialect (1, 2, or 3) - default 3 (modern)
+        std::string charset_ = "UTF8";        // Connection character set
+        uint32_t statement_timeout_seconds_ = 0;  // Statement timeout (0 = no limit)
 
         // Staged settings (from START TRANSACTION without COMMIT OUTSTANDING)
         bool settings_staged_;                // Are there staged settings?

@@ -88,6 +88,32 @@ namespace scratchbird::sblr
                                        const TID &tid,
                                        bool &result_out);
 
+        /**
+         * WP-6 PARSE-4: Evaluate expression with column names and values directly
+         * Preferred interface when tuple data is already available.
+         *
+         * @param expr Expression to evaluate
+         * @param column_names Names of columns in the row
+         * @param column_values Values for each column
+         * @return Evaluated result
+         */
+        TypedValue evaluateForRow(const Expression *expr,
+                                  const std::vector<std::string>& column_names,
+                                  const std::vector<TypedValue>& column_values);
+
+        /**
+         * WP-6 PARSE-5: Evaluate predicate with column names and values directly
+         * Preferred interface when tuple data is already available.
+         *
+         * @param predicate Predicate expression
+         * @param column_names Names of columns in the row
+         * @param column_values Values for each column
+         * @return Boolean result of predicate evaluation
+         */
+        bool evaluatePredicateForRow(const Expression *predicate,
+                                     const std::vector<std::string>& column_names,
+                                     const std::vector<TypedValue>& column_values);
+
     private:
         StringPool *pool_;
         std::map<StringPool::StringId, size_t> column_positions_; // column name -> row index

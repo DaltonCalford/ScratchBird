@@ -4,17 +4,38 @@
 #include <iostream>
 #include "gtest/gtest.h"
 #include <cstdio>
+#include <atomic>
+#include <unistd.h>
 
 using namespace scratchbird::core;
 
+class RecordDomainTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        // Generate unique file prefix per test to avoid conflicts during parallel execution
+        static std::atomic<int> test_counter{0};
+        test_id_ = std::to_string(getpid()) + "_" + std::to_string(test_counter++);
+        test_db_ = "/tmp/test_record_domain_" + test_id_ + ".sbdb";
+        std::remove(test_db_.c_str());
+    }
 
-TEST(RecordDomainTest, Comprehensive) {
+    void TearDown() override
+    {
+        std::remove(test_db_.c_str());
+    }
+
+    std::string test_id_;
+    std::string test_db_;
+};
+
+TEST_F(RecordDomainTest, Comprehensive) {
 
     std::cout << "Testing RECORD Domain Implementation (Phase 2)...\n\n";
 
-    // Create a test database
-    const char* test_db = "test_record_domain.sbdb";
-    std::remove(test_db);
+    // Create a test database using unique path
+    const char* test_db = test_db_.c_str();
 
     ErrorContext ctx;
     Status status = Database::create(test_db, 16384, &ctx);

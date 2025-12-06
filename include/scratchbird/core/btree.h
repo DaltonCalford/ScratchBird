@@ -339,6 +339,10 @@ namespace scratchbird
                               ErrorContext *ctx);
             Status removeFromParent(uint64_t parent_page_num, uint64_t child_page_id,
                                     ErrorContext *ctx);
+
+            // STOR-L3: Check if parent page is underutilized and merge recursively
+            void checkAndMergeParentRecursive(uint64_t page_num, VacuumStats &stats,
+                                              ErrorContext *ctx);
         };
 
         // B-tree range scan iterator

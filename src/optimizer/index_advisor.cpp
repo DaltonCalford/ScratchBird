@@ -11,9 +11,12 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/parser/parser.h"
+#include "scratchbird/parser/lexer.h"
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+#include <unordered_set>
 
 namespace scratchbird::optimizer {
 
@@ -403,11 +406,97 @@ Status IndexAdvisor::findUnusedIndexes(std::vector<IndexRecommendation>* recomme
     return Status::OK;
 }
 
+// OPT-3: Helper to extract predicate columns from WHERE clause expressions
+static void extractPredicateColumnsForIndex(const parser::Expression* expr,
+                                             const parser::StringPool& string_pool,
+                                             std::vector<std::pair<std::string, std::string>>& table_column_pairs,
+                                             std::unordered_set<std::string>& equality_columns,
+                                             std::unordered_set<std::string>& range_columns)
+{
+    if (!expr) return;
+
+    if (expr->kind() == parser::ASTKind::BINARY_OP)
+    {
+        auto* bin_expr = static_cast<const parser::BinaryOpExpr*>(expr);
+
+        // Check if this is a comparison operator (EQ, LT, LE, GT, GE, NE, LIKE)
+        auto op = bin_expr->op();
+        bool is_comparison = (op == parser::BinaryOp::EQ || op == parser::BinaryOp::NE ||
+                              op == parser::BinaryOp::LT || op == parser::BinaryOp::LE ||
+                              op == parser::BinaryOp::GT || op == parser::BinaryOp::GE ||
+                              op == parser::BinaryOp::LIKE);
+
+        if (is_comparison)
+        {
+            // Extract column from left side
+            auto* left = bin_expr->left();
+            auto* right = bin_expr->right();
+
+            // Check if left is identifier and right is a literal/constant
+            if (left && left->kind() == parser::ASTKind::IDENTIFIER)
+            {
+                auto* id_expr = static_cast<const parser::IdentifierExpr*>(left);
+                std::string col_name(string_pool.get(id_expr->name()));
+                std::string table_name;
+                if (id_expr->qualifier() != 0)
+                {
+                    table_name = std::string(string_pool.get(id_expr->qualifier()));
+                }
+
+                table_column_pairs.push_back({table_name, col_name});
+
+                // Classify as equality or range predicate
+                if (op == parser::BinaryOp::EQ)
+                {
+                    equality_columns.insert(col_name);
+                }
+                else if (op == parser::BinaryOp::LT || op == parser::BinaryOp::LE ||
+                         op == parser::BinaryOp::GT || op == parser::BinaryOp::GE)
+                {
+                    range_columns.insert(col_name);
+                }
+            }
+
+            // Check if right is identifier (for cases like "5 = col")
+            if (right && right->kind() == parser::ASTKind::IDENTIFIER)
+            {
+                auto* id_expr = static_cast<const parser::IdentifierExpr*>(right);
+                std::string col_name(string_pool.get(id_expr->name()));
+                std::string table_name;
+                if (id_expr->qualifier() != 0)
+                {
+                    table_name = std::string(string_pool.get(id_expr->qualifier()));
+                }
+
+                table_column_pairs.push_back({table_name, col_name});
+
+                if (op == parser::BinaryOp::EQ)
+                {
+                    equality_columns.insert(col_name);
+                }
+                else if (op == parser::BinaryOp::LT || op == parser::BinaryOp::LE ||
+                         op == parser::BinaryOp::GT || op == parser::BinaryOp::GE)
+                {
+                    range_columns.insert(col_name);
+                }
+            }
+        }
+        else
+        {
+            // Recurse into AND/OR expressions
+            extractPredicateColumnsForIndex(bin_expr->left(), string_pool, table_column_pairs,
+                                            equality_columns, range_columns);
+            extractPredicateColumnsForIndex(bin_expr->right(), string_pool, table_column_pairs,
+                                            equality_columns, range_columns);
+        }
+    }
+}
+
 Status IndexAdvisor::suggestIndexesForQuery(const std::string& sql_text,
                                              std::vector<IndexRecommendation>* recommendations,
                                              ErrorContext* ctx)
 {
-    // This would require query parsing - placeholder for now
+    // OPT-3: Parse query and analyze predicates for index recommendations
     if (!recommendations) {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null recommendations output");
         return Status::INVALID_ARGUMENT;
@@ -415,8 +504,181 @@ Status IndexAdvisor::suggestIndexesForQuery(const std::string& sql_text,
 
     recommendations->clear();
 
-    // Phase 4 Enhancement: Parse query and analyze predicates
-    // For now, return empty list (safe - no incorrect recommendations)
+    if (sql_text.empty()) {
+        return Status::OK;
+    }
+
+    // Parse the SQL query
+    parser::Lexer lexer(sql_text);
+    parser::ASTArena arena;
+    parser::Parser parser(lexer, arena);
+
+    auto result = parser.parseStatement();
+    if (!result.statement()) {
+        // Failed to parse - not an error, just can't make recommendations
+        return Status::OK;
+    }
+
+    // Only analyze SELECT statements for now
+    if (result.statement()->kind() != parser::ASTKind::SELECT) {
+        return Status::OK;
+    }
+
+    auto* select_stmt = static_cast<parser::SelectStmt*>(result.statement());
+    const auto& string_pool = parser.stringPool();
+
+    // Extract table name from FROM clause
+    std::string base_table_name(string_pool.get(select_stmt->fromClause().base_table.table_name));
+
+    // Extract predicate columns from WHERE clause
+    std::vector<std::pair<std::string, std::string>> table_column_pairs;
+    std::unordered_set<std::string> equality_columns;
+    std::unordered_set<std::string> range_columns;
+
+    if (select_stmt->whereClause()) {
+        extractPredicateColumnsForIndex(select_stmt->whereClause(), string_pool,
+                                        table_column_pairs, equality_columns, range_columns);
+    }
+
+    // Extract join condition columns
+    for (const auto& join : select_stmt->fromClause().joins) {
+        if (join.on_condition) {
+            extractPredicateColumnsForIndex(join.on_condition, string_pool,
+                                            table_column_pairs, equality_columns, range_columns);
+        }
+    }
+
+    // Build recommendations for columns that could benefit from indexes
+    // Prioritize: 1) equality predicates, 2) range predicates, 3) join columns
+    std::unordered_set<std::string> recommended_columns;
+
+    // Get table info for ID lookup
+    ID default_schema_id{};
+    default_schema_id.bytes[1] = 1;  // Public schema
+
+    CatalogManager::TableInfo table_info;
+    if (!catalog_ || catalog_->getTable(default_schema_id, base_table_name, table_info, ctx) != Status::OK) {
+        // Can't find table - still generate recommendation without table ID
+        table_info.table_id = ID{};
+    }
+
+    // Check existing indexes for this table
+    // Note: IndexInfo stores column_ids (IDs), so we would need column name lookup
+    // For simplicity, we use the index_name to infer which columns might be indexed
+    std::unordered_set<std::string> indexed_columns;
+    if (catalog_) {
+        auto existing_indexes = catalog_->getTableIndexes(table_info.table_id, ctx);
+        for (const auto& idx : existing_indexes) {
+            // Try to extract column name from index name (convention: idx_tablename_colname)
+            // This is a heuristic - not perfect but avoids ID lookup overhead
+            size_t last_underscore = idx.index_name.rfind('_');
+            if (last_underscore != std::string::npos && last_underscore > 0) {
+                std::string potential_col = idx.index_name.substr(last_underscore + 1);
+                if (!potential_col.empty()) {
+                    indexed_columns.insert(potential_col);
+                }
+            }
+        }
+    }
+
+    // Recommend indexes for equality columns first (highest priority)
+    for (const auto& col : equality_columns) {
+        if (indexed_columns.find(col) == indexed_columns.end() &&
+            recommended_columns.find(col) == recommended_columns.end()) {
+
+            IndexRecommendation rec;
+            rec.table_id = table_info.table_id;
+            rec.table_name = base_table_name;
+            rec.column_names.push_back(col);
+            rec.type = IndexRecommendationType::CREATE_BTREE;
+            rec.index_name = "idx_" + base_table_name + "_" + col;
+            rec.create_sql = "CREATE INDEX " + rec.index_name + " ON " + base_table_name + " (" + col + ")";
+            rec.benefit_score = 80.0;  // High benefit for equality predicates
+            rec.cost_score = 10.0;
+            rec.net_benefit = rec.benefit_score - rec.cost_score;
+            rec.priority = 85.0;
+            rec.confidence = 0.8;
+            rec.estimated_speedup = 10.0;  // Index can be 10x faster than seq scan
+
+            recommendations->push_back(rec);
+            recommended_columns.insert(col);
+        }
+    }
+
+    // Recommend indexes for range columns (medium priority)
+    for (const auto& col : range_columns) {
+        if (indexed_columns.find(col) == indexed_columns.end() &&
+            recommended_columns.find(col) == recommended_columns.end()) {
+
+            IndexRecommendation rec;
+            rec.table_id = table_info.table_id;
+            rec.table_name = base_table_name;
+            rec.column_names.push_back(col);
+            rec.type = IndexRecommendationType::CREATE_BTREE;
+            rec.index_name = "idx_" + base_table_name + "_" + col;
+            rec.create_sql = "CREATE INDEX " + rec.index_name + " ON " + base_table_name + " (" + col + ")";
+            rec.benefit_score = 60.0;  // Medium benefit for range predicates
+            rec.cost_score = 10.0;
+            rec.net_benefit = rec.benefit_score - rec.cost_score;
+            rec.priority = 65.0;
+            rec.confidence = 0.7;
+            rec.estimated_speedup = 5.0;
+
+            recommendations->push_back(rec);
+            recommended_columns.insert(col);
+        }
+    }
+
+    // Consider composite index if multiple equality columns exist
+    if (equality_columns.size() >= 2) {
+        std::vector<std::string> composite_cols(equality_columns.begin(), equality_columns.end());
+        // Sort for consistent naming
+        std::sort(composite_cols.begin(), composite_cols.end());
+
+        // Only suggest if a composite index doesn't already exist
+        // (heuristic: check if index name contains both column names)
+        bool already_has_composite = false;
+        // Simple check: if both columns are already individually indexed, skip composite
+        // This is a conservative heuristic
+        if (indexed_columns.count(composite_cols[0]) > 0 &&
+            indexed_columns.count(composite_cols[1]) > 0) {
+            // Both columns already indexed individually - lower priority for composite
+            already_has_composite = false;  // Still suggest but will have lower priority
+        }
+
+        if (!already_has_composite) {
+            IndexRecommendation rec;
+            rec.table_id = table_info.table_id;
+            rec.table_name = base_table_name;
+            rec.column_names = composite_cols;
+            rec.type = IndexRecommendationType::CREATE_BTREE;
+
+            std::string col_list = composite_cols[0];
+            std::string name_suffix = composite_cols[0];
+            for (size_t i = 1; i < composite_cols.size() && i < 3; ++i) {
+                col_list += ", " + composite_cols[i];
+                name_suffix += "_" + composite_cols[i];
+            }
+
+            rec.index_name = "idx_" + base_table_name + "_" + name_suffix;
+            rec.create_sql = "CREATE INDEX " + rec.index_name + " ON " + base_table_name + " (" + col_list + ")";
+            rec.benefit_score = 90.0;  // High benefit for composite covering multiple predicates
+            rec.cost_score = 15.0;
+            rec.net_benefit = rec.benefit_score - rec.cost_score;
+            rec.priority = 75.0;  // Lower priority than single-column since more expensive
+            rec.confidence = 0.75;
+            rec.estimated_speedup = 15.0;
+
+            recommendations->push_back(rec);
+        }
+    }
+
+    // Sort recommendations by priority (highest first)
+    std::sort(recommendations->begin(), recommendations->end(),
+              [](const IndexRecommendation& a, const IndexRecommendation& b) {
+                  return a.priority > b.priority;
+              });
+
     return Status::OK;
 }
 
@@ -733,26 +995,129 @@ double IndexAdvisor::estimateIndexCost(const TableUsageStats& table_stats,
     return maintenance;
 }
 
+// OPT-M8: Helper function to estimate column width from data type
+static double estimateColumnWidthFromType(uint16_t data_type, uint32_t type_precision)
+{
+    // Based on DataType enum values from types.h
+    switch (data_type) {
+        // Numeric types (1-9)
+        case 1:  return 1.0;   // INT8
+        case 2:  return 2.0;   // INT16
+        case 3:  return 4.0;   // INT32
+        case 4:  return 8.0;   // INT64
+        case 5:  return 16.0;  // INT128
+        case 6:  return 1.0;   // UINT8
+        case 7:  return 2.0;   // UINT16
+        case 8:  return 4.0;   // UINT32
+        case 9:  return 8.0;   // UINT64
+        case 10: return 4.0;   // FLOAT32
+        case 11: return 8.0;   // FLOAT64
+        case 12: return 16.0;  // DECIMAL (varies, assume 16)
+        case 13: return 8.0;   // MONEY
+
+        // String types (20-29)
+        case 20: return type_precision > 0 ? static_cast<double>(type_precision) : 16.0;  // CHAR
+        case 21: return type_precision > 0 ? static_cast<double>(type_precision) / 2.0 : 32.0;  // VARCHAR (assume 50% fill)
+        case 22: return 64.0;  // TEXT (variable, estimate average)
+
+        // Binary types (30-39)
+        case 30: return type_precision > 0 ? static_cast<double>(type_precision) : 16.0;  // BINARY
+        case 31: return type_precision > 0 ? static_cast<double>(type_precision) / 2.0 : 32.0;  // VARBINARY
+        case 32: return 256.0; // BLOB (usually large, estimate)
+        case 33: return 64.0;  // BYTEA
+
+        // Date/Time types (40-49)
+        case 40: return 4.0;   // DATE
+        case 41: return 8.0;   // TIME
+        case 42: return 8.0;   // TIMESTAMP
+        case 43: return 16.0;  // INTERVAL
+
+        // Boolean type (50)
+        case 50: return 1.0;   // BOOL
+
+        // UUID (60)
+        case 60: return 16.0;  // UUID
+
+        // JSON types (70-79)
+        case 70: return 128.0; // JSON (variable, estimate)
+        case 71: return 128.0; // JSONB
+
+        // Spatial types (80-89)
+        case 80: return 24.0;  // POINT (16 bytes + SRID)
+        case 81: return 48.0;  // LINE
+        case 82: return 64.0;  // POLYGON (varies)
+        case 83: return 64.0;  // GEOMETRY
+
+        // Network types (90-99)
+        case 90: return 4.0;   // INET (IPv4)
+        case 91: return 16.0;  // INET6 (IPv6)
+        case 92: return 6.0;   // MACADDR
+
+        default: return 8.0;   // Unknown type, assume 8 bytes
+    }
+}
+
 double IndexAdvisor::estimateIndexSize(const ID& table_id, const std::vector<ID>& column_ids)
 {
-    // Estimate index size based on table row count and column widths
+    // OPT-M8: Estimate index size based on table row count and column widths
+    // Try statistics manager first, then fall back to catalog metadata
+
+    uint64_t num_rows = 0;
+    bool have_row_count = false;
+
+    // Try to get row count from statistics
     TableStatistics ts;
-    if (db_->statistics_manager()->getTableStatistics(table_id, ts, nullptr) != Status::OK) {
+    if (db_->statistics_manager()->getTableStatistics(table_id, ts, nullptr) == Status::OK) {
+        num_rows = ts.num_rows;
+        have_row_count = true;
+    }
+
+    // Fall back to catalog for row count if statistics unavailable
+    if (!have_row_count && catalog_) {
+        CatalogManager::TableInfo table_info;
+        if (catalog_->getTable(table_id, table_info, nullptr) == Status::OK) {
+            num_rows = table_info.row_count;
+            have_row_count = true;
+        }
+    }
+
+    // If we still don't have row count, return 0
+    if (!have_row_count || num_rows == 0) {
         return 0.0;
     }
 
-    // Rough estimate: 16 bytes overhead + column width per entry
+    // B-tree index overhead: 16 bytes per entry (pointers, node overhead)
     double bytes_per_entry = 16.0;
+
+    // Get column information from catalog
+    std::vector<CatalogManager::ColumnInfo> all_columns;
+    if (catalog_) {
+        catalog_->getColumns(table_id, all_columns, nullptr);
+    }
+
     for (const auto& col_id : column_ids) {
+        // First try to get avg_width from column statistics
         ColumnStatistics cs;
         if (db_->statistics_manager()->getColumnStatistics(table_id, col_id, cs, nullptr) == Status::OK) {
             bytes_per_entry += cs.avg_width;
         } else {
-            bytes_per_entry += 8.0; // Default assumption
+            // Fall back to estimating from column metadata
+            bool found = false;
+            for (const auto& col_info : all_columns) {
+                if (col_info.column_id == col_id) {
+                    bytes_per_entry += estimateColumnWidthFromType(col_info.data_type, col_info.type_precision);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                bytes_per_entry += 8.0; // Default assumption if column not found
+            }
         }
     }
 
-    return ts.num_rows * bytes_per_entry / (1024.0 * 1024.0);
+    // Return size in MB
+    return static_cast<double>(num_rows) * bytes_per_entry / (1024.0 * 1024.0);
 }
 
 std::string IndexAdvisor::generateIndexName(const std::string& table_name,

@@ -144,11 +144,18 @@ namespace scratchbird
             Statement *parseSetTransaction();        // Phase 3 Task 3.6
             Statement *parseCommit();                // Phase 2 Task 2.6
             Statement *parseRollback();              // Phase 2 Task 2.6
+            Statement *parseSavepoint();             // ALPHA Phase 1 - SAVEPOINT
+            Statement *parseReleaseSavepoint();      // ALPHA Phase 1 - RELEASE SAVEPOINT
             Statement *parseSweep();                 // Phase 3 Task 3.3
             Statement *parseShowStatement();         // ALPHA Phase 1 - Developer Experience
             Statement *parseDescribeStatement();     // ALPHA Phase 1 - Developer Experience
             Statement *parseCreateTrigger();         // Phase 2 Wave 2 Agent C
+            Statement *parseCreateDatabaseTrigger(); // Database triggers (ON CONNECT, etc.)
+            Statement *parseCreateDatabaseTriggerImpl(const SourceLocation& start_loc, StringPool::StringId trigger_name); // Internal helper
             Statement *parseDropTrigger();           // Phase 2 Wave 2 Agent C
+            Statement *parseCreateType();            // ALPHA Phase 1 - User Defined Types
+            Statement *parseCreateDomain();          // ALPHA Phase 1 - Domain Types
+            Statement *parseCallStatement();         // PSQL - Call stored procedure
 
             // Security statement parsers (ALPHA Phase 1 - Security System Phase 2)
             Statement *parseCreateUser();
@@ -163,6 +170,9 @@ namespace scratchbird
             Statement *parseSetRole();               // SET ROLE or RESET ROLE
             Statement *parseSetSessionAuth();        // SET SESSION AUTHORIZATION or RESET
             Statement *parseSetConstraints();        // P2-7: SET CONSTRAINTS
+            Statement *parseSetSqlDialect();         // Firebird ISQL: SET SQL DIALECT N
+            Statement *parseSetNames();              // SET NAMES 'charset'
+            Statement *parseSetLocalTimeout();       // SET LOCAL_TIMEOUT N
             Statement *parseCreatePolicy();          // Security Phase 3.4: CREATE POLICY
             Statement *parseDropPolicy();            // Security Phase 3.4: DROP POLICY
             Statement *parseAlterTableRLS(const SourceLocation& start_loc, StringPool::StringId table_name);  // Security Phase 3.4

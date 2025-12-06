@@ -211,9 +211,11 @@ TEST_F(IndexBytecodeGenerationTest, CreateIndexGIN)
     // Bytecode should contain index type = GIN (0x02)
 }
 
+// Test GIST index type (using non-reserved column name)
 TEST_F(IndexBytecodeGenerationTest, CreateIndexGiST)
 {
-    std::string sql = "CREATE INDEX idx_locations ON places USING GIST (location)";
+    // Note: Using 'geom' instead of 'location' since LOCATION is a reserved keyword
+    std::string sql = "CREATE INDEX idx_locations ON places USING GIST (geom)";
     auto result = generateBytecode(sql);
 
     ASSERT_TRUE(result.success()) << "Bytecode generation should succeed for GiST index";
@@ -224,9 +226,11 @@ TEST_F(IndexBytecodeGenerationTest, CreateIndexGiST)
     // Bytecode should contain index type = GIST (0x03)
 }
 
+// Test BRIN index type (using non-reserved column name)
 TEST_F(IndexBytecodeGenerationTest, CreateIndexBRIN)
 {
-    std::string sql = "CREATE INDEX idx_events_timestamp ON events USING BRIN (timestamp)";
+    // Note: Using 'created_at' instead of 'timestamp' since TIMESTAMP is a reserved keyword
+    std::string sql = "CREATE INDEX idx_events_timestamp ON events USING BRIN (created_at)";
     auto result = generateBytecode(sql);
 
     ASSERT_TRUE(result.success()) << "Bytecode generation should succeed for BRIN index";
@@ -250,9 +254,11 @@ TEST_F(IndexBytecodeGenerationTest, CreateIndexHNSW)
     // Bytecode should contain index type = HNSW (0x07)
 }
 
+// Test partial index with WHERE clause (using non-reserved column name)
 TEST_F(IndexBytecodeGenerationTest, CreateIndexWithPredicate)
 {
-    std::string sql = "CREATE INDEX idx_active_users ON users(email) WHERE active = true";
+    // Note: Using 'is_active' instead of 'active' since ACTIVE is a reserved keyword for triggers
+    std::string sql = "CREATE INDEX idx_active_users ON users(email) WHERE is_active = true";
     auto result = generateBytecode(sql);
 
     ASSERT_TRUE(result.success()) << "Bytecode generation should succeed with WHERE clause";
@@ -263,9 +269,11 @@ TEST_F(IndexBytecodeGenerationTest, CreateIndexWithPredicate)
     // Bytecode should contain predicate flag = 1 and serialized predicate expression
 }
 
+// Test expression index (computed columns) - requires double parentheses
 TEST_F(IndexBytecodeGenerationTest, CreateIndexWithExpression)
 {
-    std::string sql = "CREATE INDEX idx_users_lower_email ON users(LOWER(email))";
+    // Note: Expression indexes require explicit parentheses: ((expression))
+    std::string sql = "CREATE INDEX idx_users_lower_email ON users((LOWER(email)))";
     auto result = generateBytecode(sql);
 
     ASSERT_TRUE(result.success()) << "Bytecode generation should succeed with expression index";
@@ -325,9 +333,9 @@ TEST_F(IndexBytecodeGenerationTest, DropIndexWithoutIfExists)
 // Note: CASCADE/RESTRICT are not currently supported in the AST for DROP INDEX
 // These tests are placeholders for when that support is added
 
-TEST_F(IndexBytecodeGenerationTest, DISABLED_DropIndexCascade)
+TEST_F(IndexBytecodeGenerationTest, DropIndexCascade)
 {
-    // TODO: Enable when parser supports CASCADE for DROP INDEX
+    // CASCADE support added to parser
     std::string sql = "DROP INDEX idx_users_name CASCADE";
     auto result = generateBytecode(sql);
 
@@ -337,9 +345,9 @@ TEST_F(IndexBytecodeGenerationTest, DISABLED_DropIndexCascade)
     EXPECT_TRUE(containsOpcode(bc, Opcode::DROP_INDEX));
 }
 
-TEST_F(IndexBytecodeGenerationTest, DISABLED_DropIndexRestrict)
+TEST_F(IndexBytecodeGenerationTest, DropIndexRestrict)
 {
-    // TODO: Enable when parser supports RESTRICT for DROP INDEX
+    // RESTRICT support added to parser
     std::string sql = "DROP INDEX idx_users_name RESTRICT";
     auto result = generateBytecode(sql);
 

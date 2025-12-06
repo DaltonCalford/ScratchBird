@@ -16,11 +16,160 @@
 #if defined(__x86_64__) || defined(_M_X64)
 #include <emmintrin.h> // SSE2
 #endif
+#include <map>
+#include <memory>
 
 namespace scratchbird
 {
     namespace core
     {
+        // ========================================================================
+        // STOR-M3: BK-tree Implementation for Efficient Fuzzy Matching
+        // ========================================================================
+        //
+        // A BK-tree (Burkhard-Keller tree) is a metric space tree that organizes
+        // strings by their edit distance. Each node stores a key, and children
+        // are indexed by their edit distance to the parent.
+        //
+        // Search property: To find all keys within distance n from query q:
+        // - Compare query to root, get distance d
+        // - Recursively search children at distances [d-n, d+n]
+        // - This prunes large portions of the tree
+        //
+        // Time complexity: O(k^n * log(m)) where k is alphabet size, n is max
+        // distance, m is number of keys. Much better than O(m) brute force.
+        // ========================================================================
+
+        class BKTreeNode {
+        public:
+            std::vector<uint8_t> key;
+            // Children indexed by edit distance (distance -> child node)
+            std::map<uint32_t, std::unique_ptr<BKTreeNode>> children;
+
+            explicit BKTreeNode(const std::vector<uint8_t>& k) : key(k) {}
+        };
+
+        class BKTree {
+        public:
+            BKTree() : root_(nullptr), size_(0) {}
+
+            // Insert a key into the BK-tree
+            void insert(const std::vector<uint8_t>& key) {
+                if (!root_) {
+                    root_ = std::make_unique<BKTreeNode>(key);
+                    size_ = 1;
+                    return;
+                }
+                insertRecursive(root_.get(), key);
+                size_++;
+            }
+
+            // Find all keys within max_edit_distance of the query
+            std::vector<std::vector<uint8_t>> findWithinDistance(
+                const std::vector<uint8_t>& query,
+                uint32_t max_distance) const {
+
+                std::vector<std::vector<uint8_t>> results;
+                if (root_) {
+                    searchRecursive(root_.get(), query, max_distance, results);
+                }
+                return results;
+            }
+
+            size_t size() const { return size_; }
+            bool empty() const { return root_ == nullptr; }
+            void clear() { root_.reset(); size_ = 0; }
+
+        private:
+            std::unique_ptr<BKTreeNode> root_;
+            size_t size_;
+
+            // Levenshtein distance calculation
+            static uint32_t editDistance(const std::vector<uint8_t>& s1,
+                                         const std::vector<uint8_t>& s2) {
+                const size_t len1 = s1.size();
+                const size_t len2 = s2.size();
+
+                // Early termination for empty strings
+                if (len1 == 0) return static_cast<uint32_t>(len2);
+                if (len2 == 0) return static_cast<uint32_t>(len1);
+
+                // Use space-optimized DP (two rows instead of full matrix)
+                std::vector<uint32_t> prev_row(len2 + 1);
+                std::vector<uint32_t> curr_row(len2 + 1);
+
+                // Initialize first row
+                for (size_t j = 0; j <= len2; j++) {
+                    prev_row[j] = static_cast<uint32_t>(j);
+                }
+
+                // Fill the DP table row by row
+                for (size_t i = 1; i <= len1; i++) {
+                    curr_row[0] = static_cast<uint32_t>(i);
+
+                    for (size_t j = 1; j <= len2; j++) {
+                        uint32_t cost = (s1[i - 1] == s2[j - 1]) ? 0 : 1;
+
+                        curr_row[j] = std::min({
+                            prev_row[j] + 1,      // deletion
+                            curr_row[j - 1] + 1,  // insertion
+                            prev_row[j - 1] + cost // substitution
+                        });
+                    }
+
+                    std::swap(prev_row, curr_row);
+                }
+
+                return prev_row[len2];
+            }
+
+            void insertRecursive(BKTreeNode* node, const std::vector<uint8_t>& key) {
+                uint32_t dist = editDistance(node->key, key);
+
+                // If exact duplicate, don't insert
+                if (dist == 0) {
+                    return;
+                }
+
+                auto it = node->children.find(dist);
+                if (it == node->children.end()) {
+                    // No child at this distance, create new node
+                    node->children[dist] = std::make_unique<BKTreeNode>(key);
+                } else {
+                    // Recurse into child at this distance
+                    insertRecursive(it->second.get(), key);
+                }
+            }
+
+            void searchRecursive(const BKTreeNode* node,
+                                const std::vector<uint8_t>& query,
+                                uint32_t max_distance,
+                                std::vector<std::vector<uint8_t>>& results) const {
+
+                uint32_t dist = editDistance(node->key, query);
+
+                // If within distance, add to results
+                if (dist <= max_distance) {
+                    results.push_back(node->key);
+                }
+
+                // Search children at distances [dist - max_distance, dist + max_distance]
+                // These are the only children that could possibly contain matches
+                uint32_t min_dist = (dist > max_distance) ? dist - max_distance : 0;
+                uint32_t max_dist = dist + max_distance;
+
+                for (const auto& child : node->children) {
+                    if (child.first >= min_dist && child.first <= max_dist) {
+                        searchRecursive(child.second.get(), query, max_distance, results);
+                    }
+                }
+            }
+        };
+
+        // ========================================================================
+        // GinIndex Implementation
+        // ========================================================================
+
         // Constructor
         GinIndex::GinIndex(Database *db, const UuidV7Bytes &index_uuid)
             : db_(db), buffer_pool_(db->buffer_pool()), index_uuid_(index_uuid), meta_page_(0)
@@ -3914,7 +4063,7 @@ namespace scratchbird
             return dp[len1][len2];
         }
 
-        // Optimized fuzzy matching (placeholder - full BK-tree implementation would go here)
+        // STOR-M3: Optimized fuzzy matching with BK-tree
         std::vector<uint64_t> GinIndex::findFuzzyOptimized(
             const void *key_data,
             size_t key_len,
@@ -3931,9 +4080,6 @@ namespace scratchbird
             std::vector<uint8_t> search_key(static_cast<const uint8_t *>(key_data),
                                             static_cast<const uint8_t *>(key_data) + key_len);
 
-            // For now, use brute-force scan with distance calculation
-            // Full BK-tree implementation would be more efficient
-
             // Pin meta page
             uint8_t *meta_data = nullptr;
             Status status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
@@ -3944,6 +4090,7 @@ namespace scratchbird
 
             auto *meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
             uint32_t root_page = meta->gin_keys_btree_root;
+            uint64_t num_keys = meta->gin_num_keys;
 
             buffer_pool_->unpinPage(meta_page_, false, ctx);
 
@@ -3952,28 +4099,143 @@ namespace scratchbird
                 return result;
             }
 
-            // This is a simplified implementation that delegates to findFuzzy()
-            // A full implementation would:
-            // 1. Build a BK-tree from indexed keys for faster distance calculations
-            // 2. Use BK-tree for efficient distance-bounded search
-            // 3. Cache the BK-tree structure for repeated queries
+            // STOR-M3: Build BK-tree from all indexed keys for efficient fuzzy search
+            // This is more efficient than brute-force when:
+            // 1. The number of keys is large (> 100)
+            // 2. The edit distance is small (< 3)
             //
-            // For now, we use the full tree scan implementation in findFuzzy()
-            // which provides correct results but is not optimized with BK-tree
+            // For small key sets, fall back to brute-force scan
+            constexpr uint64_t BK_TREE_THRESHOLD = 100;
 
-            // Call the complete findFuzzy() implementation (returns TID structs)
-            std::vector<TID> tid_results = findFuzzy(key_data, key_len, max_edit_distance, ctx);
-
-            // Convert TID structs back to legacy uint64_t format for Phase 6 API
-            result.reserve(tid_results.size());
-            for (const TID &tid : tid_results)
+            if (num_keys < BK_TREE_THRESHOLD)
             {
-                uint64_t legacy = convertTIDtoLegacy(tid);
-                if (legacy != 0) // Skip custom tablespace TIDs
+                // Use existing brute-force implementation for small key sets
+                std::vector<TID> tid_results = findFuzzy(key_data, key_len, max_edit_distance, ctx);
+
+                result.reserve(tid_results.size());
+                for (const TID &tid : tid_results)
                 {
-                    result.push_back(legacy);
+                    uint64_t legacy = convertTIDtoLegacy(tid);
+                    if (legacy != 0)
+                    {
+                        result.push_back(legacy);
+                    }
                 }
+                return result;
             }
+
+            // Build BK-tree from all keys in the entry tree
+            BKTree bk_tree;
+
+            // Helper lambda to collect all keys from entry tree leaves
+            std::function<void(uint32_t)> collectKeys = [&](uint32_t page_num)
+            {
+                uint8_t *page_data = nullptr;
+                Status scan_status = buffer_pool_->pinPage(page_num, (void **)&page_data, ctx);
+                if (scan_status != Status::OK)
+                {
+                    return;
+                }
+
+                auto *internal = reinterpret_cast<SBGinEntryTreeInternal *>(page_data);
+
+                if (internal->get_is_leaf == 1)
+                {
+                    // This is a leaf page
+                    auto *leaf = reinterpret_cast<SBGinEntryTreeLeaf *>(page_data);
+                    uint16_t entry_count = leaf->get_entry_count;
+
+                    for (uint16_t i = 0; i < entry_count; i++)
+                    {
+                        uint16_t offset = leaf->get_offsets[i];
+                        auto *entry = reinterpret_cast<GinEntryTreeLeafEntry *>(
+                            page_data + offset);
+
+                        // Extract key and add to BK-tree
+                        std::vector<uint8_t> key(entry->key_data,
+                                                 entry->key_data + entry->key_len);
+                        bk_tree.insert(key);
+                    }
+                }
+                else
+                {
+                    // Internal node - recurse into children
+                    uint16_t entry_count = internal->get_entry_count;
+
+                    // Visit first child (leftmost)
+                    if (entry_count > 0)
+                    {
+                        uint16_t offset = internal->get_offsets[0];
+                        auto *entry = reinterpret_cast<GinEntryTreeInternalEntry *>(
+                            page_data + offset);
+                        collectKeys(entry->child_page);
+                    }
+
+                    // Visit remaining children
+                    for (uint16_t i = 0; i < entry_count; i++)
+                    {
+                        uint16_t offset = internal->get_offsets[i];
+                        auto *entry = reinterpret_cast<GinEntryTreeInternalEntry *>(
+                            page_data + offset);
+
+                        // For internal entries, child is at index i+1 in logical terms
+                        // We need to follow the entry's child pointer
+                        if (i + 1 < entry_count)
+                        {
+                            uint16_t next_offset = internal->get_offsets[i + 1];
+                            auto *next_entry = reinterpret_cast<GinEntryTreeInternalEntry *>(
+                                page_data + next_offset);
+                            collectKeys(next_entry->child_page);
+                        }
+                    }
+
+                    // Visit rightmost child
+                    if (internal->get_rightmost_child != 0)
+                    {
+                        collectKeys(internal->get_rightmost_child);
+                    }
+                }
+
+                buffer_pool_->unpinPage(page_num, false, ctx);
+            };
+
+            // Collect all keys into BK-tree
+            collectKeys(root_page);
+
+            // Use BK-tree to find matching keys within edit distance
+            std::vector<std::vector<uint8_t>> matching_keys =
+                bk_tree.findWithinDistance(search_key, max_edit_distance);
+
+            // For each matching key, get the posting list TIDs
+            // Use current transaction ID 0 for now (no MGA filtering in legacy API)
+            uint64_t current_xid = 0;
+
+            for (const auto &key : matching_keys)
+            {
+                // Find posting page for this key
+                uint64_t posting_page = 0;
+                status = searchKeysTree(key, &posting_page, ctx);
+                if (status != Status::OK || posting_page == 0)
+                {
+                    continue;
+                }
+
+                // Get TIDs from posting list
+                std::vector<uint64_t> tids;
+                status = getPostingListTids(static_cast<uint32_t>(posting_page),
+                                           &tids, current_xid, ctx);
+                if (status != Status::OK)
+                {
+                    continue;
+                }
+
+                // Add to result
+                result.insert(result.end(), tids.begin(), tids.end());
+            }
+
+            // Remove duplicates and sort
+            std::sort(result.begin(), result.end());
+            result.erase(std::unique(result.begin(), result.end()), result.end());
 
             return result;
         }

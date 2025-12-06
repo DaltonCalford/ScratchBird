@@ -291,56 +291,75 @@ namespace scratchbird
             if (!table)
                 return;
 
-            // Check column count
-            if (node->columns().size() != node->values().size())
+            // Validate each row
+            size_t row_num = 0;
+            for (const auto& values : node->valueRows())
             {
-                reportError(node, "Column count doesn't match value count");
-                return;
-            }
+                row_num++;
 
-            // Validate each column and value
-            for (size_t i = 0; i < node->columns().size(); i++)
-            {
-                // Check if column exists
-                const ColumnSymbol *col = table->findColumn(node->columns()[i]);
-                if (!col)
+                // Check column count matches value count for this row
+                if (node->columns().size() != values.size())
                 {
                     std::stringstream ss;
-                    ss << "Column '" << string_pool_.get(node->columns()[i])
-                       << "' does not exist in table '" << string_pool_.get(table->name) << "'";
+                    ss << "Column count (" << node->columns().size()
+                       << ") doesn't match value count (" << values.size()
+                       << ") in row " << row_num;
                     reportError(node, ss.str());
                     continue;
                 }
 
-                // Type check the value expression
-                Expression *value = node->values()[i];
-                checkExpression(value);
-
-                // Check type compatibility
-                const ExpressionType *expr_type = getExpressionType(value);
-                if (!expr_type || !TypeChecker::canAssign(col->type, expr_type->type))
+                // Validate each column and value
+                for (size_t i = 0; i < node->columns().size(); i++)
                 {
-                    std::stringstream ss;
-                    ss << "Cannot assign ";
-                    if (expr_type)
+                    // Check if column exists
+                    const ColumnSymbol *col = table->findColumn(node->columns()[i]);
+                    if (!col)
                     {
-                        ss << core::TypeSystem::getTypeName(expr_type->type.type);
+                        std::stringstream ss;
+                        ss << "Column '" << string_pool_.get(node->columns()[i])
+                           << "' does not exist in table '" << string_pool_.get(table->name) << "'";
+                        reportError(node, ss.str());
+                        continue;
                     }
-                    else
-                    {
-                        ss << "unknown type";
-                    }
-                    ss << " to column '" << string_pool_.get(col->name) << "' of type ";
-                    ss << core::TypeSystem::getTypeName(col->type.type);
-                    reportError(value, ss.str());
-                }
 
-                // Check nullable constraint
-                if (expr_type && !col->nullable && expr_type->is_nullable)
-                {
-                    std::stringstream ss;
-                    ss << "Column '" << string_pool_.get(col->name) << "' cannot be NULL";
-                    reportError(value, ss.str());
+                    // Type check the value expression
+                    Expression *value = values[i];
+                    checkExpression(value);
+
+                    // Check type compatibility
+                    const ExpressionType *expr_type = getExpressionType(value);
+                    if (!expr_type || !TypeChecker::canAssign(col->type, expr_type->type))
+                    {
+                        std::stringstream ss;
+                        ss << "Cannot assign ";
+                        if (expr_type)
+                        {
+                            ss << core::TypeSystem::getTypeName(expr_type->type.type);
+                        }
+                        else
+                        {
+                            ss << "unknown type";
+                        }
+                        ss << " to column '" << string_pool_.get(col->name) << "' of type ";
+                        ss << core::TypeSystem::getTypeName(col->type.type);
+                        if (node->rowCount() > 1)
+                        {
+                            ss << " in row " << row_num;
+                        }
+                        reportError(value, ss.str());
+                    }
+
+                    // Check nullable constraint
+                    if (expr_type && !col->nullable && expr_type->is_nullable)
+                    {
+                        std::stringstream ss;
+                        ss << "Column '" << string_pool_.get(col->name) << "' cannot be NULL";
+                        if (node->rowCount() > 1)
+                        {
+                            ss << " in row " << row_num;
+                        }
+                        reportError(value, ss.str());
+                    }
                 }
             }
         }
@@ -662,6 +681,24 @@ namespace scratchbird
         void SemanticAnalyzer::visit(RollbackStmt *node)
         {
             // Transaction statements don't require semantic analysis
+            (void)node; // Suppress unused parameter warning
+        }
+
+        void SemanticAnalyzer::visit(SavepointStmt *node)
+        {
+            // Savepoint statements don't require semantic analysis
+            (void)node; // Suppress unused parameter warning
+        }
+
+        void SemanticAnalyzer::visit(ReleaseSavepointStmt *node)
+        {
+            // Release savepoint statements don't require semantic analysis
+            (void)node; // Suppress unused parameter warning
+        }
+
+        void SemanticAnalyzer::visit(RollbackToSavepointStmt *node)
+        {
+            // Rollback to savepoint statements don't require semantic analysis
             (void)node; // Suppress unused parameter warning
         }
 
@@ -1679,6 +1716,49 @@ namespace scratchbird
             // Semantic validation (trigger exists) happens at execution time
         }
 
+        void SemanticAnalyzer::visit(CreateDatabaseTriggerStmt *node)
+        {
+            // Validate CREATE DATABASE TRIGGER statement
+            // Trigger name should not be empty (parser ensures this)
+            // Procedure name should not be empty (parser ensures this)
+            // Position should be non-negative (parser ensures this via int32_t)
+
+            // Semantic validation (procedure exists) happens at execution time
+        }
+
+        // ALPHA Phase 1 - User Defined Types
+        void SemanticAnalyzer::visit(CreateTypeStmt *node)
+        {
+            // Validate CREATE TYPE statement
+            // Type name should not be empty (parser ensures this)
+            // For COMPOSITE types, at least one field is required
+            // For ENUM types, at least one value is required
+            // For RANGE types, subtype must be specified
+
+            // All deeper validation happens at execution time
+            (void)node; // Suppress unused parameter warning
+        }
+
+        void SemanticAnalyzer::visit(CreateDomainStmt *node)
+        {
+            // Validate CREATE DOMAIN statement
+            // Domain name and base type should not be empty (parser ensures this)
+            // CHECK constraint expression, if present, is syntactically valid
+
+            // All deeper validation happens at execution time
+            (void)node; // Suppress unused parameter warning
+        }
+
+        void SemanticAnalyzer::visit(CallStmt *node)
+        {
+            // Validate CALL statement
+            // Procedure name should not be empty (parser ensures this)
+            // Arguments are expressions which may need semantic analysis
+
+            // All deeper validation (procedure exists, argument types match) happens at execution time
+            (void)node; // Suppress unused parameter warning
+        }
+
         // Phase 2 Task 10.2 - PSQL visitors
         void SemanticAnalyzer::visit(CreateFunctionStmt *node)
         {
@@ -2061,6 +2141,27 @@ namespace scratchbird
             {
                 reportError(node, "SET CONSTRAINTS requires ALL or at least one constraint name");
             }
+        }
+
+        // Firebird ISQL compatibility: SET SQL DIALECT, SET NAMES, SET LOCAL_TIMEOUT
+        void SemanticAnalyzer::visit(SetSqlDialectStmt *node)
+        {
+            // Dialect is already validated in the parser (1, 2, or 3)
+            // Additional semantic validation could be added here if needed
+            (void)node;  // Suppress unused parameter warning
+        }
+
+        void SemanticAnalyzer::visit(SetNamesStmt *node)
+        {
+            // Charset name validation would require catalog access
+            // For now, accept any identifier - runtime will validate
+            (void)node;  // Suppress unused parameter warning
+        }
+
+        void SemanticAnalyzer::visit(SetLocalTimeoutStmt *node)
+        {
+            // Timeout is already validated in the parser (non-negative integer)
+            (void)node;  // Suppress unused parameter warning
         }
 
         // Security Phase 3.4: Row-level security policy statements

@@ -167,6 +167,18 @@ namespace scratchbird::optimizer
         double qualCost() const { return qual_cost_; }
 
         /**
+         * Set WHERE expression (OPT-L2: for EXPLAIN filter display)
+         * @param expr WHERE clause expression (non-owning pointer)
+         */
+        void setWhereExpr(const parser::Expression* expr) { where_expr_ = expr; }
+
+        /**
+         * Get WHERE expression
+         * @return WHERE clause expression or nullptr if none
+         */
+        const parser::Expression* whereExpr() const { return where_expr_; }
+
+        /**
          * Convert to string for debugging
          */
         auto toString() const -> std::string override
@@ -182,6 +194,7 @@ namespace scratchbird::optimizer
         uint64_t num_pages_;
         uint64_t num_tuples_;
         double qual_cost_;
+        const parser::Expression* where_expr_ = nullptr;  // OPT-L2: WHERE clause for EXPLAIN
     };
 
     /**
@@ -301,6 +314,18 @@ namespace scratchbird::optimizer
         double correlation() const { return correlation_; }
 
         /**
+         * Set WHERE expression (OPT-L2: for EXPLAIN filter display)
+         * @param expr WHERE clause expression (non-owning pointer)
+         */
+        void setWhereExpr(const parser::Expression* expr) { where_expr_ = expr; }
+
+        /**
+         * Get WHERE expression
+         * @return WHERE clause expression or nullptr if none
+         */
+        const parser::Expression* whereExpr() const { return where_expr_; }
+
+        /**
          * Convert to string for debugging
          */
         auto toString() const -> std::string override
@@ -323,6 +348,7 @@ namespace scratchbird::optimizer
         uint64_t heap_tuples_;
         double qual_cost_;
         double correlation_;
+        const parser::Expression* where_expr_ = nullptr;  // OPT-L2: WHERE clause for EXPLAIN
     };
 
     /**

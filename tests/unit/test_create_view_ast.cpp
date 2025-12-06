@@ -40,7 +40,7 @@ TEST(CreateViewASTTest, StoresQueryDefinitionText)
 // Test that bytecode generator writes actual query text (not placeholder)
 TEST(CreateViewBytecodeTest, WritesActualQueryText)
 {
-    std::string sql = "CREATE VIEW active_users AS SELECT id, name FROM users WHERE active = true;";
+    std::string sql = "CREATE VIEW active_users AS SELECT id, name FROM users WHERE is_active = 1;";
     parser::Lexer lexer(sql);
     parser::ASTArena arena;
     parser::Parser parser(lexer, arena);

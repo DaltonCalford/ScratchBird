@@ -45,6 +45,7 @@ namespace scratchbird
             REFRESH_MATERIALIZED_VIEW, // ALPHA Phase 1 - Materialized Views
             CREATE_TRIGGER,            // Phase 2 Wave 2 - Agent C: Basic Triggers
             DROP_TRIGGER,              // Phase 2 Wave 2 - Agent C: Basic Triggers
+            CREATE_DATABASE_TRIGGER,   // Database triggers (ON CONNECT/DISCONNECT/TRANSACTION)
             CREATE_FUNCTION,           // Phase 2 Task 10.2 - Stored Procedures
             CREATE_PROCEDURE,          // Phase 2 Task 10.2 - Stored Procedures
             CREATE_TABLESPACE,         // Phase 2 Task 2.1
@@ -65,7 +66,12 @@ namespace scratchbird
             SET_TRANSACTION,   // Phase 3 Task 3.6
             COMMIT,            // Phase 2 Task 2.6
             ROLLBACK,          // Phase 2 Task 2.6
+            SAVEPOINT,         // SAVEPOINT name
+            RELEASE_SAVEPOINT, // RELEASE SAVEPOINT name
+            ROLLBACK_TO_SAVEPOINT, // ROLLBACK TO SAVEPOINT name
             SWEEP,             // Phase 3 Task 3.3
+            CREATE_TYPE,       // CREATE TYPE for user-defined types
+            CREATE_DOMAIN,     // CREATE DOMAIN for domain types
             SHOW,              // ALPHA Phase 1 - Developer Experience: SHOW TABLES/DATABASES/COLUMNS/INDEXES/CREATE TABLE
             DESCRIBE,          // ALPHA Phase 1 - Developer Experience: DESCRIBE table (alias for SHOW COLUMNS)
 
@@ -84,6 +90,9 @@ namespace scratchbird
             SET_ROLE,          // SET ROLE rolename / RESET ROLE
             SET_SESSION_AUTH,  // SET SESSION AUTHORIZATION username / RESET SESSION AUTHORIZATION
             SET_CONSTRAINTS,   // P2-7: SET CONSTRAINTS {ALL | constraint_name} {DEFERRED | IMMEDIATE}
+            SET_SQL_DIALECT,   // SET SQL DIALECT N (Firebird ISQL compatibility)
+            SET_NAMES,         // SET NAMES 'charset' (connection character set)
+            SET_LOCAL_TIMEOUT, // SET LOCAL_TIMEOUT N (statement timeout in seconds)
             CREATE_POLICY,     // Security Phase 3.4: CREATE POLICY policy_name ON table_name
             DROP_POLICY,       // Security Phase 3.4: DROP POLICY policy_name ON table_name
             ALTER_TABLE_RLS,   // Security Phase 3.4: ALTER TABLE ... ENABLE/DISABLE ROW LEVEL SECURITY
@@ -99,6 +108,7 @@ namespace scratchbird
             RETURN_STMT,       // RETURN statement
             RAISE_STMT,        // RAISE exception
             TRY_EXCEPT,        // TRY/EXCEPT block
+            CALL,              // CALL procedure(args...) statement
 
             // Expressions
             LITERAL,
@@ -543,15 +553,18 @@ namespace scratchbird
             AVG,
             MIN,
             MAX,
-            ARRAY_AGG  // Phase 2 Task 12
+            ARRAY_AGG,   // Phase 2 Task 12
+            STRING_AGG   // STRING_AGG(expression, delimiter) with optional ORDER BY
         };
 
         // Aggregate function expression (Phase 1 Task 4.1)
+        // Extended to support FILTER clause and STRING_AGG with separator/order by
         class AggregateExpr : public Expression
         {
         public:
             AggregateExpr(const SourceSpan &span, AggregateFunc func, Expression *arg, bool distinct = false)
-                : Expression(ASTKind::AGGREGATE_FUNC, span), func_(func), arg_(arg), distinct_(distinct)
+                : Expression(ASTKind::AGGREGATE_FUNC, span), func_(func), arg_(arg), distinct_(distinct),
+                  separator_(nullptr), filter_(nullptr)
             {
             }
 
@@ -568,12 +581,34 @@ namespace scratchbird
                 return distinct_;
             }
 
+            // STRING_AGG support: separator expression
+            void setSeparator(Expression* sep) { separator_ = sep; }
+            Expression* separator() const { return separator_; }
+
+            // STRING_AGG support: ORDER BY within aggregate
+            void addOrderBy(Expression* expr, bool ascending) {
+                order_by_.push_back(expr);
+                order_ascending_.push_back(ascending);
+            }
+            const std::vector<Expression*>& orderBy() const { return order_by_; }
+            const std::vector<bool>& orderAscending() const { return order_ascending_; }
+            bool hasOrderBy() const { return !order_by_.empty(); }
+
+            // FILTER clause support: FILTER (WHERE condition)
+            void setFilter(Expression* filter) { filter_ = filter; }
+            Expression* filter() const { return filter_; }
+            bool hasFilter() const { return filter_ != nullptr; }
+
             void accept(ASTVisitor *visitor) override;
 
         private:
             AggregateFunc func_;
             Expression *arg_;     // nullptr for COUNT(*)
             bool distinct_;       // true for COUNT(DISTINCT col)
+            Expression* separator_;  // For STRING_AGG(expr, separator)
+            std::vector<Expression*> order_by_;  // For STRING_AGG ... ORDER BY
+            std::vector<bool> order_ascending_;
+            Expression* filter_;  // FILTER (WHERE condition)
         };
 
         // Window function types (Phase 1 Task 6)
@@ -588,7 +623,8 @@ namespace scratchbird
             LAST_VALUE,
             NTH_VALUE,
             CUME_DIST,        // Alpha 1 - Missing Functions Phase 4
-            PERCENT_RANK      // Alpha 1 - Missing Functions Phase 4
+            PERCENT_RANK,     // Alpha 1 - Missing Functions Phase 4
+            NTILE             // NTILE(n) - divide rows into n buckets
         };
 
         // Window frame boundary type (Phase 1 Task 6)
@@ -1216,6 +1252,24 @@ namespace scratchbird
             std::vector<StringPool::StringId> columns_;
         };
 
+        // CHECK table constraint (WP-6 PARSE-1)
+        class CheckTableConstraint : public TableConstraint
+        {
+        public:
+            CheckTableConstraint(const SourceSpan &span,
+                                Expression *check_expr,
+                                StringPool::StringId name = 0)
+                : TableConstraint(span, ConstraintType::CHECK, name),
+                  check_expr_(check_expr)
+            {
+            }
+
+            Expression *checkExpr() const { return check_expr_; }
+
+        private:
+            Expression *check_expr_;
+        };
+
         // CREATE TABLE statement
         class CreateTableStmt : public Statement
         {
@@ -1441,10 +1495,16 @@ namespace scratchbird
         class DropIndexStmt : public Statement
         {
         public:
+            enum class DropBehavior : uint8_t
+            {
+                RESTRICT,  // Fail if dependencies exist (default)
+                CASCADE    // Drop dependent objects recursively
+            };
+
             DropIndexStmt(const SourceSpan &span, StringPool::StringId index_name,
-                         bool if_exists = false)
+                         bool if_exists = false, DropBehavior behavior = DropBehavior::RESTRICT)
                 : Statement(ASTKind::DROP_INDEX, span), index_name_(index_name),
-                  if_exists_(if_exists)
+                  if_exists_(if_exists), drop_behavior_(behavior)
             {
             }
 
@@ -1456,12 +1516,17 @@ namespace scratchbird
             {
                 return if_exists_;
             }
+            DropBehavior dropBehavior() const
+            {
+                return drop_behavior_;
+            }
 
             void accept(ASTVisitor *visitor) override;
 
         private:
             StringPool::StringId index_name_;
-            bool if_exists_;  // IF EXISTS clause
+            bool if_exists_;           // IF EXISTS clause
+            DropBehavior drop_behavior_; // CASCADE or RESTRICT
         };
 
         // TRUNCATE TABLE statement (ALPHA Phase 1 - DDL Modifications - final operation)
@@ -1854,15 +1919,50 @@ namespace scratchbird
             bool concurrently_;  // CONCURRENTLY option for non-blocking refresh
         };
 
-        // INSERT statement
+        // ON CONFLICT action type for UPSERT
+        enum class OnConflictAction : uint8_t
+        {
+            NONE,       // No ON CONFLICT clause
+            DO_NOTHING, // ON CONFLICT DO NOTHING
+            DO_UPDATE   // ON CONFLICT DO UPDATE SET ...
+        };
+
+        // ON CONFLICT clause for INSERT ... ON CONFLICT (UPSERT)
+        struct OnConflictClause
+        {
+            OnConflictAction action;
+            std::vector<StringPool::StringId> conflict_columns;  // ON CONFLICT (col1, col2)
+            std::vector<StringPool::StringId> update_columns;    // SET col = ...
+            std::vector<Expression*> update_values;              // ... = value (can use EXCLUDED.col)
+            Expression* where_clause;  // Optional WHERE clause for DO UPDATE
+
+            OnConflictClause()
+                : action(OnConflictAction::NONE), where_clause(nullptr) {}
+        };
+
+        // INSERT statement with UPSERT and multi-row support
         class InsertStmt : public Statement
         {
         public:
+            // Constructor for single-row INSERT (backward compatible)
             InsertStmt(const SourceSpan &span, StringPool::StringId table_name,
                        std::vector<StringPool::StringId> columns, std::vector<Expression *> values,
                        bool has_returning = false, std::vector<StringPool::StringId> returning_columns = {})
                 : Statement(ASTKind::INSERT, span), table_name_(table_name),
-                  columns_(std::move(columns)), values_(std::move(values)),
+                  columns_(std::move(columns)), has_returning_(has_returning),
+                  returning_columns_(std::move(returning_columns))
+            {
+                // Store single row as first element of value_rows_
+                value_rows_.push_back(std::move(values));
+            }
+
+            // Constructor for multi-row INSERT
+            InsertStmt(const SourceSpan &span, StringPool::StringId table_name,
+                       std::vector<StringPool::StringId> columns,
+                       std::vector<std::vector<Expression *>> value_rows,
+                       bool has_returning = false, std::vector<StringPool::StringId> returning_columns = {})
+                : Statement(ASTKind::INSERT, span), table_name_(table_name),
+                  columns_(std::move(columns)), value_rows_(std::move(value_rows)),
                   has_returning_(has_returning), returning_columns_(std::move(returning_columns))
             {
             }
@@ -1875,10 +1975,24 @@ namespace scratchbird
             {
                 return columns_;
             }
+
+            // Multi-row access
+            const std::vector<std::vector<Expression *>> &valueRows() const
+            {
+                return value_rows_;
+            }
+            size_t rowCount() const
+            {
+                return value_rows_.size();
+            }
+
+            // Single-row access (backward compatible - returns first row)
             const std::vector<Expression *> &values() const
             {
-                return values_;
+                static const std::vector<Expression *> empty;
+                return value_rows_.empty() ? empty : value_rows_[0];
             }
+
             bool hasReturning() const
             {
                 return has_returning_;
@@ -1888,14 +2002,20 @@ namespace scratchbird
                 return returning_columns_;
             }
 
+            // ON CONFLICT (UPSERT) support
+            void setOnConflict(const OnConflictClause& clause) { on_conflict_ = clause; }
+            const OnConflictClause& onConflict() const { return on_conflict_; }
+            bool hasOnConflict() const { return on_conflict_.action != OnConflictAction::NONE; }
+
             void accept(ASTVisitor *visitor) override;
 
         private:
             StringPool::StringId table_name_;
             std::vector<StringPool::StringId> columns_;
-            std::vector<Expression *> values_;
+            std::vector<std::vector<Expression *>> value_rows_;  // Multi-row support
             bool has_returning_;
             std::vector<StringPool::StringId> returning_columns_;
+            OnConflictClause on_conflict_;  // UPSERT support
         };
 
         // SELECT list item
@@ -1932,30 +2052,32 @@ namespace scratchbird
         };
 
         // Table reference in FROM clause
-        // Supports: table_name, (SELECT ...) alias, function_call(args) alias
+        // Supports: table_name, (SELECT ...) alias, function_call(args) alias, LATERAL subquery
         struct TableRef
         {
             StringPool::StringId table_name;
             StringPool::StringId alias;  // Optional table alias
             FunctionCallExpr *table_function;  // Table-valued function (e.g., REGEXP_SPLIT_TO_TABLE)
             SelectStmt *subquery;  // Derived table subquery
+            bool is_lateral;  // LATERAL subquery (can reference columns from preceding FROM items)
 
-            TableRef() : table_name(0), alias(0), table_function(nullptr), subquery(nullptr) {}
+            TableRef() : table_name(0), alias(0), table_function(nullptr), subquery(nullptr), is_lateral(false) {}
             TableRef(StringPool::StringId name, StringPool::StringId a = 0)
-                : table_name(name), alias(a), table_function(nullptr), subquery(nullptr) {}
+                : table_name(name), alias(a), table_function(nullptr), subquery(nullptr), is_lateral(false) {}
 
             // Constructor for table-valued function
-            TableRef(FunctionCallExpr *func, StringPool::StringId a = 0)
-                : table_name(0), alias(a), table_function(func), subquery(nullptr) {}
+            TableRef(FunctionCallExpr *func, StringPool::StringId a = 0, bool lateral = false)
+                : table_name(0), alias(a), table_function(func), subquery(nullptr), is_lateral(lateral) {}
 
             // Constructor for derived table (subquery)
-            TableRef(SelectStmt *sub, StringPool::StringId a = 0)
-                : table_name(0), alias(a), table_function(nullptr), subquery(sub) {}
+            TableRef(SelectStmt *sub, StringPool::StringId a = 0, bool lateral = false)
+                : table_name(0), alias(a), table_function(nullptr), subquery(sub), is_lateral(lateral) {}
 
             // Check what type of table reference this is
             bool isTableName() const { return table_name != 0 && table_function == nullptr && subquery == nullptr; }
             bool isTableFunction() const { return table_function != nullptr; }
             bool isSubquery() const { return subquery != nullptr; }
+            bool isLateral() const { return is_lateral; }
         };
 
         // JOIN clause representation
@@ -2260,6 +2382,16 @@ namespace scratchbird
                 offset_count_ = count;
             }
 
+            // DISTINCT modifier (Alpha 1 - SELECT DISTINCT support)
+            bool isDistinct() const
+            {
+                return distinct_;
+            }
+            void setDistinct(bool distinct)
+            {
+                distinct_ = distinct;
+            }
+
             void accept(ASTVisitor *visitor) override;
 
         private:
@@ -2268,6 +2400,7 @@ namespace scratchbird
             Expression *where_clause_;
             bool has_joins_;
             WithClause *with_clause_;  // Phase 2 Wave 2: CTE support
+            bool distinct_ = false;    // Alpha 1: SELECT DISTINCT support
 
             // Aggregation (Phase 1 Task 4.1)
             GroupByClause group_by_clause_;
@@ -2609,6 +2742,121 @@ namespace scratchbird
             void accept(ASTVisitor *visitor) override;
         };
 
+        // SAVEPOINT statement
+        class SavepointStmt : public Statement
+        {
+        public:
+            SavepointStmt(const SourceSpan &span, StringPool::StringId name)
+                : Statement(ASTKind::SAVEPOINT, span), name_(name) {}
+
+            StringPool::StringId name() const { return name_; }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId name_;
+        };
+
+        // RELEASE SAVEPOINT statement
+        class ReleaseSavepointStmt : public Statement
+        {
+        public:
+            ReleaseSavepointStmt(const SourceSpan &span, StringPool::StringId name)
+                : Statement(ASTKind::RELEASE_SAVEPOINT, span), name_(name) {}
+
+            StringPool::StringId name() const { return name_; }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId name_;
+        };
+
+        // ROLLBACK TO SAVEPOINT statement
+        class RollbackToSavepointStmt : public Statement
+        {
+        public:
+            RollbackToSavepointStmt(const SourceSpan &span, StringPool::StringId name)
+                : Statement(ASTKind::ROLLBACK_TO_SAVEPOINT, span), name_(name) {}
+
+            StringPool::StringId name() const { return name_; }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId name_;
+        };
+
+        // User-defined type kind
+        enum class UserTypeKind : uint8_t
+        {
+            COMPOSITE,  // CREATE TYPE name AS (field1 type1, field2 type2, ...)
+            ENUM,       // CREATE TYPE name AS ENUM ('value1', 'value2', ...)
+            RANGE       // CREATE TYPE name AS RANGE (subtype = ...) - future
+        };
+
+        // CREATE TYPE statement for user-defined types
+        class CreateTypeStmt : public Statement
+        {
+        public:
+            CreateTypeStmt(const SourceSpan &span, StringPool::StringId name, UserTypeKind type_kind)
+                : Statement(ASTKind::CREATE_TYPE, span), name_(name), type_kind_(type_kind) {}
+
+            StringPool::StringId name() const { return name_; }
+            UserTypeKind typeKind() const { return type_kind_; }
+
+            // For COMPOSITE types: list of (field_name, field_type) pairs
+            void addField(StringPool::StringId field_name, TypeInfo field_type) {
+                field_names_.push_back(field_name);
+                field_types_.push_back(field_type);
+            }
+            const std::vector<StringPool::StringId>& fieldNames() const { return field_names_; }
+            const std::vector<TypeInfo>& fieldTypes() const { return field_types_; }
+
+            // For ENUM types: list of enum values
+            void addEnumValue(StringPool::StringId value) { enum_values_.push_back(value); }
+            const std::vector<StringPool::StringId>& enumValues() const { return enum_values_; }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId name_;
+            UserTypeKind type_kind_;
+            std::vector<StringPool::StringId> field_names_;  // COMPOSITE
+            std::vector<TypeInfo> field_types_;              // COMPOSITE
+            std::vector<StringPool::StringId> enum_values_;  // ENUM
+        };
+
+        // CREATE DOMAIN statement (specialized type with constraints)
+        class CreateDomainStmt : public Statement
+        {
+        public:
+            CreateDomainStmt(const SourceSpan &span, StringPool::StringId name, TypeInfo base_type)
+                : Statement(ASTKind::CREATE_DOMAIN, span), name_(name), base_type_(base_type),
+                  default_value_(nullptr), check_expr_(nullptr), not_null_(false) {}
+
+            StringPool::StringId name() const { return name_; }
+            const TypeInfo& baseType() const { return base_type_; }
+
+            void setDefault(Expression* expr) { default_value_ = expr; }
+            Expression* defaultValue() const { return default_value_; }
+
+            void setCheck(Expression* expr) { check_expr_ = expr; }
+            Expression* checkExpr() const { return check_expr_; }
+
+            void setNotNull(bool not_null) { not_null_ = not_null; }
+            bool isNotNull() const { return not_null_; }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId name_;
+            TypeInfo base_type_;
+            Expression* default_value_;
+            Expression* check_expr_;
+            bool not_null_;
+        };
+
         // CREATE TABLESPACE statement (Phase 2 Task 2.1)
         class CreateTablespaceStmt : public Statement
         {
@@ -2835,38 +3083,115 @@ namespace scratchbird
             void accept(ASTVisitor *visitor) override;
         };
 
-        // SHOW statement (ALPHA Phase 1 - Developer Experience)
+        // SHOW statement (ALPHA Phase 1 - Developer Experience + Firebird ISQL compatibility)
         enum class ShowObjectType : uint8_t
         {
+            // Basic SHOW commands (Alpha 1)
             TABLES,         // SHOW TABLES
             DATABASES,      // SHOW DATABASES / SHOW SCHEMAS
             COLUMNS,        // SHOW COLUMNS FROM table
             INDEXES,        // SHOW INDEXES FROM table
-            CREATE_TABLE    // SHOW CREATE TABLE table
+            CREATE_TABLE,   // SHOW CREATE TABLE table
+
+            // Extended SHOW commands (Firebird ISQL compatibility)
+            TABLE,          // SHOW TABLE [name] - detailed table structure
+            INDEX,          // SHOW INDEX [name] - detailed index info
+            TRIGGER,        // SHOW TRIGGER [name] - trigger definitions
+            PROCEDURE,      // SHOW PROCEDURE [name] - stored procedure definitions
+            FUNCTION,       // SHOW FUNCTION [name] - user-defined functions
+            VIEW,           // SHOW VIEW [name] - view definitions
+            DOMAIN,         // SHOW DOMAIN [name] - domain definitions
+            GENERATOR,      // SHOW GENERATOR [name] / SHOW SEQUENCE [name]
+            SCHEMA,         // SHOW SCHEMA [name] - schema definitions
+            ROLE,           // SHOW ROLE [name] - role definitions
+            GRANTS,         // SHOW GRANTS [object] - object privileges
+            CHECKS,         // SHOW CHECKS [table] - check constraints
+            COLLATIONS,     // SHOW COLLATIONS - collation sequences
+            COMMENTS,       // SHOW COMMENTS - object comments
+            DEPENDENCIES,   // SHOW DEPENDENCIES obj - object dependency graph
+            PACKAGE,        // SHOW PACKAGE [name] - package definitions
+            SYSTEM,         // SHOW SYSTEM - system tables/views
+            SQL_DIALECT,    // SHOW SQL DIALECT - current SQL dialect
+            VERSION,        // SHOW VERSION - server version info
+            DATABASE,       // SHOW DATABASE - database metadata
+
+            // Schema navigation commands
+            SCHEMA_PATH,    // SHOW SCHEMA PATH - full path to current schema
+            SCHEMA_TREE,    // SHOW SCHEMA TREE [DEPTH n] - show schema hierarchy
+            SEARCH_PATH,    // SHOW SEARCH PATH - current search path
+            LOCATION,       // SHOW LOCATION OF [type] name - find object in search path
+            RESOLVED,       // SHOW RESOLVED name - which object search path resolves to
+            OBJECTS         // SHOW OBJECTS - all objects in current schema
+        };
+
+        // Schema scope for SHOW commands
+        enum class ShowSchemaScope : uint8_t
+        {
+            CURRENT,        // Show in current schema only (default)
+            IN_PATH,        // Show in all schemas in search path
+            IN_SCHEMA       // Show in specific schema (schema_path_ specifies which)
         };
 
         class ShowStmt : public Statement
         {
         public:
             /**
-             * Constructor
+             * Constructor for basic SHOW statements
              *
              * @param span Source location
              * @param object_type Type of object to show (TABLES, DATABASES, etc.)
-             * @param table_name Table name (for SHOW COLUMNS/INDEXES/CREATE TABLE)
+             * @param object_name Object name (for SHOW TABLE name, etc.)
              * @param database_name Database name (for SHOW TABLES FROM database)
              * @param like_pattern LIKE pattern for filtering results
              */
             ShowStmt(const SourceSpan &span,
                      ShowObjectType object_type,
-                     StringPool::StringId table_name = 0,
+                     StringPool::StringId object_name = 0,
                      StringPool::StringId database_name = 0,
                      StringPool::StringId like_pattern = 0)
                 : Statement(ASTKind::SHOW, span),
                   object_type_(object_type),
-                  table_name_(table_name),
+                  object_name_(object_name),
                   database_name_(database_name),
-                  like_pattern_(like_pattern)
+                  like_pattern_(like_pattern),
+                  schema_scope_(ShowSchemaScope::CURRENT),
+                  schema_path_(0),
+                  in_detail_(false),
+                  tree_depth_(0)
+            {
+            }
+
+            /**
+             * Full constructor with all schema-aware options
+             *
+             * @param span Source location
+             * @param object_type Type of object to show
+             * @param object_name Object name (optional)
+             * @param database_name Database name (optional)
+             * @param like_pattern LIKE pattern (optional)
+             * @param schema_scope Where to search (CURRENT, IN_PATH, IN_SCHEMA)
+             * @param schema_path Schema path for IN_SCHEMA scope
+             * @param in_detail Whether to show detailed information
+             * @param tree_depth Depth for SCHEMA_TREE (0 = unlimited)
+             */
+            ShowStmt(const SourceSpan &span,
+                     ShowObjectType object_type,
+                     StringPool::StringId object_name,
+                     StringPool::StringId database_name,
+                     StringPool::StringId like_pattern,
+                     ShowSchemaScope schema_scope,
+                     StringPool::StringId schema_path,
+                     bool in_detail,
+                     uint32_t tree_depth = 0)
+                : Statement(ASTKind::SHOW, span),
+                  object_type_(object_type),
+                  object_name_(object_name),
+                  database_name_(database_name),
+                  like_pattern_(like_pattern),
+                  schema_scope_(schema_scope),
+                  schema_path_(schema_path),
+                  in_detail_(in_detail),
+                  tree_depth_(tree_depth)
             {
             }
 
@@ -2875,9 +3200,16 @@ namespace scratchbird
                 return object_type_;
             }
 
+            // Renamed from tableName() to objectName() for clarity
+            StringPool::StringId objectName() const
+            {
+                return object_name_;
+            }
+
+            // Keep tableName() for backwards compatibility
             StringPool::StringId tableName() const
             {
-                return table_name_;
+                return object_name_;
             }
 
             StringPool::StringId databaseName() const
@@ -2890,13 +3222,38 @@ namespace scratchbird
                 return like_pattern_;
             }
 
+            // New schema-aware accessors
+            ShowSchemaScope schemaScope() const
+            {
+                return schema_scope_;
+            }
+
+            StringPool::StringId schemaPath() const
+            {
+                return schema_path_;
+            }
+
+            bool inDetail() const
+            {
+                return in_detail_;
+            }
+
+            uint32_t treeDepth() const
+            {
+                return tree_depth_;
+            }
+
             void accept(ASTVisitor *visitor) override;
 
         private:
             ShowObjectType object_type_;
-            StringPool::StringId table_name_;
+            StringPool::StringId object_name_;      // Object name (was table_name_)
             StringPool::StringId database_name_;
             StringPool::StringId like_pattern_;
+            ShowSchemaScope schema_scope_;          // CURRENT, IN_PATH, or IN_SCHEMA
+            StringPool::StringId schema_path_;      // Schema path for IN_SCHEMA scope
+            bool in_detail_;                        // Show extended details
+            uint32_t tree_depth_;                   // Depth limit for SCHEMA_TREE
         };
 
         // DESCRIBE statement (ALPHA Phase 1 - Developer Experience)
@@ -2974,6 +3331,58 @@ namespace scratchbird
             std::vector<TableReservation> table_reservations_; // RESERVING clause tables
         };
 
+        // SET SQL DIALECT statement (Firebird ISQL compatibility)
+        // Sets the SQL dialect for the current session (1, 2, or 3)
+        class SetSqlDialectStmt : public Statement
+        {
+        public:
+            SetSqlDialectStmt(const SourceSpan &span, uint8_t dialect)
+                : Statement(ASTKind::SET_SQL_DIALECT, span), dialect_(dialect)
+            {
+            }
+
+            uint8_t dialect() const { return dialect_; }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            uint8_t dialect_;  // 1, 2, or 3
+        };
+
+        // SET NAMES statement (character set for the connection)
+        class SetNamesStmt : public Statement
+        {
+        public:
+            SetNamesStmt(const SourceSpan &span, StringPool::StringId charset_name)
+                : Statement(ASTKind::SET_NAMES, span), charset_name_(charset_name)
+            {
+            }
+
+            StringPool::StringId charsetName() const { return charset_name_; }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId charset_name_;
+        };
+
+        // SET LOCAL_TIMEOUT statement (statement timeout in seconds)
+        class SetLocalTimeoutStmt : public Statement
+        {
+        public:
+            SetLocalTimeoutStmt(const SourceSpan &span, uint32_t timeout_seconds)
+                : Statement(ASTKind::SET_LOCAL_TIMEOUT, span), timeout_seconds_(timeout_seconds)
+            {
+            }
+
+            uint32_t timeoutSeconds() const { return timeout_seconds_; }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            uint32_t timeout_seconds_;
+        };
+
         // Trigger timing (Phase 2 Wave 2 - Agent C)
         enum class TriggerTiming : uint8_t
         {
@@ -2994,6 +3403,17 @@ namespace scratchbird
         {
             FOR_EACH_ROW,
             FOR_EACH_STATEMENT  // P2-8: Statement-level triggers
+        };
+
+        // Database trigger events (Firebird-style database triggers)
+        // These fire on connection/transaction lifecycle events, not on table DML
+        enum class DatabaseTriggerEvent : uint8_t
+        {
+            ON_CONNECT,             // Fire when client connects to database
+            ON_DISCONNECT,          // Fire when client disconnects
+            ON_TRANSACTION_START,   // Fire when transaction starts
+            ON_TRANSACTION_COMMIT,  // Fire when transaction commits
+            ON_TRANSACTION_ROLLBACK // Fire when transaction rolls back
         };
 
         // P2-8: Transition table names for statement-level triggers
@@ -3100,6 +3520,42 @@ namespace scratchbird
         private:
             StringPool::StringId trigger_name_;
             bool if_exists_;
+        };
+
+        // CREATE DATABASE TRIGGER statement (Firebird-style database triggers)
+        // Syntax: CREATE TRIGGER name [ACTIVE | INACTIVE] ON event [POSITION n] AS ...
+        class CreateDatabaseTriggerStmt : public Statement
+        {
+        public:
+            CreateDatabaseTriggerStmt(const SourceSpan &span,
+                                      StringPool::StringId trigger_name,
+                                      DatabaseTriggerEvent event,
+                                      bool active,
+                                      int32_t position,
+                                      StringPool::StringId procedure_name)
+                : Statement(ASTKind::CREATE_DATABASE_TRIGGER, span),
+                  trigger_name_(trigger_name),
+                  event_(event),
+                  active_(active),
+                  position_(position),
+                  procedure_name_(procedure_name)
+            {
+            }
+
+            StringPool::StringId triggerName() const { return trigger_name_; }
+            DatabaseTriggerEvent event() const { return event_; }
+            bool isActive() const { return active_; }
+            int32_t position() const { return position_; }
+            StringPool::StringId procedureName() const { return procedure_name_; }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            StringPool::StringId trigger_name_;
+            DatabaseTriggerEvent event_;
+            bool active_;        // ACTIVE (true) or INACTIVE (false)
+            int32_t position_;   // Execution order (0 = default, lower executes first)
+            StringPool::StringId procedure_name_;
         };
 
         // ===== PSQL - Stored Procedures and Functions (Phase 2 Task 10.2) =====
@@ -3467,6 +3923,30 @@ namespace scratchbird
             SqlSecurity sql_security_;  // Phase 3.1: SQL SECURITY DEFINER/INVOKER
         };
 
+        // CALL procedure_name(arg1, arg2, ...)
+        // Invokes a stored procedure
+        class CallStmt : public Statement
+        {
+        public:
+            CallStmt(const SourceSpan& span,
+                    StringPool::StringId procedure_name,
+                    std::vector<Expression*> arguments)
+                : Statement(ASTKind::CALL, span),
+                  procedure_name_(procedure_name),
+                  arguments_(std::move(arguments))
+            {
+            }
+
+            StringPool::StringId procedureName() const { return procedure_name_; }
+            const std::vector<Expression*>& arguments() const { return arguments_; }
+
+            void accept(ASTVisitor* visitor) override;
+
+        private:
+            StringPool::StringId procedure_name_;
+            std::vector<Expression*> arguments_;
+        };
+
         // ===== Security Statements (ALPHA Phase 1 - Security System Phase 2) =====
 
         // CREATE USER username [WITH PASSWORD 'password'] [SUPERUSER | NOSUPERUSER]
@@ -3823,17 +4303,20 @@ namespace scratchbird
             GrantRoleStmt(const SourceSpan& span,
                          StringPool::StringId rolename,
                          GranteeType grantee_type,
-                         StringPool::StringId grantee_name)
+                         StringPool::StringId grantee_name,
+                         bool with_admin_option = false)
                 : Statement(ASTKind::GRANT_ROLE, span),
                   rolename_(rolename),
                   grantee_type_(grantee_type),
-                  grantee_name_(grantee_name)
+                  grantee_name_(grantee_name),
+                  with_admin_option_(with_admin_option)
             {
             }
 
             StringPool::StringId rolename() const { return rolename_; }
             GranteeType granteeType() const { return grantee_type_; }
             StringPool::StringId granteeName() const { return grantee_name_; }
+            bool withAdminOption() const { return with_admin_option_; }
 
             void accept(ASTVisitor* visitor) override;
 
@@ -3841,6 +4324,7 @@ namespace scratchbird
             StringPool::StringId rolename_;
             GranteeType grantee_type_;
             StringPool::StringId grantee_name_;
+            bool with_admin_option_;
         };
 
         // REVOKE role FROM user/role [CASCADE | RESTRICT]
@@ -4129,6 +4613,7 @@ namespace scratchbird
             virtual void visit(DescribeStmt *node) = 0;         // ALPHA Phase 1 - Developer Experience
             virtual void visit(CreateTriggerStmt *node) = 0;    // Phase 2 Wave 2 Agent C
             virtual void visit(DropTriggerStmt *node) = 0;      // Phase 2 Wave 2 Agent C
+            virtual void visit(CreateDatabaseTriggerStmt *node) = 0; // Database triggers
 
             // PSQL - Stored Procedures and Functions (Phase 2 Task 10.2)
             virtual void visit(CreateFunctionStmt *node) = 0;
@@ -4142,6 +4627,7 @@ namespace scratchbird
             virtual void visit(ExitStmt *node) = 0;
             virtual void visit(ReturnStmt *node) = 0;
             virtual void visit(RaiseStmt *node) = 0;
+            virtual void visit(CallStmt *node) = 0;
 
             // Security statements (ALPHA Phase 1 - Security System Phase 2)
             virtual void visit(CreateUserStmt *node) = 0;
@@ -4158,9 +4644,21 @@ namespace scratchbird
             virtual void visit(SetRoleStmt *node) = 0;
             virtual void visit(SetSessionAuthStmt *node) = 0;
             virtual void visit(SetConstraintsStmt *node) = 0;   // P2-7: SET CONSTRAINTS
+            virtual void visit(SetSqlDialectStmt *node) = 0;    // Firebird ISQL: SET SQL DIALECT
+            virtual void visit(SetNamesStmt *node) = 0;         // SET NAMES charset
+            virtual void visit(SetLocalTimeoutStmt *node) = 0;  // SET LOCAL_TIMEOUT N
             virtual void visit(CreatePolicyStmt *node) = 0;     // Security Phase 3.4
             virtual void visit(DropPolicyStmt *node) = 0;       // Security Phase 3.4
             virtual void visit(AlterTableRLSStmt *node) = 0;    // Security Phase 3.4
+
+            // Transaction control - SAVEPOINT
+            virtual void visit(SavepointStmt *node) = 0;           // SAVEPOINT name
+            virtual void visit(ReleaseSavepointStmt *node) = 0;    // RELEASE SAVEPOINT name
+            virtual void visit(RollbackToSavepointStmt *node) = 0; // ROLLBACK TO SAVEPOINT name
+
+            // User Defined Types
+            virtual void visit(CreateTypeStmt *node) = 0;          // CREATE TYPE
+            virtual void visit(CreateDomainStmt *node) = 0;        // CREATE DOMAIN
 
             // Expressions
             virtual void visit(LiteralExpr *node) = 0;
@@ -4234,6 +4732,7 @@ namespace scratchbird
             // Procedural language statements (stub implementations)
             void visit(CreateTriggerStmt *node) override;
             void visit(DropTriggerStmt *node) override;
+            void visit(CreateDatabaseTriggerStmt *node) override;
             void visit(CreateFunctionStmt *node) override;
             void visit(CreateProcedureStmt *node) override;
             void visit(BlockStmt *node) override;
@@ -4245,6 +4744,7 @@ namespace scratchbird
             void visit(ExitStmt *node) override;
             void visit(ReturnStmt *node) override;
             void visit(RaiseStmt *node) override;
+            void visit(CallStmt *node) override;
 
             // Security statements (ALPHA Phase 1 - Security System Phase 2)
             void visit(CreateUserStmt *node) override;
@@ -4261,6 +4761,18 @@ namespace scratchbird
             void visit(SetRoleStmt *node) override;
             void visit(SetSessionAuthStmt *node) override;
             void visit(SetConstraintsStmt *node) override;
+            void visit(SetSqlDialectStmt *node) override;
+            void visit(SetNamesStmt *node) override;
+            void visit(SetLocalTimeoutStmt *node) override;
+
+            // Transaction control - SAVEPOINT
+            void visit(SavepointStmt *node) override;
+            void visit(ReleaseSavepointStmt *node) override;
+            void visit(RollbackToSavepointStmt *node) override;
+
+            // User Defined Types
+            void visit(CreateTypeStmt *node) override;
+            void visit(CreateDomainStmt *node) override;
 
         private:
             std::ostream &out_;

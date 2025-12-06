@@ -14,8 +14,10 @@
 #include <cstring>
 #include <thread>
 #include <vector>
+#include <atomic>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/buffer_pool.h"
@@ -28,6 +30,16 @@ class PageManagementEdgeTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        // Generate unique file prefix per test to avoid conflicts during parallel execution
+        static std::atomic<int> test_counter{0};
+        test_id_ = std::to_string(getpid()) + "_" + std::to_string(test_counter++);
+
+        db_edge_ = "/tmp/test_edge_" + test_id_ + ".db";
+        db_corrupt_ = "/tmp/test_corrupt_" + test_id_ + ".db";
+        db_limits_ = "/tmp/test_limits_" + test_id_ + ".db";
+        db_exhaust_ = "/tmp/test_exhaust_" + test_id_ + ".db";
+        db_fsm_durability_ = "/tmp/test_fsm_durability_" + test_id_ + ".db";
+
         // Clean up test files
         cleanup_test_files();
     }
@@ -39,12 +51,19 @@ protected:
 
     void cleanup_test_files()
     {
-        remove("/tmp/test_edge.db");
-        remove("/tmp/test_corrupt.db");
-        remove("/tmp/test_limits.db");
-        remove("/tmp/test_exhaust.db");
-        remove("/tmp/test_fsm_durability.db");
+        remove(db_edge_.c_str());
+        remove(db_corrupt_.c_str());
+        remove(db_limits_.c_str());
+        remove(db_exhaust_.c_str());
+        remove(db_fsm_durability_.c_str());
     }
+
+    std::string test_id_;
+    std::string db_edge_;
+    std::string db_corrupt_;
+    std::string db_limits_;
+    std::string db_exhaust_;
+    std::string db_fsm_durability_;
 
     // Helper to corrupt a specific page
     void corrupt_page(const char *db_path, uint32_t page_id, size_t corruption_offset)
@@ -79,10 +98,10 @@ protected:
 TEST_F(PageManagementEdgeTest, BufferPool_ExhaustionAllPinned)
 {
     // Create database with default settings (large enough buffer pool)
-    ASSERT_EQ(Database::create("/tmp/test_exhaust.db", 16384), Status::OK);
+    ASSERT_EQ(Database::create(db_exhaust_.c_str(), 16384), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("/tmp/test_exhaust.db"), Status::OK);
+    ASSERT_EQ(db.open(db_exhaust_.c_str()), Status::OK);
 
     // Use the database's buffer pool
     BufferPool *pool = db.buffer_pool();
@@ -143,10 +162,10 @@ TEST_F(PageManagementEdgeTest, BufferPool_ExhaustionAllPinned)
 // Rewritten to use db.buffer_pool() - tests pin/unpin behavior
 TEST_F(PageManagementEdgeTest, BufferPool_NoEvictablePagesLRU)
 {
-    ASSERT_EQ(Database::create("/tmp/test_exhaust.db", 16384), Status::OK);
+    ASSERT_EQ(Database::create(db_exhaust_.c_str(), 16384), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("/tmp/test_exhaust.db"), Status::OK);
+    ASSERT_EQ(db.open(db_exhaust_.c_str()), Status::OK);
 
     // Use the database's buffer pool
     BufferPool *pool = db.buffer_pool();
@@ -214,15 +233,15 @@ TEST_F(PageManagementEdgeTest, BufferPool_NoEvictablePagesLRU)
 TEST_F(PageManagementEdgeTest, PageManager_FSMCorruption_PageType)
 {
     // Create a valid database
-    ASSERT_EQ(Database::create("/tmp/test_corrupt.db", 16384), Status::OK);
+    ASSERT_EQ(Database::create(db_corrupt_.c_str(), 16384), Status::OK);
 
     // Corrupt the FSM page type
-    corrupt_page("/tmp/test_corrupt.db", 2, offsetof(PageHeader, page_type));
+    corrupt_page(db_corrupt_.c_str(), 2, offsetof(PageHeader, page_type));
 
     // Try to open and use the database
     Database db;
     ErrorContext ctx;
-    Status status = db.open("/tmp/test_corrupt.db", &ctx);
+    Status status = db.open(db_corrupt_.c_str(), &ctx);
 
     // The open might succeed, but operations should fail
     if (status == Status::OK)
@@ -252,11 +271,11 @@ TEST_F(PageManagementEdgeTest, PageManager_FSMCorruption_PageType)
 TEST_F(PageManagementEdgeTest, PageManager_FSMCorruption_Bitmap)
 {
     // Create database and allocate some pages
-    ASSERT_EQ(Database::create("/tmp/test_corrupt.db", 16384), Status::OK);
+    ASSERT_EQ(Database::create(db_corrupt_.c_str(), 16384), Status::OK);
 
     {
         Database db;
-        ASSERT_EQ(db.open("/tmp/test_corrupt.db"), Status::OK);
+        ASSERT_EQ(db.open(db_corrupt_.c_str()), Status::OK);
 
         PageManager *pm = db.page_manager();
 
@@ -269,11 +288,11 @@ TEST_F(PageManagementEdgeTest, PageManager_FSMCorruption_Bitmap)
     }
 
     // Corrupt the FSM bitmap area
-    corrupt_page("/tmp/test_corrupt.db", 2, 128); // Corrupt bitmap data
+    corrupt_page(db_corrupt_.c_str(), 2, 128); // Corrupt bitmap data
 
     // Reopen should detect corruption
     Database db;
-    Status open_status = db.open("/tmp/test_corrupt.db");
+    Status open_status = db.open(db_corrupt_.c_str());
 
     // With improved validation, we should detect corruption during load
     if (open_status == Status::PAGE_CORRUPT || open_status == Status::CHECKSUM_MISMATCH)
@@ -321,10 +340,10 @@ TEST_F(PageManagementEdgeTest, PageManager_FSMCorruption_Bitmap)
 // Enabled with reduced allocation count (was 1000, now 50) to avoid LongTransactionMonitor hang
 TEST_F(PageManagementEdgeTest, PageManager_FileSizeLimits)
 {
-    ASSERT_EQ(Database::create("/tmp/test_limits.db", 16384), Status::OK);
+    ASSERT_EQ(Database::create(db_limits_.c_str(), 16384), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("/tmp/test_limits.db"), Status::OK);
+    ASSERT_EQ(db.open(db_limits_.c_str()), Status::OK);
 
     PageManager *pm = db.page_manager();
 
@@ -444,14 +463,14 @@ TEST_F(PageManagementEdgeTest, ThreadSafety_Documentation)
 // written to disk before being evicted and can be read back correctly
 TEST_F(PageManagementEdgeTest, BufferPool_DirtyPageEviction)
 {
-    ASSERT_EQ(Database::create("/tmp/test_edge.db", 16384), Status::OK);
+    ASSERT_EQ(Database::create(db_edge_.c_str(), 16384), Status::OK);
 
     uint32_t page_ids[3];
 
     // Phase 1: Write data to pages
     {
         Database db;
-        ASSERT_EQ(db.open("/tmp/test_edge.db"), Status::OK);
+        ASSERT_EQ(db.open(db_edge_.c_str()), Status::OK);
 
         BufferPool *pool = db.buffer_pool();
         PageManager *pm = db.page_manager();
@@ -489,7 +508,7 @@ TEST_F(PageManagementEdgeTest, BufferPool_DirtyPageEviction)
     // Phase 2: Reopen and verify data persisted
     {
         Database db;
-        ASSERT_EQ(db.open("/tmp/test_edge.db"), Status::OK);
+        ASSERT_EQ(db.open(db_edge_.c_str()), Status::OK);
 
         BufferPool *pool = db.buffer_pool();
 
@@ -528,7 +547,7 @@ TEST_F(PageManagementEdgeTest, BufferPool_DirtyPageEviction)
  */
 TEST_F(PageManagementEdgeTest, PageManager_FSMDurability)
 {
-    ASSERT_EQ(Database::create("/tmp/test_fsm_durability.db", 16384), Status::OK);
+    ASSERT_EQ(Database::create(db_fsm_durability_.c_str(), 16384), Status::OK);
 
     uint32_t allocated_page;
     uint32_t total_after_alloc;
@@ -536,7 +555,7 @@ TEST_F(PageManagementEdgeTest, PageManager_FSMDurability)
     // Phase 1: Create database and allocate a page
     {
         Database db;
-        ASSERT_EQ(db.open("/tmp/test_fsm_durability.db"), Status::OK);
+        ASSERT_EQ(db.open(db_fsm_durability_.c_str()), Status::OK);
 
         PageManager *pm = db.page_manager();
         uint32_t initial_total = pm->totalPages();
@@ -555,7 +574,7 @@ TEST_F(PageManagementEdgeTest, PageManager_FSMDurability)
     // Phase 2: Reopen and verify FSM state persisted
     {
         Database db;
-        ASSERT_EQ(db.open("/tmp/test_fsm_durability.db"), Status::OK);
+        ASSERT_EQ(db.open(db_fsm_durability_.c_str()), Status::OK);
 
         PageManager *pm = db.page_manager();
 

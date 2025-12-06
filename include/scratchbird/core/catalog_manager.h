@@ -55,6 +55,63 @@ namespace scratchbird::core
     }
 
     /**
+     * IdentifierUtils - SQL identifier comparison utilities (Firebird-style)
+     *
+     * Firebird SQL identifier rules:
+     * - Unquoted identifiers: case-insensitive, compared UPPER() to UPPER()
+     * - Quoted identifiers ("Name"): case-sensitive, compared as-is
+     *
+     * For name conflict detection, we compare UPPER() to UPPER() unless
+     * both identifiers are delimited (quoted), in which case we compare as-is.
+     */
+    namespace IdentifierUtils
+    {
+        // Convert string to uppercase (ASCII-only, sufficient for SQL identifiers)
+        inline std::string toUpper(const std::string& str)
+        {
+            std::string result = str;
+            for (char& c : result) {
+                if (c >= 'a' && c <= 'z') {
+                    c = static_cast<char>(c - 32);
+                }
+            }
+            return result;
+        }
+
+        // Compare two SQL identifiers for conflict detection
+        // Returns true if names conflict (would be treated as same object)
+        // Rules:
+        // - If BOTH are delimited: exact case-sensitive comparison
+        // - Otherwise: case-insensitive (UPPER vs UPPER) comparison
+        inline bool namesConflict(const std::string& name1, bool delimited1,
+                                  const std::string& name2, bool delimited2)
+        {
+            if (delimited1 && delimited2) {
+                // Both are case-sensitive: exact match required for conflict
+                return name1 == name2;
+            }
+            // At least one is case-insensitive: compare UPPER to UPPER
+            return toUpper(name1) == toUpper(name2);
+        }
+
+        // Compare a search name against a stored name for lookup
+        // Returns true if names match for lookup purposes
+        // Rules:
+        // - If stored is delimited: search must match exactly
+        // - If stored is not delimited: case-insensitive lookup
+        inline bool namesMatch(const std::string& search_name, bool search_delimited,
+                               const std::string& stored_name, bool stored_delimited)
+        {
+            if (stored_delimited) {
+                // Stored is case-sensitive: must match exactly
+                return search_name == stored_name;
+            }
+            // Stored is case-insensitive: compare UPPER to UPPER
+            return toUpper(search_name) == toUpper(stored_name);
+        }
+    }
+
+    /**
      * SecurityConstants - Well-known security object UUIDs
      *
      * Phase 1.2: Security System Bootstrap
@@ -275,6 +332,7 @@ namespace scratchbird::core
             ID schema_id;
             ID parent_schema_id;                // Parent schema UUID (zero UUID for root)
             std::string schema_name;            // Short name (not full path)
+            bool name_is_delimited = false;     // True if name was double-quoted (case-sensitive)
             std::string full_path;              // Cached full dotted path (e.g., "remote.emulated.firebird")
             SchemaType schema_type = SchemaType::APPLICATION;
             ID owner_id;                        // Owner UUID reference (NOT name)
@@ -306,6 +364,7 @@ namespace scratchbird::core
             ID table_id;
             ID schema_id;
             std::string table_name;
+            bool name_is_delimited = false;    // True if name was double-quoted (case-sensitive)
             ID owner_id;                       // Owner UUID reference (NOT name)
             uint32_t root_page = 0;            // Root page of table data
             uint32_t column_count = 0;
@@ -360,6 +419,7 @@ namespace scratchbird::core
             ID sequence_id;
             ID schema_id;
             std::string name;
+            bool name_is_delimited = false;    // True if name was double-quoted (case-sensitive)
             ID owner_id;
             int64_t current_value;
             int64_t increment_by;
@@ -397,6 +457,7 @@ namespace scratchbird::core
             ID view_id;
             ID schema_id;
             std::string name;
+            bool name_is_delimited = false;    // True if name was double-quoted (case-sensitive)
             ID owner_id;
             std::string definition;  // SELECT query text
             bool check_option;
@@ -435,6 +496,7 @@ namespace scratchbird::core
             ID table_id;
             ID column_id;
             std::string column_name;
+            bool name_is_delimited = false;    // True if name was double-quoted (case-sensitive)
             uint16_t ordinal = 0;        // Column position in table
             uint16_t data_type = 0;      // Type code
             uint32_t type_precision = 0; // For DECIMAL, VECTOR dimensions, VARCHAR length
@@ -496,6 +558,7 @@ namespace scratchbird::core
             ID index_id;
             ID table_id;
             std::string index_name;
+            bool name_is_delimited = false;    // True if name was double-quoted (case-sensitive)
             ID owner_id;                   // Owner UUID reference (NOT name)
             uint32_t root_page = 0;
             uint16_t tablespace_id = 0;    // Tablespace ID (0 = primary file, 1-65535 = custom)
@@ -1205,6 +1268,45 @@ namespace scratchbird::core
         // End Phase B Structures
         // ============================================================================
 
+        // ============================================================================
+        // sb_statistic - Column Statistics for Query Optimizer (OPT-1, OPT-2)
+        // ============================================================================
+
+        // Column statistics information (similar to PostgreSQL's pg_statistic)
+        // Fixed-size record for catalog storage - MCVs and histograms stored in TOAST
+        struct StatisticInfo
+        {
+            ID statistic_id;              // Unique statistic ID
+            ID table_id;                  // Table this column belongs to
+            ID column_id;                 // Column ID
+            uint16_t data_type = 0;       // DataType enum value
+            uint16_t reserved1 = 0;
+
+            // Basic statistics
+            uint64_t num_rows = 0;        // Total rows in table at ANALYZE time
+            uint64_t num_nulls = 0;       // Number of NULL values
+            float null_fraction = 0.0f;   // Fraction of NULLs
+            uint64_t num_distinct = 0;    // Number of distinct non-NULL values
+            float avg_width = 0.0f;       // Average width in bytes
+
+            // TOAST references for variable-length data
+            uint32_t mcv_oid = 0;         // TOAST reference for MCV list (JSON)
+            uint32_t histogram_oid = 0;   // TOAST reference for histogram (JSON)
+
+            // Histogram metadata
+            uint8_t histogram_type = 0;   // HistogramType enum (0=equal_height, 1=equal_width, 255=none)
+            uint8_t padding[3] = {0};
+            uint32_t histogram_bucket_count = 0;
+
+            // Metadata
+            uint64_t last_analyzed_time = 0;   // Timestamp of last ANALYZE
+            uint64_t sample_size = 0;         // Number of rows sampled
+            float sample_rate = 0.0f;         // Fraction of table sampled
+
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
         CatalogManager(Database *db);
         ~CatalogManager();
 
@@ -1396,6 +1498,14 @@ namespace scratchbird::core
 
         auto getViewIdByName(const std::string& name, ID& id_out,
                              ErrorContext* ctx = nullptr) -> Status;
+
+        // OPT-5: Get view info directly by ID (for optimizer MV rewriting)
+        auto getViewById(const ID& view_id, ViewInfo& info_out,
+                        ErrorContext* ctx = nullptr) -> Status;
+
+        // OPT-4: Get all materialized views (for MV candidate search)
+        auto getAllMaterializedViews(std::vector<ViewInfo>& views_out,
+                                     ErrorContext* ctx = nullptr) -> Status;
 
         auto isView(const std::string& name) -> bool;
 
@@ -2079,7 +2189,7 @@ namespace scratchbird::core
                                  std::vector<ObjectPermissionInfo>& perms_out,
                                  ErrorContext* ctx = nullptr) -> Status;
 
-        // Timezone operations (pg_timezone system table)
+        // Timezone operations (sb_timezone system table)
         struct TimezoneInfo
         {
             uint16_t timezone_id = 0;
@@ -2111,7 +2221,70 @@ namespace scratchbird::core
             -> Status;
         auto deleteTimezone(uint16_t timezone_id, ErrorContext *ctx = nullptr) -> Status;
 
-        // Character set operations (pg_charset system table)
+        // ========================================================================
+        // Statistics operations (sb_statistic system table - OPT-1, OPT-2)
+        // ========================================================================
+
+        /**
+         * storeStatistic - Store column statistics to sb_statistic catalog
+         *
+         * @param info Statistics information to store
+         * @param ctx Error context
+         * @return Status::OK on success, error status otherwise
+         *
+         * Creates or updates statistics for a column. If statistics already exist
+         * for the same (table_id, column_id), they are replaced.
+         */
+        auto storeStatistic(const StatisticInfo& info, ErrorContext* ctx = nullptr) -> Status;
+
+        /**
+         * getStatistic - Retrieve column statistics from sb_statistic catalog
+         *
+         * @param table_id Table ID
+         * @param column_id Column ID
+         * @param info_out Output statistics information
+         * @param ctx Error context
+         * @return Status::OK if found, Status::NOT_FOUND otherwise
+         */
+        auto getStatistic(const ID& table_id, const ID& column_id,
+                          StatisticInfo& info_out, ErrorContext* ctx = nullptr) -> Status;
+
+        /**
+         * getStatisticsForTable - Get all column statistics for a table
+         *
+         * @param table_id Table ID
+         * @param stats_out Output vector of statistics
+         * @param ctx Error context
+         * @return Status::OK on success
+         */
+        auto getStatisticsForTable(const ID& table_id,
+                                   std::vector<StatisticInfo>& stats_out,
+                                   ErrorContext* ctx = nullptr) -> Status;
+
+        /**
+         * deleteStatistic - Delete column statistics from sb_statistic catalog
+         *
+         * @param table_id Table ID
+         * @param column_id Column ID
+         * @param ctx Error context
+         * @return Status::OK on success, Status::NOT_FOUND if not exists
+         */
+        auto deleteStatistic(const ID& table_id, const ID& column_id,
+                             ErrorContext* ctx = nullptr) -> Status;
+
+        /**
+         * deleteStatisticsForTable - Delete all statistics for a table
+         *
+         * @param table_id Table ID
+         * @param ctx Error context
+         * @return Status::OK on success
+         *
+         * Used when dropping a table to clean up associated statistics.
+         */
+        auto deleteStatisticsForTable(const ID& table_id,
+                                      ErrorContext* ctx = nullptr) -> Status;
+
+        // Character set operations (sb_charset system table)
         struct CharsetInfo
         {
             uint16_t charset_id = 0;    // Character set ID (matches CharacterSet enum)
@@ -2137,7 +2310,7 @@ namespace scratchbird::core
             -> Status;
         auto deleteCharset(uint16_t charset_id, ErrorContext *ctx = nullptr) -> Status;
 
-        // Collation operations (pg_collation system table)
+        // Collation operations (sb_collation system table)
         struct CollationCatalogInfo
         {
             uint32_t collation_id = 0;
@@ -2203,7 +2376,7 @@ namespace scratchbird::core
          * @param ctx Error context
          * @return Status::OK on success, error status otherwise
          *
-         * Updates pg_tablespace statistics after tablespace extension.
+         * Updates sb_tablespace statistics after tablespace extension.
          * Called by PageManager::extendTablespace() (Phase 3 Task 3.1.4).
          */
         auto updateTablespaceStats(uint16_t tablespace_id, uint64_t total_size_mb,
@@ -2229,7 +2402,7 @@ namespace scratchbird::core
          * 5. Allocate new tablespace_id (find first available 1-65535)
          * 6. Open file descriptor and register in Database
          * 7. Load FSM into memory (PageManager::openTablespace)
-         * 8. Add entry to pg_tablespace catalog
+         * 8. Add entry to sb_tablespace catalog
          * 9. Update tablespace_cache_
          *
          * Validation:
@@ -2262,7 +2435,7 @@ namespace scratchbird::core
          * 5. If force, migrate tables back to primary tablespace first
          * 6. Flush dirty pages to disk
          * 7. Close file descriptor (Database::closeTablespace)
-         * 8. Remove from pg_tablespace catalog
+         * 8. Remove from sb_tablespace catalog
          * 9. Remove from tablespace_cache_
          *
          * Validation:
@@ -2287,11 +2460,11 @@ namespace scratchbird::core
          * This should be called periodically or after many DROP/ALTER operations.
          *
          * Compacts the following catalog pages:
-         * - pg_tablespace (tablespaces_table_page_)
-         * - pg_schema (schemas_table_page_)
-         * - pg_table (tables_table_page_)
-         * - pg_column (columns_table_page_)
-         * - pg_index (indexes_table_page_)
+         * - sb_tablespace (tablespaces_table_page_)
+         * - sb_schema (schemas_table_page_)
+         * - sb_table (tables_table_page_)
+         * - sb_column (columns_table_page_)
+         * - sb_index (indexes_table_page_)
          *
          * @param ctx Error context
          * @return Status::OK on success, error status otherwise
@@ -2615,6 +2788,7 @@ namespace scratchbird::core
         {
             ID trigger_id;
             std::string trigger_name;
+            bool name_is_delimited = false;    // True if name was double-quoted (case-sensitive)
             ID table_id;
             std::string table_name;
             TriggerTiming timing;
@@ -2629,7 +2803,53 @@ namespace scratchbird::core
             std::string new_table_alias;  // REFERENCING NEW TABLE AS name (empty if not specified)
             std::string when_expression;  // Optional WHEN condition (serialized bytecode)
         };
-        
+
+        // ===== Database Triggers (Firebird-style) =====
+        // Database triggers fire on session/transaction events, not table operations
+
+        // Database trigger event types (matches parser::DatabaseTriggerEvent)
+        enum class DatabaseTriggerEvent : uint8_t
+        {
+            ON_CONNECT = 0,           // Fires when client connects to database
+            ON_DISCONNECT = 1,        // Fires when client disconnects from database
+            ON_TRANSACTION_START = 2, // Fires when transaction starts
+            ON_TRANSACTION_COMMIT = 3,   // Fires when transaction commits
+            ON_TRANSACTION_ROLLBACK = 4  // Fires when transaction rolls back
+        };
+
+        // Database trigger information
+        struct DatabaseTriggerInfo
+        {
+            ID trigger_id;                        // UUID v7
+            std::string trigger_name;             // Trigger name (unique)
+            DatabaseTriggerEvent event;           // Which event fires this trigger
+            bool active = true;                   // ACTIVE vs INACTIVE
+            int32_t position = 0;                 // POSITION n (execution order, lower first)
+            std::string procedure_name;           // Procedure to call: procedure_name()
+            uint64_t created_time = 0;            // Creation timestamp
+            ID owner_id;                          // Owner user UUID
+        };
+
+        // Database trigger management methods
+        auto createDatabaseTrigger(const DatabaseTriggerInfo &trigger, ErrorContext *ctx = nullptr) -> Status;
+
+        auto dropDatabaseTrigger(const std::string &trigger_name, ErrorContext *ctx = nullptr) -> Status;
+
+        auto getDatabaseTrigger(const ID &trigger_id, DatabaseTriggerInfo &info, ErrorContext *ctx = nullptr)
+            -> Status;
+
+        auto getDatabaseTriggerByName(const std::string &trigger_name, DatabaseTriggerInfo &info,
+                                      ErrorContext *ctx = nullptr) -> Status;
+
+        auto listDatabaseTriggers(DatabaseTriggerEvent event, std::vector<DatabaseTriggerInfo> &triggers,
+                                  ErrorContext *ctx = nullptr) -> Status;
+
+        auto listAllDatabaseTriggers(std::vector<DatabaseTriggerInfo> &triggers,
+                                     ErrorContext *ctx = nullptr) -> Status;
+
+        auto enableDatabaseTrigger(const std::string &trigger_name, bool enable,
+                                   ErrorContext *ctx = nullptr) -> Status;
+
         // Trigger management methods
         auto createTrigger(const TriggerInfo &trigger, ErrorContext *ctx = nullptr) -> Status;
         
@@ -2683,6 +2903,7 @@ namespace scratchbird::core
 
             ID function_id;                        // UUID v7
             std::string name;
+            bool name_is_delimited = false;        // True if name was double-quoted (case-sensitive)
             ID owner_id;                           // Phase 3.1: Owner user UUID
             std::vector<ParameterInfo> parameters;
             DataType return_type = DataType::INT32;
@@ -2707,6 +2928,7 @@ namespace scratchbird::core
 
             ID procedure_id;                       // UUID v7
             std::string name;
+            bool name_is_delimited = false;        // True if name was double-quoted (case-sensitive)
             ID owner_id;                           // Phase 3.1: Owner user UUID
             std::vector<ParameterInfo> parameters;
             bool or_replace = false;
@@ -2746,10 +2968,24 @@ namespace scratchbird::core
         auto loadStringFromToast(uint32_t oid, uint64_t xmin,
                                 std::string& str_out, ErrorContext* ctx = nullptr) -> Status;
 
+        // OPT-1/OPT-2: Public TOAST storage for statistics data (MCVs, histograms)
+        // Store a string in TOAST and return its OID
+        // @param str String to store
+        // @param xmin Transaction ID (use 0 for catalog operations)
+        // @param oid_out Output OID for the stored value
+        // @param ctx Error context
+        // @return Status::OK on success
+        auto storeStringInToast(const std::string& str, uint64_t xmin,
+                               uint32_t& oid_out, ErrorContext* ctx = nullptr) -> Status;
+
     private:
         // Internal helper functions (assume mutex_ is already held)
         auto getColumnInternal(const ID &table_id, const std::string &column_name,
                                ColumnInfo &info, ErrorContext *ctx) -> Status;
+
+        // Internal unlocked version of getUserByName - caller must hold mutex_
+        auto getUserByNameUnlocked(const std::string& username, UserInfo& user_out,
+                                   ErrorContext* ctx) -> Status;
 
         // WP-2 CAT-M3: Extract column references from expression bytecode
         static void extractColumnRefsFromBytecode(const std::vector<uint8_t>& bytecode,
@@ -2796,7 +3032,7 @@ namespace scratchbird::core
         std::mutex policy_cache_mutex_;
 
         // TOAST table ID for policy expressions (Phase 3.4.8 - TOAST Persistence)
-        ID policy_toast_table_id_;  // UUID for pg_toast_policy table
+        ID policy_toast_table_id_;  // UUID for sb_toast_policy table
         std::unique_ptr<ToastManager> policy_toast_manager_;  // TOAST manager for policy expressions
 
         // Object permissions cache (Phase 3.1 - SQL Object Permissions)
@@ -2859,12 +3095,7 @@ namespace scratchbird::core
         // TODO Phase 6: Implement full user lookup from Users table
         auto resolveOwnerUUID(const std::string &owner_name) -> ID;
 
-        // TOAST helpers for storing strings (Phase 3.4.6 - RLS Expression Storage)
-        // Store a string in TOAST and return its OID
-        auto storeStringInToast(const std::string& str, uint64_t xmin,
-                               uint32_t& oid_out, ErrorContext* ctx = nullptr) -> Status;
-
-        // Note: loadStringFromToast is in public section (WP-5 EXEC-M6)
+        // Note: storeStringInToast and loadStringFromToast are in public section (OPT-1/OPT-2, WP-5 EXEC-M6)
 
         // Index TID update helper (Phase 4 Task 4.1.5)
         // Updates all index entries for a table to reference new GPIDs after table migration
@@ -2910,8 +3141,8 @@ namespace scratchbird::core
         static constexpr uint32_t TABLES_TABLE_PAGE = 5;
         static constexpr uint32_t COLUMNS_TABLE_PAGE = 6;
         static constexpr uint32_t INDEXES_TABLE_PAGE = 7;
-        static constexpr uint32_t TABLESPACES_TABLE_PAGE = 8;       // pg_tablespace
-        static constexpr uint32_t TABLESPACE_FILES_TABLE_PAGE = 9;  // pg_tablespace_files
+        static constexpr uint32_t TABLESPACES_TABLE_PAGE = 8;       // sb_tablespace
+        static constexpr uint32_t TABLESPACE_FILES_TABLE_PAGE = 9;  // sb_tablespace_files
 
         // In-memory cache of catalog data
         std::unordered_map<ID, SchemaInfo> schema_cache_;
@@ -2936,10 +3167,21 @@ namespace scratchbird::core
         std::unordered_multimap<ID, ID> table_triggers_;  // table_id -> trigger_id (multiple per table)
         mutable std::mutex trigger_mutex_;  // Separate mutex for trigger operations
 
+        // Database trigger storage (Firebird-style ON CONNECT/DISCONNECT/TRANSACTION events)
+        std::unordered_map<ID, DatabaseTriggerInfo> db_trigger_cache_;  // keyed by trigger_id
+        std::unordered_map<std::string, ID> db_trigger_name_to_id_;  // name -> ID lookup
+        std::unordered_multimap<DatabaseTriggerEvent, ID> event_triggers_;  // event -> trigger_id (multiple per event)
+        mutable std::mutex db_trigger_mutex_;  // Separate mutex for database trigger operations
+
         // PSQL - Stored Procedures and Functions (Phase 2 Task 10.2)
         std::unordered_map<std::string, FunctionInfo> functions_;    // keyed by function name
         std::unordered_map<std::string, ProcedureInfo> procedures_;  // keyed by procedure name
         mutable std::mutex psql_mutex_;  // Separate mutex for function/procedure operations
+
+        // Statistics cache (OPT-1, OPT-2 - sb_statistic)
+        // Key: combined hash of table_id and column_id
+        std::unordered_map<uint64_t, StatisticInfo> statistic_cache_;  // getCacheKey(table_id, column_id) -> StatisticInfo
+        mutable std::mutex statistic_mutex_;  // Separate mutex for statistics operations
 
         // ONLINE migration state cache (Sprint 4 Task 5.4.1)
         std::unordered_map<ID, TableMigrationState> migration_cache_;  // keyed by migration_id
@@ -2965,10 +3207,10 @@ namespace scratchbird::core
         uint32_t statistics_table_page_ = 0;     // Will be allocated during init
         uint32_t collations_table_page_ = 0;     // Will be allocated during init
         uint32_t timezones_table_page_ = 0;      // Will be allocated during init
-        uint32_t charsets_table_page_ = 0;       // Will be allocated during init (pg_charset)
-        uint32_t collation_defs_table_page_ = 0; // Will be allocated during init (pg_collation)
-        uint32_t tablespaces_table_page_ = TABLESPACES_TABLE_PAGE;           // pg_tablespace
-        uint32_t tablespace_files_table_page_ = TABLESPACE_FILES_TABLE_PAGE; // pg_tablespace_files
+        uint32_t charsets_table_page_ = 0;       // Will be allocated during init (sb_charset)
+        uint32_t collation_defs_table_page_ = 0; // Will be allocated during init (sb_collation)
+        uint32_t tablespaces_table_page_ = TABLESPACES_TABLE_PAGE;           // sb_tablespace
+        uint32_t tablespace_files_table_page_ = TABLESPACE_FILES_TABLE_PAGE; // sb_tablespace_files
 
         // Phase 6.1: New system table pages (16 new tables - added group_memberships and group_mappings)
         uint32_t dependencies_table_page_ = 0;      // Dependencies tracking (Phase 1.4)
@@ -3316,6 +3558,12 @@ namespace scratchbird::core
             -> Status;
         auto writeTablespaceRecord(const TablespaceInfo &tablespace, ErrorContext *ctx) -> Status;
         auto readTablespaceRecords(ErrorContext *ctx) -> Status;
+
+        // OPT-1, OPT-2: Statistics persistence methods
+        auto writeStatisticRecord(const StatisticInfo &info, ErrorContext *ctx) -> Status;
+        auto deleteStatisticRecord(const ID &table_id, const ID &column_id, ErrorContext *ctx) -> Status;
+        auto readStatisticRecords(ErrorContext *ctx) -> Status;
+        auto getStatisticCacheKey(const ID &table_id, const ID &column_id) const -> uint64_t;
 
         // Helper to allocate catalog pages
         auto allocateCatalogPage(uint32_t &page_id, ErrorContext *ctx) -> Status;

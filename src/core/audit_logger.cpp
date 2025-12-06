@@ -55,7 +55,7 @@ Status AuditLogger::writeEventToCatalog(const AuditEvent& event, ErrorContext* c
 
     // Phase 4 Enhancement (P0-3 Phase 2): Implement catalog table write
     // For now, just store in memory buffer (events not persisted)
-    // Future: Write to pg_audit_log catalog table
+    // Future: Write to sb_audit_log catalog table
 
     return Status::OK;
 }

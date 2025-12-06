@@ -43,7 +43,7 @@ using scratchbird::core::ErrorContext;
 class MockServer {
 public:
     explicit MockServer(const std::string& db_name)
-        : db_name_(db_name), running_(false) {}
+        : db_name_(db_name), running_(false), port_(allocatePort()) {}
 
     ~MockServer() {
         stop();
@@ -53,7 +53,7 @@ public:
         scratchbird::server::IPCServerConfig config;
         config.database_name = db_name_;
         config.method = scratchbird::server::IPCMethod::TCP_LOCALHOST;
-        config.tcp_port = 15433;  // Non-standard port for testing
+        config.tcp_port = port_;  // Use dynamically allocated port
         config.accept_timeout_ms = 100;
 
         ErrorContext ctx;
@@ -82,9 +82,15 @@ public:
         }
     }
 
-    uint16_t getPort() const { return 15433; }
+    uint16_t getPort() const { return port_; }
 
 private:
+    // Allocate unique port for each test to avoid conflicts during parallel execution
+    static uint16_t allocatePort() {
+        static std::atomic<uint16_t> port_counter{16000};
+        return port_counter++;
+    }
+
     void serverLoop() {
         while (running_) {
             ErrorContext ctx;
@@ -245,6 +251,7 @@ private:
 
     std::string db_name_;
     std::atomic<bool> running_;
+    uint16_t port_;
     std::unique_ptr<scratchbird::server::IPCServer> server_;
     std::thread server_thread_;
 };

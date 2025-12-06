@@ -47,6 +47,7 @@ namespace scratchbird
             SEMICOLON,   // ;
             DOT,         // .
             COLON,       // : (used in :: for type casting)
+            COLON_EQUALS,  // := (PL/SQL assignment operator) WP-6 PARSE-2
 
             // JSON operators (Phase 1 Task 7)
             ARROW,              // -> (JSON field as JSON)
@@ -356,6 +357,7 @@ namespace scratchbird
             KW_CONCURRENTLY, // ALPHA Phase 1 - Materialized Views (REFRESH CONCURRENTLY)
             KW_CHECK,        // ALPHA Phase 1 - Views (WITH CHECK OPTION)
             KW_OPTION,       // ALPHA Phase 1 - Views (WITH CHECK OPTION)
+            KW_ADMIN,        // WP-6 PARSE-L1: WITH ADMIN OPTION for GRANT ROLE
             KW_ON,
             KW_OFF,
             KW_ALTER,  // Phase 2 Task 2.2
@@ -394,6 +396,11 @@ namespace scratchbird
             KW_PROCEDURE,
             KW_OLD,
             KW_NEW,
+
+            // Database trigger keywords (Firebird-style)
+            KW_DISCONNECT,    // ON DISCONNECT database trigger
+            KW_ACTIVE,        // CREATE TRIGGER name ACTIVE
+            KW_INACTIVE,      // CREATE TRIGGER name INACTIVE
 
             // Stored procedure keywords (Phase 2 Task 10.2)
             KW_FUNCTION,
@@ -456,6 +463,69 @@ namespace scratchbird
             KW_SCHEMAS,       // SHOW SCHEMAS
             KW_COLUMNS,       // SHOW COLUMNS FROM table
             KW_INDEXES,       // SHOW INDEXES FROM table
+
+            // UPSERT/ON CONFLICT (INSERT ... ON CONFLICT)
+            KW_CONFLICT,      // ON CONFLICT clause
+            KW_DO,            // DO UPDATE / DO NOTHING
+            KW_NOTHING,       // DO NOTHING action
+            KW_EXCLUDED,      // EXCLUDED pseudo-table in ON CONFLICT DO UPDATE
+
+            // LATERAL JOIN
+            KW_LATERAL,       // LATERAL keyword for correlated subqueries in FROM
+
+            // STRING_AGG aggregate function
+            KW_STRING_AGG,    // STRING_AGG(expression, delimiter)
+            KW_GROUP_CONCAT,  // GROUP_CONCAT (MySQL alias for STRING_AGG)
+            KW_WITHIN,        // WITHIN GROUP (ORDER BY ...) clause
+
+            // FILTER clause for aggregates
+            KW_FILTER,        // FILTER (WHERE condition) clause
+
+            // NTILE window function
+            KW_NTILE,         // NTILE(n) window function
+
+            // SAVEPOINT transaction control
+            KW_SAVEPOINT,     // SAVEPOINT name
+            KW_RELEASE,       // RELEASE SAVEPOINT name
+
+            // User Defined Types
+            KW_COMPOSITE,     // CREATE TYPE ... AS (composite type)
+            KW_ENUM,          // CREATE TYPE ... AS ENUM
+            KW_DOMAIN,        // CREATE DOMAIN (domain type)
+            // Note: KW_RANGE already exists for window frame mode (line 147)
+            KW_SUBTYPE,       // SUBTYPE = typename in RANGE definition
+
+            // Procedure invocation
+            KW_CALL,          // CALL procedure_name(args...)
+
+            // Extended SHOW/SET keywords (Firebird ISQL compatibility)
+            KW_DIALECT,       // SET SQL DIALECT / SHOW SQL DIALECT
+            KW_GENERATOR,     // SHOW GENERATOR (alias for SEQUENCE)
+            KW_DEPENDENCIES,  // SHOW DEPENDENCIES
+            KW_COLLATIONS,    // SHOW COLLATIONS
+            KW_COMMENTS,      // SHOW COMMENTS
+            KW_CHECKS,        // SHOW CHECKS
+            KW_GRANTS,        // SHOW GRANTS
+            KW_SYSTEM,        // SHOW SYSTEM
+            KW_PACKAGE,       // SHOW PACKAGE
+            KW_NAMES,         // SET NAMES charset
+            KW_LOCAL_TIMEOUT, // SET LOCAL_TIMEOUT N
+            KW_SCHEMA,        // SHOW SCHEMA (singular - specific schema)
+            KW_VERSION,       // SHOW VERSION
+
+            // Schema navigation keywords
+            KW_PATH,          // SHOW SCHEMA PATH, SET SEARCH PATH, IN PATH
+            KW_TREE,          // SHOW SCHEMA TREE
+            KW_DEPTH,         // SHOW SCHEMA TREE DEPTH n
+            KW_SEARCH,        // SET SEARCH PATH, SHOW SEARCH PATH
+            // KW_LOCATION already defined above for tablespace, reused for SHOW LOCATION OF
+            KW_OF,            // SHOW LOCATION OF
+            KW_RESOLVED,      // SHOW RESOLVED name
+            KW_OBJECTS,       // SHOW OBJECTS
+            KW_DETAIL,        // IN DETAIL
+            KW_HOME,          // SET SCHEMA HOME
+            KW_ROOT,          // SET SCHEMA ROOT
+            KW_UP,            // SET SCHEMA UP
         };
 
         // Location in source file
@@ -491,6 +561,11 @@ namespace scratchbird
             SourceLocation location;
             uint32_t length; // Length of token text
 
+            // Firebird SQL identifier handling:
+            // - Unquoted identifiers: case-insensitive (stored as-is, compared UPPER)
+            // - Quoted "Identifiers": case-sensitive (delimited)
+            bool is_delimited = false;  // True if identifier was double-quoted
+
             union
             {
                 int64_t int_value;              // For INTEGER_LITERAL
@@ -500,7 +575,7 @@ namespace scratchbird
             } value;
 
             // Default constructor - initializes to safe state
-            Token() : type(TokenType::ERROR), location(), length(0)
+            Token() : type(TokenType::ERROR), location(), length(0), is_delimited(false)
             {
                 value.int_value = 0; // Initialize union to zero
             }
@@ -558,12 +633,13 @@ namespace scratchbird
             }
 
             static Token makeIdentifier(const SourceLocation &loc, uint32_t len,
-                                        StringPool::StringId id)
+                                        StringPool::StringId id, bool delimited = false)
             {
                 Token t;
                 t.type = TokenType::IDENTIFIER;
                 t.location = loc;
                 t.length = len;
+                t.is_delimited = delimited;
                 t.value.string_id = id;
                 return t;
             }

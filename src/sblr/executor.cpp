@@ -864,6 +864,18 @@ namespace scratchbird
                             executeDropTrigger();
                             result = ExecutionResult();
                         }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CREATE_DB_TRIGGER))
+                        {
+                            // Database trigger: ON CONNECT/DISCONNECT/TRANSACTION events
+                            executeCreateDatabaseTrigger();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_DROP_DB_TRIGGER))
+                        {
+                            // Drop database trigger
+                            executeDropDatabaseTrigger();
+                            result = ExecutionResult();
+                        }
                         else if (ext_op == static_cast<uint8_t>(Opcode::EXT_MERGE_START))
                         {
                             // Alpha 1 - Advanced SQL: MERGE statement execution
@@ -879,7 +891,8 @@ namespace scratchbird
                         else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_SCALAR) ||
                                  ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_EXISTS) ||
                                  ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_IN) ||
-                                 ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_NOT_IN))
+                                 ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_NOT_IN) ||
+                                 ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_ARRAY))
                         {
                             // Phase 2 Wave 2 - Agent B: Subquery execution
                             // These opcodes should not appear at statement level - they are expression-level
@@ -996,6 +1009,35 @@ namespace scratchbird
                         {
                             executeCursorClose();
                             result = ExecutionResult();
+                        }
+                        // ===== CALL statement (PSQL procedure invocation) =====
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CALL))
+                        {
+                            // CALL procedure_name(args...)
+                            // Read procedure name
+                            std::string procedure_name = readString();
+
+                            // Read argument count
+                            int32_t arg_count = readInt32();
+
+                            // Evaluate each argument expression and collect values
+                            std::vector<Value> args;
+                            args.reserve(static_cast<size_t>(arg_count));
+                            for (int32_t i = 0; i < arg_count; ++i)
+                            {
+                                // Execute the expression bytecode - it will push result onto stack
+                                evaluateExpression();
+                                args.push_back(pop());
+                            }
+
+                            // Call the procedure using the existing callProcedureByName method
+                            result = callProcedureByName(procedure_name, args);
+
+                            // If the call failed, break out of the execution loop
+                            if (!result.success())
+                            {
+                                break;
+                            }
                         }
                         // ===== Spatial SRID Functions (Phase 2 Task 9.5) =====
                         else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_SRID))
@@ -1345,6 +1387,154 @@ namespace scratchbird
                         else if (ext_op == static_cast<uint8_t>(Opcode::EXT_DESCRIBE_TABLE))
                         {
                             executeDescribeTable();
+                            result = ExecutionResult();
+                        }
+                        // ===== Extended SHOW Commands (Firebird ISQL compatibility) =====
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_TABLE))
+                        {
+                            executeShowTable();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_INDEX))
+                        {
+                            executeShowIndex();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_TRIGGER))
+                        {
+                            executeShowTrigger();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_PROCEDURE))
+                        {
+                            executeShowProcedure();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_FUNCTION))
+                        {
+                            executeShowFunction();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_VIEW))
+                        {
+                            executeShowView();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_DOMAIN))
+                        {
+                            executeShowDomain();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_GENERATOR))
+                        {
+                            executeShowGenerator();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_SCHEMA))
+                        {
+                            executeShowSchema();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_ROLE))
+                        {
+                            executeShowRole();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_GRANTS))
+                        {
+                            executeShowGrants();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_CHECKS))
+                        {
+                            executeShowChecks();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_COLLATIONS))
+                        {
+                            executeShowCollations();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_COMMENTS))
+                        {
+                            executeShowComments();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_DEPENDENCIES))
+                        {
+                            executeShowDependencies();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_PACKAGE))
+                        {
+                            executeShowPackage();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_SYSTEM))
+                        {
+                            executeShowSystem();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_SQL_DIALECT))
+                        {
+                            executeShowSqlDialect();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_VERSION))
+                        {
+                            executeShowVersion();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_DATABASE))
+                        {
+                            executeShowDatabase();
+                            result = ExecutionResult();
+                        }
+                        // ===== Session SET Commands (Firebird ISQL compatibility) =====
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SET_SQL_DIALECT))
+                        {
+                            executeSetSqlDialect();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SET_NAMES))
+                        {
+                            executeSetNames();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SET_LOCAL_TIMEOUT))
+                        {
+                            executeSetLocalTimeout();
+                            result = ExecutionResult();
+                        }
+                        // ===== Schema Navigation Commands =====
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_SCHEMA_PATH))
+                        {
+                            executeShowSchemaPath();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_SCHEMA_TREE))
+                        {
+                            executeShowSchemaTree();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_SEARCH_PATH))
+                        {
+                            executeShowSearchPath();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_LOCATION))
+                        {
+                            executeShowLocation();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_RESOLVED))
+                        {
+                            executeShowResolved();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SHOW_OBJECTS))
+                        {
+                            executeShowObjects();
                             result = ExecutionResult();
                         }
                         else
@@ -10984,6 +11174,65 @@ namespace scratchbird
             }
         }
 
+        void Executor::executeCreateDatabaseTrigger()
+        {
+            // Firebird-style database trigger: ON CONNECT/DISCONNECT/TRANSACTION events
+            // Bytecode format:
+            //   - trigger_name: string (length + chars)
+            //   - event: uint8_t (DatabaseTriggerEvent enum)
+            //   - active: uint8_t (1 = active, 0 = inactive)
+            //   - position: int32_t
+            //   - procedure_name: string (length + chars)
+
+            std::string trigger_name = readString();
+            auto event = static_cast<core::CatalogManager::DatabaseTriggerEvent>(readByte());
+            bool active = (readByte() != 0);
+            int32_t position = static_cast<int32_t>(readInt32());
+            std::string procedure_name = readString();
+
+            // Create DatabaseTriggerInfo
+            core::CatalogManager::DatabaseTriggerInfo trigger_info;
+            trigger_info.trigger_name = trigger_name;
+            trigger_info.event = event;
+            trigger_info.active = active;
+            trigger_info.position = position;
+            trigger_info.procedure_name = procedure_name;
+            trigger_info.created_time = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()
+            ).count();
+
+            // Store in catalog
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->createDatabaseTrigger(trigger_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to create database trigger";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        void Executor::executeDropDatabaseTrigger()
+        {
+            // Drop database trigger by name
+            std::string trigger_name = readString();
+
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->dropDatabaseTrigger(trigger_name, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to drop database trigger";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
         bool Executor::fireTrigger(const TriggerContext& ctx)
         {
             // Wave 2: Trigger Executor Implementation
@@ -13461,6 +13710,61 @@ namespace scratchbird
                         current_result_set_ = std::move(saved_result_set);
                         current_table_ = saved_table;
                     }
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_ARRAY))
+                    {
+                        // WP-6 PARSE-M3: ARRAY(subquery) - collect subquery results into array
+                        // Save execution context
+                        auto saved_result_set = std::move(current_result_set_);
+                        auto saved_table = current_table_;
+
+                        // Execute subquery
+                        current_result_set_ = std::make_unique<ResultSet>();
+
+                        // Read and execute the nested SELECT
+                        Opcode subquery_op = static_cast<Opcode>(readByte());
+                        if (subquery_op == Opcode::SELECT)
+                        {
+                            executeSelect();
+
+                            // Validate: must return exactly one column
+                            if (!current_result_set_ || current_result_set_->columnCount() != 1)
+                            {
+                                error("ARRAY subquery must return exactly one column");
+                            }
+
+                            // Collect all values into an array
+                            std::vector<Value> array_elements;
+                            for (size_t r = 0; r < current_result_set_->rowCount(); r++)
+                            {
+                                array_elements.push_back(current_result_set_->getValue(r, 0));
+                            }
+
+                            // Push the array result
+                            push(Value::makeArray(std::move(array_elements)));
+                        }
+                        else
+                        {
+                            error("ARRAY subquery must be a SELECT statement");
+                        }
+
+                        // Skip to EXT_SUBQUERY_END marker
+                        while (pc_ < bytecode_size_)
+                        {
+                            uint8_t b = readByte();
+                            if (b == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                            {
+                                uint8_t ext = readByte();
+                                if (ext == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_END))
+                                {
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Restore context
+                        current_result_set_ = std::move(saved_result_set);
+                        current_table_ = saved_table;
+                    }
                     // Spatial functions (Phase 2 Task 9.1)
                     else if (ext_op == static_cast<uint8_t>(Opcode::EXT_ST_POINT))
                     {
@@ -15364,6 +15668,87 @@ namespace scratchbird
                         {
                             bool matches = matchRegex(text.toString(), pattern.toString(), true);
                             push(Value::makeBoolean(!matches));
+                        }
+                    }
+                    // WP-6 PARSE-3: IN value list operator
+                    else if (ext_op == static_cast<uint8_t>(Opcode::EXT_IN_LIST))
+                    {
+                        // Format: EXT_IN_LIST | negated (1 byte) | array_value on stack | test_value on stack
+                        uint8_t negated = readByte();
+
+                        // Pop values: RHS is an array of values to check membership in
+                        // Stack order: bottom=[test_value] top=[array_value]
+                        Value array_value = pop();
+                        Value test_value = pop();
+
+                        if (test_value.isNull())
+                        {
+                            // NULL IN (...) is NULL (SQL semantics)
+                            push(Value::makeNull());
+                        }
+                        else if (array_value.isNull())
+                        {
+                            // x IN (NULL) is NULL
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            // Parse the array value as JSON array
+                            try {
+                                json j_array = json::parse(array_value.toString());
+                                if (!j_array.is_array())
+                                {
+                                    // If not an array, single value comparison
+                                    bool found = (test_value.toString() == array_value.toString());
+                                    push(Value::makeBoolean(negated ? !found : found));
+                                }
+                                else
+                                {
+                                    // Check if test_value is in the array
+                                    bool found = false;
+                                    std::string test_str = test_value.toString();
+
+                                    for (const auto& elem : j_array)
+                                    {
+                                        std::string elem_str;
+                                        if (elem.is_string())
+                                            elem_str = elem.get<std::string>();
+                                        else if (elem.is_null())
+                                            continue; // NULL in list doesn't match
+                                        else
+                                            elem_str = elem.dump();
+
+                                        // Compare values (type-aware comparison would be better)
+                                        if (test_str == elem_str)
+                                        {
+                                            found = true;
+                                            break;
+                                        }
+
+                                        // Try numeric comparison for numbers
+                                        if (elem.is_number())
+                                        {
+                                            try {
+                                                double test_num = std::stod(test_str);
+                                                double elem_num = elem.get<double>();
+                                                if (test_num == elem_num)
+                                                {
+                                                    found = true;
+                                                    break;
+                                                }
+                                            } catch (...) {
+                                                // Not a number, continue with string comparison
+                                            }
+                                        }
+                                    }
+
+                                    push(Value::makeBoolean(negated ? !found : found));
+                                }
+                            } catch (const json::exception& e) {
+                                // If not valid JSON, treat as single value comparison
+                                bool found = (test_value.toString() == array_value.toString());
+                                push(Value::makeBoolean(negated ? !found : found));
+                            }
                         }
                     }
                     else if (ext_op == static_cast<uint8_t>(Opcode::EXT_REGEXP_MATCHES))
@@ -19344,6 +19729,193 @@ namespace scratchbird
             }
         }
 
+        // ========================================================================
+        // Public API: Call a procedure by name (for database triggers, CALL stmt)
+        // ========================================================================
+        ExecutionResult Executor::callProcedureByName(const std::string& procedure_name,
+                                                      const std::vector<Value>& args)
+        {
+            // Look up procedure in catalog
+            core::CatalogManager::ProcedureInfo procedure_info;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getProcedure(procedure_name, procedure_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                return ExecutionResult("Procedure not found: " + procedure_name);
+            }
+
+            // Check that procedure has stored bytecode
+            if (procedure_info.bytecode.empty())
+            {
+                return ExecutionResult("Procedure '" + procedure_name + "' has no bytecode (not compiled)");
+            }
+
+            // Check EXECUTE permission
+            auto ctx = core::ConnectionContext::getCurrent();
+            if (ctx && !ctx->isSuperuser())
+            {
+                if (!db_->catalog_manager()->hasObjectPermission(
+                    procedure_info.procedure_id,
+                    ctx->getCurrentUserId(),
+                    0x0001, // PERM_EXECUTE
+                    &err_ctx))
+                {
+                    return ExecutionResult("Permission denied: EXECUTE on procedure " + procedure_name);
+                }
+            }
+
+            // Security Phase 3.1: Push security context based on SQL SECURITY mode
+            bool security_context_pushed = false;
+            if (ctx)
+            {
+                if (procedure_info.sql_security == core::CatalogManager::ProcedureInfo::SqlSecurity::DEFINER)
+                {
+                    // Execute with owner's privileges
+                    bool owner_is_superuser = false;
+                    core::CatalogManager::UserInfo owner_info;
+                    if (db_->catalog_manager()->getUser(procedure_info.owner_id, owner_info, &err_ctx) == core::Status::OK)
+                    {
+                        owner_is_superuser = owner_info.is_superuser;
+                    }
+
+                    ctx->pushSecurityContext(
+                        procedure_info.owner_id,
+                        core::ID(),  // No role for DEFINER mode
+                        owner_is_superuser,
+                        core::ConnectionContext::SecurityMode::DEFINER,
+                        procedure_info.procedure_id
+                    );
+                    security_context_pushed = true;
+                }
+                else
+                {
+                    // INVOKER: Execute with caller's privileges
+                    ctx->pushSecurityContext(
+                        ctx->getCurrentUserId(),
+                        ctx->getActiveRoleId(),
+                        ctx->isSuperuser(),
+                        core::ConnectionContext::SecurityMode::INVOKER,
+                        procedure_info.procedure_id
+                    );
+                    security_context_pushed = true;
+                }
+            }
+
+            // Initialize variable stack if not already done
+            if (!variable_stack_)
+            {
+                variable_stack_ = std::make_unique<VariableStack>();
+            }
+
+            // Push new frame for procedure
+            variable_stack_->pushFrame();
+
+            // Bind arguments to procedure parameters (if any)
+            // Database triggers typically have no arguments, but CALL statements might
+            for (size_t i = 0; i < args.size() && i < procedure_info.parameters.size(); ++i)
+            {
+                const auto& param = procedure_info.parameters[i];
+                variable_stack_->declareVariable(param.name, args[i]);
+            }
+
+            // Execute the procedure's bytecode
+            // Save and restore the current bytecode context
+            const uint8_t* saved_bytecode = bytecode_;
+            size_t saved_size = bytecode_size_;
+            size_t saved_pc = pc_;
+            bool saved_return_requested = return_requested_;
+
+            bytecode_ = procedure_info.bytecode.data();
+            bytecode_size_ = procedure_info.bytecode.size();
+            pc_ = 0;
+            return_requested_ = false;
+
+            ExecutionResult result;
+            try
+            {
+                // Execute bytecode - the procedure body should start with version header
+                // Skip version header if present (bytecode format: [version_major][version_minor])
+                if (bytecode_size_ >= 2)
+                {
+                    // Skip past version header
+                    pc_ += 2;
+                }
+
+                // Execute main loop until end of bytecode or error
+                while (pc_ < bytecode_size_)
+                {
+                    if (return_requested_)
+                    {
+                        break;  // RETURN was called
+                    }
+
+                    uint8_t opcode = readByte();
+                    if (opcode == static_cast<uint8_t>(Opcode::END))
+                    {
+                        break;  // Normal termination
+                    }
+
+                    // Handle extended opcodes for PSQL statements
+                    if (opcode == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                    {
+                        uint8_t ext_opcode = readByte();
+                        switch (static_cast<Opcode>(ext_opcode))
+                        {
+                            case Opcode::EXT_BLOCK:
+                                executeBlock();
+                                break;
+                            case Opcode::EXT_ASSIGN:
+                                executeAssignment();
+                                break;
+                            case Opcode::EXT_IF:
+                                executeIfStatement();
+                                break;
+                            case Opcode::EXT_LOOP:
+                                executeLoopStatement();
+                                break;
+                            case Opcode::EXT_WHILE:
+                                executeWhileStatement();
+                                break;
+                            case Opcode::EXT_EXIT:
+                                executeExitStatement();
+                                break;
+                            case Opcode::EXT_RETURN:
+                                executeReturnStatement();
+                                break;
+                            case Opcode::EXT_RAISE:
+                                executeRaiseStatement();
+                                break;
+                            default:
+                                // Unknown extended opcode
+                                break;
+                        }
+                    }
+                }
+                result = ExecutionResult();  // Success
+            }
+            catch (const std::exception& e)
+            {
+                result = ExecutionResult(std::string("Error executing procedure '") + procedure_name + "': " + e.what());
+            }
+
+            // Restore bytecode context
+            bytecode_ = saved_bytecode;
+            bytecode_size_ = saved_size;
+            pc_ = saved_pc;
+            return_requested_ = saved_return_requested;
+
+            // Pop procedure frame
+            variable_stack_->popFrame();
+
+            // Security Phase 3.1: Pop security context
+            if (security_context_pushed && ctx)
+            {
+                ctx->popSecurityContext();
+            }
+
+            return result;
+        }
+
         void Executor::executeBlock()
         {
             // Read variable declaration count
@@ -20978,6 +21550,8 @@ namespace scratchbird
             std::string rolename = readString();
             uint8_t grantee_type_byte = readByte();
             std::string grantee_name = readString();
+            // WP-6 PARSE-L1: Read WITH ADMIN OPTION flag from bytecode
+            bool with_admin_option = readByte() != 0;
 
             // Security Check: Only superusers can grant roles
             if (conn_ctx_ && !conn_ctx_->isSuperuser())
@@ -21024,8 +21598,7 @@ namespace scratchbird
                 std::memset(&granted_by, 0, sizeof(granted_by)); // System user fallback
             }
 
-            // Phase 2 Enhancement: WITH ADMIN OPTION requires bytecode generator update
-            bool with_admin_option = false;
+            // WP-6 PARSE-L1: with_admin_option is now read from bytecode at top of function
 
             // Grant role to user
             auto status = db_->catalog_manager()->grantRole(
@@ -22159,6 +22732,1007 @@ namespace scratchbird
             }
         }
 
+        // =============================================================================
+        // Extended SHOW Commands (Firebird ISQL compatibility)
+        // =============================================================================
+
+        void Executor::executeShowTable()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+
+            // Get catalog manager
+            auto* catalog = db_->catalog_manager();
+
+            // Look up table in PUBLIC schema
+            core::CatalogManager::SchemaInfo schema_info;
+            auto schema_status = catalog->getSchema("PUBLIC", schema_info, nullptr);
+            if (schema_status != core::Status::OK)
+            {
+                error("Failed to get schema PUBLIC");
+            }
+
+            core::CatalogManager::TableInfo table_info;
+            core::ErrorContext err_ctx;
+            auto table_status = catalog->getTable(schema_info.schema_id, object_name, table_info, &err_ctx);
+            if (table_status != core::Status::OK)
+            {
+                error("Table '" + object_name + "' not found");
+            }
+
+            // Get columns
+            std::vector<core::CatalogManager::ColumnInfo> columns;
+            auto col_status = catalog->getColumns(table_info.table_id, columns, &err_ctx);
+            if (col_status != core::Status::OK)
+            {
+                error("Failed to get columns: " + err_ctx.message);
+            }
+
+            // Create result set with detailed table info
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            // Output table metadata
+            current_result_set_->addColumn("Property", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Value", core::DataType::VARCHAR);
+
+            current_result_set_->addRow({Value::makeVarchar("Table Name"), Value::makeVarchar(table_info.table_name)});
+            current_result_set_->addRow({Value::makeVarchar("Schema"), Value::makeVarchar("PUBLIC")});
+            current_result_set_->addRow({Value::makeVarchar("Column Count"), Value::makeVarchar(std::to_string(columns.size()))});
+
+            // Add column info
+            for (size_t i = 0; i < columns.size(); i++)
+            {
+                std::string type_str = dataTypeToString(static_cast<core::DataType>(columns[i].data_type));
+                if (columns[i].type_precision > 0)
+                {
+                    type_str += "(" + std::to_string(columns[i].type_precision);
+                    if (columns[i].type_scale > 0)
+                    {
+                        type_str += "," + std::to_string(columns[i].type_scale);
+                    }
+                    type_str += ")";
+                }
+                std::string col_info = columns[i].column_name + " " + type_str;
+                if (!columns[i].nullable) col_info += " NOT NULL";
+                if (columns[i].is_primary_key) col_info += " PRIMARY KEY";
+                current_result_set_->addRow({Value::makeVarchar("Column " + std::to_string(i + 1)), Value::makeVarchar(col_info)});
+            }
+        }
+
+        void Executor::executeShowIndex()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+
+            // Create result set
+            // Note: Full index lookup by name requires catalog enhancement
+            // Use SHOW INDEXES FROM table for detailed index info
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Property", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Value", core::DataType::VARCHAR);
+
+            std::vector<Value> row1;
+            row1.push_back(Value::makeVarchar("Index Name"));
+            row1.push_back(Value::makeVarchar(object_name));
+            current_result_set_->addRow(row1);
+
+            std::vector<Value> row2;
+            row2.push_back(Value::makeVarchar("Status"));
+            row2.push_back(Value::makeVarchar("(use SHOW INDEXES FROM table for details)"));
+            current_result_set_->addRow(row2);
+        }
+
+        void Executor::executeShowTrigger()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+
+            // Create stub result set - triggers to be implemented
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Trigger", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Event", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Table", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Timing", core::DataType::VARCHAR);
+            // Note: Full trigger info requires catalog trigger table implementation
+            current_result_set_->addRow({Value::makeVarchar(object_name), Value::makeVarchar("N/A"), Value::makeVarchar("N/A"), Value::makeVarchar("N/A")});
+        }
+
+        void Executor::executeShowProcedure()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+
+            // Create stub result set - procedures to be implemented
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Procedure", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Parameters", core::DataType::VARCHAR);
+            // Note: Full procedure info requires catalog procedure table implementation
+            current_result_set_->addRow({Value::makeVarchar(object_name), Value::makeVarchar("(not yet implemented)")});
+        }
+
+        void Executor::executeShowFunction()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+
+            // Create stub result set - functions to be implemented
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Function", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Return Type", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Parameters", core::DataType::VARCHAR);
+            // Note: Full function info requires catalog function table implementation
+            current_result_set_->addRow({Value::makeVarchar(object_name), Value::makeVarchar("N/A"), Value::makeVarchar("(not yet implemented)")});
+        }
+
+        void Executor::executeShowView()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+
+            // Get catalog manager
+            auto* catalog = db_->catalog_manager();
+
+            // Look up view in PUBLIC schema
+            core::CatalogManager::SchemaInfo schema_info;
+            auto schema_status = catalog->getSchema("PUBLIC", schema_info, nullptr);
+            if (schema_status != core::Status::OK)
+            {
+                error("Failed to get schema PUBLIC");
+            }
+
+            core::CatalogManager::ViewInfo view_info;
+            core::ErrorContext err_ctx;
+            auto view_status = catalog->getView(schema_info.schema_id, object_name, view_info, &err_ctx);
+            if (view_status != core::Status::OK)
+            {
+                error("View '" + object_name + "' not found");
+            }
+
+            // Create result set
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("View Name", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Definition", core::DataType::VARCHAR);
+
+            std::vector<Value> row;
+            row.push_back(Value::makeVarchar(view_info.name));
+            row.push_back(Value::makeVarchar(view_info.definition));
+            current_result_set_->addRow(row);
+        }
+
+        void Executor::executeShowDomain()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+
+            // Create stub result set - domains to be implemented
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Domain", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Base Type", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Constraints", core::DataType::VARCHAR);
+            // Note: Full domain info requires catalog domain table implementation
+            current_result_set_->addRow({Value::makeVarchar(object_name), Value::makeVarchar("N/A"), Value::makeVarchar("(not yet implemented)")});
+        }
+
+        void Executor::executeShowGenerator()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+
+            // Get catalog manager
+            auto* catalog = db_->catalog_manager();
+
+            // Look up sequence (generator is Firebird terminology for sequence)
+            core::CatalogManager::SchemaInfo schema_info;
+            auto schema_status = catalog->getSchema("PUBLIC", schema_info, nullptr);
+            if (schema_status != core::Status::OK)
+            {
+                error("Failed to get schema PUBLIC");
+            }
+
+            core::CatalogManager::SequenceInfo seq_info;
+            core::ErrorContext err_ctx;
+            auto seq_status = catalog->getSequence(schema_info.schema_id, object_name, seq_info, &err_ctx);
+            if (seq_status != core::Status::OK)
+            {
+                error("Generator/Sequence '" + object_name + "' not found");
+            }
+
+            // Create result set
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Property", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Value", core::DataType::VARCHAR);
+
+            std::vector<Value> row1, row2, row3, row4, row5;
+            row1.push_back(Value::makeVarchar("Generator Name"));
+            row1.push_back(Value::makeVarchar(seq_info.name));
+            current_result_set_->addRow(row1);
+
+            row2.push_back(Value::makeVarchar("Current Value"));
+            row2.push_back(Value::makeVarchar(std::to_string(seq_info.current_value)));
+            current_result_set_->addRow(row2);
+
+            row3.push_back(Value::makeVarchar("Increment"));
+            row3.push_back(Value::makeVarchar(std::to_string(seq_info.increment_by)));
+            current_result_set_->addRow(row3);
+
+            row4.push_back(Value::makeVarchar("Min Value"));
+            row4.push_back(Value::makeVarchar(std::to_string(seq_info.min_value)));
+            current_result_set_->addRow(row4);
+
+            row5.push_back(Value::makeVarchar("Max Value"));
+            row5.push_back(Value::makeVarchar(std::to_string(seq_info.max_value)));
+            current_result_set_->addRow(row5);
+        }
+
+        void Executor::executeShowSchema()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+
+            // Get catalog manager
+            auto* catalog = db_->catalog_manager();
+
+            // Create result set
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            if (object_name.empty())
+            {
+                // List all schemas
+                current_result_set_->addColumn("Schema", core::DataType::VARCHAR);
+                current_result_set_->addColumn("Owner", core::DataType::VARCHAR);
+
+                std::vector<core::CatalogManager::SchemaInfo> schemas;
+                core::ErrorContext err_ctx;
+                auto status = catalog->listSchemas(schemas, &err_ctx);
+                if (status == core::Status::OK)
+                {
+                    for (const auto& schema : schemas)
+                    {
+                        current_result_set_->addRow({Value::makeVarchar(schema.schema_name), Value::makeVarchar("SYSDBA")});
+                    }
+                }
+            }
+            else
+            {
+                // Show specific schema
+                core::CatalogManager::SchemaInfo schema_info;
+                core::ErrorContext err_ctx;
+                auto status = catalog->getSchema(object_name, schema_info, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    error("Schema '" + object_name + "' not found");
+                }
+
+                current_result_set_->addColumn("Property", core::DataType::VARCHAR);
+                current_result_set_->addColumn("Value", core::DataType::VARCHAR);
+
+                current_result_set_->addRow({Value::makeVarchar("Schema Name"), Value::makeVarchar(schema_info.schema_name)});
+            }
+        }
+
+        void Executor::executeShowRole()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+
+            // Get catalog manager
+            auto* catalog = db_->catalog_manager();
+
+            // Look up role by name
+            core::CatalogManager::RoleInfo role_info;
+            core::ErrorContext err_ctx;
+            auto status = catalog->getRoleByName(object_name, role_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                error("Role '" + object_name + "' not found");
+            }
+
+            // Create result set
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Role", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Owner", core::DataType::VARCHAR);
+
+            std::vector<Value> row;
+            row.push_back(Value::makeVarchar(role_info.role_name));
+            row.push_back(Value::makeVarchar("SYSDBA"));
+            current_result_set_->addRow(row);
+        }
+
+        void Executor::executeShowGrants()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+
+            // Create result set - list grants for object or all
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Grantee", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Object", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Privilege", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Grantor", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Grant Option", core::DataType::VARCHAR);
+
+            // Note: Full grant info requires catalog privilege table query
+            if (!object_name.empty())
+            {
+                current_result_set_->addRow({
+                    Value::makeVarchar("(grant query not yet implemented)"),
+                    Value::makeVarchar(object_name),
+                    Value::makeVarchar("N/A"),
+                    Value::makeVarchar("N/A"),
+                    Value::makeVarchar("N/A")
+                });
+            }
+        }
+
+        void Executor::executeShowChecks()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+
+            // Create result set - list check constraints for table
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Constraint Name", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Table", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Check Clause", core::DataType::VARCHAR);
+
+            // Note: Full check constraint info requires catalog constraint table query
+            current_result_set_->addRow({
+                Value::makeVarchar("(check query not yet implemented)"),
+                Value::makeVarchar(object_name),
+                Value::makeVarchar("N/A")
+            });
+        }
+
+        void Executor::executeShowCollations()
+        {
+            // Read bytecode parameters
+            std::string like_pattern = readString();
+
+            // Create result set - list available collations
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Collation", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Character Set", core::DataType::VARCHAR);
+
+            // Add known collations
+            std::vector<std::pair<std::string, std::string>> collations = {
+                {"UTF8_UNICODE", "UTF8"},
+                {"UTF8_UNICODE_CI", "UTF8"},
+                {"ASCII", "ASCII"},
+                {"UTF8_BINARY", "UTF8"},
+                {"ISO8859_1", "ISO8859_1"},
+                {"NONE", "NONE"}
+            };
+
+            for (const auto& coll : collations)
+            {
+                if (like_pattern.empty() || matchSqlLike(coll.first, like_pattern))
+                {
+                    current_result_set_->addRow({
+                        Value::makeVarchar(coll.first),
+                        Value::makeVarchar(coll.second)
+                    });
+                }
+            }
+        }
+
+        void Executor::executeShowComments()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+
+            // Create stub result set - comments to be implemented
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Object", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Comment", core::DataType::VARCHAR);
+
+            // Note: Full comment info requires catalog comment storage
+            current_result_set_->addRow({
+                Value::makeVarchar(object_name),
+                Value::makeVarchar("(no comments)")
+            });
+        }
+
+        void Executor::executeShowDependencies()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+
+            // Create stub result set - dependencies to be implemented
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Dependent Object", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Depends On", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Dependency Type", core::DataType::VARCHAR);
+
+            // Note: Full dependency tracking requires catalog dependency table
+            current_result_set_->addRow({
+                Value::makeVarchar(object_name),
+                Value::makeVarchar("N/A"),
+                Value::makeVarchar("(dependency tracking not yet implemented)")
+            });
+        }
+
+        void Executor::executeShowPackage()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+
+            // Create stub result set - packages to be implemented
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Package", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Header", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Body", core::DataType::VARCHAR);
+
+            // Note: Full package info requires catalog package table implementation
+            current_result_set_->addRow({
+                Value::makeVarchar(object_name),
+                Value::makeVarchar("(not yet implemented)"),
+                Value::makeVarchar("(not yet implemented)")
+            });
+        }
+
+        void Executor::executeShowSystem()
+        {
+            // Show system information
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Property", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Value", core::DataType::VARCHAR);
+
+            current_result_set_->addRow({Value::makeVarchar("Database Engine"), Value::makeVarchar("ScratchBird")});
+            current_result_set_->addRow({Value::makeVarchar("Server Version"), Value::makeVarchar("1.0.0-alpha")});
+            current_result_set_->addRow({Value::makeVarchar("Protocol"), Value::makeVarchar("SBCP 1.0")});
+            current_result_set_->addRow({Value::makeVarchar("Page Size"), Value::makeVarchar(std::to_string(db_->page_size()))});
+            current_result_set_->addRow({Value::makeVarchar("Architecture"), Value::makeVarchar("Firebird MGA")});
+        }
+
+        void Executor::executeShowSqlDialect()
+        {
+            // Show current SQL dialect (Firebird compatibility)
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("SQL Dialect", core::DataType::INT32);
+
+            // Default to dialect 3 (modern SQL)
+            int dialect = 3;
+            if (conn_ctx_)
+            {
+                dialect = conn_ctx_->sql_dialect();
+            }
+            current_result_set_->addRow({Value::makeInt32(dialect)});
+        }
+
+        void Executor::executeShowVersion()
+        {
+            // Show database version info
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Component", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Version", core::DataType::VARCHAR);
+
+            current_result_set_->addRow({Value::makeVarchar("ScratchBird Engine"), Value::makeVarchar("1.0.0-alpha")});
+            current_result_set_->addRow({Value::makeVarchar("SBLR Bytecode"), Value::makeVarchar("1.0")});
+            current_result_set_->addRow({Value::makeVarchar("Wire Protocol"), Value::makeVarchar("SBCP 1.0")});
+            current_result_set_->addRow({Value::makeVarchar("SQL Compatibility"), Value::makeVarchar("Firebird 5.0")});
+        }
+
+        void Executor::executeShowDatabase()
+        {
+            // Show database information
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Property", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Value", core::DataType::VARCHAR);
+
+            // Get database file path as name
+            std::vector<Value> row1, row2;
+            row1.push_back(Value::makeVarchar("Database"));
+            row1.push_back(Value::makeVarchar("ScratchBird Database"));
+            current_result_set_->addRow(row1);
+
+            row2.push_back(Value::makeVarchar("Page Size"));
+            row2.push_back(Value::makeVarchar(std::to_string(db_->page_size())));
+            current_result_set_->addRow(row2);
+        }
+
+        // =============================================================================
+        // Schema Navigation Commands
+        // =============================================================================
+
+        void Executor::executeShowSchemaPath()
+        {
+            // Show full path to current schema
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Current Schema Path", core::DataType::VARCHAR);
+
+            // Get current schema from connection context
+            std::string schema_path = "public";  // Default
+            if (conn_ctx_)
+            {
+                schema_path = conn_ctx_->current_schema();
+                if (schema_path.empty())
+                {
+                    schema_path = "public";
+                }
+            }
+
+            std::vector<Value> row;
+            row.push_back(Value::makeVarchar(schema_path));
+            current_result_set_->addRow(row);
+        }
+
+        void Executor::executeShowSchemaTree()
+        {
+            // Read bytecode parameters
+            int32_t max_depth = readInt32();  // 0 = unlimited
+            std::string from_path = readString();  // "/" means from root
+
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Schema", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Depth", core::DataType::INT32);
+            current_result_set_->addColumn("Type", core::DataType::VARCHAR);
+
+            // Get catalog manager
+            auto catalog = db_->catalog_manager();
+            if (!catalog)
+            {
+                return;  // No catalog available
+            }
+
+            // Get all schemas and build tree structure
+            std::vector<core::CatalogManager::SchemaInfo> schemas;
+            core::ErrorContext err_ctx;
+            if (catalog->listSchemas(schemas, &err_ctx) != core::Status::OK)
+            {
+                return;
+            }
+
+            // Sort by name for consistent output
+            std::sort(schemas.begin(), schemas.end(),
+                      [](const core::CatalogManager::SchemaInfo& a, const core::CatalogManager::SchemaInfo& b) {
+                          return a.schema_name < b.schema_name;
+                      });
+
+            // Add schemas to result set (simplified flat list for now)
+            // TODO: Implement proper tree traversal with parent_schema_id
+            for (const auto& schema : schemas)
+            {
+                if (max_depth > 0)
+                {
+                    // Count depth based on dots in name (simplified)
+                    int depth = 1;
+                    for (char c : schema.schema_name)
+                    {
+                        if (c == '.') depth++;
+                    }
+                    if (depth > max_depth) continue;
+                }
+
+                std::vector<Value> row;
+                row.push_back(Value::makeVarchar(schema.schema_name));
+                row.push_back(Value::makeInt32(1));  // Depth (simplified)
+                row.push_back(Value::makeVarchar("SCHEMA"));
+                current_result_set_->addRow(row);
+            }
+        }
+
+        void Executor::executeShowSearchPath()
+        {
+            // Show current search path
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Search Path", core::DataType::VARCHAR);
+
+            // Get search path from connection context
+            std::string search_path = "public";  // Default
+            if (conn_ctx_)
+            {
+                const auto& paths = conn_ctx_->search_path();
+                if (!paths.empty())
+                {
+                    search_path.clear();
+                    for (size_t i = 0; i < paths.size(); i++)
+                    {
+                        if (i > 0) search_path += ", ";
+                        search_path += paths[i];
+                    }
+                }
+            }
+
+            std::vector<Value> row;
+            row.push_back(Value::makeVarchar(search_path));
+            current_result_set_->addRow(row);
+        }
+
+        void Executor::executeShowLocation()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+            std::string type_hint = readString();  // Optional type filter
+
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Location", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Type", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Schema", core::DataType::VARCHAR);
+
+            // Get catalog manager
+            auto catalog = db_->catalog_manager();
+            if (!catalog)
+            {
+                return;
+            }
+
+            // Search for object in search path schemas
+            std::vector<std::string> search_schemas = {"public"};  // Default
+            if (conn_ctx_)
+            {
+                const auto& paths = conn_ctx_->search_path();
+                if (!paths.empty())
+                {
+                    search_schemas = paths;
+                }
+            }
+
+            core::ErrorContext err_ctx;
+            for (const auto& schema_name : search_schemas)
+            {
+                // Get schema
+                core::CatalogManager::SchemaInfo schema;
+                if (catalog->getSchema(schema_name, schema, &err_ctx) != core::Status::OK)
+                {
+                    continue;
+                }
+
+                // Check for table
+                if (type_hint.empty() || type_hint == "table")
+                {
+                    core::CatalogManager::TableInfo table;
+                    if (catalog->getTable(schema.schema_id, object_name, table, &err_ctx) == core::Status::OK)
+                    {
+                        std::vector<Value> row;
+                        row.push_back(Value::makeVarchar(schema_name + "." + object_name));
+                        row.push_back(Value::makeVarchar("TABLE"));
+                        row.push_back(Value::makeVarchar(schema_name));
+                        current_result_set_->addRow(row);
+                    }
+                }
+
+                // Check for view
+                if (type_hint.empty() || type_hint == "view")
+                {
+                    core::CatalogManager::ViewInfo view;
+                    if (catalog->getView(schema.schema_id, object_name, view, &err_ctx) == core::Status::OK)
+                    {
+                        std::vector<Value> row;
+                        row.push_back(Value::makeVarchar(schema_name + "." + object_name));
+                        row.push_back(Value::makeVarchar("VIEW"));
+                        row.push_back(Value::makeVarchar(schema_name));
+                        current_result_set_->addRow(row);
+                    }
+                }
+
+                // Check for sequence
+                if (type_hint.empty() || type_hint == "sequence")
+                {
+                    core::CatalogManager::SequenceInfo seq;
+                    if (catalog->getSequence(schema.schema_id, object_name, seq, &err_ctx) == core::Status::OK)
+                    {
+                        std::vector<Value> row;
+                        row.push_back(Value::makeVarchar(schema_name + "." + object_name));
+                        row.push_back(Value::makeVarchar("SEQUENCE"));
+                        row.push_back(Value::makeVarchar(schema_name));
+                        current_result_set_->addRow(row);
+                    }
+                }
+            }
+        }
+
+        void Executor::executeShowResolved()
+        {
+            // Read bytecode parameters
+            std::string object_name = readString();
+
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Resolved To", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Type", core::DataType::VARCHAR);
+
+            // Get catalog manager
+            auto catalog = db_->catalog_manager();
+            if (!catalog)
+            {
+                return;
+            }
+
+            // Get search path
+            std::vector<std::string> search_schemas = {"public"};
+            if (conn_ctx_)
+            {
+                const auto& paths = conn_ctx_->search_path();
+                if (!paths.empty())
+                {
+                    search_schemas = paths;
+                }
+            }
+
+            core::ErrorContext err_ctx;
+            // Search in order - return first match
+            for (const auto& schema_name : search_schemas)
+            {
+                core::CatalogManager::SchemaInfo schema;
+                if (catalog->getSchema(schema_name, schema, &err_ctx) != core::Status::OK)
+                {
+                    continue;
+                }
+
+                // Check table first
+                core::CatalogManager::TableInfo table;
+                if (catalog->getTable(schema.schema_id, object_name, table, &err_ctx) == core::Status::OK)
+                {
+                    std::vector<Value> row;
+                    row.push_back(Value::makeVarchar(schema_name + "." + object_name));
+                    row.push_back(Value::makeVarchar("TABLE"));
+                    current_result_set_->addRow(row);
+                    return;  // Return first match
+                }
+
+                // Check view
+                core::CatalogManager::ViewInfo view;
+                if (catalog->getView(schema.schema_id, object_name, view, &err_ctx) == core::Status::OK)
+                {
+                    std::vector<Value> row;
+                    row.push_back(Value::makeVarchar(schema_name + "." + object_name));
+                    row.push_back(Value::makeVarchar("VIEW"));
+                    current_result_set_->addRow(row);
+                    return;
+                }
+
+                // Check sequence
+                core::CatalogManager::SequenceInfo seq;
+                if (catalog->getSequence(schema.schema_id, object_name, seq, &err_ctx) == core::Status::OK)
+                {
+                    std::vector<Value> row;
+                    row.push_back(Value::makeVarchar(schema_name + "." + object_name));
+                    row.push_back(Value::makeVarchar("SEQUENCE"));
+                    current_result_set_->addRow(row);
+                    return;
+                }
+            }
+
+            // Object not found
+            std::vector<Value> row;
+            row.push_back(Value::makeVarchar("NOT FOUND"));
+            row.push_back(Value::makeVarchar(""));
+            current_result_set_->addRow(row);
+        }
+
+        void Executor::executeShowObjects()
+        {
+            // Read bytecode parameters
+            uint8_t schema_scope = bytecode_[pc_++];  // 0=CURRENT, 1=IN_PATH, 2=IN_SCHEMA
+            std::string schema_path = readString();
+            std::string like_pattern = readString();
+
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            current_result_set_->addColumn("Name", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Type", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Schema", core::DataType::VARCHAR);
+
+            auto catalog = db_->catalog_manager();
+            if (!catalog)
+            {
+                return;
+            }
+
+            // Determine which schemas to search
+            std::vector<std::string> search_schemas;
+            if (schema_scope == 2 && !schema_path.empty())
+            {
+                // IN_SCHEMA - specific schema
+                search_schemas.push_back(schema_path);
+            }
+            else if (schema_scope == 1)
+            {
+                // IN_PATH - all schemas in search path
+                if (conn_ctx_)
+                {
+                    search_schemas = conn_ctx_->search_path();
+                }
+                if (search_schemas.empty())
+                {
+                    search_schemas.push_back("public");
+                }
+            }
+            else
+            {
+                // CURRENT - current schema only
+                std::string current = "public";
+                if (conn_ctx_)
+                {
+                    current = conn_ctx_->current_schema();
+                    if (current.empty()) current = "public";
+                }
+                search_schemas.push_back(current);
+            }
+
+            core::ErrorContext err_ctx;
+            for (const auto& schema_name : search_schemas)
+            {
+                core::CatalogManager::SchemaInfo schema;
+                if (catalog->getSchema(schema_name, schema, &err_ctx) != core::Status::OK)
+                {
+                    continue;
+                }
+
+                // Get tables using listTables
+                std::vector<core::CatalogManager::TableInfo> tables;
+                if (catalog->listTables(schema.schema_id, tables, &err_ctx) == core::Status::OK)
+                {
+                    for (const auto& table : tables)
+                    {
+                        if (!like_pattern.empty())
+                        {
+                            // Simple LIKE pattern matching (% at start/end)
+                            // TODO: Implement proper LIKE pattern matching
+                            if (table.table_name.find(like_pattern) == std::string::npos)
+                            {
+                                continue;
+                            }
+                        }
+                        std::vector<Value> row;
+                        row.push_back(Value::makeVarchar(table.table_name));
+                        row.push_back(Value::makeVarchar("TABLE"));
+                        row.push_back(Value::makeVarchar(schema_name));
+                        current_result_set_->addRow(row);
+                    }
+                }
+
+                // Views and sequences don't have listViews/listSequences in catalog API
+                // so we skip them for now (SHOW OBJECTS shows tables from schemas)
+            }
+        }
+
+        // =============================================================================
+        // Session SET Commands (Firebird ISQL compatibility)
+        // =============================================================================
+
+        void Executor::executeSetSqlDialect()
+        {
+            // Read bytecode parameter
+            uint8_t dialect = bytecode_[pc_++];
+
+            // Validate dialect (1, 2, or 3)
+            if (dialect < 1 || dialect > 3)
+            {
+                error("Invalid SQL dialect: " + std::to_string(dialect) + ". Valid values are 1, 2, or 3");
+            }
+
+            // Set dialect in connection context
+            if (conn_ctx_)
+            {
+                conn_ctx_->set_sql_dialect(dialect);
+            }
+        }
+
+        void Executor::executeSetNames()
+        {
+            // Read bytecode parameter
+            std::string charset_name = readString();
+
+            // Set character set in connection context
+            if (conn_ctx_)
+            {
+                conn_ctx_->set_charset(charset_name);
+            }
+        }
+
+        void Executor::executeSetLocalTimeout()
+        {
+            // Read bytecode parameter (32-bit timeout in seconds)
+            uint32_t timeout_seconds = readInt32();
+
+            // Set statement timeout in connection context
+            if (conn_ctx_)
+            {
+                conn_ctx_->set_statement_timeout(timeout_seconds);
+            }
+        }
+
         // Security context helpers (Phase 2 - Security System)
         const core::ID& Executor::getCurrentUserID() const
         {
@@ -22306,6 +23880,8 @@ namespace scratchbird
             // SECURITY ENHANCEMENT (MEDIUM-3): Check all query execution limits
             checkTimeout();
             checkCTEDepth();
+            // NET-M1: Also check for user cancellation requests
+            checkCancellation();
         }
 
         void Executor::checkTimeout()
@@ -22320,6 +23896,16 @@ namespace scratchbird
                 LOG_WARNING(EXECUTOR, "Query timeout exceeded: %lld ms (limit: %llu ms)",
                           elapsed_ms, query_limits_.max_execution_time_ms);
                 error("Query execution timeout exceeded");
+            }
+        }
+
+        void Executor::checkCancellation()
+        {
+            // NET-M1: Check if query was cancelled by another thread
+            if (cancel_requested_.load(std::memory_order_acquire))
+            {
+                LOG_INFO(EXECUTOR, "Query cancelled by user request");
+                error("Query cancelled by user request");
             }
         }
 
@@ -22358,6 +23944,13 @@ namespace scratchbird
                 LOG_WARNING(EXECUTOR, "Intermediate row limit exceeded: %llu (limit: %llu)",
                           rows_processed_, query_limits_.max_intermediate_rows);
                 error("Maximum intermediate row count exceeded");
+            }
+
+            // NET-M1: Periodically check for cancellation during row processing
+            // Check every 1000 rows to balance responsiveness with overhead
+            if ((rows_processed_ % 1000) == 0)
+            {
+                checkCancellation();
             }
         }
 

@@ -139,11 +139,18 @@ namespace scratchbird
             void visit(parser::SetTransactionStmt *node) override;   // Phase 3 Task 3.6
             void visit(parser::CommitStmt *node) override;           // Phase 2 Task 2.6
             void visit(parser::RollbackStmt *node) override;         // Phase 2 Task 2.6
+            void visit(parser::SavepointStmt *node) override;        // ALPHA Phase 1 - SAVEPOINT
+            void visit(parser::ReleaseSavepointStmt *node) override; // ALPHA Phase 1 - RELEASE SAVEPOINT
+            void visit(parser::RollbackToSavepointStmt *node) override; // ALPHA Phase 1 - ROLLBACK TO SAVEPOINT
             void visit(parser::SweepStmt *node) override;            // Phase 3 Task 3.3
             void visit(parser::ShowStmt *node) override;             // ALPHA Phase 1 - Developer Experience
             void visit(parser::DescribeStmt *node) override;         // ALPHA Phase 1 - Developer Experience
             void visit(parser::CreateTriggerStmt *node) override;    // Phase 2 Wave 2 Agent C
             void visit(parser::DropTriggerStmt *node) override;      // Phase 2 Wave 2 Agent C
+            void visit(parser::CreateDatabaseTriggerStmt *node) override;  // Database triggers
+            void visit(parser::CreateTypeStmt *node) override;       // ALPHA Phase 1 - User Defined Types
+            void visit(parser::CreateDomainStmt *node) override;     // ALPHA Phase 1 - Domain Types
+            void visit(parser::CallStmt *node) override;             // PSQL - Call stored procedure
 
             // PSQL - Stored Procedures and Functions (Phase 2 Task 10.2)
             void visit(parser::CreateFunctionStmt *node) override;
@@ -192,6 +199,9 @@ namespace scratchbird
             void visit(parser::SetRoleStmt *node) override;
             void visit(parser::SetSessionAuthStmt *node) override;
             void visit(parser::SetConstraintsStmt *node) override;  // P2-7: SET CONSTRAINTS
+            void visit(parser::SetSqlDialectStmt *node) override;   // Firebird ISQL: SET SQL DIALECT
+            void visit(parser::SetNamesStmt *node) override;        // SET NAMES charset
+            void visit(parser::SetLocalTimeoutStmt *node) override; // SET LOCAL_TIMEOUT N
             void visit(parser::CreatePolicyStmt *node) override;  // Security Phase 3.4.4
             void visit(parser::DropPolicyStmt *node) override;    // Security Phase 3.4.4
             void visit(parser::AlterTableRLSStmt *node) override; // Security Phase 3.4.4

@@ -282,8 +282,8 @@ TEST_F(PredicateMatcherTest, EqualityDoesNotImplyWrongRange)
 
 TEST_F(PredicateMatcherTest, ConjunctInAND)
 {
-    auto result_query = parsePredicate("active = true AND verified = true");
-    auto result_index = parsePredicate("active = true");
+    auto result_query = parsePredicate("is_active = 1 AND verified = 1");
+    auto result_index = parsePredicate("is_active = 1");
 
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);
@@ -321,8 +321,8 @@ TEST_F(PredicateMatcherTest, ConjunctRightSide)
 
 TEST_F(PredicateMatcherTest, NoConjunctInOR)
 {
-    auto result_query = parsePredicate("active = true OR verified = true");
-    auto result_index = parsePredicate("active = true");
+    auto result_query = parsePredicate("is_active = 1 OR verified = 1");
+    auto result_index = parsePredicate("is_active = 1");
 
     ASSERT_NE(result_query.expr, nullptr);
     ASSERT_NE(result_index.expr, nullptr);

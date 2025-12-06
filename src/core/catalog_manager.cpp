@@ -51,8 +51,8 @@ namespace scratchbird::core
         uint32_t statistics_page;     // Page containing statistics table
         uint32_t collations_page;     // Page containing collations table (legacy)
         uint32_t timezones_page;      // Page containing timezones table
-        uint32_t charsets_page;       // Page containing character sets table (pg_charset)
-        uint32_t collation_defs_page; // Page containing collation definitions table (pg_collation)
+        uint32_t charsets_page;       // Page containing character sets table (sb_charset)
+        uint32_t collation_defs_page; // Page containing collation definitions table (sb_collation)
 
         // Phase 1.4-1.5: Dependencies and Comments (Catalog Corrections)
         uint32_t dependencies_page;   // Page containing dependencies table
@@ -241,7 +241,7 @@ namespace scratchbird::core
         uint32_t padding;  // Alignment
     };
 
-    // Character set record on disk (pg_charset)
+    // Character set record on disk (sb_charset)
     struct CharsetRecord
     {
         uint16_t charset_id;    // Character set ID (matches CharacterSet enum)
@@ -258,7 +258,7 @@ namespace scratchbird::core
         uint32_t padding;  // Alignment
     };
 
-    // Collation record on disk (pg_collation)
+    // Collation record on disk (sb_collation)
     struct CollationRecord
     {
         uint32_t collation_id;
@@ -274,6 +274,42 @@ namespace scratchbird::core
         uint64_t last_modified_time;
         uint32_t is_valid; // 1 if valid, 0 if deleted
         uint32_t padding;  // Alignment
+    };
+
+    // Statistic record on disk (sb_statistic) - OPT-1, OPT-2
+    struct StatisticRecord
+    {
+        ID statistic_id;              // Unique statistic ID
+        ID table_id;                  // Table this column belongs to
+        ID column_id;                 // Column ID
+        uint16_t data_type;           // DataType enum value
+        uint16_t reserved1;
+
+        // Basic statistics
+        uint64_t num_rows;            // Total rows in table at ANALYZE time
+        uint64_t num_nulls;           // Number of NULL values
+        float null_fraction;          // Fraction of NULLs
+        uint64_t num_distinct;        // Number of distinct non-NULL values
+        float avg_width;              // Average width in bytes
+
+        // TOAST references for variable-length data
+        uint32_t mcv_oid;             // TOAST reference for MCV list (JSON)
+        uint32_t histogram_oid;       // TOAST reference for histogram (JSON)
+
+        // Histogram metadata
+        uint8_t histogram_type;       // HistogramType enum (0=equal_height, 1=equal_width, 255=none)
+        uint8_t padding1[3];
+        uint32_t histogram_bucket_count;
+
+        // Metadata
+        uint64_t last_analyzed_time;  // Timestamp of last ANALYZE
+        uint64_t sample_size;         // Number of rows sampled
+        float sample_rate;            // Fraction of table sampled
+
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;            // 1 if valid, 0 if deleted
+        uint32_t padding2;            // Alignment
     };
 
     // Constraint types
@@ -391,7 +427,7 @@ namespace scratchbird::core
     struct ColumnPermissionRecord
     {
         ID permission_id;     // UUIDv7
-        ID table_id;          // References pg_tables
+        ID table_id;          // References sb_tables
         char column_name[128]; // Column being protected (fixed-size for record alignment)
         ID grantee_id;        // User, Role, Group, or PUBLIC UUID
         uint8_t grantee_type; // USER=1, ROLE=2, GROUP=3, PUBLIC=4
@@ -407,7 +443,7 @@ namespace scratchbird::core
     struct PolicyRecord
     {
         ID policy_id;           // UUIDv7
-        ID table_id;            // References pg_tables
+        ID table_id;            // References sb_tables
         char policy_name[64];   // Policy name (unique per table)
         uint8_t policy_type;    // ALL=0, SELECT=1, INSERT=2, UPDATE=3, DELETE=4
         uint32_t roles_oid;     // TOAST reference for roles array (0 = all roles)
@@ -1034,7 +1070,7 @@ namespace scratchbird::core
             return status;
         }
 
-        // Allocate and initialize charsets page (pg_charset)
+        // Allocate and initialize charsets page (sb_charset)
         status = pm->allocatePage(charsets_table_page_, ctx);
         if (status != Status::OK)
         {
@@ -1047,7 +1083,7 @@ namespace scratchbird::core
             return status;
         }
 
-        // Allocate and initialize collation definitions page (pg_collation)
+        // Allocate and initialize collation definitions page (sb_collation)
         status = pm->allocatePage(collation_defs_table_page_, ctx);
         if (status != Status::OK)
         {
@@ -1428,7 +1464,7 @@ namespace scratchbird::core
         LOG_INFO(STORAGE, "CatalogManager::initializePolicyToast - Creating TOAST manager");
         policy_toast_manager_ = std::make_unique<ToastManager>(db_, policy_toast_table_id_);
 
-        // Initialize the TOAST table (creates pg_toast_<table_id> catalog table)
+        // Initialize the TOAST table (creates sb_toast_<table_id> catalog table)
         LOG_INFO(STORAGE, "CatalogManager::initializePolicyToast - Initializing TOAST table");
         Status status = policy_toast_manager_->initialize(ctx);
         LOG_INFO(STORAGE, "CatalogManager::initializePolicyToast - TOAST initialization returned status=%d", static_cast<int>(status));
@@ -1580,9 +1616,11 @@ namespace scratchbird::core
                                               ErrorContext *ctx) -> Status
     {
         // Check if schema already exists
+        // Uses case-insensitive comparison per Firebird SQL rules
         for (const auto &[id, info] : schema_cache_)
         {
-            if (info.schema_name == schema_name)
+            if (IdentifierUtils::namesConflict(schema_name, false /*new_is_delimited*/,
+                                               info.schema_name, info.name_is_delimited))
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                   ("Schema already exists: " + schema_name).c_str());
@@ -1639,6 +1677,8 @@ namespace scratchbird::core
 
     // Helper to resolve owner name to UUID (Phase 5.1 - Owner UUID References)
     // Resolve owner name to UUID (WP-2 CAT-3)
+    // NOTE: This is called from methods that already hold mutex_, so it uses
+    // getUserByNameUnlocked to avoid deadlock
     auto CatalogManager::resolveOwnerUUID(const std::string &owner_name) -> ID
     {
         // Well-known system UUID (fixed UUID for bootstrap/system objects)
@@ -1663,9 +1703,10 @@ namespace scratchbird::core
         }
 
         // Look up user in Users table (WP-2 CAT-3 implementation)
+        // Use unlocked version since caller already holds mutex_
         UserInfo user_info;
         ErrorContext ctx;
-        Status status = getUserByName(owner_name, user_info, &ctx);
+        Status status = getUserByNameUnlocked(owner_name, user_info, &ctx);
         if (status == Status::OK)
         {
             return user_info.user_id;
@@ -2046,9 +2087,14 @@ namespace scratchbird::core
         }
 
         // Check if table already exists in schema
+        // Uses case-insensitive comparison per Firebird SQL rules:
+        // - Unquoted identifiers: compared UPPER() to UPPER()
+        // - Quoted identifiers: case-sensitive (both must be delimited)
         for (const auto &[id, info] : table_cache_)
         {
-            if (info.schema_id == schema_id && info.table_name == table_name)
+            if (info.schema_id == schema_id &&
+                IdentifierUtils::namesConflict(table_name, false /*new_is_delimited*/,
+                                               info.table_name, info.name_is_delimited))
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                   ("Table already exists: " + table_name).c_str());
@@ -2150,9 +2196,13 @@ namespace scratchbird::core
                                   TableInfo &info, ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        // Use case-insensitive lookup: search name (assumed unquoted) matches
+        // stored names using Firebird SQL rules
         for (const auto &[id, table_info] : table_cache_)
         {
-            if (table_info.schema_id == schema_id && table_info.table_name == table_name)
+            if (table_info.schema_id == schema_id &&
+                IdentifierUtils::namesMatch(table_name, false /*search_delimited*/,
+                                            table_info.table_name, table_info.name_is_delimited))
             {
                 info = table_info;
                 return Status::OK;
@@ -2220,7 +2270,9 @@ namespace scratchbird::core
 
         for (const auto &col : it->second)
         {
-            if (col.column_name == column_name)
+            // Use case-insensitive comparison per Firebird SQL rules
+            if (IdentifierUtils::namesMatch(column_name, false /*search_delimited*/,
+                                            col.column_name, col.name_is_delimited))
             {
                 info = col;
                 return Status::OK;
@@ -2316,9 +2368,12 @@ namespace scratchbird::core
         }
 
         // Check if index already exists
+        // Uses case-insensitive comparison per Firebird SQL rules
         for (const auto &[id, info] : index_cache_)
         {
-            if (info.table_id == table_id && info.index_name == index_name)
+            if (info.table_id == table_id &&
+                IdentifierUtils::namesConflict(index_name, false /*new_is_delimited*/,
+                                               info.index_name, info.name_is_delimited))
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                   ("Index already exists: " + index_name).c_str());
@@ -2430,9 +2485,12 @@ namespace scratchbird::core
         }
 
         // Check if index already exists
+        // Uses case-insensitive comparison per Firebird SQL rules
         for (const auto &[id, info] : index_cache_)
         {
-            if (info.table_id == table_id && info.index_name == index_name)
+            if (info.table_id == table_id &&
+                IdentifierUtils::namesConflict(index_name, false /*new_is_delimited*/,
+                                               info.index_name, info.name_is_delimited))
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                   ("Index already exists: " + index_name).c_str());
@@ -2576,7 +2634,10 @@ namespace scratchbird::core
         std::lock_guard<std::mutex> lock(mutex_);
         for (const auto &[id, index_info] : index_cache_)
         {
-            if (index_info.table_id == table_id && index_info.index_name == index_name)
+            // Use case-insensitive comparison per Firebird SQL rules
+            if (index_info.table_id == table_id &&
+                IdentifierUtils::namesMatch(index_name, false /*search_delimited*/,
+                                            index_info.index_name, index_info.name_is_delimited))
             {
                 info = index_info;
                 return Status::OK;
@@ -3877,6 +3938,292 @@ namespace scratchbird::core
                                                       record, ctx);
     }
 
+    // ========== Statistics Operations (OPT-1, OPT-2) ==========
+
+    auto CatalogManager::getStatisticCacheKey(const ID &table_id, const ID &column_id) const -> uint64_t
+    {
+        // Combine table_id and column_id into a single uint64_t key
+        // Use XOR of first 8 bytes of each ID
+        uint64_t table_key = 0;
+        uint64_t column_key = 0;
+        std::memcpy(&table_key, table_id.bytes.data(), sizeof(uint64_t));
+        std::memcpy(&column_key, column_id.bytes.data(), sizeof(uint64_t));
+        return table_key ^ column_key;
+    }
+
+    auto CatalogManager::storeStatistic(const StatisticInfo &info, ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(statistic_mutex_);
+
+        // First, try to delete any existing statistic for this column
+        auto predicate = [&info](const StatisticRecord &rec)
+        {
+            return rec.table_id == info.table_id && rec.column_id == info.column_id && rec.is_valid;
+        };
+        auto existing = findRecordInHeapPage<StatisticRecord>(statistics_table_page_, predicate, ctx);
+        if (existing.status == Status::OK)
+        {
+            // Mark existing as deleted
+            StatisticRecord del_record = existing.record;
+            del_record.is_valid = 0;
+            auto del_status = updateRecordInHeapPage<StatisticRecord>(
+                statistics_table_page_, existing.slot_index, del_record, ctx);
+            if (del_status != Status::OK)
+            {
+                return del_status;
+            }
+        }
+
+        // Write the new record
+        return writeStatisticRecord(info, ctx);
+    }
+
+    auto CatalogManager::getStatistic(const ID &table_id, const ID &column_id,
+                                      StatisticInfo &info_out, ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(statistic_mutex_);
+
+        // Check cache first
+        uint64_t cache_key = getStatisticCacheKey(table_id, column_id);
+        auto it = statistic_cache_.find(cache_key);
+        if (it != statistic_cache_.end())
+        {
+            info_out = it->second;
+            return Status::OK;
+        }
+
+        // Not in cache, search disk
+        auto predicate = [&table_id, &column_id](const StatisticRecord &rec)
+        {
+            return rec.table_id == table_id && rec.column_id == column_id && rec.is_valid;
+        };
+        auto result = findRecordInHeapPage<StatisticRecord>(statistics_table_page_, predicate, ctx);
+        if (result.status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Statistics not found");
+            return Status::NOT_FOUND;
+        }
+
+        // Convert record to info
+        const auto &rec = result.record;
+        info_out.statistic_id = rec.statistic_id;
+        info_out.table_id = rec.table_id;
+        info_out.column_id = rec.column_id;
+        info_out.data_type = rec.data_type;
+        info_out.num_rows = rec.num_rows;
+        info_out.num_nulls = rec.num_nulls;
+        info_out.null_fraction = rec.null_fraction;
+        info_out.num_distinct = rec.num_distinct;
+        info_out.avg_width = rec.avg_width;
+        info_out.mcv_oid = rec.mcv_oid;
+        info_out.histogram_oid = rec.histogram_oid;
+        info_out.histogram_type = rec.histogram_type;
+        info_out.histogram_bucket_count = rec.histogram_bucket_count;
+        info_out.last_analyzed_time = rec.last_analyzed_time;
+        info_out.sample_size = rec.sample_size;
+        info_out.sample_rate = rec.sample_rate;
+        info_out.created_time = rec.created_time;
+        info_out.last_modified_time = rec.last_modified_time;
+
+        // Add to cache
+        statistic_cache_[cache_key] = info_out;
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::getStatisticsForTable(const ID &table_id,
+                                               std::vector<StatisticInfo> &stats_out,
+                                               ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(statistic_mutex_);
+        stats_out.clear();
+
+        auto filter = [&table_id](const StatisticRecord &rec)
+        {
+            return rec.table_id == table_id && rec.is_valid;
+        };
+        auto converter = [](const StatisticRecord &rec, StatisticInfo &info)
+        {
+            info.statistic_id = rec.statistic_id;
+            info.table_id = rec.table_id;
+            info.column_id = rec.column_id;
+            info.data_type = rec.data_type;
+            info.num_rows = rec.num_rows;
+            info.num_nulls = rec.num_nulls;
+            info.null_fraction = rec.null_fraction;
+            info.num_distinct = rec.num_distinct;
+            info.avg_width = rec.avg_width;
+            info.mcv_oid = rec.mcv_oid;
+            info.histogram_oid = rec.histogram_oid;
+            info.histogram_type = rec.histogram_type;
+            info.histogram_bucket_count = rec.histogram_bucket_count;
+            info.last_analyzed_time = rec.last_analyzed_time;
+            info.sample_size = rec.sample_size;
+            info.sample_rate = rec.sample_rate;
+            info.created_time = rec.created_time;
+            info.last_modified_time = rec.last_modified_time;
+        };
+
+        return scanHeapPageWithFilter<StatisticRecord, StatisticInfo>(
+            statistics_table_page_, stats_out, filter, converter, ctx);
+    }
+
+    auto CatalogManager::deleteStatistic(const ID &table_id, const ID &column_id,
+                                         ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(statistic_mutex_);
+
+        auto predicate = [&table_id, &column_id](const StatisticRecord &rec)
+        {
+            return rec.table_id == table_id && rec.column_id == column_id && rec.is_valid;
+        };
+        auto result = findRecordInHeapPage<StatisticRecord>(statistics_table_page_, predicate, ctx);
+        if (result.status != Status::OK)
+        {
+            return Status::NOT_FOUND;
+        }
+
+        // Mark as deleted
+        StatisticRecord record = result.record;
+        record.is_valid = 0;
+
+        auto status = updateRecordInHeapPage<StatisticRecord>(
+            statistics_table_page_, result.slot_index, record, ctx);
+
+        if (status == Status::OK)
+        {
+            // Remove from cache
+            uint64_t cache_key = getStatisticCacheKey(table_id, column_id);
+            statistic_cache_.erase(cache_key);
+        }
+
+        return status;
+    }
+
+    auto CatalogManager::deleteStatisticsForTable(const ID &table_id, ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(statistic_mutex_);
+
+        BufferPool *bp = db_->buffer_pool();
+        uint32_t current_page_id = statistics_table_page_;
+        bool any_deleted = false;
+
+        while (current_page_id != 0)
+        {
+            void *page_buffer;
+            Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+            uint32_t offset = sizeof(CatalogHeapPage);
+            bool page_modified = false;
+
+            for (uint32_t i = 0; i < heap->record_count; i++)
+            {
+                auto *record = reinterpret_cast<StatisticRecord *>(
+                    reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+                if (record->is_valid && record->table_id == table_id)
+                {
+                    record->is_valid = 0;
+                    page_modified = true;
+                    any_deleted = true;
+
+                    // Remove from cache
+                    uint64_t cache_key = getStatisticCacheKey(table_id, record->column_id);
+                    statistic_cache_.erase(cache_key);
+                }
+
+                offset += sizeof(StatisticRecord);
+            }
+
+            uint32_t next_page = heap->next_page;
+            bp->unpinPage(current_page_id, page_modified, ctx);
+            current_page_id = next_page;
+        }
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::writeStatisticRecord(const StatisticInfo &info, ErrorContext *ctx) -> Status
+    {
+        StatisticRecord record;
+        std::memset(&record, 0, sizeof(StatisticRecord));
+
+        record.statistic_id = info.statistic_id;
+        record.table_id = info.table_id;
+        record.column_id = info.column_id;
+        record.data_type = info.data_type;
+        record.num_rows = info.num_rows;
+        record.num_nulls = info.num_nulls;
+        record.null_fraction = info.null_fraction;
+        record.num_distinct = info.num_distinct;
+        record.avg_width = info.avg_width;
+        record.mcv_oid = info.mcv_oid;
+        record.histogram_oid = info.histogram_oid;
+        record.histogram_type = info.histogram_type;
+        record.histogram_bucket_count = info.histogram_bucket_count;
+        record.last_analyzed_time = info.last_analyzed_time;
+        record.sample_size = info.sample_size;
+        record.sample_rate = info.sample_rate;
+        record.created_time = info.created_time;
+        record.last_modified_time = info.last_modified_time;
+        record.is_valid = 1;
+
+        // Write to heap page
+        auto status = writeRecordToHeapPage<StatisticRecord>(statistics_table_page_, record, ctx);
+        if (status == Status::OK)
+        {
+            // Add to cache
+            uint64_t cache_key = getStatisticCacheKey(info.table_id, info.column_id);
+            statistic_cache_[cache_key] = info;
+        }
+
+        return status;
+    }
+
+    auto CatalogManager::deleteStatisticRecord(const ID &table_id, const ID &column_id,
+                                               ErrorContext *ctx) -> Status
+    {
+        return deleteStatistic(table_id, column_id, ctx);
+    }
+
+    auto CatalogManager::readStatisticRecords(ErrorContext *ctx) -> Status
+    {
+        auto converter = [](const StatisticRecord &rec, StatisticInfo &info)
+        {
+            info.statistic_id = rec.statistic_id;
+            info.table_id = rec.table_id;
+            info.column_id = rec.column_id;
+            info.data_type = rec.data_type;
+            info.num_rows = rec.num_rows;
+            info.num_nulls = rec.num_nulls;
+            info.null_fraction = rec.null_fraction;
+            info.num_distinct = rec.num_distinct;
+            info.avg_width = rec.avg_width;
+            info.mcv_oid = rec.mcv_oid;
+            info.histogram_oid = rec.histogram_oid;
+            info.histogram_type = rec.histogram_type;
+            info.histogram_bucket_count = rec.histogram_bucket_count;
+            info.last_analyzed_time = rec.last_analyzed_time;
+            info.sample_size = rec.sample_size;
+            info.sample_rate = rec.sample_rate;
+            info.created_time = rec.created_time;
+            info.last_modified_time = rec.last_modified_time;
+        };
+
+        auto key_extractor = [this](const StatisticInfo &info) -> uint64_t
+        {
+            return getStatisticCacheKey(info.table_id, info.column_id);
+        };
+
+        return readRecordsFromHeapPage<StatisticRecord, StatisticInfo, uint64_t>(
+            statistics_table_page_, statistic_cache_, converter, key_extractor, ctx);
+    }
+
     // ========== Character Set Operations ==========
     // NOTE: These implementations are stubs and need proper helper template functions
     //       (findRecordInHeapPage, updateRecordInHeapPage, scanHeapPage, etc.)
@@ -4388,11 +4735,11 @@ namespace scratchbird::core
         BufferPool *bp = db_->buffer_pool();
         void *page_buffer;
 
-        // Pin pg_tablespace page
+        // Pin sb_tablespace page
         Status status = bp->pinPage(tablespaces_table_page_, &page_buffer, ctx);
         if (status != Status::OK)
         {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to pin pg_tablespace page");
+            SET_ERROR_CONTEXT(ctx, status, "Failed to pin sb_tablespace page");
             return status;
         }
 
@@ -5150,7 +5497,7 @@ namespace scratchbird::core
             }
         }
 
-        // ===== STEP 9: Write to pg_tablespace catalog =====
+        // ===== STEP 9: Write to sb_tablespace catalog =====
 
         status = writeTablespaceRecord(ts_info, ctx);
         if (status != Status::OK)
@@ -5313,7 +5660,7 @@ namespace scratchbird::core
             return status;
         }
 
-        // ===== STEP 8: Remove from pg_tablespace catalog =====
+        // ===== STEP 8: Remove from sb_tablespace catalog =====
 
         // Mark tablespace record as deleted in catalog (Firebird MGA - in-place)
         // This fixes Bug #2 from MGA_COMPLIANCE_REVIEW_TABLESPACE.md
@@ -5359,48 +5706,48 @@ namespace scratchbird::core
         Status status;
         uint32_t total_reclaimed = 0;
 
-        // ===== COMPACT pg_tablespace =====
-        LOG_DEBUG(CATALOG, "Compacting pg_tablespace catalog page");
+        // ===== COMPACT sb_tablespace =====
+        LOG_DEBUG(CATALOG, "Compacting sb_tablespace catalog page");
         status = compactCatalogHeapPage<SBTablespaceCatalog>(tablespaces_table_page_, ctx);
         if (status != Status::OK)
         {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to compact pg_tablespace");
+            SET_ERROR_CONTEXT(ctx, status, "Failed to compact sb_tablespace");
             return status;
         }
 
-        // ===== COMPACT pg_schema =====
-        LOG_DEBUG(CATALOG, "Compacting pg_schema catalog page");
+        // ===== COMPACT sb_schema =====
+        LOG_DEBUG(CATALOG, "Compacting sb_schema catalog page");
         status = compactCatalogHeapPage<SchemaRecord>(schemas_table_page_, ctx);
         if (status != Status::OK)
         {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to compact pg_schema");
+            SET_ERROR_CONTEXT(ctx, status, "Failed to compact sb_schema");
             return status;
         }
 
-        // ===== COMPACT pg_table =====
-        LOG_DEBUG(CATALOG, "Compacting pg_table catalog page");
+        // ===== COMPACT sb_table =====
+        LOG_DEBUG(CATALOG, "Compacting sb_table catalog page");
         status = compactCatalogHeapPage<TableRecord>(tables_table_page_, ctx);
         if (status != Status::OK)
         {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to compact pg_table");
+            SET_ERROR_CONTEXT(ctx, status, "Failed to compact sb_table");
             return status;
         }
 
-        // ===== COMPACT pg_column =====
-        LOG_DEBUG(CATALOG, "Compacting pg_column catalog page");
+        // ===== COMPACT sb_column =====
+        LOG_DEBUG(CATALOG, "Compacting sb_column catalog page");
         status = compactCatalogHeapPage<ColumnRecord>(columns_table_page_, ctx);
         if (status != Status::OK)
         {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to compact pg_column");
+            SET_ERROR_CONTEXT(ctx, status, "Failed to compact sb_column");
             return status;
         }
 
-        // ===== COMPACT pg_index =====
-        LOG_DEBUG(CATALOG, "Compacting pg_index catalog page");
+        // ===== COMPACT sb_index =====
+        LOG_DEBUG(CATALOG, "Compacting sb_index catalog page");
         status = compactCatalogHeapPage<IndexRecord>(indexes_table_page_, ctx);
         if (status != Status::OK)
         {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to compact pg_index");
+            SET_ERROR_CONTEXT(ctx, status, "Failed to compact sb_index");
             return status;
         }
 
@@ -6517,7 +6864,7 @@ namespace scratchbird::core
         table_info.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
 
         // Note: In full implementation, we would:
-        // - Write updated TableInfo to pg_tables catalog page
+        // - Write updated TableInfo to sb_tables catalog page
         // - For now, the in-memory cache is updated, which is sufficient for testing
 
         LOG_INFO(CATALOG,
@@ -8056,6 +8403,203 @@ auto CatalogManager::enableTrigger(const std::string &trigger_name, bool enable,
     return Status::OK;
 }
 
+// ===== Database Triggers (Firebird-style) =====
+
+auto CatalogManager::createDatabaseTrigger(const DatabaseTriggerInfo &trigger, ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(db_trigger_mutex_);
+
+    // Check trigger name is unique (check both table triggers and database triggers)
+    if (db_trigger_name_to_id_.count(trigger.trigger_name) > 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "Database trigger already exists");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+
+    // Also check against table trigger names (triggers share a namespace)
+    {
+        std::lock_guard<std::mutex> table_lock(trigger_mutex_);
+        if (trigger_name_to_id_.count(trigger.trigger_name) > 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                              "Trigger name already exists as a table trigger");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+    }
+
+    // Generate trigger ID
+    DatabaseTriggerInfo trigger_copy = trigger;
+    trigger_copy.trigger_id = generateUuidV7();
+    trigger_copy.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    // Store in cache
+    db_trigger_cache_[trigger_copy.trigger_id] = trigger_copy;
+    db_trigger_name_to_id_[trigger_copy.trigger_name] = trigger_copy.trigger_id;
+    event_triggers_.insert({trigger_copy.event, trigger_copy.trigger_id});
+
+    const char* event_name = "UNKNOWN";
+    switch (trigger_copy.event) {
+        case DatabaseTriggerEvent::ON_CONNECT: event_name = "ON CONNECT"; break;
+        case DatabaseTriggerEvent::ON_DISCONNECT: event_name = "ON DISCONNECT"; break;
+        case DatabaseTriggerEvent::ON_TRANSACTION_START: event_name = "ON TRANSACTION START"; break;
+        case DatabaseTriggerEvent::ON_TRANSACTION_COMMIT: event_name = "ON TRANSACTION COMMIT"; break;
+        case DatabaseTriggerEvent::ON_TRANSACTION_ROLLBACK: event_name = "ON TRANSACTION ROLLBACK"; break;
+    }
+
+    LOG_INFO(CATALOG, "Created database trigger '%s' %s",
+             trigger_copy.trigger_name.c_str(), event_name);
+
+    return Status::OK;
+}
+
+auto CatalogManager::dropDatabaseTrigger(const std::string &trigger_name, ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(db_trigger_mutex_);
+
+    // Look up trigger
+    auto it = db_trigger_name_to_id_.find(trigger_name);
+    if (it == db_trigger_name_to_id_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Database trigger does not exist");
+        return Status::NOT_FOUND;
+    }
+
+    ID trigger_id = it->second;
+
+    // Get trigger info for cleanup
+    const auto& trigger_info = db_trigger_cache_[trigger_id];
+
+    // Remove from event_triggers multimap
+    auto range = event_triggers_.equal_range(trigger_info.event);
+    for (auto ev_it = range.first; ev_it != range.second; )
+    {
+        if (ev_it->second == trigger_id)
+        {
+            ev_it = event_triggers_.erase(ev_it);
+        }
+        else
+        {
+            ++ev_it;
+        }
+    }
+
+    // Remove from caches
+    db_trigger_cache_.erase(trigger_id);
+    db_trigger_name_to_id_.erase(trigger_name);
+
+    LOG_INFO(CATALOG, "Dropped database trigger '%s'", trigger_name.c_str());
+
+    return Status::OK;
+}
+
+auto CatalogManager::getDatabaseTrigger(const ID &trigger_id, DatabaseTriggerInfo &info,
+                                        ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(db_trigger_mutex_);
+
+    auto it = db_trigger_cache_.find(trigger_id);
+    if (it == db_trigger_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Database trigger does not exist");
+        return Status::NOT_FOUND;
+    }
+
+    info = it->second;
+    return Status::OK;
+}
+
+auto CatalogManager::getDatabaseTriggerByName(const std::string &trigger_name, DatabaseTriggerInfo &info,
+                                              ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(db_trigger_mutex_);
+
+    auto it = db_trigger_name_to_id_.find(trigger_name);
+    if (it == db_trigger_name_to_id_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Database trigger does not exist");
+        return Status::NOT_FOUND;
+    }
+
+    info = db_trigger_cache_[it->second];
+    return Status::OK;
+}
+
+auto CatalogManager::listDatabaseTriggers(DatabaseTriggerEvent event,
+                                          std::vector<DatabaseTriggerInfo> &triggers,
+                                          ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(db_trigger_mutex_);
+
+    triggers.clear();
+
+    // Get all triggers for this event
+    auto range = event_triggers_.equal_range(event);
+    for (auto it = range.first; it != range.second; ++it)
+    {
+        const auto& trigger = db_trigger_cache_[it->second];
+        // Only include active triggers
+        if (trigger.active)
+        {
+            triggers.push_back(trigger);
+        }
+    }
+
+    // Sort by position (lower position first)
+    std::sort(triggers.begin(), triggers.end(),
+              [](const DatabaseTriggerInfo& a, const DatabaseTriggerInfo& b) {
+                  return a.position < b.position;
+              });
+
+    return Status::OK;
+}
+
+auto CatalogManager::listAllDatabaseTriggers(std::vector<DatabaseTriggerInfo> &triggers,
+                                             ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(db_trigger_mutex_);
+
+    triggers.clear();
+    triggers.reserve(db_trigger_cache_.size());
+
+    for (const auto& pair : db_trigger_cache_)
+    {
+        triggers.push_back(pair.second);
+    }
+
+    // Sort by event, then position
+    std::sort(triggers.begin(), triggers.end(),
+              [](const DatabaseTriggerInfo& a, const DatabaseTriggerInfo& b) {
+                  if (a.event != b.event)
+                      return static_cast<uint8_t>(a.event) < static_cast<uint8_t>(b.event);
+                  return a.position < b.position;
+              });
+
+    return Status::OK;
+}
+
+auto CatalogManager::enableDatabaseTrigger(const std::string &trigger_name, bool enable,
+                                           ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(db_trigger_mutex_);
+
+    // Look up trigger
+    auto it = db_trigger_name_to_id_.find(trigger_name);
+    if (it == db_trigger_name_to_id_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Database trigger does not exist");
+        return Status::NOT_FOUND;
+    }
+
+    // Update active status
+    db_trigger_cache_[it->second].active = enable;
+
+    LOG_INFO(CATALOG, "Database trigger '%s' %s", trigger_name.c_str(),
+             enable ? "activated" : "deactivated");
+
+    return Status::OK;
+}
+
 // ===== PSQL - Stored Procedures and Functions (Phase 2 Task 10.2) =====
 
 auto CatalogManager::registerFunction(const FunctionInfo &info, ErrorContext *ctx) -> Status
@@ -9185,6 +9729,20 @@ auto CatalogManager::createSequence(const ID& schema_id, const std::string& name
         return Status::INVALID_ARGUMENT;
     }
 
+    // Check if sequence already exists using case-insensitive comparison
+    // Note: SequenceState doesn't have name_is_delimited field, so all sequences
+    // are treated as unquoted (case-insensitive) for now
+    for (const auto& [id, state] : sequence_cache_)
+    {
+        if (IdentifierUtils::namesConflict(name, false /*new_is_delimited*/,
+                                           state->name, false /*existing_is_delimited*/))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              ("Sequence already exists: " + name).c_str());
+            return Status::INVALID_ARGUMENT;
+        }
+    }
+
     // Generate sequence ID
     ID sequence_id = generateUuidV7();
 
@@ -9454,17 +10012,22 @@ auto CatalogManager::sequenceSetVal(const ID& sequence_id, int64_t value, bool i
 
 auto CatalogManager::getSequenceIdByName(const std::string& name, ID& id_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(sequence_name_mutex_);
+    std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
 
-    auto it = sequence_name_to_id_.find(name);
-    if (it == sequence_name_to_id_.end()) {
-        std::string msg = "Sequence not found: " + name;
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, msg.c_str());
-        return Status::NOT_FOUND;
+    // Use case-insensitive comparison per Firebird SQL rules
+    for (const auto& [seq_id, state] : sequence_cache_)
+    {
+        if (state && IdentifierUtils::namesMatch(name, false /*search_delimited*/,
+                                                  state->name, false /*stored_delimited*/))
+        {
+            id_out = seq_id;
+            return Status::OK;
+        }
     }
 
-    id_out = it->second;
-    return Status::OK;
+    std::string msg = "Sequence not found: " + name;
+    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, msg.c_str());
+    return Status::NOT_FOUND;
 }
 
 // WP-2 CAT-M1: List sequences by schema for CASCADE support
@@ -9498,9 +10061,21 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
 {
     std::lock_guard<std::mutex> lock(view_cache_mutex_);
 
-    // Check if view exists
-    auto it = view_name_to_id_.find(name);
-    if (it != view_name_to_id_.end())
+    // Check if view exists using case-insensitive comparison per Firebird SQL rules
+    ID existing_view_id;
+    bool view_exists = false;
+    for (const auto& [id, view_info] : view_cache_)
+    {
+        if (IdentifierUtils::namesConflict(name, false /*new_is_delimited*/,
+                                           view_info.name, view_info.name_is_delimited))
+        {
+            existing_view_id = id;
+            view_exists = true;
+            break;
+        }
+    }
+
+    if (view_exists)
     {
         if (!or_replace)
         {
@@ -9510,7 +10085,7 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
         }
 
         // Update existing view (OR REPLACE)
-        ViewInfo& view = view_cache_[it->second];
+        ViewInfo& view = view_cache_[existing_view_id];
         view.definition = definition;
         view.check_option = check_option;
         view.materialized = materialized;  // ALPHA Phase 1 - Materialized Views
@@ -9894,6 +10469,43 @@ auto CatalogManager::isView(const std::string& name) -> bool
 {
     std::lock_guard<std::mutex> lock(view_cache_mutex_);
     return view_name_to_id_.find(name) != view_name_to_id_.end();
+}
+
+// OPT-5: Get view by ID (for optimizer MV rewriting)
+auto CatalogManager::getViewById(const ID& view_id, ViewInfo& info_out,
+                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(view_cache_mutex_);
+
+    auto it = view_cache_.find(view_id);
+    if (it == view_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "View not found by ID");
+        return Status::NOT_FOUND;
+    }
+
+    info_out = it->second;
+    return Status::OK;
+}
+
+// OPT-4: Get all materialized views (for MV candidate search)
+auto CatalogManager::getAllMaterializedViews(std::vector<ViewInfo>& views_out,
+                                              ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(view_cache_mutex_);
+
+    views_out.clear();
+    views_out.reserve(view_cache_.size());
+
+    for (const auto& [view_id, view_info] : view_cache_)
+    {
+        if (view_info.materialized)
+        {
+            views_out.push_back(view_info);
+        }
+    }
+
+    return Status::OK;
 }
 
 // ========================================================================
@@ -10476,11 +11088,10 @@ auto CatalogManager::getUser(const ID& user_id, UserInfo& user_out,
     return Status::OK;
 }
 
-auto CatalogManager::getUserByName(const std::string& username, UserInfo& user_out,
-                                   ErrorContext* ctx) -> Status
+// Internal unlocked version - caller must hold mutex_
+auto CatalogManager::getUserByNameUnlocked(const std::string& username, UserInfo& user_out,
+                                           ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-
     auto predicate = [&username](const UserRecord& rec) {
         return rec.is_valid && (std::string(rec.username) == username);
     };
@@ -10516,6 +11127,13 @@ auto CatalogManager::getUserByName(const std::string& username, UserInfo& user_o
     user_out.last_login_time = result.record.last_login_time;
 
     return Status::OK;
+}
+
+auto CatalogManager::getUserByName(const std::string& username, UserInfo& user_out,
+                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return getUserByNameUnlocked(username, user_out, ctx);
 }
 
 auto CatalogManager::updateUser(const ID& user_id, const std::string& password_hash,

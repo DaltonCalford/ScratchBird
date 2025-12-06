@@ -21,6 +21,7 @@
 #include <stack>
 #include <unordered_set>
 #include <unordered_map>
+#include <atomic>
 
 namespace scratchbird
 {
@@ -190,6 +191,22 @@ namespace scratchbird
             const IndexMaintenanceStats& getIndexStats() const { return index_stats_; }
             void resetIndexStats() { index_stats_.reset(); }
 
+            // NET-M1: Query cancellation support
+            // Request cancellation of the currently executing query
+            void requestCancellation() { cancel_requested_.store(true, std::memory_order_release); }
+
+            // Check if cancellation has been requested
+            bool isCancellationRequested() const { return cancel_requested_.load(std::memory_order_acquire); }
+
+            // Reset cancellation flag (called before starting a new query)
+            void resetCancellation() { cancel_requested_.store(false, std::memory_order_release); }
+
+            // PSQL procedure invocation (for database triggers and CALL statement)
+            // Executes a stored procedure by name with optional arguments
+            // Returns success/error status
+            ExecutionResult callProcedureByName(const std::string& procedure_name,
+                                                const std::vector<Value>& args = {});
+
         private:
             core::Database *db_;
             core::CharsetManager charset_manager_;
@@ -242,6 +259,9 @@ namespace scratchbird
             std::chrono::steady_clock::time_point query_start_time_;
             uint32_t cte_recursion_depth_ = 0;
             uint64_t rows_processed_ = 0;
+
+            // NET-M1: Query cancellation flag (atomic for thread-safe access)
+            std::atomic<bool> cancel_requested_{false};
 
             // Execution helpers
             uint8_t readByte();
@@ -338,6 +358,10 @@ namespace scratchbird
             // Trigger execution (Wave 2)
             void executeCreateTrigger();    // CREATE TRIGGER
             void executeDropTrigger();      // DROP TRIGGER
+
+            // Database trigger execution (Firebird-style: ON CONNECT/DISCONNECT/TRANSACTION events)
+            void executeCreateDatabaseTrigger();
+            void executeDropDatabaseTrigger();
 
             // Sequence execution (ALPHA Phase 1 - Sequences)
             void executeCreateSequence();
@@ -674,6 +698,41 @@ namespace scratchbird
             void executeShowCreateTable();   // Execute SHOW CREATE TABLE
             void executeDescribeTable();     // Execute DESCRIBE table
 
+            // Extended SHOW Commands (Firebird ISQL compatibility)
+            void executeShowTable();         // Execute SHOW TABLE object_name
+            void executeShowIndex();         // Execute SHOW INDEX object_name
+            void executeShowTrigger();       // Execute SHOW TRIGGER object_name
+            void executeShowProcedure();     // Execute SHOW PROCEDURE object_name
+            void executeShowFunction();      // Execute SHOW FUNCTION object_name
+            void executeShowView();          // Execute SHOW VIEW object_name
+            void executeShowDomain();        // Execute SHOW DOMAIN object_name
+            void executeShowGenerator();     // Execute SHOW GENERATOR object_name (sequence)
+            void executeShowSchema();        // Execute SHOW SCHEMA [object_name]
+            void executeShowRole();          // Execute SHOW ROLE object_name
+            void executeShowGrants();        // Execute SHOW GRANTS [FOR object_name]
+            void executeShowChecks();        // Execute SHOW CHECKS object_name
+            void executeShowCollations();    // Execute SHOW COLLATIONS [LIKE pattern]
+            void executeShowComments();      // Execute SHOW COMMENTS object_name
+            void executeShowDependencies();  // Execute SHOW DEPENDENCIES object_name
+            void executeShowPackage();       // Execute SHOW PACKAGE object_name
+            void executeShowSystem();        // Execute SHOW SYSTEM
+            void executeShowSqlDialect();    // Execute SHOW SQL DIALECT
+            void executeShowVersion();       // Execute SHOW VERSION
+            void executeShowDatabase();      // Execute SHOW DATABASE
+
+            // Schema Navigation Commands
+            void executeShowSchemaPath();    // Execute SHOW SCHEMA PATH
+            void executeShowSchemaTree();    // Execute SHOW SCHEMA TREE [DEPTH n]
+            void executeShowSearchPath();    // Execute SHOW SEARCH PATH
+            void executeShowLocation();      // Execute SHOW LOCATION OF [type] name
+            void executeShowResolved();      // Execute SHOW RESOLVED name
+            void executeShowObjects();       // Execute SHOW OBJECTS
+
+            // Session SET Commands (Firebird ISQL compatibility)
+            void executeSetSqlDialect();     // Execute SET SQL DIALECT n
+            void executeSetNames();          // Execute SET NAMES charset_name
+            void executeSetLocalTimeout();   // Execute SET LOCAL_TIMEOUT n
+
             // Security context helpers (Phase 2 - Security System)
             // These wrap ConnectionContext methods for convenience
             const core::ID& getCurrentUserID() const;
@@ -722,6 +781,7 @@ namespace scratchbird
             // SECURITY ENHANCEMENT (MEDIUM-3): Query execution limit checks
             void checkQueryLimits();              // Check all query limits, throw if exceeded
             void checkTimeout();                  // Check query timeout
+            void checkCancellation();             // NET-M1: Check if query was cancelled, throw if so
             void checkCTEDepth();                 // Check CTE recursion depth
             void incrementCTEDepth();             // Increment CTE depth counter
             void decrementCTEDepth();             // Decrement CTE depth counter

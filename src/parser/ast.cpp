@@ -238,6 +238,36 @@ namespace scratchbird
             visitor->visit(this);
         }
 
+        void SavepointStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void ReleaseSavepointStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void RollbackToSavepointStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void CreateTypeStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void CreateDomainStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void CallStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
         void SweepStmt::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);
@@ -264,6 +294,11 @@ namespace scratchbird
         }
 
         void DropTriggerStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void CreateDatabaseTriggerStmt::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);
         }
@@ -487,18 +522,28 @@ namespace scratchbird
                 first = false;
             }
 
-            out_ << ") VALUES (";
+            out_ << ") VALUES ";
 
-            first = true;
-            for (auto *val : node->values())
+            // Print each value row
+            bool first_row = true;
+            for (const auto& values : node->valueRows())
             {
-                if (!first)
+                if (!first_row)
                     out_ << ", ";
-                val->accept(this);
-                first = false;
-            }
+                out_ << "(";
 
-            out_ << ")";
+                first = true;
+                for (auto *val : values)
+                {
+                    if (!first)
+                        out_ << ", ";
+                    val->accept(this);
+                    first = false;
+                }
+
+                out_ << ")";
+                first_row = false;
+            }
         }
 
         void ASTPrinter::visit(SelectStmt *node)
@@ -1441,6 +1486,11 @@ namespace scratchbird
             out_ << "DROP TRIGGER";
         }
 
+        void ASTPrinter::visit(CreateDatabaseTriggerStmt *node)
+        {
+            out_ << "CREATE TRIGGER (DATABASE)";
+        }
+
         void ASTPrinter::visit(CreateFunctionStmt *node)
         {
             out_ << "CREATE FUNCTION";
@@ -1750,6 +1800,133 @@ namespace scratchbird
             out_ << (node->isDeferred() ? " DEFERRED" : " IMMEDIATE") << "\n";
         }
 
+        // Firebird ISQL Session Commands
+        void ASTPrinter::visit(SetSqlDialectStmt *node)
+        {
+            printIndent();
+            out_ << "SET SQL DIALECT " << static_cast<int>(node->dialect()) << "\n";
+        }
+
+        void ASTPrinter::visit(SetNamesStmt *node)
+        {
+            printIndent();
+            out_ << "SET NAMES " << pool_.get(node->charsetName()) << "\n";
+        }
+
+        void ASTPrinter::visit(SetLocalTimeoutStmt *node)
+        {
+            printIndent();
+            out_ << "SET LOCAL_TIMEOUT " << node->timeoutSeconds() << "\n";
+        }
+
+        // SAVEPOINT statements
+        void ASTPrinter::visit(SavepointStmt *node)
+        {
+            printIndent();
+            out_ << "SAVEPOINT " << pool_.get(node->name()) << "\n";
+        }
+
+        void ASTPrinter::visit(ReleaseSavepointStmt *node)
+        {
+            printIndent();
+            out_ << "RELEASE SAVEPOINT " << pool_.get(node->name()) << "\n";
+        }
+
+        void ASTPrinter::visit(RollbackToSavepointStmt *node)
+        {
+            printIndent();
+            out_ << "ROLLBACK TO SAVEPOINT " << pool_.get(node->name()) << "\n";
+        }
+
+        // User Defined Types
+        void ASTPrinter::visit(CreateTypeStmt *node)
+        {
+            printIndent();
+            out_ << "CREATE TYPE " << pool_.get(node->name());
+            switch (node->typeKind())
+            {
+            case UserTypeKind::COMPOSITE:
+                out_ << " AS (\n";
+                increaseIndent();
+                {
+                    const auto& names = node->fieldNames();
+                    const auto& types = node->fieldTypes();
+                    for (size_t i = 0; i < names.size(); ++i)
+                    {
+                        printIndent();
+                        out_ << pool_.get(names[i]) << " " << core::TypeSystem::getTypeName(types[i].type) << "\n";
+                    }
+                }
+                decreaseIndent();
+                printIndent();
+                out_ << ")";
+                break;
+            case UserTypeKind::ENUM:
+                out_ << " AS ENUM (";
+                {
+                    bool first = true;
+                    for (auto val : node->enumValues())
+                    {
+                        if (!first) out_ << ", ";
+                        out_ << "'" << pool_.get(val) << "'";
+                        first = false;
+                    }
+                }
+                out_ << ")";
+                break;
+            case UserTypeKind::RANGE:
+                out_ << " AS RANGE (SUBTYPE = ";
+                // For RANGE, the subtype is stored as first field
+                if (!node->fieldTypes().empty())
+                {
+                    out_ << core::TypeSystem::getTypeName(node->fieldTypes()[0].type);
+                }
+                out_ << ")";
+                break;
+            }
+            out_ << "\n";
+        }
+
+        void ASTPrinter::visit(CreateDomainStmt *node)
+        {
+            printIndent();
+            out_ << "CREATE DOMAIN " << pool_.get(node->name())
+                 << " AS " << core::TypeSystem::getTypeName(node->baseType().type);
+            if (node->defaultValue())
+            {
+                out_ << " DEFAULT ";
+                node->defaultValue()->accept(this);
+            }
+            if (node->isNotNull())
+            {
+                out_ << " NOT NULL";
+            }
+            if (node->checkExpr())
+            {
+                out_ << " CHECK (";
+                node->checkExpr()->accept(this);
+                out_ << ")";
+            }
+            out_ << "\n";
+        }
+
+        void ASTPrinter::visit(CallStmt *node)
+        {
+            printIndent();
+            out_ << "CALL " << pool_.get(node->procedureName()) << "(";
+            bool first = true;
+            for (auto* arg : node->arguments())
+            {
+                if (!first)
+                {
+                    out_ << ", ";
+                }
+                first = false;
+                arg->accept(this);
+            }
+            out_ << ")\n";
+        }
+
         // Accept methods for security statements
         void CreateUserStmt::accept(ASTVisitor *visitor)
         {
@@ -1818,6 +1995,22 @@ namespace scratchbird
 
         // P2-7: SET CONSTRAINTS statement
         void SetConstraintsStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        // Firebird ISQL compatibility: SET SQL DIALECT, SET NAMES, SET LOCAL_TIMEOUT
+        void SetSqlDialectStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void SetNamesStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void SetLocalTimeoutStmt::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);
         }

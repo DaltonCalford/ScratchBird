@@ -186,6 +186,12 @@ private:
                                core::ErrorContext* ctx);
 
     /**
+     * OPT-4: Extract pattern from MV definition string using parser
+     */
+    bool extractPatternFromDefinition(const std::string& definition,
+                                      QueryPattern& pattern_out);
+
+    /**
      * Estimate cost of scanning a materialized view
      */
     double estimateMVScanCost(const core::CatalogManager::ViewInfo& mv_info,

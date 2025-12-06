@@ -164,6 +164,13 @@ protected:
         // Reset allocation injector
         AllocationFailureInjector::instance().disable();
 
+        // Generate unique file prefix per test to avoid conflicts during parallel execution
+        static std::atomic<int> test_counter{0};
+        test_id_ = std::to_string(getpid()) + "_" + std::to_string(test_counter++);
+        test_oom_db_ = "/tmp/test_oom_" + test_id_ + ".db";
+        test_leak_db_ = "/tmp/test_leak_" + test_id_ + ".db";
+        test_cleanup_db_ = "/tmp/test_cleanup_" + test_id_ + ".db";
+
         // Clean up test files
         cleanup_test_files();
 
@@ -186,10 +193,15 @@ protected:
 
     void cleanup_test_files()
     {
-        remove("/tmp/test_oom.db");
-        remove("/tmp/test_leak.db");
-        remove("/tmp/test_cleanup.db");
+        remove(test_oom_db_.c_str());
+        remove(test_leak_db_.c_str());
+        remove(test_cleanup_db_.c_str());
     }
+
+    std::string test_id_;
+    std::string test_oom_db_;
+    std::string test_leak_db_;
+    std::string test_cleanup_db_;
 
     int count_open_fds()
     {
@@ -230,7 +242,7 @@ TEST_F(MemorySafetyTest, OOM_CreatePageBufferAllocation)
             AllocationFailureInjector::instance().enable_failure_at(fail_point);
 
             ErrorContext ctx;
-            Status status = db.create("/tmp/test_oom.db", 8192, &ctx);
+            Status status = db.create(test_oom_db_.c_str(), 8192, &ctx);
 
             AllocationFailureInjector::instance().disable();
 
@@ -238,18 +250,18 @@ TEST_F(MemorySafetyTest, OOM_CreatePageBufferAllocation)
             {
                 oom_handled_count++;
                 // Good - OOM was handled gracefully
-                remove("/tmp/test_oom.db");
+                remove(test_oom_db_.c_str());
             }
             else if (status == Status::OK)
             {
                 // If create succeeded, clean up for next iteration
                 db.close();
-                remove("/tmp/test_oom.db");
+                remove(test_oom_db_.c_str());
             }
             else
             {
                 // Other errors are acceptable during OOM injection
-                remove("/tmp/test_oom.db");
+                remove(test_oom_db_.c_str());
             }
         }
         catch (const std::bad_alloc &)
@@ -258,7 +270,7 @@ TEST_F(MemorySafetyTest, OOM_CreatePageBufferAllocation)
             oom_exception_count++;
             // Exception propagated - this is acceptable but indicates
             // a place where OOM handling could be improved
-            remove("/tmp/test_oom.db");
+            remove(test_oom_db_.c_str());
         }
     }
 
@@ -280,7 +292,7 @@ TEST_F(MemorySafetyTest, OOM_OpenHeaderAllocation)
     // First create a valid database
     {
         Database db;
-        ASSERT_EQ(db.create("/tmp/test_oom.db", 8192), Status::OK);
+        ASSERT_EQ(db.create(test_oom_db_.c_str(), 8192), Status::OK);
     }
 
     int oom_handled_count = 0;
@@ -296,7 +308,7 @@ TEST_F(MemorySafetyTest, OOM_OpenHeaderAllocation)
             AllocationFailureInjector::instance().enable_failure_at(fail_point);
 
             ErrorContext ctx;
-            Status status = db.open("/tmp/test_oom.db", &ctx);
+            Status status = db.open(test_oom_db_.c_str(), &ctx);
 
             AllocationFailureInjector::instance().disable();
 
@@ -336,7 +348,7 @@ TEST_F(MemorySafetyTest, MemoryLeak_FileDescriptorOnError)
     // Create a valid database first
     {
         Database db;
-        ASSERT_EQ(db.create("/tmp/test_leak.db", 8192), Status::OK);
+        ASSERT_EQ(db.create(test_leak_db_.c_str(), 8192), Status::OK);
     }
 
     int initial_fds = count_open_fds();
@@ -350,7 +362,7 @@ TEST_F(MemorySafetyTest, MemoryLeak_FileDescriptorOnError)
             AllocationFailureInjector::instance().enable_failure_at(fail_point);
 
             ErrorContext ctx;
-            Status status = db.open("/tmp/test_leak.db", &ctx);
+            Status status = db.open(test_leak_db_.c_str(), &ctx);
 
             AllocationFailureInjector::instance().disable();
 
@@ -382,14 +394,14 @@ TEST_F(MemorySafetyTest, MemoryLeak_DestructorCleanup)
     // Test that destructor cleans up properly
     {
         Database db;
-        ASSERT_EQ(db.create("/tmp/test_cleanup.db", 8192), Status::OK);
+        ASSERT_EQ(db.create(test_cleanup_db_.c_str(), 8192), Status::OK);
         // db goes out of scope here - destructor called
     }
 
     // Check that we can open the file again (lock released)
     {
         Database db2;
-        Status status = db2.open("/tmp/test_cleanup.db");
+        Status status = db2.open(test_cleanup_db_.c_str());
         EXPECT_EQ(status, Status::OK) << "Lock should be released in destructor";
     }
 }
@@ -406,16 +418,16 @@ TEST_F(MemorySafetyTest, BufferOverflow_PageOperations)
     for (uint32_t size : valid_sizes)
     {
         ErrorContext ctx;
-        Status status = Database::create("/tmp/test_cleanup.db", size, &ctx);
+        Status status = Database::create(test_cleanup_db_.c_str(), size, &ctx);
         EXPECT_EQ(status, Status::OK) << "Should accept page size " << size;
 
         if (status == Status::OK)
         {
             Database db;
-            EXPECT_EQ(db.open("/tmp/test_cleanup.db", &ctx), Status::OK);
+            EXPECT_EQ(db.open(test_cleanup_db_.c_str(), &ctx), Status::OK);
             EXPECT_EQ(db.page_size(), size);
             db.close();
-            remove("/tmp/test_cleanup.db");
+            remove(test_cleanup_db_.c_str());
         }
     }
 }
@@ -427,10 +439,10 @@ TEST_F(MemorySafetyTest, BufferOverflow_PageOperations)
 TEST_F(MemorySafetyTest, UseAfterFree_CloseDatabase)
 {
     ErrorContext ctx;
-    ASSERT_EQ(Database::create("/tmp/test_cleanup.db", 8192, &ctx), Status::OK);
+    ASSERT_EQ(Database::create(test_cleanup_db_.c_str(), 8192, &ctx), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("/tmp/test_cleanup.db", &ctx), Status::OK);
+    ASSERT_EQ(db.open(test_cleanup_db_.c_str(), &ctx), Status::OK);
 
     // Verify database is open
     EXPECT_TRUE(db.is_open()) << "Database should be open";
@@ -460,8 +472,9 @@ TEST_F(MemorySafetyTest, Stress_RapidOpenClose)
     for (int i = 0; i < iterations; i++)
     {
         // Create fresh database each time to avoid corruption
+        // Use test_id_ (PID+counter) to avoid conflicts with parallel tests
         ErrorContext ctx;
-        std::string db_name = "test_cleanup_" + std::to_string(i) + ".db";
+        std::string db_name = "/tmp/test_cleanup_" + test_id_ + "_" + std::to_string(i) + ".db";
 
         ASSERT_EQ(Database::create(db_name, 8192, &ctx), Status::OK);
 
@@ -496,13 +509,13 @@ TEST_F(MemorySafetyTest, Stress_LargePageSize)
     ErrorContext ctx;
 
     // Test with maximum page size (32KB)
-    Status status = Database::create("/tmp/test_cleanup.db", 32768, &ctx);
+    Status status = Database::create(test_cleanup_db_.c_str(), 32768, &ctx);
     EXPECT_EQ(status, Status::OK) << "Should handle 32KB page size";
 
     if (status == Status::OK)
     {
         Database db;
-        ASSERT_EQ(db.open("/tmp/test_cleanup.db", &ctx), Status::OK);
+        ASSERT_EQ(db.open(test_cleanup_db_.c_str(), &ctx), Status::OK);
         EXPECT_EQ(db.page_size(), 32768u);
         EXPECT_TRUE(db.is_open());
 
@@ -530,7 +543,7 @@ TEST_F(MemorySafetyTest, OOM_PageManagerAllocation)
     // First create a valid database
     {
         Database db;
-        ASSERT_EQ(db.create("/tmp/test_oom.db", 8192), Status::OK);
+        ASSERT_EQ(db.create(test_oom_db_.c_str(), 8192), Status::OK);
     }
 
     bool found_pagemanager_oom = false;
@@ -546,7 +559,7 @@ TEST_F(MemorySafetyTest, OOM_PageManagerAllocation)
             AllocationFailureInjector::instance().enable_failure_at(fail_point);
 
             ErrorContext ctx;
-            Status status = db.open("/tmp/test_oom.db", &ctx);
+            Status status = db.open(test_oom_db_.c_str(), &ctx);
 
             AllocationFailureInjector::instance().disable();
 
@@ -586,7 +599,7 @@ TEST_F(MemorySafetyTest, OOM_BufferPoolAllocation)
     // First create a valid database
     {
         Database db;
-        ASSERT_EQ(db.create("/tmp/test_oom.db", 8192), Status::OK);
+        ASSERT_EQ(db.create(test_oom_db_.c_str(), 8192), Status::OK);
     }
 
     bool found_bufferpool_oom = false;
@@ -601,7 +614,7 @@ TEST_F(MemorySafetyTest, OOM_BufferPoolAllocation)
             AllocationFailureInjector::instance().enable_failure_at(fail_point);
 
             ErrorContext ctx;
-            Status status = db.open("/tmp/test_oom.db", &ctx);
+            Status status = db.open(test_oom_db_.c_str(), &ctx);
 
             AllocationFailureInjector::instance().disable();
 
@@ -639,7 +652,7 @@ TEST_F(MemorySafetyTest, OOM_CatalogManagerAllocation)
     // First create a valid database
     {
         Database db;
-        ASSERT_EQ(db.create("/tmp/test_oom.db", 8192), Status::OK);
+        ASSERT_EQ(db.create(test_oom_db_.c_str(), 8192), Status::OK);
     }
 
     bool found_catalog_oom = false;
@@ -654,7 +667,7 @@ TEST_F(MemorySafetyTest, OOM_CatalogManagerAllocation)
             AllocationFailureInjector::instance().enable_failure_at(fail_point);
 
             ErrorContext ctx;
-            Status status = db.open("/tmp/test_oom.db", &ctx);
+            Status status = db.open(test_oom_db_.c_str(), &ctx);
 
             AllocationFailureInjector::instance().disable();
 

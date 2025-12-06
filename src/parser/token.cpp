@@ -333,6 +333,38 @@ namespace scratchbird
                 case TokenType::KW_PLACING:
                     return "PLACING";
 
+                // Database trigger keywords (Firebird-style)
+                case TokenType::KW_DISCONNECT:
+                    return "DISCONNECT";
+                case TokenType::KW_ACTIVE:
+                    return "ACTIVE";
+                case TokenType::KW_INACTIVE:
+                    return "INACTIVE";
+
+                // Schema navigation keywords
+                case TokenType::KW_PATH:
+                    return "PATH";
+                case TokenType::KW_TREE:
+                    return "TREE";
+                case TokenType::KW_DEPTH:
+                    return "DEPTH";
+                case TokenType::KW_SEARCH:
+                    return "SEARCH";
+                case TokenType::KW_OF:
+                    return "OF";
+                case TokenType::KW_RESOLVED:
+                    return "RESOLVED";
+                case TokenType::KW_OBJECTS:
+                    return "OBJECTS";
+                case TokenType::KW_DETAIL:
+                    return "DETAIL";
+                case TokenType::KW_HOME:
+                    return "HOME";
+                case TokenType::KW_ROOT:
+                    return "ROOT";
+                case TokenType::KW_UP:
+                    return "UP";
+
                 default:
                     return "UNKNOWN";
             }

@@ -10,7 +10,7 @@ namespace scratchbird::core
 
 Status CharsetLoader::loadCharset(const CharacterSet &charset, ErrorContext *ctx)
 {
-    // Phase 4 Enhancement: Implement catalog insertion for pg_charsets table
+    // Phase 4 Enhancement: Implement catalog insertion for sb_charsets table
     // Requires catalog manager to expose insertCharset() method
     // Current implementation validates charset data and skips if exists (correct)
 
@@ -46,7 +46,7 @@ Status CharsetLoader::loadCharset(const CharacterSet &charset, ErrorContext *ctx
     UuidV7Bytes charset_id = generateCharsetID(charset.name);
     uint64_t created_at = getCurrentTimestamp();
 
-    // Phase 4 Enhancement: Call catalog manager to insert into pg_charsets table
+    // Phase 4 Enhancement: Call catalog manager to insert into sb_charsets table
     // catalog_->insertCharset(charset_id, charset.name, charset.description,
     //                         charset.max_bytes, charset.min_bytes,
     //                         charset.is_variable_width, charset.aliases,
@@ -58,7 +58,7 @@ Status CharsetLoader::loadCharset(const CharacterSet &charset, ErrorContext *ctx
 
 Status CharsetLoader::loadCollation(const Collation &collation, ErrorContext *ctx)
 {
-    // Phase 4 Enhancement: Implement catalog insertion for pg_collations table
+    // Phase 4 Enhancement: Implement catalog insertion for sb_collations table
     // Requires catalog manager to expose insertCollation() method
     // Current implementation validates collation data (correct)
 
@@ -103,7 +103,7 @@ Status CharsetLoader::loadCollation(const Collation &collation, ErrorContext *ct
     UuidV7Bytes collation_id = generateCollationID(collation.name);
     uint64_t created_at = getCurrentTimestamp();
 
-    // Phase 4 Enhancement: Call catalog manager to insert into pg_collations table
+    // Phase 4 Enhancement: Call catalog manager to insert into sb_collations table
     // catalog_->insertCollation(collation_id, collation.name, charset_id,
     //                           collation.case_insensitive, collation.accent_insensitive,
     //                           collation.language, created_at, ctx);

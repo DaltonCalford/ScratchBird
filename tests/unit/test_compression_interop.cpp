@@ -12,6 +12,8 @@
 #include <filesystem>
 #include <vector>
 #include <random>
+#include <atomic>
+#include <unistd.h>
 
 // Define a macro to skip tests when LZ4 is not available
 #ifdef HAVE_LZ4
@@ -27,7 +29,10 @@ class CompressionInteropTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_dir_ = std::filesystem::temp_directory_path() / "scratchbird_compression_interop_test";
+        // Use unique directory per test to avoid conflicts during parallel execution
+        static std::atomic<int> test_counter{0};
+        std::string unique_id = std::to_string(getpid()) + "_" + std::to_string(test_counter++);
+        test_dir_ = std::filesystem::temp_directory_path() / ("scratchbird_compression_interop_test_" + unique_id);
         std::filesystem::create_directories(test_dir_);
     }
 

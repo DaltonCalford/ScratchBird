@@ -246,6 +246,31 @@ namespace scratchbird
 
                     // Write constraint name (optional)
                     writeStringId(pk_constraint->name());
+                    continue;
+                }
+
+                // WP-6 PARSE-1: Handle CheckTableConstraint
+                auto *check_constraint = dynamic_cast<parser::CheckTableConstraint *>(constraint);
+                if (check_constraint)
+                {
+                    // Generate CHECK_CONSTRAINT opcode for table-level CHECK
+                    // Format: CHECK_CONSTRAINT | constraint_name | expression_bytecode
+                    current_result_->writeOpcode(Opcode::CHECK_CONSTRAINT);
+
+                    // Write constraint name (optional)
+                    writeStringId(check_constraint->name());
+
+                    // Generate bytecode for the CHECK expression
+                    if (check_constraint->checkExpr())
+                    {
+                        check_constraint->checkExpr()->accept(this);
+                    }
+                    else
+                    {
+                        // No expression - emit NULL literal
+                        current_result_->writeOpcode(Opcode::LITERAL_NULL);
+                    }
+                    continue;
                 }
             }
         }
@@ -872,24 +897,36 @@ namespace scratchbird
 
             current_result_->writeOpcode(Opcode::END_LIST);
 
-            // Write value list with overflow check
-            size_t val_count = node->values().size();
-            if (val_count > UINT32_MAX)
+            // Write row count for multi-row INSERT support
+            size_t row_count = node->rowCount();
+            if (row_count > UINT32_MAX)
             {
-                current_result_->addError("Value count exceeds maximum (4 billion)");
+                current_result_->addError("Row count exceeds maximum (4 billion)");
                 return;
             }
+            current_result_->writeInt32(static_cast<uint32_t>(row_count));
 
-            current_result_->writeOpcode(Opcode::BEGIN_LIST);
-            current_result_->writeInt32(static_cast<uint32_t>(val_count));
-
-            for (auto *value : node->values())
+            // Write each row's values
+            for (const auto& values : node->valueRows())
             {
-                // Null check handled in generateExpression
-                generateExpression(value);
-            }
+                size_t val_count = values.size();
+                if (val_count > UINT32_MAX)
+                {
+                    current_result_->addError("Value count exceeds maximum (4 billion)");
+                    return;
+                }
 
-            current_result_->writeOpcode(Opcode::END_LIST);
+                current_result_->writeOpcode(Opcode::BEGIN_LIST);
+                current_result_->writeInt32(static_cast<uint32_t>(val_count));
+
+                for (auto *value : values)
+                {
+                    // Null check handled in generateExpression
+                    generateExpression(value);
+                }
+
+                current_result_->writeOpcode(Opcode::END_LIST);
+            }
 
             // Emit RETURNING clause if present (Alpha 1 - Advanced SQL)
             if (node->hasReturning())
@@ -1438,6 +1475,149 @@ namespace scratchbird
             (void)node; // Suppress unused parameter warning
         }
 
+        void BytecodeGenerator::visit(parser::SavepointStmt *node)
+        {
+            // Generate SAVEPOINT bytecode (ALPHA Phase 1 - SAVEPOINT)
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SAVEPOINT));
+            writeStringId(node->name());
+        }
+
+        void BytecodeGenerator::visit(parser::ReleaseSavepointStmt *node)
+        {
+            // Generate RELEASE SAVEPOINT bytecode (ALPHA Phase 1 - SAVEPOINT)
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_RELEASE_SAVEPOINT));
+            writeStringId(node->name());
+        }
+
+        void BytecodeGenerator::visit(parser::RollbackToSavepointStmt *node)
+        {
+            // Generate ROLLBACK TO SAVEPOINT bytecode (ALPHA Phase 1 - SAVEPOINT)
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_ROLLBACK_TO_SAVEPOINT));
+            writeStringId(node->name());
+        }
+
+        void BytecodeGenerator::visit(parser::CreateTypeStmt *node)
+        {
+            // Generate CREATE TYPE bytecode (ALPHA Phase 1 - User Defined Types)
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_CREATE_TYPE));
+
+            // Write type name
+            writeStringId(node->name());
+
+            // Write type kind (COMPOSITE, ENUM, RANGE)
+            current_result_->writeByte(static_cast<uint8_t>(node->typeKind()));
+
+            switch (node->typeKind())
+            {
+                case parser::UserTypeKind::ENUM:
+                {
+                    // Write number of enum values
+                    const auto& values = node->enumValues();
+                    current_result_->writeInt32(static_cast<uint32_t>(values.size()));
+                    // Write each enum value
+                    for (const auto& value : values)
+                    {
+                        writeStringId(value);
+                    }
+                    break;
+                }
+                case parser::UserTypeKind::COMPOSITE:
+                {
+                    // Write number of fields
+                    const auto& names = node->fieldNames();
+                    const auto& types = node->fieldTypes();
+                    current_result_->writeInt32(static_cast<uint32_t>(names.size()));
+                    // Write each field (name, type)
+                    for (size_t i = 0; i < names.size(); ++i)
+                    {
+                        writeStringId(names[i]);
+                        // Write type info
+                        current_result_->writeByte(static_cast<uint8_t>(types[i].type));
+                        current_result_->writeInt32(types[i].precision);
+                        current_result_->writeInt32(types[i].scale);
+                    }
+                    break;
+                }
+                case parser::UserTypeKind::RANGE:
+                {
+                    // RANGE stores subtype as first field
+                    const auto& types = node->fieldTypes();
+                    if (!types.empty())
+                    {
+                        current_result_->writeByte(static_cast<uint8_t>(types[0].type));
+                        current_result_->writeInt32(types[0].precision);
+                        current_result_->writeInt32(types[0].scale);
+                    }
+                    else
+                    {
+                        // Default to INT32 if no subtype specified
+                        current_result_->writeByte(static_cast<uint8_t>(core::DataType::INT32));
+                        current_result_->writeInt32(0);
+                        current_result_->writeInt32(0);
+                    }
+                    break;
+                }
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::CreateDomainStmt *node)
+        {
+            // Generate CREATE DOMAIN bytecode (ALPHA Phase 1 - Domain Types)
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_CREATE_DOMAIN));
+
+            // Write domain name
+            writeStringId(node->name());
+
+            // Write base type info
+            const auto& base_type = node->baseType();
+            current_result_->writeByte(static_cast<uint8_t>(base_type.type));
+            current_result_->writeInt32(base_type.precision);
+            current_result_->writeInt32(base_type.scale);
+
+            // Write flags: has_default (bit 0), not_null (bit 1), has_check (bit 2)
+            uint8_t flags = 0;
+            if (node->defaultValue()) flags |= 0x01;
+            if (node->isNotNull()) flags |= 0x02;
+            if (node->checkExpr()) flags |= 0x04;
+            current_result_->writeByte(flags);
+
+            // Write default value expression if present
+            if (node->defaultValue())
+            {
+                generateExpression(node->defaultValue());
+            }
+
+            // Write check expression if present
+            if (node->checkExpr())
+            {
+                generateExpression(node->checkExpr());
+            }
+        }
+
+        void BytecodeGenerator::visit(parser::CallStmt *node)
+        {
+            // Generate CALL bytecode (PSQL - Call stored procedure)
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_CALL));
+
+            // Write procedure name
+            writeStringId(node->procedureName());
+
+            // Write argument count
+            current_result_->writeInt32(static_cast<int32_t>(node->arguments().size()));
+
+            // Generate bytecode for each argument expression
+            for (auto* arg : node->arguments())
+            {
+                generateExpression(arg);
+            }
+        }
+
         void BytecodeGenerator::visit(parser::SweepStmt *node)
         {
             // Generate SWEEP DATABASE bytecode (Phase 3 Task 3.3)
@@ -1486,6 +1666,195 @@ namespace scratchbird
                     // Write table name (required)
                     writeStringId(node->tableName());
                     break;
+
+                // Extended SHOW commands (Firebird ISQL compatibility)
+                case parser::ShowObjectType::TABLE:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_TABLE));
+                    // Write object name (required)
+                    writeStringId(node->tableName());
+                    break;
+
+                case parser::ShowObjectType::INDEX:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_INDEX));
+                    // Write index name (required)
+                    writeStringId(node->tableName());
+                    break;
+
+                case parser::ShowObjectType::TRIGGER:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_TRIGGER));
+                    // Write trigger name (required)
+                    writeStringId(node->tableName());
+                    break;
+
+                case parser::ShowObjectType::PROCEDURE:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_PROCEDURE));
+                    // Write procedure name (required)
+                    writeStringId(node->tableName());
+                    break;
+
+                case parser::ShowObjectType::FUNCTION:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_FUNCTION));
+                    // Write function name (required)
+                    writeStringId(node->tableName());
+                    break;
+
+                case parser::ShowObjectType::VIEW:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_VIEW));
+                    // Write view name (required)
+                    writeStringId(node->tableName());
+                    break;
+
+                case parser::ShowObjectType::DOMAIN:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_DOMAIN));
+                    // Write domain name (required)
+                    writeStringId(node->tableName());
+                    break;
+
+                case parser::ShowObjectType::GENERATOR:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_GENERATOR));
+                    // Write generator/sequence name (required)
+                    writeStringId(node->tableName());
+                    break;
+
+                case parser::ShowObjectType::SCHEMA:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_SCHEMA));
+                    // Write optional schema name (0 for all schemas)
+                    writeStringId(node->tableName());
+                    break;
+
+                case parser::ShowObjectType::ROLE:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_ROLE));
+                    // Write role name (required)
+                    writeStringId(node->tableName());
+                    break;
+
+                case parser::ShowObjectType::GRANTS:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_GRANTS));
+                    // Write optional object name (0 for all grants)
+                    writeStringId(node->tableName());
+                    break;
+
+                case parser::ShowObjectType::CHECKS:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_CHECKS));
+                    // Write table name (required)
+                    writeStringId(node->tableName());
+                    break;
+
+                case parser::ShowObjectType::COLLATIONS:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_COLLATIONS));
+                    // Write optional LIKE pattern
+                    writeStringId(node->likePattern());
+                    break;
+
+                case parser::ShowObjectType::COMMENTS:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_COMMENTS));
+                    // Write object name (required)
+                    writeStringId(node->tableName());
+                    break;
+
+                case parser::ShowObjectType::DEPENDENCIES:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_DEPENDENCIES));
+                    // Write object name (required)
+                    writeStringId(node->tableName());
+                    break;
+
+                case parser::ShowObjectType::PACKAGE:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_PACKAGE));
+                    // Write package name (required)
+                    writeStringId(node->tableName());
+                    break;
+
+                case parser::ShowObjectType::SYSTEM:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_SYSTEM));
+                    // No parameters required
+                    break;
+
+                case parser::ShowObjectType::SQL_DIALECT:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_SQL_DIALECT));
+                    // No parameters required
+                    break;
+
+                case parser::ShowObjectType::VERSION:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_VERSION));
+                    // No parameters required
+                    break;
+
+                case parser::ShowObjectType::DATABASE:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_DATABASE));
+                    // No parameters required
+                    break;
+
+                // Schema navigation commands
+                case parser::ShowObjectType::SCHEMA_PATH:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_SCHEMA_PATH));
+                    // No parameters required
+                    break;
+
+                case parser::ShowObjectType::SCHEMA_TREE:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_SCHEMA_TREE));
+                    // Write tree depth (0 = unlimited)
+                    current_result_->writeInt32(static_cast<int32_t>(node->treeDepth()));
+                    // Write schema_path (for "FROM ROOT" - "/" means root)
+                    writeStringId(node->schemaPath());
+                    break;
+
+                case parser::ShowObjectType::SEARCH_PATH:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_SEARCH_PATH));
+                    // No parameters required
+                    break;
+
+                case parser::ShowObjectType::LOCATION:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_LOCATION));
+                    // Write object name (required)
+                    writeStringId(node->objectName());
+                    // Write optional type hint (stored in databaseName field)
+                    writeStringId(node->databaseName());
+                    break;
+
+                case parser::ShowObjectType::RESOLVED:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_RESOLVED));
+                    // Write object name (required)
+                    writeStringId(node->objectName());
+                    break;
+
+                case parser::ShowObjectType::OBJECTS:
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SHOW_OBJECTS));
+                    // Write schema scope
+                    current_result_->writeByte(static_cast<uint8_t>(node->schemaScope()));
+                    // Write schema path (for IN_SCHEMA scope)
+                    writeStringId(node->schemaPath());
+                    // Write optional LIKE pattern
+                    writeStringId(node->likePattern());
+                    break;
+            }
+
+            // For commands that support schema scope, emit the scope info
+            // This is appended after the command-specific data
+            auto objType = node->objectType();
+            if (objType == parser::ShowObjectType::TABLES ||
+                objType == parser::ShowObjectType::TABLE ||
+                objType == parser::ShowObjectType::INDEX ||
+                objType == parser::ShowObjectType::TRIGGER ||
+                objType == parser::ShowObjectType::PROCEDURE ||
+                objType == parser::ShowObjectType::FUNCTION ||
+                objType == parser::ShowObjectType::VIEW ||
+                objType == parser::ShowObjectType::DOMAIN ||
+                objType == parser::ShowObjectType::GENERATOR ||
+                objType == parser::ShowObjectType::SCHEMA ||
+                objType == parser::ShowObjectType::ROLE ||
+                objType == parser::ShowObjectType::GRANTS ||
+                objType == parser::ShowObjectType::CHECKS ||
+                objType == parser::ShowObjectType::COMMENTS ||
+                objType == parser::ShowObjectType::DEPENDENCIES ||
+                objType == parser::ShowObjectType::PACKAGE ||
+                objType == parser::ShowObjectType::SYSTEM)
+            {
+                // Write schema scope (CURRENT=0, IN_PATH=1, IN_SCHEMA=2)
+                current_result_->writeByte(static_cast<uint8_t>(node->schemaScope()));
+                // Write schema path (for IN_SCHEMA scope)
+                writeStringId(node->schemaPath());
+                // Write in_detail flag
+                current_result_->writeByte(node->inDetail() ? 1 : 0);
             }
 
             DEBUG_LOG_DB("Generated SHOW bytecode");
@@ -1704,6 +2073,31 @@ namespace scratchbird
                 case parser::BinaryOp::REGEX_NOT_MATCH_CI:
                     current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
                     current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_REGEX_NOT_MATCH_CI));
+                    break;
+                // WP-6 PARSE-3: IN and NOT IN with value list
+                // The RHS is an ArrayLiteral containing the values
+                case parser::BinaryOp::IN:
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_IN_LIST));
+                    current_result_->writeByte(0); // 0 = IN, not negated
+                    break;
+                case parser::BinaryOp::NOT_IN:
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_IN_LIST));
+                    current_result_->writeByte(1); // 1 = NOT IN, negated
+                    break;
+                // Range operators
+                case parser::BinaryOp::RANGE_STRICTLY_LEFT:
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_RANGE_STRICTLY_LEFT));
+                    break;
+                case parser::BinaryOp::RANGE_STRICTLY_RIGHT:
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_RANGE_STRICTLY_RIGHT));
+                    break;
+                case parser::BinaryOp::RANGE_ADJACENT:
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_RANGE_ADJACENT));
                     break;
             }
         }
@@ -4174,6 +4568,9 @@ namespace scratchbird
 
             // Write grantee name (StringPool ID)
             writeStringId(node->granteeName());
+
+            // WP-6 PARSE-L1: Write WITH ADMIN OPTION flag (uint8_t)
+            current_result_->writeByte(node->withAdminOption() ? 1 : 0);
         }
 
         void BytecodeGenerator::visit(parser::RevokeRoleStmt *node)
@@ -4273,6 +4670,43 @@ namespace scratchbird
                     writeStringId(name_id);
                 }
             }
+        }
+
+        // Firebird ISQL Session Commands
+        void BytecodeGenerator::visit(parser::SetSqlDialectStmt *node)
+        {
+            // Emit extended opcode marker + SET_SQL_DIALECT opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SET_SQL_DIALECT));
+
+            // Write dialect value (1, 2, or 3)
+            current_result_->writeByte(node->dialect());
+
+            DEBUG_LOG_DB("Generated SET SQL DIALECT bytecode");
+        }
+
+        void BytecodeGenerator::visit(parser::SetNamesStmt *node)
+        {
+            // Emit extended opcode marker + SET_NAMES opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SET_NAMES));
+
+            // Write charset name (StringPool ID)
+            writeStringId(node->charsetName());
+
+            DEBUG_LOG_DB("Generated SET NAMES bytecode");
+        }
+
+        void BytecodeGenerator::visit(parser::SetLocalTimeoutStmt *node)
+        {
+            // Emit extended opcode marker + SET_LOCAL_TIMEOUT opcode
+            current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SET_LOCAL_TIMEOUT));
+
+            // Write timeout value in seconds (32-bit)
+            current_result_->writeInt32(node->timeoutSeconds());
+
+            DEBUG_LOG_DB("Generated SET LOCAL_TIMEOUT bytecode");
         }
 
         // Security Phase 3.4.4 - Row-Level Security Policy Statements
@@ -5135,16 +5569,179 @@ namespace scratchbird
 
         void BytecodeGenerator::visit(parser::WindowFuncExpr *node)
         {
-            // This is called when generating direct (non-optimized) bytecode
-            // The optimized path uses generateWindowFunc() instead
-            current_result_->addError("Direct window function bytecode generation not yet supported");
+            // WP-6 PARSE-M1: Direct window function bytecode generation
+            // Emit function type opcode based on function
+            switch (node->func())
+            {
+                case parser::WindowFunc::ROW_NUMBER:
+                    current_result_->writeOpcode(Opcode::WIN_ROW_NUMBER);
+                    break;
+                case parser::WindowFunc::RANK:
+                    current_result_->writeOpcode(Opcode::WIN_RANK);
+                    break;
+                case parser::WindowFunc::DENSE_RANK:
+                    current_result_->writeOpcode(Opcode::WIN_DENSE_RANK);
+                    break;
+                case parser::WindowFunc::LAG:
+                    current_result_->writeOpcode(Opcode::WIN_LAG);
+                    break;
+                case parser::WindowFunc::LEAD:
+                    current_result_->writeOpcode(Opcode::WIN_LEAD);
+                    break;
+                case parser::WindowFunc::FIRST_VALUE:
+                    current_result_->writeOpcode(Opcode::WIN_FIRST_VALUE);
+                    break;
+                case parser::WindowFunc::LAST_VALUE:
+                    current_result_->writeOpcode(Opcode::WIN_LAST_VALUE);
+                    break;
+                case parser::WindowFunc::NTH_VALUE:
+                    current_result_->writeOpcode(Opcode::WIN_NTH_VALUE);
+                    break;
+                case parser::WindowFunc::CUME_DIST:
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_WIN_CUME_DIST));
+                    break;
+                case parser::WindowFunc::PERCENT_RANK:
+                    current_result_->writeOpcode(Opcode::EXTENDED_OPCODE);
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_WIN_PERCENT_RANK));
+                    break;
+                // NTILE not yet defined in WindowFunc enum - add when needed
+            }
+
+            // Write argument count
+            current_result_->writeByte(static_cast<uint8_t>(node->args().size()));
+
+            // Generate bytecode for arguments
+            for (auto* arg : node->args())
+            {
+                generateExpression(arg);
+            }
+
+            // Emit window specification
+            if (node->windowSpec())
+            {
+                node->windowSpec()->accept(this);
+            }
+            else
+            {
+                // No window spec - emit empty marker
+                current_result_->writeOpcode(Opcode::WINDOW_SPEC);
+                current_result_->writeInt32(0); // No PARTITION BY columns
+                current_result_->writeInt32(0); // No ORDER BY columns
+                current_result_->writeInt32(0); // No frame clause
+            }
         }
 
         void BytecodeGenerator::visit(parser::WindowSpec *node)
         {
-            // This is called when generating direct (non-optimized) bytecode
-            // The optimized path uses generateWindowSpec() instead
-            current_result_->addError("Direct window spec bytecode generation not yet supported");
+            // WP-6 PARSE-M2: Direct window spec bytecode generation
+            current_result_->writeOpcode(Opcode::WINDOW_SPEC);
+
+            // Emit PARTITION BY clause
+            const auto& partition_by = node->partitionBy();
+            current_result_->writeInt32(static_cast<uint32_t>(partition_by.size()));
+            if (!partition_by.empty())
+            {
+                current_result_->writeOpcode(Opcode::PARTITION_BY);
+                for (auto* expr : partition_by)
+                {
+                    generateExpression(expr);
+                }
+            }
+
+            // Emit ORDER BY clause
+            const auto& order_by = node->orderBy();
+            const auto& ascending = node->orderAscending();
+            current_result_->writeInt32(static_cast<uint32_t>(order_by.size()));
+            if (!order_by.empty())
+            {
+                current_result_->writeOpcode(Opcode::ORDER_BY);
+                for (size_t i = 0; i < order_by.size(); ++i)
+                {
+                    // Generate sort key expression
+                    current_result_->writeOpcode(Opcode::SORT_KEY);
+                    generateExpression(order_by[i]);
+
+                    // Emit sort direction
+                    if (i < ascending.size() && ascending[i])
+                    {
+                        current_result_->writeOpcode(Opcode::SORT_ASC);
+                    }
+                    else
+                    {
+                        current_result_->writeOpcode(Opcode::SORT_DESC);
+                    }
+                }
+            }
+
+            // Emit frame clause
+            if (node->hasFrame())
+            {
+                current_result_->writeInt32(1); // Has frame
+                // Frame mode
+                switch (node->frameMode())
+                {
+                    case parser::FrameMode::ROWS:
+                        current_result_->writeOpcode(Opcode::FRAME_ROWS);
+                        break;
+                    case parser::FrameMode::RANGE:
+                        current_result_->writeOpcode(Opcode::FRAME_RANGE);
+                        break;
+                    case parser::FrameMode::GROUPS:
+                        current_result_->writeOpcode(Opcode::FRAME_ROWS); // Fall back to ROWS for GROUPS
+                        break;
+                }
+
+                // Frame start boundary
+                const auto& start = node->frameStart();
+                switch (start.type)
+                {
+                    case parser::FrameBoundaryType::UNBOUNDED_PRECEDING:
+                        current_result_->writeOpcode(Opcode::FRAME_UNBOUNDED_PRECEDING);
+                        break;
+                    case parser::FrameBoundaryType::PRECEDING:
+                        current_result_->writeOpcode(Opcode::FRAME_PRECEDING);
+                        if (start.offset) generateExpression(start.offset);
+                        break;
+                    case parser::FrameBoundaryType::CURRENT_ROW:
+                        current_result_->writeOpcode(Opcode::FRAME_CURRENT_ROW);
+                        break;
+                    case parser::FrameBoundaryType::FOLLOWING:
+                        current_result_->writeOpcode(Opcode::FRAME_FOLLOWING);
+                        if (start.offset) generateExpression(start.offset);
+                        break;
+                    case parser::FrameBoundaryType::UNBOUNDED_FOLLOWING:
+                        current_result_->writeOpcode(Opcode::FRAME_UNBOUNDED_FOLLOWING);
+                        break;
+                }
+
+                // Frame end boundary
+                const auto& end = node->frameEnd();
+                switch (end.type)
+                {
+                    case parser::FrameBoundaryType::UNBOUNDED_PRECEDING:
+                        current_result_->writeOpcode(Opcode::FRAME_UNBOUNDED_PRECEDING);
+                        break;
+                    case parser::FrameBoundaryType::PRECEDING:
+                        current_result_->writeOpcode(Opcode::FRAME_PRECEDING);
+                        if (end.offset) generateExpression(end.offset);
+                        break;
+                    case parser::FrameBoundaryType::CURRENT_ROW:
+                        current_result_->writeOpcode(Opcode::FRAME_CURRENT_ROW);
+                        break;
+                    case parser::FrameBoundaryType::FOLLOWING:
+                        current_result_->writeOpcode(Opcode::FRAME_FOLLOWING);
+                        if (end.offset) generateExpression(end.offset);
+                        break;
+                    case parser::FrameBoundaryType::UNBOUNDED_FOLLOWING:
+                        current_result_->writeOpcode(Opcode::FRAME_UNBOUNDED_FOLLOWING);
+                        break;
+                }
+            }
+            else
+            {
+                current_result_->writeInt32(0); // No frame
+            }
         }
 
         void BytecodeGenerator::visit(parser::JSONFuncExpr *node)
@@ -5321,9 +5918,9 @@ namespace scratchbird
                     current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SUBQUERY_NOT_IN));
                     break;
                 case parser::SubqueryType::ARRAY:
-                    // ARRAY subqueries not yet implemented in executor
-                    current_result_->addError("ARRAY subqueries not yet supported");
-                    return;
+                    // WP-6 PARSE-M3: ARRAY subqueries - collects subquery results into array
+                    current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_SUBQUERY_ARRAY));
+                    break;
             }
 
             // Generate bytecode for the subquery SELECT statement
@@ -5842,6 +6439,39 @@ namespace scratchbird
 
             // Emit if_exists flag (1 byte)
             current_result_->writeByte(node->ifExists() ? 1 : 0);
+        }
+
+        // Database triggers (Firebird-style ON CONNECT/DISCONNECT/TRANSACTION events)
+        void BytecodeGenerator::visit(parser::CreateDatabaseTriggerStmt *node)
+        {
+            // Emit extended opcode marker
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+            current_result_->writeByte(static_cast<uint8_t>(Opcode::EXT_CREATE_DB_TRIGGER));
+
+            // Emit trigger name
+            std::string_view trigger_name = string_pool_.get(node->triggerName());
+            current_result_->writeInt32(static_cast<uint32_t>(trigger_name.length()));
+            for (char c : trigger_name)
+            {
+                current_result_->writeByte(static_cast<uint8_t>(c));
+            }
+
+            // Emit event (1 byte)
+            current_result_->writeByte(static_cast<uint8_t>(node->event()));
+
+            // Emit active flag (1 byte)
+            current_result_->writeByte(node->isActive() ? 1 : 0);
+
+            // Emit position (4 bytes)
+            current_result_->writeInt32(node->position());
+
+            // Emit procedure name
+            std::string_view procedure_name = string_pool_.get(node->procedureName());
+            current_result_->writeInt32(static_cast<uint32_t>(procedure_name.length()));
+            for (char c : procedure_name)
+            {
+                current_result_->writeByte(static_cast<uint8_t>(c));
+            }
         }
 
         // ===== PSQL - Stored Procedures and Functions (Phase 2 Task 10.2) =====

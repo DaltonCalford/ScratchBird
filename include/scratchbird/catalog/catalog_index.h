@@ -45,18 +45,18 @@ class RoleEntry;
 
 // Index type enumeration
 enum class CatalogIndexType : uint8_t {
-    TABLES_BY_NAME,          // pg_tables(table_name) -> table_id
-    TABLES_BY_SCHEMA,        // pg_tables(schema_id) -> table_ids
-    COLUMNS_BY_TABLE,        // pg_columns(table_id) -> column_ids
-    COLUMNS_BY_NAME,         // pg_columns(table_id, column_name) -> column_id
-    INDEXES_BY_NAME,         // pg_indexes(index_name) -> index_id
-    INDEXES_BY_TABLE,        // pg_indexes(table_id) -> index_ids
-    USERS_BY_NAME,           // pg_users(username) -> user_id
-    ROLES_BY_NAME,           // pg_roles(role_name) -> role_id
-    SEQUENCES_BY_NAME,       // pg_sequences(sequence_name) -> sequence_id
-    VIEWS_BY_NAME,           // pg_views(view_name) -> view_id
-    FUNCTIONS_BY_NAME,       // pg_functions(function_name) -> function_ids
-    TRIGGERS_BY_TABLE,       // pg_triggers(table_id) -> trigger_ids
+    TABLES_BY_NAME,          // sb_tables(table_name) -> table_id
+    TABLES_BY_SCHEMA,        // sb_tables(schema_id) -> table_ids
+    COLUMNS_BY_TABLE,        // sb_columns(table_id) -> column_ids
+    COLUMNS_BY_NAME,         // sb_columns(table_id, column_name) -> column_id
+    INDEXES_BY_NAME,         // sb_indexes(index_name) -> index_id
+    INDEXES_BY_TABLE,        // sb_indexes(table_id) -> index_ids
+    USERS_BY_NAME,           // sb_users(username) -> user_id
+    ROLES_BY_NAME,           // sb_roles(role_name) -> role_id
+    SEQUENCES_BY_NAME,       // sb_sequences(sequence_name) -> sequence_id
+    VIEWS_BY_NAME,           // sb_views(view_name) -> view_id
+    FUNCTIONS_BY_NAME,       // sb_functions(function_name) -> function_ids
+    TRIGGERS_BY_TABLE,       // sb_triggers(table_id) -> trigger_ids
 };
 
 // Index statistics

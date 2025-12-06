@@ -111,10 +111,11 @@ TEST_F(BitmapDMLTest, DirectInsertViaBitmapIndex)
     auto bitmap = BitmapIndex::open(db_.get(), index_uuid, meta_page, &ctx);
     ASSERT_NE(bitmap, nullptr) << "Failed to open Bitmap index: " << ctx.message;
 
-    // Begin transaction
-    uint64_t xid;
-    status = tx_manager_->beginTransaction(0, xid, &ctx);
-    ASSERT_EQ(status, Status::OK);
+    // Create connection (begins transaction automatically)
+    std::unique_ptr<ConnectionContext> conn;
+    status = db_->connect(conn, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to connect: " << ctx.message;
+    uint64_t xid = conn->getCurrentXid();
 
     // Insert low-cardinality values (e.g., status column: 'active', 'inactive', 'pending')
     std::vector<uint8_t> value_active = serializeString("active");
@@ -139,13 +140,14 @@ TEST_F(BitmapDMLTest, DirectInsertViaBitmapIndex)
     status = bitmap->insert(value_pending.data(), value_pending.size(), tid4, &ctx);
     EXPECT_EQ(status, Status::OK) << "Insert 4 (pending) failed: " << ctx.message;
 
-    status = tx_manager_->commitTransaction(0, xid, &ctx);
-    ASSERT_EQ(status, Status::OK);
+    status = conn->commit(&ctx);
+    ASSERT_EQ(status, Status::OK) << "Commit failed: " << ctx.message;
 
-    // Verify find returns correct TIDs for each value
-    uint64_t search_xid;
-    status = tx_manager_->beginTransaction(0, search_xid, &ctx);
-    ASSERT_EQ(status, Status::OK);
+    // Create new connection for search (new transaction)
+    std::unique_ptr<ConnectionContext> search_conn;
+    status = db_->connect(search_conn, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to connect for search: " << ctx.message;
+    uint64_t search_xid = search_conn->getCurrentXid();
 
     std::vector<TID> active_results;
     status = bitmap->find(value_active.data(), value_active.size(), search_xid, &active_results, &ctx);
@@ -162,7 +164,7 @@ TEST_F(BitmapDMLTest, DirectInsertViaBitmapIndex)
     EXPECT_EQ(status, Status::OK);
     EXPECT_EQ(pending_results.size(), 1) << "Should find 1 'pending' tuple";
 
-    status = tx_manager_->commitTransaction(0, search_xid, &ctx);
+    status = search_conn->commit(&ctx);
     ASSERT_EQ(status, Status::OK);
 }
 
@@ -180,43 +182,48 @@ TEST_F(BitmapDMLTest, LogicalDeletionWithXmax)
     ASSERT_EQ(status, Status::OK);
     auto bitmap = BitmapIndex::open(db_.get(), index_uuid, meta_page, &ctx);
 
-    // Begin transaction and insert
-    uint64_t insert_xid;
-    status = tx_manager_->beginTransaction(0, insert_xid, &ctx);
-    ASSERT_EQ(status, Status::OK);
+    // Create connection and insert
+    std::unique_ptr<ConnectionContext> insert_conn;
+    status = db_->connect(insert_conn, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to connect for insert: " << ctx.message;
 
     std::vector<uint8_t> value = serializeInt32(42);
     TID tid = makeTID(1, 10, 1);
 
     status = bitmap->insert(value.data(), value.size(), tid, &ctx);
     ASSERT_EQ(status, Status::OK);
-    status = tx_manager_->commitTransaction(0, insert_xid, &ctx);
+    status = insert_conn->commit(&ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Verify visible
-    uint64_t read1_xid;
-    status = tx_manager_->beginTransaction(0, read1_xid, &ctx);
-    ASSERT_EQ(status, Status::OK);
+    std::unique_ptr<ConnectionContext> read1_conn;
+    status = db_->connect(read1_conn, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to connect for read1: " << ctx.message;
+    uint64_t read1_xid = read1_conn->getCurrentXid();
+
     std::vector<TID> results1;
     status = bitmap->find(value.data(), value.size(), read1_xid, &results1, &ctx);
     EXPECT_EQ(status, Status::OK);
     EXPECT_EQ(results1.size(), 1) << "Should find 1 tuple before deletion";
-    status = tx_manager_->commitTransaction(0, read1_xid, &ctx);
+    status = read1_conn->commit(&ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Delete (logical deletion with xmax)
-    uint64_t delete_xid;
-    status = tx_manager_->beginTransaction(0, delete_xid, &ctx);
-    ASSERT_EQ(status, Status::OK);
+    std::unique_ptr<ConnectionContext> delete_conn;
+    status = db_->connect(delete_conn, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to connect for delete: " << ctx.message;
+
     status = bitmap->remove(tid, &ctx);
     EXPECT_EQ(status, Status::OK) << "Remove should succeed: " << ctx.message;
-    status = tx_manager_->commitTransaction(0, delete_xid, &ctx);
+    status = delete_conn->commit(&ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Verify not visible after deletion (MGA visibility filtering)
-    uint64_t read2_xid;
-    status = tx_manager_->beginTransaction(0, read2_xid, &ctx);
-    ASSERT_EQ(status, Status::OK);
+    std::unique_ptr<ConnectionContext> read2_conn;
+    status = db_->connect(read2_conn, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to connect for read2: " << ctx.message;
+    uint64_t read2_xid = read2_conn->getCurrentXid();
+
     std::vector<TID> results2;
     status = bitmap->find(value.data(), value.size(), read2_xid, &results2, &ctx);
     EXPECT_EQ(status, Status::OK);
@@ -225,7 +232,7 @@ TEST_F(BitmapDMLTest, LogicalDeletionWithXmax)
     // NOTE: This depends on proper TIP-based visibility implementation in bitmap->find()
     EXPECT_LE(results2.size(), 1) << "Tuple may still be in bitmap but should be marked deleted";
 
-    status = tx_manager_->commitTransaction(0, read2_xid, &ctx);
+    status = read2_conn->commit(&ctx);
     ASSERT_EQ(status, Status::OK);
 }
 
@@ -243,9 +250,10 @@ TEST_F(BitmapDMLTest, LogicalOperations)
     ASSERT_EQ(status, Status::OK);
     auto bitmap = BitmapIndex::open(db_.get(), index_uuid, meta_page, &ctx);
 
-    uint64_t xid;
-    status = tx_manager_->beginTransaction(0, xid, &ctx);
-    ASSERT_EQ(status, Status::OK);
+    // Create connection for inserts
+    std::unique_ptr<ConnectionContext> conn;
+    status = db_->connect(conn, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to connect: " << ctx.message;
 
     // Insert entries with values 1, 2, 3
     std::vector<uint8_t> value1 = serializeInt32(1);
@@ -257,12 +265,14 @@ TEST_F(BitmapDMLTest, LogicalOperations)
     bitmap->insert(value1.data(), value1.size(), makeTID(1, 3, 1), &ctx);
     bitmap->insert(value3.data(), value3.size(), makeTID(1, 4, 1), &ctx);
 
-    status = tx_manager_->commitTransaction(0, xid, &ctx);
+    status = conn->commit(&ctx);
     ASSERT_EQ(status, Status::OK);
 
-    uint64_t query_xid;
-    status = tx_manager_->beginTransaction(0, query_xid, &ctx);
-    ASSERT_EQ(status, Status::OK);
+    // Create new connection for queries
+    std::unique_ptr<ConnectionContext> query_conn;
+    status = db_->connect(query_conn, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to connect for query: " << ctx.message;
+    uint64_t query_xid = query_conn->getCurrentXid();
 
     // Test OR operation
     std::vector<const void*> or_values = {value1.data(), value2.data()};
@@ -278,7 +288,7 @@ TEST_F(BitmapDMLTest, LogicalOperations)
     // However, implementation may vary - just check it returns some results
     EXPECT_GE(not_results.size(), 0) << "NOT operation should complete";
 
-    status = tx_manager_->commitTransaction(0, query_xid, &ctx);
+    status = query_conn->commit(&ctx);
     ASSERT_EQ(status, Status::OK);
 }
 
@@ -299,22 +309,23 @@ TEST_F(BitmapDMLTest, UpdateScenario)
     ASSERT_EQ(status, Status::OK);
     auto bitmap = BitmapIndex::open(db_.get(), index_uuid, meta_page, &ctx);
 
-    uint64_t xid;
-    status = tx_manager_->beginTransaction(0, xid, &ctx);
-    ASSERT_EQ(status, Status::OK);
+    // Create connection for initial insert
+    std::unique_ptr<ConnectionContext> conn;
+    status = db_->connect(conn, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to connect: " << ctx.message;
 
     // Initial insert with value "draft"
     std::vector<uint8_t> value_draft = serializeString("draft");
     TID tid = makeTID(1, 5, 1);
 
     bitmap->insert(value_draft.data(), value_draft.size(), tid, &ctx);
-    status = tx_manager_->commitTransaction(0, xid, &ctx);
+    status = conn->commit(&ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Simulate UPDATE: change status from "draft" to "published"
-    uint64_t update_xid;
-    status = tx_manager_->beginTransaction(0, update_xid, &ctx);
-    ASSERT_EQ(status, Status::OK);
+    std::unique_ptr<ConnectionContext> update_conn;
+    status = db_->connect(update_conn, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to connect for update: " << ctx.message;
 
     // Remove old value (marks with xmax)
     bitmap->remove(tid, &ctx);
@@ -323,13 +334,14 @@ TEST_F(BitmapDMLTest, UpdateScenario)
     std::vector<uint8_t> value_published = serializeString("published");
     bitmap->insert(value_published.data(), value_published.size(), tid, &ctx);
 
-    status = tx_manager_->commitTransaction(0, update_xid, &ctx);
+    status = update_conn->commit(&ctx);
     ASSERT_EQ(status, Status::OK);
 
     // Verify: old value should not be found, new value should be found
-    uint64_t verify_xid;
-    status = tx_manager_->beginTransaction(0, verify_xid, &ctx);
-    ASSERT_EQ(status, Status::OK);
+    std::unique_ptr<ConnectionContext> verify_conn;
+    status = db_->connect(verify_conn, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to connect for verify: " << ctx.message;
+    uint64_t verify_xid = verify_conn->getCurrentXid();
 
     std::vector<TID> draft_results;
     status = bitmap->find(value_draft.data(), value_draft.size(), verify_xid, &draft_results, &ctx);
@@ -343,6 +355,6 @@ TEST_F(BitmapDMLTest, UpdateScenario)
     EXPECT_LE(draft_results.size(), 0) << "Old value 'draft' should not be found after update";
     EXPECT_GE(published_results.size(), 1) << "New value 'published' should be found after update";
 
-    status = tx_manager_->commitTransaction(0, verify_xid, &ctx);
+    status = verify_conn->commit(&ctx);
     ASSERT_EQ(status, Status::OK);
 }

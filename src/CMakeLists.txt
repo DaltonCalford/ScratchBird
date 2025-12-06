@@ -143,6 +143,7 @@ target_include_directories(scratchbird_optimizer PUBLIC
 target_link_libraries(scratchbird_optimizer PUBLIC
     # Note: Not linking scratchbird_core to avoid circular dependency
     # scratchbird_core will link against scratchbird_optimizer instead
+    scratchbird_parser  # OPT-L2: Required for expressionToString in EXPLAIN
 )
 # Link OpenSSL if available for RAND_bytes in statistics_manager.cpp
 if(OPENSSL_FOUND)

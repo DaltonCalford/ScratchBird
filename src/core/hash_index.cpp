@@ -1111,8 +1111,11 @@ namespace scratchbird
 
             for (uint32_t bucket_page : unique_buckets)
             {
-                // Vacuum this bucket and its overflow chain
+                // STOR-L1: Vacuum this bucket and its overflow chain
+                // Track previous page to unlink empty overflow pages
                 uint32_t current_page = bucket_page;
+                uint32_t prev_page = 0;
+                bool is_first_page = true;
 
                 while (current_page != 0)
                 {
@@ -1120,6 +1123,8 @@ namespace scratchbird
                     status = buffer_pool_->pinPage(current_page, (void **)&page_data, ctx);
                     if (status != Status::OK)
                     {
+                        prev_page = current_page;
+                        is_first_page = false;
                         continue;
                     }
 
@@ -1155,10 +1160,44 @@ namespace scratchbird
 
                     uint32_t next_page = bucket->hbp_overflow_page;
 
-                    // If this overflow page is now empty, we could free it
-                    // For now, just mark it dirty
+                    // STOR-L1: Check if this overflow page is now empty and can be freed
+                    // Only free overflow pages (not the primary bucket page)
+                    if (!is_first_page && bucket->hbp_entry_count == 0)
+                    {
+                        // This overflow page is empty - unlink it from the chain
+                        // First, update the previous page's overflow pointer
+                        if (prev_page != 0)
+                        {
+                            uint8_t *prev_data = nullptr;
+                            Status prev_status = buffer_pool_->pinPage(prev_page, (void **)&prev_data, ctx);
+                            if (prev_status == Status::OK)
+                            {
+                                auto *prev_bucket = reinterpret_cast<SBHashBucketPage *>(prev_data);
+                                // Skip this empty page - point to the next one
+                                prev_bucket->hbp_overflow_page = next_page;
+                                buffer_pool_->unpinPage(prev_page, true, ctx);
+                            }
+                        }
+
+                        // Free this empty overflow page via page manager
+                        auto page_mgr = db_->page_manager();
+                        if (page_mgr)
+                        {
+                            // Mark page as free for reuse
+                            // Note: freePage marks the page in the free space map
+                            page_mgr->freePage(current_page, ctx);
+                        }
+
+                        buffer_pool_->unpinPage(current_page, true, ctx);
+                        // Don't update prev_page since we removed current_page
+                        current_page = next_page;
+                        continue;
+                    }
+
                     buffer_pool_->unpinPage(current_page, true, ctx);
 
+                    prev_page = current_page;
+                    is_first_page = false;
                     current_page = next_page;
                 }
             }
@@ -1217,7 +1256,86 @@ namespace scratchbird
                 stats.load_factor = (static_cast<double>(stats.num_tuples) / max_entries) * 100.0;
             }
 
-            stats.num_overflow_pages = 0; // Phase 3 Enhancement: Count overflow pages
+            // STOR-L2: Count overflow pages by traversing all buckets
+            stats.num_overflow_pages = 0;
+
+            // Re-pin meta page to get directory
+            status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            if (status == Status::OK)
+            {
+                meta = reinterpret_cast<SBHashIndexMetaPage *>(meta_data);
+                uint64_t dir_page = meta->hip_directory_page;
+                uint32_t global_depth = meta->hip_global_depth;
+                buffer_pool_->unpinPage(meta_page_, false, ctx);
+
+                if (dir_page != 0)
+                {
+                    // Pin directory page
+                    uint8_t *dir_data = nullptr;
+                    status = buffer_pool_->pinPage(dir_page, (void **)&dir_data, ctx);
+                    if (status == Status::OK)
+                    {
+                        auto *dir = reinterpret_cast<SBHashDirectoryPage *>(dir_data);
+                        uint32_t num_buckets = (1U << global_depth);
+
+                        // Track unique bucket pages to avoid double-counting
+                        std::vector<uint32_t> seen_buckets;
+                        seen_buckets.reserve(num_buckets);
+
+                        for (uint32_t i = 0; i < num_buckets; i++)
+                        {
+                            uint32_t bucket_page = dir->hdp_bucket_pointers[i];
+
+                            // Check if we've already counted this bucket
+                            bool already_seen = false;
+                            for (uint32_t seen : seen_buckets)
+                            {
+                                if (seen == bucket_page)
+                                {
+                                    already_seen = true;
+                                    break;
+                                }
+                            }
+
+                            if (already_seen)
+                            {
+                                continue;
+                            }
+                            seen_buckets.push_back(bucket_page);
+
+                            // Count overflow pages in this bucket's chain
+                            uint8_t *bucket_data = nullptr;
+                            status = buffer_pool_->pinPage(bucket_page, (void **)&bucket_data, ctx);
+                            if (status == Status::OK)
+                            {
+                                auto *bucket = reinterpret_cast<SBHashBucketPage *>(bucket_data);
+                                uint32_t overflow_page = bucket->hbp_overflow_page;
+                                buffer_pool_->unpinPage(bucket_page, false, ctx);
+
+                                // Walk the overflow chain
+                                while (overflow_page != 0)
+                                {
+                                    stats.num_overflow_pages++;
+
+                                    uint8_t *overflow_data = nullptr;
+                                    status = buffer_pool_->pinPage(overflow_page, (void **)&overflow_data, ctx);
+                                    if (status != Status::OK)
+                                    {
+                                        break;
+                                    }
+
+                                    auto *overflow = reinterpret_cast<SBHashBucketPage *>(overflow_data);
+                                    uint32_t current_overflow = overflow_page;
+                                    overflow_page = overflow->hbp_overflow_page;
+                                    buffer_pool_->unpinPage(current_overflow, false, ctx);
+                                }
+                            }
+                        }
+
+                        buffer_pool_->unpinPage(dir_page, false, ctx);
+                    }
+                }
+            }
 
             return stats;
         }

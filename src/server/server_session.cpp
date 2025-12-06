@@ -229,6 +229,9 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
             executor_->setConnectionContext(conn_ctx_.get());
         }
 
+        // Fire ON CONNECT database triggers (Firebird-style)
+        fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent::ON_CONNECT);
+
         // Send success response (use first 4 bytes of UUID as uint32 for wire protocol)
         uint32_t user_id_wire = 0;
         std::memcpy(&user_id_wire, user_id.bytes.data(), std::min<size_t>(4, user_id.bytes.size()));
@@ -247,6 +250,9 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
 
 core::Status ServerSession::handleDisconnect(const protocol::Message& msg, core::ErrorContext* ctx) {
     state_ = SessionState::CLOSING;
+
+    // Fire ON DISCONNECT database triggers (Firebird-style) before closing
+    fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent::ON_DISCONNECT);
 
     // Rollback any active transaction (if we have a connection context)
     if (conn_ctx_) {
@@ -306,6 +312,8 @@ core::Status ServerSession::handleTransaction(const protocol::Message& msg, core
                 status = conn_ctx_->startTransaction(false, core::IsolationLevel::SNAPSHOT, true, ctx);
                 if (status == core::Status::OK) {
                     state_ = SessionState::IN_TRANSACTION;
+                    // Fire ON TRANSACTION START database triggers (Firebird-style)
+                    fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent::ON_TRANSACTION_START);
                     result_msg = "BEGIN";
                 }
             }
@@ -313,6 +321,8 @@ core::Status ServerSession::handleTransaction(const protocol::Message& msg, core
 
         case protocol::MessageType::COMMIT:
             if (conn_ctx_) {
+                // Fire ON TRANSACTION COMMIT triggers BEFORE commit (Firebird-style)
+                fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent::ON_TRANSACTION_COMMIT);
                 status = conn_ctx_->commit(ctx);
                 if (status == core::Status::OK) {
                     state_ = SessionState::AUTHENTICATED;
@@ -324,6 +334,8 @@ core::Status ServerSession::handleTransaction(const protocol::Message& msg, core
 
         case protocol::MessageType::ROLLBACK:
             if (conn_ctx_) {
+                // Fire ON TRANSACTION ROLLBACK triggers BEFORE rollback (Firebird-style)
+                fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent::ON_TRANSACTION_ROLLBACK);
                 status = conn_ctx_->rollback(ctx);
                 state_ = SessionState::AUTHENTICATED;
                 stats_.transactions_rolled_back++;
@@ -332,11 +344,60 @@ core::Status ServerSession::handleTransaction(const protocol::Message& msg, core
             break;
 
         case protocol::MessageType::SAVEPOINT:
+            // NET-2: Handle SAVEPOINT
+            if (conn_ctx_) {
+                // Parse savepoint name from message payload
+                if (msg.getPayloadSize() >= sizeof(protocol::SavepointPayload)) {
+                    const auto* sp_payload = reinterpret_cast<const protocol::SavepointPayload*>(msg.getPayload());
+                    // Extract savepoint name (null-terminated, max 63 chars)
+                    std::string sp_name(sp_payload->savepoint_name,
+                                       strnlen(sp_payload->savepoint_name, sizeof(sp_payload->savepoint_name)));
+                    status = conn_ctx_->createSavepoint(sp_name, ctx);
+                    if (status == core::Status::OK) {
+                        result_msg = "SAVEPOINT";
+                    }
+                } else {
+                    sendError("Invalid savepoint message");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+            }
+            break;
+
         case protocol::MessageType::RELEASE_SAVEPOINT:
+            // NET-2: Handle RELEASE SAVEPOINT
+            if (conn_ctx_) {
+                if (msg.getPayloadSize() >= sizeof(protocol::SavepointPayload)) {
+                    const auto* sp_payload = reinterpret_cast<const protocol::SavepointPayload*>(msg.getPayload());
+                    std::string sp_name(sp_payload->savepoint_name,
+                                       strnlen(sp_payload->savepoint_name, sizeof(sp_payload->savepoint_name)));
+                    status = conn_ctx_->releaseSavepoint(sp_name, ctx);
+                    if (status == core::Status::OK) {
+                        result_msg = "RELEASE";
+                    }
+                } else {
+                    sendError("Invalid release savepoint message");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+            }
+            break;
+
         case protocol::MessageType::ROLLBACK_TO:
-            // Savepoints not yet implemented - return error
-            sendError("Savepoints not yet implemented", "0A000");
-            return core::Status::NOT_IMPLEMENTED;
+            // NET-2: Handle ROLLBACK TO SAVEPOINT
+            if (conn_ctx_) {
+                if (msg.getPayloadSize() >= sizeof(protocol::SavepointPayload)) {
+                    const auto* sp_payload = reinterpret_cast<const protocol::SavepointPayload*>(msg.getPayload());
+                    std::string sp_name(sp_payload->savepoint_name,
+                                       strnlen(sp_payload->savepoint_name, sizeof(sp_payload->savepoint_name)));
+                    status = conn_ctx_->rollbackToSavepoint(sp_name, ctx);
+                    if (status == core::Status::OK) {
+                        result_msg = "ROLLBACK";
+                    }
+                } else {
+                    sendError("Invalid rollback to savepoint message");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+            }
+            break;
 
         default:
             sendError("Unknown transaction type");
@@ -365,13 +426,39 @@ core::Status ServerSession::handlePing(const protocol::Message& msg, core::Error
 }
 
 core::Status ServerSession::handleCancel(const protocol::Message& msg, core::ErrorContext* ctx) {
-    // For now, just acknowledge - actual cancellation requires async execution
-    sendError("Query cancellation not implemented", "0A000");
-    return core::Status::OK;
+    // NET-M1: Query cancellation support
+    if (query_executing_.load(std::memory_order_acquire)) {
+        // A query is currently executing - request cancellation
+        if (executor_) {
+            executor_->requestCancellation();
+            // Send acknowledgement - the actual cancellation will happen asynchronously
+            // The executing query will detect the cancellation flag and abort
+            protocol::Message response = protocol::ProtocolCodec::buildCommandComplete("CANCEL", 0);
+            return protocol_session_->sendMessage(response, ctx);
+        }
+    }
+
+    // No query executing, nothing to cancel
+    protocol::Message response = protocol::ProtocolCodec::buildCommandComplete("CANCEL", 0);
+    return protocol_session_->sendMessage(response, ctx);
 }
 
 core::Status ServerSession::executeQuery(const std::string& sql, core::ErrorContext* ctx) {
     stats_.queries_executed++;
+
+    // NET-M1: Reset cancellation state and mark query as executing
+    if (executor_) {
+        executor_->resetCancellation();
+    }
+    query_executing_.store(true, std::memory_order_release);
+
+    // NET-M1: Scope guard to ensure query_executing_ is reset on exit
+    // This is a simple lambda-based scope guard
+    struct QueryExecutingGuard {
+        std::atomic<bool>& flag;
+        QueryExecutingGuard(std::atomic<bool>& f) : flag(f) {}
+        ~QueryExecutingGuard() { flag.store(false, std::memory_order_release); }
+    } guard(query_executing_);
 
     // Reset parser components for reuse
     ast_arena_->reset();
@@ -620,6 +707,58 @@ bool ServerSession::authenticate(const std::string& username, const std::string&
     user_id = user.user_id;
     is_superuser = user.is_superuser;
     return true;
+}
+
+bool ServerSession::fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent event) {
+    // Get catalog manager
+    auto* catalog = database_->catalog_manager();
+    if (!catalog) {
+        // No catalog - no triggers to fire
+        return true;
+    }
+
+    // Get all triggers for this event (already sorted by position)
+    std::vector<core::CatalogManager::DatabaseTriggerInfo> triggers;
+    core::ErrorContext ctx;
+    core::Status status = catalog->listDatabaseTriggers(event, triggers, &ctx);
+
+    if (status != core::Status::OK) {
+        // Failed to list triggers - log warning but don't fail the operation
+        std::cerr << "Warning: Failed to list database triggers for event\n";
+        return true;
+    }
+
+    // Execute each active trigger in order
+    for (const auto& trigger : triggers) {
+        if (!trigger.active) {
+            continue;  // Skip inactive triggers
+        }
+
+        // Execute the trigger procedure using the Executor
+        // Create a temporary executor for trigger execution
+        sblr::Executor trigger_executor(database_);
+
+        // Set connection context if available (for security and transaction state)
+        if (conn_ctx_) {
+            trigger_executor.setConnectionContext(conn_ctx_.get());
+        }
+
+        // Call the procedure by name (database trigger procedures have no arguments)
+        auto result = trigger_executor.callProcedureByName(trigger.procedure_name);
+
+        if (!result.success()) {
+            // Trigger execution failed
+            std::cerr << "Database trigger '" << trigger.trigger_name
+                      << "' failed: " << result.error() << "\n";
+            return false;  // Abort the operation
+        }
+
+        // Log successful trigger fire (can be removed in production)
+        std::cerr << "Database trigger '" << trigger.trigger_name
+                  << "' executed procedure: " << trigger.procedure_name << "()\n";
+    }
+
+    return true;  // All triggers executed successfully
 }
 
 // ============================================================================

@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <vector>
 #include <thread>
+#include <atomic>
+#include <unistd.h>
 
 using namespace scratchbird::core;
 
@@ -15,6 +17,13 @@ class TablespaceAutoextendTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        // Generate unique file prefix per test to avoid conflicts during parallel execution
+        test_id_ = std::to_string(getpid()) + "_" + std::to_string(test_counter_++);
+        db_path_ = "/tmp/test_autoextend_" + test_id_ + ".db";
+        ts_autoextend_ = "test_ts_autoextend_" + test_id_ + ".sbts";
+        ts_maxsize_ = "test_ts_maxsize_" + test_id_ + ".sbts";
+        ts_concurrent_ = "test_ts_concurrent_" + test_id_ + ".sbts";
+        ts_disabled_ = "test_ts_disabled_" + test_id_ + ".sbts";
         cleanup_test_files();
     }
 
@@ -25,22 +34,30 @@ protected:
 
     void cleanup_test_files()
     {
-        std::filesystem::remove("/tmp/test_autoextend.db");
-        std::filesystem::remove("test_ts_autoextend.sbts");
-        std::filesystem::remove("test_ts_maxsize.sbts");
-        std::filesystem::remove("test_ts_concurrent.sbts");
-        std::filesystem::remove("test_ts_disabled.sbts");
+        std::filesystem::remove(db_path_);
+        std::filesystem::remove(ts_autoextend_);
+        std::filesystem::remove(ts_maxsize_);
+        std::filesystem::remove(ts_concurrent_);
+        std::filesystem::remove(ts_disabled_);
     }
+
+    std::string test_id_;
+    std::string db_path_;
+    std::string ts_autoextend_;
+    std::string ts_maxsize_;
+    std::string ts_concurrent_;
+    std::string ts_disabled_;
+    static inline std::atomic<int> test_counter_{0};
 };
 
 // Test 1: Basic autoextend on page allocation
 TEST_F(TablespaceAutoextendTest, AutoextendOnAllocation)
 {
     // Create database
-    ASSERT_EQ(Database::create("/tmp/test_autoextend.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create(db_path_, 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("/tmp/test_autoextend.db"), Status::OK);
+    ASSERT_EQ(db.open(db_path_), Status::OK);
 
     PageManager *page_mgr = db.page_manager();
     ASSERT_NE(page_mgr, nullptr);
@@ -53,7 +70,7 @@ TEST_F(TablespaceAutoextendTest, AutoextendOnAllocation)
     config.prealloc_pages = 2;      // Start with only 2 pages (16KB)
 
     Status status = page_mgr->createTablespace(
-        1, "test_ts_autoextend", "test_ts_autoextend.sbts", config, nullptr
+        1, "test_ts_autoextend", ts_autoextend_.c_str(), config, nullptr
     );
     ASSERT_EQ(status, Status::OK) << "Failed to create tablespace";
 
@@ -104,10 +121,10 @@ TEST_F(TablespaceAutoextendTest, AutoextendOnAllocation)
 // Test 2: MAXSIZE enforcement
 TEST_F(TablespaceAutoextendTest, MaxsizeEnforcement)
 {
-    ASSERT_EQ(Database::create("/tmp/test_autoextend.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create(db_path_, 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("/tmp/test_autoextend.db"), Status::OK);
+    ASSERT_EQ(db.open(db_path_), Status::OK);
 
     PageManager *page_mgr = db.page_manager();
     ASSERT_NE(page_mgr, nullptr);
@@ -120,7 +137,7 @@ TEST_F(TablespaceAutoextendTest, MaxsizeEnforcement)
     config.prealloc_pages = 2;
 
     Status status = page_mgr->createTablespace(
-        1, "test_ts_maxsize", "test_ts_maxsize.sbts", config, nullptr
+        1, "test_ts_maxsize", ts_maxsize_.c_str(), config, nullptr
     );
     ASSERT_EQ(status, Status::OK);
 
@@ -167,10 +184,10 @@ TEST_F(TablespaceAutoextendTest, MaxsizeEnforcement)
 // Test 3: Concurrent allocations triggering extension (thread safety)
 TEST_F(TablespaceAutoextendTest, ConcurrentExtension)
 {
-    ASSERT_EQ(Database::create("/tmp/test_autoextend.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create(db_path_, 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("/tmp/test_autoextend.db"), Status::OK);
+    ASSERT_EQ(db.open(db_path_), Status::OK);
 
     PageManager *page_mgr = db.page_manager();
     ASSERT_NE(page_mgr, nullptr);
@@ -183,7 +200,7 @@ TEST_F(TablespaceAutoextendTest, ConcurrentExtension)
     config.prealloc_pages = 2;
 
     Status status = page_mgr->createTablespace(
-        1, "test_ts_concurrent", "test_ts_concurrent.sbts", config, nullptr
+        1, "test_ts_concurrent", ts_concurrent_.c_str(), config, nullptr
     );
     ASSERT_EQ(status, Status::OK);
 
@@ -259,10 +276,10 @@ TEST_F(TablespaceAutoextendTest, ConcurrentExtension)
 // Test 4: Extension failure handling (autoextend disabled)
 TEST_F(TablespaceAutoextendTest, AutoextendDisabled)
 {
-    ASSERT_EQ(Database::create("/tmp/test_autoextend.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create(db_path_, 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("/tmp/test_autoextend.db"), Status::OK);
+    ASSERT_EQ(db.open(db_path_), Status::OK);
 
     PageManager *page_mgr = db.page_manager();
     ASSERT_NE(page_mgr, nullptr);
@@ -275,7 +292,7 @@ TEST_F(TablespaceAutoextendTest, AutoextendDisabled)
     config.prealloc_pages = 5;  // Only 5 pages (page 0,1 = header/FSM, 3 data pages)
 
     Status status = page_mgr->createTablespace(
-        1, "test_ts_disabled", "test_ts_disabled.sbts", config, nullptr
+        1, "test_ts_disabled", ts_disabled_.c_str(), config, nullptr
     );
     ASSERT_EQ(status, Status::OK);
 
@@ -311,10 +328,10 @@ TEST_F(TablespaceAutoextendTest, AutoextendDisabled)
 // Test 5: Verify statistics tracking
 TEST_F(TablespaceAutoextendTest, StatisticsTracking)
 {
-    ASSERT_EQ(Database::create("/tmp/test_autoextend.db", 8192), Status::OK);
+    ASSERT_EQ(Database::create(db_path_, 8192), Status::OK);
 
     Database db;
-    ASSERT_EQ(db.open("/tmp/test_autoextend.db"), Status::OK);
+    ASSERT_EQ(db.open(db_path_), Status::OK);
 
     PageManager *page_mgr = db.page_manager();
     CatalogManager *catalog = db.catalog_manager();
@@ -329,7 +346,7 @@ TEST_F(TablespaceAutoextendTest, StatisticsTracking)
     config.prealloc_pages = 2;
 
     Status status = page_mgr->createTablespace(
-        1, "test_ts_autoextend", "test_ts_autoextend.sbts", config, nullptr
+        1, "test_ts_autoextend", ts_autoextend_.c_str(), config, nullptr
     );
     ASSERT_EQ(status, Status::OK);
 

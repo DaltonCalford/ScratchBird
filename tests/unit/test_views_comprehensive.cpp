@@ -53,10 +53,10 @@ TEST_F(ViewsTest, SelectWithWhere)
 }
 
 // Test 4: View with complex WHERE (multiple conditions)
-// SKIPPED: Parser doesn't support AND in WHERE yet
-TEST_F(ViewsTest, DISABLED_SelectWithComplexWhere)
+// Note: Using is_active instead of 'active' since ACTIVE is a reserved keyword for triggers
+TEST_F(ViewsTest, SelectWithComplexWhere)
 {
-    std::string sql = "CREATE VIEW filtered_users AS SELECT name FROM users WHERE age > 18 AND active = true;";
+    std::string sql = "CREATE VIEW filtered_users AS SELECT name FROM users WHERE age > 18 AND is_active = 1;";
     parseAndValidate(sql, "AND");
     std::cout << "✓ Complex WHERE clause view parsed correctly" << std::endl;
 }
@@ -95,8 +95,7 @@ TEST_F(ViewsTest, SelectWithLimit)
 }
 
 // Test 8: View definition preserves column aliases
-// SKIPPED: Parser doesn't support AS aliases yet
-TEST_F(ViewsTest, DISABLED_ColumnAliases)
+TEST_F(ViewsTest, ColumnAliases)
 {
     std::string sql = "CREATE VIEW user_info AS SELECT id as user_id, name as user_name FROM users;";
     parseAndValidate(sql, "user_id");
@@ -107,12 +106,13 @@ TEST_F(ViewsTest, DISABLED_ColumnAliases)
 TEST_F(ViewsTest, NestedViewDefinition)
 {
     // First create a view definition
-    std::string view1_sql = "CREATE VIEW active_users AS SELECT id, name FROM users WHERE active = 1;";
-    parseAndValidate(view1_sql, "active");
+    // Note: 'active' is a reserved keyword (for triggers), so we use 'is_active' instead
+    std::string view1_sql = "CREATE VIEW enabled_users AS SELECT id, name FROM users WHERE is_enabled = 1;";
+    parseAndValidate(view1_sql, "is_enabled");
 
     // Then create a view that would reference the first view
     // (In reality, this would need the first view to exist in the catalog)
-    std::string view2_sql = "CREATE VIEW user_count AS SELECT COUNT(*) FROM active_users;";
+    std::string view2_sql = "CREATE VIEW user_count AS SELECT COUNT(*) FROM enabled_users;";
     parseAndValidate(view2_sql, "COUNT");
     std::cout << "✓ Nested view definition parsed correctly" << std::endl;
 }
@@ -142,8 +142,7 @@ TEST_F(ViewsTest, SubqueryInWhere)
 }
 
 // Test 12: View with DISTINCT
-// SKIPPED: Parser doesn't support DISTINCT yet
-TEST_F(ViewsTest, DISABLED_SelectDistinct)
+TEST_F(ViewsTest, SelectDistinct)
 {
     std::string sql = "CREATE VIEW unique_statuses AS SELECT DISTINCT status FROM users;";
     parseAndValidate(sql, "DISTINCT");
@@ -165,8 +164,7 @@ TEST_F(ViewsTest, InvalidEmptyName)
 }
 
 // Test 14: Very long view definition
-// SKIPPED: Contains AND which isn't supported yet
-TEST_F(ViewsTest, DISABLED_LongViewDefinition)
+TEST_F(ViewsTest, LongViewDefinition)
 {
     std::string sql = "CREATE VIEW detailed_view AS SELECT id, name, email, status, created_at, updated_at, "
                      "age, city, country, subscription_level FROM users WHERE status = 1 AND age > 18;";
@@ -175,8 +173,7 @@ TEST_F(ViewsTest, DISABLED_LongViewDefinition)
 }
 
 // Test 15: View with calculated columns
-// SKIPPED: Expressions and AS aliases not supported yet
-TEST_F(ViewsTest, DISABLED_CalculatedColumns)
+TEST_F(ViewsTest, CalculatedColumns)
 {
     std::string sql = "CREATE VIEW user_ages AS SELECT name, 2024 - birth_year AS age FROM users;";
     parseAndValidate(sql, "birth_year");

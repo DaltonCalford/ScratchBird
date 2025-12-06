@@ -13,7 +13,9 @@ class CharsetCatalogTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        test_db_path_ = "/tmp/test_charset_catalog.sbdb";
+        // Use unique path per test to avoid conflicts during parallel execution
+        test_db_path_ = "/tmp/test_charset_catalog_" + std::to_string(getpid()) + "_" +
+                        std::to_string(test_counter_++) + ".sbdb";
         if (std::filesystem::exists(test_db_path_))
         {
             std::filesystem::remove(test_db_path_);
@@ -50,6 +52,7 @@ protected:
 
     std::string test_db_path_;
     std::unique_ptr<Database> db_;
+    static inline std::atomic<int> test_counter_{0};
 };
 
 // ========== Character Set Tests ==========

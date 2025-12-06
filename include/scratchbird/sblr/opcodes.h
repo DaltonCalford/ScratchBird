@@ -388,6 +388,11 @@ namespace scratchbird
             // Additional date/time functions (Alpha 1 - Missing Functions Phase 5) - 0x6C range
             EXT_FUNC_AGE = 0x6C,           // AGE(timestamp [, timestamp]) - age between timestamps
 
+            // Database trigger opcodes (Firebird-style) - 0x6D-0x6F range
+            EXT_CREATE_DB_TRIGGER = 0x6D,  // CREATE TRIGGER (database trigger)
+            EXT_DROP_DB_TRIGGER = 0x6E,    // DROP TRIGGER (database trigger)
+            EXT_FIRE_DB_TRIGGER = 0x6F,    // Internal: Fire database trigger
+
             // Trigger opcodes (Phase 2 Wave 2 - Agent C) - 0x70-0x72 range
             EXT_CREATE_TRIGGER = 0x70,     // CREATE TRIGGER
             EXT_DROP_TRIGGER = 0x71,       // DROP TRIGGER
@@ -399,6 +404,7 @@ namespace scratchbird
             EXT_SUBQUERY_IN = 0x75,        // IN subquery (membership test)
             EXT_SUBQUERY_NOT_IN = 0x76,    // NOT IN subquery (negated membership)
             EXT_SUBQUERY_END = 0x77,       // End of subquery marker
+            EXT_SUBQUERY_ARRAY = 0x5B,     // WP-6 PARSE-M3: ARRAY(SELECT ...) subquery
 
             // Additional spatial functions (Task 9.3 - G4) - 0x78-0x8F range
             EXT_ST_DISJOINT = 0x78,        // ST_Disjoint(geom1, geom2) - are geometries disjoint?
@@ -753,6 +759,9 @@ namespace scratchbird
             EXT_COLUMNSTORE_SCAN = 0x2D,   // Columnstore scan column
             EXT_CURSOR_CLOSE = 0x2E,       // CLOSE cursor_name - Close cursor and free resources
 
+            // IN value list opcodes (WP-6 PARSE-3)
+            EXT_IN_LIST = 0x2F,            // IN (val1, val2, ...) - membership test in value list
+
             // Bit manipulation - Byte/Bit access (0x06-0x09)
             EXT_GET_BYTE = 0x06,           // GET_BYTE(bytes, offset) - extract byte at offset
             EXT_SET_BYTE = 0x07,           // SET_BYTE(bytes, offset, value) - set byte at offset
@@ -799,6 +808,54 @@ namespace scratchbird
 
             // Statistics and query optimization (P1-10) - 0x57 range
             EXT_ANALYZE = 0x57,            // ANALYZE table_name [COLUMN column_name] [SAMPLE sample_rate]
+
+            // SAVEPOINT support (Alpha Phase 1 - SAVEPOINT) - 0x58-0x5A range
+            EXT_SAVEPOINT = 0x58,          // SAVEPOINT savepoint_name
+            EXT_RELEASE_SAVEPOINT = 0x59,  // RELEASE SAVEPOINT savepoint_name
+            EXT_ROLLBACK_TO_SAVEPOINT = 0x5A, // ROLLBACK TO SAVEPOINT savepoint_name
+
+            // User Defined Types (Alpha Phase 1 - UDT) - 0x5B-0x5C range
+            EXT_CREATE_TYPE = 0x5B,        // CREATE TYPE type_name AS {ENUM|RANGE|composite}
+            EXT_CREATE_DOMAIN = 0x5C,      // CREATE DOMAIN domain_name AS type [constraints]
+
+            // Procedure invocation (PSQL) - 0x5D
+            EXT_CALL = 0x5D,               // CALL procedure_name(args...) - invoke stored procedure
+
+            // Extended SHOW commands (Firebird ISQL compatibility) - 0x5E-0x72 range
+            // Note: These are extended opcodes, prefixed with EXTENDED_OPCODE (0xFF)
+            EXT_SHOW_TABLE = 0x5E,         // SHOW TABLE object_name - detailed table info
+            EXT_SHOW_INDEX = 0x5F,         // SHOW INDEX object_name - detailed index info
+            EXT_SHOW_TRIGGER = 0x60,       // SHOW TRIGGER object_name - trigger definition
+            EXT_SHOW_PROCEDURE = 0x61,     // SHOW PROCEDURE object_name - procedure definition
+            EXT_SHOW_FUNCTION = 0x62,      // SHOW FUNCTION object_name - function definition
+            EXT_SHOW_VIEW = 0x63,          // SHOW VIEW object_name - view definition
+            EXT_SHOW_DOMAIN = 0x64,        // SHOW DOMAIN object_name - domain definition
+            EXT_SHOW_GENERATOR = 0x65,     // SHOW GENERATOR object_name - sequence/generator info
+            EXT_SHOW_SCHEMA = 0x66,        // SHOW SCHEMA [object_name] - schema listing or details
+            EXT_SHOW_ROLE = 0x67,          // SHOW ROLE object_name - role definition
+            EXT_SHOW_GRANTS = 0x68,        // SHOW GRANTS [FOR object_name] - privilege grants
+            EXT_SHOW_CHECKS = 0x69,        // SHOW CHECKS object_name - check constraints
+            EXT_SHOW_COLLATIONS = 0x6A,    // SHOW COLLATIONS [LIKE pattern] - available collations
+            EXT_SHOW_COMMENTS = 0x6B,      // SHOW COMMENTS object_name - object comments/remarks
+            EXT_SHOW_DEPENDENCIES = 0x6C,  // SHOW DEPENDENCIES object_name - object dependencies
+            EXT_SHOW_PACKAGE = 0x6D,       // SHOW PACKAGE object_name - package definition
+            EXT_SHOW_SYSTEM = 0x6E,        // SHOW SYSTEM - system information
+            EXT_SHOW_SQL_DIALECT = 0x6F,   // SHOW SQL DIALECT - current SQL dialect
+            EXT_SHOW_VERSION = 0x70,       // SHOW VERSION - database version
+            EXT_SHOW_DATABASE = 0x71,      // SHOW DATABASE - current database info
+
+            // Session SET commands (Firebird ISQL compatibility) - 0x72-0x74 range
+            EXT_SET_SQL_DIALECT = 0x72,    // SET SQL DIALECT n - set SQL dialect (1, 2, or 3)
+            EXT_SET_NAMES = 0x73,          // SET NAMES charset_name - set connection charset
+            EXT_SET_LOCAL_TIMEOUT = 0x74,  // SET LOCAL_TIMEOUT n - set statement timeout in seconds
+
+            // Schema navigation SHOW commands - 0x75-0x7A range
+            EXT_SHOW_SCHEMA_PATH = 0x75,   // SHOW SCHEMA PATH - full path to current schema
+            EXT_SHOW_SCHEMA_TREE = 0x76,   // SHOW SCHEMA TREE [DEPTH n] - schema hierarchy
+            EXT_SHOW_SEARCH_PATH = 0x77,   // SHOW SEARCH PATH - current search path
+            EXT_SHOW_LOCATION = 0x78,      // SHOW LOCATION OF [type] name - find object in search path
+            EXT_SHOW_RESOLVED = 0x79,      // SHOW RESOLVED name - which object search path resolves to
+            EXT_SHOW_OBJECTS = 0x7A,       // SHOW OBJECTS - all objects in current/specified schema
         };
 
         /**

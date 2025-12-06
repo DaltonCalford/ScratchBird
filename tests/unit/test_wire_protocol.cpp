@@ -15,6 +15,8 @@
 #include <cstring>
 #include <thread>
 #include <chrono>
+#include <atomic>
+#include <unistd.h>
 
 #include "scratchbird/protocol/wire_protocol.h"
 #include "scratchbird/server/ipc_server.h"
@@ -582,9 +584,11 @@ TEST_F(UtilityFunctionTest, SessionIdToString) {
 class ProtocolSessionTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // Use unique port for each test
-        static std::atomic<uint16_t> port_counter{16500};
-        test_port_ = port_counter++;
+        // Use unique port for each test, based on PID to avoid conflicts during parallel execution
+        // Each process gets a unique port range: base + (pid % 1000) * 10 + counter % 10
+        static std::atomic<uint16_t> port_counter{0};
+        uint16_t base_port = 30000 + (static_cast<uint16_t>(getpid()) % 1000) * 10;
+        test_port_ = base_port + (port_counter++ % 10);
     }
 
     void TearDown() override {}

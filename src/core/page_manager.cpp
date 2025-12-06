@@ -1697,7 +1697,7 @@ namespace scratchbird::core
                 static_cast<unsigned long>(new_total_pages),
                 static_cast<unsigned long>(header->free_pages));
 
-        // Step 10: Update pg_tablespace statistics (Phase 3 Task 3.1.4)
+        // Step 10: Update sb_tablespace statistics (Phase 3 Task 3.1.4)
         // Calculate sizes in MB
         uint64_t total_size_mb = (new_total_pages * page_size_) / (1024 * 1024);
         uint64_t free_size_mb = (header->free_pages * page_size_) / (1024 * 1024);

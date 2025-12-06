@@ -275,6 +275,7 @@ namespace scratchbird
             {"ENABLE", TokenType::KW_ENABLE},      // Security Phase 3.4: ENABLE ROW LEVEL SECURITY
             {"DISABLE", TokenType::KW_DISABLE},    // Security Phase 3.4: DISABLE ROW LEVEL SECURITY
             {"FORCE", TokenType::KW_FORCE},
+            {"CALL", TokenType::KW_CALL},          // PSQL - Call stored procedure
             {"CASCADE", TokenType::KW_CASCADE},    // ALPHA Phase 1 - DDL Modifications
             {"RESTRICT", TokenType::KW_RESTRICT},  // ALPHA Phase 1 - DDL Modifications
             {"DROP", TokenType::KW_DROP},
@@ -300,6 +301,7 @@ namespace scratchbird
             {"CONCURRENTLY", TokenType::KW_CONCURRENTLY}, // ALPHA Phase 1 - Materialized Views
             {"CHECK", TokenType::KW_CHECK},            // ALPHA Phase 1 - Views (WITH CHECK OPTION)
             {"OPTION", TokenType::KW_OPTION},          // ALPHA Phase 1 - Views (WITH CHECK OPTION)
+            {"ADMIN", TokenType::KW_ADMIN},            // WP-6 PARSE-L1: WITH ADMIN OPTION for GRANT ROLE
             {"ON", TokenType::KW_ON},
             {"OFF", TokenType::KW_OFF},
             {"ALTER", TokenType::KW_ALTER},   // Phase 2 Task 2.2
@@ -378,6 +380,9 @@ namespace scratchbird
             {"PUBLIC", TokenType::KW_PUBLIC},
             {"USAGE", TokenType::KW_USAGE},
             {"CONNECT", TokenType::KW_CONNECT},
+            {"DISCONNECT", TokenType::KW_DISCONNECT},  // Database triggers: ON DISCONNECT
+            {"ACTIVE", TokenType::KW_ACTIVE},          // Database triggers: CREATE TRIGGER name ACTIVE
+            {"INACTIVE", TokenType::KW_INACTIVE},      // Database triggers: CREATE TRIGGER name INACTIVE
             {"REFERENCES", TokenType::KW_REFERENCES},
             // Security Phase 3.4: Row-level security
             {"POLICY", TokenType::KW_POLICY},
@@ -399,6 +404,54 @@ namespace scratchbird
             {"SCHEMAS", TokenType::KW_SCHEMAS},
             {"COLUMNS", TokenType::KW_COLUMNS},
             {"INDEXES", TokenType::KW_INDEXES},
+
+            // UPSERT/ON CONFLICT (INSERT ... ON CONFLICT)
+            {"CONFLICT", TokenType::KW_CONFLICT},
+            {"DO", TokenType::KW_DO},
+            {"NOTHING", TokenType::KW_NOTHING},
+            {"EXCLUDED", TokenType::KW_EXCLUDED},
+
+            // LATERAL JOIN
+            {"LATERAL", TokenType::KW_LATERAL},
+
+            // STRING_AGG aggregate function
+            {"STRING_AGG", TokenType::KW_STRING_AGG},
+            {"GROUP_CONCAT", TokenType::KW_GROUP_CONCAT},
+            {"WITHIN", TokenType::KW_WITHIN},
+
+            // FILTER clause for aggregates
+            {"FILTER", TokenType::KW_FILTER},
+
+            // NTILE window function
+            {"NTILE", TokenType::KW_NTILE},
+
+            // SAVEPOINT transaction control
+            {"SAVEPOINT", TokenType::KW_SAVEPOINT},
+            {"RELEASE", TokenType::KW_RELEASE},
+
+            // User Defined Types
+            {"COMPOSITE", TokenType::KW_COMPOSITE},
+            {"ENUM", TokenType::KW_ENUM},
+            {"DOMAIN", TokenType::KW_DOMAIN},
+            // Note: RANGE already exists for window frame mode
+            {"SUBTYPE", TokenType::KW_SUBTYPE},
+
+            // Extended SHOW/SET keywords (Firebird ISQL compatibility)
+            {"DIALECT", TokenType::KW_DIALECT},
+            {"GENERATOR", TokenType::KW_GENERATOR},
+            {"DEPENDENCIES", TokenType::KW_DEPENDENCIES},
+            {"COLLATIONS", TokenType::KW_COLLATIONS},
+            {"COMMENTS", TokenType::KW_COMMENTS},
+            {"CHECKS", TokenType::KW_CHECKS},
+            {"GRANTS", TokenType::KW_GRANTS},
+            {"SYSTEM", TokenType::KW_SYSTEM},
+            {"PACKAGE", TokenType::KW_PACKAGE},
+            {"NAMES", TokenType::KW_NAMES},
+            {"LOCAL_TIMEOUT", TokenType::KW_LOCAL_TIMEOUT},
+            {"SCHEMA", TokenType::KW_SCHEMA},
+            {"VERSION", TokenType::KW_VERSION},
+            // Schema navigation keywords - note: PATH, TREE, DEPTH, etc. are NOT reserved keywords
+            // They are handled contextually in the parser to avoid conflicts with common column names
         };
 
         // Case-insensitive string comparison
@@ -763,7 +816,8 @@ namespace scratchbird
 
             size_t length = current_pos_ - start_pos;
             StringPool::StringId id = string_pool_.intern(value);
-            return Token::makeIdentifier(start_loc, length, id);
+            // Quoted identifiers are delimited (case-sensitive in Firebird SQL)
+            return Token::makeIdentifier(start_loc, length, id, true /* delimited */);
         }
 
         Token Lexer::scanOperator()
@@ -827,8 +881,14 @@ namespace scratchbird
                     advance();
                     return Token::makeOperator(start_loc, 1, TokenType::DOT);
                 case ':':
-                    // : is used in :: for type casting
+                    // : is used in :: for type casting, := for PL/SQL assignment
                     advance();
+                    if (currentChar() == '=')
+                    {
+                        // WP-6 PARSE-2: := assignment operator
+                        advance();
+                        return Token::makeOperator(start_loc, 2, TokenType::COLON_EQUALS);
+                    }
                     return Token::makeOperator(start_loc, 1, TokenType::COLON);
                 case '=':
                     advance();

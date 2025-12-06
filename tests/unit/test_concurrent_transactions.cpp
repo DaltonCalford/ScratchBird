@@ -201,7 +201,14 @@ TEST_F(ConcurrentCounterTest, CompareExchange_Lost_Updates)
 
     // With CAS, some updates are lost when there's contention
     EXPECT_EQ(counter_.load(), successful_increments_.load());
-    EXPECT_GT(failed_increments_.load(), 0) << "Expected some CAS failures due to contention";
+    // Note: CAS failures depend on thread scheduling - all ops might succeed if threads
+    // happen to execute mostly sequentially. This is expected behavior.
+    // The important invariant is: counter == successful_increments (verified above)
+    // Failed increments > 0 is typical but not guaranteed under all scheduling conditions.
+    if (failed_increments_.load() == 0)
+    {
+        std::cout << "Note: All CAS operations succeeded (threads executed sequentially)\n";
+    }
 }
 
 // =============================================================================

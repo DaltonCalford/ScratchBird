@@ -164,56 +164,109 @@ std::vector<MVCandidate> MVRewriter::findCandidates(const QueryPattern& pattern,
     uint64_t now_timestamp = std::chrono::duration_cast<std::chrono::seconds>(
         now.time_since_epoch()).count();
 
-    // Get all views from catalog
-    // Note: We need to iterate through the catalog to find materialized views
-    // Since getAllViews() doesn't exist, we'll use a simpler approach:
-    // Check if any of the queried tables have associated MVs
-
-    for (const auto& table_id : pattern.base_table_ids)
+    // OPT-4: Get all materialized views from catalog
+    std::vector<core::CatalogManager::ViewInfo> all_mvs;
+    auto status = catalog->getAllMaterializedViews(all_mvs, ctx);
+    if (status == core::Status::OK && !all_mvs.empty())
     {
-        // Look for views that reference this table
-        core::CatalogManager::TableInfo table_info;
-        auto status = catalog->getTable(table_id, table_info, ctx);
-        if (status != core::Status::OK)
+        DEBUG_LOG_DB("MVRewriter: Found " + std::to_string(all_mvs.size()) + " materialized views in catalog");
+
+        for (const auto& mv_info : all_mvs)
         {
-            continue;
+            // Try to extract pattern from MV definition
+            QueryPattern mv_pattern;
+            if (extractPatternFromDefinition(mv_info.definition, mv_pattern))
+            {
+                if (checkSubsumption(mv_pattern, pattern))
+                {
+                    MVCandidate candidate;
+                    candidate.mv_info = mv_info;
+                    candidate.mv_pattern = mv_pattern;
+
+                    // OPT-M9: Calculate staleness from last_refresh_time
+                    if (mv_info.last_refresh_time > 0)
+                    {
+                        candidate.staleness_seconds = static_cast<double>(now_timestamp - mv_info.last_refresh_time);
+                    }
+                    else
+                    {
+                        candidate.staleness_seconds = 0.0;  // Never refreshed = treat as current
+                    }
+
+                    // OPT-M10: Estimate cost using statistics if available
+                    if (stats_manager_ && !mv_pattern.base_table_ids.empty())
+                    {
+                        double original_cost = estimateOriginalCost(mv_pattern, ctx);
+                        double mv_cost_factor = mv_pattern.is_aggregate ? 0.15 : 0.40;
+                        candidate.estimated_cost = original_cost * mv_cost_factor;
+                        if (candidate.estimated_cost < 10.0)
+                        {
+                            candidate.estimated_cost = 10.0;
+                        }
+                    }
+                    else
+                    {
+                        candidate.estimated_cost = 50.0;
+                    }
+
+                    // Check match type
+                    candidate.is_exact_match = columnSetsMatch(mv_pattern.select_columns, pattern.select_columns);
+                    candidate.is_subsumption_match = !candidate.is_exact_match &&
+                        columnSetContains(mv_pattern.select_columns, pattern.select_columns);
+
+                    candidates.push_back(candidate);
+                }
+            }
         }
-
-        // Search for materialized views by schema
-        // This is a simplified implementation - in production we'd have
-        // a proper MV registry
-        (void)table_info;  // Schema lookup would go here
-
-        // For now, we'll check if there's a view with a matching pattern
-        // A full implementation would maintain a registry of MVs indexed by
-        // their base tables
     }
 
-    // Fallback: Check pattern cache for any pre-registered MVs
-    // In a full implementation, MVs would be registered when created
-    // and indexed by the tables they reference
-
+    // Also check pattern cache for any pre-registered MVs
     for (const auto& [mv_id, mv_pattern] : mv_pattern_cache_)
     {
         if (checkSubsumption(mv_pattern, pattern))
         {
-            // Get MV info by ID - we need to get the view using getViewIdByName or similar
-            // Since we cached the pattern with the ID, use our default schema
+            // OPT-5: Get MV info by ID using getViewById
             core::CatalogManager::ViewInfo mv_info;
+            status = catalog->getViewById(mv_id, mv_info, ctx);
 
-            // Note: In a full implementation, we'd store the schema ID with the cached pattern
-            // For now, skip if we can't retrieve the view info
-            // This is a simplified implementation - MV info would be cached with pattern
-
-            // Create a candidate with cached info
             MVCandidate candidate;
             candidate.mv_pattern = mv_pattern;
 
-            // Calculate staleness (using a placeholder since we don't have full view info)
-            candidate.staleness_seconds = 0.0;  // Assume fresh for cached patterns
+            if (status == core::Status::OK)
+            {
+                candidate.mv_info = mv_info;
 
-            // Estimate cost using a default
-            candidate.estimated_cost = 50.0;  // Default low cost for MVs
+                // OPT-M9: Calculate staleness from last_refresh_time
+                if (mv_info.last_refresh_time > 0)
+                {
+                    candidate.staleness_seconds = static_cast<double>(now_timestamp - mv_info.last_refresh_time);
+                }
+                else
+                {
+                    candidate.staleness_seconds = 0.0;
+                }
+            }
+            else
+            {
+                // Fallback if view info not found - assume fresh
+                candidate.staleness_seconds = 0.0;
+            }
+
+            // OPT-M10: Estimate cost using statistics if available
+            if (stats_manager_ && !mv_pattern.base_table_ids.empty())
+            {
+                double original_cost = estimateOriginalCost(mv_pattern, ctx);
+                double mv_cost_factor = mv_pattern.is_aggregate ? 0.15 : 0.40;
+                candidate.estimated_cost = original_cost * mv_cost_factor;
+                if (candidate.estimated_cost < 10.0)
+                {
+                    candidate.estimated_cost = 10.0;
+                }
+            }
+            else
+            {
+                candidate.estimated_cost = 50.0;
+            }
 
             // Check match type
             candidate.is_exact_match = columnSetsMatch(mv_pattern.select_columns, pattern.select_columns);
@@ -505,6 +558,46 @@ QueryPattern MVRewriter::parseMVPattern(const core::CatalogManager::ViewInfo& mv
     }
 
     return pattern;
+}
+
+bool MVRewriter::extractPatternFromDefinition(const std::string& definition,
+                                               QueryPattern& pattern_out)
+{
+    // OPT-4: Parse MV definition string and extract query pattern
+    if (definition.empty())
+    {
+        return false;
+    }
+
+    // Parse the definition SQL
+    parser::Lexer lexer(definition);
+    parser::ASTArena arena;
+    parser::Parser parser(lexer, arena);
+
+    auto result = parser.parseStatement();
+    if (!result.statement())
+    {
+        DEBUG_LOG_DB("MVRewriter: Failed to parse MV definition: " + definition);
+        return false;
+    }
+
+    if (result.statement()->kind() != parser::ASTKind::SELECT)
+    {
+        DEBUG_LOG_DB("MVRewriter: MV definition is not a SELECT statement");
+        return false;
+    }
+
+    auto* select_stmt = static_cast<parser::SelectStmt*>(result.statement());
+    pattern_out = extractPattern(select_stmt, parser.stringPool(), nullptr);
+
+    // Verify we extracted something useful
+    if (pattern_out.table_names.empty())
+    {
+        DEBUG_LOG_DB("MVRewriter: No tables found in MV definition");
+        return false;
+    }
+
+    return true;
 }
 
 double MVRewriter::estimateMVScanCost(const core::CatalogManager::ViewInfo& mv_info,

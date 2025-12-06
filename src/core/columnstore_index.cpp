@@ -144,6 +144,119 @@ namespace core {
         return status;
     }
 
+    // ========================================================================
+    // STOR-M1: Row-Level OLTP Insert
+    // ========================================================================
+
+    Status ColumnstoreIndexSimple::insertRow(uint16_t column_id, uint64_t tid,
+                                             const void *value, size_t value_len,
+                                             bool is_null, ErrorContext *ctx)
+    {
+        std::lock_guard<std::mutex> lock(buffer_mutex_);
+
+        // Create buffered row
+        BufferedRow row;
+        row.tid = tid;
+        row.is_null = is_null;
+
+        // Copy value data
+        if (!is_null && value && value_len > 0)
+        {
+            const uint8_t *bytes = static_cast<const uint8_t *>(value);
+            row.data.assign(bytes, bytes + value_len);
+        }
+
+        // Add to column buffer
+        row_buffer_[column_id].push_back(std::move(row));
+
+        // Auto-flush if buffer reaches threshold
+        if (row_buffer_[column_id].size() >= ROW_BUFFER_THRESHOLD)
+        {
+            return flushColumnBuffer(column_id, ctx);
+        }
+
+        return Status::OK;
+    }
+
+    Status ColumnstoreIndexSimple::flushRowBuffer(ErrorContext *ctx)
+    {
+        std::lock_guard<std::mutex> lock(buffer_mutex_);
+
+        // Flush all column buffers
+        for (auto &pair : row_buffer_)
+        {
+            if (!pair.second.empty())
+            {
+                Status status = flushColumnBuffer(pair.first, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+        }
+
+        return Status::OK;
+    }
+
+    Status ColumnstoreIndexSimple::flushColumnBuffer(uint16_t column_id, ErrorContext *ctx)
+    {
+        // Called with buffer_mutex_ held
+        auto it = row_buffer_.find(column_id);
+        if (it == row_buffer_.end() || it->second.empty())
+        {
+            return Status::OK;
+        }
+
+        auto &rows = it->second;
+
+        // Convert buffered rows to column-major format
+        // Determine row size from first non-null row
+        size_t row_size = 8; // Default to 8 bytes (int64_t)
+        for (const auto &row : rows)
+        {
+            if (!row.is_null && !row.data.empty())
+            {
+                row_size = row.data.size();
+                break;
+            }
+        }
+
+        // Build column data vector
+        std::vector<uint8_t> column_data;
+        column_data.reserve(rows.size() * row_size);
+
+        for (const auto &row : rows)
+        {
+            if (row.is_null || row.data.empty())
+            {
+                // Insert null placeholder (zeros)
+                column_data.insert(column_data.end(), row_size, 0);
+            }
+            else if (row.data.size() >= row_size)
+            {
+                column_data.insert(column_data.end(), row.data.begin(), row.data.begin() + row_size);
+            }
+            else
+            {
+                // Pad short data with zeros
+                column_data.insert(column_data.end(), row.data.begin(), row.data.end());
+                column_data.insert(column_data.end(), row_size - row.data.size(), 0);
+            }
+        }
+
+        // Insert using batch method
+        uint32_t row_count = static_cast<uint32_t>(rows.size());
+        Status status = insertColumn(column_id, row_count, column_data, ctx);
+
+        // Clear buffer on success
+        if (status == Status::OK)
+        {
+            rows.clear();
+        }
+
+        return status;
+    }
+
     Status ColumnstoreIndexSimple::scanColumn(uint16_t column_id, uint32_t start_row, uint32_t end_row,
                                         std::vector<uint8_t> *data_out, ErrorContext *ctx)
     {

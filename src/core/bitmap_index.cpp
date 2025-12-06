@@ -8,6 +8,7 @@
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/heap_page.h"           // For ItemPointer, TupleHeader, HeapPageSpecial
 #include "scratchbird/core/transaction_manager.h" // For TransactionState, isVersionVisible (TIP-based visibility)
+#include "scratchbird/core/connection_context.h"  // For ConnectionContext::getCurrentTransactionId()
 #include <cstring>
 #include <algorithm>
 #include <functional>
@@ -444,14 +445,17 @@ namespace scratchbird
 
             // TASK-CRITICAL-2: Get current transaction ID for xmin tracking
             // Firebird MGA: Per MGA_RULES.md Rule 6 - store xmin with insert
-            TransactionManager *txn_mgr = db_->transaction_manager();
-            if (!txn_mgr)
+            // First try ConnectionContext (thread-local), then fall back to TransactionManager
+            uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
+            if (current_xid == 0)
             {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No transaction manager");
-                return Status::INVALID_ARGUMENT;
+                // Fallback to TransactionManager if no ConnectionContext
+                TransactionManager *txn_mgr = db_->transaction_manager();
+                if (txn_mgr)
+                {
+                    current_xid = txn_mgr->getCurrentXid();
+                }
             }
-
-            uint64_t current_xid = txn_mgr->getCurrentXid();
             if (current_xid == 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No active transaction");
@@ -507,14 +511,17 @@ namespace scratchbird
         {
             // TASK-CRITICAL-2: Get current transaction ID for xmax marking (logical deletion)
             // Firebird MGA: Per MGA_RULES.md Rule 5 - NO physical removal, only xmax marking
-            TransactionManager *txn_mgr = db_->transaction_manager();
-            if (!txn_mgr)
+            // First try ConnectionContext (thread-local), then fall back to TransactionManager
+            uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
+            if (current_xid == 0)
             {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No transaction manager");
-                return Status::INVALID_ARGUMENT;
+                // Fallback to TransactionManager if no ConnectionContext
+                TransactionManager *txn_mgr = db_->transaction_manager();
+                if (txn_mgr)
+                {
+                    current_xid = txn_mgr->getCurrentXid();
+                }
             }
-
-            uint64_t current_xid = txn_mgr->getCurrentXid();
             if (current_xid == 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No active transaction");

@@ -101,8 +101,8 @@ namespace scratchbird::core
         // Check if TOAST table already exists
         CatalogManager *catalog = db_->catalog_manager();
 
-        // TOAST table naming convention: pg_toast_<table_id>
-        std::string toast_name = "pg_toast_" + table_id_.toString();
+        // TOAST table naming convention: sb_toast_<table_id>
+        std::string toast_name = "sb_toast_" + table_id_.toString();
 
         // Get the schema of the parent table first
         CatalogManager::TableInfo parent_info;
@@ -174,7 +174,7 @@ namespace scratchbird::core
         col3.has_default = false;
         columns.push_back(col3);
 
-        std::string toast_name = "pg_toast_" + table_id_.toString();
+        std::string toast_name = "sb_toast_" + table_id_.toString();
 
         // Get the schema of the parent table
         CatalogManager::TableInfo parent_info;
@@ -340,7 +340,7 @@ namespace scratchbird::core
         CatalogManager *catalog = db_->catalog_manager();
 
         // Get the index ID for the TOAST table
-        std::string toast_name = "pg_toast_" + table_id_.toString();
+        std::string toast_name = "sb_toast_" + table_id_.toString();
         std::string index_name = toast_name + "_idx";
         CatalogManager::IndexInfo index_info;
         Status status = catalog->getIndex(toast_table_id_, index_name, index_info, ctx);
@@ -627,7 +627,7 @@ namespace scratchbird::core
         uint32_t max_chunk_size = ToastSettings::getMaxChunkSize(db_->page_size());
 
         // Get the index ID for the TOAST table
-        std::string toast_name = "pg_toast_" + table_id_.toString();
+        std::string toast_name = "sb_toast_" + table_id_.toString();
         std::string index_name = toast_name + "_idx";
         CatalogManager::IndexInfo index_info;
         Status status = catalog->getIndex(toast_table_id_, index_name, index_info, ctx);

@@ -2290,7 +2290,13 @@ namespace scratchbird::core
             {
                 // Log warning but don't fail the merge - pages are already merged
                 // The parent inconsistency will be detected during validation
-                // Phase 3 Enhancement: Consider implementing parent merge if parent becomes underutilized
+            }
+
+            // STOR-L3: Check if parent is underutilized and can be merged with sibling
+            // This implements recursive upward merge to maintain B-tree balance
+            if (status == Status::OK)
+            {
+                checkAndMergeParentRecursive(parent_page_num, stats, ctx);
             }
         }
 
@@ -3274,6 +3280,129 @@ namespace scratchbird::core
         }
 
         return Status::OK;
+    }
+
+    // STOR-L3: Recursively check and merge underutilized parent pages
+    // This maintains B-tree balance by propagating merges up the tree
+    void BTree::checkAndMergeParentRecursive(uint64_t page_num, VacuumStats &stats,
+                                             ErrorContext *ctx)
+    {
+        BufferPool *bp = db_->buffer_pool();
+        if (!bp)
+        {
+            return;
+        }
+
+        // Pin the page to check its fill ratio
+        void *page_data_ptr = nullptr;
+        Status status = bp->pinPage(page_num, &page_data_ptr, ctx);
+        if (status != Status::OK)
+        {
+            return;
+        }
+
+        auto *page = reinterpret_cast<SBBTreePage *>(page_data_ptr);
+
+        // Don't merge root pages
+        if ((page->btr_flags & static_cast<uint16_t>(BTreeFlags::ROOT)) != 0)
+        {
+            bp->unpinPage(page_num, false, ctx);
+            return;
+        }
+
+        // Calculate fill ratio - only consider merging if below 50%
+        uint32_t page_size = page->btr_header.page_size;
+        uint32_t used_space = page_size - page->btr_free_space - sizeof(SBBTreePage);
+        uint32_t available_space = page_size - sizeof(SBBTreePage);
+        uint32_t fill_percent = (used_space * 100) / available_space;
+
+        if (fill_percent >= 50)
+        {
+            // Page is sufficiently full, no merge needed
+            bp->unpinPage(page_num, false, ctx);
+            return;
+        }
+
+        // Get sibling information
+        uint64_t left_sibling = page->btr_left_sibling;
+        uint64_t right_sibling = page->btr_right_sibling;
+        uint64_t parent_page = page->btr_parent_page;
+
+        bp->unpinPage(page_num, false, ctx);
+
+        // Try to merge with right sibling first (more common in B-tree operations)
+        if (right_sibling != 0)
+        {
+            void *right_data_ptr = nullptr;
+            status = bp->pinPage(right_sibling, &right_data_ptr, ctx);
+            if (status == Status::OK)
+            {
+                void *left_data_ptr = nullptr;
+                status = bp->pinPage(page_num, &left_data_ptr, ctx);
+                if (status == Status::OK)
+                {
+                    auto *left_page_hdr = reinterpret_cast<SBBTreePage *>(left_data_ptr);
+                    auto *right_page_hdr = reinterpret_cast<SBBTreePage *>(right_data_ptr);
+
+                    bool should_merge = shouldMergePages(left_page_hdr, right_page_hdr);
+
+                    bp->unpinPage(page_num, false, ctx);
+                    bp->unpinPage(right_sibling, false, ctx);
+
+                    if (should_merge)
+                    {
+                        status = mergePages(page_num, right_sibling, stats, ctx);
+                        // mergePages will recursively call checkAndMergeParentRecursive
+                        // for the parent, so we can return here
+                        return;
+                    }
+                }
+                else
+                {
+                    bp->unpinPage(right_sibling, false, ctx);
+                }
+            }
+        }
+
+        // Try to merge with left sibling if right merge didn't happen
+        if (left_sibling != 0)
+        {
+            void *left_data_ptr = nullptr;
+            status = bp->pinPage(left_sibling, &left_data_ptr, ctx);
+            if (status == Status::OK)
+            {
+                void *right_data_ptr = nullptr;
+                status = bp->pinPage(page_num, &right_data_ptr, ctx);
+                if (status == Status::OK)
+                {
+                    auto *left_page_hdr = reinterpret_cast<SBBTreePage *>(left_data_ptr);
+                    auto *right_page_hdr = reinterpret_cast<SBBTreePage *>(right_data_ptr);
+
+                    bool should_merge = shouldMergePages(left_page_hdr, right_page_hdr);
+
+                    bp->unpinPage(left_sibling, false, ctx);
+                    bp->unpinPage(page_num, false, ctx);
+
+                    if (should_merge)
+                    {
+                        status = mergePages(left_sibling, page_num, stats, ctx);
+                        // mergePages will recursively call checkAndMergeParentRecursive
+                        // for the parent, so we can return here
+                        return;
+                    }
+                }
+                else
+                {
+                    bp->unpinPage(left_sibling, false, ctx);
+                }
+            }
+        }
+
+        // If no merge was possible but we have a parent, check if we should
+        // propagate the check upward anyway (for cascading underutilization)
+        // This is a conservative approach - only propagate if we couldn't merge
+        // but the parent might still benefit from checking
+        (void)parent_page; // Parent will be checked when its children merge
     }
 
 } // namespace scratchbird::core

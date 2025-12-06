@@ -27,6 +27,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/catalog_manager.h"  // For DatabaseTriggerEvent
 #include "scratchbird/protocol/wire_protocol.h"
 #include "scratchbird/server/ipc_server.h"
 
@@ -253,6 +254,21 @@ private:
                       core::ID& user_id, bool& is_superuser);
 
     // ========================================================================
+    // Database Trigger Firing (Firebird-style)
+    // ========================================================================
+
+    /**
+     * Fire all database triggers for the specified event
+     *
+     * Triggers are executed in order of their POSITION value.
+     * If any trigger fails, remaining triggers are not executed.
+     *
+     * @param event The database event that occurred
+     * @return true if all triggers executed successfully, false if any failed
+     */
+    bool fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent event);
+
+    // ========================================================================
     // Internal State
     // ========================================================================
 
@@ -278,6 +294,10 @@ private:
 
     // Statistics
     SessionStats stats_;
+
+    // NET-M1: Query cancellation support
+    // Flag to indicate a query is currently executing
+    std::atomic<bool> query_executing_{false};
 
     // Mutex for thread safety
     mutable std::mutex mutex_;

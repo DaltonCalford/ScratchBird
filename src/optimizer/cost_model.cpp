@@ -154,9 +154,22 @@ namespace scratchbird::optimizer
         double index_io_cost = static_cast<double>(estimated_index_pages) * params_.random_page_cost;
         double index_cpu_cost = static_cast<double>(index_tuples) * params_.cpu_index_tuple_cost;
 
-        // Additional CPU cost for k-way merge if range scan
-        // For now, assume simple lookup (no merge overhead)
-        // Phase 4 Enhancement: Add merge cost for range scans in future
+        // OPT-M7: Additional CPU cost for k-way merge if range scan
+        // K-way merge is needed when range scans must merge results from multiple SSTables
+        // Cost: O(n * log(k)) where n = tuples, k = number of SSTables to merge
+        // For point lookups (index_tuples <= 1), no merge needed
+        double merge_cost = 0.0;
+        if (index_tuples > 1 && total_sstables > 1)
+        {
+            // K-way merge CPU cost: each tuple requires log(k) comparisons to find next
+            // in the merge heap, where k = number of overlapping SSTables
+            double log_k = std::log2(static_cast<double>(total_sstables));
+            merge_cost = static_cast<double>(index_tuples) * log_k * params_.cpu_operator_cost;
+
+            DEBUG_LOG_DB("LSM merge cost for " + std::to_string(index_tuples) +
+                         " tuples across " + std::to_string(total_sstables) +
+                         " SSTables: " + std::to_string(merge_cost));
+        }
 
         // Heap fetch cost: same as B-Tree
         double effective_heap_pages;
@@ -176,7 +189,7 @@ namespace scratchbird::optimizer
         double heap_cpu_cost = static_cast<double>(heap_tuples) * params_.cpu_tuple_cost +
                                static_cast<double>(heap_tuples) * qual_cost;
 
-        cost.run_cost = index_io_cost + index_cpu_cost + heap_io_cost + heap_cpu_cost;
+        cost.run_cost = index_io_cost + index_cpu_cost + merge_cost + heap_io_cost + heap_cpu_cost;
         cost.total_cost = cost.startup_cost + cost.run_cost;
         cost.rows = heap_tuples;
 
@@ -184,6 +197,7 @@ namespace scratchbird::optimizer
                      ", run=" + std::to_string(cost.run_cost) +
                      ", total=" + std::to_string(cost.total_cost) +
                      " (index_io=" + std::to_string(index_io_cost) +
+                     ", merge=" + std::to_string(merge_cost) +
                      ", heap_io=" + std::to_string(heap_io_cost) +
                      ", bloom_checks=" + std::to_string(bloom_filter_cost) + ")");
 

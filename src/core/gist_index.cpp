@@ -1263,21 +1263,41 @@ Status GiSTIndex::loadPage(uint64_t page_num, SBGiSTPage** page, ErrorContext* c
 
 Status GiSTIndex::allocatePage(uint64_t* page_num, ErrorContext* ctx)
 {
-    // Allocate new page via buffer pool
-    // For now, use a simple counter (in production, use free page list)
-    static uint64_t next_page = 1;
-    *page_num = next_page++;
-
+    // STOR-M2: Proper page allocation via buffer pool
+    // Uses buffer pool's allocatePage which handles the free page list internally
+    uint32_t allocated_page_id = 0;
     void* page_buffer = nullptr;
-    Status status = buffer_pool_->pinPage(static_cast<uint32_t>(*page_num), &page_buffer, ctx);
+
+    Status status = buffer_pool_->allocatePage(&allocated_page_id, &page_buffer, ctx);
     if (status != Status::OK)
     {
-        if (ctx)
+        if (ctx && ctx->message.empty())
         {
             ctx->code = Status::IO_ERROR;
-            ctx->message = "Failed to allocate GiST page";
+            ctx->message = "Failed to allocate GiST page from buffer pool";
         }
         return Status::IO_ERROR;
+    }
+
+    *page_num = static_cast<uint64_t>(allocated_page_id);
+
+    // Initialize the page as empty GiST page
+    if (page_buffer)
+    {
+        SBGiSTPage* gist_page = reinterpret_cast<SBGiSTPage*>(page_buffer);
+        gist_page->gist_header.page_type = PAGE_TYPE_GIST;
+        gist_page->gist_header.version = 1;
+        gist_page->gist_count = 0;
+        gist_page->gist_level = 0;
+        gist_page->gist_flags = 0;
+        gist_page->gist_right_sibling = 0;
+        gist_page->gist_left_sibling = 0;
+        gist_page->gist_parent_page = 0;
+        gist_page->gist_xmin = 0;
+        gist_page->gist_xmax = 0;
+
+        // Mark page as dirty since we initialized it
+        buffer_pool_->unpinPage(allocated_page_id, true, ctx);
     }
 
     return Status::OK;

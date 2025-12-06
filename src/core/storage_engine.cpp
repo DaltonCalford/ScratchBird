@@ -426,18 +426,26 @@ namespace scratchbird::core
                                 const void *col_value = is_null ? nullptr : (tuple_data + column_offsets[col_idx]);
                                 size_t col_value_len = column_sizes[col_idx];
 
-                                // Phase 2 Enhancement: Columnstore row-level OLTP integration
-                                // ColumnstoreIndex currently only supports batch insertColumn() operations.
-                                // Row-by-row insert() method requires:
-                                // 1. Buffering individual rows until batch threshold reached
-                                // 2. Converting row values to columnar format
-                                // 3. Compressing and appending to column segments
-                                // For now, columnstore indexes are updated via explicit batch loads (REFRESH/ANALYZE)
-                                (void)col_value;      // Suppress unused variable warning
-                                (void)col_value_len;  // Suppress unused variable warning
+                                // STOR-M1: Row-level OLTP insert into columnstore
+                                // Buffers individual rows and auto-flushes when threshold reached
+                                // Use gpid as the TID representation (64-bit global page id)
+                                Status insert_status = columnstore->insertRow(
+                                    static_cast<uint16_t>(col_idx),
+                                    tid.gpid,
+                                    col_value,
+                                    col_value_len,
+                                    is_null,
+                                    ctx);
+
+                                if (insert_status != Status::OK)
+                                {
+                                    LOG_WARNING(STORAGE, "Failed to insert into columnstore index %s: %s",
+                                                index_info.index_name.c_str(),
+                                                ctx ? ctx->message.c_str() : "unknown error");
+                                }
                             }
 
-                            continue; // Columnstore uses batch operations, not key extraction
+                            continue; // Columnstore handled via row-level buffering
                         }
 
                         // Regular index handling (key-based indexes)
@@ -1519,18 +1527,27 @@ namespace scratchbird::core
                                 const void *col_value = is_null ? nullptr : (new_tuple_data + new_offsets[col_idx]);
                                 size_t col_value_len = new_sizes[col_idx];
 
-                                // Phase 2 Enhancement: Columnstore row-level OLTP integration
-                                // ColumnstoreIndex currently only supports batch insertColumn() operations.
-                                // Row-by-row insert() method requires:
-                                // 1. Buffering individual rows until batch threshold reached
-                                // 2. Converting row values to columnar format
-                                // 3. Compressing and appending to column segments
-                                // For now, columnstore indexes are updated via explicit batch loads (REFRESH/ANALYZE)
-                                (void)col_value;      // Suppress unused variable warning
-                                (void)col_value_len;  // Suppress unused variable warning
+                                // STOR-M1: Row-level OLTP insert into columnstore (append-only)
+                                // Old values are already marked with xmax in heap (visibility filtering)
+                                // New values are appended to columnstore buffer
+                                // Use gpid as the TID representation (64-bit global page id)
+                                Status insert_status = columnstore->insertRow(
+                                    static_cast<uint16_t>(col_idx),
+                                    tid.gpid,
+                                    col_value,
+                                    col_value_len,
+                                    is_null,
+                                    ctx);
+
+                                if (insert_status != Status::OK)
+                                {
+                                    LOG_WARNING(STORAGE, "Failed to insert into columnstore index %s: %s",
+                                                index_info.index_name.c_str(),
+                                                ctx ? ctx->message.c_str() : "unknown error");
+                                }
                             }
 
-                            continue; // Columnstore uses batch operations, not key extraction
+                            continue; // Columnstore handled via row-level buffering
                         }
 
                         // Regular index handling (key-based indexes)

@@ -227,12 +227,14 @@ namespace scratchbird::optimizer
          * - IndexScanPath → IndexScanNode
          *
          * @param path Path to convert
+         * @param string_pool String pool for expression-to-string conversion (OPT-L2)
          * @param ctx Error context
          * @return PlanNode or nullptr
          *
          * Phase 1, Task 1.3.5
          */
         auto pathToPlanNode(const std::shared_ptr<Path> &path,
+                            const parser::StringPool &string_pool,
                             core::ErrorContext *ctx)
             -> std::shared_ptr<PlanNode>;
 
@@ -277,6 +279,18 @@ namespace scratchbird::optimizer
          * Phase 1, Task 1.3.4
          */
         auto calculateQualCost(const parser::SelectStmt *select_stmt) const
+            -> double;
+
+        /**
+         * calculateExpressionCost - Calculate cost of an expression tree
+         *
+         * OPT-M5: Recursively traverses expression tree to sum operator costs.
+         * Handles binary operators, function calls, CASE expressions, etc.
+         *
+         * @param expr Expression to evaluate
+         * @return Total cost of evaluating the expression
+         */
+        auto calculateExpressionCost(const parser::Expression *expr) const
             -> double;
 
         /**
@@ -334,6 +348,7 @@ namespace scratchbird::optimizer
          * @param left_path Path for left (outer) relation
          * @param right_path Path for right (inner) relation
          * @param join_clause Join clause from AST
+         * @param string_pool StringPool for resolving StringIds (OPT-M6)
          * @param ctx Error context
          * @return Vector of join paths
          *
@@ -342,6 +357,7 @@ namespace scratchbird::optimizer
         auto generateJoinPaths(std::shared_ptr<Path> left_path,
                               std::shared_ptr<Path> right_path,
                               const parser::JoinClause &join_clause,
+                              const parser::StringPool &string_pool,
                               core::ErrorContext *ctx)
             -> std::vector<std::shared_ptr<Path>>;
 
@@ -365,16 +381,26 @@ namespace scratchbird::optimizer
          * → left_keys = [u.id, u.type]
          * → right_keys = [o.user_id, o.type]
          *
+         * OPT-M6: Now verifies that columns belong to the correct tables
+         * by checking the qualifier of IdentifierExpr nodes against the
+         * provided table names. Handles table aliases correctly.
+         *
          * @param join_condition JOIN ON expression
          * @param left_keys Output: hash keys from left table
          * @param right_keys Output: hash keys from right table
+         * @param left_table_name Name of left table (or alias)
+         * @param right_table_name Name of right table (or alias)
+         * @param string_pool StringPool for resolving StringIds
          * @return true if hash keys extracted successfully
          *
          * Phase 1, Task 3.2
          */
         auto extractHashKeys(const parser::Expression *join_condition,
                             std::vector<parser::Expression *> &left_keys,
-                            std::vector<parser::Expression *> &right_keys) const
+                            std::vector<parser::Expression *> &right_keys,
+                            const std::string &left_table_name,
+                            const std::string &right_table_name,
+                            const parser::StringPool &string_pool) const
             -> bool;
 
         /**
@@ -563,6 +589,7 @@ namespace scratchbird::optimizer
                                     const core::ID &table_id,
                                     const std::string &table_name,
                                     std::vector<std::shared_ptr<Path>> &paths,
+                                    const parser::StringPool &string_pool,
                                     core::ErrorContext *ctx)
             -> core::Status;
 
@@ -575,13 +602,15 @@ namespace scratchbird::optimizer
          * - ST_Within(column, constant)
          *
          * @param expr Expression to check
+         * @param string_pool String pool for resolving function/column names
          * @param column_name Output: column name if spatial predicate
          * @param function_name Output: spatial function name
          * @return true if expr is a spatial predicate
          *
-         * Phase 2, Task 9.2
+         * Phase 2, Task 9.2 / OPT-M4: Proper function name resolution
          */
         auto isSpatialPredicate(const parser::Expression *expr,
+                               const parser::StringPool &string_pool,
                                std::string &column_name,
                                std::string &function_name) const
             -> bool;
@@ -607,6 +636,18 @@ namespace scratchbird::optimizer
             -> bool;
 
     private:
+        /**
+         * OPT-M3: Extract column references from expression
+         *
+         * Recursively traverses expression tree to find all column references.
+         * Used to determine if an index can be applied based on predicate columns.
+         *
+         * @param expr Expression to analyze
+         * @param columns Output: list of referenced column names
+         */
+        void extractColumnReferences(const parser::Expression* expr,
+                                    std::vector<std::string>& columns) const;
+
         /**
          * Security Phase 3.2: Permission checking at plan time
          *

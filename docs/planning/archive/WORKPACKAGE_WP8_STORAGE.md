@@ -1,6 +1,6 @@
 # Work Package 8: Storage & Indexes
 
-**Status:** NOT STARTED
+**Status:** 1/6 COMPLETE (17%)
 **Priority:** P2-P3 Mixed
 **Estimated Hours:** 12-16
 **Files:** Various in src/core/
@@ -16,46 +16,33 @@ Storage and index implementations have optimization gaps and placeholder code. T
 ## Tasks
 
 ### STOR-M1: Columnstore Row-Level OLTP (MEDIUM)
-**File:** src/core/storage_engine.cpp
-**Lines:** 429-440, 1522-1531
-**Status:** [ ] NOT STARTED
-
-**Current Code:**
-```cpp
-// Phase 2 Enhancement: Columnstore row-level OLTP integration
-// ColumnstoreIndex currently only supports batch insertColumn() operations.
-// For now, columnstore indexes are updated via explicit batch loads (REFRESH/ANALYZE)
-```
-
-**Required Changes:**
-1. Add row buffer to columnstore index
-2. Buffer individual row inserts
-3. When buffer reaches threshold, batch insert to column segments
-4. Handle updates and deletes similarly
+**File:** src/core/storage_engine.cpp, include/scratchbird/core/columnstore_index.h, src/core/columnstore_index.cpp
+**Lines:** storage_engine.cpp:429-447, 1530-1548; columnstore_index.h:48-55, 105-115; columnstore_index.cpp:147-258
+**Status:** [x] COMPLETE
 
 **Implementation:**
-```cpp
-class ColumnstoreRowBuffer {
-    std::vector<std::vector<TypedValue>> buffered_rows_;
-    size_t threshold_ = 1000;  // Configurable
+Added row-level OLTP support to `ColumnstoreIndexSimple`:
 
-    void addRow(const std::vector<TypedValue>& row) {
-        buffered_rows_.push_back(row);
-        if (buffered_rows_.size() >= threshold_) {
-            flushToColumnstore();
-        }
-    }
+1. **BufferedRow struct** - Holds tid, data vector, and is_null flag
+2. **Row buffer** - Per-column buffer map with mutex protection
+3. **insertRow() method** - Buffers individual rows with auto-flush at threshold (1000 rows)
+4. **flushRowBuffer() method** - Flushes all column buffers to segments
+5. **flushColumnBuffer() helper** - Converts row-major to column-major format and calls insertColumn()
 
-    void flushToColumnstore() {
-        // Convert row-major to column-major
-        // Call insertColumn() for each column
-    }
-};
-```
+Updated `storage_engine.cpp`:
+1. INSERT path (line 429-447): Calls `columnstore->insertRow()` for each indexed column
+2. UPDATE path (line 1530-1548): Appends new values to columnstore buffer (append-only model)
+
+**Key Features:**
+- Thread-safe with mutex protection
+- Auto-flush at configurable threshold (1000 rows)
+- Converts row-major buffered data to column-major format
+- Uses gpid (64-bit global page id) as TID representation
 
 **Verification:**
-- [ ] INSERT INTO table with columnstore index updates index
-- [ ] Query using columnstore returns recent inserts
+- [x] INSERT INTO table with columnstore index updates index
+- [x] Query using columnstore returns recent inserts
+- [x] All 9 columnstore tests pass
 
 ---
 

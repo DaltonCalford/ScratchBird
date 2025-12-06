@@ -99,11 +99,18 @@ namespace scratchbird
             void visit(SetTransactionStmt *node) override;   // Phase 3 Task 3.6
             void visit(CommitStmt *node) override;           // Phase 2 Task 2.6
             void visit(RollbackStmt *node) override;         // Phase 2 Task 2.6
+            void visit(SavepointStmt *node) override;        // ALPHA Phase 1 - SAVEPOINT
+            void visit(ReleaseSavepointStmt *node) override; // ALPHA Phase 1 - RELEASE SAVEPOINT
+            void visit(RollbackToSavepointStmt *node) override; // ALPHA Phase 1 - ROLLBACK TO SAVEPOINT
             void visit(SweepStmt *node) override;            // Phase 3 Task 3.3
             void visit(ShowStmt *node) override;             // ALPHA Phase 1 - Developer Experience
             void visit(DescribeStmt *node) override;         // ALPHA Phase 1 - Developer Experience
             void visit(CreateTriggerStmt *node) override;    // Phase 2 Wave 2 Agent C
             void visit(DropTriggerStmt *node) override;      // Phase 2 Wave 2 Agent C
+            void visit(CreateDatabaseTriggerStmt *node) override; // Database triggers
+            void visit(CreateTypeStmt *node) override;       // ALPHA Phase 1 - User Defined Types
+            void visit(CreateDomainStmt *node) override;     // ALPHA Phase 1 - Domain Types
+            void visit(CallStmt *node) override;             // PSQL - Call stored procedure
             void visit(CreateFunctionStmt *node) override;   // Phase 2 Task 10.2 - PSQL
             void visit(CreateProcedureStmt *node) override;  // Phase 2 Task 10.2 - PSQL
             void visit(BlockStmt *node) override;            // Phase 2 Task 10.2 - PSQL
@@ -149,6 +156,9 @@ namespace scratchbird
             void visit(SetRoleStmt *node) override;
             void visit(SetSessionAuthStmt *node) override;
             void visit(SetConstraintsStmt *node) override;   // P2-7: SET CONSTRAINTS
+            void visit(SetSqlDialectStmt *node) override;    // Firebird ISQL: SET SQL DIALECT
+            void visit(SetNamesStmt *node) override;         // SET NAMES charset
+            void visit(SetLocalTimeoutStmt *node) override;  // SET LOCAL_TIMEOUT N
             void visit(CreatePolicyStmt *node) override;     // Security Phase 3.4
             void visit(DropPolicyStmt *node) override;       // Security Phase 3.4
             void visit(AlterTableRLSStmt *node) override;    // Security Phase 3.4

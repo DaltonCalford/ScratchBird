@@ -10,6 +10,7 @@
 #include <vector>
 #include <memory>
 #include <map>
+#include <mutex>
 
 namespace scratchbird
 {
@@ -39,10 +40,19 @@ namespace scratchbird
             // Destructor
             ~ColumnstoreIndexSimple();
 
-            // Insert column data
+            // Insert column data (batch)
             Status insertColumn(uint16_t column_id, uint32_t row_count,
                                 const std::vector<uint8_t> &column_data,
                                 ErrorContext *ctx = nullptr);
+
+            // Insert single row (STOR-M1: Row-Level OLTP)
+            // Buffers individual row inserts and auto-flushes when threshold reached
+            Status insertRow(uint16_t column_id, uint64_t tid,
+                            const void *value, size_t value_len,
+                            bool is_null, ErrorContext *ctx = nullptr);
+
+            // Flush any buffered rows to column segments
+            Status flushRowBuffer(ErrorContext *ctx = nullptr);
 
             // Scan column range
             Status scanColumn(uint16_t column_id, uint32_t start_row, uint32_t end_row,
@@ -92,12 +102,25 @@ namespace scratchbird
             // In-memory segment catalog (loaded from meta page)
             std::map<uint16_t, std::vector<ColumnSegment>> column_segments_;
 
+            // STOR-M1: Row-level OLTP buffering
+            struct BufferedRow {
+                uint64_t tid;
+                std::vector<uint8_t> data;
+                bool is_null;
+            };
+
+            // Row buffer per column (column_id -> buffered rows)
+            std::map<uint16_t, std::vector<BufferedRow>> row_buffer_;
+            mutable std::mutex buffer_mutex_;
+            static constexpr size_t ROW_BUFFER_THRESHOLD = 1000;  // Auto-flush at this count
+
             // Helper methods
             Status compressRLE(const std::vector<uint8_t>& data, std::vector<uint8_t>* compressed, ErrorContext* ctx);
             Status decompressRLE(const std::vector<uint8_t>& compressed, uint32_t row_count, std::vector<uint8_t>* data, ErrorContext* ctx);
 
             Status loadSegmentCatalog(ErrorContext* ctx);
             Status saveSegmentCatalog(ErrorContext* ctx);
+            Status flushColumnBuffer(uint16_t column_id, ErrorContext* ctx);
 
             ColumnSegment* findSegment(uint16_t column_id, uint32_t row);
         };

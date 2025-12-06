@@ -114,6 +114,19 @@ TEST_F(ParserComprehensiveTest, Insert_WithoutColumns)
     expectSuccess("INSERT INTO users VALUES (1, 'Bob', 25)", "INSERT without column list");
 }
 
+// Multi-row INSERT support
+TEST_F(ParserComprehensiveTest, Insert_MultipleRows)
+{
+    expectSuccess("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 25), (2, 'Bob', 30), (3, 'Charlie', 35)",
+                  "multi-row INSERT");
+}
+
+TEST_F(ParserComprehensiveTest, Insert_MultipleRowsWithExpressions)
+{
+    expectSuccess("INSERT INTO products (id, price, qty) VALUES (1, 9.99, 10), (2, 19.99 + 5, 20 * 2)",
+                  "multi-row INSERT with expressions");
+}
+
 TEST_F(ParserComprehensiveTest, Select_Simple)
 {
     expectSuccess("SELECT * FROM users", "simple SELECT");

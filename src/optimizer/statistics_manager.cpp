@@ -365,22 +365,86 @@ namespace scratchbird::optimizer
         stats.table_name = table_info.table_name;
         stats.num_rows = table_info.row_count;
 
-        // Phase 4 Enhancement: num_pages is not currently tracked in TableInfo
-        // For now, estimate based on row_count or set to 0
-        // This will be properly implemented when P1-10 (Statistics & ANALYZE) is completed
-        stats.num_pages = 0;
+        // OPT-M1: Estimate num_pages from row count and average row size
+        // Since TableInfo doesn't track page count directly, we estimate it
+        // by calculating average row size from column definitions
+        constexpr uint64_t PAGE_SIZE = 8192;          // 8KB pages
+        constexpr uint64_t TUPLE_HEADER_SIZE = 24;    // Per-tuple overhead
+        constexpr double PAGE_FILL_FACTOR = 0.8;      // 80% fill factor
 
-        // Calculate average row size
-        if (stats.num_rows > 0 && stats.num_pages > 0)
+        // Get column info to estimate row size
+        std::vector<core::CatalogManager::ColumnInfo> columns;
+        auto col_status = catalog_->getColumns(table_id, columns, ctx);
+
+        double estimated_row_size = TUPLE_HEADER_SIZE;
+        if (col_status == core::Status::OK && !columns.empty())
         {
-            // Estimate avg row size from pages and tuple count
-            constexpr uint64_t PAGE_SIZE = 8192; // 8KB pages
-            uint64_t total_bytes = stats.num_pages * PAGE_SIZE;
-            stats.avg_row_size = static_cast<float>(total_bytes) / stats.num_rows;
+            for (const auto& col : columns)
+            {
+                // Estimate size per column based on data type
+                switch (static_cast<core::DataType>(col.data_type))
+                {
+                    case core::DataType::BOOLEAN:
+                    case core::DataType::INT8:
+                        estimated_row_size += 1;
+                        break;
+                    case core::DataType::INT16:
+                        estimated_row_size += 2;
+                        break;
+                    case core::DataType::INT32:
+                    case core::DataType::FLOAT32:
+                    case core::DataType::DATE:
+                        estimated_row_size += 4;
+                        break;
+                    case core::DataType::INT64:
+                    case core::DataType::FLOAT64:
+                    case core::DataType::TIMESTAMP:
+                    case core::DataType::TIME:
+                    case core::DataType::INTERVAL:
+                        estimated_row_size += 8;
+                        break;
+                    case core::DataType::UUID:
+                    case core::DataType::DECIMAL:
+                        estimated_row_size += 16;
+                        break;
+                    case core::DataType::VARCHAR:
+                    case core::DataType::BYTEA:
+                    case core::DataType::TEXT:
+                    case core::DataType::JSON:
+                    case core::DataType::JSONB:
+                        // Variable-length types: estimate average 20 bytes
+                        estimated_row_size += 24; // 4-byte length prefix + avg 20 bytes
+                        break;
+                    default:
+                        estimated_row_size += 8; // Default estimate
+                        break;
+                }
+            }
         }
         else
         {
-            stats.avg_row_size = 0.0f;
+            // Fallback: use 100 bytes per row if no column info
+            estimated_row_size = 100;
+        }
+
+        stats.avg_row_size = static_cast<float>(estimated_row_size);
+
+        // Calculate number of pages needed
+        if (stats.num_rows > 0)
+        {
+            double usable_page_size = PAGE_SIZE * PAGE_FILL_FACTOR;
+            double rows_per_page = usable_page_size / estimated_row_size;
+            stats.num_pages = static_cast<uint64_t>(
+                std::ceil(static_cast<double>(stats.num_rows) / rows_per_page));
+            // Ensure at least 1 page for non-empty tables
+            if (stats.num_pages == 0)
+            {
+                stats.num_pages = 1;
+            }
+        }
+        else
+        {
+            stats.num_pages = 0;
         }
 
         // Set last analyzed time (use current time as approximation)
@@ -429,10 +493,10 @@ namespace scratchbird::optimizer
             DEBUG_LOG_DB("Removed " << keys_to_remove.size() << " column statistics from cache");
         }
 
-        // Step 2: Delete from pg_statistic catalog table
+        // Step 2: Delete from sb_statistic catalog table
         // Note: Since storeColumnStatistics may not have catalog persistence implemented yet,
         // we don't fail if catalog deletion is not available
-        // Future enhancement: Delete records from pg_statistic catalog table
+        // Future enhancement: Delete records from sb_statistic catalog table
 
         DEBUG_LOG_DB("Statistics dropped successfully for table");
 
@@ -453,11 +517,37 @@ namespace scratchbird::optimizer
         }
         else
         {
-            // Phase 4 Enhancement: Remove only entries for this specific table
-            // For now, clear entire cache (safe but less efficient)
-            column_stats_cache_.clear();
-            table_stats_cache_.clear();
-            DEBUG_LOG_DB("Invalidated statistics cache for table");
+            // OPT-L1: Targeted invalidation - remove only entries for this specific table
+            // This preserves statistics for other tables, improving efficiency
+
+            // Remove table-level statistics
+            uint64_t table_cache_key = 0;
+            std::memcpy(&table_cache_key, table_id.bytes.data(), sizeof(uint64_t));
+            auto table_it = table_stats_cache_.find(table_cache_key);
+            if (table_it != table_stats_cache_.end())
+            {
+                table_stats_cache_.erase(table_it);
+            }
+
+            // Remove column-level statistics for this table
+            // The cache key is table_key XOR column_key, so we need to check each entry
+            // to see if its table_id matches
+            std::vector<uint64_t> keys_to_remove;
+            for (const auto& [cache_key, stats] : column_stats_cache_)
+            {
+                if (std::memcmp(stats.table_id.bytes.data(), table_id.bytes.data(), 16) == 0)
+                {
+                    keys_to_remove.push_back(cache_key);
+                }
+            }
+
+            for (uint64_t key : keys_to_remove)
+            {
+                column_stats_cache_.erase(key);
+            }
+
+            DEBUG_LOG_DB("Invalidated statistics cache for table: removed " +
+                         std::to_string(keys_to_remove.size()) + " column entries");
         }
     }
 
@@ -744,6 +834,7 @@ namespace scratchbird::optimizer
                 }
 
                 // Skip this column's data based on its type
+                // OPT-M2: Extended type support for statistics
                 core::DataType col_type = static_cast<core::DataType>(columns[i].data_type);
                 if (col_type == core::DataType::INT32)
                 {
@@ -766,7 +857,55 @@ namespace scratchbird::optimizer
                     std::memcpy(&len, tuple_data.data() + data_offset, sizeof(uint32_t));
                     data_offset += sizeof(uint32_t) + len;
                 }
-                // Phase 4 Enhancement: Add support for other types as needed (current types cover common cases)
+                // OPT-M2: Additional type support
+                else if (col_type == core::DataType::BOOLEAN)
+                {
+                    data_offset += sizeof(uint8_t);  // BOOLEAN stored as 1 byte
+                }
+                else if (col_type == core::DataType::DATE)
+                {
+                    data_offset += sizeof(int32_t);  // DATE stored as days since epoch (int32)
+                }
+                else if (col_type == core::DataType::TIME)
+                {
+                    data_offset += sizeof(int64_t);  // TIME stored as microseconds since midnight (int64)
+                }
+                else if (col_type == core::DataType::TIMESTAMP)
+                {
+                    data_offset += sizeof(int64_t);  // TIMESTAMP stored as microseconds since epoch (int64)
+                }
+                else if (col_type == core::DataType::UUID)
+                {
+                    data_offset += 16;  // UUID is always 16 bytes
+                }
+                else if (col_type == core::DataType::DECIMAL)
+                {
+                    // DECIMAL has precision/scale in first 2 bytes, then variable data
+                    if (data_offset + 2 > tuple_data.size())
+                        break;
+                    // Precision stored in first byte determines size
+                    uint8_t precision = tuple_data[data_offset];
+                    // Decimal storage: 2 bytes header + ceil((precision + 1) / 2) bytes for digits
+                    uint32_t digit_bytes = (precision + 2) / 2;
+                    data_offset += 2 + digit_bytes;
+                }
+                else if (col_type == core::DataType::BYTEA)
+                {
+                    // BYTEA has length prefix like VARCHAR
+                    if (data_offset + sizeof(uint32_t) > tuple_data.size())
+                        break;
+                    uint32_t len;
+                    std::memcpy(&len, tuple_data.data() + data_offset, sizeof(uint32_t));
+                    data_offset += sizeof(uint32_t) + len;
+                }
+                else if (col_type == core::DataType::INT16)
+                {
+                    data_offset += sizeof(int16_t);
+                }
+                else if (col_type == core::DataType::FLOAT32)
+                {
+                    data_offset += sizeof(float);
+                }
             }
 
             // Extract the target column value
@@ -801,6 +940,72 @@ namespace scratchbird::optimizer
                     std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(uint32_t) + len);
                     total_width += len; // Width is actual string length, not including length prefix
                 }
+            }
+            // OPT-M2: Additional type support for extraction
+            else if (target_type == core::DataType::BOOLEAN && data_offset + sizeof(uint8_t) <= tuple_data.size())
+            {
+                value.resize(sizeof(uint8_t));
+                std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(uint8_t));
+                total_width += sizeof(uint8_t);
+            }
+            else if (target_type == core::DataType::DATE && data_offset + sizeof(int32_t) <= tuple_data.size())
+            {
+                value.resize(sizeof(int32_t));
+                std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(int32_t));
+                total_width += sizeof(int32_t);
+            }
+            else if (target_type == core::DataType::TIME && data_offset + sizeof(int64_t) <= tuple_data.size())
+            {
+                value.resize(sizeof(int64_t));
+                std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(int64_t));
+                total_width += sizeof(int64_t);
+            }
+            else if (target_type == core::DataType::TIMESTAMP && data_offset + sizeof(int64_t) <= tuple_data.size())
+            {
+                value.resize(sizeof(int64_t));
+                std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(int64_t));
+                total_width += sizeof(int64_t);
+            }
+            else if (target_type == core::DataType::UUID && data_offset + 16 <= tuple_data.size())
+            {
+                value.resize(16);
+                std::memcpy(value.data(), tuple_data.data() + data_offset, 16);
+                total_width += 16;
+            }
+            else if (target_type == core::DataType::DECIMAL && data_offset + 2 <= tuple_data.size())
+            {
+                // DECIMAL: precision byte + scale byte + digit bytes
+                uint8_t precision = tuple_data[data_offset];
+                uint32_t digit_bytes = (precision + 2) / 2;
+                if (data_offset + 2 + digit_bytes <= tuple_data.size())
+                {
+                    value.resize(2 + digit_bytes);
+                    std::memcpy(value.data(), tuple_data.data() + data_offset, 2 + digit_bytes);
+                    total_width += 2 + digit_bytes;
+                }
+            }
+            else if (target_type == core::DataType::BYTEA && data_offset + sizeof(uint32_t) <= tuple_data.size())
+            {
+                uint32_t len;
+                std::memcpy(&len, tuple_data.data() + data_offset, sizeof(uint32_t));
+                if (data_offset + sizeof(uint32_t) + len <= tuple_data.size())
+                {
+                    value.resize(sizeof(uint32_t) + len);
+                    std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(uint32_t) + len);
+                    total_width += len;
+                }
+            }
+            else if (target_type == core::DataType::INT16 && data_offset + sizeof(int16_t) <= tuple_data.size())
+            {
+                value.resize(sizeof(int16_t));
+                std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(int16_t));
+                total_width += sizeof(int16_t);
+            }
+            else if (target_type == core::DataType::FLOAT32 && data_offset + sizeof(float) <= tuple_data.size())
+            {
+                value.resize(sizeof(float));
+                std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(float));
+                total_width += sizeof(float);
             }
 
             column_values.push_back(std::move(value));
@@ -1157,33 +1362,139 @@ namespace scratchbird::optimizer
     {
         DEBUG_LOG_DB("Storing column statistics to catalog");
 
-        // Phase 1, Task 1.1.8 - Statistics storage
+        // OPT-1: Statistics persistence implementation
         //
-        // For now, we store statistics in the in-memory cache only.
-        // Future enhancement: persist to pg_statistic catalog table
-        //
-        // Steps for full implementation:
-        // 1. Serialize MCVs to TOAST if large (> inline threshold)
-        // 2. Serialize histogram to TOAST if large
-        // 3. Create StatisticsRecord with basic stats + TOAST refs
-        // 4. Write to pg_statistic catalog page
-        // 5. Update cache
+        // Steps:
+        // 1. Serialize MCVs to JSON and store via TOAST if large
+        // 2. Serialize histogram to JSON and store via TOAST if large
+        // 3. Create StatisticInfo with basic stats + TOAST refs
+        // 4. Write to sb_statistic catalog via CatalogManager
+        // 5. Update in-memory cache
 
-        std::lock_guard<std::mutex> lock(cache_mutex_);
+        // Ensure catalog is initialized
+        if (!catalog_)
+        {
+            catalog_ = db_->catalog_manager();
+        }
 
-        // Generate cache key
-        uint64_t cache_key = getCacheKey(stats.table_id, stats.column_id);
+        // Create StatisticInfo from ColumnStatistics
+        core::CatalogManager::StatisticInfo info;
+        info.statistic_id = core::generateUuidV7();  // Generate new ID
+        info.table_id = stats.table_id;
+        info.column_id = stats.column_id;
+        info.data_type = static_cast<uint16_t>(stats.data_type);
+        info.num_rows = stats.num_rows;
+        info.num_nulls = stats.num_nulls;
+        info.null_fraction = stats.null_fraction;
+        info.num_distinct = stats.num_distinct;
+        info.avg_width = stats.avg_width;
+        info.histogram_type = static_cast<uint8_t>(stats.histogram_type);
+        info.histogram_bucket_count = stats.histogram_bucket_count;
+        info.last_analyzed_time = stats.last_analyzed_time;
+        info.sample_size = stats.sample_size;
+        info.sample_rate = stats.sample_rate;
 
-        // Store in cache
-        column_stats_cache_[cache_key] = stats;
+        // Get current timestamp
+        auto now = std::chrono::system_clock::now();
+        auto now_time = std::chrono::duration_cast<std::chrono::seconds>(
+            now.time_since_epoch()).count();
+        info.created_time = now_time;
+        info.last_modified_time = now_time;
 
-        DEBUG_LOG_DB("Stored column statistics in cache for table=" +
-                     std::to_string(cache_key >> 32) + " column=" +
-                     std::to_string(cache_key & 0xFFFFFFFF));
+        // Serialize MCVs to JSON format for TOAST storage
+        // Format: [{"value":"base64","freq":0.5}, ...]
+        if (!stats.mcv_list.empty())
+        {
+            std::string mcv_json = "[";
+            for (size_t i = 0; i < stats.mcv_list.size(); ++i)
+            {
+                if (i > 0) mcv_json += ",";
+                const auto& mcv = stats.mcv_list[i];
 
-        // Phase 4 Enhancement: Persist to pg_statistic catalog
-        // For now, statistics are volatile (lost on database restart)
-        // This is acceptable for Alpha release
+                // Convert value_data to hex string (simpler than base64)
+                std::string hex_value;
+                for (size_t j = 0; j < 256 && mcv.value_data[j] != 0; ++j)
+                {
+                    char buf[3];
+                    snprintf(buf, sizeof(buf), "%02x", mcv.value_data[j]);
+                    hex_value += buf;
+                }
+
+                mcv_json += "{\"v\":\"" + hex_value + "\",\"f\":" +
+                           std::to_string(mcv.frequency) + "}";
+            }
+            mcv_json += "]";
+
+            // Store via TOAST and get OID (xmin=0 for catalog operations)
+            Status status = catalog_->storeStringInToast(mcv_json, 0, info.mcv_oid, ctx);
+            if (status != Status::OK)
+            {
+                DEBUG_LOG_DB("Failed to store MCV list via TOAST");
+                // Continue anyway - stats will work without MCVs
+                info.mcv_oid = 0;
+            }
+        }
+
+        // Serialize histogram to JSON format for TOAST storage
+        // Format: [{"lo":"hex","hi":"hex","cnt":100,"freq":0.1}, ...]
+        if (!stats.histogram_buckets.empty())
+        {
+            std::string hist_json = "[";
+            for (size_t i = 0; i < stats.histogram_buckets.size(); ++i)
+            {
+                if (i > 0) hist_json += ",";
+                const auto& bucket = stats.histogram_buckets[i];
+
+                // Convert bounds to hex strings
+                std::string lo_hex, hi_hex;
+                for (size_t j = 0; j < 256; ++j)
+                {
+                    if (bucket.lower_bound[j] == 0 && j > 0) break;
+                    char buf[3];
+                    snprintf(buf, sizeof(buf), "%02x", bucket.lower_bound[j]);
+                    lo_hex += buf;
+                }
+                for (size_t j = 0; j < 256; ++j)
+                {
+                    if (bucket.upper_bound[j] == 0 && j > 0) break;
+                    char buf[3];
+                    snprintf(buf, sizeof(buf), "%02x", bucket.upper_bound[j]);
+                    hi_hex += buf;
+                }
+
+                hist_json += "{\"lo\":\"" + lo_hex + "\",\"hi\":\"" + hi_hex +
+                            "\",\"cnt\":" + std::to_string(bucket.row_count) +
+                            ",\"f\":" + std::to_string(bucket.frequency) + "}";
+            }
+            hist_json += "]";
+
+            // Store via TOAST and get OID (xmin=0 for catalog operations)
+            Status status = catalog_->storeStringInToast(hist_json, 0, info.histogram_oid, ctx);
+            if (status != Status::OK)
+            {
+                DEBUG_LOG_DB("Failed to store histogram via TOAST");
+                // Continue anyway - stats will work without histogram
+                info.histogram_oid = 0;
+            }
+        }
+
+        // Store to catalog
+        Status status = catalog_->storeStatistic(info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to store statistics to catalog");
+            return status;
+        }
+
+        // Also update in-memory cache for fast access
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            uint64_t cache_key = getCacheKey(stats.table_id, stats.column_id);
+            column_stats_cache_[cache_key] = stats;
+        }
+
+        DEBUG_LOG_DB("Stored column statistics to catalog for table_id=" +
+                     std::to_string(*reinterpret_cast<const uint64_t*>(stats.table_id.bytes.data())));
 
         return Status::OK;
     }
@@ -1194,24 +1505,184 @@ namespace scratchbird::optimizer
     {
         DEBUG_LOG_DB("Loading column statistics from catalog");
 
-        // Phase 1, Task 1.1.8 - Statistics loading
+        // OPT-2: Statistics loading from persistent storage
         //
-        // For now, we load from in-memory cache only.
-        // Future enhancement: load from pg_statistic catalog table
-        //
-        // Steps for full implementation:
-        // 1. Read StatisticsRecord from pg_statistic catalog
-        // 2. Load MCVs from TOAST if needed
-        // 3. Load histogram from TOAST if needed
+        // Steps:
+        // 1. Read StatisticInfo from sb_statistic catalog via CatalogManager
+        // 2. Load MCVs from TOAST if OID is set
+        // 3. Load histogram from TOAST if OID is set
         // 4. Deserialize into ColumnStatistics struct
+        // 5. Cache for fast access
 
-        // Note: The getColumnStatistics method already checks cache first,
-        // so this is only called on cache miss. Since we don't have
-        // persistent storage yet, we return NOT_FOUND.
+        // Ensure catalog is initialized
+        if (!catalog_)
+        {
+            catalog_ = db_->catalog_manager();
+        }
 
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
-                          "Statistics not found in cache (persistence not yet implemented)");
-        return Status::NOT_FOUND;
+        // Try to load from catalog
+        core::CatalogManager::StatisticInfo info;
+        Status status = catalog_->getStatistic(table_id, column_id, info, ctx);
+        if (status != Status::OK)
+        {
+            // Not found in catalog - this is normal for columns that haven't been analyzed
+            return status;
+        }
+
+        // Convert StatisticInfo to ColumnStatistics
+        stats.table_id = info.table_id;
+        stats.column_id = info.column_id;
+        stats.data_type = static_cast<core::DataType>(info.data_type);
+        stats.num_rows = info.num_rows;
+        stats.num_nulls = info.num_nulls;
+        stats.null_fraction = info.null_fraction;
+        stats.num_distinct = info.num_distinct;
+        stats.avg_width = info.avg_width;
+        stats.histogram_type = static_cast<HistogramType>(info.histogram_type);
+        stats.histogram_bucket_count = info.histogram_bucket_count;
+        stats.last_analyzed_time = info.last_analyzed_time;
+        stats.sample_size = info.sample_size;
+        stats.sample_rate = info.sample_rate;
+
+        // Load MCVs from TOAST if available
+        if (info.mcv_oid != 0)
+        {
+            std::string json;
+            status = catalog_->loadStringFromToast(info.mcv_oid, 0, json, ctx);
+            if (status == Status::OK && !json.empty())
+            {
+                // Parse JSON: [{"v":"hex","f":0.5}, ...]
+                stats.mcv_list.clear();
+
+                // Simple JSON parser for MCV entries
+                size_t pos = 0;
+                while ((pos = json.find("{\"v\":\"", pos)) != std::string::npos)
+                {
+                    pos += 6; // Skip {"v":"
+                    size_t end = json.find("\"", pos);
+                    if (end == std::string::npos) break;
+
+                    std::string hex_value = json.substr(pos, end - pos);
+                    pos = end;
+
+                    // Find frequency
+                    size_t freq_pos = json.find("\"f\":", pos);
+                    if (freq_pos == std::string::npos) break;
+                    freq_pos += 4; // Skip "f":
+
+                    size_t freq_end = json.find_first_of(",}", freq_pos);
+                    if (freq_end == std::string::npos) break;
+
+                    float freq = std::stof(json.substr(freq_pos, freq_end - freq_pos));
+
+                    // Convert hex to bytes
+                    MCVEntry entry;
+                    size_t byte_idx = 0;
+                    for (size_t i = 0; i < hex_value.size() && byte_idx < 256; i += 2)
+                    {
+                        unsigned int byte_val;
+                        sscanf(hex_value.c_str() + i, "%02x", &byte_val);
+                        entry.value_data[byte_idx++] = static_cast<uint8_t>(byte_val);
+                    }
+                    entry.frequency = freq;
+                    stats.mcv_list.push_back(entry);
+
+                    pos = freq_end;
+                }
+            }
+        }
+
+        // Load histogram from TOAST if available
+        if (info.histogram_oid != 0)
+        {
+            std::string json;
+            status = catalog_->loadStringFromToast(info.histogram_oid, 0, json, ctx);
+            if (status == Status::OK && !json.empty())
+            {
+                // Parse JSON: [{"lo":"hex","hi":"hex","cnt":100,"f":0.1}, ...]
+                stats.histogram_buckets.clear();
+
+                // Simple JSON parser for histogram entries
+                size_t pos = 0;
+                while ((pos = json.find("{\"lo\":\"", pos)) != std::string::npos)
+                {
+                    pos += 7; // Skip {"lo":"
+                    size_t end = json.find("\"", pos);
+                    if (end == std::string::npos) break;
+
+                    std::string lo_hex = json.substr(pos, end - pos);
+                    pos = end;
+
+                    // Find hi
+                    size_t hi_pos = json.find("\"hi\":\"", pos);
+                    if (hi_pos == std::string::npos) break;
+                    hi_pos += 6;
+                    size_t hi_end = json.find("\"", hi_pos);
+                    if (hi_end == std::string::npos) break;
+
+                    std::string hi_hex = json.substr(hi_pos, hi_end - hi_pos);
+                    pos = hi_end;
+
+                    // Find cnt
+                    size_t cnt_pos = json.find("\"cnt\":", pos);
+                    if (cnt_pos == std::string::npos) break;
+                    cnt_pos += 6;
+                    size_t cnt_end = json.find(",", cnt_pos);
+                    if (cnt_end == std::string::npos) break;
+
+                    uint64_t cnt = std::stoull(json.substr(cnt_pos, cnt_end - cnt_pos));
+                    pos = cnt_end;
+
+                    // Find f
+                    size_t f_pos = json.find("\"f\":", pos);
+                    if (f_pos == std::string::npos) break;
+                    f_pos += 4;
+                    size_t f_end = json.find_first_of(",}", f_pos);
+                    if (f_end == std::string::npos) break;
+
+                    float freq = std::stof(json.substr(f_pos, f_end - f_pos));
+
+                    // Create bucket
+                    HistogramBucket bucket;
+
+                    // Convert hex to bytes for lower bound
+                    size_t byte_idx = 0;
+                    for (size_t i = 0; i < lo_hex.size() && byte_idx < 256; i += 2)
+                    {
+                        unsigned int byte_val;
+                        sscanf(lo_hex.c_str() + i, "%02x", &byte_val);
+                        bucket.lower_bound[byte_idx++] = static_cast<uint8_t>(byte_val);
+                    }
+
+                    // Convert hex to bytes for upper bound
+                    byte_idx = 0;
+                    for (size_t i = 0; i < hi_hex.size() && byte_idx < 256; i += 2)
+                    {
+                        unsigned int byte_val;
+                        sscanf(hi_hex.c_str() + i, "%02x", &byte_val);
+                        bucket.upper_bound[byte_idx++] = static_cast<uint8_t>(byte_val);
+                    }
+
+                    bucket.row_count = cnt;
+                    bucket.frequency = freq;
+                    stats.histogram_buckets.push_back(bucket);
+
+                    pos = f_end;
+                }
+            }
+        }
+
+        // Cache for fast access
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            uint64_t cache_key = getCacheKey(table_id, column_id);
+            column_stats_cache_[cache_key] = stats;
+        }
+
+        DEBUG_LOG_DB("Loaded column statistics from catalog for table_id=" +
+                     std::to_string(*reinterpret_cast<const uint64_t*>(table_id.bytes.data())));
+
+        return Status::OK;
     }
 
     auto StatisticsManager::getCacheKey(const ID &table_id, const ID &column_id) -> uint64_t

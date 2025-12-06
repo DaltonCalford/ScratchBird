@@ -11,6 +11,8 @@
 #include <filesystem>
 #include <thread>
 #include <vector>
+#include <atomic>
+#include <unistd.h>
 
 using namespace scratchbird::core;
 
@@ -19,6 +21,14 @@ class LoggerTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        // Generate unique file prefix per test to avoid conflicts during parallel execution
+        static std::atomic<int> test_counter{0};
+        test_id_ = std::to_string(getpid()) + "_" + std::to_string(test_counter++);
+        log_file_ = "test_logger_" + test_id_ + ".log";
+        log_file_2_ = "test_logger2_" + test_id_ + ".log";
+        config_file_ = "test_logger_config_" + test_id_ + ".ini";
+        multithread_log_file_ = "test_logger_multithread_" + test_id_ + ".log";
+
         // Get logger instance
         Logger& log = Logger::getInstance();
 
@@ -46,10 +56,17 @@ protected:
 
     void cleanupTestFiles()
     {
-        std::filesystem::remove("test_logger.log");
-        std::filesystem::remove("test_logger_config.ini");
-        std::filesystem::remove("test_logger_multithread.log");
+        std::filesystem::remove(log_file_);
+        std::filesystem::remove(log_file_2_);
+        std::filesystem::remove(config_file_);
+        std::filesystem::remove(multithread_log_file_);
     }
+
+    std::string test_id_;
+    std::string log_file_;
+    std::string log_file_2_;
+    std::string config_file_;
+    std::string multithread_log_file_;
 
     std::string readLogFile(const std::string& filename)
     {
@@ -83,16 +100,16 @@ protected:
 TEST_F(LoggerTest, BasicLoggingToFile)
 {
     Logger& log = Logger::getInstance();
-    log.setLogFile("test_logger.log");
+    log.setLogFile(log_file_);
 
     LOG_INFO(GENERAL, "Test message");
 
     log.flush();
 
-    EXPECT_TRUE(std::filesystem::exists("test_logger.log"));
-    EXPECT_TRUE(fileContains("test_logger.log", "Test message"));
-    EXPECT_TRUE(fileContains("test_logger.log", "[INFO]"));
-    EXPECT_TRUE(fileContains("test_logger.log", "[GENERAL]"));
+    EXPECT_TRUE(std::filesystem::exists(log_file_));
+    EXPECT_TRUE(fileContains(log_file_, "Test message"));
+    EXPECT_TRUE(fileContains(log_file_, "[INFO]"));
+    EXPECT_TRUE(fileContains(log_file_, "[GENERAL]"));
 }
 
 // Test 2: Log Level Filtering
@@ -100,7 +117,7 @@ TEST_F(LoggerTest, LogLevelFiltering)
 {
     Logger& log = Logger::getInstance();
     log.setLogLevel(LogLevel::WARNING);
-    log.setLogFile("test_logger.log");
+    log.setLogFile(log_file_);
 
     // These should not appear (below WARNING)
     LOG_TRACE(GENERAL, "Trace message");
@@ -114,7 +131,7 @@ TEST_F(LoggerTest, LogLevelFiltering)
 
     log.flush();
 
-    std::string content = readLogFile("test_logger.log");
+    std::string content = readLogFile(log_file_);
 
     EXPECT_TRUE(content.find("Trace message") == std::string::npos);
     EXPECT_TRUE(content.find("Debug message") == std::string::npos);
@@ -130,7 +147,7 @@ TEST_F(LoggerTest, AllLogLevels)
 {
     Logger& log = Logger::getInstance();
     log.setLogLevel(LogLevel::TRACE);
-    log.setLogFile("test_logger.log");
+    log.setLogFile(log_file_);
 
     LOG_TRACE(GENERAL, "Trace");
     LOG_DEBUG(GENERAL, "Debug");
@@ -141,7 +158,7 @@ TEST_F(LoggerTest, AllLogLevels)
 
     log.flush();
 
-    std::string content = readLogFile("test_logger.log");
+    std::string content = readLogFile(log_file_);
 
     EXPECT_TRUE(content.find("[TRACE]") != std::string::npos);
     EXPECT_TRUE(content.find("[DEBUG]") != std::string::npos);
@@ -155,7 +172,7 @@ TEST_F(LoggerTest, AllLogLevels)
 TEST_F(LoggerTest, AllLogCategories)
 {
     Logger& log = Logger::getInstance();
-    log.setLogFile("test_logger.log");
+    log.setLogFile(log_file_);
 
     LOG_INFO(GENERAL, "General");
     LOG_INFO(STORAGE, "Storage");
@@ -172,7 +189,7 @@ TEST_F(LoggerTest, AllLogCategories)
 
     log.flush();
 
-    std::string content = readLogFile("test_logger.log");
+    std::string content = readLogFile(log_file_);
 
     EXPECT_TRUE(content.find("[GENERAL]") != std::string::npos);
     EXPECT_TRUE(content.find("[STORAGE]") != std::string::npos);
@@ -192,7 +209,7 @@ TEST_F(LoggerTest, AllLogCategories)
 TEST_F(LoggerTest, FormattedMessages)
 {
     Logger& log = Logger::getInstance();
-    log.setLogFile("test_logger.log");
+    log.setLogFile(log_file_);
 
     int value = 42;
     std::string text = "test";
@@ -200,7 +217,7 @@ TEST_F(LoggerTest, FormattedMessages)
 
     log.flush();
 
-    std::string content = readLogFile("test_logger.log");
+    std::string content = readLogFile(log_file_);
 
     EXPECT_TRUE(content.find("Integer: 42") != std::string::npos);
     EXPECT_TRUE(content.find("String: test") != std::string::npos);
@@ -210,14 +227,14 @@ TEST_F(LoggerTest, FormattedMessages)
 TEST_F(LoggerTest, TimestampEnabledDisabled)
 {
     Logger& log = Logger::getInstance();
-    log.setLogFile("test_logger.log");
+    log.setLogFile(log_file_);
 
     // With timestamp
     log.setTimestampEnabled(true);
     LOG_INFO(GENERAL, "With timestamp");
 
     log.flush();
-    std::string content1 = readLogFile("test_logger.log");
+    std::string content1 = readLogFile(log_file_);
 
     // Should contain date/time pattern (YYYY-MM-DD HH:MM:SS.mmm)
     EXPECT_TRUE(content1.find("202") != std::string::npos); // Year
@@ -225,13 +242,13 @@ TEST_F(LoggerTest, TimestampEnabledDisabled)
 
     // Without timestamp
     log.close();
-    std::filesystem::remove("test_logger.log");
-    log.setLogFile("test_logger.log");
+    std::filesystem::remove(log_file_);
+    log.setLogFile(log_file_);
     log.setTimestampEnabled(false);
     LOG_INFO(GENERAL, "Without timestamp");
 
     log.flush();
-    std::string content2 = readLogFile("test_logger.log");
+    std::string content2 = readLogFile(log_file_);
 
     // Should start with [INFO] directly
     EXPECT_TRUE(content2.find("[INFO]") < 10);
@@ -241,26 +258,26 @@ TEST_F(LoggerTest, TimestampEnabledDisabled)
 TEST_F(LoggerTest, ThreadIdEnabledDisabled)
 {
     Logger& log = Logger::getInstance();
-    log.setLogFile("test_logger.log");
+    log.setLogFile(log_file_);
 
     // With thread ID
     log.setThreadIdEnabled(true);
     LOG_INFO(GENERAL, "With thread ID");
 
     log.flush();
-    std::string content1 = readLogFile("test_logger.log");
+    std::string content1 = readLogFile(log_file_);
 
     EXPECT_TRUE(content1.find("[Thread:") != std::string::npos);
 
     // Without thread ID
     log.close();
-    std::filesystem::remove("test_logger.log");
-    log.setLogFile("test_logger.log");
+    std::filesystem::remove(log_file_);
+    log.setLogFile(log_file_);
     log.setThreadIdEnabled(false);
     LOG_INFO(GENERAL, "Without thread ID");
 
     log.flush();
-    std::string content2 = readLogFile("test_logger.log");
+    std::string content2 = readLogFile(log_file_);
 
     EXPECT_TRUE(content2.find("[Thread:") == std::string::npos);
 }
@@ -269,26 +286,26 @@ TEST_F(LoggerTest, ThreadIdEnabledDisabled)
 TEST_F(LoggerTest, SourceLocationEnabledDisabled)
 {
     Logger& log = Logger::getInstance();
-    log.setLogFile("test_logger.log");
+    log.setLogFile(log_file_);
 
     // With source location
     log.setSourceLocationEnabled(true);
     LOG_INFO(GENERAL, "With source location");
 
     log.flush();
-    std::string content1 = readLogFile("test_logger.log");
+    std::string content1 = readLogFile(log_file_);
 
     EXPECT_TRUE(content1.find(".cpp:") != std::string::npos);
 
     // Without source location
     log.close();
-    std::filesystem::remove("test_logger.log");
-    log.setLogFile("test_logger.log");
+    std::filesystem::remove(log_file_);
+    log.setLogFile(log_file_);
     log.setSourceLocationEnabled(false);
     LOG_INFO(GENERAL, "Without source location");
 
     log.flush();
-    std::string content2 = readLogFile("test_logger.log");
+    std::string content2 = readLogFile(log_file_);
 
     EXPECT_TRUE(content2.find(".cpp:") == std::string::npos);
 }
@@ -300,20 +317,20 @@ TEST_F(LoggerTest, SourceLocationEnabledDisabled)
 TEST_F(LoggerTest, ConfigIntegration)
 {
     // Create config file
-    std::ofstream config_file("test_logger_config.ini");
-    config_file << "[logging]\n";
-    config_file << "log_level = DEBUG\n";
-    config_file << "log_file = test_logger.log\n";
-    config_file << "log_timestamp = true\n";
-    config_file << "log_thread_id = false\n";
-    config_file << "log_source_location = true\n";
-    config_file.close();
+    std::ofstream cfg_file(config_file_.c_str());
+    cfg_file << "[logging]\n";
+    cfg_file << "log_level = DEBUG\n";
+    cfg_file << "log_file = " << log_file_ << "\n";
+    cfg_file << "log_timestamp = true\n";
+    cfg_file << "log_thread_id = false\n";
+    cfg_file << "log_source_location = true\n";
+    cfg_file.close();
 
     // Initialize config
     Config& cfg = Config::getInstance();
     cfg.clear();
     ErrorContext ctx;
-    cfg.initialize("test_logger_config.ini", &ctx);
+    cfg.initialize(config_file_.c_str(), &ctx);
 
     // Apply config settings to logger manually (simulating what initialize() does)
     Logger& log = Logger::getInstance();
@@ -326,9 +343,9 @@ TEST_F(LoggerTest, ConfigIntegration)
         log.setLogLevel(LogLevel::INFO);
 
     // Read and apply log file from config
-    std::string log_file = cfg.getString("logging", "log_file", "");
-    if (!log_file.empty())
-        log.setLogFile(log_file);
+    std::string log_file_from_cfg = cfg.getString("logging", "log_file", "");
+    if (!log_file_from_cfg.empty())
+        log.setLogFile(log_file_from_cfg);
 
     // Read and apply flags from config
     log.setTimestampEnabled(cfg.getBool("logging", "log_timestamp", true));
@@ -343,7 +360,7 @@ TEST_F(LoggerTest, ConfigIntegration)
 
     log.flush();
 
-    EXPECT_TRUE(fileContains("test_logger.log", "Debug message from config"));
+    EXPECT_TRUE(fileContains(log_file_, "Debug message from config"));
 
     // Clean up
     cfg.clear();
@@ -353,7 +370,7 @@ TEST_F(LoggerTest, ConfigIntegration)
 TEST_F(LoggerTest, ThreadSafety)
 {
     Logger& log = Logger::getInstance();
-    log.setLogFile("test_logger_multithread.log");
+    log.setLogFile(multithread_log_file_);
     log.setTimestampEnabled(false); // Easier to count lines
 
     const int num_threads = 10;
@@ -376,7 +393,7 @@ TEST_F(LoggerTest, ThreadSafety)
     log.flush();
 
     // Should have exactly num_threads * logs_per_thread lines
-    int line_count = countLines("test_logger_multithread.log");
+    int line_count = countLines(multithread_log_file_);
     EXPECT_EQ(line_count, num_threads * logs_per_thread);
 }
 
@@ -424,34 +441,34 @@ TEST_F(LoggerTest, ChangeLogFile)
 {
     Logger& log = Logger::getInstance();
 
-    log.setLogFile("test_logger.log");
+    log.setLogFile(log_file_);
     LOG_INFO(GENERAL, "Message 1");
     log.flush();
 
-    EXPECT_TRUE(fileContains("test_logger.log", "Message 1"));
+    EXPECT_TRUE(fileContains(log_file_, "Message 1"));
 
     // Change to a different file
-    log.setLogFile("test_logger2.log");
+    log.setLogFile(log_file_2_);
     LOG_INFO(GENERAL, "Message 2");
     log.flush();
 
     // First file should only have Message 1
-    EXPECT_TRUE(fileContains("test_logger.log", "Message 1"));
-    EXPECT_FALSE(fileContains("test_logger.log", "Message 2"));
+    EXPECT_TRUE(fileContains(log_file_, "Message 1"));
+    EXPECT_FALSE(fileContains(log_file_, "Message 2"));
 
     // Second file should have Message 2
-    EXPECT_TRUE(fileContains("test_logger2.log", "Message 2"));
-    EXPECT_FALSE(fileContains("test_logger2.log", "Message 1"));
+    EXPECT_TRUE(fileContains(log_file_2_, "Message 2"));
+    EXPECT_FALSE(fileContains(log_file_2_, "Message 1"));
 
     // Clean up
-    std::filesystem::remove("test_logger2.log");
+    std::filesystem::remove(log_file_2_);
 }
 
 // Test 14: Flush Ensures Data Written
 TEST_F(LoggerTest, FlushEnsuresDataWritten)
 {
     Logger& log = Logger::getInstance();
-    log.setLogFile("test_logger.log");
+    log.setLogFile(log_file_);
 
     LOG_INFO(GENERAL, "Before flush");
 
@@ -459,14 +476,14 @@ TEST_F(LoggerTest, FlushEnsuresDataWritten)
     log.flush();
 
     // File should contain the message
-    EXPECT_TRUE(fileContains("test_logger.log", "Before flush"));
+    EXPECT_TRUE(fileContains(log_file_, "Before flush"));
 }
 
 // Test 15: Close Closes Log File
 TEST_F(LoggerTest, CloseClosesLogFile)
 {
     Logger& log = Logger::getInstance();
-    log.setLogFile("test_logger.log");
+    log.setLogFile(log_file_);
 
     LOG_INFO(GENERAL, "Before close");
     log.close();
@@ -475,7 +492,7 @@ TEST_F(LoggerTest, CloseClosesLogFile)
     LOG_INFO(GENERAL, "After close");
 
     // File should only have "Before close"
-    std::string content = readLogFile("test_logger.log");
+    std::string content = readLogFile(log_file_);
     EXPECT_TRUE(content.find("Before close") != std::string::npos);
     EXPECT_TRUE(content.find("After close") == std::string::npos);
 }
@@ -517,11 +534,11 @@ TEST_F(LoggerTest, MultipleInitializeCalls)
     log.initialize(); // Should not crash
 
     // Should still work
-    log.setLogFile("test_logger.log");
+    log.setLogFile(log_file_);
     LOG_INFO(GENERAL, "After multiple initializes");
     log.flush();
 
-    EXPECT_TRUE(fileContains("test_logger.log", "After multiple initializes"));
+    EXPECT_TRUE(fileContains(log_file_, "After multiple initializes"));
 }
 
 // Test 19: Invalid Log File Path
@@ -543,7 +560,7 @@ TEST_F(LoggerTest, InvalidLogFilePath)
 TEST_F(LoggerTest, LargeLogMessage)
 {
     Logger& log = Logger::getInstance();
-    log.setLogFile("test_logger.log");
+    log.setLogFile(log_file_);
 
     // Create a large message (3000 characters)
     std::string large_message(3000, 'X');
@@ -551,7 +568,7 @@ TEST_F(LoggerTest, LargeLogMessage)
 
     log.flush();
 
-    std::string content = readLogFile("test_logger.log");
+    std::string content = readLogFile(log_file_);
 
     // Message should be truncated to buffer size (4096 in logger.cpp)
     // but should not crash

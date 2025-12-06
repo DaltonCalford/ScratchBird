@@ -1,18 +1,21 @@
 # Implementation Status Dashboard
 
-**Last Updated:** December 3, 2025 (EXEC-14 scalar aggregates implemented, WP5 in progress)
+**Last Updated:** December 6, 2025 (Parser v2.0 planning complete, Alpha 2 Phase 2.2 in progress)
 **Analysis Method:** Source code verification against planning documents
 
 ### Alpha 1 Status: ✅ **100% COMPLETE** (December 2, 2025)
+### Alpha 2 Status: 🚧 **IN PROGRESS** (Phase 2.2 - Parser Extraction)
 
 | Metric | Value |
 |--------|-------|
-| **Total Tests** | 1,020 |
-| **Tests Passed** | 1,020 (100%) |
+| **Total Tests** | 1,123 |
+| **Tests Passed** | 1,123 (100%) |
 | **Tests Failed** | 0 (0%) |
 | **Tests Skipped** | 0 (0%) |
-| **Test Runtime** | ~25 minutes |
+| **Test Runtime** | ~30 minutes |
 | **CODE_COMPLETION_MASTER_PLAN** | ✅ 135/135 (100%) |
+| **Parser Audit Documents** | ✅ 13/13 (100%) |
+| **Parser v2.0 Plan** | ✅ Complete |
 
 **CLI Tools Functional Tests:** PASS (all 4 tools working)
 - sb_verify: PASS (--version, --quick, page verification)
@@ -424,6 +427,7 @@ All 4 phases (A, B, C, D) complete with ~4,290 lines of virtual catalog infrastr
 
 | Date | Changes | Updated By |
 |------|---------|------------|
+| 2025-12-06 | **Parser v2.0 Planning Complete** - 13 audit docs, implementation plan, CREATE/DROP TRIGGER/FUNCTION/PROCEDURE enabled, 1123 tests | Claude Code |
 | 2025-12-03 | **EXEC-14 Scalar Aggregates Implemented** - Work Package 5 in progress, added executeScalarAggregate() helper | Claude Code |
 | 2025-12-02 | **All tests passing (1020/1020 = 100%)** - Fixed OOM tests, cleaned up test file paths, P3 80% complete (16/20) | Claude Code |
 | 2025-11-28 | **CODE_COMPLETION_MASTER_PLAN 100% COMPLETE** - 135/135 items, all TODOs documented as "Phase X Enhancement" | Claude Code |
@@ -446,5 +450,54 @@ All 4 phases (A, B, C, D) complete with ~4,290 lines of virtual catalog infrastr
 
 ---
 
-**Alpha 1 COMPLETE!** Next phase: Alpha 2 (Parser Separation)
-**See:** [OFFICIAL_ROADMAP.md](/OFFICIAL_ROADMAP.md) for Alpha 2 details
+---
+
+## Alpha 2: Parser Separation - Current Work
+
+### Phase 2.2: ScratchBird Parser v2.0 Implementation 🚧
+
+**Goal:** Implement "Smart Parser, Dumb Lexer" context-sensitive architecture
+
+| Task | Status | Notes |
+|------|--------|-------|
+| Parser Audit Documents | ✅ Complete | 13 docs in `/docs/planning/current_parser/` |
+| Grammar Specification | ✅ Complete | `/docs/specifications/ScratchBird Master Grammar Specification v2.0.md` |
+| Implementation Plan | ✅ Complete | `/docs/planning/PARSER_V2_IMPLEMENTATION_PLAN.md` |
+| PSQL Dispatch | ✅ Complete | TRIGGER, FUNCTION, PROCEDURE enabled in CREATE/DROP |
+| ParserState Class | 🔄 Pending | Mode stack for DDL, DML, SESSION, EXPRESSION, PSQL |
+| Gatekeeper Keywords | 🔄 Pending | ~35 globally reserved words |
+| Contextual Helpers | 🔄 Pending | `expectContextual(string)` implementation |
+| Schema Path Parsing | 🔄 Pending | `.name`, `..name`, qualified paths |
+| Lexer Refactor | 🔄 Pending | Emit IDENTIFIER for most keywords |
+
+### Key Design Documents
+
+- **Implementation Plan:** [PARSER_V2_IMPLEMENTATION_PLAN.md](/docs/planning/PARSER_V2_IMPLEMENTATION_PLAN.md)
+- **Grammar Spec:** [ScratchBird Master Grammar Specification v2.0.md](/docs/specifications/ScratchBird%20Master%20Grammar%20Specification%20v2.0.md)
+- **Current Parser Audit:** [/docs/planning/current_parser/](/docs/planning/current_parser/)
+
+### Parser v2.0 Architecture Highlights
+
+1. **Gatekeeper Keywords (~35):** Only these words globally reserved
+   - Control: CREATE, ALTER, DROP, TRUNCATE, COMMENT
+   - DML: SELECT, INSERT, UPDATE, DELETE, MERGE, WITH
+   - Transaction: START, COMMIT, ROLLBACK, SAVEPOINT, RELEASE
+   - Session: SET, RESET, SHOW, DESCRIBE
+   - Logic: AND, OR, NOT, NULL, TRUE, FALSE
+   - Security: GRANT, REVOKE
+   - Other: EXPLAIN, ANALYZE, REFRESH, SWEEP, ATTACH, DETACH, CALL
+
+2. **Contextual Keywords:** TABLE, INDEX, VIEW, PROCEDURE, etc. recognized only in context
+
+3. **Schema Paths:** Filesystem-like navigation
+   - `.name` - Current schema
+   - `..name` - Parent schema
+   - `schema.table` - Qualified path
+   - Search path: Left-to-right resolution
+
+4. **UUID Resolution:** Objects resolved to UUID once; execution uses UUIDs only
+
+---
+
+**Alpha 1 COMPLETE!** Alpha 2 (Parser Separation) **IN PROGRESS**
+**See:** [OFFICIAL_ROADMAP.md](/OFFICIAL_ROADMAP.md) for full Alpha 2 details

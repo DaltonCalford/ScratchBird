@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -305,6 +306,149 @@ int64_t ResultSet::getTime(const std::string& column) const {
 std::string ResultSet::getUUID(const std::string& column) const {
     int idx = getColumnIndex(column);
     return idx >= 0 ? getUUID(static_cast<size_t>(idx)) : "";
+}
+
+// ============================================================================
+// PreparedStatement Helper Functions - NET-1: Parameter Substitution
+// ============================================================================
+
+// Escape a string for safe SQL insertion (prevents SQL injection)
+static std::string escapeString(const std::string& str) {
+    std::string result;
+    result.reserve(str.size() * 2 + 2);
+    result += '\'';
+    for (char c : str) {
+        if (c == '\'') {
+            result += "''";  // SQL standard escape for single quotes
+        } else if (c == '\\') {
+            result += "\\\\";  // Escape backslashes
+        } else if (c == '\0') {
+            // Skip null bytes (potential injection vector)
+            continue;
+        } else {
+            result += c;
+        }
+    }
+    result += '\'';
+    return result;
+}
+
+// Convert ColumnValue to SQL literal string with proper escaping
+static std::string columnValueToSqlLiteral(const protocol::ProtocolCodec::ColumnValue& val) {
+    if (val.is_null) {
+        return "NULL";
+    }
+
+    // Determine type based on data size and content
+    // Note: ColumnValue doesn't store type info, so we infer from size
+    if (val.data.size() == 1) {
+        // Boolean (1 byte)
+        return val.data[0] ? "TRUE" : "FALSE";
+    } else if (val.data.size() == 4) {
+        // Int32
+        int32_t value;
+        std::memcpy(&value, val.data.data(), 4);
+        return std::to_string(value);
+    } else if (val.data.size() == 8) {
+        // Could be int64 or double - check if it looks like a reasonable double
+        // We default to treating as int64 first, then check if it might be a double
+        int64_t int_value;
+        std::memcpy(&int_value, val.data.data(), 8);
+
+        double dbl_value;
+        std::memcpy(&dbl_value, val.data.data(), 8);
+
+        // If the double representation is a "normal" floating point number
+        // (not NaN, not infinity, and has a fractional part), use it
+        if (std::isfinite(dbl_value) && dbl_value != static_cast<double>(int_value)) {
+            std::ostringstream oss;
+            oss.precision(17);  // Maximum precision for double
+            oss << dbl_value;
+            return oss.str();
+        }
+
+        return std::to_string(int_value);
+    } else {
+        // String or bytes - treat as string with escaping
+        std::string str(val.data.begin(), val.data.end());
+        return escapeString(str);
+    }
+}
+
+// Substitute parameters in SQL, replacing $1, $2, etc. with escaped values
+static std::string substituteParameters(
+    const std::string& sql,
+    const std::vector<protocol::ProtocolCodec::ColumnValue>& params) {
+
+    std::string result;
+    result.reserve(sql.size() * 2);
+
+    size_t i = 0;
+    while (i < sql.size()) {
+        // Check for parameter placeholder ($1, $2, etc.)
+        if (sql[i] == '$' && i + 1 < sql.size() && std::isdigit(sql[i + 1])) {
+            // Parse parameter number
+            size_t j = i + 1;
+            int param_num = 0;
+            while (j < sql.size() && std::isdigit(sql[j])) {
+                param_num = param_num * 10 + (sql[j] - '0');
+                ++j;
+            }
+
+            // Parameter indices are 1-based, vector is 0-based
+            if (param_num > 0 && static_cast<size_t>(param_num) <= params.size()) {
+                result += columnValueToSqlLiteral(params[param_num - 1]);
+            } else {
+                // Invalid parameter number - leave as-is (will cause SQL error)
+                result += sql.substr(i, j - i);
+            }
+            i = j;
+        } else if (sql[i] == '\'' && i + 1 < sql.size()) {
+            // Skip string literals to avoid replacing $ inside strings
+            result += sql[i++];
+            while (i < sql.size() && sql[i] != '\'') {
+                if (sql[i] == '\'' && i + 1 < sql.size() && sql[i + 1] == '\'') {
+                    result += sql[i++];
+                }
+                result += sql[i++];
+            }
+            if (i < sql.size()) {
+                result += sql[i++];  // Closing quote
+            }
+        } else if (sql[i] == '"' && i + 1 < sql.size()) {
+            // Skip double-quoted identifiers
+            result += sql[i++];
+            while (i < sql.size() && sql[i] != '"') {
+                if (sql[i] == '"' && i + 1 < sql.size() && sql[i + 1] == '"') {
+                    result += sql[i++];
+                }
+                result += sql[i++];
+            }
+            if (i < sql.size()) {
+                result += sql[i++];  // Closing quote
+            }
+        } else if (sql[i] == '-' && i + 1 < sql.size() && sql[i + 1] == '-') {
+            // Skip line comments
+            while (i < sql.size() && sql[i] != '\n') {
+                result += sql[i++];
+            }
+        } else if (sql[i] == '/' && i + 1 < sql.size() && sql[i + 1] == '*') {
+            // Skip block comments
+            result += sql[i++];
+            result += sql[i++];
+            while (i + 1 < sql.size() && !(sql[i] == '*' && sql[i + 1] == '/')) {
+                result += sql[i++];
+            }
+            if (i + 1 < sql.size()) {
+                result += sql[i++];  // *
+                result += sql[i++];  // /
+            }
+        } else {
+            result += sql[i++];
+        }
+    }
+
+    return result;
 }
 
 // ============================================================================
@@ -651,7 +795,21 @@ public:
                 }
 
                 case protocol::MessageType::TRANSACTION_STATUS: {
-                    // Update transaction state
+                    // NET-L1: Parse transaction status and update connection state
+                    if (response.getPayloadSize() >= sizeof(protocol::TransactionStatusPayload)) {
+                        const auto* ts_payload = reinterpret_cast<const protocol::TransactionStatusPayload*>(
+                            response.getPayload());
+                        // Status: 0 = idle, 1 = in transaction, 2 = failed
+                        in_transaction_ = (ts_payload->status == 1);
+                        if (ts_payload->status == 2) {
+                            // Transaction failed - reset to idle
+                            state_ = ConnectionState::CONNECTED;
+                        } else if (ts_payload->status == 1) {
+                            state_ = ConnectionState::IN_TRANSACTION;
+                        } else {
+                            state_ = ConnectionState::CONNECTED;
+                        }
+                    }
                     break;
                 }
 
@@ -925,12 +1083,9 @@ core::Status Connection::executeQuery(PreparedStatement& stmt,
         return core::Status::INVALID_ARGUMENT;
     }
 
-    // Simple parameter substitution for now
-    // In production, this would use server-side prepared statements
-    std::string sql = stmt.impl_->sql_;
-
-    // Phase 5 Enhancement: Proper parameter substitution with escaping
-    // For now, just execute the raw SQL (basic functionality works)
+    // NET-1: Parameter substitution with proper escaping for SQL injection prevention
+    // Substitute $1, $2, etc. with escaped parameter values
+    std::string sql = substituteParameters(stmt.impl_->sql_, stmt.impl_->params_);
 
     return executeQuery(sql, results, ctx);
 }
@@ -1033,7 +1188,23 @@ core::Status Connection::releaseSavepoint(const std::string& name,
 
     protocol::Message response;
     status = impl_->protocol_session_->receiveMessage(response, ctx);
-    return status;
+    if (!isOk(status)) {
+        impl_->last_error_ = "Failed to receive response";
+        return status;
+    }
+
+    // NET-M2: Proper response validation
+    if (response.getType() == protocol::MessageType::QUERY_ERROR) {
+        uint32_t code;
+        std::string sqlstate, message, detail, hint;
+        protocol::ProtocolCodec::parseQueryError(
+            response, code, sqlstate, message, detail, hint, ctx
+        );
+        impl_->last_error_ = message;
+        return static_cast<core::Status>(code);
+    }
+
+    return core::Status::OK;
 }
 
 core::Status Connection::rollbackTo(const std::string& name,
@@ -1052,7 +1223,23 @@ core::Status Connection::rollbackTo(const std::string& name,
 
     protocol::Message response;
     status = impl_->protocol_session_->receiveMessage(response, ctx);
-    return status;
+    if (!isOk(status)) {
+        impl_->last_error_ = "Failed to receive response";
+        return status;
+    }
+
+    // NET-M3: Proper response validation
+    if (response.getType() == protocol::MessageType::QUERY_ERROR) {
+        uint32_t code;
+        std::string sqlstate, message, detail, hint;
+        protocol::ProtocolCodec::parseQueryError(
+            response, code, sqlstate, message, detail, hint, ctx
+        );
+        impl_->last_error_ = message;
+        return static_cast<core::Status>(code);
+    }
+
+    return core::Status::OK;
 }
 
 bool Connection::inTransaction() const {
