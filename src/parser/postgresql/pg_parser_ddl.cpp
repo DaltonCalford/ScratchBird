@@ -1,0 +1,1440 @@
+/**
+ * PostgreSQL Parser - DDL Statement Parsing
+ *
+ * Handles CREATE, ALTER, DROP, TRUNCATE and other DDL statements.
+ */
+
+#include "scratchbird/parser/postgresql/pg_parser.h"
+#include <algorithm>
+
+namespace scratchbird::parser::postgresql {
+
+// ============================================================================
+// CREATE Statement Dispatch
+// ============================================================================
+
+void Parser::parseCreateStmt() {
+    consume(TokenType::KW_CREATE, "Expected CREATE");
+
+    // Handle OR REPLACE
+    bool or_replace = false;
+    if (matchKeyword(TokenType::KW_OR)) {
+        consumeKeyword(TokenType::KW_REPLACE, "Expected REPLACE");
+        or_replace = true;
+    }
+
+    // Handle TEMP/TEMPORARY
+    bool is_temp = matchKeyword(TokenType::KW_TEMP) || matchKeyword(TokenType::KW_TEMPORARY);
+
+    // Handle UNLOGGED
+    bool is_unlogged = matchKeyword(TokenType::KW_UNLOGGED);
+
+    // What to create?
+    if (matchKeyword(TokenType::KW_TABLE)) {
+        parseCreateTable();
+    } else if (matchKeyword(TokenType::KW_INDEX)) {
+        parseCreateIndex();
+    } else if (matchKeyword(TokenType::KW_UNIQUE)) {
+        consumeKeyword(TokenType::KW_INDEX, "Expected INDEX");
+        parseCreateIndex();
+    } else if (matchKeyword(TokenType::KW_VIEW)) {
+        parseCreateView();
+    } else if (matchKeyword(TokenType::KW_MATERIALIZED)) {
+        consumeKeyword(TokenType::KW_VIEW, "Expected VIEW");
+        parseCreateMaterializedView();
+    } else if (matchKeyword(TokenType::KW_SEQUENCE)) {
+        parseCreateSequence();
+    } else if (matchKeyword(TokenType::KW_DATABASE)) {
+        parseCreateDatabase();
+    } else if (matchKeyword(TokenType::KW_SCHEMA)) {
+        parseCreateSchema();
+    } else if (matchKeyword(TokenType::KW_FUNCTION)) {
+        parseCreateFunction();
+    } else if (matchKeyword(TokenType::KW_PROCEDURE)) {
+        parseCreateProcedure();
+    } else if (matchKeyword(TokenType::KW_TRIGGER)) {
+        parseCreateTrigger();
+    } else if (matchKeyword(TokenType::KW_TYPE)) {
+        parseCreateType();
+    } else if (matchKeyword(TokenType::KW_DOMAIN)) {
+        parseCreateDomain();
+    } else if (matchKeyword(TokenType::KW_ROLE)) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CREATE_ROLE));
+        std::string role_name = parseIdentifier();
+        emitString(role_name);
+    } else if (matchKeyword(TokenType::KW_USER)) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CREATE_USER));
+        std::string user_name = parseIdentifier();
+        emitString(user_name);
+        // Optional WITH PASSWORD
+        if (matchKeyword(TokenType::KW_WITH)) {
+            if (matchKeyword(TokenType::KW_PASSWORD)) {
+                if (check(TokenType::STRING_LITERAL)) {
+                    uint32_t id = current_token_.value.string_id;
+                    std::string password(lexer_.stringPool().get(id));
+                    emitString(password);
+                    advance();
+                }
+            }
+        }
+    } else {
+        error("Expected TABLE, INDEX, VIEW, SEQUENCE, FUNCTION, etc. after CREATE");
+    }
+}
+
+// ============================================================================
+// CREATE TABLE
+// ============================================================================
+
+void Parser::parseCreateTable() {
+    emit(sblr::Opcode::CREATE_TABLE);
+
+    // IF NOT EXISTS
+    bool if_not_exists = false;
+    if (matchKeyword(TokenType::KW_IF)) {
+        consumeKeyword(TokenType::KW_NOT, "Expected NOT");
+        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+        if_not_exists = true;
+    }
+    emitByte(if_not_exists ? 1 : 0);
+
+    // Table name
+    std::string schema;
+    std::string table = parseIdentifier();
+    if (match(TokenType::DOT)) {
+        schema = table;
+        table = parseIdentifier();
+    }
+    resolveTableName(schema, table);
+
+    emit(sblr::Opcode::TABLE_REF);
+    emitString(schema + "/" + table);
+
+    consume(TokenType::LEFT_PAREN, "Expected (");
+
+    // Parse column definitions and constraints
+    emit(sblr::Opcode::BEGIN_LIST);
+    size_t count_pos = bytecode_.size();
+    emitU32(0);
+    uint32_t count = 0;
+
+    do {
+        // Check for table-level constraint
+        if (check(TokenType::KW_PRIMARY) || check(TokenType::KW_UNIQUE) ||
+            check(TokenType::KW_FOREIGN) || check(TokenType::KW_CHECK) ||
+            check(TokenType::KW_CONSTRAINT) || check(TokenType::KW_EXCLUDE)) {
+
+            // Table constraint
+            std::string constraint_name;
+            if (matchKeyword(TokenType::KW_CONSTRAINT)) {
+                constraint_name = parseIdentifier();
+            }
+
+            if (matchKeyword(TokenType::KW_PRIMARY)) {
+                consumeKeyword(TokenType::KW_KEY, "Expected KEY");
+                emit(sblr::Opcode::PRIMARY_KEY);
+                emitString(constraint_name);
+
+                consume(TokenType::LEFT_PAREN, "Expected (");
+                emit(sblr::Opcode::BEGIN_LIST);
+                size_t pk_count_pos = bytecode_.size();
+                emitU32(0);
+                uint32_t pk_count = 0;
+                do {
+                    std::string col = parseIdentifier();
+                    emit(sblr::Opcode::COLUMN_REF);
+                    emitString(col);
+                    pk_count++;
+                } while (match(TokenType::COMMA));
+                sblr::writeInt32(&bytecode_[pk_count_pos], pk_count);
+                emit(sblr::Opcode::END_LIST);
+                consume(TokenType::RIGHT_PAREN, "Expected )");
+            } else if (matchKeyword(TokenType::KW_UNIQUE)) {
+                emit(sblr::Opcode::UNIQUE_CONSTRAINT);
+                emitString(constraint_name);
+
+                consume(TokenType::LEFT_PAREN, "Expected (");
+                emit(sblr::Opcode::BEGIN_LIST);
+                size_t uq_count_pos = bytecode_.size();
+                emitU32(0);
+                uint32_t uq_count = 0;
+                do {
+                    std::string col = parseIdentifier();
+                    emit(sblr::Opcode::COLUMN_REF);
+                    emitString(col);
+                    uq_count++;
+                } while (match(TokenType::COMMA));
+                sblr::writeInt32(&bytecode_[uq_count_pos], uq_count);
+                emit(sblr::Opcode::END_LIST);
+                consume(TokenType::RIGHT_PAREN, "Expected )");
+            } else if (matchKeyword(TokenType::KW_FOREIGN)) {
+                consumeKeyword(TokenType::KW_KEY, "Expected KEY");
+                ForeignKeyDef fk = parseForeignKeyDef();
+                fk.name = constraint_name;
+
+                emit(sblr::Opcode::TABLE_FK);
+                emitString(fk.name);
+                emit(sblr::Opcode::BEGIN_LIST);
+                emitU32(static_cast<uint32_t>(fk.columns.size()));
+                for (const auto& col : fk.columns) {
+                    emit(sblr::Opcode::COLUMN_REF);
+                    emitString(col);
+                }
+                emit(sblr::Opcode::END_LIST);
+                emitString(fk.ref_table);
+                emit(sblr::Opcode::BEGIN_LIST);
+                emitU32(static_cast<uint32_t>(fk.ref_columns.size()));
+                for (const auto& col : fk.ref_columns) {
+                    emit(sblr::Opcode::COLUMN_REF);
+                    emitString(col);
+                }
+                emit(sblr::Opcode::END_LIST);
+            } else if (matchKeyword(TokenType::KW_CHECK)) {
+                emit(sblr::Opcode::CHECK_CONSTRAINT);
+                emitString(constraint_name);
+                consume(TokenType::LEFT_PAREN, "Expected (");
+                parseExpression();
+                consume(TokenType::RIGHT_PAREN, "Expected )");
+            }
+        } else {
+            // Column definition
+            ColumnDef col = parseColumnDef();
+
+            emit(sblr::Opcode::COLUMN_DEF);
+            emitString(col.name);
+            emit(typeToOpcode(col.type.kind));
+            if (col.type.length > 0) {
+                emitU32(col.type.length);
+            }
+            if (col.type.precision > 0) {
+                emitU16(col.type.precision);
+                emitU16(col.type.scale);
+            }
+
+            // Constraints
+            if (col.not_null) {
+                emit(sblr::Opcode::NOT_NULL);
+            }
+            if (col.primary_key) {
+                emit(sblr::Opcode::PRIMARY_KEY);
+                emitString("");
+            }
+            if (col.unique) {
+                emit(sblr::Opcode::UNIQUE_CONSTRAINT);
+                emitString("");
+            }
+            if (col.has_default) {
+                emit(sblr::Opcode::DEFAULT_VALUE);
+                if (col.default_is_null) {
+                    emit(sblr::Opcode::LITERAL_NULL);
+                } else {
+                    emitString(col.default_value);
+                }
+            }
+            if (col.is_identity) {
+                emit(sblr::Opcode::IDENTITY_COLUMN);
+                emitByte(col.identity_always ? 1 : 0);
+            }
+            if (col.is_generated) {
+                emit(sblr::Opcode::GENERATED_COLUMN);
+                emitString(col.generated_expr);
+                emitByte(col.generated_stored ? 1 : 0);
+            }
+        }
+        count++;
+    } while (match(TokenType::COMMA));
+
+    sblr::writeInt32(&bytecode_[count_pos], count);
+    emit(sblr::Opcode::END_LIST);
+
+    consume(TokenType::RIGHT_PAREN, "Expected )");
+
+    // Table options
+    if (matchKeyword(TokenType::KW_WITH)) {
+        consume(TokenType::LEFT_PAREN, "Expected (");
+        // Parse storage options
+        while (!check(TokenType::RIGHT_PAREN)) {
+            parseIdentifier();  // option name
+            if (match(TokenType::EQUAL)) {
+                parseExpression();  // option value
+            }
+            if (!match(TokenType::COMMA)) break;
+        }
+        consume(TokenType::RIGHT_PAREN, "Expected )");
+    }
+
+    // TABLESPACE
+    if (matchKeyword(TokenType::KW_TABLESPACE)) {
+        parseIdentifier();  // tablespace name
+    }
+}
+
+ColumnDef Parser::parseColumnDef() {
+    ColumnDef col;
+    col.name = parseIdentifier();
+    col.type = parseDataType();
+
+    // Parse column constraints
+    while (true) {
+        if (matchKeyword(TokenType::KW_NOT)) {
+            consumeKeyword(TokenType::KW_NULL, "Expected NULL");
+            col.not_null = true;
+        } else if (matchKeyword(TokenType::KW_NULL)) {
+            col.not_null = false;
+        } else if (matchKeyword(TokenType::KW_PRIMARY)) {
+            consumeKeyword(TokenType::KW_KEY, "Expected KEY");
+            col.primary_key = true;
+        } else if (matchKeyword(TokenType::KW_UNIQUE)) {
+            col.unique = true;
+        } else if (matchKeyword(TokenType::KW_DEFAULT)) {
+            col.has_default = true;
+            if (matchKeyword(TokenType::KW_NULL)) {
+                col.default_is_null = true;
+            } else {
+                // For now, just capture the expression as a string
+                col.default_is_expr = true;
+                // We'd need to capture the expression text here
+                parseExpression();  // Parse but don't capture
+            }
+        } else if (matchKeyword(TokenType::KW_GENERATED)) {
+            col.is_generated = true;
+            if (matchKeyword(TokenType::KW_ALWAYS)) {
+                col.identity_always = true;
+            } else if (matchKeyword(TokenType::KW_BY)) {
+                consumeKeyword(TokenType::KW_DEFAULT, "Expected DEFAULT");
+                col.identity_always = false;
+            }
+            consumeKeyword(TokenType::KW_AS, "Expected AS");
+
+            if (matchKeyword(TokenType::KW_IDENTITY)) {
+                col.is_identity = true;
+                col.is_generated = false;
+            } else {
+                consume(TokenType::LEFT_PAREN, "Expected (");
+                // Capture expression - for now parse and discard
+                parseExpression();
+                consume(TokenType::RIGHT_PAREN, "Expected )");
+                if (matchKeyword(TokenType::KW_STORED)) {
+                    col.generated_stored = true;
+                } else if (matchKeyword(TokenType::KW_VIRTUAL)) {
+                    col.generated_stored = false;
+                }
+            }
+        } else if (matchKeyword(TokenType::KW_CHECK)) {
+            consume(TokenType::LEFT_PAREN, "Expected (");
+            parseExpression();  // Check constraint
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+        } else if (matchKeyword(TokenType::KW_REFERENCES)) {
+            // Inline foreign key
+            std::string ref_table = parseQualifiedName();
+            if (match(TokenType::LEFT_PAREN)) {
+                parseIdentifier();  // ref column
+                consume(TokenType::RIGHT_PAREN, "Expected )");
+            }
+            // ON DELETE/UPDATE
+            while (matchKeyword(TokenType::KW_ON)) {
+                if (matchKeyword(TokenType::KW_DELETE) || matchKeyword(TokenType::KW_UPDATE)) {
+                    // CASCADE, SET NULL, SET DEFAULT, RESTRICT, NO ACTION
+                    matchKeyword(TokenType::KW_CASCADE) ||
+                    matchKeyword(TokenType::KW_RESTRICT) ||
+                    (matchKeyword(TokenType::KW_SET) &&
+                     (matchKeyword(TokenType::KW_NULL) || matchKeyword(TokenType::KW_DEFAULT))) ||
+                    (matchKeyword(TokenType::KW_NO) && matchKeyword(TokenType::KW_ACTION));
+                }
+            }
+        } else if (matchKeyword(TokenType::KW_COLLATE)) {
+            col.collation = parseIdentifier();
+        } else if (matchKeyword(TokenType::KW_CONSTRAINT)) {
+            parseIdentifier();  // Skip constraint name, reparse
+        } else {
+            break;
+        }
+    }
+
+    return col;
+}
+
+PgDataType Parser::parseDataType() {
+    PgDataType type;
+
+    // Check for type name
+    if (matchKeyword(TokenType::KW_SMALLINT) || matchKeyword(TokenType::KW_INT2)) {
+        type.kind = PgDataType::Kind::SMALLINT;
+    } else if (matchKeyword(TokenType::KW_INTEGER) || matchKeyword(TokenType::KW_INT) ||
+               matchKeyword(TokenType::KW_INT4)) {
+        type.kind = PgDataType::Kind::INTEGER;
+    } else if (matchKeyword(TokenType::KW_BIGINT) || matchKeyword(TokenType::KW_INT8)) {
+        type.kind = PgDataType::Kind::BIGINT;
+    } else if (matchKeyword(TokenType::KW_REAL) || matchKeyword(TokenType::KW_FLOAT4)) {
+        type.kind = PgDataType::Kind::REAL;
+    } else if (matchKeyword(TokenType::KW_DOUBLE)) {
+        matchKeyword(TokenType::KW_PRECISION);
+        type.kind = PgDataType::Kind::DOUBLE_PRECISION;
+    } else if (matchKeyword(TokenType::KW_FLOAT8)) {
+        type.kind = PgDataType::Kind::DOUBLE_PRECISION;
+    } else if (matchKeyword(TokenType::KW_NUMERIC) || matchKeyword(TokenType::KW_DECIMAL)) {
+        type.kind = PgDataType::Kind::NUMERIC;
+        if (match(TokenType::LEFT_PAREN)) {
+            if (check(TokenType::INTEGER_LITERAL)) {
+                type.precision = static_cast<int>(current_token_.value.int_value);
+                advance();
+            }
+            if (match(TokenType::COMMA)) {
+                if (check(TokenType::INTEGER_LITERAL)) {
+                    type.scale = static_cast<int>(current_token_.value.int_value);
+                    advance();
+                }
+            }
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+        }
+    } else if (matchKeyword(TokenType::KW_MONEY)) {
+        type.kind = PgDataType::Kind::MONEY;
+    } else if (matchKeyword(TokenType::KW_SMALLSERIAL) || matchKeyword(TokenType::KW_SERIAL2)) {
+        type.kind = PgDataType::Kind::SMALLSERIAL;
+    } else if (matchKeyword(TokenType::KW_SERIAL) || matchKeyword(TokenType::KW_SERIAL4)) {
+        type.kind = PgDataType::Kind::SERIAL;
+    } else if (matchKeyword(TokenType::KW_BIGSERIAL) || matchKeyword(TokenType::KW_SERIAL8)) {
+        type.kind = PgDataType::Kind::BIGSERIAL;
+    } else if (matchKeyword(TokenType::KW_CHAR) || matchKeyword(TokenType::KW_CHARACTER)) {
+        if (matchKeyword(TokenType::KW_VARYING)) {
+            type.kind = PgDataType::Kind::VARCHAR;
+        } else {
+            type.kind = PgDataType::Kind::CHAR;
+        }
+        if (match(TokenType::LEFT_PAREN)) {
+            if (check(TokenType::INTEGER_LITERAL)) {
+                type.length = static_cast<int>(current_token_.value.int_value);
+                advance();
+            }
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+        }
+    } else if (matchKeyword(TokenType::KW_VARCHAR)) {
+        type.kind = PgDataType::Kind::VARCHAR;
+        if (match(TokenType::LEFT_PAREN)) {
+            if (check(TokenType::INTEGER_LITERAL)) {
+                type.length = static_cast<int>(current_token_.value.int_value);
+                advance();
+            }
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+        }
+    } else if (matchKeyword(TokenType::KW_TEXT)) {
+        type.kind = PgDataType::Kind::TEXT;
+    } else if (matchKeyword(TokenType::KW_BYTEA)) {
+        type.kind = PgDataType::Kind::BYTEA;
+    } else if (matchKeyword(TokenType::KW_DATE)) {
+        type.kind = PgDataType::Kind::DATE;
+    } else if (matchKeyword(TokenType::KW_TIME)) {
+        type.kind = PgDataType::Kind::TIME;
+        if (match(TokenType::LEFT_PAREN)) {
+            if (check(TokenType::INTEGER_LITERAL)) {
+                type.precision = static_cast<int>(current_token_.value.int_value);
+                advance();
+            }
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+        }
+        if (matchKeyword(TokenType::KW_WITH)) {
+            consumeKeyword(TokenType::KW_TIME, "Expected TIME");
+            consumeKeyword(TokenType::KW_ZONE, "Expected ZONE");
+            type.kind = PgDataType::Kind::TIMETZ;
+            type.with_time_zone = true;
+        } else if (matchKeyword(TokenType::KW_WITHOUT)) {
+            consumeKeyword(TokenType::KW_TIME, "Expected TIME");
+            consumeKeyword(TokenType::KW_ZONE, "Expected ZONE");
+        }
+    } else if (matchKeyword(TokenType::KW_TIMESTAMP)) {
+        type.kind = PgDataType::Kind::TIMESTAMP;
+        if (match(TokenType::LEFT_PAREN)) {
+            if (check(TokenType::INTEGER_LITERAL)) {
+                type.precision = static_cast<int>(current_token_.value.int_value);
+                advance();
+            }
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+        }
+        if (matchKeyword(TokenType::KW_WITH)) {
+            consumeKeyword(TokenType::KW_TIME, "Expected TIME");
+            consumeKeyword(TokenType::KW_ZONE, "Expected ZONE");
+            type.kind = PgDataType::Kind::TIMESTAMPTZ;
+            type.with_time_zone = true;
+        } else if (matchKeyword(TokenType::KW_WITHOUT)) {
+            consumeKeyword(TokenType::KW_TIME, "Expected TIME");
+            consumeKeyword(TokenType::KW_ZONE, "Expected ZONE");
+        }
+    } else if (matchKeyword(TokenType::KW_INTERVAL)) {
+        type.kind = PgDataType::Kind::INTERVAL;
+    } else if (matchKeyword(TokenType::KW_BOOLEAN) || matchKeyword(TokenType::KW_BOOL)) {
+        type.kind = PgDataType::Kind::BOOLEAN;
+    } else if (matchKeyword(TokenType::KW_UUID)) {
+        type.kind = PgDataType::Kind::UUID;
+    } else if (matchKeyword(TokenType::KW_JSON)) {
+        type.kind = PgDataType::Kind::JSON;
+    } else if (matchKeyword(TokenType::KW_JSONB)) {
+        type.kind = PgDataType::Kind::JSONB;
+    } else if (matchKeyword(TokenType::KW_XML)) {
+        type.kind = PgDataType::Kind::XML;
+    } else if (matchKeyword(TokenType::KW_POINT)) {
+        type.kind = PgDataType::Kind::POINT;
+    } else if (matchKeyword(TokenType::KW_LINE)) {
+        type.kind = PgDataType::Kind::LINE;
+    } else if (matchKeyword(TokenType::KW_LSEG)) {
+        type.kind = PgDataType::Kind::LSEG;
+    } else if (matchKeyword(TokenType::KW_BOX)) {
+        type.kind = PgDataType::Kind::BOX;
+    } else if (matchKeyword(TokenType::KW_PATH)) {
+        type.kind = PgDataType::Kind::PATH;
+    } else if (matchKeyword(TokenType::KW_POLYGON)) {
+        type.kind = PgDataType::Kind::POLYGON;
+    } else if (matchKeyword(TokenType::KW_CIRCLE)) {
+        type.kind = PgDataType::Kind::CIRCLE;
+    } else if (matchKeyword(TokenType::KW_CIDR)) {
+        type.kind = PgDataType::Kind::CIDR;
+    } else if (matchKeyword(TokenType::KW_INET)) {
+        type.kind = PgDataType::Kind::INET;
+    } else if (matchKeyword(TokenType::KW_MACADDR)) {
+        type.kind = PgDataType::Kind::MACADDR;
+    } else if (matchKeyword(TokenType::KW_MACADDR8)) {
+        type.kind = PgDataType::Kind::MACADDR8;
+    } else if (matchKeyword(TokenType::KW_BIT)) {
+        if (matchKeyword(TokenType::KW_VARYING)) {
+            type.kind = PgDataType::Kind::VARBIT;
+        } else {
+            type.kind = PgDataType::Kind::BIT;
+        }
+        if (match(TokenType::LEFT_PAREN)) {
+            if (check(TokenType::INTEGER_LITERAL)) {
+                type.length = static_cast<int>(current_token_.value.int_value);
+                advance();
+            }
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+        }
+    } else if (matchKeyword(TokenType::KW_TSVECTOR)) {
+        type.kind = PgDataType::Kind::TSVECTOR;
+    } else if (matchKeyword(TokenType::KW_TSQUERY)) {
+        type.kind = PgDataType::Kind::TSQUERY;
+    } else {
+        // User-defined type or domain
+        type.type_name = parseQualifiedName();
+        type.kind = PgDataType::Kind::DOMAIN;
+    }
+
+    // Check for array modifier
+    while (match(TokenType::LEFT_BRACKET)) {
+        type.kind = PgDataType::Kind::ARRAY;
+        if (check(TokenType::INTEGER_LITERAL)) {
+            advance();  // Array dimension
+        }
+        consume(TokenType::RIGHT_BRACKET, "Expected ]");
+    }
+
+    return type;
+}
+
+ForeignKeyDef Parser::parseForeignKeyDef() {
+    ForeignKeyDef fk;
+
+    // (columns)
+    consume(TokenType::LEFT_PAREN, "Expected (");
+    do {
+        fk.columns.push_back(parseIdentifier());
+    } while (match(TokenType::COMMA));
+    consume(TokenType::RIGHT_PAREN, "Expected )");
+
+    // REFERENCES table (columns)
+    consumeKeyword(TokenType::KW_REFERENCES, "Expected REFERENCES");
+
+    std::string ref_schema;
+    std::string ref_table = parseIdentifier();
+    if (match(TokenType::DOT)) {
+        ref_schema = ref_table;
+        ref_table = parseIdentifier();
+    }
+    resolveTableName(ref_schema, ref_table);
+    fk.ref_table = ref_schema + "/" + ref_table;
+
+    if (match(TokenType::LEFT_PAREN)) {
+        do {
+            fk.ref_columns.push_back(parseIdentifier());
+        } while (match(TokenType::COMMA));
+        consume(TokenType::RIGHT_PAREN, "Expected )");
+    }
+
+    // MATCH type
+    if (matchKeyword(TokenType::KW_MATCH)) {
+        if (matchKeyword(TokenType::KW_FULL)) {
+            fk.match_type = "FULL";
+        } else if (matchKeyword(TokenType::KW_PARTIAL)) {
+            fk.match_type = "PARTIAL";
+        } else if (matchKeyword(TokenType::KW_SIMPLE)) {
+            fk.match_type = "SIMPLE";
+        }
+    }
+
+    // ON DELETE/UPDATE
+    while (matchKeyword(TokenType::KW_ON)) {
+        std::string* action = nullptr;
+        if (matchKeyword(TokenType::KW_DELETE)) {
+            action = &fk.on_delete;
+        } else if (matchKeyword(TokenType::KW_UPDATE)) {
+            action = &fk.on_update;
+        }
+
+        if (action) {
+            if (matchKeyword(TokenType::KW_CASCADE)) {
+                *action = "CASCADE";
+            } else if (matchKeyword(TokenType::KW_RESTRICT)) {
+                *action = "RESTRICT";
+            } else if (matchKeyword(TokenType::KW_SET)) {
+                if (matchKeyword(TokenType::KW_NULL)) {
+                    *action = "SET NULL";
+                } else if (matchKeyword(TokenType::KW_DEFAULT)) {
+                    *action = "SET DEFAULT";
+                }
+            } else if (matchKeyword(TokenType::KW_NO)) {
+                consumeKeyword(TokenType::KW_ACTION, "Expected ACTION");
+                *action = "NO ACTION";
+            }
+        }
+    }
+
+    // DEFERRABLE
+    if (matchKeyword(TokenType::KW_DEFERRABLE)) {
+        fk.deferrable = true;
+        if (matchKeyword(TokenType::KW_INITIALLY)) {
+            if (matchKeyword(TokenType::KW_DEFERRED)) {
+                fk.initially_deferred = true;
+            } else {
+                matchKeyword(TokenType::KW_IMMEDIATE);
+            }
+        }
+    } else if (matchKeyword(TokenType::KW_NOT)) {
+        consumeKeyword(TokenType::KW_DEFERRABLE, "Expected DEFERRABLE");
+        fk.deferrable = false;
+    }
+
+    return fk;
+}
+
+// ============================================================================
+// CREATE INDEX
+// ============================================================================
+
+void Parser::parseCreateIndex() {
+    emit(sblr::Opcode::CREATE_INDEX);
+
+    // CONCURRENTLY
+    bool concurrent = matchKeyword(TokenType::KW_CONCURRENTLY);
+    emitByte(concurrent ? 1 : 0);
+
+    // IF NOT EXISTS
+    bool if_not_exists = false;
+    if (matchKeyword(TokenType::KW_IF)) {
+        consumeKeyword(TokenType::KW_NOT, "Expected NOT");
+        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+        if_not_exists = true;
+    }
+    emitByte(if_not_exists ? 1 : 0);
+
+    // Index name (optional for inline definitions)
+    std::string index_name;
+    if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
+        index_name = parseIdentifier();
+    }
+    emitString(index_name);
+
+    consumeKeyword(TokenType::KW_ON, "Expected ON");
+
+    // Table name
+    std::string schema;
+    std::string table = parseIdentifier();
+    if (match(TokenType::DOT)) {
+        schema = table;
+        table = parseIdentifier();
+    }
+    resolveTableName(schema, table);
+    emit(sblr::Opcode::TABLE_REF);
+    emitString(schema + "/" + table);
+
+    // USING method
+    uint8_t method = 0;  // Default BTREE
+    if (matchKeyword(TokenType::KW_USING)) {
+        std::string method_name = parseIdentifier();
+        std::transform(method_name.begin(), method_name.end(), method_name.begin(), ::tolower);
+        if (method_name == "btree") method = 0;
+        else if (method_name == "hash") method = 1;
+        else if (method_name == "gin") method = 2;
+        else if (method_name == "gist") method = 3;
+        else if (method_name == "spgist") method = 4;
+        else if (method_name == "brin") method = 5;
+    }
+    emitByte(method);
+
+    // Column list
+    consume(TokenType::LEFT_PAREN, "Expected (");
+    emit(sblr::Opcode::BEGIN_LIST);
+    size_t count_pos = bytecode_.size();
+    emitU32(0);
+    uint32_t count = 0;
+
+    do {
+        // Column or expression
+        if (match(TokenType::LEFT_PAREN)) {
+            // Expression index
+            parseExpression();
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+        } else {
+            std::string col = parseIdentifier();
+            emit(sblr::Opcode::COLUMN_REF);
+            emitString(col);
+        }
+
+        // Collation
+        if (matchKeyword(TokenType::KW_COLLATE)) {
+            parseIdentifier();
+        }
+
+        // Operator class
+        if (check(TokenType::IDENTIFIER) && !check(TokenType::KW_ASC) &&
+            !check(TokenType::KW_DESC) && !check(TokenType::KW_NULLS)) {
+            parseIdentifier();
+        }
+
+        // ASC/DESC
+        if (matchKeyword(TokenType::KW_DESC)) {
+            emit(sblr::Opcode::SORT_DESC);
+        } else {
+            matchKeyword(TokenType::KW_ASC);
+            emit(sblr::Opcode::SORT_ASC);
+        }
+
+        // NULLS FIRST/LAST
+        if (matchKeyword(TokenType::KW_NULLS)) {
+            if (matchKeyword(TokenType::KW_FIRST)) {
+                emit(sblr::Opcode::NULLS_FIRST);
+            } else if (matchKeyword(TokenType::KW_LAST)) {
+                emit(sblr::Opcode::NULLS_LAST);
+            }
+        }
+
+        count++;
+    } while (match(TokenType::COMMA));
+
+    sblr::writeInt32(&bytecode_[count_pos], count);
+    emit(sblr::Opcode::END_LIST);
+    consume(TokenType::RIGHT_PAREN, "Expected )");
+
+    // INCLUDE columns
+    if (matchKeyword(TokenType::KW_INCLUDE)) {
+        consume(TokenType::LEFT_PAREN, "Expected (");
+        emit(sblr::Opcode::BEGIN_LIST);
+        size_t inc_count_pos = bytecode_.size();
+        emitU32(0);
+        uint32_t inc_count = 0;
+        do {
+            std::string col = parseIdentifier();
+            emit(sblr::Opcode::COLUMN_REF);
+            emitString(col);
+            inc_count++;
+        } while (match(TokenType::COMMA));
+        sblr::writeInt32(&bytecode_[inc_count_pos], inc_count);
+        emit(sblr::Opcode::END_LIST);
+        consume(TokenType::RIGHT_PAREN, "Expected )");
+    }
+
+    // WHERE clause (partial index)
+    if (matchKeyword(TokenType::KW_WHERE)) {
+        emit(sblr::Opcode::WHERE_CLAUSE);
+        parseExpression();
+    }
+}
+
+// ============================================================================
+// Other CREATE statements (stubs for now)
+// ============================================================================
+
+void Parser::parseCreateView() {
+    emit(sblr::Opcode::CREATE_VIEW);
+
+    bool if_not_exists = false;
+    if (matchKeyword(TokenType::KW_IF)) {
+        consumeKeyword(TokenType::KW_NOT, "Expected NOT");
+        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+        if_not_exists = true;
+    }
+    emitByte(if_not_exists ? 1 : 0);
+
+    std::string schema;
+    std::string view_name = parseIdentifier();
+    if (match(TokenType::DOT)) {
+        schema = view_name;
+        view_name = parseIdentifier();
+    }
+    resolveTableName(schema, view_name);
+    emitString(schema + "/" + view_name);
+
+    // Column list
+    if (match(TokenType::LEFT_PAREN)) {
+        emit(sblr::Opcode::BEGIN_LIST);
+        size_t count_pos = bytecode_.size();
+        emitU32(0);
+        uint32_t count = 0;
+        do {
+            emitString(parseIdentifier());
+            count++;
+        } while (match(TokenType::COMMA));
+        sblr::writeInt32(&bytecode_[count_pos], count);
+        emit(sblr::Opcode::END_LIST);
+        consume(TokenType::RIGHT_PAREN, "Expected )");
+    }
+
+    consumeKeyword(TokenType::KW_AS, "Expected AS");
+    parseSelectStmt();
+
+    // WITH CHECK OPTION
+    if (matchKeyword(TokenType::KW_WITH)) {
+        if (matchKeyword(TokenType::KW_CHECK)) {
+            consumeKeyword(TokenType::KW_OPTION, "Expected OPTION");
+            emitByte(1);
+        } else if (matchKeyword(TokenType::KW_LOCAL)) {
+            consumeKeyword(TokenType::KW_CHECK, "Expected CHECK");
+            consumeKeyword(TokenType::KW_OPTION, "Expected OPTION");
+            emitByte(2);
+        } else if (matchKeyword(TokenType::KW_CASCADED)) {
+            consumeKeyword(TokenType::KW_CHECK, "Expected CHECK");
+            consumeKeyword(TokenType::KW_OPTION, "Expected OPTION");
+            emitByte(3);
+        }
+    }
+}
+
+void Parser::parseCreateMaterializedView() {
+    emit(sblr::Opcode::CREATE_VIEW);
+    emitByte(1);  // Materialized flag
+
+    // Similar to CREATE VIEW but materialized
+    std::string schema;
+    std::string view_name = parseIdentifier();
+    if (match(TokenType::DOT)) {
+        schema = view_name;
+        view_name = parseIdentifier();
+    }
+    resolveTableName(schema, view_name);
+    emitString(schema + "/" + view_name);
+
+    consumeKeyword(TokenType::KW_AS, "Expected AS");
+    parseSelectStmt();
+
+    // WITH [NO] DATA
+    if (matchKeyword(TokenType::KW_WITH)) {
+        if (matchKeyword(TokenType::KW_NO)) {
+            consumeKeyword(TokenType::KW_DATA, "Expected DATA");
+            emitByte(0);  // No data
+        } else {
+            consumeKeyword(TokenType::KW_DATA, "Expected DATA");
+            emitByte(1);  // With data
+        }
+    }
+}
+
+void Parser::parseCreateSequence() {
+    emit(sblr::Opcode::CREATE_SEQUENCE);
+
+    bool if_not_exists = false;
+    if (matchKeyword(TokenType::KW_IF)) {
+        consumeKeyword(TokenType::KW_NOT, "Expected NOT");
+        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+        if_not_exists = true;
+    }
+    emitByte(if_not_exists ? 1 : 0);
+
+    std::string schema;
+    std::string seq_name = parseIdentifier();
+    if (match(TokenType::DOT)) {
+        schema = seq_name;
+        seq_name = parseIdentifier();
+    }
+    resolveTableName(schema, seq_name);
+    emitString(schema + "/" + seq_name);
+
+    // Sequence options
+    while (true) {
+        if (matchKeyword(TokenType::KW_START)) {
+            matchKeyword(TokenType::KW_WITH);
+            parseExpression();
+        } else if (matchKeyword(TokenType::KW_INCREMENT)) {
+            matchKeyword(TokenType::KW_BY);
+            parseExpression();
+        } else if (matchKeyword(TokenType::KW_MINVALUE)) {
+            parseExpression();
+        } else if (matchKeyword(TokenType::KW_NO)) {
+            if (matchKeyword(TokenType::KW_MINVALUE)) {
+                // No minimum
+            } else if (matchKeyword(TokenType::KW_MAXVALUE)) {
+                // No maximum
+            } else if (matchKeyword(TokenType::KW_CYCLE)) {
+                // No cycle
+            }
+        } else if (matchKeyword(TokenType::KW_MAXVALUE)) {
+            parseExpression();
+        } else if (matchKeyword(TokenType::KW_CYCLE)) {
+            // Cycle enabled
+        } else if (matchKeyword(TokenType::KW_CACHE)) {
+            parseExpression();
+        } else if (matchKeyword(TokenType::KW_OWNED)) {
+            consumeKeyword(TokenType::KW_BY, "Expected BY");
+            if (matchKeyword(TokenType::KW_NONE)) {
+                // Not owned
+            } else {
+                parseQualifiedName();  // table.column
+            }
+        } else {
+            break;
+        }
+    }
+}
+
+void Parser::parseCreateDatabase() {
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_DATABASE));  // Use a placeholder
+
+    std::string db_name = parseIdentifier();
+    emitString(db_name);
+
+    // Database options
+    if (matchKeyword(TokenType::KW_WITH)) {
+        while (true) {
+            if (matchKeyword(TokenType::KW_OWNER)) {
+                match(TokenType::EQUAL);
+                parseIdentifier();
+            } else if (matchKeyword(TokenType::KW_TEMPLATE)) {
+                match(TokenType::EQUAL);
+                parseIdentifier();
+            } else if (matchKeyword(TokenType::KW_ENCODING)) {
+                match(TokenType::EQUAL);
+                if (check(TokenType::STRING_LITERAL)) {
+                    advance();
+                } else {
+                    parseIdentifier();
+                }
+            } else if (matchKeyword(TokenType::KW_TABLESPACE)) {
+                match(TokenType::EQUAL);
+                parseIdentifier();
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+void Parser::parseCreateSchema() {
+    std::string schema_name;
+
+    bool if_not_exists = false;
+    if (matchKeyword(TokenType::KW_IF)) {
+        consumeKeyword(TokenType::KW_NOT, "Expected NOT");
+        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+        if_not_exists = true;
+    }
+
+    if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
+        schema_name = parseIdentifier();
+    }
+
+    if (matchKeyword(TokenType::KW_AUTHORIZATION)) {
+        parseIdentifier();  // role name
+    }
+
+    emitString(schema_name);
+}
+
+void Parser::parseCreateFunction() {
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_FUNCTION));
+
+    std::string schema;
+    std::string func_name = parseIdentifier();
+    if (match(TokenType::DOT)) {
+        schema = func_name;
+        func_name = parseIdentifier();
+    }
+    emitString(func_name);
+
+    // Parameters
+    consume(TokenType::LEFT_PAREN, "Expected (");
+    emit(sblr::Opcode::BEGIN_LIST);
+    size_t count_pos = bytecode_.size();
+    emitU32(0);
+    uint32_t count = 0;
+
+    if (!check(TokenType::RIGHT_PAREN)) {
+        do {
+            // IN/OUT/INOUT/VARIADIC
+            if (matchKeyword(TokenType::KW_IN)) {
+                emit(sblr::Opcode::EXTENDED_OPCODE);
+                emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_PARAM_IN));
+            } else if (matchKeyword(TokenType::KW_OUT)) {
+                emit(sblr::Opcode::EXTENDED_OPCODE);
+                emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_PARAM_OUT));
+            } else if (matchKeyword(TokenType::KW_INOUT)) {
+                emit(sblr::Opcode::EXTENDED_OPCODE);
+                emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_PARAM_INOUT));
+            } else if (matchKeyword(TokenType::KW_VARIADIC)) {
+                // Variadic parameter
+            }
+
+            std::string param_name = parseIdentifier();
+            emitString(param_name);
+            PgDataType param_type = parseDataType();
+            emit(typeToOpcode(param_type.kind));
+
+            // DEFAULT
+            if (matchKeyword(TokenType::KW_DEFAULT) || match(TokenType::EQUAL)) {
+                parseExpression();
+            }
+
+            count++;
+        } while (match(TokenType::COMMA));
+    }
+
+    sblr::writeInt32(&bytecode_[count_pos], count);
+    emit(sblr::Opcode::END_LIST);
+    consume(TokenType::RIGHT_PAREN, "Expected )");
+
+    // RETURNS
+    if (matchKeyword(TokenType::KW_RETURNS)) {
+        if (matchKeyword(TokenType::KW_TABLE)) {
+            // RETURNS TABLE
+            consume(TokenType::LEFT_PAREN, "Expected (");
+            // Parse return columns
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+        } else if (matchKeyword(TokenType::KW_SETOF)) {
+            parseDataType();
+        } else {
+            parseDataType();
+        }
+    }
+
+    // Function body and options
+    while (true) {
+        if (matchKeyword(TokenType::KW_LANGUAGE)) {
+            std::string lang = parseIdentifier();
+            emitString(lang);
+        } else if (matchKeyword(TokenType::KW_AS)) {
+            // Function body
+            if (check(TokenType::STRING_LITERAL) || check(TokenType::DOLLAR_STRING)) {
+                uint32_t id = current_token_.value.string_id;
+                std::string body(lexer_.stringPool().get(id));
+                emitString(body);
+                advance();
+            }
+        } else if (matchKeyword(TokenType::KW_IMMUTABLE)) {
+            emitByte(1);
+        } else if (matchKeyword(TokenType::KW_STABLE)) {
+            emitByte(2);
+        } else if (matchKeyword(TokenType::KW_VOLATILE)) {
+            emitByte(3);
+        } else if (matchKeyword(TokenType::KW_STRICT)) {
+            // STRICT / RETURNS NULL ON NULL INPUT
+        } else {
+            break;
+        }
+    }
+}
+
+void Parser::parseCreateProcedure() {
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_PROCEDURE));
+
+    // Similar to CREATE FUNCTION but for procedures
+    std::string proc_name = parseIdentifier();
+    emitString(proc_name);
+
+    consume(TokenType::LEFT_PAREN, "Expected (");
+    // Parameters - similar to function
+    consume(TokenType::RIGHT_PAREN, "Expected )");
+
+    while (true) {
+        if (matchKeyword(TokenType::KW_LANGUAGE)) {
+            parseIdentifier();
+        } else if (matchKeyword(TokenType::KW_AS)) {
+            if (check(TokenType::STRING_LITERAL) || check(TokenType::DOLLAR_STRING)) {
+                advance();
+            }
+        } else {
+            break;
+        }
+    }
+}
+
+void Parser::parseCreateTrigger() {
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CREATE_TRIGGER));
+
+    std::string trigger_name = parseIdentifier();
+    emitString(trigger_name);
+
+    // BEFORE/AFTER/INSTEAD OF
+    if (matchKeyword(TokenType::KW_BEFORE)) {
+        emitByte(1);
+    } else if (matchKeyword(TokenType::KW_AFTER)) {
+        emitByte(2);
+    } else if (matchKeyword(TokenType::KW_INSTEAD)) {
+        consumeKeyword(TokenType::KW_OF, "Expected OF");
+        emitByte(3);
+    }
+
+    // Event (INSERT/UPDATE/DELETE/TRUNCATE)
+    do {
+        if (matchKeyword(TokenType::KW_INSERT)) {
+            emitByte(1);
+        } else if (matchKeyword(TokenType::KW_UPDATE)) {
+            emitByte(2);
+            // OF columns
+            if (matchKeyword(TokenType::KW_OF)) {
+                do {
+                    parseIdentifier();
+                } while (match(TokenType::COMMA));
+            }
+        } else if (matchKeyword(TokenType::KW_DELETE)) {
+            emitByte(3);
+        } else if (matchKeyword(TokenType::KW_TRUNCATE)) {
+            emitByte(4);
+        }
+    } while (matchKeyword(TokenType::KW_OR));
+
+    consumeKeyword(TokenType::KW_ON, "Expected ON");
+    std::string table_name = parseQualifiedName();
+    emitString(table_name);
+
+    // FOR EACH ROW/STATEMENT
+    if (matchKeyword(TokenType::KW_FOR)) {
+        matchKeyword(TokenType::KW_EACH);
+        if (matchKeyword(TokenType::KW_ROW)) {
+            emitByte(1);
+        } else if (matchKeyword(TokenType::KW_STATEMENT)) {
+            emitByte(2);
+        }
+    }
+
+    // WHEN condition
+    if (matchKeyword(TokenType::KW_WHEN)) {
+        consume(TokenType::LEFT_PAREN, "Expected (");
+        parseExpression();
+        consume(TokenType::RIGHT_PAREN, "Expected )");
+    }
+
+    // EXECUTE FUNCTION/PROCEDURE
+    consumeKeyword(TokenType::KW_EXECUTE, "Expected EXECUTE");
+    matchKeyword(TokenType::KW_FUNCTION) || matchKeyword(TokenType::KW_PROCEDURE);
+    std::string func_name = parseQualifiedName();
+    emitString(func_name);
+    consume(TokenType::LEFT_PAREN, "Expected (");
+    // Arguments
+    consume(TokenType::RIGHT_PAREN, "Expected )");
+}
+
+void Parser::parseCreateType() {
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CREATE_TYPE));
+
+    std::string type_name = parseQualifiedName();
+    emitString(type_name);
+
+    consumeKeyword(TokenType::KW_AS, "Expected AS");
+
+    if (matchKeyword(TokenType::KW_ENUM)) {
+        // ENUM type
+        emitByte(1);
+        consume(TokenType::LEFT_PAREN, "Expected (");
+        do {
+            if (check(TokenType::STRING_LITERAL)) {
+                uint32_t id = current_token_.value.string_id;
+                emitString(lexer_.stringPool().get(id));
+                advance();
+            }
+        } while (match(TokenType::COMMA));
+        consume(TokenType::RIGHT_PAREN, "Expected )");
+    } else if (matchKeyword(TokenType::KW_RANGE)) {
+        // RANGE type
+        emitByte(2);
+        consume(TokenType::LEFT_PAREN, "Expected (");
+        // Parse range options
+        consume(TokenType::RIGHT_PAREN, "Expected )");
+    } else if (match(TokenType::LEFT_PAREN)) {
+        // Composite type
+        emitByte(3);
+        do {
+            std::string attr_name = parseIdentifier();
+            emitString(attr_name);
+            parseDataType();
+        } while (match(TokenType::COMMA));
+        consume(TokenType::RIGHT_PAREN, "Expected )");
+    }
+}
+
+void Parser::parseCreateDomain() {
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CREATE_DOMAIN));
+
+    std::string domain_name = parseQualifiedName();
+    emitString(domain_name);
+
+    consumeKeyword(TokenType::KW_AS, "Expected AS");
+    parseDataType();
+
+    // Constraints
+    while (true) {
+        if (matchKeyword(TokenType::KW_DEFAULT)) {
+            parseExpression();
+        } else if (matchKeyword(TokenType::KW_NOT)) {
+            consumeKeyword(TokenType::KW_NULL, "Expected NULL");
+        } else if (matchKeyword(TokenType::KW_NULL)) {
+            // Allow NULL
+        } else if (matchKeyword(TokenType::KW_CHECK)) {
+            consume(TokenType::LEFT_PAREN, "Expected (");
+            parseExpression();
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+        } else if (matchKeyword(TokenType::KW_CONSTRAINT)) {
+            parseIdentifier();  // constraint name
+        } else {
+            break;
+        }
+    }
+}
+
+// ============================================================================
+// ALTER Statement
+// ============================================================================
+
+void Parser::parseAlterStmt() {
+    consume(TokenType::KW_ALTER, "Expected ALTER");
+    emit(sblr::Opcode::ALTER_TABLE);
+
+    if (matchKeyword(TokenType::KW_TABLE)) {
+        // Table name
+        std::string schema;
+        std::string table = parseIdentifier();
+        if (match(TokenType::DOT)) {
+            schema = table;
+            table = parseIdentifier();
+        }
+        resolveTableName(schema, table);
+        emit(sblr::Opcode::TABLE_REF);
+        emitString(schema + "/" + table);
+
+        // ALTER TABLE actions
+        do {
+            if (matchKeyword(TokenType::KW_ADD)) {
+                if (matchKeyword(TokenType::KW_COLUMN)) {
+                    ColumnDef col = parseColumnDef();
+                    emit(sblr::Opcode::COLUMN_DEF);
+                    emitString(col.name);
+                    emit(typeToOpcode(col.type.kind));
+                } else if (matchKeyword(TokenType::KW_CONSTRAINT)) {
+                    // Add constraint
+                    parseIdentifier();  // constraint name
+                } else {
+                    // Default is ADD COLUMN
+                    ColumnDef col = parseColumnDef();
+                    emit(sblr::Opcode::COLUMN_DEF);
+                    emitString(col.name);
+                    emit(typeToOpcode(col.type.kind));
+                }
+            } else if (matchKeyword(TokenType::KW_DROP)) {
+                if (matchKeyword(TokenType::KW_COLUMN)) {
+                    matchKeyword(TokenType::KW_IF) && matchKeyword(TokenType::KW_EXISTS);
+                    std::string col_name = parseIdentifier();
+                    emitString(col_name);
+                    matchKeyword(TokenType::KW_CASCADE) || matchKeyword(TokenType::KW_RESTRICT);
+                } else if (matchKeyword(TokenType::KW_CONSTRAINT)) {
+                    matchKeyword(TokenType::KW_IF) && matchKeyword(TokenType::KW_EXISTS);
+                    std::string constraint_name = parseIdentifier();
+                    emitString(constraint_name);
+                }
+            } else if (matchKeyword(TokenType::KW_ALTER)) {
+                consumeKeyword(TokenType::KW_COLUMN, "Expected COLUMN");
+                std::string col_name = parseIdentifier();
+                emitString(col_name);
+                // ALTER COLUMN actions
+                if (matchKeyword(TokenType::KW_SET)) {
+                    if (matchKeyword(TokenType::KW_DEFAULT)) {
+                        parseExpression();
+                    } else if (matchKeyword(TokenType::KW_NOT)) {
+                        consumeKeyword(TokenType::KW_NULL, "Expected NULL");
+                    }
+                } else if (matchKeyword(TokenType::KW_DROP)) {
+                    if (matchKeyword(TokenType::KW_DEFAULT)) {
+                        // Drop default
+                    } else if (matchKeyword(TokenType::KW_NOT)) {
+                        consumeKeyword(TokenType::KW_NULL, "Expected NULL");
+                    }
+                } else if (matchKeyword(TokenType::KW_TYPE)) {
+                    parseDataType();
+                }
+            } else if (matchKeyword(TokenType::KW_RENAME)) {
+                if (matchKeyword(TokenType::KW_COLUMN)) {
+                    std::string old_name = parseIdentifier();
+                    consumeKeyword(TokenType::KW_TO, "Expected TO");
+                    std::string new_name = parseIdentifier();
+                    emitString(old_name);
+                    emitString(new_name);
+                } else if (matchKeyword(TokenType::KW_TO)) {
+                    std::string new_name = parseIdentifier();
+                    emitString(new_name);
+                }
+            } else if (matchKeyword(TokenType::KW_SET)) {
+                if (matchKeyword(TokenType::KW_SCHEMA)) {
+                    std::string new_schema = parseIdentifier();
+                    emitString(new_schema);
+                }
+            }
+        } while (match(TokenType::COMMA));
+    } else if (matchKeyword(TokenType::KW_SEQUENCE)) {
+        emit(sblr::Opcode::ALTER_SEQUENCE);
+        std::string seq_name = parseQualifiedName();
+        emitString(seq_name);
+        // Sequence options (similar to CREATE SEQUENCE)
+    }
+}
+
+// ============================================================================
+// DROP Statement
+// ============================================================================
+
+void Parser::parseDropStmt() {
+    consume(TokenType::KW_DROP, "Expected DROP");
+
+    if (matchKeyword(TokenType::KW_TABLE)) {
+        emit(sblr::Opcode::DROP_TABLE);
+
+        bool if_exists = false;
+        if (matchKeyword(TokenType::KW_IF)) {
+            consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+            if_exists = true;
+        }
+        emitByte(if_exists ? 1 : 0);
+
+        // Table names
+        do {
+            std::string schema;
+            std::string table = parseIdentifier();
+            if (match(TokenType::DOT)) {
+                schema = table;
+                table = parseIdentifier();
+            }
+            resolveTableName(schema, table);
+            emit(sblr::Opcode::TABLE_REF);
+            emitString(schema + "/" + table);
+        } while (match(TokenType::COMMA));
+
+        // CASCADE/RESTRICT
+        if (matchKeyword(TokenType::KW_CASCADE)) {
+            emitByte(1);
+        } else if (matchKeyword(TokenType::KW_RESTRICT)) {
+            emitByte(2);
+        }
+    } else if (matchKeyword(TokenType::KW_INDEX)) {
+        emit(sblr::Opcode::DROP_INDEX);
+
+        bool concurrent = matchKeyword(TokenType::KW_CONCURRENTLY);
+        emitByte(concurrent ? 1 : 0);
+
+        bool if_exists = false;
+        if (matchKeyword(TokenType::KW_IF)) {
+            consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+            if_exists = true;
+        }
+        emitByte(if_exists ? 1 : 0);
+
+        std::string index_name = parseQualifiedName();
+        emitString(index_name);
+    } else if (matchKeyword(TokenType::KW_VIEW)) {
+        emit(sblr::Opcode::DROP_VIEW);
+
+        bool if_exists = false;
+        if (matchKeyword(TokenType::KW_IF)) {
+            consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+            if_exists = true;
+        }
+        emitByte(if_exists ? 1 : 0);
+
+        std::string view_name = parseQualifiedName();
+        emitString(view_name);
+    } else if (matchKeyword(TokenType::KW_SEQUENCE)) {
+        emit(sblr::Opcode::DROP_SEQUENCE);
+
+        bool if_exists = false;
+        if (matchKeyword(TokenType::KW_IF)) {
+            consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+            if_exists = true;
+        }
+        emitByte(if_exists ? 1 : 0);
+
+        std::string seq_name = parseQualifiedName();
+        emitString(seq_name);
+    } else if (matchKeyword(TokenType::KW_FUNCTION)) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_FUNCTION));
+        // ... function signature
+    } else if (matchKeyword(TokenType::KW_TRIGGER)) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_DROP_TRIGGER));
+        std::string trigger_name = parseIdentifier();
+        emitString(trigger_name);
+        consumeKeyword(TokenType::KW_ON, "Expected ON");
+        std::string table_name = parseQualifiedName();
+        emitString(table_name);
+    } else if (matchKeyword(TokenType::KW_ROLE)) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_DROP_ROLE));
+        std::string role_name = parseIdentifier();
+        emitString(role_name);
+    } else if (matchKeyword(TokenType::KW_USER)) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_DROP_USER));
+        std::string user_name = parseIdentifier();
+        emitString(user_name);
+    }
+}
+
+// ============================================================================
+// TRUNCATE Statement
+// ============================================================================
+
+void Parser::parseTruncateStmt() {
+    consume(TokenType::KW_TRUNCATE, "Expected TRUNCATE");
+    matchKeyword(TokenType::KW_TABLE);  // Optional
+
+    emit(sblr::Opcode::TRUNCATE_TABLE);
+
+    // Table names
+    do {
+        std::string schema;
+        std::string table = parseIdentifier();
+        if (match(TokenType::DOT)) {
+            schema = table;
+            table = parseIdentifier();
+        }
+        resolveTableName(schema, table);
+        emit(sblr::Opcode::TABLE_REF);
+        emitString(schema + "/" + table);
+    } while (match(TokenType::COMMA));
+
+    // RESTART IDENTITY / CONTINUE IDENTITY
+    if (matchKeyword(TokenType::KW_RESTART)) {
+        consumeKeyword(TokenType::KW_IDENTITY, "Expected IDENTITY");
+        emitByte(1);
+    } else if (matchKeyword(TokenType::KW_CONTINUE)) {
+        consumeKeyword(TokenType::KW_IDENTITY, "Expected IDENTITY");
+        emitByte(2);
+    }
+
+    // CASCADE/RESTRICT
+    if (matchKeyword(TokenType::KW_CASCADE)) {
+        emitByte(1);
+    } else if (matchKeyword(TokenType::KW_RESTRICT)) {
+        emitByte(2);
+    }
+}
+
+} // namespace scratchbird::parser::postgresql

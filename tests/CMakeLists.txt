@@ -1341,6 +1341,28 @@ set_tests_properties(GIN_DML PROPERTIES
 )
 
 # ============================================================================
+# PostgreSQL Parser Unit Tests
+# ============================================================================
+
+add_executable(test_postgresql_parser
+    unit/test_postgresql_parser.cpp
+)
+target_link_libraries(test_postgresql_parser
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+# Use gtest_discover_tests for proper test enumeration (like other parser tests)
+gtest_discover_tests(test_postgresql_parser
+    TEST_PREFIX "PostgreSQL."
+    PROPERTIES LABELS "unit;parser;postgresql;emulation"
+    PROPERTIES TIMEOUT 60
+)
+
+# ============================================================================
 # Parser V2 Performance Benchmarks (Phase 9)
 # ============================================================================
 

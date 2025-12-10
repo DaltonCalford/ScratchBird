@@ -10,17 +10,20 @@ So the project was restarted, from first principles and all steps taken are kept
 
 ## Current Status
 
-**Phase:** Alpha 2 - Parser Separation ✅ **IN PROGRESS**
-**Progress:** ✅ 100% of Alpha 1 complete (test suite: 1123/1123 = 100% pass rate)
-**Current Work:** Parser v2.0 - Context-sensitive "Smart Parser, Dumb Lexer" architecture
+**Phase:** Alpha 2 - Parser Separation ✅ **COMPLETE**
+**Progress:** ✅ 100% of Alpha 2 complete (test suite: 1255/1255 = 100% pass rate)
+**Current Work:** Ready for Alpha 3 - Network Listeners
 **Started:** June 2025 (6 months of evening/weekend development)
 **Project Type:** Educational/Research (no time constraints)
-**Last Updated:** December 6, 2025
+**Last Updated:** December 10, 2025
 
-### Recent Completions
-- **Parser Audit:** Complete audit of current parser in `/docs/planning/current_parser/` (13 documents)
-- **Parser v2.0 Plan:** Full implementation plan at `/docs/planning/PARSER_V2_IMPLEMENTATION_PLAN.md`
-- **PSQL Dispatch:** CREATE/DROP TRIGGER/FUNCTION/PROCEDURE now fully dispatched
+### Alpha 2 Completions
+- **Parser v2.0:** Context-sensitive "Smart Parser, Dumb Lexer" architecture - ✅ COMPLETE
+- **Firebird Parser:** Full Firebird SQL dialect support with MGA - ✅ COMPLETE (52 tests)
+- **MySQL Parser:** MySQL 8.0 dialect support - ✅ COMPLETE (30 tests)
+- **PostgreSQL Parser:** PostgreSQL 16 dialect support - ✅ COMPLETE (52 tests)
+- **All Parser Tests:** 293 parser tests passing (100%)
+- **Total Test Suite:** 1255 tests passing (100%)
 
 **Detailed Status:** See [IMPLEMENTATION_STATUS_DASHBOARD.md](docs/IMPLEMENTATION_STATUS_DASHBOARD.md) 
 
@@ -102,8 +105,8 @@ This is an **educational/research project with no fixed deadlines**. Each phase 
 ScratchBird/
 ├── src/
 │   ├── core/          # Storage engine, indexes, transactions, catalog
-│   ├── parser/        # SQL parser
-│   └── sblr/          # SBLR bytecode interpreter
+│   ├── parser/        # SQL parsers (V2, Firebird, MySQL, PostgreSQL)
+│   └── sblr/          # SBLR bytecode interpreter & query compilers
 ├── include/           # Public headers
 ├── tests/
 │   ├── unit/          # Unit tests
