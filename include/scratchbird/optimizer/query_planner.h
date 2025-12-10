@@ -1,5 +1,22 @@
 #pragma once
 
+/**
+ * QueryPlanner - Cost-based Query Planner
+ *
+ * V2 MIGRATION STATUS: COMPLETE
+ *
+ * This optimizer generates execution plans using V2 resolved AST types.
+ * It supports:
+ * - Single table SELECT with WHERE, GROUP BY, ORDER BY, LIMIT/OFFSET
+ * - JOIN queries using JoinOrderingOptimizer
+ * - ANALYZE statements
+ *
+ * NOTE: The main client execution path is:
+ *   ServerSession → QueryCompilerV2 → BytecodeGeneratorV2 → Executor
+ *
+ * QueryPlanner is primarily used for EXPLAIN functionality.
+ */
+
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/database.h"
@@ -8,8 +25,8 @@
 #include "scratchbird/optimizer/cost_model.h"
 #include "scratchbird/optimizer/statistics_manager.h"
 #include "scratchbird/optimizer/selectivity_estimator.h"
-#include "scratchbird/parser/ast.h"
-#include "scratchbird/parser/token.h"
+#include "scratchbird/parser/shared_types.h"      // For JoinType, GroupingType, etc.
+#include "scratchbird/sblr/resolved_ast_v2.h"     // For V2 ResolvedSelectStmt, ResolvedExpression, etc.
 #include <memory>
 #include <vector>
 #include <unordered_set>
@@ -18,24 +35,10 @@ namespace scratchbird::optimizer
 {
 
     /**
-     * QueryPlanner - Cost-based query planner
+     * QueryPlanner - Cost-based query planner (V2 Complete)
      *
-     * Generates multiple execution paths for a query, estimates costs,
-     * and selects the cheapest path.
-     *
-     * Planning Pipeline:
-     *   1. Receive AST from parser
-     *   2. Generate all feasible paths (SeqScan, IndexScans)
-     *   3. Estimate cost for each path using CostModel + Statistics
-     *   4. Select cheapest path
-     *   5. Convert to PlanNode tree
-     *   6. Return PlanNode to bytecode generator
-     *
-     * Current Scope (Phase 1):
-     * - Single-table SELECT queries
-     * - WHERE clause with simple predicates
-     * - SeqScan and IndexScan paths
-     * - No joins, no aggregation, no sorting
+     * Generates execution plans using V2 resolved AST types.
+     * Supports single-table queries, JOINs, aggregation, sorting, and LIMIT.
      *
      * Phase 1, Task 1.3
      */
@@ -61,653 +64,49 @@ namespace scratchbird::optimizer
         }
 
         /**
-         * planQuery - Generate execution plan for SELECT statement
+         * planQuery - Generate execution plan for SELECT statement (V2 API)
          *
-         * Planning algorithm:
-         *   1. Check SELECT permission on table (Phase 3.2)
-         *   2. Generate sequential scan path
-         *   3. Generate index scan paths (one per applicable index)
-         *   4. Estimate costs for all paths
-         *   5. Select cheapest path
-         *   6. Convert to PlanNode
-         *
-         * @param select_stmt SELECT statement AST
-         * @param string_pool String pool for resolving StringIds
+         * @param select_stmt SELECT statement (V2 Resolved AST)
          * @param ctx Error context
-         * @param conn_ctx Connection context (for permission checks, Phase 3.2)
-         * @return Execution plan (PlanNode tree) or nullptr on error
-         *
-         * Phase 1, Task 1.3.3
-         * Security Phase 3.2: Permission checks moved from executor to planner
+         * @param conn_ctx Connection context
+         * @return Execution plan node tree, or nullptr on error
          */
-        auto planQuery(const parser::SelectStmt *select_stmt,
-                       const parser::StringPool &string_pool,
+        auto planQuery(const parser::v2::ResolvedSelectStmt *select_stmt,
                        core::ErrorContext *ctx = nullptr,
                        core::ConnectionContext *conn_ctx = nullptr)
             -> std::shared_ptr<PlanNode>;
 
         /**
-         * planAnalyze - Generate execution plan for ANALYZE statement
+         * planAnalyze - Generate execution plan for ANALYZE statement (V2 API)
          *
-         * Creates a simple plan that triggers statistics collection.
-         *
-         * @param analyze_stmt ANALYZE statement AST
-         * @param string_pool String pool for resolving StringIds
+         * @param analyze_stmt ANALYZE statement (V2 Resolved AST)
          * @param ctx Error context
-         * @return Execution plan or nullptr on error
-         *
-         * Phase 1, Task 1.3.3
+         * @return Execution plan node tree, or nullptr on error
          */
-        auto planAnalyze(const parser::AnalyzeStmt *analyze_stmt,
-                         const parser::StringPool &string_pool,
+        auto planAnalyze(const parser::v2::ResolvedAnalyzeStmt *analyze_stmt,
                          core::ErrorContext *ctx = nullptr)
             -> std::shared_ptr<PlanNode>;
 
     private:
         /**
-         * generatePaths - Generate all feasible paths for single-table query
-         *
-         * Generates:
-         * - One SeqScanPath (always feasible)
-         * - One IndexScanPath per applicable index
-         *
-         * Index applicability rules:
-         * - Index column matches WHERE clause column
-         * - Operator is compatible with index (=, <, >, <=, >=, BETWEEN)
-         * - For B-tree: supports all comparison operators
-         *
-         * @param select_stmt SELECT statement
-         * @param table_id Table ID
-         * @param paths Output vector of generated paths
-         * @param ctx Error context
-         * @return Status
-         *
-         * Phase 1, Task 1.3.4
+         * Plan a JOIN query using JoinOrderingOptimizer
          */
-        auto generatePaths(const parser::SelectStmt *select_stmt,
-                           const core::ID &table_id,
-                           std::vector<std::shared_ptr<Path>> &paths,
-                           const parser::StringPool &string_pool,
-                           core::ErrorContext *ctx)
-            -> core::Status;
+        std::shared_ptr<PlanNode> planJoinQuery(
+            const parser::v2::ResolvedSelectStmt* select_stmt,
+            core::ErrorContext* ctx);
 
         /**
-         * generateSeqScanPath - Generate sequential scan path
-         *
-         * Cost calculation:
-         *   1. Get table statistics (num_pages, num_rows)
-         *   2. Estimate selectivity of WHERE clause
-         *   3. Calculate qual_cost (sum of operator costs)
-         *   4. Call cost_model.costSeqScan()
-         *
-         * @param select_stmt SELECT statement
-         * @param table_id Table ID
-         * @param table_name Table name
-         * @param ctx Error context
-         * @return SeqScanPath or nullptr
-         *
-         * Phase 1, Task 1.3.4
+         * Wrap base plan with GROUP BY, ORDER BY, LIMIT/OFFSET nodes
          */
-        auto generateSeqScanPath(const parser::SelectStmt *select_stmt,
-                                 const core::ID &table_id,
-                                 const std::string &table_name,
-                                 core::ErrorContext *ctx)
-            -> std::shared_ptr<SeqScanPath>;
-
-        /**
-         * generateIndexScanPaths - Generate index scan paths
-         *
-         * For each index on table:
-         *   1. Check if index is applicable to WHERE clause
-         *   2. If applicable, estimate index scan cost
-         *   3. Create IndexScanPath
-         *
-         * Index applicability:
-         * - Index column must appear in WHERE clause
-         * - Operator must be index-compatible (=, <, >, <=, >=, BETWEEN)
-         * - For multi-column indexes, first column must match (Phase 1 limitation)
-         *
-         * @param select_stmt SELECT statement
-         * @param table_id Table ID
-         * @param table_name Table name
-         * @param paths Output vector to append index paths
-         * @param ctx Error context
-         * @return Status
-         *
-         * Phase 1, Task 1.3.4
-         */
-        auto generateIndexScanPaths(const parser::SelectStmt *select_stmt,
-                                    const core::ID &table_id,
-                                    const std::string &table_name,
-                                    std::vector<std::shared_ptr<Path>> &paths,
-                                    const parser::StringPool &string_pool,
-                                    core::ErrorContext *ctx)
-            -> core::Status;
-
-        /**
-         * isIndexApplicable - Check if index can be used for WHERE clause
-         *
-         * Rules:
-         * - Index column matches WHERE predicate column
-         * - Operator is index-compatible
-         * - B-tree indexes support: =, <, >, <=, >=, BETWEEN
-         *
-         * @param index_id Index ID
-         * @param select_stmt SELECT statement
-         * @param ctx Error context
-         * @return true if index is applicable
-         *
-         * Phase 1, Task 1.3.4
-         */
-        auto isIndexApplicable(const core::ID &index_id,
-                               const parser::SelectStmt *select_stmt,
-                               core::ErrorContext *ctx) const
-            -> bool;
-
-        /**
-         * selectCheapestPath - Select path with lowest total cost
-         *
-         * Comparison criteria (in order):
-         * 1. Total cost (lower is better)
-         * 2. If costs are equal, prefer index scan (provides ordering)
-         *
-         * @param paths Vector of candidate paths
-         * @return Cheapest path or nullptr if empty
-         *
-         * Phase 1, Task 1.3.5
-         */
-        auto selectCheapestPath(const std::vector<std::shared_ptr<Path>> &paths) const
-            -> std::shared_ptr<Path>;
-
-        /**
-         * pathToPlanNode - Convert Path to PlanNode
-         *
-         * Creates appropriate PlanNode subclass:
-         * - SeqScanPath → SeqScanNode
-         * - IndexScanPath → IndexScanNode
-         *
-         * @param path Path to convert
-         * @param string_pool String pool for expression-to-string conversion (OPT-L2)
-         * @param ctx Error context
-         * @return PlanNode or nullptr
-         *
-         * Phase 1, Task 1.3.5
-         */
-        auto pathToPlanNode(const std::shared_ptr<Path> &path,
-                            const parser::StringPool &string_pool,
-                            core::ErrorContext *ctx)
-            -> std::shared_ptr<PlanNode>;
-
-        /**
-         * estimateSelectivity - Estimate selectivity of WHERE clause
-         *
-         * Returns fraction of rows passing WHERE clause (0.0 to 1.0).
-         *
-         * For Phase 1, uses simple heuristics:
-         * - Equality (=): 1.0 / n_distinct
-         * - Range (<, >, <=, >=): 0.33 (default guess)
-         * - BETWEEN: 0.10 (default guess)
-         * - No WHERE clause: 1.0 (all rows)
-         *
-         * Phase 2 will use histogram-based estimation (Task 1.4).
-         *
-         * @param select_stmt SELECT statement
-         * @param table_id Table ID
-         * @param ctx Error context
-         * @return Selectivity estimate (0.0 to 1.0)
-         *
-         * Phase 1, Task 1.3.4
-         */
-        auto estimateSelectivity(const parser::SelectStmt *select_stmt,
-                                 const core::ID &table_id,
-                                 core::ErrorContext *ctx)
-            -> double;
-
-        /**
-         * calculateQualCost - Calculate cost of WHERE clause evaluation
-         *
-         * Sums cpu_operator_cost for each predicate in WHERE clause.
-         *
-         * Example:
-         *   WHERE age > 25 AND name = 'Alice'
-         *   qual_cost = operatorCost(">") + operatorCost("=")
-         *             = 0.0025 + 0.0025 = 0.005
-         *
-         * @param select_stmt SELECT statement
-         * @return Qualification cost
-         *
-         * Phase 1, Task 1.3.4
-         */
-        auto calculateQualCost(const parser::SelectStmt *select_stmt) const
-            -> double;
-
-        /**
-         * calculateExpressionCost - Calculate cost of an expression tree
-         *
-         * OPT-M5: Recursively traverses expression tree to sum operator costs.
-         * Handles binary operators, function calls, CASE expressions, etc.
-         *
-         * @param expr Expression to evaluate
-         * @return Total cost of evaluating the expression
-         */
-        auto calculateExpressionCost(const parser::Expression *expr) const
-            -> double;
-
-        /**
-         * planJoinQuery - Generate execution plan for JOIN query
-         *
-         * Uses greedy join ordering for Phase 1 (joins in query order).
-         * Phase 2 will implement dynamic programming for optimal ordering.
-         *
-         * Algorithm:
-         *   1. Generate path for base table
-         *   2. For each join:
-         *      a. Generate paths for right table
-         *      b. Generate join paths (nested loop + hash)
-         *      c. Select cheapest join path
-         *   3. Convert final path to plan node
-         *
-         * @param select_stmt SELECT statement with JOINs
-         * @param string_pool String pool for resolving StringIds
-         * @param ctx Error context
-         * @return Join execution plan
-         *
-         * Phase 1, Task 3.2
-         */
-        auto planJoinQuery(const parser::SelectStmt *select_stmt,
-                          const parser::StringPool &string_pool,
-                          core::ErrorContext *ctx)
-            -> std::shared_ptr<PlanNode>;
-
-        /**
-         * generateBaseRelationPaths - Generate paths for a single table
-         *
-         * Used for both base table and joined tables.
-         *
-         * @param table_ref Table reference (with optional alias)
-         * @param where_clause Optional WHERE clause (nullptr for joined tables)
-         * @param string_pool String pool for resolving StringIds
-         * @param ctx Error context
-         * @return Vector of paths for the table
-         *
-         * Phase 1, Task 3.2
-         */
-        auto generateBaseRelationPaths(const parser::TableRef &table_ref,
-                                      const parser::Expression *where_clause,
-                                      const parser::StringPool &string_pool,
-                                      core::ErrorContext *ctx)
-            -> std::vector<std::shared_ptr<Path>>;
-
-        /**
-         * generateJoinPaths - Generate join paths for two relations
-         *
-         * Generates:
-         * - Nested loop join path (always applicable)
-         * - Hash join path (only for equi-joins)
-         *
-         * @param left_path Path for left (outer) relation
-         * @param right_path Path for right (inner) relation
-         * @param join_clause Join clause from AST
-         * @param string_pool StringPool for resolving StringIds (OPT-M6)
-         * @param ctx Error context
-         * @return Vector of join paths
-         *
-         * Phase 1, Task 3.2
-         */
-        auto generateJoinPaths(std::shared_ptr<Path> left_path,
-                              std::shared_ptr<Path> right_path,
-                              const parser::JoinClause &join_clause,
-                              const parser::StringPool &string_pool,
-                              core::ErrorContext *ctx)
-            -> std::vector<std::shared_ptr<Path>>;
-
-        /**
-         * isHashJoinApplicable - Check if hash join can be used
-         *
-         * Hash join requires equi-join condition (contains = operator).
-         *
-         * @param join_condition JOIN ON expression
-         * @return true if hash join applicable
-         *
-         * Phase 1, Task 3.2
-         */
-        auto isHashJoinApplicable(const parser::Expression *join_condition) const
-            -> bool;
-
-        /**
-         * extractHashKeys - Extract hash key expressions from equi-join
-         *
-         * Example: "u.id = o.user_id AND u.type = o.type"
-         * → left_keys = [u.id, u.type]
-         * → right_keys = [o.user_id, o.type]
-         *
-         * OPT-M6: Now verifies that columns belong to the correct tables
-         * by checking the qualifier of IdentifierExpr nodes against the
-         * provided table names. Handles table aliases correctly.
-         *
-         * @param join_condition JOIN ON expression
-         * @param left_keys Output: hash keys from left table
-         * @param right_keys Output: hash keys from right table
-         * @param left_table_name Name of left table (or alias)
-         * @param right_table_name Name of right table (or alias)
-         * @param string_pool StringPool for resolving StringIds
-         * @return true if hash keys extracted successfully
-         *
-         * Phase 1, Task 3.2
-         */
-        auto extractHashKeys(const parser::Expression *join_condition,
-                            std::vector<parser::Expression *> &left_keys,
-                            std::vector<parser::Expression *> &right_keys,
-                            const std::string &left_table_name,
-                            const std::string &right_table_name,
-                            const parser::StringPool &string_pool) const
-            -> bool;
-
-        /**
-         * joinPathToPlanNode - Convert join path to plan node
-         *
-         * Recursively converts path tree to plan node tree.
-         * Handles:
-         * - SeqScanPath → SeqScanNode
-         * - IndexScanPath → IndexScanNode
-         * - NestedLoopJoinPath → NestedLoopJoinNode
-         * - HashJoinPath → HashJoinNode
-         *
-         * @param path Path to convert
-         * @return Plan node
-         *
-         * Phase 1, Task 3.2
-         */
-        auto joinPathToPlanNode(std::shared_ptr<Path> path)
-            -> std::shared_ptr<PlanNode>;
-
-        /**
-         * detectAggregates - Detect aggregate functions in SELECT list
-         *
-         * Scans the SELECT list for AggregateExpr nodes (COUNT, SUM, AVG, MIN, MAX).
-         *
-         * @param select_stmt SELECT statement
-         * @param aggregates Output: vector of aggregate expressions
-         * @return true if aggregates found
-         *
-         * Phase 1, Task 4.1
-         */
-        auto detectAggregates(const parser::SelectStmt *select_stmt,
-                             std::vector<parser::AggregateExpr*>& aggregates) const
-            -> bool;
-
-        /**
-         * estimateNumGroups - Estimate number of groups for GROUP BY
-         *
-         * Uses n_distinct statistics from columns in GROUP BY clause.
-         * For multiple columns, multiplies n_distinct values (with cap).
-         *
-         * @param select_stmt SELECT statement
-         * @param table_id Table ID
-         * @param ctx Error context
-         * @return Estimated number of groups (1 for simple aggregation)
-         *
-         * Phase 1, Task 4.1
-         */
-        auto estimateNumGroups(const parser::SelectStmt *select_stmt,
-                              const core::ID& table_id,
-                              core::ErrorContext *ctx) const
-            -> uint64_t;
-
-        /**
-         * estimateRowWidth - Estimate average row width in bytes
-         *
-         * Used for sort cost estimation.
-         *
-         * @param select_stmt SELECT statement
-         * @param ctx Error context
-         * @return Estimated row width in bytes
-         *
-         * Phase 1, Task 5.1
-         */
-        auto estimateRowWidth(const parser::SelectStmt *select_stmt,
-                             core::ErrorContext *ctx) const
-            -> uint64_t;
-
-        /**
-         * addAggregatePath - Add aggregation path on top of base path
-         *
-         * Creates AggregatePath with cost estimation.
-         *
-         * @param base_path Base path to aggregate
-         * @param select_stmt SELECT statement
-         * @param aggregates Aggregate expressions
-         * @param table_id Table ID (for num_groups estimation)
-         * @param ctx Error context
-         * @return Aggregate path or nullptr
-         *
-         * Phase 1, Task 4.1
-         */
-        auto addAggregatePath(std::shared_ptr<Path> base_path,
-                             const parser::SelectStmt *select_stmt,
-                             const std::vector<parser::AggregateExpr*>& aggregates,
-                             const core::ID& table_id,
-                             core::ErrorContext *ctx)
-            -> std::shared_ptr<Path>;
-
-        /**
-         * addSortPath - Add sort path on top of base path
-         *
-         * Creates SortPath with cost estimation.
-         *
-         * @param base_path Base path to sort
-         * @param select_stmt SELECT statement
-         * @param ctx Error context
-         * @return Sort path or nullptr
-         *
-         * Phase 1, Task 5.1
-         */
-        auto addSortPath(std::shared_ptr<Path> base_path,
-                        const parser::SelectStmt *select_stmt,
-                        core::ErrorContext *ctx)
-            -> std::shared_ptr<Path>;
-
-        /**
-         * addLimitPath - Add limit path on top of base path
-         *
-         * Creates LimitPath with cost estimation.
-         *
-         * @param base_path Base path to limit
-         * @param select_stmt SELECT statement
-         * @param ctx Error context
-         * @return Limit path or nullptr
-         *
-         * Phase 1, Task 5.2
-         */
-        auto addLimitPath(std::shared_ptr<Path> base_path,
-                         const parser::SelectStmt *select_stmt,
-                         core::ErrorContext *ctx)
-            -> std::shared_ptr<Path>;
-
-        /**
-         * detectWindowFunctions - Detect window functions in SELECT list
-         *
-         * Scans the SELECT list for WindowFuncExpr nodes (ROW_NUMBER, RANK, etc.).
-         *
-         * @param select_stmt SELECT statement
-         * @param window_funcs Output: vector of window function expressions
-         * @return true if window functions found
-         *
-         * Phase 1, Task 6.2
-         */
-        auto detectWindowFunctions(const parser::SelectStmt *select_stmt,
-                                   std::vector<parser::WindowFuncExpr*>& window_funcs) const
-            -> bool;
-
-        /**
-         * addWindowPath - Add window function path on top of base path
-         *
-         * Creates WindowPath with cost estimation.
-         * Window functions require:
-         * - Sorting by PARTITION BY + ORDER BY columns
-         * - Frame window processing
-         *
-         * @param base_path Base path to add window functions to
-         * @param select_stmt SELECT statement
-         * @param window_funcs Window function expressions
-         * @param ctx Error context
-         * @return Window path or nullptr
-         *
-         * Phase 1, Task 6.2
-         */
-        auto addWindowPath(std::shared_ptr<Path> base_path,
-                          const parser::SelectStmt *select_stmt,
-                          const std::vector<parser::WindowFuncExpr*>& window_funcs,
-                          core::ErrorContext *ctx)
-            -> std::shared_ptr<Path>;
-
-        /**
-         * generateRTreeScanPaths - Generate R-tree spatial index scan paths
-         *
-         * For each R-tree index on table:
-         *   1. Check if index column appears in spatial predicate
-         *   2. Estimate selectivity based on bounding box overlap
-         *   3. Estimate R-tree pages accessed
-         *   4. Create RTreeScanPath with cost estimate
-         *
-         * Applicable for spatial predicates:
-         * - ST_Intersects(geom_column, constant)
-         * - ST_Contains(geom_column, constant)
-         * - ST_Within(geom_column, constant)
-         * - ST_Covers, ST_CoveredBy, ST_Overlaps, etc.
-         *
-         * @param select_stmt SELECT statement
-         * @param table_id Table ID
-         * @param table_name Table name
-         * @param paths Output vector to append R-tree paths
-         * @param ctx Error context
-         * @return Status
-         *
-         * Phase 2, Task 9.2
-         */
-        auto generateRTreeScanPaths(const parser::SelectStmt *select_stmt,
-                                    const core::ID &table_id,
-                                    const std::string &table_name,
-                                    std::vector<std::shared_ptr<Path>> &paths,
-                                    const parser::StringPool &string_pool,
-                                    core::ErrorContext *ctx)
-            -> core::Status;
-
-        /**
-         * isSpatialPredicate - Check if expression is a spatial predicate
-         *
-         * Recognizes spatial function calls like:
-         * - ST_Intersects(column, constant)
-         * - ST_Contains(column, constant)
-         * - ST_Within(column, constant)
-         *
-         * @param expr Expression to check
-         * @param string_pool String pool for resolving function/column names
-         * @param column_name Output: column name if spatial predicate
-         * @param function_name Output: spatial function name
-         * @return true if expr is a spatial predicate
-         *
-         * Phase 2, Task 9.2 / OPT-M4: Proper function name resolution
-         */
-        auto isSpatialPredicate(const parser::Expression *expr,
-                               const parser::StringPool &string_pool,
-                               std::string &column_name,
-                               std::string &function_name) const
-            -> bool;
-
-        /**
-         * isExpressionIndexApplicable - Check if expression index can be used
-         *
-         * Uses ExpressionMatcher to check if any expression in the WHERE clause
-         * matches the index expression.
-         *
-         * @param index_info Index information
-         * @param where_clause WHERE clause expression
-         * @param string_pool String pool for resolving StringIds
-         * @param ctx Error context
-         * @return true if expression index applicable
-         *
-         * Task 17 Phase 8
-         */
-        auto isExpressionIndexApplicable(const core::CatalogManager::IndexInfo &index_info,
-                                        const parser::Expression *where_clause,
-                                        const parser::StringPool &string_pool,
-                                        core::ErrorContext *ctx) const
-            -> bool;
-
-    private:
-        /**
-         * OPT-M3: Extract column references from expression
-         *
-         * Recursively traverses expression tree to find all column references.
-         * Used to determine if an index can be applied based on predicate columns.
-         *
-         * @param expr Expression to analyze
-         * @param columns Output: list of referenced column names
-         */
-        void extractColumnReferences(const parser::Expression* expr,
-                                    std::vector<std::string>& columns) const;
-
-        /**
-         * Security Phase 3.2: Permission checking at plan time
-         *
-         * Check if user has required permission on table
-         * Superusers bypass all permission checks
-         * Results are cached for the duration of query planning
-         *
-         * @param table_id Table ID
-         * @param privilege Required privilege (SELECT, INSERT, UPDATE, DELETE)
-         * @param ctx Error context
-         * @return true if user has permission, false otherwise
-         */
-        auto checkTablePermission(const core::ID& table_id,
-                                 core::CatalogManager::Privilege privilege,
-                                 core::ErrorContext* ctx) -> bool;
-
-        /**
-         * Security Phase 3.4.5: Row-Level Security policy enforcement
-         *
-         * Check if RLS is enabled on table and apply policies.
-         * If RLS is enabled:
-         * - Load applicable policies for current user
-         * - Return true if policies need to be applied
-         * - Superusers with forced RLS bypass policies
-         *
-         * @param table_info Table information
-         * @param policies_out Output: applicable policies
-         * @param ctx Error context
-         * @return true if RLS policies should be enforced, false otherwise
-         */
-        auto checkAndLoadRLSPolicies(const core::CatalogManager::TableInfo& table_info,
-                                    std::vector<core::CatalogManager::PolicyInfo>& policies_out,
-                                    core::ErrorContext* ctx) -> bool;
-
-        /**
-         * Security Phase 3.4.7: Parse expression string into AST
-         *
-         * Parses a SQL expression string (from RLS policies) into an Expression AST node.
-         * Used for runtime evaluation of policy predicates.
-         *
-         * @param expr_str Expression string to parse
-         * @param arena AST arena for memory allocation
-         * @param string_pool String pool for identifier interning
-         * @param ctx Error context
-         * @return Parsed Expression or nullptr on parse error
-         */
-        auto parseExpressionString(const std::string& expr_str,
-                                  parser::ASTArena& arena,
-                                  parser::StringPool& string_pool,
-                                  core::ErrorContext* ctx) -> parser::Expression*;
+        std::shared_ptr<PlanNode> wrapWithClauses(
+            std::shared_ptr<PlanNode> base_plan,
+            const parser::v2::ResolvedSelectStmt* select_stmt);
 
         core::Database *db_;
         CostModel cost_model_;
         StatisticsManager *stats_manager_;
         SelectivityEstimator selectivity_estimator_;
-        core::ConnectionContext *conn_ctx_;  // Security Phase 3.2: User context for permission checks
-        // Security Phase 3.2.3: Local cache removed - now using global cache in db_->permission_cache()
-
-        // ALPHA Phase 1: View expansion cycle detection
-        // Track currently expanding views to detect cycles
+        core::ConnectionContext *conn_ctx_;
         mutable std::unordered_set<std::string> expanding_views_;
     };
 

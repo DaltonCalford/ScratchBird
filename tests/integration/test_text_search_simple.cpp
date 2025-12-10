@@ -1,6 +1,6 @@
 #include <iostream>
-#include "scratchbird/parser/parser.h"
-#include "scratchbird/parser/semantic_analyzer.h"
+
+
 
 int main() {
     using namespace scratchbird::parser;

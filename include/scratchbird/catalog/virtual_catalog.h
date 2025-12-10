@@ -354,7 +354,7 @@ public:
         }
 
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
-                          "Virtual table not found: " + schema_name + "." + table_name);
+                          ("Virtual table not found: " + schema_name + "." + table_name).c_str());
         return Status::NOT_FOUND;
     }
 
@@ -379,7 +379,7 @@ public:
         }
 
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
-                          "Virtual table not found: " + schema_name + "." + table_name);
+                          ("Virtual table not found: " + schema_name + "." + table_name).c_str());
         return Status::NOT_FOUND;
     }
 

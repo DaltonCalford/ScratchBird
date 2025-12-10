@@ -27,7 +27,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/parser/parser.h"
+
 #include <memory>
 <filesystem>
 

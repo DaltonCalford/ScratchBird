@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
-#include "scratchbird/parser/parser.h"
-#include "scratchbird/parser/semantic_analyzer.h"
+
+
 #include <string>
 
 using namespace scratchbird::parser;

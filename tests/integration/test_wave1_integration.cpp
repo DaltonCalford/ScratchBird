@@ -1,7 +1,7 @@
 // Quick integration test for Wave 1 features
 #include <iostream>
-#include "scratchbird/parser/parser.h"
-#include "scratchbird/sblr/bytecode_generator.h"
+
+#include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/executor.h"
 
 using namespace scratchbird::parser;

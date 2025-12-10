@@ -510,6 +510,7 @@ namespace scratchbird
             KW_PACKAGE,       // SHOW PACKAGE
             KW_NAMES,         // SET NAMES charset
             KW_LOCAL_TIMEOUT, // SET LOCAL_TIMEOUT N
+            KW_PARSER,        // SET PARSER VERSION (Phase 10)
             KW_SCHEMA,        // SHOW SCHEMA (singular - specific schema)
             KW_VERSION,       // SHOW VERSION
 

@@ -239,6 +239,16 @@ namespace scratchbird::core
             return statement_timeout_seconds_;
         }
 
+        // Phase 10: Parser version control
+        void set_parser_version(uint8_t version)
+        {
+            parser_version_ = version;
+        }
+        uint8_t parser_version() const
+        {
+            return parser_version_;
+        }
+
         // Table reservation (for SNAPSHOT TABLE STABILITY)
         struct TableReservation
         {
@@ -288,6 +298,7 @@ namespace scratchbird::core
         uint8_t sql_dialect_ = 3;             // SQL dialect (1, 2, or 3) - default 3 (modern)
         std::string charset_ = "UTF8";        // Connection character set
         uint32_t statement_timeout_seconds_ = 0;  // Statement timeout (0 = no limit)
+        uint8_t parser_version_ = 2;          // Phase 10: Parser version (1 = V1, 2 = V2) - default V2
 
         // Staged settings (from START TRANSACTION without COMMIT OUTSTANDING)
         bool settings_staged_;                // Are there staged settings?

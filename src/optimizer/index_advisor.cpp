@@ -5,14 +5,15 @@
 //
 // P2-25: Index Advisor Implementation
 //
+// V2 MIGRATION STATUS: COMPLETE
+//
 // November 25, 2025
 
 #include "scratchbird/optimizer/index_advisor.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/logger.h"
-#include "scratchbird/parser/parser.h"
-#include "scratchbird/parser/lexer.h"
+#include "scratchbird/parser/parser_v2.h"
 #include <algorithm>
 #include <cmath>
 #include <sstream>
@@ -406,76 +407,95 @@ Status IndexAdvisor::findUnusedIndexes(std::vector<IndexRecommendation>* recomme
     return Status::OK;
 }
 
-// OPT-3: Helper to extract predicate columns from WHERE clause expressions
-static void extractPredicateColumnsForIndex(const parser::Expression* expr,
-                                             const parser::StringPool& string_pool,
+// OPT-3: Helper to extract predicate columns from WHERE clause expressions (V2 API)
+static void extractPredicateColumnsForIndex(const parser::v2::Expression* expr,
+                                             const parser::v2::StringPool& string_pool,
                                              std::vector<std::pair<std::string, std::string>>& table_column_pairs,
                                              std::unordered_set<std::string>& equality_columns,
                                              std::unordered_set<std::string>& range_columns)
 {
     if (!expr) return;
 
-    if (expr->kind() == parser::ASTKind::BINARY_OP)
+    // Handle LIKE expressions (separate from binary ops in V2)
+    if (expr->kind() == parser::v2::ASTKind::LikeExpr)
     {
-        auto* bin_expr = static_cast<const parser::BinaryOpExpr*>(expr);
+        auto* like_expr = static_cast<const parser::v2::LikeExpr*>(expr);
+        if (like_expr->expr && like_expr->expr->kind() == parser::v2::ASTKind::ColumnRefExpr)
+        {
+            auto* col_ref = static_cast<const parser::v2::ColumnRefExpr*>(like_expr->expr);
+            std::string col_name(string_pool.get(col_ref->column.column_name));
+            std::string table_name;
+            if (col_ref->column.has_table_qualifier && !col_ref->column.table_path.components.empty())
+            {
+                table_name = std::string(string_pool.get(col_ref->column.table_path.components.back()));
+            }
+            table_column_pairs.push_back({table_name, col_name});
+            // LIKE is treated as range predicate for indexing purposes
+            range_columns.insert(col_name);
+        }
+        return;
+    }
 
-        // Check if this is a comparison operator (EQ, LT, LE, GT, GE, NE, LIKE)
-        auto op = bin_expr->op();
-        bool is_comparison = (op == parser::BinaryOp::EQ || op == parser::BinaryOp::NE ||
-                              op == parser::BinaryOp::LT || op == parser::BinaryOp::LE ||
-                              op == parser::BinaryOp::GT || op == parser::BinaryOp::GE ||
-                              op == parser::BinaryOp::LIKE);
+    if (expr->kind() == parser::v2::ASTKind::BinaryExpr)
+    {
+        auto* bin_expr = static_cast<const parser::v2::BinaryExpr*>(expr);
+
+        // Check if this is a comparison operator (EQ, LT, LE, GT, GE, NE)
+        auto op = bin_expr->op;
+        bool is_comparison = (op == parser::v2::BinaryOp::EQ || op == parser::v2::BinaryOp::NE ||
+                              op == parser::v2::BinaryOp::LT || op == parser::v2::BinaryOp::LE ||
+                              op == parser::v2::BinaryOp::GT || op == parser::v2::BinaryOp::GE);
 
         if (is_comparison)
         {
             // Extract column from left side
-            auto* left = bin_expr->left();
-            auto* right = bin_expr->right();
+            auto* left = bin_expr->left;
+            auto* right = bin_expr->right;
 
-            // Check if left is identifier and right is a literal/constant
-            if (left && left->kind() == parser::ASTKind::IDENTIFIER)
+            // Check if left is column reference and right is a literal/constant
+            if (left && left->kind() == parser::v2::ASTKind::ColumnRefExpr)
             {
-                auto* id_expr = static_cast<const parser::IdentifierExpr*>(left);
-                std::string col_name(string_pool.get(id_expr->name()));
+                auto* col_ref = static_cast<const parser::v2::ColumnRefExpr*>(left);
+                std::string col_name(string_pool.get(col_ref->column.column_name));
                 std::string table_name;
-                if (id_expr->qualifier() != 0)
+                if (col_ref->column.has_table_qualifier && !col_ref->column.table_path.components.empty())
                 {
-                    table_name = std::string(string_pool.get(id_expr->qualifier()));
+                    table_name = std::string(string_pool.get(col_ref->column.table_path.components.back()));
                 }
 
                 table_column_pairs.push_back({table_name, col_name});
 
                 // Classify as equality or range predicate
-                if (op == parser::BinaryOp::EQ)
+                if (op == parser::v2::BinaryOp::EQ)
                 {
                     equality_columns.insert(col_name);
                 }
-                else if (op == parser::BinaryOp::LT || op == parser::BinaryOp::LE ||
-                         op == parser::BinaryOp::GT || op == parser::BinaryOp::GE)
+                else if (op == parser::v2::BinaryOp::LT || op == parser::v2::BinaryOp::LE ||
+                         op == parser::v2::BinaryOp::GT || op == parser::v2::BinaryOp::GE)
                 {
                     range_columns.insert(col_name);
                 }
             }
 
-            // Check if right is identifier (for cases like "5 = col")
-            if (right && right->kind() == parser::ASTKind::IDENTIFIER)
+            // Check if right is column reference (for cases like "5 = col")
+            if (right && right->kind() == parser::v2::ASTKind::ColumnRefExpr)
             {
-                auto* id_expr = static_cast<const parser::IdentifierExpr*>(right);
-                std::string col_name(string_pool.get(id_expr->name()));
+                auto* col_ref = static_cast<const parser::v2::ColumnRefExpr*>(right);
+                std::string col_name(string_pool.get(col_ref->column.column_name));
                 std::string table_name;
-                if (id_expr->qualifier() != 0)
+                if (col_ref->column.has_table_qualifier && !col_ref->column.table_path.components.empty())
                 {
-                    table_name = std::string(string_pool.get(id_expr->qualifier()));
+                    table_name = std::string(string_pool.get(col_ref->column.table_path.components.back()));
                 }
 
                 table_column_pairs.push_back({table_name, col_name});
 
-                if (op == parser::BinaryOp::EQ)
+                if (op == parser::v2::BinaryOp::EQ)
                 {
                     equality_columns.insert(col_name);
                 }
-                else if (op == parser::BinaryOp::LT || op == parser::BinaryOp::LE ||
-                         op == parser::BinaryOp::GT || op == parser::BinaryOp::GE)
+                else if (op == parser::v2::BinaryOp::LT || op == parser::v2::BinaryOp::LE ||
+                         op == parser::v2::BinaryOp::GT || op == parser::v2::BinaryOp::GE)
                 {
                     range_columns.insert(col_name);
                 }
@@ -484,9 +504,9 @@ static void extractPredicateColumnsForIndex(const parser::Expression* expr,
         else
         {
             // Recurse into AND/OR expressions
-            extractPredicateColumnsForIndex(bin_expr->left(), string_pool, table_column_pairs,
+            extractPredicateColumnsForIndex(bin_expr->left, string_pool, table_column_pairs,
                                             equality_columns, range_columns);
-            extractPredicateColumnsForIndex(bin_expr->right(), string_pool, table_column_pairs,
+            extractPredicateColumnsForIndex(bin_expr->right, string_pool, table_column_pairs,
                                             equality_columns, range_columns);
         }
     }
@@ -496,7 +516,7 @@ Status IndexAdvisor::suggestIndexesForQuery(const std::string& sql_text,
                                              std::vector<IndexRecommendation>* recommendations,
                                              ErrorContext* ctx)
 {
-    // OPT-3: Parse query and analyze predicates for index recommendations
+    // OPT-3: Parse query and analyze predicates for index recommendations (V2 API)
     if (!recommendations) {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null recommendations output");
         return Status::INVALID_ARGUMENT;
@@ -508,11 +528,8 @@ Status IndexAdvisor::suggestIndexesForQuery(const std::string& sql_text,
         return Status::OK;
     }
 
-    // Parse the SQL query
-    parser::Lexer lexer(sql_text);
-    parser::ASTArena arena;
-    parser::Parser parser(lexer, arena);
-
+    // Parse the SQL query using V2 parser
+    parser::v2::Parser parser(sql_text);
     auto result = parser.parseStatement();
     if (!result.statement()) {
         // Failed to parse - not an error, just can't make recommendations
@@ -520,30 +537,34 @@ Status IndexAdvisor::suggestIndexesForQuery(const std::string& sql_text,
     }
 
     // Only analyze SELECT statements for now
-    if (result.statement()->kind() != parser::ASTKind::SELECT) {
+    if (result.statement()->kind() != parser::v2::ASTKind::SelectStmt) {
         return Status::OK;
     }
 
-    auto* select_stmt = static_cast<parser::SelectStmt*>(result.statement());
+    auto* select_stmt = static_cast<parser::v2::SelectStmt*>(result.statement());
     const auto& string_pool = parser.stringPool();
 
     // Extract table name from FROM clause
-    std::string base_table_name(string_pool.get(select_stmt->fromClause().base_table.table_name));
+    std::string base_table_name;
+    if (select_stmt->from && !select_stmt->from->table_path.components.empty()) {
+        // Get last component of table path as table name
+        base_table_name = std::string(string_pool.get(select_stmt->from->table_path.components.back()));
+    }
 
     // Extract predicate columns from WHERE clause
     std::vector<std::pair<std::string, std::string>> table_column_pairs;
     std::unordered_set<std::string> equality_columns;
     std::unordered_set<std::string> range_columns;
 
-    if (select_stmt->whereClause()) {
-        extractPredicateColumnsForIndex(select_stmt->whereClause(), string_pool,
+    if (select_stmt->where) {
+        extractPredicateColumnsForIndex(select_stmt->where, string_pool,
                                         table_column_pairs, equality_columns, range_columns);
     }
 
     // Extract join condition columns
-    for (const auto& join : select_stmt->fromClause().joins) {
-        if (join.on_condition) {
-            extractPredicateColumnsForIndex(join.on_condition, string_pool,
+    for (const auto* join : select_stmt->joins) {
+        if (join && join->on_condition) {
+            extractPredicateColumnsForIndex(join->on_condition, string_pool,
                                             table_column_pairs, equality_columns, range_columns);
         }
     }

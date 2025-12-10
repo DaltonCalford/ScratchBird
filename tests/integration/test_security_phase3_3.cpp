@@ -14,11 +14,11 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
-#include "scratchbird/parser/parser.h"
-#include "scratchbird/parser/lexer.h"
+
+
 #include "scratchbird/parser/ast.h"
-#include "scratchbird/parser/semantic_analyzer.h"
-#include "scratchbird/sblr/bytecode_generator.h"
+
+#include "scratchbird/sblr/query_compiler_v2.h"
 #include <filesystem>
 #include <memory>
 

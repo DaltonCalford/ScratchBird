@@ -2249,9 +2249,9 @@ namespace scratchbird::core
 
         columns = it->second;
 
-        // Sort by column_id for consistent ordering
+        // Sort by ordinal for consistent column ordering (definition order)
         std::sort(columns.begin(), columns.end(), [](const ColumnInfo &a, const ColumnInfo &b)
-                  { return a.column_id < b.column_id; });
+                  { return a.ordinal < b.ordinal; });
 
         return Status::OK;
     }

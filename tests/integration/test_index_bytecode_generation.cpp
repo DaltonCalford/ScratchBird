@@ -1,11 +1,10 @@
 #include <gtest/gtest.h>
-#include "scratchbird/parser/parser.h"
-#include "scratchbird/sblr/bytecode_generator.h"
+
+#include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/opcodes.h"
 #include <string>
 #include <vector>
 
-using namespace scratchbird::parser;
 using namespace scratchbird::sblr;
 
 /**
@@ -16,33 +15,19 @@ using namespace scratchbird::sblr;
  * according to the SBLR (ScratchBird Binary Language Runner) specification.
  *
  * Date: November 20, 2025
+ * Updated: December 2025 - Migrated to V2 parser
  */
 
 class IndexBytecodeGenerationTest : public ::testing::Test
 {
 protected:
     /**
-     * Parse SQL and generate bytecode
+     * Parse SQL and generate bytecode using QueryCompilerV2
      */
-    BytecodeResult generateBytecode(const std::string &sql)
+    CompilationResultV2 generateBytecode(const std::string &sql)
     {
-        Lexer lexer(sql);
-        ASTArena arena;
-        Parser parser(lexer, arena);
-
-        auto parse_result = parser.parseStatement();
-        if (!parse_result.success())
-        {
-            BytecodeResult error_result;
-            for (const auto &err : parse_result.errors())
-            {
-                error_result.addError(err.message);
-            }
-            return error_result;
-        }
-
-        BytecodeGenerator generator(parser.stringPool());
-        return generator.generate(parse_result.statement());
+        QueryCompilerV2 compiler(nullptr);  // No database needed for bytecode structure tests
+        return compiler.compile(sql);
     }
 
     /**

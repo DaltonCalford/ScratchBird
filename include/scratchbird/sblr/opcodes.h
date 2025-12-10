@@ -856,6 +856,37 @@ namespace scratchbird
             EXT_SHOW_LOCATION = 0x78,      // SHOW LOCATION OF [type] name - find object in search path
             EXT_SHOW_RESOLVED = 0x79,      // SHOW RESOLVED name - which object search path resolves to
             EXT_SHOW_OBJECTS = 0x7A,       // SHOW OBJECTS - all objects in current/specified schema
+
+            // Parser V2 SHOW variants (Session/GUC support)
+            EXT_SHOW_VARIABLE = 0x7B,      // SHOW variable_name - show session variable value
+            EXT_SHOW_ALL = 0x7C,           // SHOW ALL - show all session variables
+            EXT_SHOW_TRANSACTION_LEVEL = 0x7D, // SHOW TRANSACTION ISOLATION LEVEL
+
+            // Phase 10: Parser version control
+            EXT_SET_PARSER_VERSION = 0x7E,     // SET PARSER VERSION {V1 | V2}
+
+            // Parser V2 completeness opcodes (0x80-0x8F range)
+            EXT_SELECT_TABLE_STAR = 0x80,      // SELECT t.* - qualified table star (followed by table UUID)
+            EXT_SET_VARIABLE = 0x81,           // SET variable = value - generic session variable
+            EXT_ON_CONFLICT = 0x82,            // INSERT ... ON CONFLICT marker
+            EXT_ON_CONFLICT_COLUMN = 0x83,     // ON CONFLICT (column, ...) - conflict target columns
+            EXT_ON_CONFLICT_CONSTRAINT = 0x84, // ON CONFLICT ON CONSTRAINT name
+            EXT_ON_CONFLICT_DO_NOTHING = 0x85, // ON CONFLICT DO NOTHING
+            EXT_ON_CONFLICT_DO_UPDATE = 0x86,  // ON CONFLICT DO UPDATE SET
+            EXT_ON_CONFLICT_WHERE = 0x87,      // ON CONFLICT ... WHERE condition
+
+            // Permission management (GRANT/REVOKE) (0x88-0x8F)
+            EXT_GRANT = 0x88,                  // GRANT privileges ON object TO grantee
+            EXT_REVOKE = 0x89,                 // REVOKE privileges ON object FROM grantee
+            EXT_GRANT_OPTION = 0x8A,           // WITH GRANT OPTION
+            EXT_PRIVILEGE = 0x8B,              // Privilege type (SELECT, INSERT, UPDATE, DELETE, etc.)
+
+            // Connection statements (0x90-0x93)
+            EXT_CONNECT = 0x90,                // CONNECT TO database
+            EXT_DISCONNECT = 0x91,             // DISCONNECT [ALL | CURRENT | connection_name]
+
+            // Metadata statements (0x94-0x97)
+            EXT_COMMENT = 0x94,                // COMMENT ON object IS 'text'
         };
 
         /**

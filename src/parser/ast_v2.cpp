@@ -1,0 +1,325 @@
+/**
+ * ScratchBird Parser v2.0 - AST Implementation
+ *
+ * See: include/scratchbird/parser/ast_v2.h
+ */
+
+#include "scratchbird/parser/ast_v2.h"
+#include <cstdlib>
+#include <cstring>
+#include <new>
+
+namespace scratchbird::parser::v2 {
+
+// =============================================================================
+// Statement accept() implementations
+// =============================================================================
+
+// DDL statements
+void CreateTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateIndexStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateViewStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateSequenceStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void AlterTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropIndexStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropViewStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void TruncateTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+
+// DML statements
+void SelectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void InsertStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void UpdateStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DeleteStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+
+// Transaction statements
+void StartTransactionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CommitStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void RollbackStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void SavepointStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ReleaseSavepointStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+
+// Session statements
+void SetStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ResetStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ShowStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ExplainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+
+// DCL statements
+void GrantStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void RevokeStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+
+// Connection statements
+void ConnectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DisconnectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+
+// Metadata statements
+void CommentStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+
+// DML (additional)
+void MergeStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+
+// =============================================================================
+// PSQL accept() implementations
+// =============================================================================
+
+void ExecuteBlockStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CompoundStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DeclareVariableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void AssignmentStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void IfStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void WhileStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ForSelectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LoopStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LeaveStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ContinueStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ExitStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void SuspendStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ReturnStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ExceptionRaiseStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void WhenExceptionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void PostEventStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DeclareCursorStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void OpenCursorStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void FetchCursorStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CloseCursorStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+
+// =============================================================================
+// Expression accept() implementations
+// =============================================================================
+
+void LiteralExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ColumnRefExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void BinaryExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void UnaryExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void FunctionCallExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CastExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CaseExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void SubqueryExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ExistsExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void InExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void BetweenExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LikeExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void IsNullExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void ArrayExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+
+// =============================================================================
+// ASTArena Implementation
+// =============================================================================
+
+ASTArena::ASTArena(size_t block_size)
+    : current_block_(nullptr)
+    , block_size_(block_size)
+    , total_allocated_(0)
+{
+    current_block_ = allocateBlock(block_size_);
+}
+
+ASTArena::~ASTArena() {
+    // Call all tracked destructors first (in reverse order)
+    callDestructors();
+
+    // Free all blocks
+    reset();
+
+    // Free the current block too
+    if (current_block_) {
+        std::free(current_block_->data);
+        delete current_block_;
+    }
+}
+
+ASTArena::Block* ASTArena::allocateBlock(size_t size) {
+    Block* block = new Block;
+    block->data = static_cast<char*>(std::malloc(size));
+    block->size = size;
+    block->used = 0;
+    block->next = nullptr;
+    return block;
+}
+
+void* ASTArena::allocate(size_t size, size_t alignment) {
+    // Align the current position
+    size_t current = reinterpret_cast<size_t>(current_block_->data + current_block_->used);
+    size_t aligned = (current + alignment - 1) & ~(alignment - 1);
+    size_t padding = aligned - current;
+
+    // Check if we need a new block
+    if (current_block_->used + padding + size > current_block_->size) {
+        // Allocate new block (at least big enough for this allocation)
+        size_t new_size = std::max(block_size_, size + alignment);
+        Block* new_block = allocateBlock(new_size);
+        new_block->next = current_block_;
+        current_block_ = new_block;
+
+        // Recalculate alignment for new block
+        current = reinterpret_cast<size_t>(current_block_->data);
+        aligned = (current + alignment - 1) & ~(alignment - 1);
+        padding = aligned - current;
+    }
+
+    void* result = current_block_->data + current_block_->used + padding;
+    current_block_->used += padding + size;
+    total_allocated_ += size;
+
+    return result;
+}
+
+void ASTArena::trackDestructor(std::function<void()> dtor) {
+    destructors_.push_back(std::move(dtor));
+}
+
+void ASTArena::callDestructors() {
+    // Call destructors in reverse order (LIFO)
+    for (auto it = destructors_.rbegin(); it != destructors_.rend(); ++it) {
+        (*it)();
+    }
+    destructors_.clear();
+}
+
+void ASTArena::reset() {
+    // Call all tracked destructors first
+    callDestructors();
+
+    // Free all blocks except the current one
+    while (current_block_ && current_block_->next) {
+        Block* next = current_block_->next;
+        std::free(current_block_->data);
+        delete current_block_;
+        current_block_ = next;
+    }
+
+    // Reset the current block
+    if (current_block_) {
+        current_block_->used = 0;
+    }
+
+    total_allocated_ = 0;
+}
+
+// =============================================================================
+// Utility Functions
+// =============================================================================
+
+const char* astKindToString(ASTKind kind) {
+    switch (kind) {
+        // DDL
+        case ASTKind::CreateTableStmt: return "CreateTableStmt";
+        case ASTKind::CreateIndexStmt: return "CreateIndexStmt";
+        case ASTKind::CreateViewStmt: return "CreateViewStmt";
+        case ASTKind::CreateSequenceStmt: return "CreateSequenceStmt";
+        case ASTKind::CreateFunctionStmt: return "CreateFunctionStmt";
+        case ASTKind::CreateProcedureStmt: return "CreateProcedureStmt";
+        case ASTKind::CreateTriggerStmt: return "CreateTriggerStmt";
+        case ASTKind::CreateTypeStmt: return "CreateTypeStmt";
+        case ASTKind::CreateDomainStmt: return "CreateDomainStmt";
+        case ASTKind::AlterTableStmt: return "AlterTableStmt";
+        case ASTKind::DropTableStmt: return "DropTableStmt";
+        case ASTKind::DropIndexStmt: return "DropIndexStmt";
+        case ASTKind::DropViewStmt: return "DropViewStmt";
+        case ASTKind::TruncateTableStmt: return "TruncateTableStmt";
+
+        // DML
+        case ASTKind::SelectStmt: return "SelectStmt";
+        case ASTKind::InsertStmt: return "InsertStmt";
+        case ASTKind::UpdateStmt: return "UpdateStmt";
+        case ASTKind::DeleteStmt: return "DeleteStmt";
+        case ASTKind::MergeStmt: return "MergeStmt";
+
+        // Transaction
+        case ASTKind::StartTransactionStmt: return "StartTransactionStmt";
+        case ASTKind::CommitStmt: return "CommitStmt";
+        case ASTKind::RollbackStmt: return "RollbackStmt";
+        case ASTKind::SavepointStmt: return "SavepointStmt";
+        case ASTKind::ReleaseSavepointStmt: return "ReleaseSavepointStmt";
+
+        // Session
+        case ASTKind::SetStmt: return "SetStmt";
+        case ASTKind::ResetStmt: return "ResetStmt";
+        case ASTKind::ShowStmt: return "ShowStmt";
+        case ASTKind::ExplainStmt: return "ExplainStmt";
+
+        // DCL
+        case ASTKind::GrantStmt: return "GrantStmt";
+        case ASTKind::RevokeStmt: return "RevokeStmt";
+
+        // Connection
+        case ASTKind::ConnectStmt: return "ConnectStmt";
+        case ASTKind::DisconnectStmt: return "DisconnectStmt";
+
+        // Metadata
+        case ASTKind::CommentStmt: return "CommentStmt";
+
+        // Expressions
+        case ASTKind::LiteralExpr: return "LiteralExpr";
+        case ASTKind::ColumnRefExpr: return "ColumnRefExpr";
+        case ASTKind::BinaryExpr: return "BinaryExpr";
+        case ASTKind::UnaryExpr: return "UnaryExpr";
+        case ASTKind::FunctionCallExpr: return "FunctionCallExpr";
+        case ASTKind::CastExpr: return "CastExpr";
+        case ASTKind::CaseExpr: return "CaseExpr";
+        case ASTKind::SubqueryExpr: return "SubqueryExpr";
+        case ASTKind::ExistsExpr: return "ExistsExpr";
+        case ASTKind::InExpr: return "InExpr";
+        case ASTKind::BetweenExpr: return "BetweenExpr";
+        case ASTKind::LikeExpr: return "LikeExpr";
+        case ASTKind::IsNullExpr: return "IsNullExpr";
+        case ASTKind::ArrayExpr: return "ArrayExpr";
+
+        // Other
+        case ASTKind::ColumnDef: return "ColumnDef";
+        case ASTKind::TableConstraint: return "TableConstraint";
+        case ASTKind::TypeName: return "TypeName";
+        case ASTKind::SelectItem: return "SelectItem";
+        case ASTKind::FromClause: return "FromClause";
+        case ASTKind::JoinClause: return "JoinClause";
+        case ASTKind::WindowSpec: return "WindowSpec";
+        case ASTKind::OrderByItem: return "OrderByItem";
+        case ASTKind::GroupByClause: return "GroupByClause";
+    }
+    return "UNKNOWN";
+}
+
+const char* binaryOpToString(BinaryOp op) {
+    switch (op) {
+        case BinaryOp::ADD: return "+";
+        case BinaryOp::SUB: return "-";
+        case BinaryOp::MUL: return "*";
+        case BinaryOp::DIV: return "/";
+        case BinaryOp::MOD: return "%";
+        case BinaryOp::POWER: return "^";
+        case BinaryOp::EQ: return "=";
+        case BinaryOp::NE: return "<>";
+        case BinaryOp::LT: return "<";
+        case BinaryOp::LE: return "<=";
+        case BinaryOp::GT: return ">";
+        case BinaryOp::GE: return ">=";
+        case BinaryOp::AND: return "AND";
+        case BinaryOp::OR: return "OR";
+        case BinaryOp::CONCAT: return "||";
+        case BinaryOp::BIT_AND: return "&";
+        case BinaryOp::BIT_OR: return "|";
+        case BinaryOp::BIT_XOR: return "#";
+        case BinaryOp::SHIFT_LEFT: return "<<";
+        case BinaryOp::SHIFT_RIGHT: return ">>";
+        case BinaryOp::JSON_EXTRACT: return "->";
+        case BinaryOp::JSON_EXTRACT_TEXT: return "->>";
+        case BinaryOp::ARRAY_CONTAINS: return "@>";
+        case BinaryOp::ARRAY_CONTAINED_BY: return "<@";
+        case BinaryOp::ARRAY_OVERLAP: return "&&";
+    }
+    return "?";
+}
+
+const char* unaryOpToString(UnaryOp op) {
+    switch (op) {
+        case UnaryOp::NEGATE: return "-";
+        case UnaryOp::NOT: return "NOT";
+        case UnaryOp::BIT_NOT: return "~";
+        case UnaryOp::IS_NULL: return "IS NULL";
+        case UnaryOp::IS_NOT_NULL: return "IS NOT NULL";
+    }
+    return "?";
+}
+
+} // namespace scratchbird::parser::v2

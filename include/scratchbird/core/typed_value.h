@@ -165,11 +165,44 @@ namespace scratchbird::core
         // Utility methods
         std::string toString() const;
 
-        // Compatibility aliases for legacy code
-        int64_t toInt64() const { return getInt64(); }
-        int32_t toInt32() const { return getInt32(); }
-        double toDouble() const { return getFloat64(); }
-        float toFloat() const { return getFloat32(); }
+        // Compatibility aliases for legacy code with type coercion
+        int64_t toInt64() const {
+            switch (type_) {
+                case DataType::INT32: return static_cast<int64_t>(data_.int32_val);
+                case DataType::INT64: return data_.int64_val;
+                case DataType::FLOAT32: return static_cast<int64_t>(data_.float32_val);
+                case DataType::FLOAT64: return static_cast<int64_t>(data_.float64_val);
+                default: return getInt64();
+            }
+        }
+        int32_t toInt32() const {
+            switch (type_) {
+                case DataType::INT32: return data_.int32_val;
+                case DataType::INT64: return static_cast<int32_t>(data_.int64_val);
+                case DataType::FLOAT32: return static_cast<int32_t>(data_.float32_val);
+                case DataType::FLOAT64: return static_cast<int32_t>(data_.float64_val);
+                default: return getInt32();
+            }
+        }
+        double toDouble() const {
+            switch (type_) {
+                case DataType::INT32: return static_cast<double>(data_.int32_val);
+                case DataType::INT64: return static_cast<double>(data_.int64_val);
+                case DataType::FLOAT32: return static_cast<double>(data_.float32_val);
+                case DataType::FLOAT64: return data_.float64_val;
+                case DataType::DECIMAL: return std::stod(toString());
+                default: return getFloat64();
+            }
+        }
+        float toFloat() const {
+            switch (type_) {
+                case DataType::INT32: return static_cast<float>(data_.int32_val);
+                case DataType::INT64: return static_cast<float>(data_.int64_val);
+                case DataType::FLOAT32: return data_.float32_val;
+                case DataType::FLOAT64: return static_cast<float>(data_.float64_val);
+                default: return getFloat32();
+            }
+        }
         bool toBoolean() const { return getBool(); }
         std::string toVarchar() const { return getVarchar(); }
         std::string toText() const { return getText(); }

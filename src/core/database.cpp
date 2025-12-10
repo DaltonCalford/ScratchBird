@@ -432,8 +432,13 @@ namespace scratchbird::core
         if (flock(fd, LOCK_EX | LOCK_NB) != 0)
         {
             ::close(fd);
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to lock database file");
-            return Status::IO_ERROR;
+            if (errno == EWOULDBLOCK || errno == EAGAIN) {
+                SET_ERROR_CONTEXT(ctx, Status::LOCK_CONFLICT,
+                    "Database file is already in use by another process");
+            } else {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to lock database file");
+            }
+            return Status::LOCK_CONFLICT;
         }
 
         // Allocate buffer for header page with OOM check
@@ -533,8 +538,13 @@ namespace scratchbird::core
         {
             ::close(fd_);
             fd_ = -1;
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to lock database file");
-            return Status::IO_ERROR;
+            if (errno == EWOULDBLOCK || errno == EAGAIN) {
+                SET_ERROR_CONTEXT(ctx, Status::LOCK_CONFLICT,
+                    "Database file is already in use by another process");
+            } else {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to lock database file");
+            }
+            return Status::LOCK_CONFLICT;
         }
 
         // Read header to determine page size

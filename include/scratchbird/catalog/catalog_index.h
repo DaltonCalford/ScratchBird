@@ -28,8 +28,12 @@
 #include <shared_mutex>
 #include <optional>
 #include <cstdint>
+#include <array>
+#include <unordered_map>
 
 namespace scratchbird::catalog {
+
+using core::ErrorContext;
 
 // Forward declarations
 class CatalogManager;
@@ -99,6 +103,7 @@ struct CatalogKey {
 
     // Comparison operators
     bool operator<(const CatalogKey& other) const;
+    bool operator>(const CatalogKey& other) const;
     bool operator==(const CatalogKey& other) const;
     bool operator!=(const CatalogKey& other) const { return !(*this == other); }
 };

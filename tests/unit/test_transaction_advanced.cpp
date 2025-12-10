@@ -2,9 +2,9 @@
 // Tests RESERVING clause, LOCK TIMEOUT, and SET TRANSACTION syntax
 
 #include <gtest/gtest.h>
-#include "scratchbird/parser/parser.h"
+
 #include "scratchbird/parser/ast.h"
-#include "scratchbird/sblr/bytecode_generator.h"
+#include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/opcodes.h"
 #include <vector>
 #include <string>

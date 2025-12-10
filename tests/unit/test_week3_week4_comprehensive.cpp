@@ -7,9 +7,9 @@
  */
 
 #include <gtest/gtest.h>
-#include "scratchbird/parser/parser.h"
-#include "scratchbird/parser/semantic_analyzer.h"
-#include "scratchbird/sblr/bytecode_generator.h"
+
+
+#include "scratchbird/sblr/query_compiler_v2.h"
 #include <chrono>
 #include <algorithm>
 

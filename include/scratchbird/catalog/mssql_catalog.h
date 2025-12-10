@@ -256,7 +256,7 @@ private:
         for (const auto& schema : schemas) {
             VirtualRow row;
             row.columns = {
-                {"name", TypedValue::makeString(schema.schema_name)},
+                {"name", TypedValue::makeVarchar(schema.schema_name)},
                 {"schema_id", TypedValue::makeInt32(idToObjectId(schema.schema_id))},
                 {"principal_id", TypedValue::makeInt32(idToObjectId(schema.owner_id))}
             };
@@ -310,47 +310,47 @@ private:
             for (const auto& table : tables) {
                 VirtualRow row;
                 row.columns = {
-                    {"name", TypedValue::makeString(table.table_name)},
+                    {"name", TypedValue::makeVarchar(table.table_name)},
                     {"object_id", TypedValue::makeInt32(idToObjectId(table.table_id))},
                     {"principal_id", TypedValue::makeNull()},
                     {"schema_id", TypedValue::makeInt32(idToObjectId(schema.schema_id))},
                     {"parent_object_id", TypedValue::makeInt32(0)},
-                    {"type", TypedValue::makeString("U")},  // U = User table
-                    {"type_desc", TypedValue::makeString("USER_TABLE")},
+                    {"type", TypedValue::makeVarchar("U")},  // U = User table
+                    {"type_desc", TypedValue::makeVarchar("USER_TABLE")},
                     {"create_date", TypedValue::makeNull()},
                     {"modify_date", TypedValue::makeNull()},
-                    {"is_ms_shipped", TypedValue::makeString("0")},
-                    {"is_published", TypedValue::makeString("0")},
-                    {"is_schema_published", TypedValue::makeString("0")},
+                    {"is_ms_shipped", TypedValue::makeVarchar("0")},
+                    {"is_published", TypedValue::makeVarchar("0")},
+                    {"is_schema_published", TypedValue::makeVarchar("0")},
                     {"lob_data_space_id", TypedValue::makeInt32(0)},
                     {"filestream_data_space_id", TypedValue::makeNull()},
                     {"max_column_id_used", TypedValue::makeInt32(static_cast<int32_t>(table.column_count))},
-                    {"lock_on_bulk_load", TypedValue::makeString("0")},
-                    {"uses_ansi_nulls", TypedValue::makeString("1")},
-                    {"is_replicated", TypedValue::makeString("0")},
-                    {"has_replication_filter", TypedValue::makeString("0")},
-                    {"is_merge_published", TypedValue::makeString("0")},
-                    {"is_sync_tran_subscribed", TypedValue::makeString("0")},
-                    {"has_unchecked_assembly_data", TypedValue::makeString("0")},
+                    {"lock_on_bulk_load", TypedValue::makeVarchar("0")},
+                    {"uses_ansi_nulls", TypedValue::makeVarchar("1")},
+                    {"is_replicated", TypedValue::makeVarchar("0")},
+                    {"has_replication_filter", TypedValue::makeVarchar("0")},
+                    {"is_merge_published", TypedValue::makeVarchar("0")},
+                    {"is_sync_tran_subscribed", TypedValue::makeVarchar("0")},
+                    {"has_unchecked_assembly_data", TypedValue::makeVarchar("0")},
                     {"text_in_row_limit", TypedValue::makeInt32(0)},
-                    {"large_value_types_out_of_row", TypedValue::makeString("0")},
-                    {"is_tracked_by_cdc", TypedValue::makeString("0")},
-                    {"lock_escalation", TypedValue::makeString("0")},
-                    {"lock_escalation_desc", TypedValue::makeString("TABLE")},
-                    {"is_filetable", TypedValue::makeString("0")},
-                    {"is_memory_optimized", TypedValue::makeString("0")},
-                    {"durability", TypedValue::makeString("0")},
-                    {"durability_desc", TypedValue::makeString("SCHEMA_AND_DATA")},
-                    {"temporal_type", TypedValue::makeString("0")},
-                    {"temporal_type_desc", TypedValue::makeString("NON_TEMPORAL_TABLE")},
+                    {"large_value_types_out_of_row", TypedValue::makeVarchar("0")},
+                    {"is_tracked_by_cdc", TypedValue::makeVarchar("0")},
+                    {"lock_escalation", TypedValue::makeVarchar("0")},
+                    {"lock_escalation_desc", TypedValue::makeVarchar("TABLE")},
+                    {"is_filetable", TypedValue::makeVarchar("0")},
+                    {"is_memory_optimized", TypedValue::makeVarchar("0")},
+                    {"durability", TypedValue::makeVarchar("0")},
+                    {"durability_desc", TypedValue::makeVarchar("SCHEMA_AND_DATA")},
+                    {"temporal_type", TypedValue::makeVarchar("0")},
+                    {"temporal_type_desc", TypedValue::makeVarchar("NON_TEMPORAL_TABLE")},
                     {"history_table_id", TypedValue::makeNull()},
-                    {"is_remote_data_archive_enabled", TypedValue::makeString("0")},
-                    {"is_external", TypedValue::makeString("0")},
+                    {"is_remote_data_archive_enabled", TypedValue::makeVarchar("0")},
+                    {"is_external", TypedValue::makeVarchar("0")},
                     {"history_retention_period", TypedValue::makeNull()},
                     {"history_retention_period_unit", TypedValue::makeNull()},
                     {"history_retention_period_unit_desc", TypedValue::makeNull()},
-                    {"is_node", TypedValue::makeString("0")},
-                    {"is_edge", TypedValue::makeString("0")}
+                    {"is_node", TypedValue::makeVarchar("0")},
+                    {"is_edge", TypedValue::makeVarchar("0")}
                 };
                 results.rows.push_back(std::move(row));
             }
@@ -408,7 +408,7 @@ private:
                     VirtualRow row;
                     row.columns = {
                         {"object_id", TypedValue::makeInt32(idToObjectId(table.table_id))},
-                        {"name", TypedValue::makeString(col.column_name)},
+                        {"name", TypedValue::makeVarchar(col.column_name)},
                         {"column_id", TypedValue::makeInt32(col.ordinal)},
                         {"system_type_id", TypedValue::makeInt32(typeId)},
                         {"user_type_id", TypedValue::makeInt32(typeId)},
@@ -416,31 +416,31 @@ private:
                         {"precision", TypedValue::makeInt32(col.precision)},
                         {"scale", TypedValue::makeInt32(col.scale)},
                         {"collation_name", TypedValue::makeNull()},
-                        {"is_nullable", TypedValue::makeString(col.nullable ? "1" : "0")},
-                        {"is_ansi_padded", TypedValue::makeString("1")},
-                        {"is_rowguidcol", TypedValue::makeString("0")},
-                        {"is_identity", TypedValue::makeString(col.is_identity ? "1" : "0")},
-                        {"is_computed", TypedValue::makeString(col.is_computed ? "1" : "0")},
-                        {"is_filestream", TypedValue::makeString("0")},
-                        {"is_replicated", TypedValue::makeString("0")},
-                        {"is_non_sql_subscribed", TypedValue::makeString("0")},
-                        {"is_merge_published", TypedValue::makeString("0")},
-                        {"is_dts_replicated", TypedValue::makeString("0")},
-                        {"is_xml_document", TypedValue::makeString("0")},
+                        {"is_nullable", TypedValue::makeVarchar(col.nullable ? "1" : "0")},
+                        {"is_ansi_padded", TypedValue::makeVarchar("1")},
+                        {"is_rowguidcol", TypedValue::makeVarchar("0")},
+                        {"is_identity", TypedValue::makeVarchar(col.is_identity ? "1" : "0")},
+                        {"is_computed", TypedValue::makeVarchar(col.is_computed ? "1" : "0")},
+                        {"is_filestream", TypedValue::makeVarchar("0")},
+                        {"is_replicated", TypedValue::makeVarchar("0")},
+                        {"is_non_sql_subscribed", TypedValue::makeVarchar("0")},
+                        {"is_merge_published", TypedValue::makeVarchar("0")},
+                        {"is_dts_replicated", TypedValue::makeVarchar("0")},
+                        {"is_xml_document", TypedValue::makeVarchar("0")},
                         {"xml_collection_id", TypedValue::makeInt32(0)},
                         {"default_object_id", TypedValue::makeInt32(0)},
                         {"rule_object_id", TypedValue::makeInt32(0)},
-                        {"is_sparse", TypedValue::makeString("0")},
-                        {"is_column_set", TypedValue::makeString("0")},
-                        {"generated_always_type", TypedValue::makeString("0")},
-                        {"generated_always_type_desc", TypedValue::makeString("NOT_APPLICABLE")},
+                        {"is_sparse", TypedValue::makeVarchar("0")},
+                        {"is_column_set", TypedValue::makeVarchar("0")},
+                        {"generated_always_type", TypedValue::makeVarchar("0")},
+                        {"generated_always_type_desc", TypedValue::makeVarchar("NOT_APPLICABLE")},
                         {"encryption_type", TypedValue::makeNull()},
                         {"encryption_type_desc", TypedValue::makeNull()},
                         {"encryption_algorithm_name", TypedValue::makeNull()},
                         {"column_encryption_key_id", TypedValue::makeNull()},
                         {"column_encryption_key_database_name", TypedValue::makeNull()},
-                        {"is_hidden", TypedValue::makeString("0")},
-                        {"is_masked", TypedValue::makeString("0")},
+                        {"is_hidden", TypedValue::makeVarchar("0")},
+                        {"is_masked", TypedValue::makeVarchar("0")},
                         {"graph_type", TypedValue::makeNull()},
                         {"graph_type_desc", TypedValue::makeNull()}
                     };
@@ -501,28 +501,28 @@ private:
                     VirtualRow row;
                     row.columns = {
                         {"object_id", TypedValue::makeInt32(idToObjectId(table.table_id))},
-                        {"name", TypedValue::makeString(idx.index_name)},
+                        {"name", TypedValue::makeVarchar(idx.index_name)},
                         {"index_id", TypedValue::makeInt32(indexId++)},
                         {"type", TypedValue::makeInt32(type)},
-                        {"type_desc", TypedValue::makeString(typeDesc)},
-                        {"is_unique", TypedValue::makeString(idx.is_unique ? "1" : "0")},
+                        {"type_desc", TypedValue::makeVarchar(typeDesc)},
+                        {"is_unique", TypedValue::makeVarchar(idx.is_unique ? "1" : "0")},
                         {"data_space_id", TypedValue::makeInt32(1)},
-                        {"ignore_dup_key", TypedValue::makeString("0")},
-                        {"is_primary_key", TypedValue::makeString(idx.is_primary_key ? "1" : "0")},
-                        {"is_unique_constraint", TypedValue::makeString(idx.is_unique && !idx.is_primary_key ? "1" : "0")},
-                        {"fill_factor", TypedValue::makeString("0")},
-                        {"is_padded", TypedValue::makeString("0")},
-                        {"is_disabled", TypedValue::makeString("0")},
-                        {"is_hypothetical", TypedValue::makeString("0")},
-                        {"is_ignored_in_optimization", TypedValue::makeString("0")},
-                        {"allow_row_locks", TypedValue::makeString("1")},
-                        {"allow_page_locks", TypedValue::makeString("1")},
-                        {"has_filter", TypedValue::makeString(idx.filter_expression.empty() ? "0" : "1")},
+                        {"ignore_dup_key", TypedValue::makeVarchar("0")},
+                        {"is_primary_key", TypedValue::makeVarchar(idx.is_primary_key ? "1" : "0")},
+                        {"is_unique_constraint", TypedValue::makeVarchar(idx.is_unique && !idx.is_primary_key ? "1" : "0")},
+                        {"fill_factor", TypedValue::makeVarchar("0")},
+                        {"is_padded", TypedValue::makeVarchar("0")},
+                        {"is_disabled", TypedValue::makeVarchar("0")},
+                        {"is_hypothetical", TypedValue::makeVarchar("0")},
+                        {"is_ignored_in_optimization", TypedValue::makeVarchar("0")},
+                        {"allow_row_locks", TypedValue::makeVarchar("1")},
+                        {"allow_page_locks", TypedValue::makeVarchar("1")},
+                        {"has_filter", TypedValue::makeVarchar(idx.filter_expression.empty() ? "0" : "1")},
                         {"filter_definition", idx.filter_expression.empty() ?
-                            TypedValue::makeNull() : TypedValue::makeString(idx.filter_expression)},
+                            TypedValue::makeNull() : TypedValue::makeVarchar(idx.filter_expression)},
                         {"compression_delay", TypedValue::makeNull()},
-                        {"suppress_dup_key_messages", TypedValue::makeString("0")},
-                        {"auto_created", TypedValue::makeString("0")}
+                        {"suppress_dup_key_messages", TypedValue::makeVarchar("0")},
+                        {"auto_created", TypedValue::makeVarchar("0")}
                     };
                     results.rows.push_back(std::move(row));
                 }
@@ -593,21 +593,21 @@ private:
         for (const auto& t : builtinTypes) {
             VirtualRow row;
             row.columns = {
-                {"name", TypedValue::makeString(t.name)},
+                {"name", TypedValue::makeVarchar(t.name)},
                 {"system_type_id", TypedValue::makeInt32(t.typeId)},
                 {"user_type_id", TypedValue::makeInt32(t.typeId)},
                 {"schema_id", TypedValue::makeInt32(4)},  // sys schema
                 {"principal_id", TypedValue::makeNull()},
                 {"max_length", TypedValue::makeInt16(t.maxLen)},
-                {"precision", TypedValue::makeString("0")},
-                {"scale", TypedValue::makeString("0")},
+                {"precision", TypedValue::makeVarchar("0")},
+                {"scale", TypedValue::makeVarchar("0")},
                 {"collation_name", TypedValue::makeNull()},
-                {"is_nullable", TypedValue::makeString("1")},
-                {"is_user_defined", TypedValue::makeString("0")},
-                {"is_assembly_type", TypedValue::makeString("0")},
+                {"is_nullable", TypedValue::makeVarchar("1")},
+                {"is_user_defined", TypedValue::makeVarchar("0")},
+                {"is_assembly_type", TypedValue::makeVarchar("0")},
                 {"default_object_id", TypedValue::makeInt32(0)},
                 {"rule_object_id", TypedValue::makeInt32(0)},
-                {"is_table_type", TypedValue::makeString("0")}
+                {"is_table_type", TypedValue::makeVarchar("0")}
             };
             results.rows.push_back(std::move(row));
         }
@@ -645,18 +645,18 @@ private:
                 for (const auto& table : tables) {
                     VirtualRow row;
                     row.columns = {
-                        {"name", TypedValue::makeString(table.table_name)},
+                        {"name", TypedValue::makeVarchar(table.table_name)},
                         {"object_id", TypedValue::makeInt32(idToObjectId(table.table_id))},
                         {"principal_id", TypedValue::makeNull()},
                         {"schema_id", TypedValue::makeInt32(idToObjectId(schema.schema_id))},
                         {"parent_object_id", TypedValue::makeInt32(0)},
-                        {"type", TypedValue::makeString("U ")},  // User table
-                        {"type_desc", TypedValue::makeString("USER_TABLE")},
+                        {"type", TypedValue::makeVarchar("U ")},  // User table
+                        {"type_desc", TypedValue::makeVarchar("USER_TABLE")},
                         {"create_date", TypedValue::makeNull()},
                         {"modify_date", TypedValue::makeNull()},
-                        {"is_ms_shipped", TypedValue::makeString("0")},
-                        {"is_published", TypedValue::makeString("0")},
-                        {"is_schema_published", TypedValue::makeString("0")}
+                        {"is_ms_shipped", TypedValue::makeVarchar("0")},
+                        {"is_published", TypedValue::makeVarchar("0")},
+                        {"is_schema_published", TypedValue::makeVarchar("0")}
                     };
                     results.rows.push_back(std::move(row));
                 }
@@ -669,18 +669,18 @@ private:
                 for (const auto& view : views) {
                     VirtualRow row;
                     row.columns = {
-                        {"name", TypedValue::makeString(view.view_name)},
+                        {"name", TypedValue::makeVarchar(view.view_name)},
                         {"object_id", TypedValue::makeInt32(idToObjectId(view.view_id))},
                         {"principal_id", TypedValue::makeNull()},
                         {"schema_id", TypedValue::makeInt32(idToObjectId(schema.schema_id))},
                         {"parent_object_id", TypedValue::makeInt32(0)},
-                        {"type", TypedValue::makeString("V ")},  // View
-                        {"type_desc", TypedValue::makeString("VIEW")},
+                        {"type", TypedValue::makeVarchar("V ")},  // View
+                        {"type_desc", TypedValue::makeVarchar("VIEW")},
                         {"create_date", TypedValue::makeNull()},
                         {"modify_date", TypedValue::makeNull()},
-                        {"is_ms_shipped", TypedValue::makeString("0")},
-                        {"is_published", TypedValue::makeString("0")},
-                        {"is_schema_published", TypedValue::makeString("0")}
+                        {"is_ms_shipped", TypedValue::makeVarchar("0")},
+                        {"is_published", TypedValue::makeVarchar("0")},
+                        {"is_schema_published", TypedValue::makeVarchar("0")}
                     };
                     results.rows.push_back(std::move(row));
                 }
@@ -693,18 +693,18 @@ private:
                 for (const auto& proc : procedures) {
                     VirtualRow row;
                     row.columns = {
-                        {"name", TypedValue::makeString(proc.procedure_name)},
+                        {"name", TypedValue::makeVarchar(proc.procedure_name)},
                         {"object_id", TypedValue::makeInt32(idToObjectId(proc.procedure_id))},
                         {"principal_id", TypedValue::makeNull()},
                         {"schema_id", TypedValue::makeInt32(idToObjectId(schema.schema_id))},
                         {"parent_object_id", TypedValue::makeInt32(0)},
-                        {"type", TypedValue::makeString("P ")},  // Stored procedure
-                        {"type_desc", TypedValue::makeString("SQL_STORED_PROCEDURE")},
+                        {"type", TypedValue::makeVarchar("P ")},  // Stored procedure
+                        {"type_desc", TypedValue::makeVarchar("SQL_STORED_PROCEDURE")},
                         {"create_date", TypedValue::makeNull()},
                         {"modify_date", TypedValue::makeNull()},
-                        {"is_ms_shipped", TypedValue::makeString("0")},
-                        {"is_published", TypedValue::makeString("0")},
-                        {"is_schema_published", TypedValue::makeString("0")}
+                        {"is_ms_shipped", TypedValue::makeVarchar("0")},
+                        {"is_published", TypedValue::makeVarchar("0")},
+                        {"is_schema_published", TypedValue::makeVarchar("0")}
                     };
                     results.rows.push_back(std::move(row));
                 }
@@ -717,18 +717,18 @@ private:
                 for (const auto& func : functions) {
                     VirtualRow row;
                     row.columns = {
-                        {"name", TypedValue::makeString(func.function_name)},
+                        {"name", TypedValue::makeVarchar(func.function_name)},
                         {"object_id", TypedValue::makeInt32(idToObjectId(func.function_id))},
                         {"principal_id", TypedValue::makeNull()},
                         {"schema_id", TypedValue::makeInt32(idToObjectId(schema.schema_id))},
                         {"parent_object_id", TypedValue::makeInt32(0)},
-                        {"type", TypedValue::makeString("FN")},  // Scalar function
-                        {"type_desc", TypedValue::makeString("SQL_SCALAR_FUNCTION")},
+                        {"type", TypedValue::makeVarchar("FN")},  // Scalar function
+                        {"type_desc", TypedValue::makeVarchar("SQL_SCALAR_FUNCTION")},
                         {"create_date", TypedValue::makeNull()},
                         {"modify_date", TypedValue::makeNull()},
-                        {"is_ms_shipped", TypedValue::makeString("0")},
-                        {"is_published", TypedValue::makeString("0")},
-                        {"is_schema_published", TypedValue::makeString("0")}
+                        {"is_ms_shipped", TypedValue::makeVarchar("0")},
+                        {"is_published", TypedValue::makeVarchar("0")},
+                        {"is_schema_published", TypedValue::makeVarchar("0")}
                     };
                     results.rows.push_back(std::move(row));
                 }
@@ -769,22 +769,22 @@ private:
             for (const auto& proc : procedures) {
                 VirtualRow row;
                 row.columns = {
-                    {"name", TypedValue::makeString(proc.procedure_name)},
+                    {"name", TypedValue::makeVarchar(proc.procedure_name)},
                     {"object_id", TypedValue::makeInt32(idToObjectId(proc.procedure_id))},
                     {"principal_id", TypedValue::makeNull()},
                     {"schema_id", TypedValue::makeInt32(idToObjectId(schema.schema_id))},
                     {"parent_object_id", TypedValue::makeInt32(0)},
-                    {"type", TypedValue::makeString("P ")},
-                    {"type_desc", TypedValue::makeString("SQL_STORED_PROCEDURE")},
+                    {"type", TypedValue::makeVarchar("P ")},
+                    {"type_desc", TypedValue::makeVarchar("SQL_STORED_PROCEDURE")},
                     {"create_date", TypedValue::makeNull()},
                     {"modify_date", TypedValue::makeNull()},
-                    {"is_ms_shipped", TypedValue::makeString("0")},
-                    {"is_published", TypedValue::makeString("0")},
-                    {"is_schema_published", TypedValue::makeString("0")},
-                    {"is_auto_executed", TypedValue::makeString("0")},
-                    {"is_execution_replicated", TypedValue::makeString("0")},
-                    {"is_repl_serializable_only", TypedValue::makeString("0")},
-                    {"skips_repl_constraints", TypedValue::makeString("0")}
+                    {"is_ms_shipped", TypedValue::makeVarchar("0")},
+                    {"is_published", TypedValue::makeVarchar("0")},
+                    {"is_schema_published", TypedValue::makeVarchar("0")},
+                    {"is_auto_executed", TypedValue::makeVarchar("0")},
+                    {"is_execution_replicated", TypedValue::makeVarchar("0")},
+                    {"is_repl_serializable_only", TypedValue::makeVarchar("0")},
+                    {"skips_repl_constraints", TypedValue::makeVarchar("0")}
                 };
                 results.rows.push_back(std::move(row));
             }
@@ -823,15 +823,15 @@ private:
                     VirtualRow row;
                     row.columns = {
                         {"object_id", TypedValue::makeInt32(idToObjectId(view.view_id))},
-                        {"definition", TypedValue::makeString("CREATE VIEW " + view.view_name + " AS " + view.definition)},
-                        {"uses_ansi_nulls", TypedValue::makeString("1")},
-                        {"uses_quoted_identifier", TypedValue::makeString("1")},
-                        {"is_schema_bound", TypedValue::makeString("0")},
-                        {"uses_database_collation", TypedValue::makeString("1")},
-                        {"is_recompiled", TypedValue::makeString("0")},
+                        {"definition", TypedValue::makeVarchar("CREATE VIEW " + view.view_name + " AS " + view.definition)},
+                        {"uses_ansi_nulls", TypedValue::makeVarchar("1")},
+                        {"uses_quoted_identifier", TypedValue::makeVarchar("1")},
+                        {"is_schema_bound", TypedValue::makeVarchar("0")},
+                        {"uses_database_collation", TypedValue::makeVarchar("1")},
+                        {"is_recompiled", TypedValue::makeVarchar("0")},
                         {"null_on_null_input", TypedValue::makeNull()},
                         {"execute_as_principal_id", TypedValue::makeNull()},
-                        {"uses_native_compilation", TypedValue::makeString("0")},
+                        {"uses_native_compilation", TypedValue::makeVarchar("0")},
                         {"inline_type", TypedValue::makeNull()},
                         {"is_inlineable", TypedValue::makeNull()}
                     };
@@ -847,15 +847,15 @@ private:
                     VirtualRow row;
                     row.columns = {
                         {"object_id", TypedValue::makeInt32(idToObjectId(proc.procedure_id))},
-                        {"definition", TypedValue::makeString("CREATE PROCEDURE " + proc.procedure_name + " AS " + proc.body)},
-                        {"uses_ansi_nulls", TypedValue::makeString("1")},
-                        {"uses_quoted_identifier", TypedValue::makeString("1")},
-                        {"is_schema_bound", TypedValue::makeString("0")},
-                        {"uses_database_collation", TypedValue::makeString("1")},
-                        {"is_recompiled", TypedValue::makeString("0")},
+                        {"definition", TypedValue::makeVarchar("CREATE PROCEDURE " + proc.procedure_name + " AS " + proc.body)},
+                        {"uses_ansi_nulls", TypedValue::makeVarchar("1")},
+                        {"uses_quoted_identifier", TypedValue::makeVarchar("1")},
+                        {"is_schema_bound", TypedValue::makeVarchar("0")},
+                        {"uses_database_collation", TypedValue::makeVarchar("1")},
+                        {"is_recompiled", TypedValue::makeVarchar("0")},
                         {"null_on_null_input", TypedValue::makeNull()},
                         {"execute_as_principal_id", TypedValue::makeNull()},
-                        {"uses_native_compilation", TypedValue::makeString("0")},
+                        {"uses_native_compilation", TypedValue::makeVarchar("0")},
                         {"inline_type", TypedValue::makeNull()},
                         {"is_inlineable", TypedValue::makeNull()}
                     };
@@ -871,15 +871,15 @@ private:
                     VirtualRow row;
                     row.columns = {
                         {"object_id", TypedValue::makeInt32(idToObjectId(func.function_id))},
-                        {"definition", TypedValue::makeString("CREATE FUNCTION " + func.function_name + " AS " + func.body)},
-                        {"uses_ansi_nulls", TypedValue::makeString("1")},
-                        {"uses_quoted_identifier", TypedValue::makeString("1")},
-                        {"is_schema_bound", TypedValue::makeString("0")},
-                        {"uses_database_collation", TypedValue::makeString("1")},
-                        {"is_recompiled", TypedValue::makeString("0")},
-                        {"null_on_null_input", TypedValue::makeString(func.is_deterministic ? "1" : "0")},
+                        {"definition", TypedValue::makeVarchar("CREATE FUNCTION " + func.name + " AS " + func.source_text)},
+                        {"uses_ansi_nulls", TypedValue::makeVarchar("1")},
+                        {"uses_quoted_identifier", TypedValue::makeVarchar("1")},
+                        {"is_schema_bound", TypedValue::makeVarchar("0")},
+                        {"uses_database_collation", TypedValue::makeVarchar("1")},
+                        {"is_recompiled", TypedValue::makeVarchar("0")},
+                        {"null_on_null_input", TypedValue::makeVarchar(func.deterministic ? "1" : "0")},
                         {"execute_as_principal_id", TypedValue::makeNull()},
-                        {"uses_native_compilation", TypedValue::makeString("0")},
+                        {"uses_native_compilation", TypedValue::makeVarchar("0")},
                         {"inline_type", TypedValue::makeNull()},
                         {"is_inlineable", TypedValue::makeNull()}
                     };
@@ -982,7 +982,7 @@ private:
                                                int ordinal) {
         CatalogManager::ColumnInfo col;
         col.column_name = name;
-        col.data_type = type;
+        col.data_type = static_cast<uint16_t>(type);
         col.ordinal = ordinal;
         col.nullable = true;
         col.max_length = (type == DataType::VARCHAR) ? 256 : 0;

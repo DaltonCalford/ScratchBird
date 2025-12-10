@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include "scratchbird/optimizer/expression_matcher.h"
-#include "scratchbird/parser/parser.h"
+
 
 using namespace scratchbird::optimizer;
 using namespace scratchbird::parser;

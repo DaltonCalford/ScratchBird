@@ -1655,4 +1655,1463 @@ SELECT * FROM ..common.lookup_table;
 
 ---
 
+## Appendix D: Parser-Engine Architecture Clarifications
+
+### D.1 CatalogInterface Abstraction
+
+The parser library communicates with the catalog through an abstract `CatalogInterface`. This abstraction enables the same parser code to work in both embedded and server modes.
+
+```cpp
+class CatalogInterface {
+public:
+    virtual ~CatalogInterface() = default;
+
+    // ===== Object Resolution =====
+    // All lookups are transaction-isolated (MGA back-versioning applies)
+    virtual UUID resolveObject(const SchemaPath& path, ObjectType type) = 0;
+    virtual std::optional<TableInfo> getTableInfo(UUID uuid) = 0;
+    virtual std::optional<ColumnInfo> getColumnInfo(UUID table_uuid, uint32_t col_idx) = 0;
+    virtual std::vector<ColumnInfo> getTableColumns(UUID table_uuid) = 0;
+
+    // ===== Session State (Server-Owned) =====
+    virtual SchemaPath getCurrentSchema() = 0;
+    virtual std::vector<SchemaPath> getSearchPath() = 0;
+    virtual TransactionId getCurrentTransactionId() = 0;
+
+    // ===== Catalog Version for Cache Invalidation =====
+    virtual uint64_t getCatalogVersion() = 0;
+};
+
+// Embedded mode: Direct calls to engine
+class EmbeddedCatalogInterface : public CatalogInterface { /* ... */ };
+
+// Server mode via Unix socket
+class SocketCatalogInterface : public CatalogInterface { /* ... */ };
+
+// Server mode via network
+class NetworkCatalogInterface : public CatalogInterface { /* ... */ };
+```
+
+### D.2 Session State Ownership
+
+**Critical Design Decision:** Session state lives on the server, not the client/parser.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Server (Engine)                          │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │                 Session State                        │   │
+│  │  - Session ID (UUID)                                 │   │
+│  │  - Current schema                                    │   │
+│  │  - Search path                                       │   │
+│  │  - Transaction context                               │   │
+│  │  - User/Role/Group privileges                        │   │
+│  │  - Catalog version at transaction start              │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+                              ▲
+                              │ Session ID + Queries
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│                    Client (Parser)                          │
+│  - Holds Session ID only                                    │
+│  - Queries server for session state via CatalogInterface    │
+│  - Local catalog cache (invalidated by version check)       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Session Attachment:** A client may crash and a new client instance may attach to an existing session using the Session ID. This enables:
+- Recovery/cleanup of in-flight work
+- Session continuity across client restarts
+- Debugging by attaching a new client to observe session state
+
+**Authentication:** Session attachment follows the security protocols defined in:
+- `/docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md`
+- `/docs/specifications/SECURITY_IMPLIMENTATION_DETAILS.md`
+- `/docs/specifications/Security Hardening Guide.md`
+
+For local-only deployment (current phase): No authentication required.
+
+### D.3 Caching Strategy
+
+**Server-Side Query Plan Cache:**
+```cpp
+// Located on Server/Engine
+class QueryPlanCache {
+    // SBLR bytecode hash → Execution Plan
+    std::unordered_map<size_t, ExecutionPlan> plans_;
+
+    // Object UUID → Plan hashes (for invalidation)
+    std::multimap<UUID, size_t> object_deps_;
+
+    void invalidateByUUID(UUID object_uuid);
+};
+```
+
+**Client-Side Catalog Cache:**
+```cpp
+// Located in Parser Library
+class ParserCatalogCache {
+    // Cached catalog metadata (schemas, tables, columns, types)
+    std::unordered_map<UUID, TableInfo> table_cache_;
+    std::unordered_map<UUID, std::vector<ColumnInfo>> column_cache_;
+
+    // Cache version - checked on transaction start
+    uint64_t cached_catalog_version_;
+
+    // Invalidation on DDL
+    void checkAndInvalidate(uint64_t server_catalog_version) {
+        if (server_catalog_version != cached_catalog_version_) {
+            // Clear all cached metadata
+            table_cache_.clear();
+            column_cache_.clear();
+            cached_catalog_version_ = server_catalog_version;
+        }
+    }
+};
+```
+
+**Cache Invalidation Protocol:**
+1. Server maintains a monotonic `catalog_version` counter
+2. DDL operations (CREATE, ALTER, DROP) increment `catalog_version`
+3. On transaction start, client checks `catalog_version` via CatalogInterface
+4. If version differs from cached version, client clears its local cache
+5. This cuts down network traffic for common catalog lookups
+
+### D.4 UUID-to-Name Mapping in Results
+
+All error messages and results must use human-readable names. The execution result includes a UUID-to-name mapping:
+
+```cpp
+struct ExecutionResult {
+    // Query results
+    std::vector<Row> rows;
+    std::vector<ColumnMetadata> columns;
+
+    // UUID → Name mapping for client display
+    struct ObjectNameMapping {
+        UUID uuid;
+        std::string schema_path;    // e.g., "hr.employees"
+        std::string object_name;    // e.g., "employees"
+        ObjectType type;
+    };
+    std::vector<ObjectNameMapping> object_names;
+
+    // Column name mapping (column index → name)
+    std::vector<std::string> column_names;
+
+    // Errors use names, not UUIDs
+    struct ErrorInfo {
+        std::string message;        // Human-readable
+        std::string object_name;    // If applicable
+        SourceSpan location;        // Line/column in SQL
+    };
+    std::vector<ErrorInfo> errors;
+};
+```
+
+The SBLR bytecode operates on UUIDs internally, but the result translator resolves UUIDs to names for client presentation.
+
+### D.5 Transaction Isolation - ALWAYS
+
+**Fundamental Rule:** ALL actions occur within a transaction. There is no "outside transaction" state.
+
+```cpp
+// Every CatalogInterface call is implicitly transaction-scoped
+class CatalogInterface {
+    // The implementation tracks current transaction ID
+    // All catalog lookups respect MGA visibility rules
+
+    virtual UUID resolveObject(const SchemaPath& path, ObjectType type) = 0;
+    // Returns object UUID visible to current transaction (TIP lookup)
+    // If object was created by uncommitted transaction → not visible
+    // If object was dropped by uncommitted transaction → still visible
+};
+```
+
+**MGA Back-Versioning Applies to Catalog:**
+- Catalog metadata has transaction IDs (xmin)
+- Parser sees catalog state as of its transaction start
+- DDL by concurrent transactions is invisible until:
+  1. That transaction commits
+  2. Parser starts a new transaction AFTER the commit
+
+**Embedded Mode:** Even in embedded/single-user mode, a transaction is always active. This ensures:
+- ACID compliance
+- Crash recovery
+- Consistent behavior between embedded and server modes
+
+### D.6 Deployment Modes
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    EMBEDDED MODE                            │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │              Application Process                      │  │
+│  │  ┌─────────────┐     ┌─────────────────────────────┐ │  │
+│  │  │   Parser    │────▶│         Engine              │ │  │
+│  │  │   Library   │     │  (Direct function calls)    │ │  │
+│  │  └─────────────┘     └─────────────────────────────┘ │  │
+│  │        │                         │                    │  │
+│  │        └─────────┬───────────────┘                    │  │
+│  │                  ▼                                    │  │
+│  │           Database File                               │  │
+│  └──────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                    SERVER MODE (Local)                      │
+│  ┌─────────────────┐          ┌───────────────────────────┐│
+│  │ Client Process  │          │    Server Process         ││
+│  │ ┌─────────────┐ │  Socket  │ ┌───────────────────────┐ ││
+│  │ │   Parser    │─┼──────────┼▶│       Engine          │ ││
+│  │ │   Library   │ │          │ │  (Session state here) │ ││
+│  │ └─────────────┘ │          │ └───────────────────────┘ ││
+│  └─────────────────┘          │           │               ││
+│                               │           ▼               ││
+│                               │    Database File          ││
+│                               └───────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                    SERVER MODE (Network)                    │
+│  ┌─────────────────┐          ┌───────────────────────────┐│
+│  │ Client Machine  │ Network  │    Server Machine         ││
+│  │ ┌─────────────┐ │   TCP    │ ┌───────────────────────┐ ││
+│  │ │   Parser    │─┼──────────┼▶│       Engine          │ ││
+│  │ │   Library   │ │          │ │  (Session state here) │ ││
+│  │ └─────────────┘ │          │ └───────────────────────┘ ││
+│  └─────────────────┘          │           │               ││
+│                               │           ▼               ││
+│                               │    Database File          ││
+│                               └───────────────────────────┘│
+└─────────────────────────────────────────────────────────────┘
+```
+
+### D.7 SBLR Output Modes
+
+The SBLR generator produces different output structures depending on the statement type and complexity.
+
+#### D.7.1 Single Statement → Multiple Opcodes
+
+A single SQL statement may compile to multiple SBLR opcodes:
+
+```sql
+INSERT INTO employees (id, name, dept) VALUES
+    (1, 'Alice', 'Eng'),
+    (2, 'Bob', 'Sales'),
+    (3, 'Carol', 'Eng');
+```
+
+Could compile to:
+- **Series of INSERT opcodes**: Individual row insertions
+- **Batch INSERT opcode**: Single opcode with row array parameter
+- **Compiled procedure block**: For complex logic with triggers
+
+The SBLR generator chooses the most efficient representation based on:
+- Row count
+- Presence of triggers on target table
+- Transaction isolation requirements
+- Server-side optimization hints
+
+#### D.7.2 Multi-Statement Blocks
+
+Complex operations compile to SBLR procedure blocks:
+
+```sql
+BEGIN
+    INSERT INTO audit_log VALUES (...);
+    UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+    UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+    INSERT INTO transfers VALUES (...);
+END;
+```
+
+Compiles to a single SBLR procedure block containing:
+- Statement sequence
+- Local variable declarations
+- Control flow (if any)
+- Exception handlers (if any)
+
+This executes atomically within the current transaction.
+
+#### D.7.3 EXECUTE PROCEDURE / Dynamic Execution
+
+For `EXECUTE PROCEDURE` and dynamic SQL:
+
+```sql
+EXECUTE PROCEDURE transfer_funds(from_account := 1, to_account := 2, amount := 100);
+```
+
+The SBLR contains:
+- Procedure UUID reference
+- Parameter bindings
+- Execution mode flags
+
+The engine resolves the procedure at execution time, enabling:
+- Late binding (procedure can be replaced)
+- Parameter validation
+- Privilege checking
+
+### D.8 Source Code Preservation
+
+Source SQL can optionally be preserved alongside SBLR bytecode for debugging, logging, analysis, and trigger context.
+
+#### D.8.1 SBLRModule Structure
+
+```cpp
+struct SBLRModule {
+    // ===== Required =====
+    std::vector<uint8_t> bytecode;          // Executable SBLR
+    UUID module_id;                          // Unique identifier
+    std::vector<UUID> referenced_objects;    // For cache invalidation
+
+    // ===== Optional - Source Preservation =====
+    std::optional<std::string> source_sql;   // Original SQL text
+    bool source_stored;                      // Was source preserved?
+
+    // ===== Metadata =====
+    uint64_t compiled_timestamp;
+    uint64_t catalog_version;                // Catalog state at compile time
+};
+```
+
+#### D.8.2 DDL Source Preservation
+
+For DDL statements (`CREATE VIEW`, `CREATE PROCEDURE`, `CREATE TRIGGER`, etc.), source preservation enables:
+
+- `SHOW CREATE VIEW view_name` - Retrieve original definition
+- `SHOW CREATE PROCEDURE proc_name` - Retrieve procedure source
+- Schema migration tools - Extract DDL for replication
+- Documentation generation - Auto-document database objects
+
+**Control:**
+```sql
+-- Database-level default
+SET DATABASE OPTION STORE_DDL_SOURCE = TRUE;
+
+-- Per-object override
+CREATE VIEW my_view AS SELECT * FROM t WITH SOURCE;
+CREATE PROCEDURE my_proc ... WITHOUT SOURCE;  -- Obfuscate/protect IP
+```
+
+**Catalog Storage:**
+```cpp
+struct ViewRecord {
+    ID view_id;
+    // ... existing fields ...
+    uint32_t source_oid;         // TOAST reference to source SQL (0 if not stored)
+    uint32_t sblr_oid;           // TOAST reference to compiled SBLR
+};
+
+struct ProcedureRecord {
+    ID procedure_id;
+    // ... existing fields ...
+    uint32_t source_oid;         // TOAST reference to source SQL
+    uint32_t sblr_oid;           // TOAST reference to compiled SBLR
+};
+```
+
+#### D.8.3 DML Source Preservation
+
+For DML statements (`SELECT`, `INSERT`, `UPDATE`, `DELETE`), source preservation enables:
+
+- **Debugging**: Log actual SQL executed
+- **Audit logging**: Record original statements with timestamps
+- **Query analysis**: Profiling with actual SQL text
+- **Trigger context**: Triggers can access the statement that fired them
+
+**Execution Context:**
+```cpp
+struct ExecutionContext {
+    SBLRModule* module;
+    TransactionId xid;
+    Session* session;
+
+    // ===== Optional DML Source =====
+    std::optional<std::string> source_sql;
+
+    // ===== Trigger Context =====
+    struct TriggerContext {
+        std::string triggering_statement;    // SQL that caused trigger
+        TriggerEvent event;                  // INSERT/UPDATE/DELETE
+        std::optional<Row> old_row;          // For UPDATE/DELETE
+        std::optional<Row> new_row;          // For INSERT/UPDATE
+    };
+    std::optional<TriggerContext> trigger_ctx;
+};
+```
+
+**Control:**
+```sql
+-- Database-level (usually FALSE - too verbose for production)
+SET DATABASE OPTION STORE_DML_SOURCE = FALSE;
+
+-- Session-level (for debugging)
+SET SESSION OPTION LOG_STATEMENTS = TRUE;
+
+-- Query-level hint
+SELECT /*+ PRESERVE_SOURCE */ * FROM employees WHERE dept = 'Eng';
+```
+
+#### D.8.4 Source Access in Triggers
+
+SELECT triggers and audit triggers can access the triggering statement:
+
+```sql
+CREATE TRIGGER audit_changes
+    AFTER INSERT OR UPDATE OR DELETE ON employees
+    FOR EACH ROW
+BEGIN
+    INSERT INTO audit_log (
+        table_name,
+        operation,
+        old_data,
+        new_data,
+        executed_sql,      -- From trigger context
+        executed_by,
+        executed_at
+    ) VALUES (
+        'employees',
+        TG_OP,
+        OLD,
+        NEW,
+        TG_SQL,            -- Built-in variable: triggering SQL
+        CURRENT_USER,
+        CURRENT_TIMESTAMP
+    );
+END;
+```
+
+#### D.8.5 Configuration Summary
+
+| Setting | Scope | Default | Purpose |
+|---------|-------|---------|---------|
+| `STORE_DDL_SOURCE` | Database | TRUE | Preserve CREATE statement source |
+| `STORE_DML_SOURCE` | Database | FALSE | Preserve DML statement source |
+| `LOG_STATEMENTS` | Session | FALSE | Log all statements to debug log |
+| `AUDIT_STATEMENTS` | Database | FALSE | Record statements in audit table |
+| `WITH SOURCE` | Statement | (default) | Force source preservation |
+| `WITHOUT SOURCE` | Statement | - | Force source omission |
+
+### D.9 Prepared Statements / Parameterized Queries
+
+#### D.9.1 Parameter Placeholders in SBLR
+
+The parser generates SBLR with typed parameter placeholders:
+
+```sql
+PREPARE get_employee AS SELECT * FROM employees WHERE id = $1 AND dept = $2;
+```
+
+Compiles to SBLR containing:
+```cpp
+struct SBLRParameter {
+    uint16_t param_index;        // $1 = 0, $2 = 1, etc.
+    TypeId expected_type;        // INTEGER, VARCHAR, etc.
+    bool nullable;               // Can parameter be NULL?
+};
+```
+
+#### D.9.2 Plan Caching
+
+- SBLR is cached on the server by **statement UUID**
+- Plan cache checks for existing matching plans before generating new ones
+- Plan cache has configurable:
+  - Time-to-live (TTL)
+  - Maximum entries
+  - Eviction policy
+  - Cross-client optimization (similar queries share plans)
+
+#### D.9.3 Type Verification
+
+- Parser defines the expected datatype for each parameter
+- Engine verifies at execution time that provided values match expected types
+- Each datatype has a `TypeId` that identifies it
+- Type mismatch returns detailed error
+
+#### D.9.4 Cross-Session Persistence
+
+Prepared statements can span sessions:
+- Reduces re-planning overhead
+- Enables cross-client optimization of similar code
+- Session attachment can access previously prepared statements
+
+### D.10 Multi-Dialect Parser Architecture
+
+#### D.10.1 Shared Infrastructure
+
+All dialect parsers share:
+- Same `CatalogInterface` abstraction
+- Same SBLR bytecode format
+- Same semantic analyzer core
+
+#### D.10.2 Dialect-Specific Catalog Views
+
+Each dialect has views that map expected system tables to the common catalog:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                 Common ScratchBird Catalog                  │
+│  sys.catalog.tables, sys.catalog.columns, etc.              │
+└─────────────────────────────────────────────────────────────┘
+        │                   │                   │
+        ▼                   ▼                   ▼
+┌───────────────┐   ┌───────────────┐   ┌───────────────┐
+│ PostgreSQL    │   │ MySQL Views   │   │ Firebird      │
+│ Views         │   │               │   │ Views         │
+│ pg_catalog.*  │   │ information_  │   │ RDB$*         │
+│ information_  │   │ schema.*      │   │               │
+│ schema.*      │   │               │   │               │
+└───────────────┘   └───────────────┘   └───────────────┘
+```
+
+The recursive schema system isolates each dialect's namespace while providing the interfaces clients expect.
+
+#### D.10.3 SBLR Equivalence
+
+All dialects produce **identical SBLR** for equivalent statements:
+
+| PostgreSQL | MySQL | Firebird | SBLR Result |
+|------------|-------|----------|-------------|
+| `LIMIT 10 OFFSET 5` | `LIMIT 5, 10` | `FIRST 10 SKIP 5` | Same SBLR |
+| `SERIAL` | `AUTO_INCREMENT` | `GENERATOR` | Same SBLR |
+| `||` concat | `CONCAT()` | `||` concat | Same SBLR |
+
+The functionality is implemented in the engine; dialects map to SBLR that produces the expected result.
+
+### D.11 Parser Error Handling
+
+#### D.11.1 Error Recovery
+
+- Parser does **NOT** attempt to recover and continue after syntax errors
+- Parsing stops at first error
+- Clear, actionable error message returned
+
+#### D.11.2 Partial AST Support
+
+Partial AST for error-tolerant tools:
+- **ScratchBird native**: Supports partial AST return
+- **Emulated dialects**: Depends on emulated server's behavior
+
+#### D.11.3 Error Location Detail
+
+Errors include:
+- Line number
+- Column number
+- Highlighted problem text (source excerpt)
+
+```cpp
+struct ParseError {
+    uint32_t line;
+    uint32_t column;
+    std::string message;
+    std::string source_excerpt;      // Highlighted problem text
+    std::string suggestion;          // Optional: "Did you mean...?"
+};
+```
+
+### D.12 Expression Type Inference
+
+#### D.12.1 Full Type Checking
+
+The parser performs **full type checking** - offloading this work from the engine:
+
+```sql
+SELECT a + b FROM t WHERE c = 'hello'
+```
+
+Parser:
+1. Queries catalog for types of columns `a`, `b`, `c`
+2. Verifies `a + b` is valid (numeric types)
+3. Verifies `c = 'hello'` is valid (string comparison)
+4. Annotates AST with resolved types
+5. Caches catalog lookups per D.3
+
+#### D.12.2 Function Overload Resolution
+
+Function overloads are resolved using **Firebird's resolution mechanics**:
+
+1. Exact match preferred
+2. Implicit conversions ranked by "distance"
+3. Ambiguous overloads produce error
+
+```sql
+SELECT add(1, 2.5);  -- add(INT, INT) or add(FLOAT, FLOAT)?
+-- Resolves to add(FLOAT, FLOAT) via implicit INT→FLOAT conversion
+```
+
+### D.13 Dependency Tracking
+
+#### D.13.1 Parser Records Dependencies
+
+When creating views, procedures, triggers, the parser records all dependencies:
+
+```sql
+CREATE VIEW v AS SELECT * FROM t1 JOIN t2 ON t1.id = t2.fk;
+```
+
+Dependencies recorded:
+- `v → t1` (UUID)
+- `v → t2` (UUID)
+- `v → t1.id` (column UUID)
+- `v → t2.fk` (column UUID)
+
+#### D.13.2 UUID-Based Storage
+
+Dependencies are stored by **UUID**, not name:
+- Survives object renames
+- Names resolved at display time from UUID→Name mapping
+
+#### D.13.3 Drop Verification
+
+`DROP` statements verify no objects depend on the target:
+
+```sql
+DROP TABLE t1;
+-- Error: Cannot drop table t1: view v depends on it
+-- Hint: Use DROP TABLE t1 CASCADE to drop dependent objects
+```
+
+With `CASCADE`:
+- All dependent objects are dropped
+- Dependency graph traversed recursively
+- User informed of all dropped objects
+
+### D.14 Dynamic SQL in Procedures
+
+#### D.14.1 Dynamic SBLR Generation
+
+Dynamic SQL is converted to **dynamic SBLR** - the equivalent using SBLR as the dynamic language:
+
+```sql
+EXECUTE STATEMENT 'SELECT * FROM ' || table_name || ' WHERE ' || col_name || ' = 1';
+```
+
+Compiles to SBLR that:
+1. Concatenates SBLR fragments at runtime
+2. Validates the resulting SBLR
+3. Executes with current transaction context
+
+#### D.14.2 Security Verification
+
+SQL injection protection is verified at **both** parser and server levels:
+- Parser validates structure of dynamic fragments
+- Server validates final SBLR before execution
+- See `/docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md` for details
+
+#### D.14.3 Parse-at-Runtime Instructions
+
+The parser generates SBLR containing "parse at runtime" instructions:
+
+```cpp
+enum SBLROpcode {
+    // ... existing opcodes ...
+    OP_DYNAMIC_PARSE,       // Parse string as SBLR at runtime
+    OP_DYNAMIC_EXECUTE,     // Execute dynamically generated SBLR
+    OP_VALIDATE_SBLR,       // Security validation of dynamic SBLR
+};
+```
+
+### D.15 Transaction Boundaries
+
+#### D.15.1 Parser Transaction Awareness
+
+The parser **must know** when transactions start/end:
+- Catalog cache validity tied to transaction
+- Session state changes on transaction boundaries
+- Catalog version checked on transaction start
+
+#### D.15.2 Auto-Commit Mode
+
+Auto-commit is controlled via `SET` commands:
+
+```sql
+SET AUTOCOMMIT ON;   -- Each statement is its own transaction
+SET AUTOCOMMIT OFF;  -- Manual COMMIT/ROLLBACK required
+```
+
+When auto-commit is ON:
+- Each statement wrapped in implicit BEGIN/COMMIT
+- Errors cause implicit ROLLBACK
+
+#### D.15.3 SET TRANSACTION Behavior
+
+`SET TRANSACTION` affects transaction boundaries:
+
+```sql
+SET TRANSACTION READ ONLY ISOLATION LEVEL SNAPSHOT;
+```
+
+Behavior:
+1. If transaction is active: COMMIT (or ROLLBACK if dirty)
+2. Start new transaction with specified settings
+3. New settings apply to the new transaction
+
+### D.16 SBLR Versioning
+
+#### D.16.1 Version Number in Bytecode
+
+SBLR bytecode includes a version header:
+
+```cpp
+struct SBLRHeader {
+    uint32_t magic;              // 'SBLR'
+    uint16_t version_major;      // Breaking changes
+    uint16_t version_minor;      // Backward-compatible additions
+    uint32_t flags;              // Feature flags
+    uint32_t bytecode_length;
+    // ... followed by bytecode
+};
+```
+
+#### D.16.2 Version Compatibility
+
+| Engine Version | SBLR Version | Result |
+|----------------|--------------|--------|
+| 2.0 | 1.x | Migration required |
+| 2.0 | 2.0 | Execute directly |
+| 2.0 | 2.1 | Execute (backward compatible) |
+| 2.0 | 3.0 | Migration required |
+
+#### D.16.3 Migration Tools
+
+When SBLR format changes:
+1. **If source preserved**: Recompile from source using new parser
+2. **If source not preserved**: Migration tool reads old SBLR, generates new SBLR
+3. Database upgrade process:
+   - Scan all stored procedures, views, triggers
+   - Recompile or migrate each
+   - Update catalog with new SBLR OIDs
+
+### D.17 Parser Hints / Optimizer Directives
+
+#### D.17.1 Current Release
+
+For this release:
+- Parser does **NOT** extract hints from comments
+- Full hint syntax support deferred to future release
+
+#### D.17.2 Plan Suggestions
+
+The parser can suggest execution strategies:
+
+```cpp
+struct SBLRModule {
+    // ... existing fields ...
+
+    // Plan suggestions from parser
+    enum PlanHint {
+        HINT_NONE,
+        HINT_FORCE_NEW_PLAN,      // Don't use cached plan
+        HINT_PREFER_CACHED,       // Use cached if available
+        HINT_INDEX_SCAN,          // Suggest index scan
+        HINT_SEQ_SCAN,            // Suggest sequential scan
+    };
+    std::vector<PlanHint> hints;
+};
+```
+
+#### D.17.3 Future Hint Syntax
+
+Hint syntax will be defined as the system evolves. Potential formats:
+- Comment hints: `/*+ HINT */`
+- Clause hints: `SELECT ... WITH (HINT)`
+- Session hints: `SET OPTIMIZER_HINT = ...`
+
+### D.18 Collation and Character Sets
+
+#### D.18.1 Collation Clause Parsing
+
+Parser handles collation clauses:
+
+```sql
+SELECT * FROM t WHERE name = 'café' COLLATE utf8_general_ci;
+CREATE TABLE t (name VARCHAR(100) COLLATE utf8_bin);
+```
+
+#### D.18.2 String Literal Tagging
+
+String literals in AST are tagged with character set:
+
+```cpp
+struct StringLiteral : public Expression {
+    std::string value;
+    CharacterSet charset;        // UTF8, LATIN1, etc.
+    std::optional<Collation> collation;  // If explicitly specified
+};
+```
+
+#### D.18.3 Default Collation Discovery
+
+Parser retrieves database default collation via `CatalogInterface`:
+
+```cpp
+class CatalogInterface {
+    // ... existing methods ...
+
+    // Character set and collation
+    virtual CharacterSet getDefaultCharset() = 0;
+    virtual Collation getDefaultCollation() = 0;
+    virtual std::vector<Collation> getAvailableCollations() = 0;
+};
+```
+
+Collation can be:
+- Queried: `SHOW COLLATION`
+- Changed: `SET NAMES utf8 COLLATE utf8_general_ci`
+
+### D.19 Complete CatalogInterface Specification
+
+The `CatalogInterface` is the parser's abstraction for querying catalog metadata. This interface must support all operations needed for semantic analysis, type checking, and function overload resolution.
+
+#### D.19.1 Core Interface Definition
+
+```cpp
+#include "scratchbird/core/types.h"
+#include "scratchbird/core/uuidv7.h"
+#include <vector>
+#include <optional>
+#include <string>
+
+namespace scratchbird::parser {
+
+using UUID = core::UuidV7Bytes;
+using TypeId = core::DataType;
+
+// Schema path representation (e.g., "sales.customers" or "sys.catalog.tables")
+struct SchemaPath {
+    std::vector<std::string> components;
+    bool is_absolute;  // Starts with root schema
+
+    std::string toString() const;
+    static SchemaPath parse(const std::string& path);
+    static SchemaPath current();     // "."
+    static SchemaPath parent();      // ".."
+};
+
+// Object types in the catalog
+enum class ObjectType : uint8_t {
+    TABLE,
+    VIEW,
+    MATERIALIZED_VIEW,
+    SEQUENCE,
+    FUNCTION,
+    PROCEDURE,
+    TRIGGER,
+    INDEX,
+    TYPE,
+    DOMAIN,
+    SCHEMA,
+    PACKAGE
+};
+
+// Function parameter mode
+enum class ParamMode : uint8_t {
+    IN,
+    OUT,
+    INOUT
+};
+
+// Function signature for overload resolution
+struct FunctionSignature {
+    UUID function_uuid;
+    std::string name;
+    std::vector<TypeId> param_types;
+    std::vector<ParamMode> param_modes;
+    std::vector<std::string> param_names;
+    std::vector<std::optional<std::string>> param_defaults;  // Default value expressions
+    TypeId return_type;
+    bool is_aggregate;
+    bool is_window;
+    bool is_variadic;        // Last param accepts multiple values
+    bool is_deterministic;   // Same inputs always produce same output
+};
+
+// Column information
+struct ColumnInfo {
+    UUID column_uuid;
+    std::string name;
+    TypeId type;
+    uint32_t precision;
+    uint32_t scale;
+    bool nullable;
+    std::optional<std::string> default_expr;
+    bool is_generated;
+    bool is_identity;
+    uint32_t ordinal_position;
+};
+
+// Table/View information
+struct TableInfo {
+    UUID table_uuid;
+    std::string name;
+    SchemaPath schema_path;
+    ObjectType type;  // TABLE, VIEW, MATERIALIZED_VIEW
+    std::vector<ColumnInfo> columns;
+    UUID owner_uuid;
+    uint64_t last_ddl_xid;  // Transaction ID of last DDL modification
+};
+
+// Index information
+struct IndexInfo {
+    UUID index_uuid;
+    std::string name;
+    UUID table_uuid;
+    std::vector<UUID> column_uuids;
+    std::vector<std::string> expressions;  // For expression indexes
+    bool is_unique;
+    bool is_primary;
+    std::string index_type;  // "btree", "hash", "gin", etc.
+};
+
+// Type conversion rule
+struct TypeConversion {
+    TypeId from_type;
+    TypeId to_type;
+    uint8_t distance;        // Lower = better match (0 = exact)
+    bool is_implicit;        // Can convert without explicit CAST
+    bool is_assignment;      // Can convert in assignment context
+};
+
+// Collation information
+struct CollationInfo {
+    uint32_t collation_id;
+    std::string name;
+    std::string provider;    // "libc", "icu"
+    std::string locale;
+};
+
+// Character set information
+struct CharsetInfo {
+    uint16_t charset_id;
+    std::string name;
+    uint8_t bytes_per_char;
+};
+
+/**
+ * CatalogInterface - Abstract interface for catalog access
+ *
+ * All operations are transaction-isolated (MGA back-versioning applies).
+ * The implementation tracks the current transaction ID and uses TIP-based
+ * visibility to return only committed, visible catalog entries.
+ */
+class CatalogInterface {
+public:
+    virtual ~CatalogInterface() = default;
+
+    // ===== Transaction Context =====
+
+    // Get current transaction ID (for visibility checks)
+    virtual uint64_t getCurrentTransactionId() = 0;
+
+    // Get catalog version for cache invalidation
+    // Monotonically increasing; bumped by any DDL operation
+    virtual uint64_t getCatalogVersion() = 0;
+
+    // ===== Object Resolution =====
+
+    // Resolve an object name to UUID using search path
+    // Returns nullopt if not found or not visible to current transaction
+    virtual std::optional<UUID> resolveObject(
+        const std::string& name,
+        ObjectType type
+    ) = 0;
+
+    // Resolve with explicit schema path (ignores search path)
+    virtual std::optional<UUID> resolveObjectInSchema(
+        const SchemaPath& schema,
+        const std::string& name,
+        ObjectType type
+    ) = 0;
+
+    // ===== Table/View Operations =====
+
+    virtual std::optional<TableInfo> getTableInfo(UUID table_uuid) = 0;
+    virtual std::vector<ColumnInfo> getTableColumns(UUID table_uuid) = 0;
+    virtual std::optional<ColumnInfo> getColumnByName(UUID table_uuid, const std::string& name) = 0;
+    virtual std::optional<ColumnInfo> getColumnByIndex(UUID table_uuid, uint32_t index) = 0;
+
+    // ===== Index Operations =====
+
+    virtual std::vector<IndexInfo> getTableIndexes(UUID table_uuid) = 0;
+    virtual std::optional<IndexInfo> getIndexInfo(UUID index_uuid) = 0;
+
+    // ===== Function/Procedure Operations =====
+
+    // Get all overloads of a function by name
+    virtual std::vector<FunctionSignature> getFunctionOverloads(
+        const std::string& name
+    ) = 0;
+
+    // Get overloads in specific schema
+    virtual std::vector<FunctionSignature> getFunctionOverloadsInSchema(
+        const SchemaPath& schema,
+        const std::string& name
+    ) = 0;
+
+    // Resolve best matching overload for given argument types
+    // Returns nullopt if no match or ambiguous
+    // Uses ScratchBird function resolution rules (Section D.20)
+    virtual std::optional<UUID> resolveOverload(
+        const std::string& name,
+        const std::vector<TypeId>& arg_types
+    ) = 0;
+
+    // Get function signature by UUID
+    virtual std::optional<FunctionSignature> getFunctionSignature(UUID function_uuid) = 0;
+
+    // ===== Type System =====
+
+    // Get type information
+    virtual std::optional<core::TypeInfo> getTypeInfo(TypeId type_id) = 0;
+
+    // Get domain information (user-defined type with constraints)
+    virtual std::optional<UUID> resolveDomain(const std::string& name) = 0;
+    virtual std::optional<TypeId> getDomainBaseType(UUID domain_uuid) = 0;
+
+    // Type conversion rules
+    virtual std::vector<TypeConversion> getImplicitConversions(TypeId from_type) = 0;
+    virtual bool canImplicitConvert(TypeId from_type, TypeId to_type) = 0;
+    virtual uint8_t getConversionDistance(TypeId from_type, TypeId to_type) = 0;
+
+    // ===== Session State =====
+
+    virtual SchemaPath getCurrentSchema() = 0;
+    virtual std::vector<SchemaPath> getSearchPath() = 0;
+    virtual void setCurrentSchema(const SchemaPath& schema) = 0;
+    virtual void setSearchPath(const std::vector<SchemaPath>& paths) = 0;
+
+    // ===== Character Set and Collation =====
+
+    virtual CharsetInfo getDefaultCharset() = 0;
+    virtual CollationInfo getDefaultCollation() = 0;
+    virtual std::vector<CollationInfo> getAvailableCollations() = 0;
+    virtual std::optional<CollationInfo> getCollationByName(const std::string& name) = 0;
+
+    // ===== Dependency Tracking =====
+
+    // Record that object A depends on object B
+    virtual void recordDependency(UUID dependent, UUID referenced) = 0;
+
+    // Get all objects that depend on a given object
+    virtual std::vector<UUID> getDependents(UUID object_uuid) = 0;
+
+    // Get all objects that a given object depends on
+    virtual std::vector<UUID> getReferences(UUID object_uuid) = 0;
+
+    // ===== Privilege Checking =====
+
+    // Check if current user has privilege on object
+    virtual bool hasPrivilege(UUID object_uuid, const std::string& privilege) = 0;
+
+    // Get current user UUID
+    virtual UUID getCurrentUserUUID() = 0;
+
+    // Get active role UUID
+    virtual std::optional<UUID> getActiveRoleUUID() = 0;
+};
+
+// Concrete implementations
+class EmbeddedCatalogInterface : public CatalogInterface { /* ... */ };
+class SocketCatalogInterface : public CatalogInterface { /* ... */ };
+class NetworkCatalogInterface : public CatalogInterface { /* ... */ };
+
+} // namespace scratchbird::parser
+```
+
+### D.20 Function Resolution Rules (ScratchBird Approach)
+
+ScratchBird implements its own function resolution system that is **more flexible than Firebird** (which does not support overloading) but **follows similar type conversion rules**.
+
+**Key difference from Firebird:** ScratchBird DOES support function overloading. Firebird does not allow multiple functions with the same name. ScratchBird allows overloads and resolves them using type distance calculations.
+
+#### D.20.1 Core Resolution Algorithm
+
+```cpp
+/**
+ * Function Overload Resolution Algorithm
+ *
+ * Given: function name and list of argument types
+ * Returns: Best matching function UUID, or error if none/ambiguous
+ */
+std::optional<UUID> resolveOverload(
+    const std::string& name,
+    const std::vector<TypeId>& arg_types,
+    CatalogInterface* catalog
+) {
+    // Step 1: Get all overloads
+    auto overloads = catalog->getFunctionOverloads(name);
+    if (overloads.empty()) {
+        return std::nullopt;  // No function with this name
+    }
+
+    // Step 2: Filter by argument count compatibility
+    std::vector<std::pair<FunctionSignature, uint32_t>> candidates;
+    for (const auto& sig : overloads) {
+        if (isArgumentCountCompatible(sig, arg_types.size())) {
+            uint32_t total_distance = calculateTotalDistance(sig, arg_types, catalog);
+            if (total_distance != INCOMPATIBLE) {
+                candidates.push_back({sig, total_distance});
+            }
+        }
+    }
+
+    if (candidates.empty()) {
+        return std::nullopt;  // No compatible overload
+    }
+
+    // Step 3: Sort by total conversion distance
+    std::sort(candidates.begin(), candidates.end(),
+        [](const auto& a, const auto& b) {
+            return a.second < b.second;  // Lower distance is better
+        });
+
+    // Step 4: Check for ambiguity
+    if (candidates.size() > 1 && candidates[0].second == candidates[1].second) {
+        throw AmbiguousOverloadError(name, arg_types);
+    }
+
+    return candidates[0].first.function_uuid;
+}
+```
+
+#### D.20.2 Type Conversion Distance Rules
+
+Type conversion distances are used to rank overload candidates:
+
+| Conversion | Distance | Notes |
+|------------|----------|-------|
+| Exact match | 0 | No conversion needed |
+| INT8 → INT16 | 1 | Safe widening |
+| INT16 → INT32 | 1 | Safe widening |
+| INT32 → INT64 | 1 | Safe widening |
+| INT32 → FLOAT64 | 2 | May lose precision |
+| INT64 → FLOAT64 | 3 | May lose precision |
+| FLOAT32 → FLOAT64 | 1 | Safe widening |
+| VARCHAR(n) → TEXT | 1 | Safe widening |
+| CHAR(n) → VARCHAR(m) | 2 | If m >= n |
+| Any → VARCHAR | 3 | String conversion |
+| Domain → Base type | 0 | Domain unwrapping |
+| NULL → Any | 0 | NULL matches any type |
+
+#### D.20.3 Resolution Priority
+
+1. **Exact match**: All argument types match parameter types exactly
+2. **Implicit conversions only**: Uses implicit conversions (no explicit CAST)
+3. **Lower total distance wins**: Sum of conversion distances across all arguments
+4. **Ambiguity error**: If two candidates have equal distance
+
+#### D.20.4 Special Cases
+
+**Variadic functions:**
+```sql
+-- format(text, ...) accepts any number of arguments after the first
+SELECT format('Name: %s, Age: %d', name, age) FROM users;
+```
+
+**Named arguments (future enhancement):**
+```sql
+-- Named arguments skip positional matching
+SELECT my_func(param2 => 'value', param1 => 42);
+```
+
+**Default parameters:**
+```sql
+CREATE FUNCTION greet(name VARCHAR, greeting VARCHAR DEFAULT 'Hello')
+    RETURNS VARCHAR AS ...
+
+-- Can call with 1 or 2 arguments
+SELECT greet('World');           -- Uses default for greeting
+SELECT greet('World', 'Hi');     -- Explicit greeting
+```
+
+#### D.20.5 Firebird Type Coercion Rules (Adopted)
+
+ScratchBird adopts Firebird's strict type coercion rules from SQL Dialect 3:
+
+1. **Minimal implicit conversion** in expressions - CAST is usually required
+2. **Comparison exception**: In predicates, implicit string→other conversion is allowed
+3. **String concatenation exception**: Non-strings implicitly convert to string for `||`
+
+```sql
+-- Dialect 3 behavior
+SELECT 1 + '2';        -- Error: Cannot add integer and string
+SELECT 1 + CAST('2' AS INTEGER);  -- OK: 3
+SELECT 'value: ' || 42;            -- OK: 'value: 42' (implicit conversion)
+SELECT * FROM t WHERE id = '123';  -- OK: '123' converts to integer for comparison
+```
+
+### D.21 TypeId System with Fixed UUIDs
+
+#### D.21.1 Built-in Type UUIDs
+
+Built-in data types have **fixed UUIDs** that are constant across all databases. This ensures SBLR bytecode is portable and type checks are consistent.
+
+```cpp
+namespace scratchbird::core {
+
+// Fixed UUIDs for built-in types
+// Format: 00000000-0000-0000-0000-0000000000XX where XX = DataType value
+//
+// These UUIDs are embedded in SBLR bytecode and must NEVER change.
+// New types receive the next sequential XX value.
+
+constexpr UuidV7Bytes TYPE_UUID_INT8      = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x01};
+constexpr UuidV7Bytes TYPE_UUID_INT16     = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x02};
+constexpr UuidV7Bytes TYPE_UUID_INT32     = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x03};
+constexpr UuidV7Bytes TYPE_UUID_INT64     = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x04};
+constexpr UuidV7Bytes TYPE_UUID_INT128    = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x05};
+constexpr UuidV7Bytes TYPE_UUID_UINT8     = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x06};
+constexpr UuidV7Bytes TYPE_UUID_UINT16    = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x07};
+constexpr UuidV7Bytes TYPE_UUID_UINT32    = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x08};
+constexpr UuidV7Bytes TYPE_UUID_UINT64    = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x09};
+constexpr UuidV7Bytes TYPE_UUID_FLOAT32   = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x0A};
+constexpr UuidV7Bytes TYPE_UUID_FLOAT64   = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x0B};
+constexpr UuidV7Bytes TYPE_UUID_DECIMAL   = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x0C};
+constexpr UuidV7Bytes TYPE_UUID_MONEY     = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x0D};
+// ... continuing for all DataType values ...
+constexpr UuidV7Bytes TYPE_UUID_CHAR      = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x14};
+constexpr UuidV7Bytes TYPE_UUID_VARCHAR   = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x15};
+constexpr UuidV7Bytes TYPE_UUID_TEXT      = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x16};
+constexpr UuidV7Bytes TYPE_UUID_DATE      = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x28};
+constexpr UuidV7Bytes TYPE_UUID_TIME      = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x29};
+constexpr UuidV7Bytes TYPE_UUID_TIMESTAMP = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x2A};
+constexpr UuidV7Bytes TYPE_UUID_BOOLEAN   = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x32};
+constexpr UuidV7Bytes TYPE_UUID_UUID      = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x3C};
+constexpr UuidV7Bytes TYPE_UUID_JSON      = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x3D};
+constexpr UuidV7Bytes TYPE_UUID_JSONB     = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0x3E};
+// etc.
+
+// Lookup functions
+UuidV7Bytes getTypeUUID(DataType type);
+DataType getTypeFromUUID(const UuidV7Bytes& uuid);
+
+} // namespace scratchbird::core
+```
+
+#### D.21.2 User-Defined Types and Domains
+
+Domains and user-defined types receive **dynamically generated UUIDs** (standard UUIDv7):
+
+```cpp
+// Creating a domain generates a new UUID
+CREATE DOMAIN email_address AS VARCHAR(255)
+    CHECK (VALUE LIKE '%@%.%');
+// uuid = <generated UUIDv7>
+
+// The SBLR references this UUID
+// If database is migrated, the UUID travels with the domain
+```
+
+#### D.21.3 Type Validation and Casting
+
+```cpp
+struct TypeValidator {
+    UUID type_uuid;
+
+    // Validation function pointer (for domains with CHECK constraints)
+    using ValidateFn = bool (*)(const TypedValue& value);
+    ValidateFn validate;
+
+    // Cast function pointer (for custom types)
+    using CastFn = TypedValue (*)(const TypedValue& value, TypeId target_type);
+    CastFn cast_to;
+    CastFn cast_from;
+};
+```
+
+### D.22 Plan Cache Matching Algorithm
+
+#### D.22.1 Exact SBLR Byte Match
+
+Plan cache matching uses **exact SBLR bytecode hash match**:
+
+```cpp
+struct PlanCacheKey {
+    // SHA-256 hash of SBLR bytecode
+    std::array<uint8_t, 32> sblr_hash;
+
+    // Database UUID (plans are database-specific)
+    UUID database_uuid;
+
+    bool operator==(const PlanCacheKey& other) const {
+        return sblr_hash == other.sblr_hash && database_uuid == other.database_uuid;
+    }
+};
+
+struct PlanCacheKeyHash {
+    size_t operator()(const PlanCacheKey& key) const {
+        // Use first 8 bytes of SHA-256 as hash
+        return *reinterpret_cast<const size_t*>(key.sblr_hash.data());
+    }
+};
+
+class PlanCache {
+    std::unordered_map<PlanCacheKey, CachedPlan, PlanCacheKeyHash> cache_;
+
+    // TTL and eviction settings
+    std::chrono::seconds ttl_ = std::chrono::hours(1);
+    size_t max_entries_ = 10000;
+
+    // Object UUID → Plan keys (for invalidation)
+    std::multimap<UUID, PlanCacheKey> object_dependencies_;
+};
+```
+
+#### D.22.2 Cache Invalidation
+
+Plans are invalidated when referenced objects change:
+
+```cpp
+void PlanCache::invalidateByObject(UUID object_uuid) {
+    auto range = object_dependencies_.equal_range(object_uuid);
+    for (auto it = range.first; it != range.second; ++it) {
+        cache_.erase(it->second);
+    }
+    object_dependencies_.erase(object_uuid);
+}
+```
+
+### D.23 Catalog Version and Cache Invalidation
+
+#### D.23.1 Per-Object Modification Tracking
+
+Each catalog object stores the **transaction ID of its last DDL modification**:
+
+```cpp
+struct CatalogEntry {
+    UUID object_uuid;
+    uint64_t xmin;           // Transaction that created this version
+    uint64_t xmax;           // Transaction that deleted this version (0 = active)
+    uint64_t last_ddl_xid;   // Last DDL transaction (for cache invalidation)
+    // ... other fields
+};
+```
+
+#### D.23.2 Client-Side Cache Invalidation
+
+```cpp
+class ParserCatalogCache {
+    struct CachedEntry {
+        TableInfo info;
+        uint64_t cached_at_xid;  // Transaction ID when cached
+    };
+
+    std::unordered_map<UUID, CachedEntry> table_cache_;
+
+    std::optional<TableInfo> getTableInfo(UUID uuid, CatalogInterface* catalog) {
+        auto it = table_cache_.find(uuid);
+        if (it != table_cache_.end()) {
+            // Check if cache is still valid
+            auto current_info = catalog->getTableInfo(uuid);
+            if (current_info && current_info->last_ddl_xid <= it->second.cached_at_xid) {
+                return it->second.info;  // Cache hit
+            }
+            // Cache stale, remove
+            table_cache_.erase(it);
+        }
+
+        // Cache miss, fetch from catalog
+        auto info = catalog->getTableInfo(uuid);
+        if (info) {
+            table_cache_[uuid] = {*info, catalog->getCurrentTransactionId()};
+        }
+        return info;
+    }
+};
+```
+
+### D.24 Monitoring Tables (MON$-style)
+
+ScratchBird provides memory-only monitoring tables similar to Firebird's MON$ tables. These are virtual tables that reflect runtime state.
+
+#### D.24.1 Session Monitoring
+
+```sql
+-- MON$SESSIONS - Active and detached sessions
+CREATE VIEW mon$sessions AS ...
+
+Columns:
+- session_id: UUID - Unique session identifier
+- user_id: UUID - User who owns the session
+- status: VARCHAR - 'ACTIVE', 'DETACHED', 'IDLE'
+- attached_client_id: UUID NULL - Currently attached client (NULL if detached)
+- connect_time: TIMESTAMP - When session was created
+- last_activity_time: TIMESTAMP - Last activity timestamp
+- current_transaction_id: BIGINT NULL - Active transaction ID
+- current_schema: VARCHAR - Current schema path
+- client_address: VARCHAR - Client IP address
+- client_application: VARCHAR - Application name
+```
+
+#### D.24.2 Transaction Monitoring
+
+```sql
+-- MON$TRANSACTIONS - Active transactions
+CREATE VIEW mon$transactions AS ...
+
+Columns:
+- transaction_id: BIGINT - Transaction ID (XID)
+- session_id: UUID - Owning session
+- state: VARCHAR - 'ACTIVE', 'COMMITTED', 'ROLLED_BACK', 'LIMBO'
+- start_time: TIMESTAMP - Transaction start time
+- isolation_level: VARCHAR - 'READ_COMMITTED', 'REPEATABLE_READ', 'SERIALIZABLE'
+- read_only: BOOLEAN - Is read-only transaction
+- lock_timeout: INTEGER - Lock wait timeout in seconds
+- oldest_active: BIGINT - Oldest active transaction at start (OAT)
+```
+
+#### D.24.3 Statement Monitoring
+
+```sql
+-- MON$STATEMENTS - Active and recent statements
+CREATE VIEW mon$statements AS ...
+
+Columns:
+- statement_id: UUID - Unique statement identifier
+- session_id: UUID - Owning session
+- transaction_id: BIGINT - Transaction context
+- sql_text: TEXT NULL - Original SQL (if preserved)
+- sblr_hash: VARCHAR - Hash of SBLR bytecode
+- state: VARCHAR - 'EXECUTING', 'COMPLETED', 'FAILED'
+- start_time: TIMESTAMP - Execution start time
+- end_time: TIMESTAMP NULL - Execution end time
+- rows_affected: BIGINT - Rows affected/returned
+- plan_cache_hit: BOOLEAN - Was plan from cache
+```
+
+#### D.24.4 Session Attachment
+
+Orphaned sessions can be found and attached:
+
+```sql
+-- Find detached sessions for current user
+SELECT session_id, connect_time, last_activity_time, current_schema
+FROM mon$sessions
+WHERE user_id = CURRENT_USER_ID
+  AND status = 'DETACHED';
+
+-- Attach to session (via client API, not SQL)
+-- Client calls: session.attach(session_id)
+```
+
+Session timeout and cleanup is controlled by database configuration settings.
+
+### D.25 Security Reference
+
+For full authentication and authorization details, see:
+- `/docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md` - Core security model
+- `/docs/specifications/SECURITY_IMPLIMENTATION_DETAILS.md` - Implementation details
+- `/docs/specifications/Security Hardening Guide.md` - Hardening recommendations
+
+Key points relevant to parser:
+- Session state includes User ID, active Role ID, Group IDs
+- Privilege checks happen BEFORE execution (not during MGA visibility)
+- Parser may need to check CREATE privilege before parsing DDL
+- SHOW commands are permission-filtered (parser may need privilege info)
+- Dynamic SQL has dual validation (parser + server) for SQL injection protection
+
+---
+
 **End of Implementation Plan**

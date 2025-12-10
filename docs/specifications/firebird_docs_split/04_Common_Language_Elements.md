@@ -1,0 +1,1339 @@
+# 04 Common Language Elements
+
+
+
+<!-- Original PDF Page: 69 -->
+
+Argument Description
+dec_prec Decimal precision of DECFLOAT, either 16 or 34; default is 34
+precision Numeric precision in decimal digits. From 1 to 38
+scale Scale, or number of decimals. From 0 to 38. It must be less than or equal
+to precision
+length The maximum length of a string, in characters, or — for BINARY and
+VARBINARY — bytes; optional for fixed-width character types, defaults to 1
+charset Character set
+m, n Integer numbers defining the index range of an array dimension
+[1] in practice, the actual range is determined by the backing type, for NUMERIC(4, s) that is SMALLINT, which means it can store [-
+327.68, 327.67
+Chapter 3. Data Types and Subtypes
+68
+
+<!-- Original PDF Page: 70 -->
+
+Chapter 4. Common Language Elements
+This chapter covers the elements that are common throughout the implementation of the SQL
+language — the expressions that are used to extract and operate on conditions about data and the
+predicates that test the truth of those assertions.
+4.1. Expressions
+SQL expressions provide formal methods for evaluating, transforming and comparing values. SQL
+expressions may include table columns, variables, constants, literals, various statements and
+predicates and also other expressions. The complete list of possible tokens in expressions follows.
+Description of Expression Elements
+Column name
+Identifier of a column from a specified table used in evaluations or as a search condition. A
+column of the array type cannot be an element in an expression except when used with the IS
+[NOT] NULL predicate.
+Array element
+An expression may contain a reference to an array member i.e., <array_name>[s], where s is the
+subscript of the member in the array <array_name>
+Arithmetic operators
+The +, -, *, / characters used to calculate values
+Concatenation operator
+The || (“double-pipe”) operator used to concatenate strings
+Logical operators
+The reserved words NOT, AND and OR, used to combine simple search conditions to create complex
+conditions
+Comparison operators
+The symbols =, <>, !=, ~=, ^=, <, <=, >, >=, !<, ~<, ^<, !>, ~> and ^>
+Comparison predicates
+LIKE, STARTING WITH, CONTAINING, SIMILAR TO, BETWEEN, IS [NOT] NULL , IS [NOT] {TRUE | FALSE |
+UNKNOWN} and IS [NOT] DISTINCT FROM
+Existential predicates
+Predicates used to check the existence of values in a set. The IN predicate can be used both with
+sets of comma-separated constants and with subqueries that return a single column. The EXISTS,
+SINGULAR, ALL, ANY and SOME predicates can be used only with sub-queries.
+Constant or Literal
+Numbers, or string literals enclosed in apostrophes or Q-strings, Boolean values TRUE, FALSE and
+UNKOWN, NULL
+Chapter 4. Common Language Elements
+69
+
+<!-- Original PDF Page: 71 -->
+
+Datetime literal
+An expression, similar to a string literal enclosed in apostrophes, that can be interpreted as a
+date, time or timestamp value. Datetime literals can be strings of characters and numerals, such
+as TIMESTAMP '25.12.2016 15:30:35', that can be resolved as datetime value.
+Datetime mnemonics
+A string literal with a description of a desired datetime value that can be cast to a datetime type.
+For example 'TODAY', 'NOW'.
+Context variable
+An internally-defined context variable
+Local variable
+Declared local variable, input or output parameter of a PSQL module (stored procedure, stored
+function, trigger, or unnamed PSQL block in DSQL)
+Positional parameter
+A member of an ordered group of one or more unnamed parameters passed to a stored
+procedure or prepared query
+Subquery
+A SELECT statement enclosed in parentheses that returns a single (scalar) value or, when used in
+existential predicates, a set of values
+Function identifier
+The identifier of an internal, packaged, stored or external function in a function expression
+Type cast
+An expression explicitly converting data of one data type to another using the CAST function 
+(CAST (<value> AS <datatype>) ). For datetime literals only, the shorthand syntax <datatype>
+<value> is also supported (DATE '2016-12-25').
+Conditional expression
+Expressions using CASE and related internal functions
+Parentheses
+Bracket pairs (…) used to group expressions. Operations inside the parentheses are performed
+before operations outside them. When nested parentheses are used, the most deeply nested
+expressions are evaluated first and then the evaluations move outward through the levels of
+nesting.
+COLLATE clause
+Clause applied to CHAR and VARCHAR types to specify the character-set-specific collation to use
+in string comparisons
+NEXT VALUE FOR sequence
+Expression for obtaining the next value of a specified generator (sequence). The internal
+function GEN_ID() does the same.
+Chapter 4. Common Language Elements
+70
+
+<!-- Original PDF Page: 72 -->
+
+AT expression
+Expression to change the time zone of a datetime.
+4.1.1. Literals (Constants)
+A literal — or constant — is a value that is supplied directly in an SQL statement, not derived from
+an expression, a parameter, a column reference nor a variable. It can be a string or a number.
+String Literals
+A string literal is a series of characters enclosed between a pair of apostrophes (“single quotes”).
+The maximum length of a string literal is 32,765 for CHAR/VARCHAR, or 65,533 bytes for BLOB; the
+maximum character count will be determined by the number of bytes used to encode each
+character.
+Formally, the syntax of a normal string literal is:
+Character String Literal Syntax
+<char-literal> ::=
+  [<introducer> charset-name] <quote> [<char>...] <quote>
+  [{ <separator> <quote> [<char>...] <quote> }... ]
+<separator> ::=
+  { <comment> | <white space> }
+<introducer> ::= underscore (U+005F)
+<quote> ::= apostrophe (U+0027)
+<char> ::= character representation;
+           apostrophe is escaped by doubling
+
+• Double quotes are not valid  for quoting strings. The SQL standard reserves
+double quotes for a different purpose: delimiting or quoting identifiers.
+• If a literal apostrophe is required within a string constant, it is “escaped” by
+prefixing it with another apostrophe. For example, 'Mother O''Reilly''s home-
+made hooch'. Or use the alternative quote literal: q'{Mother O'Reilly's home-
+made hooch}'
+• Care should be taken with the string length if the value is to be written to a CHAR
+or VARCHAR column. The maximum length for a CHAR or VARCHAR literal is 32,765
+bytes.
+The character set of a string constant is assumed to be the same as the character set of its destined
+storage.
+Examples
+-- Literal containing single quote
+select 'O''Reilly' from RDB$DATABASE;
+Chapter 4. Common Language Elements
+71
+
+<!-- Original PDF Page: 73 -->
+
+-- output: O'Reilly
+-- whitespace between literal
+select 'ab'
+       'cd'
+from RDB$DATABASE;
+-- output: abcd
+-- comment and whitespace between literal
+select 'ab' /* comment */ 'cd'
+from RDB$DATABASE;
+-- output: abcd
+String Literals in Hexadecimal Notation
+String literals can also be entered in hexadecimal notation, so-called “binary strings”. Each pair of
+hex digits defines one byte in the string. Strings entered this way will be type BINARY (a.k.a. CHAR
+CHARACTER SET OCTETS ) by default, unless the introducer syntax  is used to force a string to be
+interpreted as another character set.
+Binary String Literal Syntax
+<binary-literal> ::=
+  [<introducer> charsetname] X <quote> [<space>...]
+  [{ <hexit> [<space>...] <hexit> [<space>...] }...] <quote>
+  [{ <separator> <quote> [<space>...]
+     [{ <hexit> [<space>...] <hexit> [<space>...] }...] <quote> }...]
+<hexdigit> ::= one of 0..9, A..F, a..f
+<space> ::= the space character (U+0020)
+!! For further rules, see Character String Literal Syntax !!
+Examples
+select x'4E657276656E' from rdb$database
+-- returns 4E657276656E, a 6-byte 'binary' string
+select _ascii x'4E657276656E' from rdb$database
+-- returns 'Nerven' (same string, now interpreted as ASCII text)
+select _iso8859_1 x'53E46765' from rdb$database
+-- returns 'Säge' (4 chars, 4 bytes)
+select _utf8 x'53C3A46765' from rdb$database
+-- returns 'Säge' (4 chars, 5 bytes)
+-- Group per byte (whitespace inside literal)
+select _win1252 x'42 49 4e 41 52 59'
+from RDB$DATABASE;
+-- output: BINARY
+Chapter 4. Common Language Elements
+72
+
+<!-- Original PDF Page: 74 -->
+
+-- whitespace between literal
+select _win1252 x'42494e'
+                 '415259'
+from RDB$DATABASE;
+-- output: BINARY
+
+Notes
+The client interface determines how binary strings are displayed to the user. The
+isql utility, for example, uses upper case letters A-F, while FlameRobin uses lower
+case letters. Other client programs may use other conventions, such as displaying
+spaces between the byte pairs: '4E 65 72 76 65 6E'.
+The hexadecimal notation allows any byte value (including 00) to be inserted at
+any position in the string. However, if you want to coerce it to anything other than
+OCTETS, it is your responsibility to supply the bytes in a sequence that is valid for
+the target character set.
+The usage of the _win1252 introducer in above example is a non-standard
+extension and equivalent to an explicit cast to a CHAR of appropriate length with
+character set WIN1252.
+Alternative String Literals
+It is possible to use a character, or character pair, other than the doubled (escaped) apostrophe, to
+embed a quoted string inside another string without the need to escape the quote. The keyword q or
+Q preceding a quoted string informs the parser that certain left-right pairs or pairs of identical
+characters within the string are the delimiters of the embedded string literal.
+Syntax
+<alternative string literal> ::=
+    { q | Q } <quote> <start char> [<char> ...] <end char> <quote>
+
+Rules
+When <start char> is ‘ (’, ‘ {’, ‘ [’ or ‘ <’, <end char> is paired up with its respective
+“partner”, viz. ‘ )’, ‘ }’, ‘ ]’ and ‘ >’. In other cases, <end char> is the same as <start
+char>.
+Inside the string, i.e. <char> items, single quotes can be used without escaping.
+Each quote will be part of the result string.
+Examples
+select q'{abc{def}ghi}' from rdb$database;        -- result: abc{def}ghi
+select q'!That's a string!' from rdb$database;    -- result: That's a string
+Chapter 4. Common Language Elements
+73
+
+<!-- Original PDF Page: 75 -->
+
+Introducer Syntax for String Literals
+If necessary, a string literal may be preceded by a character set name, itself prefixed with an
+underscore “_”. This is known as introducer syntax. Its purpose is to inform the engine about how to
+interpret and store the incoming string.
+Example
+INSERT INTO People
+VALUES (_ISO8859_1 'Hans-Jörg Schäfer')
+Number Literals
+A number literal is any valid number in a supported notation:
+• In SQL, for numbers in the standard decimal notation, the decimal point is always represented
+by period character (‘ .’, full-stop, dot); thousands are not separated. Inclusion of commas,
+blanks, etc. will cause errors.
+• Exponential notation is supported. For example, 0.0000234 can be expressed as 2.34e-5.
+However, while the literal 0.0000234 is a NUMERIC(18,7), the literal 2.34e-5 is a DOUBLE PRECISION.
+• Hexadecimal notation — see below.
+The format of the literal decides the type (<d> for a decimal digit, <h> for a hexadecimal digit):
+Format Type
+<d>[<d> …] INTEGER, BIGINT, INT128 or DECFLOAT(34) (depends
+on if value fits in the type). DECFLOAT(34) is used
+for values that do not fit in INT128.
+0{x|X} <h>[<h> …] INTEGER for 1-8 <h>, or BIGINT for 9-16 <h>, INT128
+for 17-32 <h>
+<d>[<d> …] "." [<d> …] NUMERIC(18, n), NUMERIC(38, n) or DECFLOAT(34)
+where n depends on the number of digits after
+the decimal point, and precision on the total
+number of digits.
+For backwards compatibility, some values of 19
+digits are mapped to NUMERIC(18, n).
+DECFLOAT(34) is used when the unscaled value
+does not fit in INT128.
+<d>[<d> …]["." [<d> …]] E <d>[<d> …] DOUBLE PRECISION or DECFLOAT(34), where
+DECFLOAT is used only if the number of digits is 20
+or higher, or the absolute exponent is 309 or
+greater.
+Chapter 4. Common Language Elements
+74
+
+<!-- Original PDF Page: 76 -->
+
+Hexadecimal Notation for Numbers
+Integer values can also be entered in hexadecimal notation. Numbers with 1-8 hex digits will be
+interpreted as type INTEGER; numbers with 9-16 hex digits as type BIGINT; numbers with 17-32 hex
+digits as type INT128.
+Syntax
+0{x|X}<hexdigits>
+<hexdigits>  ::=  1-32 of <hexdigit>
+<hexdigit>   ::=  one of 0..9, A..F, a..f
+Examples
+select 0x6FAA0D3 from rdb$database           -- returns 117088467
+select 0x4F9 from rdb$database               -- returns 1273
+select 0x6E44F9A8 from rdb$database          -- returns 1850014120
+select 0x9E44F9A8 from rdb$database          -- returns -1639646808 (an INTEGER)
+select 0x09E44F9A8 from rdb$database         -- returns 2655320488 (a BIGINT)
+select 0x28ED678A4C987 from rdb$database     -- returns 720001751632263
+select 0xFFFFFFFFFFFFFFFF from rdb$database  -- returns -1
+Hexadecimal Value Ranges
+• Hex numbers in the range 0 … 7FFF FFFF are positive INTEGERs with values between 0 …
+2147483647 decimal. To coerce a number to BIGINT, prepend enough zeroes to bring the total
+number of hex digits to nine or above. That changes the type but not the value.
+• Hex numbers between 8000 0000 … FFFF FFFF require some attention:
+◦ When written with eight hex digits, as in 0x9E44F9A8, a value is interpreted as 32-bit INTEGER.
+Since the leftmost bit (sign bit) is set, it maps to the negative range -2147483648 … -1 decimal.
+◦ With one or more zeroes prepended, as in 0x09E44F9A8, a value is interpreted as 64-bit BIGINT
+in the range 0000 0000 8000 0000 … 0000 0000 FFFF FFFF. The sign bit is not set now, so they
+map to the positive range 2147483648 … 4294967295 decimal.
+Thus, in this range, and for 16 vs 16+ digits, prepending a mathematically insignificant 0 results
+in a different value. This is something to be aware of.
+• Hex numbers between 0 0000 0001 … 7FFF FFFF FFFF FFFF are all positive BIGINT.
+• Hex numbers between 8000 0000 0000 0000 … FFFF FFFF FFFF FFFF are all negative BIGINT.
+• Hex numbers between 0 0000 0000 0000 0001 … 7FFF FFFF FFFF FFFF FFFF FFFF FFFF FFFF are
+all positive INT128
+• Hex numbers between 8000 0000 0000 0000 0000 0000 0000 0000 … FFFF FFFF FFFF FFFF FFFF
+FFFF FFFF FFFF are all negative INT128
+• A SMALLINT cannot be written in hex, strictly speaking, since even 0x0 and 0x1 are evaluated as
+INTEGER. However, if you write a positive integer within the 16-bit range 0x0000 (decimal zero) to
+Chapter 4. Common Language Elements
+75
+
+<!-- Original PDF Page: 77 -->
+
+0x7FFF (decimal 32767) it will be converted to SMALLINT transparently.
+It is possible to write to a negative SMALLINT in hex, using a 4-byte hex number within the range
+0xFFFF8000 (decimal -32768) to 0xFFFFFFFF (decimal -1).
+Boolean Literals
+A Boolean literal is one of TRUE, FALSE or UNKNOWN.
+Datetime Literals
+Formally, the SQL standard defines datetime literals as a prefix DATE, TIME and TIMESTAMP followed by
+a string literal with a datetime format. Historically, Firebird documentation has referred to these
+datetime literals as “shorthand casts”.
+Since Firebird 4.0, the use of datetime mnemonics  in datetime literals (e.g. DATE 'TODAY') is no
+longer allowed.
+ The format of datetime literals and strings in Firebird 4.0 and higher is more strict
+compared to earlier Firebird versions.
+Datetime Literal Syntax
+<datetime_literal> ::=
+    DATE '<date_format>'
+  | TIME { '<time_format>' | '<time_tz_format>' }
+  | TIMESTAMP { '<timestamp_format>' | '<timestamp_tz_format>' }
+Datetime Format Syntax
+<date_format> ::=
+      [YYYY<p>]MM<p>DD
+    | MM<p>DD[<p>{ YYYY | YY }]
+    | DD<p>MM[<p>{ YYYY | YY }]
+<time_format> ::= HH[:mm[:SS[<f>NNNN]]]
+<timestamp_format> ::= <date_format> [<space> <time_format>]
+<time_zone> ::=
+    { + | - }HH:MM
+  | time zone name (e.g. Europe/Berlin)
+<time_tz_format> ::= <time_format> [<space>] <time_zone>
+<timestamp_tz_format> ::= <timestamp_format> [<space>] <time_zone>
+<p> ::= whitespace | . | - | /
+<f> ::= : | .
+Chapter 4. Common Language Elements
+76
+
+<!-- Original PDF Page: 78 -->
+
+Table 21. Date and Time Literal Format Arguments
+Argument Description
+datetime_literal Datetime literal
+date_format Format of date
+time_format Format of time
+timestamp_format Format of timestamp
+time_zone Format of time zone
+time_tz_format Format of time with time zone
+timestamp_tz_format Format of timestamp with time zone
+YYYY Four-digit year
+YY Two-digit year
+MM Month It may contain 1 or 2 digits (1-12 or 01-12). You can
+also specify the three-letter shorthand name or the full
+name of a month in English. Case-insensitive
+DD Day. It may contain 1 or 2 digits (1-31 or 01-31)
+HH Hour. It may contain 1 or 2 digits (0-23 or 00-23)
+mm Minutes. It may contain 1 or 2 digits (0-59 or 00-59)
+SS Seconds. It may contain 1 or 2 digits (0-59 or 00-59)
+NNNN Ten-thousandths of a second. It may contain from 1 to 4
+digits (0-9999)
+p A date separator, any of permitted characters. Leading and
+trailing spaces are ignored. The choice of separator in a
+date decides whether the parser reads MM<p>DD or DD<p>MM.
+f Fractional seconds separator
+ Use of the complete specification of the year in the four-digit form —  YYYY — is
+strongly recommended, to avoid confusion in date calculations and aggregations.
+Example
+-- 1
+  UPDATE PEOPLE
+  SET AGECAT = 'SENIOR'
+  WHERE BIRTHDATE < DATE '1-Jan-1943';
+-- 2
+  INSERT INTO APPOINTMENTS
+  (EMPLOYEE_ID, CLIENT_ID, APP_DATE, APP_TIME)
+  VALUES (973, 8804, DATE '1-Jan-2021' + 2, TIME '16:00');
+-- 3
+  NEW.LASTMOD = TIMESTAMP '1-Jan-2021 16:00';
+Chapter 4. Common Language Elements
+77
+
+<!-- Original PDF Page: 79 -->
+
+
+Although the Firebird datetime syntax is flexible, to avoid ambiguity we
+recommend using the ISO-8601 order (year-month-day), ‘ -’ as the date separator, 4
+digits for year, 2 digits for month, day, minute and second, : as the time separator,
+and ‘.’ as second.fractions separator. This format is also the only one defined in the
+SQL standard.
+In short, use TIMESTAMP '2021-05-03 04:05:00.1 +02:00' , not TIMESTAMP '3.5.21
+4:5:0:1 +2:0'.
+4.1.2. SQL Operators
+SQL operators comprise operators for comparing, calculating, evaluating and concatenating values.
+Operator Precedence
+SQL Operators are divided into four types. Each operator type has a precedence, a ranking that
+determines the order in which operators and the values obtained with their help are evaluated in
+an expression. The higher the precedence of the operator type is, the earlier it will be evaluated.
+Each operator has its own precedence within its type, that determines the order in which they are
+evaluated in an expression.
+Operators with the same precedence are evaluated from left to right. To force a different evaluation
+order, operations can be grouped by means of parentheses.
+Table 22. Operator Type Precedence
+Operator Type Precedence Explanation
+Concatenation 1 Strings are concatenated before any other operations take
+place
+Arithmetic 2 Arithmetic operations are performed after strings are
+concatenated, but before comparison and logical
+operations
+Comparison 3 Comparison operations take place after string
+concatenation and arithmetic operations, but before
+logical operations
+Logical 4 Logical operators are executed after all other types of
+operators
+Concatenation Operator
+The concatenation operator — two pipe characters known as “double pipe” or ‘ ||’ — concatenates
+two character strings to form a single string. Character strings can be literals or values obtained
+from columns or other expressions.
+Example
+SELECT LAST_NAME || ', ' || FIRST_NAME AS FULL_NAME
+Chapter 4. Common Language Elements
+78
+
+<!-- Original PDF Page: 80 -->
+
+FROM EMPLOYEE
+See also
+BLOB_APPEND()
+Arithmetic Operators
+Table 23. Arithmetic Operator Precedence
+Operator Purpose Precedence
++signed_number Unary plus 1
+-signed_number Unary minus 1
+* Multiplication 2
+/ Division 2
++ Addition 3
+- Subtraction 3
+Example
+UPDATE T
+    SET A = 4 + 1/(B-C)*D
+ Where operators have the same precedence, they are evaluated in left-to-right
+sequence.
+Comparison Operators
+Table 24. Comparison Operator Precedence
+Operator Purpose Precedence
+IS Checks that the expression on the left is (not)
+NULL or the Boolean value on the right
+1
+= Is equal to, is identical to 2
+<>, !=, ~=, ^= Is not equal to 2
+> Is greater than 2
+< Is less than 2
+>= Is greater than or equal to 2
+<= Is less than or equal to 2
+!>, ~>, ^> Is not greater than 2
+!<, ~<, ^< Is not less than 2
+This group also includes comparison predicates BETWEEN, LIKE, CONTAINING, SIMILAR TO and others.
+Chapter 4. Common Language Elements
+79
+
+<!-- Original PDF Page: 81 -->
+
+Example
+IF (SALARY > 1400) THEN
+...
+See also
+Other Comparison Predicates.
+Logical Operators
+Table 25. Logical Operator Precedence
+Operator Purpose Precedence
+NOT Negation of a search condition 1
+AND Combines two or more predicates, each of which
+must be true for the entire predicate to be true
+2
+OR Combines two or more predicates, of which at
+least one predicate must be true for the entire
+predicate to be true
+3
+Example
+IF (A < B OR (A > C AND A > D) AND NOT (C = D)) THEN ...
+NEXT VALUE FOR
+Result type
+BIGINT — dialect 2 and 3
+INTEGER — dialect 1
+Syntax
+NEXT VALUE FOR sequence-name
+NEXT VALUE FOR returns the next value of a sequence. Sequence is the SQL-standard term for what is
+historically called a generator in Firebird and its ancestor, InterBase. The NEXT VALUE FOR operator is
+equivalent to the legacy GEN_ID (…, increment) function with increment the increment stored in the
+metadata of the sequence. It is the recommended syntax for retrieving the next sequence value.
+
+Unlike the GEN_ID function, the NEXT VALUE FOR  expression does not take any
+parameters and thus provides no way to retrieve the current value of a sequence,
+nor to step the next value by a different value than the increment configured for
+the sequence. GEN_ID (…, <step value>) is still needed for these tasks. A step value
+of 0 returns the current sequence value.
+The increment of a sequence can be configured with the INCREMENT clause of CREATE
+SEQUENCE or ALTER SEQUENCE.
+Chapter 4. Common Language Elements
+80
+
+<!-- Original PDF Page: 82 -->
+
+In dialect 1, the result type is INTEGER, in dialect 2 and 3 it is BIGINT.
+Example
+NEW.CUST_ID = NEXT VALUE FOR CUSTSEQ;
+See also
+SEQUENCE (GENERATOR), GEN_ID()
+AT Time Zone Expression
+Syntax
+<at expr> ::= <expr> AT { TIME ZONE <time zone string> | LOCAL }
+The AT expression expresses a datetime value in a different time zone, while keeping the same UTC
+instant.
+AT translates a time/timestamp value to its corresponding value in another time zone. If LOCAL is
+used, the value is converted to the session time zone.
+When expr is a WITHOUT TIME ZONE type, expr is first converted to a WITH TIME ZONE in the session time
+zone and then transformed to the specified time zone.
+Examples
+select time '12:00 GMT' at time zone '-03:00' from rdb$database;
+select current_timestamp at time zone 'America/Sao_Paulo' from rdb$database;
+select timestamp '2018-01-01 12:00 GMT' at local from rdb$database;
+4.1.3. Conditional Expressions
+A conditional expression is one that returns different values according to how a certain condition is
+met. It is composed by applying a conditional function construct, of which Firebird supports
+several. This section describes only one conditional expression construct: CASE. All other conditional
+expressions apply internal functions derived from CASE and are described in Conditional Functions.
+CASE
+The CASE construct returns a single value from a number of possible values. Two syntactic variants
+are supported:
+• The simple CASE, comparable to a case construct in Pascal or a switch in C
+• The searched CASE, which works like a series of “if … else if … else if” clauses.
+Simple CASE
+Chapter 4. Common Language Elements
+81
+
+<!-- Original PDF Page: 83 -->
+
+Syntax
+...
+CASE <test-expr>
+  WHEN <expr> THEN <result>
+  [WHEN <expr> THEN <result> ...]
+  [ELSE <defaultresult>]
+END
+...
+When this variant is used, test-expr is compared to the first expr, second expr and so on, until a
+match is found, and the corresponding result is returned. If no match is found, defaultresult from
+the optional ELSE clause is returned. If there are no matches and no ELSE clause, NULL is returned.
+The matching works as the “ =” operator. That is, if test-expr is NULL, it does not match any expr, not
+even an expression that resolves to NULL.
+The returned result does not have to be a literal value: it might be a field or variable name,
+compound expression or NULL literal.
+Example
+SELECT
+  NAME,
+  AGE,
+  CASE UPPER(SEX)
+    WHEN 'M' THEN 'Male'
+    WHEN 'F' THEN 'Female'
+    ELSE 'Unknown'
+  END GENDER,
+RELIGION
+    FROM PEOPLE
+A short form of the simple CASE construct is the DECODE function.
+Searched CASE
+Syntax
+CASE
+  WHEN <bool_expr> THEN <result>
+  [WHEN <bool_expr> THEN <result> ...]
+  [ELSE <defaultresult>]
+END
+The bool_expr expression is one that gives a ternary logical result: TRUE, FALSE or NULL. The first
+expression to return TRUE determines the result. If no expressions return TRUE, defaultresult from
+the optional ELSE clause is returned as the result. If no expressions return TRUE and there is no ELSE
+clause, the result will be NULL.
+Chapter 4. Common Language Elements
+82
+
+<!-- Original PDF Page: 84 -->
+
+As with the simple CASE construct, the result need not be a literal value: it might be a field or
+variable name, a compound expression, or be NULL.
+Example
+CANVOTE = CASE
+  WHEN AGE >= 18 THEN 'Yes'
+  WHEN AGE < 18 THEN 'No'
+  ELSE 'Unsure'
+END
+4.1.4. NULL in Expressions
+NULL is not a value in SQL, but a state indicating that the value of the element either is unknown or it
+does not exist. It is not a zero, nor a void, nor an “empty string”, and it does not act like any value.
+When you use NULL in numeric, string or date/time expressions, the result will always be NULL. When
+you use NULL in logical (Boolean) expressions, the result will depend on the type of the operation
+and on other participating values. When you compare a value to NULL, the result will be unknown.
+ In SQL, the logical result unknown is also represented by NULL.
+Consult the Firebird Null Guide for more in-depth coverage of Firebird’s NULL behaviour.
+Expressions Returning NULL
+Expressions in this list will always return NULL:
+1 + 2 + 3 + NULL
+'Home ' || 'sweet ' || NULL
+MyField = NULL
+MyField <> NULL
+NULL = NULL
+not (NULL)
+If it seems difficult to understand why, remember that NULL is a state that stands for “unknown”.
+NULL in Logical Expressions
+It has already been shown that NOT (NULL) results in NULL. The interaction is a bit more complicated
+for the logical AND and logical OR operators:
+NULL or false  → NULL
+NULL or true   → true
+NULL or NULL   → NULL
+NULL and false → false
+NULL and true  → NULL
+Chapter 4. Common Language Elements
+83
+
+<!-- Original PDF Page: 85 -->
+
+NULL and NULL  → NULL
+ As a basic rule-of-thumb, if substituting TRUE for NULL produces a different result
+than substituting FALSE, the outcome of the original expression is unknown, or NULL.
+Examples
+(1 = NULL) or (1 <> 1)    -- returns NULL
+(1 = NULL) or FALSE       -- returns NULL
+(1 = NULL) or (1 = 1)     -- returns TRUE
+(1 = NULL) or TRUE        -- returns TRUE
+(1 = NULL) or (1 = NULL)  -- returns NULL
+(1 = NULL) or UNKNOWN     -- returns NULL
+(1 = NULL) and (1 <> 1)   -- returns FALSE
+(1 = NULL) and FALSE      -- returns FALSE
+(1 = NULL) and (1 = 1)    -- returns NULL
+(1 = NULL) and TRUE       -- returns NULL
+(1 = NULL) and (1 = NULL) -- returns NULL
+(1 = NULL) and UNKNOWN    -- returns NULL
+4.1.5. Subqueries
+A subquery is a special form of expression that is a query embedded within another query.
+Subqueries are written in the same way as regular SELECT queries, but they must be enclosed in
+parentheses. Subquery expressions can be used in the following ways:
+• To specify an output column in the SELECT list
+• To obtain values or conditions for search predicates (the WHERE, HAVING clauses).
+• To produce a set that the enclosing query can select from, as though were a regular table or
+view. Subqueries like this appear in the FROM clause (derived tables) or in a Common Table
+Expression (CTE)
+Correlated Subqueries
+A subquery can be correlated. A query is correlated when the subquery and the main query are
+interdependent. To process each record in the subquery, it is necessary to fetch a record in the main
+query, i.e. the subquery fully depends on the main query.
+Sample Correlated Subquery
+SELECT *
+FROM Customers C
+WHERE EXISTS
+  (SELECT *
+   FROM Orders O
+   WHERE C.cnum = O.cnum
+     AND O.adate = DATE '10.03.1990');
+Chapter 4. Common Language Elements
+84
+
+<!-- Original PDF Page: 86 -->
+
+When subqueries are used to get the values of the output column in the SELECT list, a subquery must
+return a scalar result (see below).
+Scalar Results
+Subqueries used in search predicates, other than existential and quantified predicates, must return
+a scalar result; that is, not more than one column from not more than one matching row or
+aggregation. If the query returns more columns or rows, a run-time error will occur (“Multiple
+rows in a singleton select…”).
+
+Although it is reporting a genuine error, the message can be slightly misleading. A
+“singleton SELECT” is a query that must not be capable of returning more than one
+row. However, “singleton” and “scalar” are not synonymous: not all singleton
+SELECTS are required to be scalar; and single-column selects can return multiple
+rows for existential and quantified predicates.
+Subquery Examples
+1. A subquery as the output column in a SELECT list:
+SELECT
+  e.first_name,
+  e.last_name,
+  (SELECT
+       sh.new_salary
+   FROM
+       salary_history sh
+   WHERE
+       sh.emp_no = e.emp_no
+   ORDER BY sh.change_date DESC ROWS 1) AS last_salary
+FROM
+  employee e
+2. A subquery in the WHERE clause for obtaining the employee’s maximum salary and filtering by it:
+SELECT
+  e.first_name,
+  e.last_name,
+  e.salary
+FROM employee e
+WHERE
+  e.salary = (
+    SELECT MAX(ie.salary)
+    FROM employee ie
+  )
+Chapter 4. Common Language Elements
+85
+
+<!-- Original PDF Page: 87 -->
+
+4.2. Predicates
+A predicate is a simple expression asserting some fact, let’s call it P. If P resolves as TRUE, it
+succeeds. If it resolves to FALSE or NULL (UNKNOWN), it fails. A trap lies here, though: suppose the
+predicate, P, returns FALSE. In this case NOT(P) will return TRUE. On the other hand, if P returns
+NULL (unknown), then NOT(P) returns NULL as well.
+In SQL, predicates can appear in CHECK constraints, WHERE and HAVING clauses, CASE expressions, the
+IIF() function and in the ON condition of JOIN clauses, and anywhere a normal expression can
+occur.
+4.2.1. Conditions
+A condition — or Boolean expression — is a statement about the data that, like a predicate, can
+resolve to TRUE, FALSE or NULL. Conditions consist of one or more predicates, possibly negated
+using NOT and connected by AND and OR operators. Parentheses may be used for grouping predicates
+and controlling evaluation order.
+A predicate may embed other predicates. Evaluation sequence is in the outward direction, i.e. the
+innermost predicates are evaluated first. Each “level” is evaluated in precedence order until the
+truth value of the ultimate condition is resolved.
+4.2.2. Comparison Predicates
+A comparison predicate consists of two expressions connected with a comparison operator. There
+are six traditional comparison operators:
+=, >, <, >=, <=, <>
+For the complete list of comparison operators with their variant forms, see Comparison Operators.
+If one of the sides (left or right) of a comparison predicate has NULL in it, the value of the predicate
+will be UNKNOWN.
+Examples
+1. Retrieve information about computers with the CPU frequency not less than 500 MHz and the
+price lower than $800:
+SELECT *
+FROM Pc
+WHERE speed >= 500 AND price < 800;
+2. Retrieve information about all dot matrix printers that cost less than $300:
+SELECT *
+FROM Printer
+Chapter 4. Common Language Elements
+86
+
+<!-- Original PDF Page: 88 -->
+
+WHERE ptrtype = 'matrix' AND price < 300;
+3. The following query will return no data, even if there are printers with no type specified for
+them, because a predicate that compares NULL with NULL returns NULL:
+SELECT *
+FROM Printer
+WHERE ptrtype = NULL AND price < 300;
+On the other hand, ptrtype can be tested for NULL and return a result: it is just that it is not a
+comparison test:
+SELECT *
+FROM Printer
+WHERE ptrtype IS NULL AND price < 300;
+ — see IS [NOT] NULL.
+
+Note about String Comparison
+When CHAR and VARCHAR fields are compared for equality, trailing spaces are
+ignored in all cases.
+Other Comparison Predicates
+Other comparison predicates are marked by keyword symbols.
+BETWEEN
+Syntax
+<value> [NOT] BETWEEN <value_1> AND <value_2>
+The BETWEEN predicate tests whether a value falls within a specified range of two values. ( NOT
+BETWEEN tests whether the value does not fall within that range.)
+The operands for BETWEEN predicate are two arguments of compatible data types. Unlike in some
+other DBMS, the BETWEEN predicate in Firebird is not symmetrical — if the lower value is not the first
+argument, the BETWEEN predicate will always return FALSE. The search is inclusive (the values
+represented by both arguments are included in the search). In other words, the BETWEEN predicate
+could be rewritten:
+<value> >= <value_1> AND <value> <= <value_2>
+When BETWEEN is used in the search conditions of DML queries, the Firebird optimizer can use an
+index on the searched column, if it is available.
+Chapter 4. Common Language Elements
+87
+
+<!-- Original PDF Page: 89 -->
+
+Example
+SELECT *
+FROM EMPLOYEE
+WHERE HIRE_DATE BETWEEN date '1992-01-01' AND CURRENT_DATE
+LIKE
+Syntax
+<match_value> [NOT] LIKE <pattern>
+   [ESCAPE <escape character>]
+<match_value>      ::= character-type expression
+<pattern>          ::= search pattern
+<escape character> ::= escape character
+The LIKE predicate compares the character-type expression with the pattern defined in the second
+expression. Case- or accent-sensitivity for the comparison is determined by the collation that is in
+use. A collation can be specified for either operand, if required.
+Wildcards
+Two wildcard symbols are available for use in the search pattern:
+• the percentage symbol ( %) will match any sequence of zero or more characters in the tested
+value
+• the underscore character (_) will match any single character in the tested value
+If the tested value matches the pattern, taking into account wildcard symbols, the predicate is
+TRUE.
+Using the ESCAPE Character Option
+If the search string contains either of the wildcard symbols, the ESCAPE clause can be used to specify
+an escape character. The escape character must precede the ‘ %’ or ‘_’ symbol in the search string, to
+indicate that the symbol is to be interpreted as a literal character.
+Examples using LIKE
+1. Find the numbers of departments whose names start with the word “Software”:
+SELECT DEPT_NO
+FROM DEPT
+WHERE DEPT_NAME LIKE 'Software%';
+It is possible to use an index on the DEPT_NAME field if it exists.
+Chapter 4. Common Language Elements
+88
+
+<!-- Original PDF Page: 90 -->
+
+
+About LIKE and the Optimizer
+The LIKE predicate itself does not use an index. However, if the predicate takes
+the form of LIKE 'string%', it will be converted to the STARTING WITH predicate,
+which will use an index. This optimization only works for literal patterns, not
+for parameters.
+So, if you need to search for the beginning of a string, it is recommended to use
+the STARTING WITH predicate instead of the LIKE predicate.
+2. Search for employees whose names consist of 5 letters, start with the letters “Sm” and end with
+“th”. The predicate will be true for such names as “Smith” and “Smyth”.
+SELECT
+  first_name
+FROM
+  employee
+WHERE first_name LIKE 'Sm_th'
+3. Search for all clients whose address contains the string “Rostov”:
+SELECT *
+FROM CUSTOMER
+WHERE ADDRESS LIKE '%Rostov%'
+
+If you need to do a case-insensitive search for something enclosed inside  a
+string ( LIKE '%Abc%' ), use of the CONTAINING predicate is recommended, in
+preference to the LIKE predicate.
+4. Search for tables containing the underscore character in their names. The ‘ #’ character is used
+as the escape character:
+SELECT
+  RDB$RELATION_NAME
+FROM RDB$RELATIONS
+WHERE RDB$RELATION_NAME LIKE '%#_%' ESCAPE '#'
+See also
+STARTING WITH, CONTAINING, SIMILAR TO
+STARTING WITH
+Syntax
+<value> [NOT] STARTING WITH <value>
+Chapter 4. Common Language Elements
+89
+
+<!-- Original PDF Page: 91 -->
+
+The STARTING WITH predicate searches for a string or a string-like type that starts with the characters
+in its value argument. The case- and accent-sensitivity of STARTING WITH depends on the collation of
+the first value.
+When STARTING WITH is used in the search conditions of DML queries, the Firebird optimizer can use
+an index on the searched column, if it exists.
+Example
+Search for employees whose last names start with “Jo”:
+SELECT LAST_NAME, FIRST_NAME
+FROM EMPLOYEE
+WHERE LAST_NAME STARTING WITH 'Jo'
+See also
+LIKE
+CONTAINING
+Syntax
+<value> [NOT] CONTAINING <value>
+The CONTAINING predicate searches for a string or a string-like type looking for the sequence of
+characters that matches its argument. It can be used for an alphanumeric (string-like) search on
+numbers and dates. A CONTAINING search is not case-sensitive. However, if an accent-sensitive
+collation is in use then the search will be accent-sensitive.
+Examples
+1. Search for projects whose names contain the substring “Map”:
+SELECT *
+FROM PROJECT
+WHERE PROJ_NAME CONTAINING 'Map';
+Two rows with the names “AutoMap” and “MapBrowser port” are returned.
+2. Search for changes in salaries with the date containing number 84 (in this case, it means
+changes that took place in 1984):
+SELECT *
+FROM SALARY_HISTORY
+WHERE CHANGE_DATE CONTAINING 84;
+See also
+LIKE
+Chapter 4. Common Language Elements
+90
+
+<!-- Original PDF Page: 92 -->
+
+SIMILAR TO
+Syntax
+string-expression [NOT] SIMILAR TO <pattern> [ESCAPE <escape-char>]
+<pattern>     ::= an SQL regular expression
+<escape-char> ::= a single character
+SIMILAR TO  matches a string against an SQL regular expression pattern. Unlike in some other
+languages, the pattern must match the entire string to succeed — matching a substring is not
+enough. If any operand is NULL, the result is NULL. Otherwise, the result is TRUE or FALSE.
+If a literal pattern is used, and it doesn’t start with a wildcard or other special regex character,
+SIMILAR TO can use an index.
+Syntax: SQL Regular Expressions
+The following syntax defines the SQL regular expression format. It is a complete and correct top-
+down definition. It is also highly formal and long, and may be daunting to anyone who hasn’t
+already some experience with regular expressions (or with highly formal, rather long top-down
+definitions). Feel free to skip it and read the next section, Building Regular Expressions, which uses
+a bottom-up approach, aimed at the rest of us.
+<regular expression> ::= <regular term> ['|' <regular term> ...]
+<regular term> ::= <regular factor> ...
+<regular factor> ::= <regular primary> [<quantifier>]
+<quantifier> ::= ? | * | + | '{' <m> [,[<n>]] '}'
+<m>, <n> ::= unsigned int, with <m> <= <n> if both present
+<regular primary> ::=
+    <character> | <character class> | %
+  | (<regular expression>)
+<character> ::= <escaped character> | <non-escaped character>
+<escaped character> ::=
+  <escape-char> <special character> | <escape-char> <escape-char>
+<special character> ::= any of the characters []()|^-+*%_?{}
+<non-escaped character> ::=
+  any character that is not a <special character>
+  and not equal to <escape-char> (if defined)
+<character class> ::=
+Chapter 4. Common Language Elements
+91
+
+<!-- Original PDF Page: 93 -->
+
+'_' | '[' <member> ... ']' | '[^' <non-member> ... ']'
+  | '[' <member> ... '^' <non-member> ... ']'
+<member>, <non-member> ::= <character> | <range> | <predefined class>
+<range> ::= <character>-<character>
+<predefined class> ::= '[:' <predefined class name> ':]'
+<predefined class name> ::=
+  ALPHA | UPPER | LOWER | DIGIT | ALNUM | SPACE | WHITESPACE
+Building Regular Expressions
+In this section are the elements and rules for building SQL regular expressions.
+Characters
+Within regular expressions, most characters represent themselves. The only exceptions are the
+special characters below:
+[ ] ( ) | ^ - + * % _ ? { }
+... and the escape character, if it is defined.
+A regular expression that contains no special characters or escape characters matches only strings
+that are identical to itself (subject to the collation in use). That is, it functions just like the ‘ =’
+operator:
+'Apple' similar to 'Apple'  -- true
+'Apples' similar to 'Apple' -- false
+'Apple' similar to 'Apples' -- false
+'APPLE' similar to 'Apple'  -- depends on collation
+Wildcards
+The known SQL wildcards ‘ _’ and ‘ %’ match any single character and a string of any length,
+respectively:
+'Birne' similar to 'B_rne'   -- true
+'Birne' similar to 'B_ne'    -- false
+'Birne' similar to 'B%ne'    -- true
+'Birne' similar to 'Bir%ne%' -- true
+'Birne' similar to 'Birr%ne' -- false
+Notice how ‘%’ also matches the empty string.
+Chapter 4. Common Language Elements
+92
+
+<!-- Original PDF Page: 94 -->
+
+Character Classes
+A bunch of characters enclosed in brackets define a character class. A character in the string
+matches a class in the pattern if the character is a member of the class:
+'Citroen' similar to 'Cit[arju]oen'     -- true
+'Citroen' similar to 'Ci[tr]oen'        -- false
+'Citroen' similar to 'Ci[tr][tr]oen'    -- true
+As can be seen from the second line, the class only matches a single character, not a sequence.
+Within a class definition, two characters connected by a hyphen define a range. A range comprises
+the two endpoints and all the characters that lie between them in the active collation. Ranges can
+be placed anywhere in the class definition without special delimiters to keep them apart from the
+other elements.
+'Datte' similar to 'Dat[q-u]e'          -- true
+'Datte' similar to 'Dat[abq-uy]e'       -- true
+'Datte' similar to 'Dat[bcg-km-pwz]e'   -- false
+Predefined Character Classes
+The following predefined character classes can also be used in a class definition:
+[:ALPHA:]
+Latin letters a..z and A..Z. With an accent-insensitive collation, this class also matches accented
+forms of these characters.
+[:DIGIT:]
+Decimal digits 0..9.
+[:ALNUM:]
+Union of [:ALPHA:] and [:DIGIT:].
+[:UPPER:]
+Uppercase Latin letters A..Z. Also matches lowercase with case-insensitive collation and accented
+forms with accent-insensitive collation.
+[:LOWER:]
+Lowercase Latin letters a..z. Also matches uppercase with case-insensitive collation and accented
+forms with accent-insensitive collation.
+[:SPACE:]
+Matches the space character (ASCII 32).
+[:WHITESPACE:]
+Matches horizontal tab (ASCII 9), linefeed (ASCII 10), vertical tab (ASCII 11), formfeed (ASCII 12),
+Chapter 4. Common Language Elements
+93
+
+<!-- Original PDF Page: 95 -->
+
+carriage return (ASCII 13) and space (ASCII 32).
+Including a predefined class has the same effect as including all its members. Predefined classes are
+only allowed within class definitions. If you need to match against a predefined class and nothing
+more, place an extra pair of brackets around it.
+'Erdbeere' similar to 'Erd[[:ALNUM:]]eere'     -- true
+'Erdbeere' similar to 'Erd[[:DIGIT:]]eere'     -- false
+'Erdbeere' similar to 'Erd[a[:SPACE:]b]eere'   -- true
+'Erdbeere' similar to [[:ALPHA:]]              -- false
+'E'        similar to [[:ALPHA:]]              -- true
+If a class definition starts with a caret, everything that follows is excluded from the class. All other
+characters match:
+'Framboise' similar to 'Fra[^ck-p]boise'       -- false
+'Framboise' similar to 'Fr[^a][^a]boise'       -- false
+'Framboise' similar to 'Fra[^[:DIGIT:]]boise'  -- true
+If the caret is not placed at the start of the sequence, the class contains everything before the caret,
+except for the elements that also occur after the caret:
+'Grapefruit' similar to 'Grap[a-m^f-i]fruit'   -- true
+'Grapefruit' similar to 'Grap[abc^xyz]fruit'   -- false
+'Grapefruit' similar to 'Grap[abc^de]fruit'    -- false
+'Grapefruit' similar to 'Grap[abe^de]fruit'    -- false
+'3' similar to '[[:DIGIT:]^4-8]'               -- true
+'6' similar to '[[:DIGIT:]^4-8]'               -- false
+Lastly, the already mentioned wildcard ‘ _’ is a character class of its own, matching any single
+character.
+Quantifiers
+A question mark (‘ ?’) immediately following a character or class indicates that the preceding item
+may occur 0 or 1 times to match:
+'Hallon' similar to 'Hal?on'                   -- false
+'Hallon' similar to 'Hal?lon'                  -- true
+'Hallon' similar to 'Halll?on'                 -- true
+'Hallon' similar to 'Hallll?on'                -- false
+'Hallon' similar to 'Halx?lon'                 -- true
+'Hallon' similar to 'H[a-c]?llon[x-z]?'        -- true
+An asterisk (‘ *’) immediately following a character or class indicates that the preceding item may
+Chapter 4. Common Language Elements
+94
+
+<!-- Original PDF Page: 96 -->
+
+occur 0 or more times to match:
+'Icaque' similar to 'Ica*que'                  -- true
+'Icaque' similar to 'Icar*que'                 -- true
+'Icaque' similar to 'I[a-c]*que'               -- true
+'Icaque' similar to '_*'                       -- true
+'Icaque' similar to '[[:ALPHA:]]*'             -- true
+'Icaque' similar to 'Ica[xyz]*e'               -- false
+A plus sign (‘ +’) immediately following a character or class indicates that the preceding item must
+occur 1 or more times to match:
+'Jujube' similar to 'Ju_+'                     -- true
+'Jujube' similar to 'Ju+jube'                  -- true
+'Jujube' similar to 'Jujuber+'                 -- false
+'Jujube' similar to 'J[jux]+be'                -- true
+'Jujube' sililar to 'J[[:DIGIT:]]+ujube'       -- false
+If a character or class is followed by a number enclosed in braces (‘ {’ and ‘ }’), it must be repeated
+exactly that number of times to match:
+'Kiwi' similar to 'Ki{2}wi'                    -- false
+'Kiwi' similar to 'K[ipw]{2}i'                 -- true
+'Kiwi' similar to 'K[ipw]{2}'                  -- false
+'Kiwi' similar to 'K[ipw]{3}'                  -- true
+If the number is followed by a comma (‘ ,’), the item must be repeated at least that number of times
+to match:
+'Limone' similar to 'Li{2,}mone'               -- false
+'Limone' similar to 'Li{1,}mone'               -- true
+'Limone' similar to 'Li[nezom]{2,}'            -- true
+If the braces contain two numbers separated by a comma, the second number not smaller than the
+first, then the item must be repeated at least the first number and at most the second number of
+times to match:
+'Mandarijn' similar to 'M[a-p]{2,5}rijn'       -- true
+'Mandarijn' similar to 'M[a-p]{2,3}rijn'       -- false
+'Mandarijn' similar to 'M[a-p]{2,3}arijn'      -- true
+The quantifiers ‘?’, ‘*’ and ‘+’ are shorthand for {0,1}, {0,} and {1,}, respectively.
+Chapter 4. Common Language Elements
+95
+
+<!-- Original PDF Page: 97 -->
+
+OR-ing Terms
+Regular expression terms can be OR’ed with the ‘ |’ operator. A match is made when the argument
+string matches at least one of the terms:
+'Nektarin' similar to 'Nek|tarin'              -- false
+'Nektarin' similar to 'Nektarin|Persika'       -- true
+'Nektarin' similar to 'M_+|N_+|P_+'            -- true
+Subexpressions
+One or more parts of the regular expression can be grouped into subexpressions (also called
+subpatterns) by placing them between parentheses (‘ (’ and ‘ )’). A subexpression is a regular
+expression in its own right. It can contain all the elements allowed in a regular expression, and can
+also have quantifiers added to it.
+'Orange' similar to 'O(ra|ri|ro)nge'           -- true
+'Orange' similar to 'O(r[a-e])+nge'            -- true
+'Orange' similar to 'O(ra){2,4}nge'            -- false
+'Orange' similar to 'O(r(an|in)g|rong)?e'      -- true
+Escaping Special Characters
+To match against a character that is special in regular expressions, that character has to be escaped.
+There is no default escape character; the user specifies one when needed:
+'Peer (Poire)' similar to 'P[^ ]+ \(P[^ ]+\)' escape '\'    -- true
+'Pera [Pear]'  similar to 'P[^ ]+ #[P[^ ]+#]' escape '#'    -- true
+'Päron-äppledryck' similar to 'P%$-ä%' escape '$'           -- true
+'Pärondryck' similar to 'P%--ä%' escape '-'                 -- false
+The last line demonstrates that the escape character can also escape itself, if needed.
+IS [NOT] DISTINCT FROM
+Syntax
+<operand1> IS [NOT] DISTINCT FROM <operand2>
+Two operands are considered DISTINCT (different) if they have a different value or if one of them is
+NULL and the other non-null. They are considered NOT DISTINCT (equal) if they have the same value
+or if both of them are NULL.
+IS [NOT] DISTINCT FROM  always returns TRUE or FALSE and never UNKNOWN (NULL) (unknown value).
+Operators ‘=’ and ‘<>’, conversely, will return UNKNOWN (NULL) if one or both operands are NULL.
+Table 26. Results of Various Comparison Predicates
+Chapter 4. Common Language Elements
+96
+
+<!-- Original PDF Page: 98 -->
+
+Operand values Result of various predicates
+= IS NOT DISTINCT
+FROM <> IS DISTINCT FROM
+Same value TRUE TRUE FALSE FALSE
+Different values FALSE FALSE TRUE TRUE
+Both NULL UNKNOWN TRUE UNKNOWN FALSE
+One NULL, one non-NULL UNKNOWN FALSE UNKNOWN TRUE
+Examples
+SELECT ID, NAME, TEACHER
+FROM COURSES
+WHERE START_DAY IS NOT DISTINCT FROM END_DAY;
+-- PSQL fragment
+IF (NEW.JOB IS DISTINCT FROM OLD.JOB)
+THEN POST_EVENT 'JOB_CHANGED';
+See also
+IS [NOT] NULL, Boolean IS [NOT]
+Boolean IS [NOT]
+Syntax
+<value> IS [NOT] { TRUE | FALSE | UNKNOWN }
+The IS predicate with Boolean literal values checks if the expression on the left side matches the
+Boolean value on the right side. The expression on the left side must be of type BOOLEAN, otherwise
+an exception is raised.
+The IS [NOT] UNKNOWN is equivalent to IS [NOT] NULL.
+ The right side of the predicate only accepts the literals TRUE, FALSE, UNKNOWN, and
+NULL. It does not accept expressions.
+Using the IS predicate with a Boolean data type
+-- Checking FALSE value
+SELECT * FROM TBOOL WHERE BVAL IS FALSE;
+ID            BVAL
+============= =======
+2             <false>
+-- Checking UNKNOWN value
+SELECT * FROM TBOOL WHERE BVAL IS UNKNOWN;
+Chapter 4. Common Language Elements
+97
+
+<!-- Original PDF Page: 99 -->
+
+ID            BVAL
+============= =======
+3             <null>
+See also
+IS [NOT] NULL
+IS [NOT] NULL
+Syntax
+<value> IS [NOT] NULL
+Since NULL is not a value, these operators are not comparison operators. The IS [NOT] NULL predicate
+tests that the expression on the left side has a value (IS NOT NULL) or has no value (IS NULL).
+Example
+Search for sales entries that have no shipment date set for them:
+SELECT * FROM SALES
+WHERE SHIP_DATE IS NULL;
+ Note regarding the IS predicates
+The IS predicates take precedence above the others.
+4.2.3. Existential Predicates
+This group of predicates includes those that use subqueries to submit values for all kinds of
+assertions in search conditions. Existential predicates are so called because they use various
+methods to test for the existence or non-existence of some condition, returning TRUE if the existence
+or non-existence is confirmed or FALSE otherwise.
+EXISTS
+Syntax
+[NOT] EXISTS (<select_stmt>)
+The EXISTS predicate uses a subquery expression as its argument. It returns TRUE if the subquery
+result contains at least one row, otherwise it returns FALSE.
+NOT EXISTS returns FALSE if the subquery result contains at least one row, otherwise it returns TRUE.
+ The subquery can specify multiple columns, or SELECT *, because the evaluation is
+made on the number of rows that match its criteria, not on the data.
+Chapter 4. Common Language Elements
+98
+
+<!-- Original PDF Page: 100 -->
+
+Examples
+1. Find those employees who have projects.
+SELECT *
+FROM employee
+WHERE EXISTS(SELECT *
+             FROM  employee_project ep
+             WHERE ep.emp_no = employee.emp_no)
+2. Find those employees who have no projects.
+SELECT *
+FROM employee
+WHERE NOT EXISTS(SELECT *
+                 FROM employee_project ep
+                 WHERE ep.emp_no = employee.emp_no)
+IN
+Syntax
+<value> [NOT] IN (<select_stmt> | <value_list>)
+<value_list> ::= <value_1> [, <value_2> ...]
+The IN predicate tests whether the value of the expression on the left side is present in the set of
+values specified on the right side. The set of values cannot have more than 65535 items. The IN
+predicate can be replaced with the following equivalent forms:
+(<value> = <value_1> [OR <value> = <value_2> ...])
+<value> = { ANY | SOME } (<select_stmt>)
+When the IN predicate is used in the search conditions of DML queries, the Firebird optimizer can
+use an index on the searched column, if a suitable one exists. Lists that are known to be constant
+are pre-evaluated as invariants and cached as a binary search tree, making comparisons faster if
+the condition needs to be tested for many rows or if the value list is long.
+In its second form, the IN predicate tests whether the value of the expression on the left side is
+present — or not present, if NOT IN is used — in the result of the subquery on the right side.
+The subquery must specify only one column, otherwise the error “ count of column list and variable
+list do not match” will occur.
+Queries using an IN predicate with a subquery can be replaced with a similar query using the
+EXISTS predicate. For example, the following query:
+Chapter 4. Common Language Elements
+99
+
+<!-- Original PDF Page: 101 -->
+
+SELECT
+  model, speed, hd
+FROM PC
+WHERE
+model IN (SELECT model
+          FROM product
+          WHERE maker = 'A');
+can be replaced with a similar one using the EXISTS predicate:
+SELECT
+  model, speed, hd
+FROM PC
+WHERE
+ EXISTS (SELECT *
+         FROM product
+         WHERE maker = 'A'
+           AND product.model = PC.model);
+However, a query using NOT IN with a subquery does not always give the same result as its NOT
+EXISTS counterpart. The reason is that EXISTS always returns TRUE or FALSE, whereas IN returns
+NULL in one of these two cases:
+a. when the test value is NULL and the IN () list is not empty
+b. when the test value has no match in the IN () list and at least one list element is NULL
+It is in only these two cases that IN () will return NULL while the EXISTS predicate will return FALSE
+(“no matching row found”). In a search or, for example, an IF (…) statement, both results mean
+“failure”, and it makes no difference to the outcome.
+For the same data, NOT IN () will return NULL, while NOT EXISTS will return TRUE, leading to opposite
+results.
+As an example, suppose you have the following query:
+-- Looking for people who were not born
+-- on the same day as any famous New York citizen
+SELECT P1.name AS NAME
+FROM Personnel P1
+WHERE P1.birthday NOT IN (SELECT C1.birthday
+                          FROM Celebrities C1
+                          WHERE C1.birthcity = 'New York');
+Now, assume that the NY celebrities list is not empty and contains at least one NULL birthday. Then
+for every citizen who does not share his birthday with a NY celebrity, NOT IN will return NULL,
+because that is what IN does. The search condition is thereby not satisfied and the citizen will be left
+out of the SELECT result, which is wrong.
+Chapter 4. Common Language Elements
+100
+
+<!-- Original PDF Page: 102 -->
+
+For citizens whose birthday does match with a celebrity’s birthday, NOT IN will correctly return
+FALSE, so they will be left out too, and no rows will be returned.
+If the NOT EXISTS form is used:
+-- Looking for people who were not born
+-- on the same day as any famous New York citizen
+SELECT P1.name AS NAME
+FROM Personnel P1
+WHERE NOT EXISTS (SELECT *
+                  FROM Celebrities C1
+                  WHERE C1.birthcity = 'New York'
+                    AND C1.birthday = P1.birthday);
+non-matches will have a NOT EXISTS result of TRUE and their records will be in the result set.
+ If there is any chance of NULLs being encountered when searching for a non-match,
+you will want to use NOT EXISTS.
+Examples of use
+1. Find employees with the names “Pete”, “Ann” and “Roger”:
+SELECT *
+FROM EMPLOYEE
+WHERE FIRST_NAME IN ('Pete', 'Ann', 'Roger');
+2. Find all computers that have models whose manufacturer starts with the letter “A”:
+SELECT
+  model, speed, hd
+FROM PC
+WHERE
+  model IN (SELECT model
+            FROM product
+            WHERE maker STARTING WITH 'A');
+See also
+EXISTS
+SINGULAR
+Syntax
+[NOT] SINGULAR (<select_stmt>)
+The SINGULAR predicate takes a subquery as its argument and evaluates it as TRUE if the subquery
+Chapter 4. Common Language Elements
+101
+
+<!-- Original PDF Page: 103 -->
+
+returns exactly one row, otherwise the predicate is evaluated as FALSE. The subquery may list
+several output columns since the rows are not returned anyway, they are only tested for (singular)
+existence. For brevity, people usually specify ‘SELECT *’. The SINGULAR predicate can return only two
+values: TRUE or FALSE.
+Example
+Find those employees who have only one project.
+SELECT *
+FROM employee
+WHERE SINGULAR(SELECT *
+               FROM employee_project ep
+               WHERE ep.emp_no = employee.emp_no)
+4.2.4. Quantified Subquery Predicates
+A quantifier is a logical operator that sets the number of objects for which this condition is true. It is
+not a numeric quantity, but a logical one that connects the condition with the full set of possible
+objects. Such predicates are based on logical universal and existential quantifiers that are
+recognised in formal logic.
+In subquery expressions, quantified predicates make it possible to compare separate values with
+the results of subqueries; they have the following common form:
+<value expression> <comparison operator> <quantifier> <subquery>
+ALL
+Syntax
+<value> <op> ALL (<select_stmt>)
+When the ALL quantifier is used, the predicate is TRUE if every value returned by the subquery
+satisfies the condition in the predicate of the main query.
+Example
+Show only those clients whose ratings are higher than the rating of every client in Paris.
+SELECT c1.*
+FROM Customers c1
+WHERE c1.rating > ALL
+      (SELECT c2.rating
+       FROM Customers c2
+       WHERE c2.city = 'Paris')
+ If the subquery returns an empty set, the predicate is TRUE for every left-side value,
+Chapter 4. Common Language Elements
+102

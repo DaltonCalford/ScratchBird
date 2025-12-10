@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
-#include "scratchbird/parser/parser.h"
-#include "scratchbird/sblr/bytecode_generator.h"
+
+#include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/core/database.h"
 #include <string>

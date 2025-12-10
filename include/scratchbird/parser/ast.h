@@ -1,6 +1,7 @@
 #pragma once
 
 #include "scratchbird/parser/token.h"
+#include "scratchbird/parser/shared_types.h"
 #include "scratchbird/core/types.h"
 #include <memory>
 #include <vector>
@@ -93,6 +94,7 @@ namespace scratchbird
             SET_SQL_DIALECT,   // SET SQL DIALECT N (Firebird ISQL compatibility)
             SET_NAMES,         // SET NAMES 'charset' (connection character set)
             SET_LOCAL_TIMEOUT, // SET LOCAL_TIMEOUT N (statement timeout in seconds)
+            SET_PARSER_VERSION, // Phase 10: SET PARSER VERSION (V1 or V2)
             CREATE_POLICY,     // Security Phase 3.4: CREATE POLICY policy_name ON table_name
             DROP_POLICY,       // Security Phase 3.4: DROP POLICY policy_name ON table_name
             ALTER_TABLE_RLS,   // Security Phase 3.4: ALTER TABLE ... ENABLE/DISABLE ROW LEVEL SECURITY
@@ -611,39 +613,8 @@ namespace scratchbird
             Expression* filter_;  // FILTER (WHERE condition)
         };
 
-        // Window function types (Phase 1 Task 6)
-        enum class WindowFunc : uint8_t
-        {
-            ROW_NUMBER,
-            RANK,
-            DENSE_RANK,
-            LAG,
-            LEAD,
-            FIRST_VALUE,
-            LAST_VALUE,
-            NTH_VALUE,
-            CUME_DIST,        // Alpha 1 - Missing Functions Phase 4
-            PERCENT_RANK,     // Alpha 1 - Missing Functions Phase 4
-            NTILE             // NTILE(n) - divide rows into n buckets
-        };
-
-        // Window frame boundary type (Phase 1 Task 6)
-        enum class FrameBoundaryType : uint8_t
-        {
-            UNBOUNDED_PRECEDING,
-            PRECEDING,
-            CURRENT_ROW,
-            FOLLOWING,
-            UNBOUNDED_FOLLOWING
-        };
-
-        // Window frame mode (Phase 1 Task 6, P2-9: Added GROUPS)
-        enum class FrameMode : uint8_t
-        {
-            ROWS,    // Physical row-based frames
-            RANGE,   // Value range-based frames
-            GROUPS   // P2-9: Peer group-based frames
-        };
+        // Window function types - defined in shared_types.h
+        // WindowFunc, FrameBoundaryType, FrameMode are imported from shared_types.h
 
         // Window frame boundary (Phase 1 Task 6)
         struct FrameBoundary
@@ -968,14 +939,7 @@ namespace scratchbird
         };
 
         // Subquery expression types (Phase 2 Wave 2 - Agent B)
-        enum class SubqueryType : uint8_t
-        {
-            SCALAR,      // Returns single value: (SELECT col FROM ...)
-            EXISTS,      // Returns boolean: EXISTS (SELECT ...)
-            IN,          // Membership test: col IN (SELECT ...)
-            NOT_IN,      // Membership test: col NOT IN (SELECT ...)
-            ARRAY        // Returns array: ARRAY(SELECT ...)
-        };
+        // SubqueryType - defined in shared_types.h
 
         // Forward declaration
         class SelectStmt;
@@ -2033,14 +1997,7 @@ namespace scratchbird
         };
 
         // JOIN types (Phase 1 Task 3.1)
-        enum class JoinType : uint8_t
-        {
-            INNER,        // INNER JOIN
-            LEFT,         // LEFT OUTER JOIN
-            RIGHT,        // RIGHT OUTER JOIN
-            FULL,         // FULL OUTER JOIN
-            CROSS         // CROSS JOIN
-        };
+        // JoinType - defined in shared_types.h
 
         // JOIN condition type
         enum class JoinConditionType : uint8_t
@@ -2146,20 +2103,7 @@ namespace scratchbird
             bool recursive_;
         };
 
-        // Sort direction for ORDER BY (Phase 1 Task 5.1)
-        enum class SortOrder : uint8_t
-        {
-            ASC,
-            DESC
-        };
-
-        // NULL ordering for ORDER BY (Phase 1 Task 5.1)
-        enum class NullsOrder : uint8_t
-        {
-            DEFAULT,      // Database default
-            NULLS_FIRST,
-            NULLS_LAST
-        };
+        // SortOrder, NullsOrder - defined in shared_types.h
 
         // ORDER BY item (Phase 1 Task 5.1)
         struct OrderByItem
@@ -2173,15 +2117,7 @@ namespace scratchbird
         };
 
         // GROUP BY clause (Phase 1 Task 4.1, Phase 3: Advanced Grouping)
-
-        // Grouping type for advanced GROUP BY features
-        enum class GroupingType : uint8_t
-        {
-            STANDARD,        // Regular GROUP BY
-            ROLLUP,          // GROUP BY ROLLUP(...)
-            CUBE,            // GROUP BY CUBE(...)
-            GROUPING_SETS    // GROUP BY GROUPING SETS(...)
-        };
+        // GroupingType - defined in shared_types.h
 
         struct GroupByClause
         {
@@ -3381,6 +3317,24 @@ namespace scratchbird
 
         private:
             uint32_t timeout_seconds_;
+        };
+
+        // SET PARSER VERSION statement (Phase 10: Parser Migration)
+        // Allows runtime switching between V1 and V2 parsers
+        class SetParserVersionStmt : public Statement
+        {
+        public:
+            SetParserVersionStmt(const SourceSpan &span, uint8_t version)
+                : Statement(ASTKind::SET_PARSER_VERSION, span), version_(version)
+            {
+            }
+
+            uint8_t version() const { return version_; }
+
+            void accept(ASTVisitor *visitor) override;
+
+        private:
+            uint8_t version_;  // 1 = V1, 2 = V2
         };
 
         // Trigger timing (Phase 2 Wave 2 - Agent C)
@@ -4647,6 +4601,7 @@ namespace scratchbird
             virtual void visit(SetSqlDialectStmt *node) = 0;    // Firebird ISQL: SET SQL DIALECT
             virtual void visit(SetNamesStmt *node) = 0;         // SET NAMES charset
             virtual void visit(SetLocalTimeoutStmt *node) = 0;  // SET LOCAL_TIMEOUT N
+            virtual void visit(SetParserVersionStmt *node) = 0; // Phase 10: SET PARSER VERSION
             virtual void visit(CreatePolicyStmt *node) = 0;     // Security Phase 3.4
             virtual void visit(DropPolicyStmt *node) = 0;       // Security Phase 3.4
             virtual void visit(AlterTableRLSStmt *node) = 0;    // Security Phase 3.4
@@ -4764,6 +4719,7 @@ namespace scratchbird
             void visit(SetSqlDialectStmt *node) override;
             void visit(SetNamesStmt *node) override;
             void visit(SetLocalTimeoutStmt *node) override;
+            void visit(SetParserVersionStmt *node) override;
 
             // Transaction control - SAVEPOINT
             void visit(SavepointStmt *node) override;

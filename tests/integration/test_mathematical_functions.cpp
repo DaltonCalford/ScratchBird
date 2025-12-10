@@ -3,8 +3,8 @@
 
 #include <gtest/gtest.h>
 #include <scratchbird/core/database.h>
-#include <scratchbird/parser/parser.h>
-#include <scratchbird/sblr/bytecode_generator.h>
+
+#include "scratchbird/sblr/query_compiler_v2.h"
 #include <scratchbird/sblr/executor.h>
 #include <cmath>
 
@@ -37,24 +37,17 @@ protected:
     // Helper to execute a simple SELECT statement and get the result
     double executeScalar(const std::string& sql)
     {
-        parser::Lexer lexer(sql);
-        parser::ASTArena arena;
-        parser::Parser parser(lexer, arena);
-        auto parse_result = parser.parseStatement();
-        EXPECT_TRUE(parse_result.success()) << "Parse failed";
-        if (!parse_result.success()) return 0.0;
-
-        sblr::BytecodeGenerator generator(lexer.stringPool(), db.get());
-        auto bytecode_result = generator.generate(parse_result.statement());
-        if (!bytecode_result.success()) {
-            for (const auto& err : bytecode_result.errors()) {
-                EXPECT_TRUE(false) << "Bytecode generation failed: " << err;
+        sblr::QueryCompilerV2 compiler(db.get());
+        auto compile_result = compiler.compile(sql);
+        if (!compile_result.success()) {
+            for (const auto& err : compile_result.errors()) {
+                EXPECT_TRUE(false) << "Compilation failed: " << err;
             }
             return 0.0;
         }
 
         sblr::Executor executor(db.get());
-        auto exec_result = executor.execute(bytecode_result.bytecode());
+        auto exec_result = executor.execute(compile_result.bytecode());
         EXPECT_TRUE(exec_result.success()) << "Execution failed: " << exec_result.error();
         if (!exec_result.success()) return 0.0;
 

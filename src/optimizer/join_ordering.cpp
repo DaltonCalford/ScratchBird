@@ -2,6 +2,8 @@
  * join_ordering.cpp - Dynamic Programming Join Order Optimizer Implementation
  *
  * P3-20: Cost-based join ordering optimization using dynamic programming.
+ *
+ * V2 MIGRATION: Uses V2 ResolvedExpression types for join conditions.
  */
 
 #include "scratchbird/optimizer/join_ordering.h"
@@ -15,8 +17,8 @@ namespace scratchbird::optimizer
 
 JoinOrderingOptimizer::JoinOrderingOptimizer(CostModel& cost_model,
                                              SelectivityEstimator& selectivity_estimator)
-    : cost_model_(cost_model)
-    , selectivity_estimator_(selectivity_estimator)
+    : cost_model_(cost_model),
+      selectivity_estimator_(selectivity_estimator)
 {
 }
 
@@ -44,7 +46,7 @@ size_t JoinOrderingOptimizer::addRelation(const core::ID& table_id,
 
 void JoinOrderingOptimizer::addJoinEdge(size_t left_idx, size_t right_idx,
                                         parser::JoinType join_type,
-                                        parser::Expression* join_condition)
+                                        parser::v2::ResolvedExpression* join_condition)
 {
     JoinEdge edge;
     edge.left_rel_idx = left_idx;
@@ -210,7 +212,6 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
         size_t best_rel = 0;
         std::shared_ptr<Path> best_join_path = nullptr;
         uint64_t best_join_rows = 0;
-        size_t best_edge_idx = 0;
 
         for (size_t i = 0; i < relations_.size(); ++i)
         {
@@ -257,15 +258,14 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
                 {
                     best_cost = join_cost.total_cost;
                     best_rel = i;
-                    best_edge_idx = e;
                     best_join_rows = join_rows;
 
-                    // Create join path
+                    // Create join path (V2: uses ResolvedExpression* for join condition)
                     auto join_path = std::make_shared<NestedLoopJoinPath>(
                         edge.join_type,
                         current_path,
                         relations_[i].best_path,
-                        edge.join_condition,
+                        edge.join_condition,  // V2 ResolvedExpression*
                         selectivity,
                         join_cost);
                     best_join_path = join_path;
@@ -297,7 +297,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
                         parser::JoinType::INNER,
                         current_path,
                         relations_[i].best_path,
-                        nullptr,
+                        nullptr,  // No join condition for cross join
                         selectivity,
                         join_cost);
                     best_join_path = join_path;
@@ -416,16 +416,17 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
         std::shared_ptr<Path> probe_path = (left_rows < right_rows)
             ? right_entry.best_path : left_entry.best_path;
 
-        std::vector<parser::Expression*> hash_keys_left;
-        std::vector<parser::Expression*> hash_keys_right;
+        // V2: Hash keys are now ResolvedExpression* vectors
+        std::vector<parser::v2::ResolvedExpression*> hash_keys_outer;
+        std::vector<parser::v2::ResolvedExpression*> hash_keys_inner;
 
         result.best_path = std::make_shared<HashJoinPath>(
             edge.join_type,
             build_path,
             probe_path,
-            edge.join_condition,
-            hash_keys_left,
-            hash_keys_right,
+            edge.join_condition,  // V2 ResolvedExpression*
+            hash_keys_outer,
+            hash_keys_inner,
             selectivity,
             hash_cost);
     }
@@ -438,7 +439,7 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
             edge.join_type,
             left_entry.best_path,
             right_entry.best_path,
-            edge.join_condition,
+            edge.join_condition,  // V2 ResolvedExpression*
             selectivity,
             nl_cost);
     }

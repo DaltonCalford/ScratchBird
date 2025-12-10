@@ -1,0 +1,411 @@
+#pragma once
+
+/**
+ * ScratchBird SBLR v2.0 - Semantic Analyzer
+ *
+ * This module performs semantic analysis on the unresolved AST from Parser v2,
+ * producing a resolved AST with:
+ * - Name resolution (tables, columns, functions resolved to UUIDs)
+ * - Type checking for all expressions
+ * - Validation of SQL semantics
+ *
+ * Design:
+ * - Visitor pattern over unresolved AST
+ * - Uses CatalogManager for name lookups
+ * - Maintains scope stack for nested contexts (subqueries, CTEs)
+ * - Produces ResolvedStatement output
+ *
+ * See: docs/planning/PARSER_V2_IMPLEMENTATION_PLAN.md Section 8.5
+ */
+
+#include "scratchbird/parser/ast_v2.h"
+#include "scratchbird/parser/parser_v2.h"
+#include "scratchbird/sblr/resolved_ast_v2.h"
+#include "scratchbird/core/catalog_manager.h"
+#include <vector>
+#include <string>
+#include <memory>
+#include <unordered_map>
+#include <optional>
+
+namespace scratchbird::parser::v2 {
+
+// Import types from core namespace
+using core::CatalogManager;
+using core::Status;
+
+/**
+ * Semantic analysis error
+ */
+struct SemanticError {
+    SourceSpan span;
+    std::string message;
+    std::string hint;
+
+    enum class Severity {
+        ERROR,
+        WARNING,
+    };
+    Severity severity = Severity::ERROR;
+};
+
+/**
+ * Result of semantic analysis
+ */
+class SemanticResult {
+public:
+    SemanticResult() = default;
+
+    bool success() const { return errors_.empty() && statement_ != nullptr; }
+    ResolvedStatement* statement() const { return statement_; }
+    const std::vector<SemanticError>& errors() const { return errors_; }
+    const std::vector<SemanticError>& warnings() const { return warnings_; }
+
+    void setStatement(ResolvedStatement* stmt) { statement_ = stmt; }
+    void addError(const SemanticError& error);
+    void addWarning(const SemanticError& warning);
+
+private:
+    ResolvedStatement* statement_ = nullptr;
+    std::vector<SemanticError> errors_;
+    std::vector<SemanticError> warnings_;
+};
+
+/**
+ * Name resolution scope
+ *
+ * Maintains the current naming context for resolving identifiers.
+ * Scopes are stacked for nested queries (subqueries, CTEs).
+ */
+class ResolutionScope {
+public:
+    ResolutionScope() = default;
+
+    /**
+     * Table entry in scope (from FROM clause or CTE)
+     */
+    struct TableEntry {
+        StringPool::StringId alias;             // Alias or table name
+        ID table_uuid;                          // Resolved UUID
+        ResolvedTableRef* resolved_ref = nullptr;
+        bool is_cte = false;
+
+        // Column information for this table
+        std::vector<ResolvedTableRef::ColumnInfo> columns;
+    };
+
+    /**
+     * Add a table to the current scope
+     */
+    void addTable(const TableEntry& entry);
+
+    /**
+     * Look up a table by alias/name
+     */
+    const TableEntry* findTable(StringPool::StringId name) const;
+
+    /**
+     * Look up a column by name (searches all tables in scope)
+     * Returns nullptr if not found or ambiguous
+     */
+    struct ColumnLookupResult {
+        const TableEntry* table = nullptr;
+        const ResolvedTableRef::ColumnInfo* column = nullptr;
+        bool ambiguous = false;
+    };
+    ColumnLookupResult findColumn(StringPool::StringId name) const;
+
+    /**
+     * Look up a column with explicit table qualifier
+     */
+    const ResolvedTableRef::ColumnInfo* findColumn(
+        StringPool::StringId table_name,
+        StringPool::StringId column_name) const;
+
+    /**
+     * Get all tables in scope
+     */
+    const std::vector<TableEntry>& tables() const { return tables_; }
+
+    /**
+     * Clear the scope
+     */
+    void clear();
+
+private:
+    std::vector<TableEntry> tables_;
+    std::unordered_map<StringPool::StringId, size_t> table_map_;  // alias -> index
+};
+
+/**
+ * Semantic Analyzer V2
+ *
+ * Analyzes unresolved AST and produces resolved AST with:
+ * - Name resolution to catalog UUIDs
+ * - Type information on all expressions
+ * - Semantic validation
+ */
+class SemanticAnalyzerV2 {
+public:
+    /**
+     * Create analyzer with catalog and string pool access
+     */
+    SemanticAnalyzerV2(CatalogManager& catalog, StringPool& string_pool);
+    ~SemanticAnalyzerV2();
+
+    // Non-copyable
+    SemanticAnalyzerV2(const SemanticAnalyzerV2&) = delete;
+    SemanticAnalyzerV2& operator=(const SemanticAnalyzerV2&) = delete;
+
+    /**
+     * Analyze a statement and produce resolved AST
+     * @param stmt Unresolved statement from parser
+     * @return SemanticResult containing resolved statement or errors
+     */
+    SemanticResult analyze(Statement* stmt);
+
+    /**
+     * Set the current schema for unqualified name resolution
+     */
+    void setCurrentSchema(const ID& schema_id) { current_schema_ = schema_id; }
+
+    /**
+     * Set the schema search path
+     */
+    void setSearchPath(const std::vector<ID>& path) { search_path_ = path; }
+
+    /**
+     * Access to resolved AST arena
+     */
+    ResolvedASTArena& arena() { return arena_; }
+
+private:
+    CatalogManager& catalog_;
+    StringPool& string_pool_;
+    ResolvedASTArena arena_;
+
+    // Current analysis context
+    SemanticResult* current_result_ = nullptr;
+    ID current_schema_;
+    std::vector<ID> search_path_;
+
+    // Scope stack for nested contexts
+    std::vector<ResolutionScope> scope_stack_;
+
+    // Analysis state
+    bool in_aggregate_ = false;
+    bool has_aggregates_ = false;
+    int subquery_depth_ = 0;
+
+    // ==========================================================================
+    // Error Handling
+    // ==========================================================================
+
+    void error(SourceSpan span, const std::string& message, const std::string& hint = "");
+    void warning(SourceSpan span, const std::string& message, const std::string& hint = "");
+
+    // ==========================================================================
+    // Scope Management
+    // ==========================================================================
+
+    void pushScope();
+    void popScope();
+    ResolutionScope& currentScope();
+
+    // ==========================================================================
+    // Name Resolution
+    // ==========================================================================
+
+    /**
+     * Resolve a schema path to a table UUID
+     */
+    std::optional<ResolvedTableRef> resolveTable(const SchemaPath& path, SourceSpan span);
+
+    /**
+     * Resolve a column reference
+     */
+    std::optional<ResolvedColumnRef> resolveColumn(
+        StringPool::StringId table_alias,
+        StringPool::StringId column_name,
+        SourceSpan span);
+
+    /**
+     * Resolve a function name
+     */
+    std::optional<ResolvedFunctionRef> resolveFunction(
+        const SchemaPath& path,
+        const std::vector<ResolvedType>& arg_types,
+        SourceSpan span);
+
+    /**
+     * Load column information for a resolved table
+     */
+    bool loadTableColumns(ResolvedTableRef& ref);
+
+    // ==========================================================================
+    // Type Checking
+    // ==========================================================================
+
+    /**
+     * Get common type for binary operation
+     */
+    std::optional<ResolvedType> getCommonType(
+        const ResolvedType& left,
+        const ResolvedType& right,
+        BinaryOp op);
+
+    /**
+     * Check if implicit cast is allowed
+     */
+    bool canImplicitCast(const ResolvedType& from, const ResolvedType& to);
+
+    /**
+     * Insert implicit cast if needed
+     */
+    ResolvedExpression* insertImplicitCast(
+        ResolvedExpression* expr,
+        const ResolvedType& target_type);
+
+    // ==========================================================================
+    // Statement Analysis
+    // ==========================================================================
+
+    ResolvedStatement* analyzeStatement(Statement* stmt);
+
+    // DDL
+    ResolvedStatement* analyzeCreateTable(CreateTableStmt* stmt);
+    ResolvedStatement* analyzeCreateIndex(CreateIndexStmt* stmt);
+    ResolvedStatement* analyzeCreateView(CreateViewStmt* stmt);
+    ResolvedStatement* analyzeAlterTable(AlterTableStmt* stmt);
+    ResolvedStatement* analyzeDropTable(DropTableStmt* stmt);
+    ResolvedStatement* analyzeDropIndex(DropIndexStmt* stmt);
+    ResolvedStatement* analyzeDropView(DropViewStmt* stmt);
+    ResolvedStatement* analyzeTruncateTable(TruncateTableStmt* stmt);
+
+    // DML
+    ResolvedSelectStmt* analyzeSelect(SelectStmt* stmt);
+    ResolvedStatement* analyzeInsert(InsertStmt* stmt);
+    ResolvedStatement* analyzeUpdate(UpdateStmt* stmt);
+    ResolvedStatement* analyzeDelete(DeleteStmt* stmt);
+
+    // Transaction/Session
+    ResolvedStatement* analyzeStartTransaction(StartTransactionStmt* stmt);
+    ResolvedStatement* analyzeCommit(CommitStmt* stmt);
+    ResolvedStatement* analyzeRollback(RollbackStmt* stmt);
+    ResolvedStatement* analyzeSavepoint(SavepointStmt* stmt);
+    ResolvedStatement* analyzeReleaseSavepoint(ReleaseSavepointStmt* stmt);
+    ResolvedStatement* analyzeSet(SetStmt* stmt);
+    ResolvedStatement* analyzeShow(ShowStmt* stmt);
+    ResolvedStatement* analyzeExplain(ExplainStmt* stmt);
+
+    // ==========================================================================
+    // Expression Analysis
+    // ==========================================================================
+
+    ResolvedExpression* analyzeExpression(Expression* expr);
+
+    ResolvedExpression* analyzeLiteral(LiteralExpr* expr);
+    ResolvedExpression* analyzeColumnRef(ColumnRefExpr* expr);
+    ResolvedExpression* analyzeBinaryExpr(BinaryExpr* expr);
+    ResolvedExpression* analyzeUnaryExpr(UnaryExpr* expr);
+    ResolvedExpression* analyzeFunctionCall(FunctionCallExpr* expr);
+    ResolvedExpression* analyzeCast(CastExpr* expr);
+    ResolvedExpression* analyzeCase(CaseExpr* expr);
+    ResolvedExpression* analyzeSubquery(SubqueryExpr* expr);
+    ResolvedExpression* analyzeExists(ExistsExpr* expr);
+    ResolvedExpression* analyzeIn(InExpr* expr);
+    ResolvedExpression* analyzeBetween(BetweenExpr* expr);
+    ResolvedExpression* analyzeLike(LikeExpr* expr);
+    ResolvedExpression* analyzeIsNull(IsNullExpr* expr);
+    ResolvedExpression* analyzeArray(ArrayExpr* expr);
+
+    // ==========================================================================
+    // Clause Analysis
+    // ==========================================================================
+
+    void analyzeFromClause(SelectStmt* stmt, ResolvedSelectStmt* resolved);
+    void analyzeWhereClause(Expression* where, ResolvedExpression*& resolved);
+    void analyzeGroupByClause(SelectStmt* stmt, ResolvedSelectStmt* resolved);
+    void analyzeHavingClause(Expression* having, ResolvedExpression*& resolved);
+    void analyzeOrderByClause(const std::vector<OrderByItem*>& items,
+                              std::vector<ResolvedOrderByItem*>& resolved);
+    void analyzeSelectList(SelectStmt* stmt, ResolvedSelectStmt* resolved);
+    void analyzeReturningClause(const std::vector<SelectItem*>& returning,
+                                std::vector<ResolvedSelectItem>& resolved);
+
+    // ==========================================================================
+    // Table Reference Analysis
+    // ==========================================================================
+
+    ResolvedTableRef* analyzeTableRef(TableRefNode* node);
+    ResolvedJoin* analyzeJoin(JoinNode* node);
+
+    // ==========================================================================
+    // Type Resolution Helpers
+    // ==========================================================================
+
+    ResolvedType resolveTypeName(const TypeName& type_name);
+    DataType mapToDataType(DataType ast_type, int32_t precision, int32_t scale);
+
+    // ==========================================================================
+    // Column Definition Analysis
+    // ==========================================================================
+
+    ResolvedColumnDef analyzeColumnDef(ColumnDef* def);
+    ResolvedTableConstraint analyzeTableConstraint(TableConstraint* constraint,
+                                                   const std::vector<ResolvedColumnDef>& columns);
+
+    // ==========================================================================
+    // Utility Methods
+    // ==========================================================================
+
+    /**
+     * Get string from pool
+     */
+    std::string_view getString(StringPool::StringId id) const;
+
+    /**
+     * Create a StringPool entry
+     */
+    StringPool::StringId internString(std::string_view str);
+
+    /**
+     * Check if expression is aggregate
+     */
+    bool isAggregate(const ResolvedExpression* expr) const;
+
+    /**
+     * Validate GROUP BY semantics
+     */
+    bool validateGroupBy(ResolvedSelectStmt* stmt);
+};
+
+/**
+ * Convenience function to analyze SQL with v2 parser
+ */
+inline SemanticResult analyzeSQL(
+    std::string_view sql,
+    CatalogManager& catalog,
+    StringPool& string_pool)
+{
+    Parser parser(sql);
+    auto parse_result = parser.parseStatement();
+
+    if (!parse_result.success()) {
+        SemanticResult result;
+        for (const auto& err : parse_result.errors()) {
+            SemanticError sem_err;
+            sem_err.span = err.span;
+            sem_err.message = err.message;
+            sem_err.hint = err.hint;
+            sem_err.severity = SemanticError::Severity::ERROR;
+            result.addError(sem_err);
+        }
+        return result;
+    }
+
+    SemanticAnalyzerV2 analyzer(catalog, string_pool);
+    return analyzer.analyze(parse_result.statement());
+}
+
+} // namespace scratchbird::parser::v2

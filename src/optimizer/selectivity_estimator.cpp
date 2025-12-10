@@ -8,7 +8,7 @@ namespace scratchbird::optimizer
 {
 
     auto SelectivityEstimator::estimateWhereClause(
-        const parser::Expression *where_clause,
+        const parser::v2::ResolvedExpression *where_clause,
         const core::ID &table_id,
         core::ErrorContext *ctx)
         -> double
@@ -490,7 +490,7 @@ namespace scratchbird::optimizer
     }
 
     auto SelectivityEstimator::estimateJoinSelectivity(
-        const parser::Expression* join_condition,
+        const parser::v2::ResolvedExpression* join_condition,
         const core::ID& left_table_id,
         const core::ID& right_table_id,
         core::ErrorContext* ctx)
@@ -507,13 +507,11 @@ namespace scratchbird::optimizer
         // For Phase 1, use simplified heuristic based on expression type
         // Full implementation would recursively traverse the expression tree
 
-        // Check if this is a binary operation
-        if (join_condition->kind() == parser::ASTKind::BINARY_OP)
+        // Check if this is a binary operation (V2 ResolvedBinaryExpr)
+        if (auto* binary_expr = dynamic_cast<const parser::v2::ResolvedBinaryExpr*>(join_condition))
         {
-            auto* binary_op = static_cast<const parser::BinaryOpExpr*>(join_condition);
-
             // Check for equality (equi-join)
-            if (binary_op->op() == parser::BinaryOp::EQ)
+            if (binary_expr->op == parser::v2::BinaryOp::EQ)
             {
                 // Try to extract column references from both sides
                 // For Phase 1, use default equi-join selectivity
@@ -524,22 +522,22 @@ namespace scratchbird::optimizer
                 return DEFAULT_EQUALITY_SEL;
             }
             // Range join (>, <, >=, <=)
-            else if (binary_op->op() == parser::BinaryOp::GT ||
-                    binary_op->op() == parser::BinaryOp::LT ||
-                    binary_op->op() == parser::BinaryOp::GE ||
-                    binary_op->op() == parser::BinaryOp::LE)
+            else if (binary_expr->op == parser::v2::BinaryOp::GT ||
+                    binary_expr->op == parser::v2::BinaryOp::LT ||
+                    binary_expr->op == parser::v2::BinaryOp::GE ||
+                    binary_expr->op == parser::v2::BinaryOp::LE)
             {
                 DEBUG_LOG_DB("Range join detected, using default selectivity: " +
                            std::to_string(DEFAULT_RANGE_SEL));
                 return DEFAULT_RANGE_SEL;
             }
             // AND - multiply selectivities (independence assumption)
-            else if (binary_op->op() == parser::BinaryOp::AND)
+            else if (binary_expr->op == parser::v2::BinaryOp::AND)
             {
                 double left_sel = estimateJoinSelectivity(
-                    binary_op->left(), left_table_id, right_table_id, ctx);
+                    binary_expr->left, left_table_id, right_table_id, ctx);
                 double right_sel = estimateJoinSelectivity(
-                    binary_op->right(), left_table_id, right_table_id, ctx);
+                    binary_expr->right, left_table_id, right_table_id, ctx);
 
                 double combined = left_sel * right_sel;
                 DEBUG_LOG_DB("AND join condition: " + std::to_string(left_sel) +
@@ -548,12 +546,12 @@ namespace scratchbird::optimizer
                 return combined;
             }
             // OR - add selectivities and subtract overlap
-            else if (binary_op->op() == parser::BinaryOp::OR)
+            else if (binary_expr->op == parser::v2::BinaryOp::OR)
             {
                 double left_sel = estimateJoinSelectivity(
-                    binary_op->left(), left_table_id, right_table_id, ctx);
+                    binary_expr->left, left_table_id, right_table_id, ctx);
                 double right_sel = estimateJoinSelectivity(
-                    binary_op->right(), left_table_id, right_table_id, ctx);
+                    binary_expr->right, left_table_id, right_table_id, ctx);
 
                 // sel(A OR B) = sel(A) + sel(B) - sel(A) * sel(B)
                 double combined = left_sel + right_sel - (left_sel * right_sel);

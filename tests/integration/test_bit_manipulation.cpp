@@ -12,8 +12,8 @@
 
 #include <gtest/gtest.h>
 #include <scratchbird/core/database.h>
-#include <scratchbird/parser/parser.h>
-#include <scratchbird/sblr/bytecode_generator.h>
+
+#include "scratchbird/sblr/query_compiler_v2.h"
 #include <scratchbird/sblr/executor.h>
 
 using namespace scratchbird;
@@ -39,19 +39,17 @@ protected:
 
     // Helper to test that bit manipulation functions parse as expressions
     // NOTE: Parser and executor don't support scalar SELECT (SELECT without FROM)
-    // So we test expression parsing directly
+    // So we test expression parsing directly using V2 parser
     bool testExpression(const std::string& expr_str)
     {
         std::cout << "Testing expression: " << expr_str << std::endl;
 
-        parser::Lexer lexer(expr_str);
-        parser::ASTArena arena;
-        parser::Parser parser(lexer, arena);
-        auto expr = parser.parseExpression();
+        parser::v2::Parser parser(expr_str);
+        auto result = parser.parseExpression();
 
-        if (expr == nullptr) {
+        if (!result) {
             std::cout << "  Parse FAILED" << std::endl;
-            EXPECT_NE(expr, nullptr) << "Expression parsing failed for: " << expr_str;
+            EXPECT_TRUE(result) << "Expression parsing failed for: " << expr_str;
             return false;
         }
         std::cout << "  Parse OK" << std::endl;

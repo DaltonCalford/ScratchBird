@@ -25,7 +25,7 @@
  */
 
 #include <gtest/gtest.h>
-#include "scratchbird/parser/parser.h"
+
 #include <string>
 
 using namespace scratchbird::parser;

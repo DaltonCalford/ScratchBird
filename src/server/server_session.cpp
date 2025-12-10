@@ -6,10 +6,7 @@
 
 #include "scratchbird/server/server_session.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/bytecode_generator.h"
-#include "scratchbird/parser/lexer.h"
-#include "scratchbird/parser/parser.h"
-#include "scratchbird/parser/ast.h"
+#include "scratchbird/sblr/query_compiler_v2.h"  // Parser V2 is now the only parser
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/password_hash.h"
 #include "scratchbird/core/types.h"
@@ -55,9 +52,6 @@ ServerSession::ServerSession(IPCConnection* connection,
 
     // Create executor
     executor_ = std::make_unique<sblr::Executor>(database_);
-
-    // Create parser components
-    ast_arena_ = std::make_unique<parser::ASTArena>();
 }
 
 ServerSession::~ServerSession() {
@@ -460,39 +454,26 @@ core::Status ServerSession::executeQuery(const std::string& sql, core::ErrorCont
         ~QueryExecutingGuard() { flag.store(false, std::memory_order_release); }
     } guard(query_executing_);
 
-    // Reset parser components for reuse
-    ast_arena_->reset();
-
-    // Parse the SQL
-    parser::Lexer lexer(sql);
-    parser::Parser parser_instance(lexer, *ast_arena_);
-
-    parser::ParseResult parse_result = parser_instance.parseStatement();
-
-    if (!parse_result.success()) {
-        stats_.queries_failed++;
-        std::string error_msg = "Parse error";
-        if (!parse_result.errors().empty()) {
-            error_msg = parse_result.errors()[0].message;
-        }
-        return sendError(error_msg, "42601", ctx);  // syntax_error
+    // Parser V2 is now the only parser (V1 has been removed)
+    if (!compiler_v2_) {
+        compiler_v2_ = std::make_unique<sblr::QueryCompilerV2>(database_);
     }
 
-    // Generate bytecode
-    sblr::BytecodeGenerator generator(parser_instance.stringPool(), database_);
-    sblr::BytecodeResult bytecode_result = generator.generate(parse_result.statement());
+    sblr::CompilationResultV2 compile_result = compiler_v2_->compile(sql);
 
-    if (!bytecode_result.success()) {
+    if (!compile_result.success()) {
         stats_.queries_failed++;
-        std::string error_msg = "Bytecode generation error";
-        if (!bytecode_result.errors().empty()) {
-            error_msg = bytecode_result.errors()[0];
+        std::string error_msg = "Compilation error";
+        if (!compile_result.errors().empty()) {
+            error_msg = compile_result.errors()[0];
         }
-        return sendError(error_msg, "42000", ctx);  // syntax_error_or_access_rule_violation
+        return sendError(error_msg, "42000", ctx);
     }
+
+    std::vector<uint8_t> bytecode = compile_result.bytecode();
 
     // Execute the bytecode
-    sblr::ExecutionResult exec_result = executor_->execute(bytecode_result.bytecode());
+    sblr::ExecutionResult exec_result = executor_->execute(bytecode);
 
     if (!exec_result.success()) {
         stats_.queries_failed++;

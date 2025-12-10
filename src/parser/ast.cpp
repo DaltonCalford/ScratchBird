@@ -1819,6 +1819,12 @@ namespace scratchbird
             out_ << "SET LOCAL_TIMEOUT " << node->timeoutSeconds() << "\n";
         }
 
+        void ASTPrinter::visit(SetParserVersionStmt *node)
+        {
+            printIndent();
+            out_ << "SET PARSER VERSION V" << static_cast<int>(node->version()) << "\n";
+        }
+
         // SAVEPOINT statements
         void ASTPrinter::visit(SavepointStmt *node)
         {
@@ -2011,6 +2017,11 @@ namespace scratchbird
         }
 
         void SetLocalTimeoutStmt::accept(ASTVisitor *visitor)
+        {
+            visitor->visit(this);
+        }
+
+        void SetParserVersionStmt::accept(ASTVisitor *visitor)
         {
             visitor->visit(this);
         }

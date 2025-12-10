@@ -14,7 +14,9 @@
 #include "scratchbird/catalog/information_schema.h"
 #include "scratchbird/catalog/pg_catalog.h"
 #include "scratchbird/catalog/mysql_catalog.h"
-#include "scratchbird/catalog/mssql_catalog.h"
+#include "scratchbird/catalog/firebird_catalog.h"
+// TEMPORARILY DISABLED: mssql_catalog.h has pre-existing API mismatch issues
+// #include "scratchbird/catalog/mssql_catalog.h"
 
 namespace scratchbird::catalog {
 
@@ -47,9 +49,14 @@ void initializeVirtualCatalogs(CatalogManager* catalog) {
     router.registerHandler(ProtocolType::MYSQL,
         std::make_unique<MySQLCatalogHandler>(catalog));
 
+    // Register RDB$, MON$, SEC$ (Firebird wire protocol)
+    router.registerHandler(ProtocolType::FIREBIRD,
+        std::make_unique<FirebirdCatalogHandler>(catalog));
+
+    // TEMPORARILY DISABLED: MSSQLCatalogHandler has pre-existing API mismatch issues
     // Register sys.* (SQL Server wire protocol / TDS)
-    router.registerHandler(ProtocolType::MSSQL,
-        std::make_unique<MSSQLCatalogHandler>(catalog));
+    // router.registerHandler(ProtocolType::MSSQL,
+    //     std::make_unique<MSSQLCatalogHandler>(catalog));
 }
 
 /**
@@ -172,11 +179,11 @@ std::string virtualValueToString(const TypedValue& value) {
         return "NULL";
     }
 
-    switch (value.getType()) {
+    switch (value.type()) {
         case DataType::BOOLEAN:
             return value.getBoolean() ? "true" : "false";
         case DataType::INT16:
-            return std::to_string(value.getInt16());
+            return std::to_string(value.getUInt16());
         case DataType::INT32:
             return std::to_string(value.getInt32());
         case DataType::INT64:
@@ -186,9 +193,11 @@ std::string virtualValueToString(const TypedValue& value) {
         case DataType::FLOAT64:
             return std::to_string(value.getFloat64());
         case DataType::VARCHAR:
+            return value.getVarchar();
         case DataType::CHAR:
+            return value.getChar();
         case DataType::TEXT:
-            return value.getString();
+            return value.getText();
         default:
             return value.toString();
     }

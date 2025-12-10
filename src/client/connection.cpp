@@ -575,17 +575,40 @@ public:
     // ============================
 
     core::Status doConnect(core::ErrorContext* ctx) {
-        // Check if server is running
-        if (config_.auto_start_server && !server::isServerRunning(config_.database_name)) {
-            auto status = Connection::startServer(
-                config_.database_name,
-                config_.server_executable,
-                config_.auto_start_timeout_ms,
-                ctx
-            );
-            if (!isOk(status)) {
-                last_error_ = "Failed to auto-start server";
-                return status;
+        // Check if server is running, with retry for race conditions
+        // Two clients might both see no server and both try to start one.
+        // The first one wins the database lock, the second one should connect to it.
+        if (config_.auto_start_server) {
+            int max_retries = 3;
+            for (int retry = 0; retry < max_retries; ++retry) {
+                if (server::isServerRunning(config_.database_name)) {
+                    break;  // Server is running, proceed to connect
+                }
+
+                auto status = Connection::startServer(
+                    config_.database_name,
+                    config_.server_executable,
+                    config_.auto_start_timeout_ms,
+                    ctx
+                );
+
+                if (isOk(status)) {
+                    break;  // Server started successfully
+                }
+
+                // Server start failed - might be because another client started one
+                // Wait briefly and check if a server is now running
+                std::this_thread::sleep_for(std::chrono::milliseconds(200 * (retry + 1)));
+
+                if (server::isServerRunning(config_.database_name)) {
+                    break;  // Another client started the server, we can connect to it
+                }
+
+                // Last retry - report the failure
+                if (retry == max_retries - 1) {
+                    last_error_ = "Failed to auto-start server (database may be locked by another process)";
+                    return status;
+                }
             }
         }
 
@@ -1361,9 +1384,14 @@ core::Status Connection::startServer(const std::string& database_name,
 #endif
 
     // Wait for server to start (poll PID file)
+    // Note: If another client also tried to start a server for the same database,
+    // our forked process will fail to acquire the database lock and exit.
+    // We detect this by checking if a different server (different PID) started.
     auto start_time = std::chrono::steady_clock::now();
     while (true) {
         if (isServerRunning(database_name)) {
+            // Server is running - could be ours or another client's
+            // Either way, we can connect to it
             return core::Status::OK;
         }
 
@@ -1372,7 +1400,9 @@ core::Status Connection::startServer(const std::string& database_name,
         ).count();
 
         if (static_cast<uint32_t>(elapsed) >= timeout_ms) {
-            if (ctx) ctx->message = "Server failed to start within timeout";
+            // Our server didn't start - check if our child process is still running
+            // If not, it might have failed due to database lock conflict
+            if (ctx) ctx->message = "Server failed to start within timeout (database may be locked by another process)";
             return core::Status::LOCK_TIMEOUT;
         }
 

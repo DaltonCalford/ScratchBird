@@ -1,0 +1,3868 @@
+# 06 DML Statements
+
+
+
+<!-- Original PDF Page: 252 -->
+
+Examples using COMMENT ON
+1. Adding a comment for the current database
+COMMENT ON DATABASE IS 'It is a test (''my.fdb'') database';
+2. Adding a comment for the METALS table
+COMMENT ON TABLE METALS IS 'Metal directory';
+3. Adding a comment for the ISALLOY field in the METALS table
+COMMENT ON COLUMN METALS.ISALLOY IS '0 = fine metal, 1 = alloy';
+4. Adding a comment for a parameter
+COMMENT ON PARAMETER ADD_EMP_PROJ.EMP_NO IS 'Employee ID';
+5. Adding a comment for a package, its procedures and functions, and their parameters
+COMMENT ON PACKAGE APP_VAR IS 'Application Variables';
+COMMENT ON FUNCTION APP_VAR.GET_DATEBEGIN
+IS 'Returns the start date of the period';
+COMMENT ON PROCEDURE APP_VAR.SET_DATERANGE
+IS 'Set date range';
+COMMENT ON
+PROCEDURE PARAMETER APP_VAR.SET_DATERANGE.ADATEBEGIN
+IS 'Start Date';
+Chapter 5. Data Definition (DDL) Statements
+251
+
+<!-- Original PDF Page: 253 -->
+
+Chapter 6. Data Manipulation (DML)
+Statements
+DML — data manipulation language — is the subset of SQL that is used by applications and
+procedural modules to extract and change data. Extraction, for the purpose of reading data, both
+raw and manipulated, is achieved with the SELECT statement. INSERT is for adding new data and
+DELETE is for erasing data that is no longer required. UPDATE, MERGE and UPDATE OR INSERT all modify
+data in various ways.
+6.1. SELECT
+“Queries” or retrieves data from the database
+Global syntax
+[WITH [RECURSIVE] <cte> [, <cte> ...]]
+SELECT
+  [FIRST <limit-expression>] [SKIP <limit-expression>]
+  [{ALL | DISTINCT}] <select-list>
+FROM <table-reference> [, <table-reference> ...]
+[WHERE <search-condition>]
+[GROUP BY <value-expression> [, <value-expression> ...]
+[HAVING <search-condition>]]
+[WINDOW <window_definition> [, <window_definition> ...]
+[PLAN <plan-expression>]
+[UNION [{DISTINCT | ALL}] <query-term>]
+[ORDER BY <sort-specification [, <sort-specification> ...]]
+[{ ROWS <value-expression> [TO <value-expression>]
+ | [OFFSET <offset-fetch-expression> {ROW | ROWS}]
+   [FETCH {FIRST | NEXT}
+    [<offset-fetch-expression>] {ROW | ROWS} ONLY]
+}]
+[FOR UPDATE [OF <column-name-list>]]
+[WITH LOCK [SKIP LOCKED]]
+[OPTIMIZE FOR {FIRST | ALL} ROWS]
+[INTO <variable-list>]
+<variable-list> ::= <variable> [, <variable> ...]
+<variable> ::= varname | ':' varname
+
+The above syntax is not the full SELECT syntax. For documentation reasons it is
+simplified, and we attempt to build out the syntax in later sections. The full
+SELECT syntax can be found below, in Full SELECT Syntax.
+The SELECT statement retrieves data from the database and hands them to the application or the
+enclosing SQL statement. Data is returned in zero or more rows, each containing one or more
+Chapter 6. Data Manipulation (DML) Statements
+252
+
+<!-- Original PDF Page: 254 -->
+
+columns or fields. The total of rows returned is the result set of the statement.
+The only mandatory parts of the SELECT statement are:
+• The SELECT keyword, followed by a select list. This part specifies what you want to retrieve.
+• The FROM keyword, followed by a selectable object. This tells the engine where you want to get it
+from.
+In its most basic form, SELECT retrieves a number of columns from a single table or view, like this:
+select id, name, address
+  from contacts
+Or, to retrieve all the columns:
+select * from sales
+In practice, a SELECT statement is usually executed with a WHERE clause, which limits the rows
+returned. The result set may be sorted by an ORDER BY clause, and FIRST … SKIP, OFFSET … FETCH or
+ROWS may further limit the number of returned rows, and can — for example — be used for
+pagination.
+The column list may contain all kinds of expressions, not only column names, and the source need
+not be a table or view: it may also be a derived table, a common table expression (CTE) or a
+selectable stored procedure. Multiple sources may be combined in a JOIN, and multiple result sets
+may be combined in a UNION.
+The following sections discuss the available SELECT subclauses and their usage in detail.
+6.1.1. FIRST, SKIP
+Retrieves a slice of rows from an ordered set
+Syntax
+SELECT
+  [FIRST <limit-expression>] [SKIP <limit-expression>]
+  FROM ...
+  ...
+<limit-expression> ::=
+    <integer-literal>
+  | <query-parameter>
+  | (<value-expression>)
+Table 75. Arguments for the FIRST and SKIP Clauses
+Chapter 6. Data Manipulation (DML) Statements
+253
+
+<!-- Original PDF Page: 255 -->
+
+Argument Description
+integer-literal Integer literal
+query-parameter Query parameter place-holder. ? in DSQL and :paramname in PSQL
+value-expression A valid expression (returning an integer value)
+
+FIRST and SKIP are non-standard syntax
+FIRST and SKIP are Firebird-specific clauses. Use the SQL-standard OFFSET, FETCH
+syntax wherever possible.
+FIRST m limits the output of a query to the first m rows. SKIP n will skip the first n rows of the result
+set before returning rows.
+FIRST and SKIP are both optional. When used together as in “ FIRST m SKIP n”, the n topmost rows of
+the result set are discarded, and the first m rows of the rest of the set are returned.
+Characteristics of FIRST and SKIP
+• Any argument to FIRST and SKIP that is not an integer literal or an SQL parameter must be
+enclosed in parentheses. This implies that a subquery expression must be enclosed in two pairs
+of parentheses.
+• SKIP 0 is allowed but pointless.
+• FIRST 0 is also allowed and returns an empty set.
+• Negative SKIP and/or FIRST values result in an error.
+• If a SKIP lands past the end of the result set, an empty set is returned.
+• If the number of rows in the result set (or the remainder left after a SKIP) is less than the value
+of the m argument supplied for FIRST, that smaller number of rows is returned. These are valid
+results, not error conditions.
+Examples of FIRST/SKIP
+1. The following query will return the first 10 names from the People table:
+select first 10 id, name from People
+  order by name asc
+2. The following query will return everything but the first 10 names:
+select skip 10 id, name from People
+  order by name asc
+3. And this one returns the last 10 rows. Notice the double parentheses:
+select skip ((select count(*) - 10 from People))
+Chapter 6. Data Manipulation (DML) Statements
+254
+
+<!-- Original PDF Page: 256 -->
+
+id, name from People
+  order by name asc
+4. This query returns rows 81 to 100 of the People table:
+select first 20 skip 80 id, name from People
+  order by name asc
+See also
+OFFSET, FETCH, ROWS
+6.1.2. The SELECT Columns List
+The columns list contains one or more comma-separated value expressions. Each expression
+provides a value for one output column. Alternatively, * (“star” or “all”) can be used to stand for all
+the columns of all relations in the FROM clause.
+Syntax
+SELECT
+  [...]
+  [{ ALL | DISTINCT }] <select-list>
+  [...]
+  FROM ...
+<select_list> ::= * | <select-sublist> [, <select-sublist> ...]
+<select-sublist> ::=
+    table-alias.*
+  | <value-expression> [[AS] column-alias]
+<value-expression> ::=
+    [table-alias.]col_name
+  | [table-alias.]selectable_SP_outparm
+  | <literal>
+  | <context-variable>
+  | <function-call>
+  | <single-value-subselect>
+  | <CASE-construct>
+  | any other expression returning a single
+    value of a Firebird data type or NULL
+<function-call> ::=
+    <normal-function>
+  | <aggregate-function>
+  | <window-function>
+<normal-function> ::=
+  !! See Built-in Scalar Functions !!
+Chapter 6. Data Manipulation (DML) Statements
+255
+
+<!-- Original PDF Page: 257 -->
+
+<aggregate-function> ::=
+  !! See Aggregate Functions !!
+<window-function> ::=
+  !! See Window Functions !!
+Table 76. Arguments for the SELECT Columns List
+Argument Description
+table-alias Name of relation (view, stored procedure, derived table), or its alias
+col_name Name of a table or view column, or its alias
+selectable_SP_outparm Declared name of an output parameter of a selectable stored procedure
+literal A literal
+context-variable Context variable
+function-call Scalar, aggregate, or window function expression
+single-value-subselect A subquery returning one scalar value (singleton)
+CASE-construct CASE construct setting conditions for a return value
+It is always valid to qualify a column name (or “ *”) with the name or alias of the table, view or
+selectable SP to which it belongs, followed by a dot (‘ .’). For example, relationname.columnname,
+relationname.*, alias.columnname, alias.*. Qualifying is required if the column name occurs in more
+than one relation taking part in a join. Qualifying “ *” is required if it is not the only item in the
+column list.
+
+Aliases hide the original relation name: once a table, view or procedure has been
+aliased, only the alias can be used as its qualifier throughout the query. The
+relation name itself becomes unavailable.
+The column list may optionally be preceded by one of the keywords DISTINCT or ALL:
+• DISTINCT filters out any duplicate rows. That is, if two or more rows have the same values in
+every corresponding column, only one of them is included in the result set
+• ALL is the default: it returns all rows, including duplicates. ALL is rarely used; it is allowed for
+compliance with the SQL standard.
+A COLLATE clause of a value-expression will not change the appearance of the column as such.
+However, if the specified collation changes the case or accent sensitivity of the column, it may
+influence:
+• The ordering, if an ORDER BY clause is also present, and it involves that column
+• Grouping, if the column is part of a GROUP BY clause
+• The rows retrieved (and hence the total number of rows in the result set), if DISTINCT is used
+Chapter 6. Data Manipulation (DML) Statements
+256
+
+<!-- Original PDF Page: 258 -->
+
+Examples of SELECT queries with different types of column lists
+A simple SELECT using only column names:
+select cust_id, cust_name, phone
+  from customers
+  where city = 'London'
+A query featuring a concatenation expression and a function call in the columns list:
+select 'Mr./Mrs. ' || lastname, street, zip, upper(city)
+  from contacts
+  where date_last_purchase(id) = current_date
+A query with two subselects:
+select p.fullname,
+  (select name from classes c where c.id = p.class) as class,
+  (select name from mentors m where m.id = p.mentor) as mentor
+from pupils p
+The following query accomplishes the same as the previous one using joins instead of subselects:
+select p.fullname,
+  c.name as class,
+  m.name as mentor
+  join classes c on c.id = p.class
+from pupils p
+  join mentors m on m.id = p.mentor
+This query uses a CASE construct to determine the correct title, e.g. when sending mail to a person:
+select case upper(sex)
+    when 'F' then 'Mrs.'
+    when 'M' then 'Mr.'
+    else ''
+  end as title,
+  lastname,
+  address
+from employees
+Query using a window function, ranks employees by salary.
+SELECT
+  id,
+Chapter 6. Data Manipulation (DML) Statements
+257
+
+<!-- Original PDF Page: 259 -->
+
+salary,
+  name ,
+  DENSE_RANK() OVER (ORDER BY salary) AS EMP_RANK
+FROM employees
+ORDER BY salary;
+Querying a selectable stored procedure:
+select * from interesting_transactions(2010, 3, 'S')
+  order by amount
+Selecting from columns of a derived table. A derived table is a parenthesized SELECT statement
+whose result set is used in an enclosing query as if it were a regular table or view. The derived table
+is shown in bold here:
+select fieldcount,
+  count(relation) as num_tables
+from (select r.rdb$relation_name as relation,
+        count(*) as fieldcount
+      from rdb$relations r
+        join rdb$relation_fields rf
+          on rf.rdb$relation_name = r.rdb$relation_name
+      group by relation)
+group by fieldcount
+Asking the time through a context variable (CURRENT_TIME):
+select current_time from rdb$database
+For those not familiar with RDB$DATABASE: this is a system table that is present in all Firebird
+databases and is guaranteed to contain exactly one row. Although it wasn’t created for this purpose,
+it has become standard practice among Firebird programmers to select from this table if you want
+to select “from nothing”, i.e. if you need data that are not bound to a table or view, but can be
+derived from the expressions in the output columns alone. Another example is:
+select power(12, 2) as twelve_squared, power(12, 3) as twelve_cubed
+  from rdb$database
+Finally, an example where you select some meaningful information from RDB$DATABASE itself:
+select rdb$character_set_name from rdb$database
+As you may have guessed, this will give you the default character set of the database.
+Chapter 6. Data Manipulation (DML) Statements
+258
+
+<!-- Original PDF Page: 260 -->
+
+See also
+Functions, Aggregate Functions, Window Functions, Context Variables, CASE, Subqueries
+6.1.3. The FROM clause
+The FROM clause specifies the source(s) from which the data are to be retrieved. In its simplest form,
+this is a single table or view. However, the source can also be a selectable stored procedure, a
+derived table, or a common table expression. Multiple sources can be combined using various types
+of joins.
+This section focuses on single-source selects. Joins are discussed in a following section.
+Syntax
+SELECT
+  ...
+  FROM <table-reference> [, <table-reference> ...]
+  [...]
+<table-reference> ::= <table-primary> | <joined-table>
+<table-primary> ::=
+    <table-or-query-name> [[AS] correlation-name]
+  | [LATERAL] <derived-table> [<correlation-or-recognition>]
+  | <parenthesized-joined-table>
+<table-or-query-name> ::=
+    table-name
+  | query-name
+  | [package-name.]procedure-name [(<procedure-args>)]
+<procedure-args> ::= <value-expression [, <value-expression> ...]
+<derived-table> ::= (<query-expression>)
+<correlation-or-recognition> ::=
+  [AS] correlation-name [(<column-name-list>)]
+<column-name-list> ::= column-name [, column-name ...]
+Table 77. Arguments for the FROM Clause
+Argument Description
+table-name Name of a table or view
+query-name Name of a CTE
+package-name Name of a package
+procedure-name Name of a selectable stored procedure
+procedure-args Selectable stored procedure arguments
+Chapter 6. Data Manipulation (DML) Statements
+259
+
+<!-- Original PDF Page: 261 -->
+
+Argument Description
+derived-table Derived table query expression
+correlation-name The alias of a data source (table, view, procedure, CTE, derived table)
+column-name Name or alias for a column in a relation, CTE or derived table
+Selecting FROM a table or view
+When selecting from a single table or view, the FROM clause requires nothing more than the name.
+An alias may be useful or even necessary if there are subqueries that refer to the main select
+statement (as they often do — subqueries like this are called correlated subqueries).
+Examples
+select id, name, sex, age from actors
+where state = 'Ohio'
+select * from birds
+where type = 'flightless'
+order by family, genus, species
+select firstname,
+  middlename,
+  lastname,
+  date_of_birth,
+  (select name from schools s where p.school = s.id) schoolname
+from pupils p
+where year_started = '2012'
+order by schoolname, date_of_birth
+
+Never mix column names with column aliases!
+If you specify an alias for a table or a view, you must always use this alias in place
+of the table name whenever you query the columns of the relation (and wherever
+else you make a reference to columns, such as ORDER BY , GROUP BY  and WHERE
+clauses).
+Correct use:
+SELECT PEARS
+FROM FRUIT;
+SELECT FRUIT.PEARS
+FROM FRUIT;
+SELECT PEARS
+Chapter 6. Data Manipulation (DML) Statements
+260
+
+<!-- Original PDF Page: 262 -->
+
+FROM FRUIT F;
+SELECT F.PEARS
+FROM FRUIT F;
+Incorrect use:
+SELECT FRUIT.PEARS
+FROM FRUIT F;
+Selecting FROM a stored procedure
+A selectable stored procedure is a procedure that:
+• contains at least one output parameter, and
+• utilizes the SUSPEND keyword so the caller can fetch the output rows one by one, like selecting
+from a table or view.
+The output parameters of a selectable stored procedure correspond to the columns of a regular
+table.
+Selecting from a stored procedure without input parameters is like selecting from a table or view:
+select * from suspicious_transactions
+  where assignee = 'John'
+Any required input parameters must be specified after the procedure name, enclosed in
+parentheses:
+select name, az, alt from visible_stars('Brugge', current_date, '22:30')
+  where alt >= 20
+  order by az, alt
+Values for optional parameters (that is, parameters for which default values have been defined)
+may be omitted or provided. However, if you provide them only partly, the parameters you omit
+must all be at the tail end.
+Supposing that the procedure visible_stars from the previous example has two optional
+parameters: min_magn numeric(3,1) and spectral_class varchar(12), the following queries are all
+valid:
+select name, az, alt
+from visible_stars('Brugge', current_date, '22:30');
+select name, az, alt
+Chapter 6. Data Manipulation (DML) Statements
+261
+
+<!-- Original PDF Page: 263 -->
+
+from visible_stars('Brugge', current_date, '22:30', 4.0);
+select name, az, alt
+from visible_stars('Brugge', current_date, '22:30', 4.0, 'G');
+But this one isn’t, because there’s a “hole” in the parameter list:
+select name, az, alt
+from visible_stars('Brugge', current_date, '22:30', 'G');
+An alias for a selectable stored procedure is specified after the parameter list:
+select
+  number,
+  (select name from contestants c where c.number = gw.number)
+from get_winners('#34517', 'AMS') gw
+If you refer to an output parameter (“column”) by qualifying it with the full procedure name, the
+procedure alias should be omitted:
+select
+  number,
+  (select name from contestants c where c.number = get_winners.number)
+from get_winners('#34517', 'AMS')
+See also
+Stored Procedures, CREATE PROCEDURE
+Selecting FROM a derived table
+A derived table is a valid SELECT statement enclosed in parentheses, optionally followed by a table
+alias and/or column aliases. The result set of the statement acts as a virtual table which the
+enclosing statement can query.
+Syntax
+(<query-expression>) [<correlation-or-recognition>]
+<correlation-or-recognition> ::=
+  [AS] correlation-name [(<column-name-list>)]
+<column-name-list> ::= column-name [, column-name ...]
+ The SQL standard requires the <correlation-or-recognition>, and not providing one
+makes it hard to reference the derived table or its columns. For maximum
+Chapter 6. Data Manipulation (DML) Statements
+262
+
+<!-- Original PDF Page: 264 -->
+
+compatibility and portability, we recommend always specifying an alias
+(correlation-name).
+The result set returned by this “ SELECT … FROM (SELECT FROM … )” style of statement is a virtual
+table that can be queried within the enclosing statement, as if it were a regular table or view.
+LATERAL Derived Tables
+The keyword LATERAL marks a table as a lateral derived table. Lateral derived tables can reference
+tables (including other derived tables) that occur earlier in the FROM clause. See Joins with LATERAL
+Derived Tables for more information.
+Example using a derived table
+The derived table in the query below returns the list of table names in the database, and the
+number of columns in each table. A “drill-down” query on the derived table returns the counts of
+fields and the counts of tables having each field count:
+SELECT
+  FIELDCOUNT,
+  COUNT(RELATION) AS NUM_TABLES
+FROM (SELECT
+        R.RDB$RELATION_NAME RELATION,
+        COUNT(*) AS FIELDCOUNT
+      FROM RDB$RELATIONS R
+        JOIN RDB$RELATION_FIELDS RF
+        ON RF.RDB$RELATION_NAME = R.RDB$RELATION_NAME
+        GROUP BY RELATION)
+GROUP BY FIELDCOUNT
+A trivial example demonstrating how the alias of a derived table and the list of column aliases (both
+optional) can be used:
+SELECT
+  DBINFO.DESCR, DBINFO.DEF_CHARSET
+FROM (SELECT *
+      FROM RDB$DATABASE) DBINFO
+        (DESCR, REL_ID, SEC_CLASS, DEF_CHARSET)
+
+More about Derived Tables
+Derived tables can
+• be nested
+• be unions, and can be used in unions
+• contain aggregate functions, subqueries and joins
+• be used in aggregate functions, subqueries and joins
+Chapter 6. Data Manipulation (DML) Statements
+263
+
+<!-- Original PDF Page: 265 -->
+
+• be calls to selectable stored procedures or queries to them
+• have WHERE, ORDER BY and GROUP BY clauses, FIRST/SKIP or ROWS directives, et al.
+Furthermore,
+• Each column in a derived table must have a name. If it does not have a name,
+such as when it is a constant or a run-time expression, it should be given an
+alias, either in the regular way or by including it in the list of column aliases in
+the derived table’s specification.
+◦ The list of column aliases is optional but, if it exists, it must contain an alias
+for every column in the derived table
+• The optimizer can process derived tables very effectively. However, if a
+derived table is included in an inner join and contains a subquery, the
+optimizer will be unable to use any other join order.
+A more useful example
+Suppose we have a table COEFFS which contains the coefficients of a number of quadratic equations
+we have to solve. It has been defined like this:
+create table coeffs (
+  a double precision not null,
+  b double precision not null,
+  c double precision not null,
+  constraint chk_a_not_zero check (a <> 0)
+)
+Depending on the values of a, b and c, each equation may have zero, one or two solutions. It is
+possible to find these solutions with a single-level query on table COEFFS, but the code will look
+messy and several values (like the discriminant) will have to be calculated multiple times per row.
+A derived table can help keep things clean here:
+select
+  iif (D >= 0, (-b - sqrt(D)) / denom, null) sol_1,
+  iif (D >  0, (-b + sqrt(D)) / denom, null) sol_2
+  from
+    (select b, b*b - 4*a*c, 2*a from coeffs) (b, D, denom)
+If we want to show the coefficients next to the solutions (which may not be a bad idea), we can alter
+the query like this:
+select
+  a, b, c,
+  iif (D >= 0, (-b - sqrt(D)) / denom, null) sol_1,
+  iif (D >  0, (-b + sqrt(D)) / denom, null) sol_2
+  from
+Chapter 6. Data Manipulation (DML) Statements
+264
+
+<!-- Original PDF Page: 266 -->
+
+(select a, b, c, b*b - 4*a*c as D, 2*a as denom
+     from coeffs)
+Notice that whereas the first query used a column aliases list for the derived table, the second adds
+aliases internally where needed. Both methods work, as long as every column is guaranteed to have
+a name.
+
+All columns in the derived table will be evaluated as many times as they are
+specified in the main query. This is important, as it can lead to unexpected results
+when using non-deterministic functions. The following shows an example of this.
+SELECT
+  UUID_TO_CHAR(X) AS C1,
+  UUID_TO_CHAR(X) AS C2,
+  UUID_TO_CHAR(X) AS C3
+FROM (SELECT GEN_UUID() AS X
+      FROM RDB$DATABASE) T;
+The result if this query produces three different values:
+C1  80AAECED-65CD-4C2F-90AB-5D548C3C7279
+C2  C1214CD3-423C-406D-B5BD-95BF432ED3E3
+C3  EB176C10-F754-4689-8B84-64B666381154
+To ensure a single result of the GEN_UUID function, you can use the following
+method:
+SELECT
+  UUID_TO_CHAR(X) AS C1,
+  UUID_TO_CHAR(X) AS C2,
+  UUID_TO_CHAR(X) AS C3
+FROM (SELECT GEN_UUID() AS X
+      FROM RDB$DATABASE
+      UNION ALL
+      SELECT NULL FROM RDB$DATABASE WHERE 1 = 0) T;
+This query produces a single result for all three columns:
+C1  80AAECED-65CD-4C2F-90AB-5D548C3C7279
+C2  80AAECED-65CD-4C2F-90AB-5D548C3C7279
+C3  80AAECED-65CD-4C2F-90AB-5D548C3C7279
+An alternative solution is to wrap the GEN_UUID query in a subquery:
+SELECT
+Chapter 6. Data Manipulation (DML) Statements
+265
+
+<!-- Original PDF Page: 267 -->
+
+UUID_TO_CHAR(X) AS C1,
+  UUID_TO_CHAR(X) AS C2,
+  UUID_TO_CHAR(X) AS C3
+FROM (SELECT
+        (SELECT GEN_UUID() FROM RDB$DATABASE) AS X
+      FROM RDB$DATABASE) T;
+This is an artifact of the current implementation. This behaviour may change in a
+future Firebird version.
+Selecting FROM a Common Table Expression (CTE)
+A common table expression — or CTE — is a more complex variant of the derived table, but it is also
+more powerful. A preamble, starting with the keyword WITH, defines one or more named CTEs, each
+with an optional column aliases list. The main query, which follows the preamble, can then access
+these CTEs as if they were regular tables or views. The CTEs go out of scope once the main query
+has run to completion.
+For a full discussion of CTEs, please refer to the section Common Table Expressions (“WITH … AS …
+SELECT”).
+The following is a rewrite of our derived table example as a CTE:
+with vars (b, D, denom) as (
+  select b, b*b - 4*a*c, 2*a from coeffs
+)
+select
+  iif (D >= 0, (-b - sqrt(D)) / denom, null) sol_1,
+  iif (D >  0, (-b + sqrt(D)) / denom, null) sol_2
+from vars
+Except for the fact that the calculations that have to be made first are now at the beginning, this
+isn’t a great improvement over the derived table version. However, we can now also eliminate the
+double calculation of sqrt(D) for every row:
+with vars (b, D, denom) as (
+  select b, b*b - 4*a*c, 2*a from coeffs
+),
+vars2 (b, D, denom, sqrtD) as (
+  select b, D, denom, iif (D >= 0, sqrt(D), null) from vars
+)
+select
+  iif (D >= 0, (-b - sqrtD) / denom, null) sol_1,
+  iif (D >  0, (-b + sqrtD) / denom, null) sol_2
+from vars2
+The code is a little more complicated now, but it might execute more efficiently (depending on what
+Chapter 6. Data Manipulation (DML) Statements
+266
+
+<!-- Original PDF Page: 268 -->
+
+takes more time: executing the SQRT function or passing the values of b, D and denom through an
+extra CTE). Incidentally, we could have done the same with derived tables, but that would involve
+nesting.
+
+All columns in the CTE will be evaluated as many times as they are specified in the
+main query. This is important, as it can lead to unexpected results when using non-
+deterministic functions. The following shows an example of this.
+WITH T (X) AS (
+  SELECT GEN_UUID()
+  FROM RDB$DATABASE)
+SELECT
+  UUID_TO_CHAR(X) as c1,
+  UUID_TO_CHAR(X) as c2,
+  UUID_TO_CHAR(X) as c3
+FROM T
+The result if this query produces three different values:
+C1  80AAECED-65CD-4C2F-90AB-5D548C3C7279
+C2  C1214CD3-423C-406D-B5BD-95BF432ED3E3
+C3  EB176C10-F754-4689-8B84-64B666381154
+To ensure a single result of the GEN_UUID function, you can use the following
+method:
+WITH T (X) AS (
+  SELECT GEN_UUID()
+  FROM RDB$DATABASE
+  UNION ALL
+  SELECT NULL FROM RDB$DATABASE WHERE 1 = 0)
+SELECT
+  UUID_TO_CHAR(X) as c1,
+  UUID_TO_CHAR(X) as c2,
+  UUID_TO_CHAR(X) as c3
+FROM T;
+This query produces a single result for all three columns:
+C1  80AAECED-65CD-4C2F-90AB-5D548C3C7279
+C2  80AAECED-65CD-4C2F-90AB-5D548C3C7279
+C3  80AAECED-65CD-4C2F-90AB-5D548C3C7279
+An alternative solution is to wrap the GEN_UUID query in a subquery:
+Chapter 6. Data Manipulation (DML) Statements
+267
+
+<!-- Original PDF Page: 269 -->
+
+WITH T (X) AS (
+  SELECT (SELECT GEN_UUID() FROM RDB$DATABASE)
+  FROM RDB$DATABASE)
+SELECT
+  UUID_TO_CHAR(X) as c1,
+  UUID_TO_CHAR(X) as c2,
+  UUID_TO_CHAR(X) as c3
+FROM T;
+This is an artifact of the current implementation. This behaviour may change in a
+future Firebird version.
+See also
+Common Table Expressions (“WITH … AS … SELECT”).
+6.1.4. Joins
+Joins combine data from two sources into a single set. This is done on a row-by-row basis and
+usually involves checking a join condition to determine which rows should be merged and appear
+in the resulting dataset. There are several types ( INNER, OUTER) and classes (qualified, natural, etc.) of
+joins, each with its own syntax and rules.
+Since joins can be chained, the datasets involved in a join may themselves be joined sets.
+Syntax
+SELECT
+   ...
+   FROM <table-reference> [, <table-reference> ...]
+   [...]
+<table-reference> ::= <table-primary> | <joined-table>
+<table-primary> ::=
+    <table-or-query-name> [[AS] correlation-name]
+  | [LATERAL] <derived-table> [<correlation-or-recognition>]
+  | <parenthesized-joined-table>
+<table-or-query-name> ::=
+    table-name
+  | query-name
+  | [package-name.]procedure-name [(<procedure-args>)]
+<procedure-args> ::= <value-expression [, <value-expression> ...]
+<correlation-or-recognition> ::=
+  [AS] correlation-name [(<column-name-list>)]
+<column-name-list> ::= column-name [, column-name ...]
+Chapter 6. Data Manipulation (DML) Statements
+268
+
+<!-- Original PDF Page: 270 -->
+
+<derived-table> ::= (<query-expression>)
+<parenthesized-joined-table> ::=
+    (<parenthesized-joined-table)
+  | (<joined-table>)
+<joined-table> ::=
+    <cross-join>
+  | <natural-join>
+  | <qualified-join>
+<cross-join>
+  <table-reference> CROSS JOIN <table-primary>
+<natural-join> ::=
+  <table-reference> NATURAL [<join-type>] JOIN <table-primary>
+<join-type> ::= INNER | { LEFT | RIGHT | FULL } [OUTER]
+<qualified-join> ::=
+  <table-reference> [<join-type>] JOIN <table-primary>
+  { ON <search-condition>
+  | USING (<column-name-list>) }
+Table 78. Arguments for JOIN Clauses
+Argument Description
+table-name Name of a table or view
+query-name Name of a CTE
+package-name Name of a package
+procedure-name Name of a selectable stored procedure
+procedure-args Selectable stored procedure input parameter(s)
+derived-table Derived table query expression
+correlation-name The alias of a data source (table, view, procedure, CTE, derived table)
+column-name Name or alias for a column in a relation, CTE or derived table
+search-condition Join condition (criterion)
+column-name-list List of aliases of the columns of a derived table, or the list of columns
+used for an equi-join
+Inner vs. Outer Joins
+A join combines data rows from two sets (usually referred to as the left set and the right set). By
+default, only rows that meet the join condition (i.e. that match at least one row in the other set
+when the join condition is applied) make it into the result set. This default type of join is called an
+inner join. Suppose we have the following two tables:
+Chapter 6. Data Manipulation (DML) Statements
+269
+
+<!-- Original PDF Page: 271 -->
+
+Table A
+ID S
+87 Just some text
+235 Silence
+Table B
+CODE X
+-23 56.7735
+87 416.0
+If we join these tables like this:
+select *
+  from A
+  join B on A.id = B.code;
+then the result set will be:
+ID S CODE X
+87 Just some text 87 416.0
+The first row of A has been joined with the second row of B because together they met the condition
+“A.id = B.code”. The other rows from the source tables have no match in the opposite set and are
+therefore not included in the join. Remember, this is an INNER join. We can make that fact explicit by
+writing:
+select *
+  from A
+  inner join B on A.id = B.code;
+However, since INNER is the default, it is usually omitted.
+It is perfectly possible that a row in the left set matches several rows from the right set or vice
+versa. In that case, all those combinations are included, and we can get results like:
+ID S CODE X
+87 Just some text 87 416.0
+87 Just some text 87 -1.0
+-23 Don’t know -23 56.7735
+-23 Still don’t know -23 56.7735
+-23 I give up -23 56.7735
+Chapter 6. Data Manipulation (DML) Statements
+270
+
+<!-- Original PDF Page: 272 -->
+
+Sometimes we want (or need) all the rows of one or both of the sources to appear in the joined set,
+even if they don’t match a record in the other source. This is where outer joins come in. A LEFT
+outer join includes all the records from the left set, but only matching records from the right set. In
+a RIGHT outer join it’s the other way around. A FULL outer joins include all the records from both
+sets. In all outer joins, the “holes” (the places where an included source record doesn’t have a
+match in the other set) are filled up with NULLs.
+To make an outer join, you must specify LEFT, RIGHT or FULL, optionally followed by the keyword
+OUTER.
+Below are the results of the various outer joins when applied to our original tables A and B:
+select *
+  from A
+  left outer join B on A.id = B.code;
+ID S CODE X
+87 Just some text 87 416.0
+235 Silence <null> <null>
+select *
+  from A
+  right outer join B on A.id = B.code
+ID S CODE X
+<null> <null> -23 56.7735
+87 Just some text 87 416.0
+select *
+  from A
+  full outer join B on A.id = B.code
+ID S CODE X
+<null> <null> -23 56.7735
+87 Just some text 87 416.0
+235 Silence <null> <null>
+Qualified joins
+Qualified joins specify conditions for the combining of rows. This happens either explicitly in an ON
+clause or implicitly in a USING clause.
+Chapter 6. Data Manipulation (DML) Statements
+271
+
+<!-- Original PDF Page: 273 -->
+
+Syntax
+<qualified-join> ::=
+  <table-reference> [<join-type>] JOIN <table-primary>
+  { ON <search-condition>
+  | USING (<column-name-list>) }
+<join-type> ::= INNER | {LEFT | RIGHT | FULL} [OUTER]
+Explicit-condition joins
+Most qualified joins have an ON clause, with an explicit condition that can be any valid Boolean
+expression, but usually involves a comparison between the two sources involved.
+Often, the condition is an equality test (or a number of ANDed equality tests) using the “ =” operator.
+Joins like these are called equi-joins. (The examples in the section on inner and outer joins were all
+equi-joins.)
+Examples of joins with an explicit condition:
+/* Select all Detroit customers who made a purchase
+   in 2013, along with the purchase details: */
+select * from customers c
+  join sales s on s.cust_id = c.id
+  where c.city = 'Detroit' and s.year = 2013;
+/* Same as above, but include non-buying customers: */
+select * from customers c
+  left join sales s on s.cust_id = c.id
+  where c.city = 'Detroit' and s.year = 2013;
+/* For each man, select the women who are taller than he.
+   Men for whom no such woman exists are not included. */
+select m.fullname as man, f.fullname as woman
+  from males m
+  join females f on f.height > m.height;
+/* Select all pupils with their class and mentor.
+   Pupils without a mentor are also included.
+   Pupils without a class are not included. */
+select p.firstname, p.middlename, p.lastname,
+       c.name, m.name
+  from pupils p
+  join classes c on c.id = p.class
+  left join mentors m on m.id = p.mentor;
+Chapter 6. Data Manipulation (DML) Statements
+272
+
+<!-- Original PDF Page: 274 -->
+
+Named columns joins
+Equi-joins often compare columns that have the same name in both tables. If this is the case, we can
+also use the second type of qualified join: the named columns join.
+ Named columns joins are not supported in Dialect 1 databases.
+Named columns joins have a USING clause which states only the column names. So instead of this:
+select * from flotsam f
+  join jetsam j
+  on f.sea = j.sea
+  and f.ship = j.ship;
+we can also write:
+select * from flotsam
+  join jetsam using (sea, ship)
+which is considerably shorter. The result set is a little different though — at least when using
+“SELECT *”:
+• The explicit-condition join — with the ON clause — will contain each of the columns SEA and SHIP
+twice: once from table FLOTSAM, and once from table JETSAM. Obviously, they will have the same
+values.
+• The named columns join — with the USING clause — will contain these columns only once.
+If you want all the columns in the result set of the named columns join, set up your query like this:
+select f.*, j.*
+  from flotsam f
+  join jetsam j using (sea, ship);
+This will give you the same result set as the explicit-condition join.
+For an OUTER named columns join, there’s an additional twist when using “ SELECT * ” or an
+unqualified column name from the USING list:
+If a row from one source set doesn’t have a match in the other but must still be included because of
+the LEFT, RIGHT or FULL directive, the merged column in the joined set gets the non-NULL value. That is
+fair enough, but now you can’t tell whether this value came from the left set, the right set, or both.
+This can be especially deceiving when the value came from the right hand set, because “ *” always
+shows combined columns in the left hand part — even in the case of a RIGHT join.
+Whether this is a problem or not depends on the situation. If it is, use the “ a.*, b.*” approach
+shown above, with a and b the names or aliases of the two sources. Or better yet, avoid “ *”
+altogether in your serious queries and qualify all column names in joined sets. This has the
+Chapter 6. Data Manipulation (DML) Statements
+273
+
+<!-- Original PDF Page: 275 -->
+
+additional benefit that it forces you to think about which data you want to retrieve and where from.
+It is your responsibility to make sure the column names in the USING list are of compatible types
+between the two sources. If the types are compatible but not equal, the engine converts them to the
+type with the broadest range of values before comparing the values. This will also be the data type
+of the merged column that shows up in the result set if “ SELECT *” or the unqualified column name
+is used. Qualified columns on the other hand will always retain their original data type.
+
+If, when joining by named columns, you are using a join column in the WHERE
+clause, always use the qualified column name, otherwise an index on this column
+will not be used.
+SELECT 1 FROM t1 a JOIN t2 b USING (x) WHERE x = 0;
+-- PLAN JOIN (A NATURAL , B INDEX (RDB$2))
+However:
+SELECT 1 FROM t1 a JOIN t2 b USING (x) WHERE a.x = 0;
+-- PLAN JOIN (A INDEX (RDB$1), B INDEX (RDB$2))
+SELECT 1 FROM t1 a JOIN t2 b USING (x) WHERE b.x = 0;
+-- PLAN JOIN (A INDEX (RDB$1), B INDEX (RDB$2))
+The fact is, the unspecified column in this case is implicitly replaced by
+`COALESCE(a.x, b.x). This trick is used to disambiguate column names, but it also
+interferes with the use of the index.
+Natural joins
+Taking the idea of the named columns join a step further, a natural join  performs an automatic
+equi-join on all the columns that have the same name in the left and right table. The data types of
+these columns must be compatible.
+ Natural joins are not supported in Dialect 1 databases.
+Syntax
+<natural-join> ::=
+  <table-reference> NATURAL [<join-type>] JOIN <table-primary>
+<join-type> ::= INNER | {LEFT | RIGHT | FULL} [OUTER]
+Given these two tables:
+create table TA (
+Chapter 6. Data Manipulation (DML) Statements
+274
+
+<!-- Original PDF Page: 276 -->
+
+a bigint,
+  s varchar(12),
+  ins_date date
+);
+create table TB (
+  a bigint,
+  descr varchar(12),
+  x float,
+  ins_date date
+);
+A natural join on TA and TB would involve the columns a and ins_date, and the following two
+statements would have the same effect:
+select * from TA
+  natural join TB;
+select * from TA
+  join TB using (a, ins_date);
+Like all joins, natural joins are inner joins by default, but you can turn them into outer joins by
+specifying LEFT, RIGHT or FULL before the JOIN keyword.
+ If there are no columns with the same name in the two source relations, a CROSS
+JOIN is performed. We’ll get to this type of join next.
+Cross joins
+A cross join produces the full set product — or Cartesian product — of the two data sources. This
+means that it successfully matches every row in the left source to every row in the right source.
+Syntax
+FROM <table-reference> [, <table-reference> ...]
+<cross-join>
+  <table-reference> CROSS JOIN <table-primary>
+Use of the comma syntax is discouraged, and we recommend using the explicit join syntax.
+Cross-joining two sets is equivalent to joining them on a tautology (a condition that is always true).
+The following two statements have the same effect:
+select * from TA
+Chapter 6. Data Manipulation (DML) Statements
+275
+
+<!-- Original PDF Page: 277 -->
+
+cross join TB;
+select * from TA
+  join TB on TRUE;
+Cross joins are inner joins, because they only include matching records –- it just so happens that
+every record matches! An outer cross join, if it existed, wouldn’t add anything to the result, because
+what outer joins add are non-matching records, and these don’t exist in cross joins.
+Cross joins are seldom useful, except if you want to list all the possible combinations of two or more
+variables. Suppose you are selling a product that comes in different sizes, different colors and
+different materials. If these variables are each listed in a table of their own, this query would
+return all the combinations:
+select m.name, s.size, c.name
+  from materials m
+  cross join sizes s
+  cross join colors c;
+Implicit Joins
+In the SQL:89 standard, the tables involved in a join were specified as a comma-delimited list in the
+FROM clause (in other words, a cross join). The join conditions were then specified in the WHERE clause
+among other search terms. This type of join is called an implicit join.
+An example of an implicit join:
+/*
+ * A sample of all Detroit customers who
+ * made a purchase.
+ */
+SELECT *
+FROM customers c, sales s
+WHERE s.cust_id = c.id AND c.city = 'Detroit'
+Mixing Explicit and Implicit Joins
+Mixing explicit and implicit joins is not recommend, but is allowed. However, some types of mixing
+are not supported by Firebird.
+For example, the following query will raise the error “Column does not belong to referenced table”
+SELECT *
+FROM TA, TB
+JOIN TC ON TA.COL1 = TC.COL1
+Chapter 6. Data Manipulation (DML) Statements
+276
+
+<!-- Original PDF Page: 278 -->
+
+WHERE TA.COL2 = TB.COL2
+That is because the explicit join cannot see the TA table. However, the next query will complete
+without error, since the restriction is not violated.
+SELECT *
+FROM TA, TB
+JOIN TC ON TB.COL1 = TC.COL1
+WHERE TA.COL2 = TB.COL2
+A Note on Equality
+ This note about equality and inequality operators applies everywhere in Firebird’s
+SQL language, not only in JOIN conditions.
+The “=” operator, which is explicitly used in many conditional joins and implicitly in named column
+joins and natural joins, only matches values to values. According to the SQL standard, NULL is not a
+value and hence two NULLs are neither equal nor unequal to one another. If you need NULLs to match
+each other in a join, use the IS NOT DISTINCT FROM  operator. This operator returns true if the
+operands have the same value or if they are both NULL.
+select *
+  from A join B
+  on A.id is not distinct from B.code;
+Likewise, when you want to join on inequality, use IS DISTINCT FROM, not “<>”, if you want NULL to be
+considered different from any value and two NULLs considered equal:
+select *
+  from A join B
+  on A.id is distinct from B.code;
+Ambiguous field names in joins
+Firebird rejects unqualified field names in a query if these field names exist in more than one
+dataset involved in a join. This is even true for inner equi-joins where the field name figures in the
+ON clause like this:
+select a, b, c
+  from TA
+  join TB on TA.a = TB.a;
+There is one exception to this rule: with named columns joins and natural joins, the unqualified
+field name of a column taking part in the matching process may be used legally and refers to the
+Chapter 6. Data Manipulation (DML) Statements
+277
+
+<!-- Original PDF Page: 279 -->
+
+merged column of the same name. For named columns joins, these are the columns listed in the
+USING clause. For natural joins, they are the columns that have the same name in both relations. But
+please notice again that, especially in outer joins, plain colname isn’t always the same as
+left.colname or right.colname. Types may differ, and one of the qualified columns may be NULL
+while the other isn’t. In that case, the value in the merged, unqualified column may mask the fact
+that one of the source values is absent.
+Joins with LATERAL Derived Tables
+A derived table defined with the LATERAL keyword is called a lateral derived table. If a derived table
+is defined as lateral, then it is allowed to refer to other tables in the same FROM clause, but only those
+declared before it in the FROM clause.
+Lateral Derived Table Examples
+/* select customers with their last order date and number */
+select c.name, ox.order_date as last_order, ox.number
+from customer c
+  left join LATERAL (
+    select first 1 o.order_date, o.number
+    from orders o
+    where o.id_customer = c.id
+    order by o.ORDER_DATE desc
+  ) as ox on true
+--
+select dt.population, dt.city_name, c.country_name
+from (select distinct country_name from cities) AS c
+  cross join LATERAL (
+    select first 1 city_name, population
+    from cities
+    where cities.country_name = c.country_name
+    order by population desc
+  ) AS dt;
+--
+select salespeople.name,
+       max_sale.amount,
+       customer_of_max_sale.customer_name
+from salespeople,
+  LATERAL ( select max(amount) as amount
+            from all_sales
+            where all_sales.salesperson_id = salespeople.id
+  ) as max_sale,
+  LATERAL ( select customer_name
+            from all_sales
+            where all_sales.salesperson_id = salespeople.id
+            and all_sales.amount = max_sale.amount
+  ) as customer_of_max_sale;
+Chapter 6. Data Manipulation (DML) Statements
+278
+
+<!-- Original PDF Page: 280 -->
+
+6.1.5. The WHERE clause
+The WHERE clause serves to limit the rows returned to the ones that the caller is interested in. The
+condition following the keyword WHERE can be as simple as a check like “ AMOUNT = 3” or it can be a
+multilayered, convoluted expression containing subselects, predicates, function calls, mathematical
+and logical operators, context variables and more.
+The condition in the WHERE clause is often called the search condition , the search expression  or
+simply the search.
+In DSQL and ESQL, the search condition may contain parameters. This is useful if a query has to be
+repeated a number of times with different input values. In the SQL string as it is passed to the
+server, question marks are used as placeholders for the parameters. These question marks are
+called positional parameters  because they can only be told apart by their position in the string.
+Connectivity libraries often support named parameters of the form :id, :amount, :a etc. These are
+more user-friendly; the library takes care of translating the named parameters to positional
+parameters before passing the statement to the server.
+The search condition may also contain local (PSQL) or host (ESQL) variable names, preceded by a
+colon.
+Syntax
+SELECT ...
+  FROM ...
+  [...]
+  WHERE <search-condition>
+  [...]
+Table 79. Argument of WHERE
+Parameter Description
+search-condition A Boolean expression returning TRUE, FALSE or UNKNOWN (NULL)
+Only those rows for which the search condition evaluates to TRUE are included in the result set. Be
+careful with possible NULL outcomes: if you negate a NULL expression with NOT, the result will still be
+NULL and the row will not pass. This is demonstrated in one of the examples below.
+Examples
+select genus, species from mammals
+  where family = 'Felidae'
+  order by genus;
+select * from persons
+  where birthyear in (1880, 1881)
+     or birthyear between 1891 and 1898;
+Chapter 6. Data Manipulation (DML) Statements
+279
+
+<!-- Original PDF Page: 281 -->
+
+select name, street, borough, phone
+  from schools s
+  where exists (select * from pupils p where p.school = s.id)
+  order by borough, street;
+select * from employees
+  where salary >= 10000 and position <> 'Manager';
+select name from wrestlers
+  where region = 'Europe'
+    and weight > all (select weight from shot_putters
+                      where region = 'Africa');
+select id, name from players
+  where team_id = (select id from teams where name = 'Buffaloes');
+select sum (population) from towns
+  where name like '%dam'
+  and province containing 'land';
+select password from usertable
+  where username = current_user;
+The following example shows what can happen if the search condition evaluates to NULL.
+Suppose you have a table listing children’s names and the number of marbles they possess. At a
+certain moment, the table contains this data:
+CHILD MARBLES
+Anita 23
+Bob E. 12
+Chris <null>
+Deirdre 1
+Eve 17
+Fritz 0
+Gerry 21
+Hadassah <null>
+Isaac 6
+Chapter 6. Data Manipulation (DML) Statements
+280
+
+<!-- Original PDF Page: 282 -->
+
+First, please notice the difference between NULL and 0: Fritz is known to have no marbles at all,
+Chris’s and Hadassah’s marble counts are unknown.
+Now, if you issue this SQL statement:
+select list(child) from marbletable where marbles > 10;
+you will get the names Anita, Bob E., Eve and Gerry. These children all have more than 10 marbles.
+If you negate the expression:
+select list(child) from marbletable where not marbles > 10
+it’s the turn of Deirdre, Fritz and Isaac to fill the list. Chris and Hadassah are not included, because
+they aren’t known to have ten or fewer marbles. Should you change that last query to:
+select list(child) from marbletable where marbles <= 10;
+the result will still be the same, because the expression NULL <= 10 yields UNKNOWN. This is not the
+same as TRUE, so Chris and Hadassah are not listed. If you want them listed with the “poor” children,
+change the query to:
+select list(child) from marbletable
+where marbles <= 10 or marbles is null;
+Now the search condition becomes true for Chris and Hadassah, because “ marbles is null ”
+obviously returns TRUE in their case. In fact, the search condition cannot be NULL for anybody now.
+Lastly, two examples of SELECT queries with parameters in the search. It depends on the application
+how you should define query parameters and even if it is possible at all. Notice that queries like
+these cannot be executed immediately: they have to be prepared first. Once a parameterized query
+has been prepared, the user (or calling code) can supply values for the parameters and have it
+executed many times, entering new values before every call. How the values are entered and the
+execution started is up to the application. In a GUI environment, the user typically types the
+parameter values in one or more text boxes and then clicks an “Execute”, “Run” or “Refresh”
+button.
+select name, address, phone frome stores
+  where city = ? and class = ?;
+select * from pants
+  where model = :model and size = :size and color = :col;
+Chapter 6. Data Manipulation (DML) Statements
+281
+
+<!-- Original PDF Page: 283 -->
+
+The last query cannot be passed directly to the engine; the application must convert it to the other
+format first, mapping named parameters to positional parameters.
+6.1.6. The GROUP BY clause
+GROUP BY merges output rows that have the same combination of values in its item list into a single
+row. Aggregate functions in the select list are applied to each group individually instead of to the
+dataset as a whole.
+If the select list only contains aggregate columns or, more generally, columns whose values don’t
+depend on individual rows in the underlying set, GROUP BY is optional. When omitted, the final
+result set consists of a single row (provided that at least one aggregated column is present).
+If the select list contains both aggregate columns and columns whose values may vary per row, the
+GROUP BY clause becomes mandatory.
+Syntax
+SELECT ... FROM ...
+  GROUP BY <grouping-item> [, <grouping-item> ...]
+  [HAVING <grouped-row-condition>]
+  ...
+<grouping-item> ::=
+    <non-aggr-select-item>
+  | <non-aggr-expression>
+<non-aggr-select-item> ::=
+    column-copy
+  | column-alias
+  | column-position
+Table 80. Arguments for the GROUP BY Clause
+Argument Description
+<grouping-item> Expression to group on; in the rest of this chapter, we use <value-
+expression> in GROUP BY syntax
+non-aggr-expression Any non-aggregating expression that is not included in the SELECT list, i.e.
+unselected columns from the source set or expressions that do not
+depend on the data in the set at all
+column-copy A literal copy, from the SELECT list, of an expression that contains no
+aggregate function
+column-alias The alias, from the SELECT list, of an expression (column) that contains no
+aggregate function
+column-position The position number, in the SELECT list, of an expression (column) that
+contains no aggregate function
+A general rule of thumb is that every non-aggregate item in the SELECT list must also be in the GROUP
+Chapter 6. Data Manipulation (DML) Statements
+282
+
+<!-- Original PDF Page: 284 -->
+
+BY list. You can do this in three ways:
+1. By copying the item verbatim from the select list, e.g. “class” or “'D:' || upper(doccode)”.
+2. By specifying the column alias, if it exists.
+3. By specifying the column position as an integer literal between 1 and the number of columns.
+Integer values resulting from expressions or parameter substitutions are simple constant values
+and not column position and will be used as such in the grouping. They will have no effect
+though, as their value is the same for each row.
+
+If you group by a column position, the expression at that position is copied
+internally from the select list. If it concerns a subquery, that subquery will be
+executed again in the grouping phase. That is to say, grouping by the column
+position, rather than duplicating the subquery expression in the grouping clause,
+saves keystrokes and bytes, but it is not a way of saving processing cycles!
+In addition to the required items, the grouping list may also contain:
+• Columns from the source table that are not in the select list, or non-aggregate expressions based
+on such columns. Adding such columns may further subdivide the groups. However, since these
+columns are not in the select list, you can’t tell which aggregated row corresponds to which
+value in the column. So, in general, if you are interested in this information, you also include
+the column or expression in the select list — which brings you back to the rule: “every non-
+aggregate column in the select list must also be in the grouping list”.
+• Expressions that aren’t dependent on the data in the underlying set, e.g. constants, context
+variables, single-value non-correlated subselects etc. This is only mentioned for completeness,
+as adding such items is utterly pointless: they don’t affect the grouping at all. “Harmless but
+useless” items like these may also figure in the select list without being copied to the grouping
+list.
+Examples
+When the select list contains only aggregate columns, GROUP BY is not mandatory:
+select count(*), avg(age) from students
+  where sex = 'M';
+This will return a single row listing the number of male students and their average age. Adding
+expressions that don’t depend on values in individual rows of table STUDENTS doesn’t change that:
+select count(*), avg(age), current_date from students
+  where sex = 'M';
+The row will now have an extra column showing the current date, but other than that, nothing
+fundamental has changed. A GROUP BY clause is still not required.
+However, in both the above examples it is allowed. This is perfectly valid:
+Chapter 6. Data Manipulation (DML) Statements
+283
+
+<!-- Original PDF Page: 285 -->
+
+select count(*), avg(age) from students
+  where sex = 'M'
+  group by class;
+This will return a row for each class that has boys in it, listing the number of boys and their average
+age in that particular class. (If you also leave the current_date field in, this value will be repeated on
+every row, which is not very exciting.)
+The above query has a major drawback though: it gives you information about the different classes,
+but it doesn’t tell you which row applies to which class. To get that extra bit of information, add the
+non-aggregate column CLASS to the select list:
+select class, count(*), avg(age) from students
+  where sex = 'M'
+  group by class;
+Now we have a useful query. Notice that the addition of column CLASS also makes the GROUP BY
+clause mandatory. We can’t drop that clause anymore, unless we also remove CLASS from the
+column list.
+The output of our last query may look something like this:
+CLASS COUNT AVG
+2A 12 13.5
+2B 9 13.9
+3A 11 14.6
+3B 12 14.4
+… … …
+The headings “COUNT” and “AVG” are not very informative. In a simple case like this, you might get
+away with that, but in general you should give aggregate columns a meaningful name by aliasing
+them:
+select class,
+       count(*) as num_boys,
+       avg(age) as boys_avg_age
+  from students
+  where sex = 'M'
+  group by class;
+Adding more non-aggregate (or, row-dependent) columns requires adding them to the GROUP BY
+clause too. For instance, you might want to see the above information for girls as well; and you may
+also want to differentiate between boarding and day students:
+Chapter 6. Data Manipulation (DML) Statements
+284
+
+<!-- Original PDF Page: 286 -->
+
+select class,
+       sex,
+       boarding_type,
+       count(*) as number,
+       avg(age) as avg_age
+  from students
+  group by class, sex, boarding_type;
+This may give you the following result:
+CLASS SEX BOARDING_TYPE NUMBER AVG_AGE
+2A F BOARDING 9 13.3
+2A F DAY 6 13.5
+2A M BOARDING 7 13.6
+2A M DAY 5 13.4
+2B F BOARDING 11 13.7
+2B F DAY 5 13.7
+2B M BOARDING 6 13.8
+… … … … …
+Each row in the result set corresponds to one particular combination of the columns CLASS, SEX and
+BOARDING_TYPE. The aggregate results — number and average age — are given for each of these
+groups individually. In a query like this, you don’t see a total for boys as a whole, or day students as
+a whole. That’s the tradeoff: the more non-aggregate columns you add, the more you can pinpoint
+specific groups, but the more you also lose sight of the general picture. Of course, you can still
+obtain the “coarser” aggregates through separate queries.
+HAVING
+Just as a WHERE clause limits the rows in a dataset to those that meet the search condition, so the
+HAVING sub-clause imposes restrictions on the aggregated rows in a grouped set. HAVING is optional,
+and can only be used in conjunction with GROUP BY.
+The condition(s) in the HAVING clause can refer to:
+• Any aggregated column in the select list. This is the most widely used case.
+• Any aggregated expression that is not in the select list, but allowed in the context of the query.
+This is sometimes useful too.
+• Any column in the GROUP BY list. While legal, it is more efficient to filter on these non-aggregated
+data at an earlier stage: in the WHERE clause.
+• Any expression whose value doesn’t depend on the contents of the dataset (like a constant or a
+context variable). This is valid but not useful, because it will either suppress the entire set or
+leave it untouched, based on conditions that have nothing to do with the set itself.
+Chapter 6. Data Manipulation (DML) Statements
+285
+
+<!-- Original PDF Page: 287 -->
+
+A HAVING clause can not contain:
+• Non-aggregated column expressions that are not in the GROUP BY list.
+• Column positions. An integer in the HAVING clause is just an integer, not a column position.
+• Column aliases –- not even if they appear in the GROUP BY clause!
+Examples
+Building on our earlier examples, this could be used to skip small groups of students:
+select class,
+       count(*) as num_boys,
+       avg(age) as boys_avg_age
+  from students
+  where sex = 'M'
+  group by class
+  having count(*) >= 5;
+To select only groups that have a minimum age spread:
+select class,
+       count(*) as num_boys,
+       avg(age) as boys_avg_age
+  from students
+  where sex = 'M'
+  group by class
+  having max(age) - min(age) > 1.2;
+Notice that if you’re interested in this information, you’ll likely also include min(age) and
+max(age) — or the expression “max(age) - min(age)”.
+To include only 3rd classes:
+select class,
+       count(*) as num_boys,
+       avg(age) as boys_avg_age
+  from students
+  where sex = 'M'
+  group by class
+  having class starting with '3';
+Better would be to move this condition to the WHERE clause:
+select class,
+       count(*) as num_boys,
+       avg(age) as boys_avg_age
+Chapter 6. Data Manipulation (DML) Statements
+286
+
+<!-- Original PDF Page: 288 -->
+
+from students
+  where sex = 'M' and class starting with '3'
+  group by class;
+6.1.7. The WINDOW Clause
+The WINDOW clause defines one or more named windows that can be referenced by window
+functions in the current query specification.
+Syntax
+<query_spec> ::=
+  SELECT
+    [<limit_clause>]
+    [<distinct_clause>]
+    <select_list>
+    <from_clause>
+    [<where_clause>]
+    [<group_clause>]
+    [<having_clause>]
+    [<named_windows_clause>]
+    [<plan_clause>]
+<named_windows_clause> ::=
+  WINDOW <window_definition> [, <window_definition> ...]
+<window definition> ::=
+  new-window-name AS (<window-specification-details>)
+<window-specification-details> ::=
+  !! See Window (Analytical) Functions !!
+In a query with multiple SELECT and WINDOW clauses (for example, with subqueries), the scope of the
+`new_window_name_ is confined to its query context. That means a window name from an inner
+context cannot be used in an outer context, nor vice versa. However, the same window name can
+be used independently in different contexts, though to avoid confusion it might be better to avoid
+this.
+For more information, see Window (Analytical) Functions.
+Example Using Named Windows
+select
+  id,
+  department,
+  salary,
+  count(*) over w1,
+  first_value(salary) over w2,
+  last_value(salary) over w2
+Chapter 6. Data Manipulation (DML) Statements
+287
+
+<!-- Original PDF Page: 289 -->
+
+from employee
+window w1 as (partition by department),
+       w2 as (w1 order by salary)
+order by department, salary;
+6.1.8. The PLAN Clause
+The PLAN clause enables the user to submit a data retrieval plan, thus overriding the plan that the
+optimizer would have generated automatically.
+Syntax
+PLAN <plan-expression>
+<plan-expression> ::=
+    (<plan-item> [, <plan-item> ...])
+  | <sorted-item>
+  | <joined-item>
+  | <merged-item>
+  | <hash-item>
+<sorted-item> ::= SORT (<plan-item>)
+<joined-item> ::=
+  JOIN (<plan-item>, <plan-item> [, <plan-item> ...])
+<merged-item> ::=
+  [SORT] MERGE (<sorted-item>, <sorted-item> [, <sorted-item> ...])
+<hash-item> ::=
+  HASH (<plan-item>, <plan-item> [, <plan-item> ...])
+<plan-item> ::= <basic-item> | <plan-expression>
+<basic-item> ::=
+  <relation> { NATURAL
+             | INDEX (<indexlist>)
+             | ORDER index [INDEX (<indexlist>)] }
+<relation> ::= table | view [table]
+<indexlist> ::= index [, index ...]
+Table 81. Arguments for the PLAN Clause
+Argument Description
+table Table name or its alias
+view View name
+Chapter 6. Data Manipulation (DML) Statements
+288
+
+<!-- Original PDF Page: 290 -->
+
+Argument Description
+index Index name
+Every time a user submits a query to the Firebird engine, the optimizer computes a data retrieval
+strategy. Most Firebird clients can make this retrieval plan visible to the user. In Firebird’s own isql
+utility, this is done with the command SET PLAN ON. If you are only interested in looking at query
+plans, SET PLANONLY ON  will show the plan without executing the query. Use SET PLANONLY OFF  to
+execute the query and show the plan.
+
+A more detailed plan can be obtained when you enable an advanced plan. In isql
+this can be done with SET EXPLAIN ON. The advanced plan displays more detailed
+information about the access methods used by the optimizer, however it cannot be
+included in the PLAN clause of a statement. The description of the advanced plan is
+beyond the scope of this Language Reference.
+In most situations, you can trust that Firebird will select the optimal query plan for you. However,
+if you have complicated queries that seem to be underperforming, it may be worth your while to
+examine the plan and see if you can improve on it.
+Simple Plans
+The simplest plans consist of a relation name followed by a retrieval method. For example, for an
+unsorted single-table select without a WHERE clause:
+select * from students
+  plan (students natural);
+Advanced plan:
+Select Expression
+  -> Table "STUDENTS" Full Scan
+If there’s a WHERE or a HAVING clause, you can specify the index to be used for finding matches:
+select * from students
+  where class = '3C'
+  plan (students index (ix_stud_class));
+Advanced plan:
+Select Expression
+  -> Filter
+    -> Table "STUDENTS" Access By ID
+      -> Bitmap
+Chapter 6. Data Manipulation (DML) Statements
+289
+
+<!-- Original PDF Page: 291 -->
+
+-> Index "IX_STUD_CLASS" Range Scan (full match)
+The INDEX directive is also used for join conditions (to be discussed a little later). It can contain a list
+of indexes, separated by commas.
+ORDER specifies the index for sorting the set if an ORDER BY or GROUP BY clause is present:
+select * from students
+  plan (students order pk_students)
+  order by id;
+Advanced plan:
+Select Expression
+  -> Table "STUDENTS" Access By ID
+    -> Index "PK_STUDENTS" Full Scan
+ORDER and INDEX can be combined:
+select * from students
+  where class >= '3'
+  plan (students order pk_students index (ix_stud_class))
+  order by id;
+Advanced plan:
+Select Expression
+  -> Filter
+    -> Table "STUDENTS" Access By ID
+      -> Index "PK_STUDENTS" Full Scan
+        -> Bitmap
+          -> Index "IX_STUD_CLASS" Range Scan (lower bound: 1/1)
+It is perfectly OK if ORDER and INDEX specify the same index:
+select * from students
+  where class >= '3'
+  plan (students order ix_stud_class index (ix_stud_class))
+  order by class;
+Advanced plan:
+Select Expression
+  -> Filter
+Chapter 6. Data Manipulation (DML) Statements
+290
+
+<!-- Original PDF Page: 292 -->
+
+-> Table "STUDENTS" Access By ID
+      -> Index "IX_STUD_CLASS" Range Scan (lower bound: 1/1)
+        -> Bitmap
+          -> Index "IX_STUD_CLASS" Range Scan (lower bound: 1/1)
+For sorting sets when there’s no usable index available (or if you want to suppress its use), leave
+out ORDER and prepend the plan expression with SORT:
+select * from students
+  plan sort (students natural)
+  order by name;
+Advanced plan:
+Select Expression
+  -> Sort (record length: 128, key length: 56)
+    -> Table "STUDENTS" Full Scan
+Or when an index is used for the search:
+select * from students
+  where class >= '3'
+  plan sort (students index (ix_stud_class))
+  order by name;
+Advanced plan:
+elect Expression
+  -> Sort (record length: 136, key length: 56)
+    -> Filter
+      -> Table "STUDENTS" Access By ID
+        -> Bitmap
+          -> Index "IX_STUD_CLASS" Range Scan (lower bound: 1/1)
+Notice that SORT, unlike ORDER, is outside the parentheses. This reflects the fact that the data rows are
+retrieved unordered and sorted afterward by the engine.
+When selecting from a view, specify the view and the table involved. For instance, if you have a
+view FRESHMEN that selects the first-year students:
+select * from freshmen
+  plan (freshmen students natural);
+Advanced plan:
+Chapter 6. Data Manipulation (DML) Statements
+291
+
+<!-- Original PDF Page: 293 -->
+
+Select Expression
+  -> Table "STUDENTS" as "FRESHMEN" Full Scan
+Or, for instance:
+select * from freshmen
+  where id > 10
+  plan sort (freshmen students index (pk_students))
+  order by name desc;
+Advanced plan:
+Select Expression
+  -> Sort (record length: 144, key length: 24)
+    -> Filter
+      -> Table "STUDENTS" as "FRESHMEN" Access By ID
+        -> Bitmap
+          -> Index "PK_STUDENTS" Range Scan (lower bound: 1/1)
+ If a table or view has been aliased, it is the alias, not the original name, that must
+be used in the PLAN clause.
+Composite Plans
+When a join is made, you can specify the index which is to be used for matching. You must also use
+the JOIN directive on the two streams in the plan:
+select s.id, s.name, s.class, c.mentor
+  from students s
+  join classes c on c.name = s.class
+  plan join (s natural, c index (pk_classes));
+Advanced plan:
+Select Expression
+  -> Nested Loop Join (inner)
+    -> Table "STUDENTS" as "S" Full Scan
+    -> Filter
+      -> Table "CLASSES" as "C" Access By ID
+        -> Bitmap
+          -> Index "PK_CLASSES" Unique Scan
+The same join, sorted on an indexed column:
+Chapter 6. Data Manipulation (DML) Statements
+292
+
+<!-- Original PDF Page: 294 -->
+
+select s.id, s.name, s.class, c.mentor
+  from students s
+  join classes c on c.name = s.class
+  plan join (s order pk_students, c index (pk_classes))
+  order by s.id;
+Advanced plan:
+Select Expression
+  -> Nested Loop Join (inner)
+    -> Table "STUDENTS" as "S" Access By ID
+      -> Index "PK_STUDENTS" Full Scan
+    -> Filter
+      -> Table "CLASSES" as "C" Access By ID
+        -> Bitmap
+          -> Index "PK_CLASSES" Unique Scan
+And on a non-indexed column:
+select s.id, s.name, s.class, c.mentor
+  from students s
+  join classes c on c.name = s.class
+  plan sort (join (s natural, c index (pk_classes)))
+  order by s.name;
+Advanced plan:
+Select Expression
+  -> Sort (record length: 152, key length: 12)
+    -> Nested Loop Join (inner)
+      -> Table "STUDENTS" as "S" Full Scan
+      -> Filter
+        -> Table "CLASSES" as "C" Access By ID
+          -> Bitmap
+            -> Index "PK_CLASSES" Unique Scan
+With a search condition added:
+select s.id, s.name, s.class, c.mentor
+  from students s
+  join classes c on c.name = s.class
+  where s.class <= '2'
+  plan sort (join (s index (fk_student_class), c index (pk_classes)))
+  order by s.name;
+Chapter 6. Data Manipulation (DML) Statements
+293
+
+<!-- Original PDF Page: 295 -->
+
+Advanced plan:
+Select Expression
+  -> Sort (record length: 152, key length: 12)
+    -> Nested Loop Join (inner)
+      -> Filter
+        -> Table "STUDENTS" as "S" Access By ID
+          -> Bitmap
+            -> Index "FK_STUDENT_CLASS" Range Scan (lower bound: 1/1)
+      -> Filter
+        -> Table "CLASSES" as "C" Access By ID
+          -> Bitmap
+            -> Index "PK_CLASSES" Unique Scan
+As a left outer join:
+select s.id, s.name, s.class, c.mentor
+  from classes c
+  left join students s on c.name = s.class
+  where s.class <= '2'
+  plan sort (join (c natural, s index (fk_student_class)))
+  order by s.name;
+Advanced plan:
+Select Expression
+  -> Sort (record length: 192, key length: 56)
+    -> Filter
+      -> Nested Loop Join (outer)
+        -> Table "CLASSES" as "C" Full Scan
+        -> Filter
+          -> Table "STUDENTS" as "S" Access By ID
+            -> Bitmap
+              -> Index "FK_STUDENT_CLASS" Range Scan (full match)
+If there are no indices available to match the join condition (or if you don’t want to use it), then it is
+possible connect the streams using HASH or MERGE method.
+To connect using the HASH method in the plan, the HASH directive is used instead of the JOIN directive.
+In this case, the smaller (secondary) stream is materialized completely into an internal buffer.
+While reading this secondary stream, a hash function is applied and a pair {hash, pointer to buffer}
+is written to a hash table. Then the primary stream is read and its hash key is tested against the
+hash table.
+select *
+  from students s
+  join classes c on c.cookie = s.cookie
+Chapter 6. Data Manipulation (DML) Statements
+294
+
+<!-- Original PDF Page: 296 -->
+
+plan hash (c natural, s natural)
+Advanced plan:
+Select Expression
+  -> Filter
+    -> Hash Join (inner)
+      -> Table "STUDENTS" as "S" Full Scan
+      -> Record Buffer (record length: 145)
+        -> Table "CLASSES" as "C" Full Scan
+For a MERGE join, the plan must first sort both streams on their join column(s) and then merge. This
+is achieved with the SORT directive (which we’ve already seen) and MERGE instead of JOIN:
+select * from students s
+  join classes c on c.cookie = s.cookie
+  plan merge (sort (c natural), sort (s natural));
+Adding an ORDER BY clause means the result of the merge must also be sorted:
+select * from students s
+  join classes c on c.cookie = s.cookie
+  plan sort (merge (sort (c natural), sort (s natural)))
+  order by c.name, s.id;
+Finally, we add a search condition on two indexable columns of table STUDENTS:
+select * from students s
+  join classes c on c.cookie = s.cookie
+  where s.id < 10 and s.class <= '2'
+  plan sort (merge (sort (c natural),
+                    sort (s index (pk_students, fk_student_class))))
+  order by c.name, s.id;
+As follows from the formal syntax definition, JOINs and MERGEs in the plan may combine more than
+two streams. Also, every plan expression may be used as a plan item in an encompassing plan. This
+means that plans of certain complicated queries may have various nesting levels.
+Finally, instead of MERGE you may also write SORT MERGE. As this makes no difference and may create
+confusion with “real” SORT directives (the ones that do make a difference), it’s best to stick to plain
+MERGE.
+In addition to the plan for the main query, you can specify a plan for each subquery. For example,
+the following query with multiple plans will work:
+Chapter 6. Data Manipulation (DML) Statements
+295
+
+<!-- Original PDF Page: 297 -->
+
+select *
+from color
+where exists (
+  select *
+  from hors
+  where horse.code_color = color.code_color
+  plan (horse index (fk_horse_color)))
+plan (color natural)
+
+Occasionally, the optimizer will accept a plan and then not follow it, even though it
+does not reject it as invalid. One such example was
+MERGE (unsorted stream, unsorted stream)
+It is advisable to treat such as plan as “deprecated”.
+6.1.9. UNION
+The UNION clause concatenates two or more datasets, thus increasing the number of rows but not
+the number of columns. Datasets taking part in a UNION must have the same number of columns,
+and columns at corresponding positions must be of the same type.
+By default, a union suppresses duplicate rows. UNION ALL shows all rows, including any duplicates.
+The optional DISTINCT keyword makes the default behaviour explicit.
+Syntax
+<query-expression> ::=
+  [<with-clause>] <query-expression-body> [<order-by-clause>]
+    [{ <rows-clause>
+     | [<result-offset-clause>] [<fetch-first-clause>] }]
+<query-expression-body> ::=
+    <query-term>
+  | <query-expression-body> UNION [{ DISTINCT | ALL }] <query-term>
+<query-term> ::= <query-primary>
+<query-primary> ::=
+    <query-specification>
+  | (<query-expression-body> [<order-by-clause>]
+     [<result-offset-clause>] [<fetch-first-clause>])
+<query-specification> ::=
+  SELECT <limit-clause> [{ ALL | DISTINCT }] <select-list>
+    FROM <table-reference> [, <table-reference> ...]
+    [WHERE <search-condition>]
+    [GROUP BY <value-expression> [, <value-expression> ...]]
+Chapter 6. Data Manipulation (DML) Statements
+296
+
+<!-- Original PDF Page: 298 -->
+
+[HAVING <search-condition>]
+    [WINDOW <window-definition> [, <window-definition> ...]]
+    [PLAN <plan-expression>]
+ See also Full SELECT Syntax for the full syntax.
+Unions take their column names from the first select query. If you want to alias union columns, do
+so in the column list of the topmost SELECT. Aliases in other participating selects are allowed and
+may even be useful, but will not propagate to the union level.
+If a union has an ORDER BY clause, the only allowed sort items are integer literals indicating 1-based
+column positions, optionally followed by an ASC/DESC and/or a NULLS {FIRST | LAST}  directive. This
+also implies that you cannot order a union by anything that isn’t a column in the union. (You can,
+however, wrap it in a derived table, which gives you back all the usual sort options.)
+Unions are allowed in subqueries of any kind and can themselves contain subqueries. They can
+also contain joins, and can take part in a join when wrapped in a derived table.
+Examples
+This query presents information from different music collections in one dataset using unions:
+select id, title, artist, length, 'CD' as medium
+  from cds
+union
+select id, title, artist, length, 'LP'
+  from records
+union
+select id, title, artist, length, 'MC'
+  from cassettes
+order by 3, 2  -- artist, title;
+If id, title, artist and length are the only fields in the tables involved, the query can also be
+written as:
+select c.*, 'CD' as medium
+  from cds c
+union
+select r.*, 'LP'
+  from records r
+union
+select c.*, 'MC'
+  from cassettes c
+order by 3, 2  -- artist, title;
+Qualifying the “stars” is necessary here because they are not the only item in the column list. Notice
+how the “c” aliases in the first and third select do not conflict with each other: their scopes are not
+Chapter 6. Data Manipulation (DML) Statements
+297
+
+<!-- Original PDF Page: 299 -->
+
+union-wide but apply only to their respective select queries.
+The next query retrieves names and phone numbers from translators and proofreaders.
+Translators who also work as proofreaders will show up only once in the result set, provided their
+phone number is the same in both tables. The same result can be obtained without DISTINCT. With
+ALL, these people would appear twice.
+select name, phone from translators
+  union distinct
+select name, telephone from proofreaders;
+A UNION within a subquery:
+select name, phone, hourly_rate from clowns
+where hourly_rate < all
+  (select hourly_rate from jugglers
+     union
+   select hourly_rate from acrobats)
+order by hourly_rate;
+Using parenthesized query expressions to show the employees with the highest and lowest salaries:
+(
+  select emp_no, salary, 'lowest' as type
+  from employee
+  order by salary asc
+  fetch first row only
+)
+union all
+(
+  select emp_no, salary, 'highest' as type
+  from employee
+  order by salary desc
+  fetch first row only
+);
+6.1.10. ORDER BY
+When a SELECT statement is executed, the result set is not sorted in any way. It often happens that
+rows appear to be sorted chronologically, simply because they are returned in the same order they
+were added to the table by INSERT statements. This is not something you should rely on: the order
+may change depending on the plan or updates to rows, etc. To specify an explicit sorting order for
+the set specification, an ORDER BY clause is used.
+Syntax
+SELECT ... FROM ...
+Chapter 6. Data Manipulation (DML) Statements
+298
+
+<!-- Original PDF Page: 300 -->
+
+...
+ORDER BY <sort-specification [, <sort-specification> ...]
+<sort-specification> ::=
+  <value-expression> [<ordering-specification>] [<null-ordering>]
+<ordering-specification> ::=
+    ASC  | ASCENDING
+  | DESC | DESCENDING
+<null-ordering> ::=
+    NULLS FIRST
+  | NULLS LAST
+Table 82. Arguments for the ORDER BY Clause
+Argument Description
+value-expression Any expression; an expression that is only an integer literal represents
+the column position
+The ORDER BY consists of a comma-separated list of the columns or expressions on which the result
+data set should be sorted. The sort order can be specified by the name of the column — but only if
+the column was not previously aliased in the SELECT columns list. The alias must be used if it was
+used in the select list. The ordinal position number of the column in the SELECT column list, the alias
+given to the column in the SELECT list with the help of the AS keyword, or the number of the column
+in the SELECT list can be used without restriction.
+The three forms of expressing the columns for the sort order can be mixed in the same ORDER BY
+clause. For instance, one column in the list can be specified by its name and another column can be
+specified by its number.
+
+If you sort by column position or alias, then the expression corresponding to this
+position (alias) will be copied from the SELECT list. This also applies to subqueries,
+thus, the subquery will be executed at least twice.
+
+If you use the column position to specify the sort order for a query of the SELECT *
+style, the server expands the asterisk to the full column list to determine the
+columns for the sort. It is, however, considered “sloppy practice” to design ordered
+sets this way.
+Sorting Direction
+The keyword ASC — short for ASCENDING — specifies a sort direction from lowest to highest. ASC is the
+default sort direction.
+The keyword DESC — short for DESCENDING — specifies a sort direction from highest to lowest.
+Specifying ascending order for one column and descending order for another is allowed.
+Chapter 6. Data Manipulation (DML) Statements
+299
+
+<!-- Original PDF Page: 301 -->
+
+Collation Order
+Using the keyword COLLATE in a <value-expression> specifies the collation order to apply for a string
+column if you need a collation order that is different from the normal collation for this column. The
+normal collation order is defined by either the default collation for the database character set, or
+the collation set explicitly in the column’s definition.
+NULLs Position
+The keyword NULLS defines where NULL in the associated column will fall in the sort order: NULLS
+FIRST places the rows with the NULL column above rows ordered by that column’s value; NULLS LAST
+places those rows after the ordered rows.
+NULLS FIRST is the default.
+Ordering UNION-ed Sets
+Not-parenthesized query expressions contributing to a UNION cannot take an ORDER BY clause. You
+can order the entire output, using one ORDER BY clause at the end of the overall query, or use
+parenthesized query expressions, which do allow ORDER BY.
+The simplest — and, in some cases, the only — method for specifying the sort order is by the ordinal
+column position. However, it is also valid to use the column names or aliases, from the first
+contributing query only.
+The ASC/DESC and/or NULLS directives are available for this global set.
+If discrete ordering within the contributing set is required, use parenthesized query expressions,
+derived tables, or common table expressions for those sets.
+Examples of ORDER BY
+Sorting the result set in ascending order, ordering by the RDB$CHARACTER_SET_ID and
+RDB$COLLATION_ID columns of the RDB$COLLATIONS table:
+SELECT
+  RDB$CHARACTER_SET_ID AS CHARSET_ID,
+  RDB$COLLATION_ID AS COLL_ID,
+  RDB$COLLATION_NAME AS NAME
+FROM RDB$COLLATIONS
+ORDER BY RDB$CHARACTER_SET_ID, RDB$COLLATION_ID;
+The same, but sorting by the column aliases:
+SELECT
+  RDB$CHARACTER_SET_ID AS CHARSET_ID,
+  RDB$COLLATION_ID AS COLL_ID,
+  RDB$COLLATION_NAME AS NAME
+FROM RDB$COLLATIONS
+Chapter 6. Data Manipulation (DML) Statements
+300
+
+<!-- Original PDF Page: 302 -->
+
+ORDER BY CHARSET_ID, COLL_ID;
+Sorting the output data by the column position numbers:
+SELECT
+  RDB$CHARACTER_SET_ID AS CHARSET_ID,
+  RDB$COLLATION_ID AS COLL_ID,
+  RDB$COLLATION_NAME AS NAME
+FROM RDB$COLLATIONS
+ORDER BY 1, 2;
+Sorting a SELECT * query by position numbers — possible, but nasty and not recommended:
+SELECT *
+FROM RDB$COLLATIONS
+ORDER BY 3, 2;
+Sorting by the second column in the BOOKS table, or — if BOOKS has only one column — the
+FILMS.DIRECTOR column:
+SELECT
+    BOOKS.*,
+    FILMS.DIRECTOR
+FROM BOOKS, FILMS
+ORDER BY 2;
+Sorting in descending order by the values of column PROCESS_TIME, with NULLs placed at the
+beginning of the set:
+SELECT *
+FROM MSG
+ORDER BY PROCESS_TIME DESC NULLS FIRST;
+Sorting the set obtained by a UNION of two queries. Results are sorted in descending order for the
+values in the second column, with NULLs at the end of the set; and in ascending order for the values
+of the first column with NULLs at the beginning.
+SELECT
+  DOC_NUMBER, DOC_DATE
+FROM PAYORDER
+UNION ALL
+SELECT
+  DOC_NUMBER, DOC_DATE
+FROM BUDGORDER
+Chapter 6. Data Manipulation (DML) Statements
+301
+
+<!-- Original PDF Page: 303 -->
+
+ORDER BY 2 DESC NULLS LAST, 1 ASC NULLS FIRST;
+6.1.11. ROWS
+Retrieves a slice of rows from an ordered set
+Syntax
+SELECT <columns> FROM ...
+  [WHERE ...]
+  [ORDER BY ...]
+  ROWS <value-expression> [TO <value-expression>]
+Table 83. Arguments for the ROWS Clause
+Argument Description
+value-expression Any integer expressions
+
+ROWS is non-standard syntax
+ROWS is a Firebird-specific clause. Use the SQL-standard OFFSET, FETCH syntax
+wherever possible.
+ROWS limits the amount of rows returned by the SELECT statement to a specified number or range.
+The ROWS clause also does the same job as the FIRST and SKIP clauses, but neither are SQL-compliant.
+Unlike FIRST and SKIP, and OFFSET and FETCH, the ROWS and TO clauses accept any type of integer
+expression as their arguments, without parentheses. Of course, parentheses may still be needed for
+nested evaluations inside the expression, and a subquery must always be enclosed in parentheses.
+
+• Numbering of rows in the intermediate set — the overall set cached on disk
+before the “slice” is extracted — starts at 1.
+• OFFSET/FETCH, FIRST/SKIP, and ROWS can all be used without the ORDER BY clause,
+although it rarely makes sense to do so — except perhaps when you want to
+take a quick look at the table data and don’t care that rows will be in a non-
+deterministic order. For this purpose, a query like “ SELECT * FROM TABLE1 ROWS
+20” would return the first 20 rows instead of a whole table that might be rather
+big.
+Characteristics of Using ROWS m Without a TO Clause:
+Calling ROWS m retrieves the first m records from the set specified.
+• If m is greater than the total number of records in the intermediate data set, the entire set is
+returned
+• If m = 0, an empty set is returned
+• If m < 0, the SELECT statement call fails with an error
+Chapter 6. Data Manipulation (DML) Statements
+302
+
+<!-- Original PDF Page: 304 -->
+
+Characteristics of Using ROWS m With a TO Clause:
+Calling ROWS m TO n retrieves the rows from the set, starting at row m and ending after row n — the
+set is inclusive.
+• If m is greater than the total number of rows in the intermediate set and n >= m, an empty set is
+returned
+• If m is not greater than n and n is greater than the total number of rows in the intermediate set,
+the result set will be limited to rows starting from m, up to the end of the set
+• If m < 1 and n < 1, the SELECT statement call fails with an error
+• If n = m - 1, an empty set is returned
+• If n < m - 1, the SELECT statement call fails with an error
+Not Possible to Use a TO Clause Without a ROWS Clause:
+While ROWS is an alternative to the FIRST and SKIP syntax, there is one situation where the ROWS
+syntax does not provide the same behaviour: specifying SKIP n on its own returns the entire
+intermediate set, without the first n rows. The ROWS … TO syntax needs a little help to achieve this.
+With the ROWS syntax, you need a ROWS clause in association with the TO clause and deliberately make
+the second ( n) argument greater than the size of the intermediate data set. This is achieved by
+creating an expression for n that uses a subquery to retrieve the count of rows in the intermediate
+set and adds 1 to it, or use a literal with a sufficiently large value.
+Replacing of FIRST/SKIP and OFFSET/FETCH
+The ROWS clause can be used instead of the SQL-standard OFFSET/FETCH or non-standard FIRST/SKIP
+clauses, except the case where only OFFSET or SKIP is used, that is when the whole result set is
+returned except for skipping the specified number of rows from the beginning.
+To implement this behaviour using ROWS, you must specify the TO clause with a value larger than the
+size of the returned result set.
+Mixing ROWS and FIRST/SKIP or OFFSET/FETCH
+ROWS syntax cannot be mixed with FIRST/SKIP or OFFSET/FETCH in the same SELECT expression. Using
+the different syntaxes in different subqueries in the same statement is allowed.
+ROWS Syntax in UNION Queries
+When ROWS is used in a UNION query, the ROWS directive is applied to the unioned set and must be
+placed after the last SELECT statement.
+If a need arises to limit the subsets returned by one or more SELECT statements inside UNION, there
+are a couple of options:
+1. Use FIRST/SKIP syntax in these SELECT statements — bearing in mind that an ordering clause
+(ORDER BY) cannot be applied locally to the discrete queries, but only to the combined output.
+2. Convert the queries to derived tables with their own ROWS clauses.
+Chapter 6. Data Manipulation (DML) Statements
+303
+
+<!-- Original PDF Page: 305 -->
+
+3. Use parenthesized query expressions with OFFSET/FETCH
+Examples of ROWS
+The following examples rewrite the examples used in the section about FIRST and SKIP, earlier in
+this chapter.
+Retrieve the first ten names from the output of a sorted query on the PEOPLE table:
+SELECT id, name
+FROM People
+ORDER BY name ASC
+ROWS 1 TO 10;
+or its equivalent
+SELECT id, name
+FROM People
+ORDER BY name ASC
+ROWS 10;
+Return all records from the PEOPLE table except for the first 10 names:
+SELECT id, name
+FROM People
+ORDER BY name ASC
+ROWS 11 TO (SELECT COUNT(*) FROM People);
+And this query will return the last 10 records (pay attention to the parentheses):
+SELECT id, name
+FROM People
+ORDER BY name ASC
+ROWS (SELECT COUNT(*) - 9 FROM People)
+TO (SELECT COUNT(*) FROM People);
+This one will return rows 81-100 from the PEOPLE table:
+SELECT id, name
+FROM People
+ORDER BY name ASC
+ROWS 81 TO 100;
+ ROWS can also be used with the UPDATE and DELETE statements.
+Chapter 6. Data Manipulation (DML) Statements
+304
+
+<!-- Original PDF Page: 306 -->
+
+See also
+FIRST, SKIP, OFFSET, FETCH
+6.1.12. OFFSET, FETCH
+Retrieves a slice of rows from an ordered set
+Syntax
+SELECT <columns> FROM ...
+  [WHERE ...]
+  [ORDER BY ...]
+  [OFFSET <offset-fetch-expression> { ROW | ROWS }]
+  [FETCH { FIRST | NEXT }
+   [<offset-fetch-expression>] { ROW | ROWS } ONLY]
+<offset-fetch-expression> ::=
+    <integer-literal>
+  | <query-parameter>
+Table 84. Arguments for the OFFSET and FETCH Clause
+Argument Description
+integer-literal Integer literal
+query-parameter Query parameter place-holder. ? in DSQL and :paramname in PSQL
+The OFFSET and FETCH clauses are an SQL standard-compliant equivalent for FIRST/SKIP, and an
+alternative for ROWS. The OFFSET clause specifies the number of rows to skip. The FETCH clause
+specifies the number of rows to fetch.
+When <offset-fetch-expression> is left out of the FETCH clause (e.g. FETCH FIRST ROW ONLY ), one row
+will be fetched.
+The choice between ROW or ROWS, or FIRST or NEXT in the clauses is just for aesthetic purposes (e.g.
+making the query more readable or grammatically correct). There is no difference between OFFSET
+10 ROW or OFFSET 10 ROWS, or FETCH NEXT 10 ROWS ONLY or FETCH FIRST 10 ROWS ONLY.
+As with SKIP and FIRST, OFFSET and FETCH clauses can be applied independently, in both top-level and
+nested query expressions.
+
+1. Firebird doesn’t support the percentage FETCH nor the FETCH …  WITH TIES 
+defined in the SQL standard.
+2. The FIRST/SKIP and ROWS clause are non-standard alternatives.
+3. The OFFSET and/or FETCH clauses cannot be combined with ROWS or FIRST/SKIP on
+the same query expression.
+4. Expressions, column references, etc. are not allowed within either clause.
+5. Contrary to the ROWS clause, OFFSET and FETCH are only available on SELECT
+Chapter 6. Data Manipulation (DML) Statements
+305
+
+<!-- Original PDF Page: 307 -->
+
+statements.
+Examples of OFFSET and FETCH
+Return all rows except the first 10, ordered by column COL1
+SELECT *
+FROM T1
+ORDER BY COL1
+OFFSET 10 ROWS
+Return the first 10 rows, ordered by column COL1
+SELECT *
+FROM T1
+ORDER BY COL1
+FETCH FIRST 10 ROWS ONLY
+Using OFFSET and FETCH clauses in a derived table and in the outer query
+SELECT *
+FROM (
+  SELECT *
+  FROM T1
+  ORDER BY COL1 DESC
+  OFFSET 1 ROW
+  FETCH NEXT 10 ROWS ONLY
+) a
+ORDER BY a.COL1
+FETCH FIRST ROW ONLY
+The following examples rewrite the FIRST/SKIP examples and ROWS examples earlier in this chapter.
+Retrieve the first ten names from the output of a sorted query on the PEOPLE table:
+SELECT id, name
+FROM People
+ORDER BY name ASC
+FETCH NEXT 10 ROWS ONLY;
+Return all records from the PEOPLE table except for the first 10 names:
+SELECT id, name
+FROM People
+ORDER BY name ASC
+OFFSET 10 ROWS;
+Chapter 6. Data Manipulation (DML) Statements
+306
+
+<!-- Original PDF Page: 308 -->
+
+And this query will return the last 10 records. Contrary to FIRST/SKIP and ROWS we cannot use
+expressions (including sub-queries). To retrieve the last 10 rows, reverse the sort to the first (last)
+10 rows, and then sort in the right order.
+SELECT id, name
+FROM (
+  SELECT id, name
+  FROM People
+  ORDER BY name DESC
+  FETCH FIRST 10 ROWS ONLY
+) a
+ORDER BY name ASC;
+This one will return rows 81-100 from the PEOPLE table:
+SELECT id, name
+FROM People
+ORDER BY name ASC
+OFFSET 80 ROWS
+FETCH NEXT 20 ROWS;
+See also
+FIRST, SKIP, ROWS
+6.1.13. FOR UPDATE [OF]
+Syntax
+SELECT ... FROM single_table
+  [WHERE ...]
+  FOR UPDATE [OF <column-name-list>]
+FOR UPDATE does not do what its name suggests. Its only effect currently is to disable the pre-fetch
+buffer.
+
+It is likely to change in a future Firebird version: the plan is to validate cursors
+marked with FOR UPDATE if they are truly updatable and reject positioned updates
+and deletes for cursors evaluated as non-updatable.
+The OF sub-clause does not do anything at all, and is only provided for syntax compatibility with
+other database systems.
+6.1.14. WITH LOCK
+Applies limited pessimistic locking
+Chapter 6. Data Manipulation (DML) Statements
+307
+
+<!-- Original PDF Page: 309 -->
+
+Syntax
+SELECT ... FROM single_table
+  [WHERE ...]
+  [FOR UPDATE [OF <column_list>]]
+  WITH LOCK [SKIP LOCKED]
+WITH LOCK provides a limited explicit pessimistic locking capability for cautious use in conditions
+where the affected row set is:
+a. extremely small (ideally singleton), and
+b. precisely controlled by the application code.
+
+This is for experts only!
+The need for a pessimistic lock in Firebird is very rare indeed and should be well
+understood before use of this extension is considered.
+It is essential to understand the effects of transaction isolation and other
+transaction attributes before attempting to implement explicit locking in your
+application.
+If the WITH LOCK clause succeeds, it will secure a lock on the selected rows and prevent any other
+transaction from obtaining write access to any of those rows, or their dependants, until your
+transaction ends.
+WITH LOCK can only be used with a top-level, single-table SELECT statement. It is not available:
+• in a subquery specification
+• for joined sets
+• with the DISTINCT operator, a GROUP BY clause or any other aggregating operation
+• with a view
+• with the output of a selectable stored procedure
+• with an external table
+• with a UNION query
+As the engine considers, in turn, each record falling under an explicit lock statement, it returns
+either the record version that is the most currently committed, regardless of database state when
+the statement was submitted, or an exception.
+When the optional SKIP LOCKED clause is specified, records locked by a different transaction are
+skipped.
+
+When clauses FIRST/SKIP/ROWS/OFFSET/FETCH are specified, record lock (and “skip
+locked” check) is done in between of skip ( SKIP/ROWS/OFFSET/FETCH) and limit ( FIRST
+/ROWS/OFFSET/FETCH) checks.
+Chapter 6. Data Manipulation (DML) Statements
+308
+
+<!-- Original PDF Page: 310 -->
+
+Wait behaviour and conflict reporting depend on the transaction parameters specified in the TPB
+block:
+Table 85. How TPB settings affect explicit locking
+TPB mode Behaviour
+isc_tpb_consistency Explicit locks are overridden by implicit or explicit table-level locks and
+are ignored.
+isc_tpb_concurrency +
+isc_tpb_nowait
+If a record is modified by any transaction that was committed since the
+transaction attempting to get explicit lock started, or an active transaction
+has performed a modification of this record, an update conflict exception
+is raised immediately.
+isc_tpb_concurrency +
+isc_tpb_wait
+If the record is modified by any transaction that has committed since the
+transaction attempting to get explicit lock started, an update conflict
+exception is raised immediately.
+If an active transaction is holding ownership on this record (via explicit
+locking or by a normal optimistic write-lock) the transaction attempting
+the explicit lock waits for the outcome of the blocking transaction and,
+when it finishes, attempts to get the lock on the record again. This means
+that, if the blocking transaction committed a modified version of this
+record, an update conflict exception will be raised.
+isc_tpb_read_committe
+d + isc_tpb_nowait
+If there is an active transaction holding ownership on this record (via
+explicit locking or normal update), an update conflict exception is raised
+immediately.
+isc_tpb_read_committe
+d + isc_tpb_wait
+If there is an active transaction holding ownership on this record (via
+explicit locking or by a normal optimistic write-lock), the transaction
+attempting the explicit lock waits for the outcome of blocking transaction
+and when it finishes, attempts to get the lock on the record again.
+Update conflict exceptions can never be raised by an explicit lock
+statement in this TPB mode.
+Usage with a FOR UPDATE Clause
+If the FOR UPDATE sub-clause precedes the WITH LOCK sub-clause, buffered fetches are suppressed.
+Thus, the lock will be applied to each row, one by one, at the moment it is fetched. It becomes
+possible, then, that a lock which appeared to succeed when requested will nevertheless fail
+subsequently, when an attempt is made to fetch a row which has become locked by another
+transaction in the meantime. This can be avoided by also using SKIP LOCKED.
+
+As an alternative, it may be possible in your access components to set the size of
+the fetch buffer to 1. This would enable you to process the currently-locked row
+before the next is fetched and locked, or to handle errors without rolling back your
+transaction.
+See also
+Chapter 6. Data Manipulation (DML) Statements
+309
+
+<!-- Original PDF Page: 311 -->
+
+FOR UPDATE [OF]
+How the engine deals with WITH LOCK
+When an UPDATE statement tries to access a record that is locked by another transaction, it either
+raises an update conflict exception or waits for the locking transaction to finish, depending on TPB
+mode. Engine behaviour here is the same as if this record had already been modified by the locking
+transaction.
+No special error codes are returned from conflicts involving pessimistic locks.
+The engine guarantees that all records returned by an explicit lock statement are locked and do
+meet the search conditions specified in WHERE clause, as long as the search conditions do not depend
+on any other tables, via joins, subqueries, etc. It also guarantees that rows not meeting the search
+conditions will not be locked by the statement. It can not guarantee that there are no rows which,
+though meeting the search conditions, are not locked.
+ This situation can arise if other, parallel transactions commit their changes during
+the course of the locking statement’s execution.
+The engine locks rows at fetch time. This has important consequences if you lock several rows at
+once. Many access methods for Firebird databases default to fetching output in packets of a few
+hundred rows (“buffered fetches”). Most data access components cannot bring you the rows
+contained in the last-fetched packet, when an error occurred.
+Caveats using WITH LOCK
+• Rolling back of an implicit or explicit savepoint releases record locks that were taken under that
+savepoint, but it doesn’t notify waiting transactions. Applications should not depend on this
+behaviour as it may get changed in the future.
+• While explicit locks can be used to prevent and/or handle unusual update conflict errors, the
+volume of deadlock errors will grow unless you design your locking strategy carefully and
+control it rigorously.
+• Most applications do not need explicit locks at all. The main purposes of explicit locks are:
+1. to prevent expensive handling of update conflict errors in heavily loaded applications, and
+2. to maintain integrity of objects mapped to a relational database in a clustered environment.
+If your use of explicit locking doesn’t fall in one of these two categories, then it’s probably the
+wrong way to do the task in Firebird.
+• Explicit locking is an advanced feature; do not misuse it! While solutions for these kinds of
+problems may be important for websites handling thousands of concurrent writers, or for
+ERP/CRM systems operating in large corporations, most application programs do not need to
+work in such conditions.
+Examples using explicit locking
+i. Simple:
+Chapter 6. Data Manipulation (DML) Statements
+310
+
+<!-- Original PDF Page: 312 -->
+
+SELECT * FROM DOCUMENT WHERE ID=? WITH LOCK;
+ii. Multiple rows, one-by-one processing with DSQL cursor:
+SELECT * FROM DOCUMENT WHERE PARENT_ID=?
+  FOR UPDATE WITH LOCK;
+6.1.15. OPTIMIZE FOR
+Syntax
+SELECT ...
+  [WITH LOCK [SKIP LOCKED]]
+  OPTIMIZE FOR {FIRST | ALL} ROWS
+The OPTIMIZE FOR clause can only occur on a top-level SELECT.
+This feature allows the optimizer to consider another (hopefully better) plan if only a subset or
+rows is fetched initially by the user application (with the remaining rows being fetched on
+demand), thus improving the response time.
+It can also be specified at the session level using the SET OPTIMIZE management statement.
+The default behaviour can be specified globally using the OptimizeForFirstRows setting in
+firebird.conf or databases.conf.
+6.1.16. INTO
+Passes SELECT output into variables
+Available in
+PSQL
+Syntax
+In PSQL the INTO clause is placed at the end of the SELECT statement.
+SELECT [...] <column-list>
+FROM ...
+[...]
+[INTO <variable-list>]
+<variable-list> ::= <variable> [, <variable> ...]
+<variable> ::= varname | ':' varname
+Chapter 6. Data Manipulation (DML) Statements
+311
+
+<!-- Original PDF Page: 313 -->
+
+ The colon prefix before local variable names in PSQL is optional in the INTO clause.
+In PSQL code (triggers, stored procedures and executable blocks), the results of a SELECT statement
+can be loaded row-by-row into local variables. It is often the only way to do anything with the
+returned values at all, unless an explicit or implicit cursor name is specified. The number, order
+and types of the variables must match the columns in the output row.
+A “plain” SELECT statement can only be used in PSQL if it returns at most one row, i.e. if it is a
+singleton select. For multi-row selects, PSQL provides the FOR SELECT loop construct, discussed later
+in the PSQL chapter. PSQL also supports the DECLARE CURSOR statement, which binds a named cursor
+to a SELECT statement. The cursor can then be used to walk the result set.
+Examples
+1. Selecting aggregated values and passing them into previously declared variables min_amt,
+avg_amt and max_amt:
+select min(amount), avg(cast(amount as float)), max(amount)
+  from orders
+  where artno = 372218
+  into min_amt, avg_amt, max_amt;
+
+The CAST serves to make the average a real number; otherwise, since amount is
+presumably an integer field, SQL rules would truncate it to the nearest lower
+integer.
+2. A PSQL trigger that retrieves two values as a BLOB field (using the LIST() function) and assigns it
+INTO a third field:
+select list(name, ', ')
+  from persons p
+  where p.id in (new.father, new.mother)
+  into new.parentnames;
+6.1.17. Common Table Expressions (“WITH … AS … SELECT”)
+Syntax
+<query-expression> ::=
+  [<with-clause>] <query-expression-body> [<order-by-clause>]
+    [{ <rows-clause>
+     | [<result-offset-clause>] [<fetch-first-clause>] }]
+<with-clause> ::=
+  WITH [RECURSIVE] <with-list-element> [, <with-list-element> ...]
+<with-list-element> ::=
+Chapter 6. Data Manipulation (DML) Statements
+312
+
+<!-- Original PDF Page: 314 -->
+
+query-name [(<column-name-list>)] AS (<query-expression>)
+<column-name-list> ::= column-name [, column-name ...]
+Table 86. Arguments for Common Table Expressions
+Argument Description
+query-name Alias for a table expression
+column-name Alias for a column in a table expression
+A common table expression or CTE can be described as a virtual table or view, defined in a
+preamble to a main query, and going out of scope after the main query’s execution. The main query
+can reference any CTEs defined in the preamble as if they were regular tables or views. CTEs can be
+recursive, i.e. self-referencing, but they cannot be nested.
+CTE Notes
+• A CTE definition can contain any legal query-expression, as long as it doesn’t have a “ WITH…”
+preamble of its own (no nesting).
+• CTEs defined for the same main query can reference each other, but care should be taken to
+avoid loops.
+• CTEs can be referenced from anywhere in the main query.
+• Each CTE can be referenced multiple times in the main query, using different aliases if
+necessary.
+• When enclosed in parentheses, CTE constructs can be used as subqueries in SELECT statements,
+but also in UPDATEs, MERGEs etc.
+• In PSQL, CTEs are also supported in FOR loop headers:
+for
+  with my_rivers as (select * from rivers where owner = 'me')
+    select name, length from my_rivers into :rname, :rlen
+do
+begin
+  ..
+end
+Example
+with dept_year_budget as (
+  select fiscal_year,
+         dept_no,
+         sum(projected_budget) as budget
+  from proj_dept_budget
+  group by fiscal_year, dept_no
+)
+Chapter 6. Data Manipulation (DML) Statements
+313
+
+<!-- Original PDF Page: 315 -->
+
+select d.dept_no,
+       d.department,
+       dyb_2008.budget as budget_08,
+       dyb_2009.budget as budget_09
+from department d
+     left join dept_year_budget dyb_2008
+       on d.dept_no = dyb_2008.dept_no
+       and dyb_2008.fiscal_year = 2008
+     left join dept_year_budget dyb_2009
+       on d.dept_no = dyb_2009.dept_no
+       and dyb_2009.fiscal_year = 2009
+where exists (
+  select * from proj_dept_budget b
+  where d.dept_no = b.dept_no
+);
+Recursive CTEs
+A recursive (self-referencing) CTE is a UNION which must have at least one non-recursive member,
+called the anchor. The non-recursive member(s) must be placed before the recursive member(s).
+Recursive members are linked to each other and to their non-recursive neighbour by UNION ALL
+operators. The unions between non-recursive members may be of any type.
+Recursive CTEs require the RECURSIVE keyword to be present right after WITH. Each recursive union
+member may reference itself only once, and it must do so in a FROM clause.
+A great benefit of recursive CTEs is that they use far less memory and CPU cycles than an
+equivalent recursive stored procedure.
+Execution Pattern
+The execution pattern of a recursive CTE is as follows:
+• The engine begins execution from a non-recursive member.
+• For each row evaluated, it starts executing each recursive member one by one, using the
+current values from the outer row as parameters.
+• If the currently executing instance of a recursive member produces no rows, execution loops
+back one level and gets the next row from the outer result set.
+Example of recursive CTEs
+WITH RECURSIVE DEPT_YEAR_BUDGET AS (
+  SELECT
+      FISCAL_YEAR,
+      DEPT_NO,
+      SUM(PROJECTED_BUDGET) BUDGET
+  FROM PROJ_DEPT_BUDGET
+  GROUP BY FISCAL_YEAR, DEPT_NO
+),
+Chapter 6. Data Manipulation (DML) Statements
+314
+
+<!-- Original PDF Page: 316 -->
+
+DEPT_TREE AS (
+  SELECT
+      DEPT_NO,
+      HEAD_DEPT,
+      DEPARTMENT,
+      CAST('' AS VARCHAR(255)) AS INDENT
+  FROM DEPARTMENT
+  WHERE HEAD_DEPT IS NULL
+  UNION ALL
+  SELECT
+      D.DEPT_NO,
+      D.HEAD_DEPT,
+      D.DEPARTMENT,
+      H.INDENT || ' '
+  FROM DEPARTMENT D
+    JOIN DEPT_TREE H ON H.HEAD_DEPT = D.DEPT_NO
+)
+SELECT
+    D.DEPT_NO,
+    D.INDENT || D.DEPARTMENT DEPARTMENT,
+    DYB_2008.BUDGET AS BUDGET_08,
+    DYB_2009.BUDGET AS BUDGET_09
+FROM DEPT_TREE D
+    LEFT JOIN DEPT_YEAR_BUDGET DYB_2008 ON
+      (D.DEPT_NO = DYB_2008.DEPT_NO) AND
+      (DYB_2008.FISCAL_YEAR = 2008)
+    LEFT JOIN DEPT_YEAR_BUDGET DYB_2009 ON
+      (D.DEPT_NO = DYB_2009.DEPT_NO) AND
+      (DYB_2009.FISCAL_YEAR = 2009);
+The next example returns the pedigree of a horse. The main difference is that recursion occurs
+simultaneously in two branches of the pedigree.
+WITH RECURSIVE PEDIGREE (
+  CODE_HORSE,
+  CODE_FATHER,
+  CODE_MOTHER,
+  NAME,
+  MARK,
+  DEPTH)
+AS (SELECT
+      HORSE.CODE_HORSE,
+      HORSE.CODE_FATHER,
+      HORSE.CODE_MOTHER,
+      HORSE.NAME,
+      CAST('' AS VARCHAR(80)),
+      0
+    FROM
+      HORSE
+    WHERE
+Chapter 6. Data Manipulation (DML) Statements
+315
+
+<!-- Original PDF Page: 317 -->
+
+HORSE.CODE_HORSE = :CODE_HORSE
+    UNION ALL
+    SELECT
+      HORSE.CODE_HORSE,
+      HORSE.CODE_FATHER,
+      HORSE.CODE_MOTHER,
+      HORSE.NAME,
+      'F' || PEDIGREE.MARK,
+      PEDIGREE.DEPTH + 1
+    FROM
+      HORSE
+      JOIN PEDIGREE
+        ON HORSE.CODE_HORSE = PEDIGREE.CODE_FATHER
+    WHERE
+      PEDIGREE.DEPTH < :MAX_DEPTH
+    UNION ALL
+    SELECT
+      HORSE.CODE_HORSE,
+      HORSE.CODE_FATHER,
+      HORSE.CODE_MOTHER,
+      HORSE.NAME,
+      'M' || PEDIGREE.MARK,
+      PEDIGREE.DEPTH + 1
+    FROM
+      HORSE
+      JOIN PEDIGREE
+        ON HORSE.CODE_HORSE = PEDIGREE.CODE_MOTHER
+    WHERE
+      PEDIGREE.DEPTH < :MAX_DEPTH
+)
+SELECT
+  CODE_HORSE,
+  NAME,
+  MARK,
+  DEPTH
+FROM
+  PEDIGREE
+Notes on recursive CTEs
+• Aggregates ( DISTINCT, GROUP BY, HAVING) and aggregate functions ( SUM, COUNT, MAX etc) are not
+allowed in recursive union members.
+• A recursive reference cannot participate in an outer join.
+• The maximum recursion depth is 1024.
+6.1.18. Full SELECT Syntax
+The previous sections used incomplete or simplified fragments of the SELECT syntax. Following is the
+full syntax.
+Chapter 6. Data Manipulation (DML) Statements
+316
+
+<!-- Original PDF Page: 318 -->
+
+
+Where possible, the syntax below uses syntax names from the SQL standard,
+which do not necessarily match the syntax names in the Firebird source. In some
+cases, syntax productions have been collapsed, because the productions in the SQL
+standard are verbose as they are also used to add additional rules or definitions to
+a syntax element.
+Although this is intended as the full syntax, some productions are not shown (e.g.
+<value-expression>) and assumed to be clear for the reader, and in some cases we
+take shortcuts like using query-name or column-alias for identifiers in a syntax
+production.
+If you come across situations where these shortcuts do result in lack of clarity or
+other issues, let us know on https://github.com/FirebirdSQL/firebird-
+documentation or on firebird-devel.
+The syntax below does not include the PSQL SELECT …  INTO  syntax, which is
+essentially <cursor-specification> INTO <variable-list>.
+<cursor-specification> ::=
+  <query-expression> [<updatability-clause>] [<lock-clause>]
+<query-expression> ::=
+  [<with-clause>] <query-expression-body> [<order-by-clause>]
+    [{ <rows-clause>
+     | [<result-offset-clause>] [<fetch-first-clause>] }]
+<with-clause> ::=
+  WITH [RECURSIVE] <with-list-element> [, <with-list-element> ...]
+<with-list-element> ::=
+  query-name [(<column-name-list>)] AS (<query-expression>)
+<column-name-list> ::= column-name [, column-name ...]
+<query-expression-body> ::=
+    <query-term>
+  | <query-expression-body> UNION [{ DISTINCT | ALL }] <query-term>
+<query-term> ::= <query-primary>
+<query-primary> ::=
+    <query-specification>
+  | (<query-expression-body> [<order-by-clause>]
+     [<result-offset-clause>] [<fetch-first-clause>])
+<query-specification> ::=
+  SELECT <limit-clause> [{ ALL | DISTINCT }] <select-list>
+    FROM <table-reference> [, <table-reference> ...]
+    [WHERE <search-condition>]
+Chapter 6. Data Manipulation (DML) Statements
+317
+
+<!-- Original PDF Page: 319 -->
+
+[GROUP BY <value-expression> [, <value-expression> ...]]
+    [HAVING <search-condition>]
+    [WINDOW <window-definition> [, <window-definition> ...]]
+    [PLAN <plan-expression>]
+<limit-clause> ::= [FIRST <limit-expression>] [SKIP <limit-expression>]
+<limit-expression> ::=
+    <integer-literal>
+  | <query-parameter>
+  | (<value-expression>)
+<select-list> ::= * | <select-sublist> [, <select-sublist> ...]
+<select-sublist> ::=
+    table-alias.*
+  | <value-expression> [[AS] column-alias]
+<table-reference> ::= <table-primary> | <joined-table>
+<table-primary> ::=
+    <table-or-query-name> [[AS] correlation-name]
+  | [LATERAL] <derived-table> [<correlation-or-recognition>]
+  | <parenthesized-joined-table>
+<table-or-query-name> ::=
+    table-name
+  | query-name
+  | [package-name.]procedure-name [(<procedure-args>)]
+<procedure-args> ::= <value-expression [, <value-expression> ...]
+<correlation-or-recognition> ::=
+  [AS] correlation-name [(<column-name-list>)]
+<derived-table> ::= (<query-expression>)
+<parenthesized-joined-table> ::=
+    (<parenthesized-joined-table)
+  | (<joined-table>)
+<joined-table> ::=
+    <cross-join>
+  | <natural-join>
+  | <qualified-join>
+<cross-join>
+  <table-reference> CROSS JOIN <table-primary>
+<natural-join> ::=
+  <table-reference> NATURAL [<join-type>] JOIN <table-primary>
+Chapter 6. Data Manipulation (DML) Statements
+318
+
+<!-- Original PDF Page: 320 -->
+
+<join-type> ::= INNER | { LEFT | RIGHT | FULL } [OUTER]
+<qualified-join> ::=
+  <table-reference> [<join-type>] JOIN <table-primary>
+  { ON <search-condition>
+  | USING (<column-name-list>) }
+<window-definition> ::=
+  new-window-name AS (<window-specification-details>)
+<window-specification-details> ::=
+  [existing-window-name]
+    [<window-partition-clause>]
+    [<order-by-clause>]
+    [<window-frame-clause>]
+<window-partition-clause> ::=
+  PARTITION BY <value-expression> [, <value-expression> ...]
+<order-by-clause> ::=
+  ORDER BY <sort-specification [, <sort-specification> ...]
+<sort-specification> ::=
+  <value-expression> [<ordering-specification>] [<null-ordering>]
+<ordering-specification> ::=
+    ASC  | ASCENDING
+  | DESC | DESCENDING
+<null-ordering> ::=
+    NULLS FIRST
+  | NULLS LAST
+<window-frame-clause> ::= { RANGE | ROWS } <window-frame-extent>
+<window-frame-extent> ::=
+    <window-frame-start>
+  | <window-frame-between>
+<window-frame-start> ::=
+    UNBOUNDED PRECEDING
+  | <value-expression> PRECEDING
+  | CURRENT ROW
+<window-frame-between> ::=
+  BETWEEN { UNBOUNDED PRECEDING | <value-expression> PRECEDING
+          | CURRENT ROW | <value-expression> FOLLOWING }
+  AND { <value-expression> PRECEDING | CURRENT ROW
+      | <value-expression> FOLLOWING | UNBOUNDED FOLLOWING }
+Chapter 6. Data Manipulation (DML) Statements
+319
+
+<!-- Original PDF Page: 321 -->
+
+<rows-clause> ::= ROWS <value-expression> [TO <value-expression>]
+<result-offset-clause> :: =
+  OFFSET <offset-fetch-expression> { ROW | ROWS }
+<offset-fetch-expression> ::=
+    <integer-literal>
+  | <query-parameter>
+<fetch-first-clause> ::=
+  [FETCH { FIRST | NEXT }
+   [<offset-fetch-expression>] { ROW | ROWS } ONLY]
+<updatability-clause> ::= FOR UPDATE [OF <column-name-list>]
+<lock-clause> ::= WITH LOCK [SKIP LOCKED]
+6.2. INSERT
+Inserts rows of data into a table or updatable view
+Syntax
+INSERT INTO target
+  { DEFAULT VALUES
+  | [(<column_list>)] [<override_opt>] <value-source> }
+  [RETURNING <returning_list> [INTO <variables>]]
+<column_list> ::= col_name [, col_name ...]
+<override_opt> ::=
+  OVERRIDING {USER | SYSTEM} VALUE
+<value-source> ::= VALUES (<value-list>) | <query-expression>
+<value-list> ::= <ins-value> [, <ins-value> ...]
+<ins-value> :: = <value-expression> | DEFAULT
+<returning_list> ::= * | <output_column> [, <output_column]
+<output_column> ::=
+    target.*
+  | <return_expression> [COLLATE collation] [[AS] alias]
+<return_expression> ::=
+    <value-expression>
+  | [target.]col_name
+<value-expression> ::=
+Chapter 6. Data Manipulation (DML) Statements
+320
+
+<!-- Original PDF Page: 322 -->
+
+<literal>
+  | <context-variable>
+  | any other expression returning a single
+    value of a Firebird data type or NULL
+<variables> ::= [:]varname [, [:]varname ...]
+Table 87. Arguments for the INSERT Statement Parameters
+Argument Description
+target The name of the table or view to which a new row, or batch of rows,
+should be added
+col_name Name of a table or view column
+value-expression An expression whose value is used for inserting into the table or for
+returning
+return_expression The expression to be returned in the RETURNING clause
+literal A literal
+context-variable Context variable
+varname Name of a PSQL local variable
+The INSERT statement is used to add rows to a table or to one or more tables underlying a view:
+• If the column values are supplied in a VALUES clause, exactly one row is inserted
+• The values may be provided instead by a SELECT expression, in which case zero to many rows
+may be inserted
+• With the DEFAULT VALUES clause, no values are provided at all and exactly one row is inserted.
+
+Restrictions
+• Columns returned to the NEW.column_name context variables in DML triggers
+should not have a colon (“:”) prefixed to their names
+• No column may appear more than once in the column list.
+
+ALERT : BEFORE INSERT Triggers
+Regardless of the method used for inserting rows, be mindful of any columns in
+the target table or view that are populated by BEFORE INSERT  triggers, such as
+primary keys and case-insensitive search columns. Those columns should be
+excluded from both the column_list and the VALUES list if, as they should, the
+triggers test the NEW.column_name for NULL.
+6.2.1. INSERT … VALUES
+The VALUES list must provide a value for every column in the column list, in the same order and of
+the correct type. The column list need not specify every column in the target but, if the column list
+is absent, the engine requires a value for every column in the table or view (computed columns
+Chapter 6. Data Manipulation (DML) Statements
+321
+
+<!-- Original PDF Page: 323 -->
+
+excluded).
+The expression DEFAULT allows a column to be specified in the column list, but instructs Firebird to
+use the default value (either NULL or the value specified in the DEFAULT clause of the column
+definition). For identity columns, specifying DEFAULT will generate the identity value. It is possible to
+include calculated columns in the column list and specifying DEFAULT as the column value.
+
+Introducer syntax provides a way to identify the character set of a value that is a
+string constant (literal). Introducer syntax works only with literal strings: it cannot
+be applied to string variables, parameters, column references or values that are
+expressions.
+Examples
+INSERT INTO cars (make, model, year)
+VALUES ('Ford', 'T', 1908);
+INSERT INTO cars
+VALUES ('Ford', 'T', 1908, 'USA', 850);
+-- notice the '_' prefix (introducer syntax)
+INSERT INTO People
+VALUES (_ISO8859_1 'Hans-Jörg Schäfer');
+6.2.2. INSERT … SELECT
+For this method of inserting, the output columns of the SELECT statement (or <query-expression>)
+must provide a value for every target column in the column list, in the same order and of the
+correct type.
+Literal values, context variables or expressions of compatible type can be substituted for any
+column in the source row. In this case, a source column list and a corresponding VALUES list are
+required.
+If the column list is absent — as it is when SELECT *  is used for the source expression — the
+column_list must contain the names of every column in the target table or view (computed columns
+excluded).
+Examples
+INSERT INTO cars (make, model, year)
+  SELECT make, model, year
+  FROM new_cars;
+INSERT INTO cars
+  SELECT * FROM new_cars;
+INSERT INTO Members (number, name)
+  SELECT number, name FROM NewMembers
+Chapter 6. Data Manipulation (DML) Statements
+322
+
+<!-- Original PDF Page: 324 -->
+
+WHERE Accepted = 1
+UNION ALL
+  SELECT number, name FROM SuspendedMembers
+    WHERE Vindicated = 1
+INSERT INTO numbers(num)
+  WITH RECURSIVE r(n) as (
+    SELECT 1 FROM rdb$database
+    UNION ALL
+    SELECT n+1 FROM r WHERE n < 100
+  )
+SELECT n FROM r
+Of course, the column names in the source table need not be the same as those in the target table.
+Any type of SELECT statement is permitted, as long as its output columns exactly match the insert
+columns in number, order and type. Types need not be the same, but they must be assignment-
+compatible.
+
+Since Firebird 5.0, an INSERT … SELECT with a RETURNING clause produces zero or
+more rows, and the statement is described as type isc_info_sql_stmt_select. In
+other words, an INSERT … SELECT … RETURNING will no longer produce a “multiple
+rows in singleton select” error when the select produces multiple rows.
+For the time being, a INSERT … VALUES (… ) or INSERT … DEFAULT VALUES  with a
+RETURNING clause is still described as isc_info_sql_stmt_exec_procedure. This
+behaviour may change in a future Firebird version.
+6.2.3. INSERT … DEFAULT VALUES
+The DEFAULT VALUES clause allows insertion of a record without providing any values at all, either
+directly or from a SELECT statement. This is only possible if every NOT NULL or CHECKed column in the
+table either has a valid default declared or gets such a value from a BEFORE INSERT  trigger.
+Furthermore, triggers providing required field values must not depend on the presence of input
+values.
+Specifying DEFAULT VALUES is equivalent to specifying a values list with expression DEFAULT for all
+columns.
+Example
+INSERT INTO journal
+  DEFAULT VALUES
+RETURNING entry_id;
+6.2.4. OVERRIDING
+The OVERRIDING clause controls the behaviour of an identity column for this statement only.
+Chapter 6. Data Manipulation (DML) Statements
+323
+
+<!-- Original PDF Page: 325 -->
+
+OVERRIDING SYSTEM VALUE
+The user-provided value for the identity column is used, and no value is generated using the
+identity. In other words, for this insert, the identity will behave as if it is GENERATED BY DEFAULT.
+This option can only be specified for tables with a GENERATED ALWAYS identity column.
+This can be useful when merging or importing data from another source. After such an insert, it
+may be necessary to change the next value of the identity sequence using ALTER TABLE to prevent
+subsequent inserts from generating colliding identity values.
+OVERRIDING USER VALUE
+The user-provided value for the identity column is ignored, and the column value is generated
+using the identity. In other words, for this insert, the identity will behave as if it is GENERATED
+ALWAYS, while allowing the identity column in the column-list. This option can be specified for
+both types of identity columns.
+It is usually simpler to leave out the identity column to achieve the same effect.
+Examples of OVERRIDING
+-- for ALWAYS
+-- value 11 is used anyway
+insert into objects_always (id, name)
+  OVERRIDING SYSTEM VALUE values (11, 'Laptop');
+-- for both ALWAYS and BY DEFAULT
+-- value 12 is not used
+insert into objects_default (id, name)
+  OVERRIDING USER VALUE values (12, 'Laptop');
+6.2.5. The RETURNING Clause
+An INSERT statement may optionally include a RETURNING clause to return values from the inserted
+rows. The clause, if present, need not contain all columns referenced in the insert statement and
+may also contain other columns or expressions. The returned values reflect any changes that may
+have been made in BEFORE INSERT triggers.
+The user executing the statement needs to have SELECT privileges on the columns specified in the
+RETURNING clause.
+The syntax of the returning_list is similar to the column list of a SELECT clause. It is possible to
+reference all columns using * or table_name.*.
+The optional INTO sub-clause is only valid in PSQL.
+
+Caveats for updatable views
+The values reported by RETURNING for updatable views may be incorrect if the view
+is made updatable through triggers. See The RETURNING clause and updatable
+views.
+Chapter 6. Data Manipulation (DML) Statements
+324
+
+<!-- Original PDF Page: 326 -->
+
+
+Multiple INSERTs
+In DSQL, an INSERT …  VALUES (… ) RETURNING  or INSERT …  DEFAULT VALUES
+RETURNING returns only one row, and a INSERT … SELECT … RETURNING can return
+zero or more rows.
+In PSQL, if the RETURNING clause is specified and more than one row is inserted by
+the INSERT statement, the statement fails and a “multiple rows in singleton select”
+error is returned. This behaviour may change in future Firebird versions.
+Examples
+INSERT INTO Scholars (firstname, lastname, address,
+  phone, email)
+VALUES ('Henry', 'Higgins', '27A Wimpole Street',
+  '3231212', NULL)
+RETURNING lastname, fullname, id;
+INSERT INTO Scholars (firstname, lastname, address,
+  phone, email)
+VALUES (
+  'Henry', 'Higgins', '27A Wimpole Street',
+  '3231212', NULL)
+RETURNING *;
+INSERT INTO Dumbbells (firstname, lastname, iq)
+  SELECT fname, lname, iq
+FROM Friends
+  ORDER BY iq ROWS 1
+  RETURNING id, firstname, iq
+INTO :id, :fname, :iq;
+
+• In DSQL, an INSERT … VALUES (…) RETURNING always returns exactly one row.
+This behaviour may change in a future Firebird version.
+• In DSQL, an INSERT … DEFAULT VALUES RETURNING  always returns exactly one
+row.
+• In DSQL, an INSERT … SELECT … RETURNING returns zero or more rows.
+• In PSQL, if multiple rows are returned, the statement fails with a “multiple
+rows in singleton select” error. This behaviour may change in a future Firebird
+version.
+• In PSQL, if no row was inserted, nothing is returned, and the target variables
+keep their existing values.
+6.2.6. Inserting into BLOB columns
+Inserting into BLOB columns is only possible under the following circumstances:
+1. The client application has made special provisions for such inserts, using the Firebird API. In
+Chapter 6. Data Manipulation (DML) Statements
+325
+
+<!-- Original PDF Page: 327 -->
+
+this case, the modus operandi is application-specific and outside the scope of this manual.
+2. The value inserted is a string literal of no more than 65,533 bytes (64KB - 3).
+
+A limit, in characters, is calculated at run-time for strings that are in multi-byte
+character sets, to avoid overrunning the bytes limit. For example, for a UTF8
+string (max. 4 bytes/character), the run-time limit is likely to be about
+(floor(65533/4)) = 16383 characters.
+3. You are using the “INSERT … SELECT” form and one or more columns in the result set are BLOBs.
+6.3. UPDATE
+Updates existing rows in tables and updatable views
+Syntax
+UPDATE target [[AS] alias]
+  SET col_name = <upd_value> [, col_name = <upd_value> ...]
+  [WHERE {<search-conditions> | CURRENT OF cursorname}]
+  [PLAN <plan_items>]
+  [ORDER BY <sort_items>]
+  [ROWS m [TO n]]
+  [SKIP LOCKED]
+  [RETURNING <returning_list> [INTO <variables>]]
+<upd_value> ::= <value-expression> | DEFAULT
+<returning_list> ::= * | <output_column> [, <output_column]
+<output_column> ::=
+    target.* | NEW.* | OLD.*
+  | <return_expression> [COLLATE collation] [[AS] alias]
+<return_expression> ::=
+    <value-expression>
+  | [target.]col_name
+  | NEW.col_name
+  | OLD.col_name
+<value-expression> ::=
+    <literal>
+  | <context-variable>
+  | any other expression returning a single
+    value of a Firebird data type or NULL
+<variables> ::= [:]varname [, [:]varname ...]
+Table 88. Arguments for the UPDATE Statement Parameters
+Chapter 6. Data Manipulation (DML) Statements
+326
+
+<!-- Original PDF Page: 328 -->
+
+Argument Description
+target The name of the table or view where the records are updated
+alias Alias for the table or view
+col_name Name or alias of a column in the table or view
+value-expression Expression for the new value for a column that is to be updated in the
+table or view by the statement, or a value to be returned
+search-conditions A search condition limiting the set of the rows to be updated
+cursorname The name of the cursor through which the row(s) to be updated are
+positioned
+plan_items Clauses in the query plan
+sort_items Columns listed in an ORDER BY clause
+m, n Integer expressions for limiting the number of rows to be updated
+return_expression A value to be returned in the RETURNING clause
+literal A literal
+context-variable Context variable
+varname Name of a PSQL local variable
+The UPDATE statement changes values in a table or in one or more of the tables that underlie a view.
+The columns affected are specified in the SET clause. The rows affected may be limited by the WHERE
+and ROWS clauses. If neither WHERE nor ROWS is present, all records in the table will be updated.
+6.3.1. Using an alias
+If you assign an alias to a table or a view, the alias must be used when specifying columns and also
+in any column references included in other clauses.
+Example
+Correct usage:
+update Fruit set soort = 'pisang' where ...
+update Fruit set Fruit.soort = 'pisang' where ...
+update Fruit F set soort = 'pisang' where ...
+update Fruit F set F.soort = 'pisang' where ...
+Not possible:
+update Fruit F set Fruit.soort = 'pisang' where ...
+Chapter 6. Data Manipulation (DML) Statements
+327
+
+<!-- Original PDF Page: 329 -->
+
+6.3.2. The SET Clause
+In the SET clause, the assignment expressions, containing the columns with the values to be set, are
+separated by commas. In an assignment expression, column names are on the left and the values or
+expressions to assign are on the right. A column may be assigned only once in the SET clause.
+A column name can be used in expressions on the right. The old value of the column will always be
+used in these right-side values, even if the column was already assigned a new value earlier in the
+SET clause.
+Using the expression DEFAULT will set the column to its default value (either NULL or the value
+specified on the DEFAULT clause of the column definition). For an identity column, specifying DEFAULT
+will generate a new identity value. It is possible to “update” calculated columns in the SET clause if
+and only if the assigned value is DEFAULT.
+ It is not possible to assign DEFAULT as a parameter value.
+Here is an example
+Data in the TSET table:
+A B
+---
+1 0
+2 0
+The statement:
+UPDATE tset SET a = 5, b = a;
+will change the values to:
+A B
+---
+5 1
+5 2
+Notice that the old values (1 and 2) are used to update the b column even after the column was
+assigned a new value (5).
+6.3.3. The WHERE Clause
+The WHERE clause sets the conditions that limit the set of records for a searched update.
+In PSQL, if a named cursor is being used for updating a set, using the WHERE CURRENT OF clause, the
+action is limited to the row where the cursor is currently positioned. This is a positioned update.
+Chapter 6. Data Manipulation (DML) Statements
+328
+
+<!-- Original PDF Page: 330 -->
+
+ To be able to use the WHERE CURRENT OF clause in DSQL, the cursor name needs to be
+set on the statement handle before executing the statement.
+Examples
+UPDATE People
+  SET firstname = 'Boris'
+  WHERE lastname = 'Johnson';
+UPDATE employee e
+  SET salary = salary * 1.05
+  WHERE EXISTS(
+         SELECT *
+           FROM employee_project ep
+           WHERE e.emp_no = ep.emp_no);
+UPDATE addresses
+  SET city = 'Saint Petersburg', citycode = 'PET'
+  WHERE city = 'Leningrad'
+UPDATE employees
+  SET salary = 2.5 * salary
+  WHERE title = 'CEO'
+For string literals with which the parser needs help to interpret the character set of the data, the
+introducer syntax may be used. The string literal is preceded by the character set name, prefixed
+with an underscore character:
+-- notice the '_' prefix
+UPDATE People
+SET name = _ISO8859_1 'Hans-Jörg Schäfer'
+WHERE id = 53662;
+6.3.4. The ORDER BY and ROWS Clauses
+The ORDER BY and ROWS clauses make sense only when used together. However, they can be used
+separately.
+If ROWS has one argument, m, the rows to be updated will be limited to the first m rows.
+Points to note
+• If m > the number of rows being processed, the entire set of rows is updated
+• If m = 0, no rows are updated
+• If m < 0, an error occurs and the update fails
+If two arguments are used, m and n, ROWS limits the rows being updated to rows from m to n
+Chapter 6. Data Manipulation (DML) Statements
+329
+
+<!-- Original PDF Page: 331 -->
+
+inclusively. Both arguments are integers and start from 1.
+Points to note
+• If m > the number of rows being processed, no rows are updated
+• If n > the number of rows, rows from m to the end of the set are updated
+• If m < 1 or n < 1, an error occurs and the update fails
+• If n = m - 1, no rows are updated
+• If n < m -1, an error occurs and the update fails
+ROWS Example
+UPDATE employees
+SET salary = salary + 50
+ORDER BY salary ASC
+ROWS 20;
+6.3.5. The SKIP LOCKED Clause
+When the SKIP LOCKED clause is specified, records locked by a different transaction are skipped by
+the statement and are not updated.
+When a ROWS clause is specified, the “skip locked” check is performed after skipping the requested
+number of rows specified, and before counting the number of rows to update.
+6.3.6. The RETURNING Clause
+An UPDATE statement may include RETURNING to return some values from the updated rows. RETURNING
+may include data from any column of the row, not only the columns that are updated by the
+statement. It can include literals or expressions not associated with columns, if there is a need for
+that.
+The user executing the statement needs to have SELECT privileges on the columns specified in the
+RETURNING clause.
+When the RETURNING set contains data from the current row, the returned values report changes
+made in the BEFORE UPDATE triggers, but not those made in AFTER UPDATE triggers.
+The context variables OLD.fieldname and NEW.fieldname can be used as column names. If OLD. or NEW.
+is not specified, or if the table name (target) is specified instead, the column values returned are the
+NEW. ones.
+The syntax of the returning_list is similar to the column list of a SELECT clause. It is possible to
+reference all columns using *, or table_name.*, NEW.* and/or OLD.*.
+In DSQL, a positioned update statement ( WHERE CURRENT OF … ) with RETURNING always returns a
+single row, a normal update statement can return zero or more rows. The update is executed to
+completion before rows are returned. In PSQL, attempts to execute an UPDATE … RETURNING that
+affects multiple rows will result in the error “multiple rows in singleton select”. This behaviour may
+Chapter 6. Data Manipulation (DML) Statements
+330
+
+<!-- Original PDF Page: 332 -->
+
+change in a future Firebird version.
+The INTO Sub-clause
+In PSQL, the INTO clause can be used to pass the returning values to local variables. It is not
+available in DSQL. If no records are updated, nothing is returned and variables specified in
+RETURNING will keep their previous values.
+RETURNING Example (DSQL)
+UPDATE Scholars
+SET firstname = 'Hugh', lastname = 'Pickering'
+WHERE firstname = 'Henry' and lastname = 'Higgins'
+RETURNING id, old.lastname, new.lastname;
+6.3.7. Updating BLOB columns
+Updating a BLOB column always replaces the entire contents. Even the BLOB ID, the “handle” that is
+stored directly in the column, is changed. BLOBs can be updated if:
+1. The client application has made special provisions for this operation, using the Firebird API. In
+this case, the modus operandi is application-specific and outside the scope of this manual.
+2. The new value is a string literal of no more than 65,533 bytes (64KB - 3).
+
+A limit, in characters, is calculated at run-time for strings that are in multi-byte
+character sets, to avoid overrunning the bytes limit. For example, for a UTF8
+string (max. 4 bytes/character), the run-time limit is likely to be about
+(floor(65533/4)) = 16383 characters.
+3. The source is itself a BLOB column or, more generally, an expression that returns a BLOB.
+4. You use the INSERT CURSOR statement (ESQL only).
+6.4. UPDATE OR INSERT
+Updates existing rows in a table or updatable view, or — if it does not exist — inserts it
+Syntax
+UPDATE OR INSERT INTO
+  target [(<column_list>)]
+  [<override_opt>]
+  VALUES (<value_list>)
+  [MATCHING (<column_list>)]
+  [ORDER BY <ordering-list>]
+  [ROWS <m> [TO <n>]]
+  [RETURNING <returning_list> [INTO <variables>]]
+Chapter 6. Data Manipulation (DML) Statements
+331
+
+<!-- Original PDF Page: 333 -->
+
+<column_list> ::= col_name  [, col_name ...]
+<override_opt> ::=
+  OVERRIDING {USER | SYSTEM} VALUE
+<value_list> ::= <ins_value> [, <ins_value> ...]
+<ins_value> ::= <value> | DEFAULT
+<returning_list> ::= * | <output_column> [, <output_column]
+<output_column> ::=
+    target.* | NEW.* | OLD.*
+  | <return_expression> [COLLATE collation] [[AS] alias]
+<return_expression> ::=
+    <value-expression>
+  | [target.]col_name
+  | NEW.col_name
+  | OLD.col_name
+<value-expression> ::=
+    <literal>
+  | <context-variable>
+  | any other expression returning a single
+    value of a Firebird data type or NULL
+<variables> ::= [:]varname [, [:]varname ...]
+Table 89. Arguments for the UPDATE OR INSERT Statement Parameters
+Argument Description
+target The name of the table or view where the record(s) is to be updated or a
+new record inserted
+col_name Name of a column in the table or view
+value-expression An expression whose value is to be used for inserting or updating the
+table, or returning a value
+return_expression An expression returned in the RETURNING clause
+varname Variable name — PSQL only
+UPDATE OR INSERT inserts a new record or updates one or more existing records. The action taken
+depends on the values provided for the columns in the MATCHING clause (or, if the latter is absent, in
+the primary key). If there are records found matching those values, they are updated. If not, a new
+record is inserted. A match only counts if all the columns in the MATCHING clause or primary key
+columns are equal. Matching is done with the IS NOT DISTINCT  operator, so one NULL matches
+another.
+ Restrictions
+Chapter 6. Data Manipulation (DML) Statements
+332
+
+<!-- Original PDF Page: 334 -->
+
+• If the table has no primary key, the MATCHING clause is mandatory.
+• In the MATCHING list as well as in the update/insert column list, each column
+name may occur only once.
+• The “INTO <variables>” subclause is only available in PSQL.
+• When values are returned into the context variable NEW, this name must not be
+preceded by a colon (“:”).
+6.4.1. The ORDER BY and ROWS Clauses
+See The ORDER BY and ROWS Clauses for UPDATE.
+6.4.2. The RETURNING Clause
+The optional RETURNING clause, if present, need not contain all the columns mentioned in the
+statement and may also contain other columns or expressions. The returned values reflect any
+changes that may have been made in BEFORE triggers, but not those in AFTER triggers. OLD.fieldname
+and NEW.fieldname may both be used in the list of columns to return; for field names not preceded
+by either of these, the new value is returned.
+The user executing the statement needs to have SELECT privileges on the columns specified in the
+RETURNING clause.
+The syntax of the returning_list is similar to the column list of a SELECT clause. It is possible to
+reference all columns using *, or table_name.*, NEW.* and/or OLD.*.
+In DSQL, a statement with a RETURNING clause can return zero or more rows. The update or insert is
+executed to completion before rows are returned. In PSQL, if a RETURNING clause is present and more
+than one matching record is found, an error “multiple rows in singleton select” is raised. This
+behaviour may change in a future Firebird version.
+The optional INTO sub-clause is only valid in PSQL.
+6.4.3. Example of UPDATE OR INSERT
+Modifying data in a table, using UPDATE OR INSERT in a PSQL module. The return value is passed to a
+local variable, whose colon prefix is optional.
+UPDATE OR INSERT INTO Cows (Name, Number, Location)
+  VALUES ('Suzy Creamcheese', 3278823, 'Green Pastures')
+  MATCHING (Number)
+  RETURNING rec_id into :id;
+UPDATE OR INSERT INTO Cows (Name, Number, Location)
+  VALUES ('Suzy Creamcheese', 3278823, 'Green Pastures')
+  MATCHING (Number)
+  RETURNING old.*, new.*;
+Chapter 6. Data Manipulation (DML) Statements
+333
+
+<!-- Original PDF Page: 335 -->
+
+6.5. DELETE
+Deletes rows from a table or updatable view
+Syntax
+DELETE
+  FROM target [[AS] alias]
+  [WHERE {<search-conditions> | CURRENT OF cursorname}]
+  [PLAN <plan_items>]
+  [ORDER BY <sort_items>]
+  [ROWS m [TO n]]
+  [SKIP LOCKED]
+  [RETURNING <returning_list> [INTO <variables>]]
+<returning_list> ::= * | <output_column> [, <output_column]
+<output_column> ::=
+    target.*
+  | <return_expression> [COLLATE collation] [[AS] alias]
+<return_expression> ::=
+    <value-expression>
+  | [target.]col_name
+<value-expression> ::=
+    <literal>
+  | <context-variable>
+  | any other expression returning a single
+    value of a Firebird data type or NULL
+<variables> ::=
+  [:]varname [, [:]varname ...]
+Table 90. Arguments for the DELETE Statement Parameters
+Argument Description
+target The name of the table or view from which the records are to be deleted
+alias Alias for the target table or view
+search-conditions Search condition limiting the set of rows being targeted for deletion
+cursorname The name of the cursor in which current record is positioned for deletion
+plan_items Query plan clause
+sort_items ORDER BY clause
+m, n Integer expressions for limiting the number of rows being deleted
+return_expression An expression to be returned in the RETURNING clause
+value-expression An expression whose value is used for returning
+Chapter 6. Data Manipulation (DML) Statements
+334
+
+<!-- Original PDF Page: 336 -->
+
+Argument Description
+varname Name of a PSQL variable
+DELETE removes rows from a database table or from one or more of the tables that underlie a view.
+WHERE and ROWS clauses can limit the number of rows deleted. If neither WHERE nor ROWS is present,
+DELETE removes all the rows in the relation.
+6.5.1. Aliases
+If an alias is specified for the target table or view, it must be used to qualify all field name
+references in the DELETE statement.
+Examples
+Supported usage:
+delete from Cities where name starting 'Alex';
+delete from Cities where Cities.name starting 'Alex';
+delete from Cities C where name starting 'Alex';
+delete from Cities C where C.name starting 'Alex';
+Not possible:
+delete from Cities C where Cities.name starting 'Alex';
+6.5.2. WHERE
+The WHERE clause sets the conditions that limit the set of records for a searched delete.
+In PSQL, if a named cursor is being used for deleting a set, using the WHERE CURRENT OF clause, the
+action is limited to the row where the cursor is currently positioned. This is a positioned delete.
+ To be able to use the WHERE CURRENT OF clause in DSQL, the cursor name needs to be
+set on the statement handle before executing the statement.
+Examples
+DELETE FROM People
+  WHERE firstname <> 'Boris' AND lastname <> 'Johnson';
+DELETE FROM employee e
+  WHERE NOT EXISTS(
+    SELECT *
+Chapter 6. Data Manipulation (DML) Statements
+335
+
+<!-- Original PDF Page: 337 -->
+
+FROM employee_project ep
+     WHERE e.emp_no = ep.emp_no);
+DELETE FROM Cities
+  WHERE CURRENT OF Cur_Cities;  -- ESQL and PSQL only
+6.5.3. PLAN
+A PLAN clause allows the user to optimize the operation manually.
+Example
+DELETE FROM Submissions
+  WHERE date_entered < '1-Jan-2002'
+  PLAN (Submissions INDEX ix_subm_date);
+6.5.4. ORDER BY and ROWS
+The ORDER BY clause orders the set before the actual deletion takes place. It only makes sense in
+combination with ROWS, but is also valid without it.
+The ROWS clause limits the number of rows being deleted. Integer literals or any integer expressions
+can be used for the arguments m and n.
+If ROWS has one argument, m, the rows to be deleted will be limited to the first m rows.
+Points to note
+• If m > the number of rows being processed, the entire set of rows is deleted
+• If m = 0, no rows are deleted
+• If m < 0, an error occurs and the deletion fails
+If two arguments are used, m and n, ROWS limits the rows being deleted to rows from m to n
+inclusively. Both arguments are integers and start from 1.
+Points to note
+• If m > the number of rows being processed, no rows are deleted
+• If m > 0 and <= the number of rows in the set and n is outside these values, rows from m to the
+end of the set are deleted
+• If m < 1 or n < 1, an error occurs and the deletion fails
+• If n = m - 1, no rows are deleted
+• If n < m -1, an error occurs and the deletion fails
+Examples
+Deleting the oldest purchase:
+Chapter 6. Data Manipulation (DML) Statements
+336
+
+<!-- Original PDF Page: 338 -->
+
+DELETE FROM Purchases
+  ORDER BY date ROWS 1;
+Deleting the highest custno(s):
+DELETE FROM Sales
+  ORDER BY custno DESC ROWS 1 to 10;
+Deleting all sales, ORDER BY clause pointless:
+DELETE FROM Sales
+  ORDER BY custno DESC;
+Deleting one record starting from the end, i.e. from Z…:
+DELETE FROM popgroups
+  ORDER BY name DESC ROWS 1;
+Deleting the five oldest groups:
+DELETE FROM popgroups
+  ORDER BY formed ROWS 5;
+No sorting (ORDER BY) is specified so 8 found records, starting from the fifth one, will be deleted:
+DELETE FROM popgroups
+  ROWS 5 TO 12;
+6.5.5. SKIP LOCKED
+When the SKIP LOCKED clause is specified, records locked by a different transaction are skipped by
+the statement and are not deleted.
+When a ROWS clause is specified, the “skip locked” check is performed after skipping the requested
+number of rows specified, and before counting the number of rows to delete.
+6.5.6. RETURNING
+A DELETE statement may optionally include a RETURNING clause to return values from the deleted
+rows. The clause, if present, need not contain all the relation’s columns and may also contain other
+columns or expressions.
+The user executing the statement needs to have SELECT privileges on the columns specified in the
+Chapter 6. Data Manipulation (DML) Statements
+337
+
+<!-- Original PDF Page: 339 -->
+
+RETURNING clause.
+The syntax of the returning_list is similar to the column list of a SELECT clause. It is possible to
+reference all columns using *, or table_name.*.
+
+• In DSQL, a positioned delete statement ( WHERE CURRENT OF … ) with RETURNING
+always returns a singleton, never a multi-row set. If no records is deleted, the
+returned columns contain NULL.
+• A normal DELETE statement can return zero or more rows; the deletion is
+executed to completion before rows are returned.
+• In PSQL, if a RETURNING clause is present and more than one matching record is
+found, an error “multiple rows in singleton select” is raised. This behaviour
+may change in a future Firebird version.
+• The INTO clause is available only in PSQL
+◦ If no row is deleted, nothing is returned and the target variables keep their
+values
+Examples
+DELETE FROM Scholars
+  WHERE firstname = 'Henry' and lastname = 'Higgins'
+  RETURNING lastname, fullname, id;
+DELETE FROM Scholars
+  WHERE firstname = 'Henry' and lastname = 'Higgins'
+  RETURNING *;
+DELETE FROM Dumbbells
+  ORDER BY iq DESC
+  ROWS 1
+  RETURNING lastname, iq into :lname, :iq;
+6.6. MERGE
+Merges data from a source set into a target table or updatable view
+Syntax
+MERGE INTO target [[AS] target_alias]
+  USING <table-reference>
+  ON <join_condition>
+  <merge_when> [<merge_when> ...]
+  [PLAN <plan-expr>]
+  [ORDER BY <ordering-list>]
+  [RETURNING <returning_list> [INTO <variables>]]
+<merge_when> ::=
+Chapter 6. Data Manipulation (DML) Statements
+338
+
+<!-- Original PDF Page: 340 -->
+
+<merge_when_matched>
+  | <merge_when_not_matched_target>
+  | <merge_when_not_matched_source>
+<merge_when_matched> ::=
+  WHEN MATCHED [AND <condition>] THEN
+  { UPDATE SET <assignment-list>
+  | DELETE }
+<merge_when_not_matched_target> ::=
+  WHEN NOT MATCHED [BY TARGET] [AND <condition>] THEN
+  INSERT [( <column_list> )] [<override_opt>]
+  VALUES ( <value_list> )
+<merge_when_not_matched_source> ::=
+  WHEN NOT MATCHED BY SOURCE [ AND <condition> ] THEN
+  { UPDATE SET <assignment-list>
+  | DELETE }
+<table-reference> ::= <table-primary> | <joined-table>
+<table-primary> ::=
+    <table-or-query-name> [[AS] correlation-name]
+  | [LATERAL] <derived-table> [<correlation-or-recognition>]
+  | <parenthesized-joined-table>
+<assignment_list ::=
+  col_name = <m_value> [, <col_name> = <m_value> ...]]
+<override_opt> ::=
+  OVERRIDING {USER | SYSTEM} VALUE
+<column_list> ::= colname [, colname ...]
+<value_list> ::= <m_value> [, <m_value> ...]
+<m_value> ::= <value-expression> | DEFAULT
+<returning_list> ::= * | <output_column> [, <output_column]
+<output_column> ::=
+    target.* | NEW.* | OLD.*
+  | <return_expression> [COLLATE collation] [[AS] alias]
+<return_expression> ::=
+    <value-expression>
+  | [target.]col_name
+  | NEW.col_name
+  | OLD.col_name
+<value-expression> ::=
+Chapter 6. Data Manipulation (DML) Statements
+339
+
+<!-- Original PDF Page: 341 -->
+
+<literal>
+  | <context-variable>
+  | any other expression returning a single
+    value of a Firebird data type or NULL
+<variables> ::=
+  [:]varname [, [:]varname ...]
+Table 91. Arguments for the MERGE Statement Parameters
+Argument Description
+target Name of target relation (table or updatable view)
+table-reference Data source. It can be a table, a view, a stored procedure, a derived table
+or a parenthesized joined table
+target_alias Alias for the target relation (table or updatable view)
+join_conditions The (ON) condition(s) for matching the source records with those in the
+target
+condition Additional test condition in WHEN MATCHED or WHEN NOT MATCHED clause
+col_name Name of a column in the target relation
+value-expression The value assigned to a column in the target table. This expression may
+be a literal value, a PSQL variable, a column from the source, or a
+compatible context variable
+return_expression The expression to be returned in the RETURNING clause Can be a column
+reference to source or target, or a column reference of the NEW or OLD
+context of the target, or a value.
+ret_alias Alias for the value expression in the RETURNING clause
+varname Name of a PSQL local variable
+The MERGE statement merges records from a source <table-reference> into a target table or updatable
+view. The source may be a table, view or “anything you can SELECT from” in general. Each source
+record will be used to update one or more target records, insert a new record in the target table,
+delete a record from the target table or do nothing.
+The action taken depends on the supplied join condition, the WHEN clause(s), and
+the — optional — condition in the WHEN clause. The join condition and condition in the WHEN will
+typically contain a comparison of fields in the source and target relations.
+Multiple WHEN MATCHED and WHEN NOT MATCHED  clauses are allowed. For each row in the source, the
+WHEN clauses are checked in the order they are specified in the statement. If the condition in the WHEN
+clause does not evaluate to true, the clause is skipped, and the next clause will be checked. This will
+be done until the condition for a WHEN clause evaluates to true, or a WHEN clauses without condition
+matches, or there are no more WHEN clauses. If a matching clause is found, the action associated with
+the clause is executed. For each row in the source, at most one action is executed. If the WHEN
+MATCHED clause is present, and several records match a single record in the target table, an error is
+raised.
+Chapter 6. Data Manipulation (DML) Statements
+340
+
+<!-- Original PDF Page: 342 -->
+
+Contrary to the other WHEN clauses, the WHEN NOT MATCHED BY SOURCE clauses evaluates records in the
+target which match no record in source.
+
+At least one WHEN clause must be present.
+WHEN NOT MATCHED is evaluated from the source viewpoint, that is, the table or set
+specified in USING. It has to work this way because if the source record does not
+match a target record, INSERT is executed. Of course, if there is a target record
+which does not match a source record, nothing is done.
+Currently, in PSQL, the ROW_COUNT variable returns the value 1, even if more than
+one record is modified or inserted. For details and progress, refer to firebird#4722.
+6.6.1. The ORDER BY Clause
+The ORDER BY can be used to influence the order in which rows are evaluated. The primary use case
+is when combined with RETURNING, to influence the order rows are returned.
+6.6.2. The RETURNING Clause
+A MERGE statement can contain a RETURNING clause to return rows added, modified or removed. The
+merge is executed to completion before rows are returned. The RETURNING clause can contain any
+columns from the target table (or updatable view), as well as other columns (eg from the source)
+and expressions.
+The user executing the statement needs to have SELECT privileges on the columns specified in the
+RETURNING clause.
+In PSQL, If a RETURNING clause is present and more than one matching record is found, an error
+“multiple rows in singleton select” is raised. This behaviour may change in a future Firebird
+version.
+The optional INTO sub-clause is only valid in PSQL.
+Column names can be qualified by the OLD or NEW prefix to define exactly what value to return:
+before or after modification. The returned values include the changes made by BEFORE triggers.
+The syntax of the returning_list is similar to the column list of a SELECT clause. It is possible to
+reference all columns using *, or table_name.*, NEW.* and/or OLD.*.
+For the UPDATE or INSERT action, unqualified column names, or those qualified by the target table
+name or alias will behave as if qualified by NEW, while for the DELETE action as if qualified by OLD.
+The following example modifies the previous example to affect one line, and adds a RETURNING
+clause to return the old and new quantity of goods, and the difference between those values.
+Using MERGE with a RETURNING clause
+MERGE INTO PRODUCT_INVENTORY AS TARGET
+USING (
+Chapter 6. Data Manipulation (DML) Statements
+341
+
+<!-- Original PDF Page: 343 -->
+
+SELECT
+    SL.ID_PRODUCT,
+    SUM(SL.QUANTITY)
+  FROM SALES_ORDER_LINE SL
+  JOIN SALES_ORDER S ON S.ID = SL.ID_SALES_ORDER
+  WHERE S.BYDATE = CURRENT_DATE
+  AND SL.ID_PRODUCT =: ID_PRODUCT
+  GROUP BY 1
+) AS SRC (ID_PRODUCT, QUANTITY)
+ON TARGET.ID_PRODUCT = SRC.ID_PRODUCT
+WHEN MATCHED AND TARGET.QUANTITY - SRC.QUANTITY <= 0 THEN
+  DELETE
+WHEN MATCHED THEN
+  UPDATE SET
+    TARGET.QUANTITY = TARGET.QUANTITY - SRC.QUANTITY,
+    TARGET.BYDATE = CURRENT_DATE
+RETURNING OLD.QUANTITY, NEW.QUANTITY, SRC.QUANTITY
+INTO : OLD_QUANTITY, :NEW_QUANTITY, :DIFF_QUANTITY
+6.6.3. Examples of MERGE
+1. Update books when present, or add new record if absent
+MERGE INTO books b
+  USING purchases p
+  ON p.title = b.title and p.type = 'bk'
+  WHEN MATCHED THEN
+    UPDATE SET b.desc = b.desc || '; ' || p.desc
+  WHEN NOT MATCHED THEN
+    INSERT (title, desc, bought) values (p.title, p.desc, p.bought);
+2. Using a derived table
+MERGE INTO customers c
+  USING (SELECT * from customers_delta WHERE id > 10) cd
+  ON (c.id = cd.id)
+  WHEN MATCHED THEN
+    UPDATE SET name = cd.name
+  WHEN NOT MATCHED THEN
+    INSERT (id, name) values (cd.id, cd.name);
+3. Together with a recursive CTE
+MERGE INTO numbers
+  USING (
+    WITH RECURSIVE r(n) AS (
+      SELECT 1 FROM rdb$database
+Chapter 6. Data Manipulation (DML) Statements
+342
+
+<!-- Original PDF Page: 344 -->
+
+UNION ALL
+      SELECT n+1 FROM r WHERE n < 200
+    )
+    SELECT n FROM r
+  ) t
+  ON numbers.num = t.n
+  WHEN NOT MATCHED THEN
+    INSERT(num) VALUES(t.n);
+4. Using DELETE clause
+MERGE INTO SALARY_HISTORY
+USING (
+  SELECT EMP_NO
+  FROM EMPLOYEE
+  WHERE DEPT_NO = 120) EMP
+ON SALARY_HISTORY.EMP_NO = EMP.EMP_NO
+WHEN MATCHED THEN DELETE
+5. The following example updates the PRODUCT_INVENTORY table daily based on orders processed in
+the SALES_ORDER_LINE table. If the stock level of the product would drop to zero or lower, then the
+row for that product is removed from the PRODUCT_INVENTORY table.
+MERGE INTO PRODUCT_INVENTORY AS TARGET
+USING (
+  SELECT
+    SL.ID_PRODUCT,
+    SUM (SL.QUANTITY)
+  FROM SALES_ORDER_LINE SL
+  JOIN SALES_ORDER S ON S.ID = SL.ID_SALES_ORDER
+  WHERE S.BYDATE = CURRENT_DATE
+  GROUP BY 1
+) AS SRC (ID_PRODUCT, QUANTITY)
+ON TARGET.ID_PRODUCT = SRC.ID_PRODUCT
+WHEN MATCHED AND TARGET.QUANTITY - SRC.QUANTITY <= 0 THEN
+  DELETE
+WHEN MATCHED THEN
+  UPDATE SET
+    TARGET.QUANTITY = TARGET.QUANTITY - SRC.QUANTITY,
+    TARGET.BYDATE = CURRENT_DATE
+See also
+SELECT, INSERT, UPDATE, UPDATE OR INSERT, DELETE
+6.7. EXECUTE PROCEDURE
+Executes a stored procedure
+Chapter 6. Data Manipulation (DML) Statements
+343
+
+<!-- Original PDF Page: 345 -->
+
+Syntax
+EXECUTE PROCEDURE procname
+   [{ <inparam-list | ( <inparam-list> ) }]
+   [RETURNING_VALUES { <outvar-list> | ( <outvar-list ) }]
+<inparam-list> ::=
+  <inparam> [, <inparam> ...]
+<outvar-list> ::=
+  <outvar> [, <outvar> ...]
+<outvar> ::= [:]varname
+Table 92. Arguments for the EXECUTE PROCEDURE Statement Parameters
+Argument Description
+procname Name of the stored procedure
+inparam An expression evaluating to the declared data type of an input parameter
+varname A PSQL variable to receive the return value
+Executes an executable stored procedure , taking a list of one or more input parameters, if they are
+defined for the procedure, and returning a one-row set of output values, if they are defined for the
+procedure.
+6.7.1. “Executable” Stored Procedure
+The EXECUTE PROCEDURE statement is most commonly used to invoke “executable” stored procedures
+to perform some data-modifying task at the server side — those that do not contain any SUSPEND
+statements in their code. They can be designed to return a result set, consisting of only one row,
+which is usually passed, via a set of RETURNING_VALUES() variables, to another stored procedure that
+calls it. Client interfaces usually have an API wrapper that can retrieve the output values into a
+single-row buffer when calling EXECUTE PROCEDURE in DSQL.
+Invoking “selectable” stored procedures is also possible with EXECUTE PROCEDURE, but it returns only
+the first row of an output set which is almost surely designed to be multi-row. Selectable stored
+procedures are designed to be invoked by a SELECT statement, producing output that behaves like a
+virtual table.
+
+• In PSQL and DSQL, input parameters may be any expression that resolves to
+the expected type.
+• Although parentheses are not required after the name of the stored procedure
+to enclose the input parameters, their use is recommended for the sake of
+readability.
+• Where output parameters have been defined in a procedure, the
+RETURNING_VALUES clause can be used in PSQL to retrieve them into a list of
+previously declared variables that conforms in sequence, data type and
+Chapter 6. Data Manipulation (DML) Statements
+344
+
+<!-- Original PDF Page: 346 -->
+
+number with the defined output parameters.
+• The list of RETURNING_VALUES may be optionally enclosed in parentheses and
+their use is recommended.
+• When DSQL applications call EXECUTE PROCEDURE using the Firebird API or some
+form of wrapper for it, a buffer is prepared to receive the output row and the
+RETURNING_VALUES clause is not used.
+6.7.2. Examples of EXECUTE PROCEDURE
+1. In PSQL, with optional colons and without optional parentheses:
+EXECUTE PROCEDURE MakeFullName
+  :FirstName, :MiddleName, :LastName
+  RETURNING_VALUES :FullName;
+2. In Firebird’s command-line utility isql, with literal parameters and optional parentheses:
+EXECUTE PROCEDURE MakeFullName ('J', 'Edgar', 'Hoover');
+ In DSQL (e.g. in isql), RETURNING_VALUES is not used. Any output values are
+captured by the application and displayed automatically.
+3. A PSQL example with expression parameters and optional parentheses:
+EXECUTE PROCEDURE MakeFullName
+  ('Mr./Mrs. ' || FirstName, MiddleName, upper(LastName))
+  RETURNING_VALUES (FullName);
+6.8. EXECUTE BLOCK
+Creates an “anonymous” block of PSQL code in DSQL for immediate execution
+Available in
+DSQL
+Syntax
+EXECUTE BLOCK [(<inparams>)]
+  [RETURNS (<outparams>)]
+  <psql-module-body>
+<inparams> ::=  <param_decl> = ? [, <inparams> ]
+<outparams> ::=  <param_decl> [, <outparams>]
+Chapter 6. Data Manipulation (DML) Statements
+345
+
+<!-- Original PDF Page: 347 -->
+
+<param_decl> ::=
+  paramname <domain_or_non_array_type> [NOT NULL] [COLLATE collation]
+<domain_or_non_array_type> ::=
+  !! See Scalar Data Types Syntax !!
+<psql-module-body> ::=
+  !! See Syntax of a Module Body !!
+Table 93. Arguments for the EXECUTE BLOCK Statement Parameters
+Argument Description
+param_decl Name and description of an input or output parameter
+paramname The name of an input or output parameter of the procedural block, up to
+63 characters long. The name must be unique among input and output
+parameters and local variables in the block
+collation Collation
+Executes a block of PSQL code as if it were a stored procedure, optionally with input and output
+parameters and variable declarations. This allows the user to perform “on-the-fly” PSQL within a
+DSQL context.
+6.8.1. Examples
+1. This example injects the numbers 0 through 127 and their corresponding ASCII characters into
+the table ASCIITABLE:
+EXECUTE BLOCK
+AS
+declare i INT = 0;
+BEGIN
+  WHILE (i < 128) DO
+  BEGIN
+    INSERT INTO AsciiTable VALUES (:i, ascii_char(:i));
+    i = i + 1;
+  END
+END
+2. The next example calculates the geometric mean of two numbers and returns it to the user:
+EXECUTE BLOCK (x DOUBLE PRECISION = ?, y DOUBLE PRECISION = ?)
+RETURNS (gmean DOUBLE PRECISION)
+AS
+BEGIN
+  gmean = SQRT(x*y);
+  SUSPEND;
+Chapter 6. Data Manipulation (DML) Statements
+346
+
+<!-- Original PDF Page: 348 -->
+
+END
+Because this block has input parameters, it has to be prepared first. Then the parameters can be
+set and the block executed. It depends on the client software how this must be done and even if
+it is possible at all — see the notes below.
+3. Our last example takes two integer values, smallest and largest. For all the numbers in the
+range smallest…largest, the block outputs the number itself, its square, its cube and its fourth
+power.
+EXECUTE BLOCK (smallest INT = ?, largest INT = ?)
+RETURNS (number INT, square BIGINT, cube BIGINT, fourth BIGINT)
+AS
+BEGIN
+  number = smallest;
+  WHILE (number <= largest) DO
+  BEGIN
+    square = number * number;
+    cube   = number * square;
+    fourth = number * cube;
+    SUSPEND;
+    number = number + 1;
+  END
+END
+Again, it depends on the client software if and how you can set the parameter values.
+6.8.2. Input and output parameters
+Executing a block without input parameters should be possible with every Firebird client that
+allows the user to enter their own DSQL statements. If there are input parameters, things get
+trickier: these parameters must get their values after the statement is prepared, but before it is
+executed. This requires special provisions, which not every client application offers. (Firebird’s
+own isql, for one, doesn’t.)
+The server only accepts question marks (“ ?”) as placeholders for the input values, not “ :a”,
+“:MyParam” etc., or literal values. Client software may support the “ :xxx” form though, and will
+preprocess it before sending it to the server.
+If the block has output parameters, you must use SUSPEND or nothing will be returned.
+Output is always returned in the form of a result set, just as with a SELECT statement. You can’t use
+RETURNING_VALUES or execute the block INTO some variables, even if there is only one result row.
+PSQL Links
+For more information about writing PSQL, consult Chapter Procedural SQL (PSQL)
+Chapter 6. Data Manipulation (DML) Statements
+347

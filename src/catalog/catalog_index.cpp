@@ -9,6 +9,7 @@
 
 #include "scratchbird/catalog/catalog_index.h"
 #include <algorithm>
+#include <mutex>
 
 namespace scratchbird::catalog {
 
@@ -63,6 +64,11 @@ bool CatalogKey::operator==(const CatalogKey& other) const {
     }
 
     return id_key == other.id_key;
+}
+
+bool CatalogKey::operator>(const CatalogKey& other) const {
+    // a > b is equivalent to b < a
+    return other < *this;
 }
 
 // ============================================================================

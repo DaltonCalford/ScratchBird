@@ -10,10 +10,10 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/connection_context.h"
-#include "scratchbird/parser/lexer.h"
-#include "scratchbird/parser/parser.h"
-#include "scratchbird/parser/semantic_analyzer.h"
-#include "scratchbird/sblr/bytecode_generator.h"
+
+
+
+#include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/optimizer/query_planner.h"
 #include "scratchbird/optimizer/cost_model.h"

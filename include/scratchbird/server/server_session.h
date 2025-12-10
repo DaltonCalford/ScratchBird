@@ -38,14 +38,10 @@ namespace sblr {
     class Executor;
     class ResultSet;
     class ExecutionResult;
+    class QueryCompilerV2;  // Phase 9: Parser V2 integration
 }
 
-namespace parser {
-    class Lexer;
-    class Parser;
-    class ASTArena;
-    class StringPool;
-}
+// Parser V1 has been removed. All query compilation now uses Parser V2.
 
 namespace server {
 
@@ -171,6 +167,7 @@ public:
      */
     const std::string& clientInfo() const { return client_info_; }
 
+
 private:
     // ========================================================================
     // Message Handlers
@@ -289,8 +286,8 @@ private:
     // Executor for query execution
     std::unique_ptr<sblr::Executor> executor_;
 
-    // Parser components (reused across queries)
-    std::unique_ptr<parser::ASTArena> ast_arena_;
+    // Query compiler (Parser V2 is now the only parser)
+    std::unique_ptr<sblr::QueryCompilerV2> compiler_v2_;
 
     // Statistics
     SessionStats stats_;

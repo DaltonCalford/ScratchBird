@@ -11,9 +11,9 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/proc_array.h"
-#include "scratchbird/parser/lexer.h"
-#include "scratchbird/parser/parser.h"
-#include "scratchbird/sblr/bytecode_generator.h"
+
+
+#include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/executor.h"
 
 using namespace scratchbird;

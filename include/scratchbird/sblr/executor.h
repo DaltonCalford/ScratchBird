@@ -187,6 +187,13 @@ namespace scratchbird
             void setQueryLimits(const QueryLimits& limits) { query_limits_ = limits; }
             const QueryLimits& getQueryLimits() const { return query_limits_; }
 
+            // Set current schema for DDL operations (Firebird emulation support)
+            // If not set, defaults to PUBLIC schema
+            void setCurrentSchema(const core::ID& schema_id) { current_schema_id_ = schema_id; current_schema_set_ = true; }
+            void clearCurrentSchema() { current_schema_id_ = core::ID(); current_schema_set_ = false; }
+            bool hasCurrentSchema() const { return current_schema_set_; }
+            const core::ID& getCurrentSchema() const { return current_schema_id_; }
+
             // Task 17 MGA Phase 2.2: Access index maintenance statistics
             const IndexMaintenanceStats& getIndexStats() const { return index_stats_; }
             void resetIndexStats() { index_stats_.reset(); }
@@ -262,6 +269,10 @@ namespace scratchbird
 
             // NET-M1: Query cancellation flag (atomic for thread-safe access)
             std::atomic<bool> cancel_requested_{false};
+
+            // Current schema for DDL operations (Firebird emulation support)
+            core::ID current_schema_id_;
+            bool current_schema_set_ = false;
 
             // Execution helpers
             uint8_t readByte();
@@ -732,6 +743,7 @@ namespace scratchbird
             void executeSetSqlDialect();     // Execute SET SQL DIALECT n
             void executeSetNames();          // Execute SET NAMES charset_name
             void executeSetLocalTimeout();   // Execute SET LOCAL_TIMEOUT n
+            void executeSetParserVersion();  // Phase 10: Execute SET PARSER VERSION
 
             // Security context helpers (Phase 2 - Security System)
             // These wrap ConnectionContext methods for convenience

@@ -1,13 +1,14 @@
 /**
  * mv_rewriter.cpp - Materialized View Query Rewriter Implementation
  *
+ * V2 MIGRATION STATUS: COMPLETE
+ *
  * P3-15: Automatic query rewriting to use materialized views.
  */
 
 #include "scratchbird/optimizer/mv_rewriter.h"
 #include "scratchbird/core/debug.h"
-#include "scratchbird/parser/parser.h"
-#include "scratchbird/parser/lexer.h"
+#include "scratchbird/parser/parser_v2.h"
 #include <algorithm>
 #include <functional>
 #include <chrono>
@@ -66,10 +67,10 @@ MVRewriter::MVRewriter(core::Database* db,
 {
 }
 
-parser::SelectStmt* MVRewriter::tryRewrite(const parser::SelectStmt* select_stmt,
-                                           parser::StringPool& string_pool,
-                                           parser::ASTArena& arena,
-                                           core::ErrorContext* ctx)
+parser::v2::SelectStmt* MVRewriter::tryRewrite(const parser::v2::SelectStmt* select_stmt,
+                                               parser::v2::StringPool& string_pool,
+                                               parser::v2::ASTArena& arena,
+                                               core::ErrorContext* ctx)
 {
     rewrite_attempts_++;
 
@@ -130,11 +131,11 @@ parser::SelectStmt* MVRewriter::tryRewrite(const parser::SelectStmt* select_stmt
                  ", savings=" + std::to_string(best_savings));
 
     // Step 5: Create rewritten query
-    parser::SelectStmt* rewritten = createMVSelect(best_candidate->mv_info,
-                                                   select_stmt,
-                                                   string_pool,
-                                                   arena,
-                                                   ctx);
+    parser::v2::SelectStmt* rewritten = createMVSelect(best_candidate->mv_info,
+                                                       select_stmt,
+                                                       string_pool,
+                                                       arena,
+                                                       ctx);
 
     if (rewritten)
     {
@@ -335,8 +336,8 @@ bool MVRewriter::checkSubsumption(const QueryPattern& mv_pattern,
     return true;
 }
 
-QueryPattern MVRewriter::extractPattern(const parser::SelectStmt* select_stmt,
-                                        const parser::StringPool& string_pool,
+QueryPattern MVRewriter::extractPattern(const parser::v2::SelectStmt* select_stmt,
+                                        const parser::v2::StringPool& string_pool,
                                         core::ErrorContext* ctx)
 {
     QueryPattern pattern;
@@ -346,41 +347,59 @@ QueryPattern MVRewriter::extractPattern(const parser::SelectStmt* select_stmt,
         return pattern;
     }
 
+    // Helper lambda to build table name from SchemaPath
+    auto pathToString = [&string_pool](const parser::v2::SchemaPath& path) -> std::string {
+        std::string result;
+        for (size_t i = 0; i < path.components.size(); ++i) {
+            if (i > 0) result += ".";
+            result += string_pool.get(path.components[i]);
+        }
+        return result;
+    };
+
     // Extract table names from FROM clause
-    const auto& from_clause = select_stmt->fromClause();
-    std::string base_table(string_pool.get(from_clause.base_table.table_name));
-    pattern.table_names.push_back(base_table);
-
-    // Get table ID - use getTable with default schema
-    core::CatalogManager* catalog = db_->catalog_manager();
-    if (catalog)
+    if (select_stmt->from)
     {
-        // Use default schema (public schema, ID with all zeros except byte 1)
-        core::ID default_schema_id{};
-        default_schema_id.bytes[1] = 1;  // Public schema
+        // V2 uses TableRefNode* for base table (not polymorphic)
+        auto* table_ref = select_stmt->from;
+        std::string base_table = pathToString(table_ref->table_path);
+        pattern.table_names.push_back(base_table);
 
-        core::CatalogManager::TableInfo table_info;
-        if (catalog->getTable(default_schema_id, base_table, table_info, ctx) == core::Status::OK)
+        // Get table ID from catalog
+        core::CatalogManager* catalog = db_->catalog_manager();
+        if (catalog)
         {
-            pattern.base_table_ids.push_back(table_info.table_id);
+            core::ID default_schema_id{};
+            default_schema_id.bytes[1] = 1;  // Public schema
+
+            core::CatalogManager::TableInfo table_info;
+            if (catalog->getTable(default_schema_id, base_table, table_info, ctx) == core::Status::OK)
+            {
+                pattern.base_table_ids.push_back(table_info.table_id);
+            }
         }
     }
 
     // Add joined tables
-    for (const auto& join : from_clause.joins)
+    for (const auto* join : select_stmt->joins)
     {
-        std::string joined_table(string_pool.get(join.right_table.table_name));
-        pattern.table_names.push_back(joined_table);
-
-        if (catalog)
+        if (join && join->right)
         {
-            core::ID default_schema_id{};
-            default_schema_id.bytes[1] = 1;
+            auto* table_ref = join->right;
+            std::string joined_table = pathToString(table_ref->table_path);
+            pattern.table_names.push_back(joined_table);
 
-            core::CatalogManager::TableInfo table_info;
-            if (catalog->getTable(default_schema_id, joined_table, table_info, ctx) == core::Status::OK)
+            core::CatalogManager* catalog = db_->catalog_manager();
+            if (catalog)
             {
-                pattern.base_table_ids.push_back(table_info.table_id);
+                core::ID default_schema_id{};
+                default_schema_id.bytes[1] = 1;
+
+                core::CatalogManager::TableInfo table_info;
+                if (catalog->getTable(default_schema_id, joined_table, table_info, ctx) == core::Status::OK)
+                {
+                    pattern.base_table_ids.push_back(table_info.table_id);
+                }
             }
         }
     }
@@ -389,23 +408,19 @@ QueryPattern MVRewriter::extractPattern(const parser::SelectStmt* select_stmt,
     extractSelectColumns(select_stmt, string_pool, pattern.select_columns);
 
     // Extract predicate columns from WHERE clause
-    if (select_stmt->whereClause())
+    if (select_stmt->where)
     {
-        extractPredicateColumns(select_stmt->whereClause(), string_pool, pattern.predicate_columns);
-        pattern.where_clause = const_cast<parser::Expression*>(select_stmt->whereClause());
+        extractPredicateColumns(select_stmt->where, string_pool, pattern.predicate_columns);
+        // Note: V2 unresolved AST where clause, not resolved
     }
 
     // Extract GROUP BY columns
-    const auto* group_by = select_stmt->groupByClause();
-    if (group_by)
+    for (const auto* expr : select_stmt->group_by)
     {
-        for (const auto* expr : group_by->grouping_exprs)
+        if (expr && expr->kind() == parser::v2::ASTKind::ColumnRefExpr)
         {
-            if (expr && expr->kind() == parser::ASTKind::IDENTIFIER)
-            {
-                auto* id_expr = static_cast<const parser::IdentifierExpr*>(expr);
-                pattern.group_by_columns.push_back(std::string(string_pool.get(id_expr->name())));
-            }
+            auto* col_ref = static_cast<const parser::v2::ColumnRefExpr*>(expr);
+            pattern.group_by_columns.push_back(std::string(string_pool.get(col_ref->column.column_name)));
         }
     }
 
@@ -413,24 +428,27 @@ QueryPattern MVRewriter::extractPattern(const parser::SelectStmt* select_stmt,
     pattern.is_aggregate = !pattern.group_by_columns.empty();
 
     // Look for aggregate functions in select list
-    for (const auto& item : select_stmt->selectList())
+    for (const auto* item : select_stmt->items)
     {
-        if (item.expr && item.expr->kind() == parser::ASTKind::AGGREGATE_FUNC)
+        if (item && item->expr && item->expr->kind() == parser::v2::ASTKind::FunctionCallExpr)
         {
-            auto* agg_expr = static_cast<const parser::AggregateExpr*>(item.expr);
-            // Convert aggregate function enum to string
-            std::string agg_name;
-            switch (agg_expr->func())
-            {
-                case parser::AggregateFunc::COUNT: agg_name = "COUNT"; break;
-                case parser::AggregateFunc::SUM: agg_name = "SUM"; break;
-                case parser::AggregateFunc::AVG: agg_name = "AVG"; break;
-                case parser::AggregateFunc::MIN: agg_name = "MIN"; break;
-                case parser::AggregateFunc::MAX: agg_name = "MAX"; break;
-                case parser::AggregateFunc::ARRAY_AGG: agg_name = "ARRAY_AGG"; break;
+            auto* func_expr = static_cast<const parser::v2::FunctionCallExpr*>(item->expr);
+            // Get function name from path components
+            std::string func_name;
+            for (size_t i = 0; i < func_expr->function_path.components.size(); ++i) {
+                if (i > 0) func_name += ".";
+                func_name += string_pool.get(func_expr->function_path.components[i]);
             }
-            pattern.aggregates.push_back(agg_name);
-            pattern.is_aggregate = true;
+            // Convert to uppercase for matching
+            std::transform(func_name.begin(), func_name.end(), func_name.begin(), ::toupper);
+
+            // Check if it's an aggregate function
+            if (func_name == "COUNT" || func_name == "SUM" || func_name == "AVG" ||
+                func_name == "MIN" || func_name == "MAX" || func_name == "ARRAY_AGG")
+            {
+                pattern.aggregates.push_back(func_name);
+                pattern.is_aggregate = true;
+            }
         }
     }
 
@@ -439,72 +457,87 @@ QueryPattern MVRewriter::extractPattern(const parser::SelectStmt* select_stmt,
     return pattern;
 }
 
-void MVRewriter::extractSelectColumns(const parser::SelectStmt* stmt,
-                                      const parser::StringPool& string_pool,
+void MVRewriter::extractSelectColumns(const parser::v2::SelectStmt* stmt,
+                                      const parser::v2::StringPool& string_pool,
                                       std::vector<std::string>& columns)
 {
-    for (const auto& item : stmt->selectList())
+    for (const auto* item : stmt->items)
     {
-        if (item.is_star)
+        if (!item) continue;
+
+        if (item->item_type == parser::v2::SelectItem::Type::STAR)
         {
             columns.push_back("*");
             continue;
         }
 
-        if (!item.expr) continue;
-
-        if (item.expr->kind() == parser::ASTKind::IDENTIFIER)
+        if (item->item_type == parser::v2::SelectItem::Type::TABLE_STAR)
         {
-            auto* id_expr = static_cast<const parser::IdentifierExpr*>(item.expr);
-            columns.push_back(std::string(string_pool.get(id_expr->name())));
-        }
-        else if (item.expr->kind() == parser::ASTKind::AGGREGATE_FUNC)
-        {
-            auto* agg_expr = static_cast<const parser::AggregateExpr*>(item.expr);
-            // Convert aggregate function enum to string
-            std::string agg_name;
-            switch (agg_expr->func())
-            {
-                case parser::AggregateFunc::COUNT: agg_name = "COUNT"; break;
-                case parser::AggregateFunc::SUM: agg_name = "SUM"; break;
-                case parser::AggregateFunc::AVG: agg_name = "AVG"; break;
-                case parser::AggregateFunc::MIN: agg_name = "MIN"; break;
-                case parser::AggregateFunc::MAX: agg_name = "MAX"; break;
-                case parser::AggregateFunc::ARRAY_AGG: agg_name = "ARRAY_AGG"; break;
+            // Build table path string from components
+            std::string table_path_str;
+            for (size_t i = 0; i < item->table_path.components.size(); ++i) {
+                if (i > 0) table_path_str += ".";
+                table_path_str += string_pool.get(item->table_path.components[i]);
             }
-            // Include aggregate with argument info
-            if (agg_expr->arg() && agg_expr->arg()->kind() == parser::ASTKind::IDENTIFIER)
+            columns.push_back(table_path_str + ".*");
+            continue;
+        }
+
+        if (!item->expr) continue;
+
+        if (item->expr->kind() == parser::v2::ASTKind::ColumnRefExpr)
+        {
+            auto* col_ref = static_cast<const parser::v2::ColumnRefExpr*>(item->expr);
+            columns.push_back(std::string(string_pool.get(col_ref->column.column_name)));
+        }
+        else if (item->expr->kind() == parser::v2::ASTKind::FunctionCallExpr)
+        {
+            auto* func_expr = static_cast<const parser::v2::FunctionCallExpr*>(item->expr);
+            // Build function name from path components
+            std::string func_name;
+            for (size_t i = 0; i < func_expr->function_path.components.size(); ++i) {
+                if (i > 0) func_name += ".";
+                func_name += string_pool.get(func_expr->function_path.components[i]);
+            }
+
+            // Include function with argument info
+            if (!func_expr->arguments.empty() &&
+                func_expr->arguments[0]->kind() == parser::v2::ASTKind::ColumnRefExpr)
             {
-                auto* arg_id = static_cast<const parser::IdentifierExpr*>(agg_expr->arg());
-                columns.push_back(agg_name + "(" + std::string(string_pool.get(arg_id->name())) + ")");
+                auto* arg_col = static_cast<const parser::v2::ColumnRefExpr*>(func_expr->arguments[0]);
+                columns.push_back(func_name + "(" + std::string(string_pool.get(arg_col->column.column_name)) + ")");
             }
             else
             {
-                columns.push_back(agg_name + "(*)");
+                columns.push_back(func_name + "(*)");
             }
         }
         // Handle other expression types as needed
     }
 }
 
-void MVRewriter::extractPredicateColumns(const parser::Expression* expr,
-                                         const parser::StringPool& string_pool,
+void MVRewriter::extractPredicateColumns(const parser::v2::Expression* expr,
+                                         const parser::v2::StringPool& string_pool,
                                          std::vector<std::string>& columns)
 {
     if (!expr) return;
 
-    if (expr->kind() == parser::ASTKind::IDENTIFIER)
+    if (expr->kind() == parser::v2::ASTKind::ColumnRefExpr)
     {
-        auto* id_expr = static_cast<const parser::IdentifierExpr*>(expr);
-        columns.push_back(std::string(string_pool.get(id_expr->name())));
+        auto* col_ref = static_cast<const parser::v2::ColumnRefExpr*>(expr);
+        columns.push_back(std::string(string_pool.get(col_ref->column.column_name)));
     }
-    else if (expr->kind() == parser::ASTKind::BINARY_OP)
+    else if (expr->kind() == parser::v2::ASTKind::BinaryExpr)
     {
-        auto* bin_expr = static_cast<const parser::BinaryOpExpr*>(expr);
-        extractPredicateColumns(bin_expr->left(), string_pool, columns);
-        extractPredicateColumns(bin_expr->right(), string_pool, columns);
+        auto* bin_expr = static_cast<const parser::v2::BinaryExpr*>(expr);
+        extractPredicateColumns(bin_expr->left, string_pool, columns);
+        extractPredicateColumns(bin_expr->right, string_pool, columns);
     }
-    // Note: No UnaryOpExpr in the parser - unary operations are handled differently
+    else if (expr->kind() == parser::v2::ASTKind::UnaryExpr)
+    {
+        auto* unary_expr = static_cast<const parser::v2::UnaryExpr*>(expr);
+        extractPredicateColumns(unary_expr->operand, string_pool, columns);
+    }
 }
 
 bool MVRewriter::columnSetsMatch(const std::vector<std::string>& set1,
@@ -545,15 +578,13 @@ QueryPattern MVRewriter::parseMVPattern(const core::CatalogManager::ViewInfo& mv
 {
     QueryPattern pattern;
 
-    // Parse the MV definition SQL
-    parser::Lexer lexer(mv_info.definition);
-    parser::ASTArena arena;
-    parser::Parser parser(lexer, arena);
+    // Parse the MV definition SQL using V2 parser
+    parser::v2::Parser parser(mv_info.definition);
 
     auto result = parser.parseStatement();
-    if (result.statement() && result.statement()->kind() == parser::ASTKind::SELECT)
+    if (result.statement() && result.statement()->kind() == parser::v2::ASTKind::SelectStmt)
     {
-        auto* select_stmt = static_cast<parser::SelectStmt*>(result.statement());
+        auto* select_stmt = static_cast<parser::v2::SelectStmt*>(result.statement());
         pattern = extractPattern(select_stmt, parser.stringPool(), ctx);
     }
 
@@ -563,16 +594,14 @@ QueryPattern MVRewriter::parseMVPattern(const core::CatalogManager::ViewInfo& mv
 bool MVRewriter::extractPatternFromDefinition(const std::string& definition,
                                                QueryPattern& pattern_out)
 {
-    // OPT-4: Parse MV definition string and extract query pattern
+    // OPT-4: Parse MV definition string and extract query pattern using V2 parser
     if (definition.empty())
     {
         return false;
     }
 
     // Parse the definition SQL
-    parser::Lexer lexer(definition);
-    parser::ASTArena arena;
-    parser::Parser parser(lexer, arena);
+    parser::v2::Parser parser(definition);
 
     auto result = parser.parseStatement();
     if (!result.statement())
@@ -581,13 +610,13 @@ bool MVRewriter::extractPatternFromDefinition(const std::string& definition,
         return false;
     }
 
-    if (result.statement()->kind() != parser::ASTKind::SELECT)
+    if (result.statement()->kind() != parser::v2::ASTKind::SelectStmt)
     {
         DEBUG_LOG_DB("MVRewriter: MV definition is not a SELECT statement");
         return false;
     }
 
-    auto* select_stmt = static_cast<parser::SelectStmt*>(result.statement());
+    auto* select_stmt = static_cast<parser::v2::SelectStmt*>(result.statement());
     pattern_out = extractPattern(select_stmt, parser.stringPool(), nullptr);
 
     // Verify we extracted something useful
@@ -682,64 +711,68 @@ double MVRewriter::estimateOriginalCost(const QueryPattern& pattern,
     return total_cost;
 }
 
-parser::SelectStmt* MVRewriter::createMVSelect(const core::CatalogManager::ViewInfo& mv_info,
-                                                const parser::SelectStmt* original,
-                                                parser::StringPool& string_pool,
-                                                parser::ASTArena& arena,
-                                                core::ErrorContext* ctx)
+parser::v2::SelectStmt* MVRewriter::createMVSelect(const core::CatalogManager::ViewInfo& mv_info,
+                                                    const parser::v2::SelectStmt* original,
+                                                    parser::v2::StringPool& string_pool,
+                                                    parser::v2::ASTArena& arena,
+                                                    core::ErrorContext* ctx)
 {
     // Create a new SELECT that reads from the MV's backing table
     // This is a simplified implementation - full version would handle
     // column mapping and predicate pushdown
 
+    // Create new SelectStmt
+    auto* new_select = arena.create<parser::v2::SelectStmt>();
+
     // Create table reference to MV
-    parser::StringPool::StringId mv_name_id = string_pool.intern(mv_info.name);
-
-    parser::TableRef mv_table_ref;
-    mv_table_ref.table_name = mv_name_id;
-    mv_table_ref.alias = 0;  // No alias
-
-    parser::FromClause from_clause;
-    from_clause.base_table = mv_table_ref;
-
-    // Create SELECT items from the original select list
-    std::vector<parser::SelectItem> select_list;
+    auto* mv_table_ref = arena.create<parser::v2::TableRefNode>();
+    // Create SchemaPath with proper constructor: (PathType, components, span)
+    mv_table_ref->table_path = parser::v2::SchemaPath(
+        parser::v2::PathType::UNQUALIFIED,
+        std::vector<parser::v2::StringPool::StringId>{string_pool.intern(mv_info.name)},
+        parser::v2::SourceSpan{});
+    new_select->from = mv_table_ref;
 
     // Copy the original select list
-    for (const auto& item : original->selectList())
+    for (const auto* item : original->items)
     {
-        select_list.push_back(item);
+        // Note: We're sharing pointers here - in a production implementation
+        // we might want to deep copy to avoid issues with arena lifetimes
+        new_select->items.push_back(const_cast<parser::v2::SelectItem*>(item));
     }
 
-    // Create new SELECT statement using the FromClause constructor
-    auto* new_select = arena.make<parser::SelectStmt>(
-        original->span(),
-        select_list,
-        from_clause);
-
-    // Copy additional clauses
-    if (original->whereClause())
+    // Copy WHERE clause
+    if (original->where)
     {
-        new_select->setWhereClause(const_cast<parser::Expression*>(original->whereClause()));
+        new_select->where = const_cast<parser::v2::Expression*>(original->where);
     }
 
     // Copy GROUP BY clause
-    if (original->groupByClause())
+    for (const auto* expr : original->group_by)
     {
-        new_select->setGroupByClause(*original->groupByClause());
+        new_select->group_by.push_back(const_cast<parser::v2::Expression*>(expr));
+    }
+
+    // Copy HAVING clause
+    if (original->having)
+    {
+        new_select->having = const_cast<parser::v2::Expression*>(original->having);
     }
 
     // Copy ORDER BY clause
-    new_select->setOrderByClause(original->orderByClause());
+    for (const auto* item : original->order_by)
+    {
+        new_select->order_by.push_back(const_cast<parser::v2::OrderByItem*>(item));
+    }
 
     // Copy LIMIT/OFFSET
-    if (original->hasLimit())
+    if (original->limit)
     {
-        new_select->setLimitCount(original->limitCount());
+        new_select->limit = const_cast<parser::v2::Expression*>(original->limit);
     }
-    if (original->hasOffset())
+    if (original->offset)
     {
-        new_select->setOffsetCount(original->offsetCount());
+        new_select->offset = const_cast<parser::v2::Expression*>(original->offset);
     }
 
     return new_select;
