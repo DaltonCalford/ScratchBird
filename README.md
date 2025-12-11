@@ -10,22 +10,28 @@ So the project was restarted, from first principles and all steps taken are kept
 
 ## Current Status
 
-**Phase:** Alpha 2 - Parser Separation ✅ **COMPLETE**
-**Progress:** ✅ 100% of Alpha 2 complete (test suite: 1255/1255 = 100% pass rate)
-**Current Work:** Ready for Alpha 3 - Network Listeners
-**Started:** June 2025 (6 months of evening/weekend development)
+**Phase:** Alpha 3 - Network & Service Mode 🚀 **IN PROGRESS**
+**Previous:** Alpha 1 & Alpha 2 ✅ **COMPLETE** (1255/1255 tests = 100% pass rate)
+**Started:** June 2025 (6 months of development)
 **Project Type:** Educational/Research (no time constraints)
 **Last Updated:** December 10, 2025
 
-### Alpha 2 Completions
-- **Parser v2.0:** Context-sensitive "Smart Parser, Dumb Lexer" architecture - ✅ COMPLETE
-- **Firebird Parser:** Full Firebird SQL dialect support with MGA - ✅ COMPLETE (52 tests)
-- **MySQL Parser:** MySQL 8.0 dialect support - ✅ COMPLETE (30 tests)
-- **PostgreSQL Parser:** PostgreSQL 16 dialect support - ✅ COMPLETE (52 tests)
-- **All Parser Tests:** 293 parser tests passing (100%)
-- **Total Test Suite:** 1255 tests passing (100%)
+### Alpha 3 Goals (Current Phase)
 
-**Detailed Status:** See [IMPLEMENTATION_STATUS_DASHBOARD.md](docs/IMPLEMENTATION_STATUS_DASHBOARD.md) 
+- **Wire Protocols:** PostgreSQL, MySQL, Firebird, ScratchBird Native (TDS deferred to Beta)
+- **Service Mode:** systemd daemon, configuration hot-reload, multi-database support
+- **Security Suite:** SSL/TLS, 11 authentication methods (LDAP, Kerberos, OAuth, MFA, etc.)
+- **Connection Pooling:** Built-in pooling with statement/result caching
+- **ODBC/JDBC Drivers:** Standard database connectivity
+- **UDR Plugin System:** Foreign data wrappers for external databases
+- **Live Migration:** Zero-downtime migration from PostgreSQL, MySQL, Firebird
+
+### Completed Phases
+
+- **Alpha 1:** Core engine, storage, indexes, transactions, parser v1 ✅
+- **Alpha 2:** Parser v2.0, multi-dialect support (Firebird, MySQL, PostgreSQL) ✅
+
+**Detailed Status:** See [IMPLEMENTATION_STATUS_DASHBOARD.md](docs/IMPLEMENTATION_STATUS_DASHBOARD.md)
 
 ## Quick Start
 
@@ -86,16 +92,35 @@ if (isSnapshotVisible(tuple, snapshot)) { ... }  // NEVER USE
 - **[PROJECT_CONTEXT.md](PROJECT_CONTEXT.md)** - Current work and immediate next steps
 - **[MGA_RULES.md](MGA_RULES.md)** - Mandatory MGA architecture rules
 
-### Specifications
+### Alpha 3 Specifications (NEW - December 2025)
+
+| Specification | Description |
+|--------------|-------------|
+| [Native Wire Protocol](docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md) | Port 3092, cluster PKI, federation |
+| [systemd Service](docs/specifications/SYSTEMD_SERVICE_SPECIFICATION.md) | Service mode, configuration, lifecycle |
+| [Connection Pooling](docs/specifications/CONNECTION_POOLING_SPECIFICATION.md) | Pool architecture, caching |
+| [Remote Database UDR](docs/specifications/remote_database_udr/) | Foreign data wrappers (9 docs) |
+| [Client Library API](docs/specifications/CLIENT_LIBRARY_API_SPECIFICATION.md) | C API (libscratchbird_client) |
+| [ODBC Driver](docs/specifications/ODBC_DRIVER_SPECIFICATION.md) | ODBC 3.8 driver + odbc_fdw |
+| [JDBC Driver](docs/specifications/JDBC_DRIVER_SPECIFICATION.md) | JDBC 4.3 driver + jdbc_fdw |
+| [Live Migration](docs/specifications/LIVE_MIGRATION_PASSTHROUGH_SPECIFICATION.md) | Zero-downtime migration |
+| [Migration Guide](docs/MIGRATION_GUIDE.md) | User migration guide |
+| [Alpha 3 Test Plan](docs/specifications/ALPHA3_TEST_PLAN.md) | Test suites, security, benchmarks |
+| [sb_admin CLI](docs/specifications/SB_ADMIN_CLI_SPECIFICATION.md) | Admin tool, monitoring |
+| [Prometheus Metrics](docs/specifications/PROMETHEUS_METRICS_REFERENCE.md) | Metrics, labels, alerts |
+| [Git Integration](docs/specifications/GIT_METADATA_INTEGRATION_SPECIFICATION.md) | Schema versioning (Nice to Have) |
+
+### Other Specifications
 
 - **[docs/specifications/](docs/specifications/)** - SQL dialect, DDL, security, indexes, etc.
 - **[docs/planning/](docs/planning/)** - Implementation plans and status
 
 ## Development Timeline
 
-**Work Completed:** 5 months (June-November 2025)
-**Current Progress:** ~11% of total project scope
-**Estimated Remaining:** ~3.5-4 years (single developer, evenings/weekends, AI assistance)
+**Work Completed:** Alpha 1 & Alpha 2 (June-December 2025)
+**Current Progress:** ~15% of total project scope
+**Current Phase:** Alpha 3 (~27-38 weeks estimated)
+**Estimated Remaining:** ~3-3.5 years (single developer, evenings/weekends, AI assistance)
 
 This is an **educational/research project with no fixed deadlines**. Each phase completes when ALL defined features are implemented.
 
@@ -106,13 +131,15 @@ ScratchBird/
 ├── src/
 │   ├── core/          # Storage engine, indexes, transactions, catalog
 │   ├── parser/        # SQL parsers (V2, Firebird, MySQL, PostgreSQL)
+│   ├── server/        # Server daemon, sessions, IPC
+│   ├── protocol/      # Wire protocol implementations
 │   └── sblr/          # SBLR bytecode interpreter & query compilers
 ├── include/           # Public headers
 ├── tests/
 │   ├── unit/          # Unit tests
 │   └── integration/   # Integration tests
 ├── docs/
-│   ├── specifications/ # SQL dialect, DDL, NoSQL models
+│   ├── specifications/ # SQL dialect, DDL, NoSQL models, wire protocols
 │   ├── planning/       # Implementation roadmaps
 │   └── status/         # Completion reports
 ├── OFFICIAL_ROADMAP.md # Complete project scope
@@ -124,10 +151,11 @@ ScratchBird/
 
 Planned capabilities:
 
-- Support multiple SQL dialects (PostgreSQL, MySQL, MSSQL, FirebirdSQL)
+- Support multiple SQL dialects (PostgreSQL, MySQL, FirebirdSQL) - TDS/MSSQL deferred
 - Implement 9 NoSQL models (Graph, Vector, Document, Key-Value, Time-Series, Column-Family, Search, Stream, Object/Blob)
 - Enable distributed clustering with heterogeneous databases
 - Provide wire protocol compatibility for existing clients
+- ODBC/JDBC connectivity for universal database access
 - Unified ACID transactions across all data models
 
 ## License

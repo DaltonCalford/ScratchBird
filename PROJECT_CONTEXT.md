@@ -1,8 +1,8 @@
 # ScratchBird Project Context
 
 **Last Updated:** December 10, 2025
-**Current Phase:** Alpha Phase 2 - Parser Separation ✅ **COMPLETE**
-**Progress:** 100% of Alpha 2 complete, ready for Alpha 3
+**Current Phase:** Alpha Phase 3 - Network & Service Mode 🚀 **IN PROGRESS**
+**Previous Phases:** Alpha 1 & Alpha 2 ✅ **COMPLETE**
 **Test Suite:** 1255/1255 = 100% pass rate
 **Project Type:** Educational/Research (no time constraints)
 **Detailed Status:** [IMPLEMENTATION_STATUS_DASHBOARD.md](docs/IMPLEMENTATION_STATUS_DASHBOARD.md)
@@ -12,100 +12,202 @@
 
 ---
 
-## Alpha 2 Status: ✅ **COMPLETE** (December 10, 2025)
+## Alpha 3 Status: 🚀 **IN PROGRESS** (Started December 10, 2025)
 
-### Parser Separation - All Goals Achieved
+### Phase Overview
 
-| Component | Status | Tests |
-|-----------|--------|-------|
-| **Parser V2** | ✅ Complete | 171 tests (DDL, DML, Session, State) |
-| **Firebird Parser** | ✅ Complete | 52 tests |
-| **MySQL Parser** | ✅ Complete | 30 tests |
-| **PostgreSQL Parser** | ✅ Complete | 52 tests |
-| **Total Parser Tests** | ✅ **293 tests** | 100% passing |
+Alpha 3 transforms ScratchBird from an embedded database into a **full network server** with:
+- Multiple wire protocol support (PostgreSQL, MySQL, Firebird, Native)
+- Enterprise security suite (11 authentication methods)
+- Service mode with systemd integration
+- ODBC/JDBC connectivity for universal database access
+- Live migration from existing databases
 
-### Key Accomplishments
+### Implementation Phases (15 Total, ~27-38 weeks)
 
-1. **Parser v2.0 Architecture**
-   - Context-sensitive "Smart Parser, Dumb Lexer" design
-   - ~35 Gatekeeper keywords globally reserved
-   - Contextual keyword recognition (TABLE, INDEX, VIEW, etc.)
-   - Hierarchical schema path navigation (`.name`, `..name`, qualified paths)
-   - UUID-based object resolution
+| Phase | Component | Status | Specification |
+|-------|-----------|--------|---------------|
+| 3.1 | Network Infrastructure | 🔜 **START HERE** | Foundation for all protocols |
+| 3.2 | ScratchBird Native Protocol | Pending | [Native Wire Protocol](docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md) |
+| 3.3 | PostgreSQL Wire Protocol | Pending | [PostgreSQL Protocol](docs/specifications/wire_protocols/postgresql_wire_protocol.md) |
+| 3.4 | MySQL Wire Protocol | Pending | [MySQL Protocol](docs/specifications/wire_protocols/mysql_wire_protocol.md) |
+| 3.5 | TDS Wire Protocol | ⏸️ **DEFERRED** | Moved to Beta (MSSQL via ODBC only) |
+| 3.6 | Firebird Wire Protocol | Pending | [Firebird Protocol](docs/specifications/wire_protocols/firebird_wire_protocol.md) |
+| 3.7 | Service Mode & systemd | Pending | [systemd Service](docs/specifications/SYSTEMD_SERVICE_SPECIFICATION.md) |
+| 3.8 | Connection Pooling | Pending | [Connection Pooling](docs/specifications/CONNECTION_POOLING_SPECIFICATION.md) |
+| 3.9 | Security Suite - Core | Pending | SSL/TLS, cert auth, password policies |
+| 3.10 | Security Suite - Enterprise | Pending | LDAP, Kerberos, OAuth, SAML, MFA |
+| 3.11 | UDR Plugin System | Pending | [Remote Database UDR](docs/specifications/remote_database_udr/) |
+| 3.12 | ODBC Driver | Pending | [ODBC Driver](docs/specifications/ODBC_DRIVER_SPECIFICATION.md) |
+| 3.13 | JDBC Driver | Pending | [JDBC Driver](docs/specifications/JDBC_DRIVER_SPECIFICATION.md) |
+| 3.14 | Git Integration | ⭕ Nice to Have | [Git Integration](docs/specifications/GIT_METADATA_INTEGRATION_SPECIFICATION.md) |
+| 3.15 | Testing & Performance | Pending | [Alpha 3 Test Plan](docs/specifications/ALPHA3_TEST_PLAN.md) |
 
-2. **Multi-Dialect SQL Support**
-   - **Firebird SQL:** Full dialect 1/2/3 support, EXECUTE BLOCK, generators/sequences
-   - **MySQL 8.0:** Backtick identifiers, AUTO_INCREMENT, ON DUPLICATE KEY
-   - **PostgreSQL 16:** Dollar-quoting, `::` casts, RETURNING, ON CONFLICT
+### Recommended Implementation Order
 
-3. **Query Compilers**
-   - `FirebirdQueryCompiler` - Firebird SQL → SBLR bytecode
-   - `PostgreSQLQueryCompiler` - PostgreSQL SQL → SBLR bytecode
-   - Shared semantic analyzer and bytecode generator
+**Week 1-4: Foundation**
+1. **Phase 3.1: Network Infrastructure** (3-4 weeks)
+   - Socket management (TCP/IP, Unix domain sockets)
+   - epoll/kqueue event loop
+   - Thread pool for connection handling
+   - Connection state machine
+   - Session management layer
 
-### Key Documents
-- **Implementation Plan:** [/docs/planning/PARSER_V2_IMPLEMENTATION_PLAN.md](/docs/planning/PARSER_V2_IMPLEMENTATION_PLAN.md)
-- **Grammar Specification:** [/docs/specifications/ScratchBird Master Grammar Specification v2.0.md](/docs/specifications/ScratchBird%20Master%20Grammar%20Specification%20v2.0.md)
-- **Firebird Parser Spec:** [/docs/specifications/EMULATED_DATABASE_PARSER_SPECIFICATION.md](/docs/specifications/EMULATED_DATABASE_PARSER_SPECIFICATION.md)
-- **PostgreSQL Parser Spec:** [/docs/specifications/POSTGRESQL_PARSER_SPECIFICATION.md](/docs/specifications/POSTGRESQL_PARSER_SPECIFICATION.md)
-- **MySQL Parser Spec:** [/docs/specifications/MYSQL_PARSER_SPECIFICATION.md](/docs/specifications/MYSQL_PARSER_SPECIFICATION.md)
+**Week 5-6: Service Mode**
+2. **Phase 3.7: Service Mode & systemd** (1-2 weeks)
+   - Daemonization, PID file management
+   - Configuration file parser (INI format)
+   - Hot configuration reload (SIGHUP)
+   - systemd notify integration
+
+**Week 7-9: Native Protocol**
+3. **Phase 3.2: ScratchBird Native Protocol** (2-3 weeks)
+   - Binary message format (16-byte header)
+   - Authentication handshake
+   - Query/result protocol
+   - Cluster PKI infrastructure
+
+**Week 10-15: External Protocols**
+4. **Phase 3.3: PostgreSQL Protocol** (2 weeks)
+5. **Phase 3.4: MySQL Protocol** (2 weeks)
+6. **Phase 3.6: Firebird Protocol** (2 weeks)
+
+**Week 16-18: Connection Pooling**
+7. **Phase 3.8: Connection Pooling** (2-3 weeks)
+
+**Week 19-24: Security**
+8. **Phase 3.9-3.10: Security Suite** (4-6 weeks)
+
+**Week 25-28: Foreign Data & Drivers**
+9. **Phase 3.11: UDR Plugin System** (3-4 weeks)
+10. **Phase 3.12-3.13: ODBC/JDBC Drivers** (3-4 weeks)
+
+**Week 29-31: Testing**
+11. **Phase 3.15: Testing & Performance** (2-3 weeks)
+
+### Completion Criteria (44 Items)
+
+**Wire Protocols (1-6):**
+- ✅ ScratchBird Native Protocol (port 3092) functional
+- ✅ PostgreSQL Wire Protocol v3 (port 5432) functional
+- ✅ MySQL Wire Protocol (port 3306) functional
+- ⏸️ TDS Wire Protocol - DEFERRED TO BETA
+- ✅ Firebird Wire Protocol (port 3050) functional
+- ✅ All protocols tested with native clients
+
+**Database Connectivity (7-10):**
+- ✅ ScratchBird ODBC driver functional
+- ✅ ScratchBird JDBC driver functional
+- ✅ ODBC connectivity to MSSQL/Oracle/other databases
+- ✅ JDBC connectivity to external databases
+
+**Service Mode (11-15):**
+- ✅ sb_server daemon mode operational
+- ✅ systemd integration complete
+- ✅ Configuration file hot-reload working
+- ✅ Graceful startup/shutdown
+- ✅ Both single-database and multi-database modes
+
+**Security (16-25):**
+- ✅ SSL/TLS 1.2+ for all protocols
+- ✅ Certificate authentication (X.509/mTLS)
+- ✅ Multi-factor authentication (TOTP)
+- ✅ IP whitelisting functional
+- ✅ LDAP authentication working
+- ✅ Active Directory integration
+- ✅ Kerberos/GSSAPI functional
+- ✅ SAML 2.0 federation
+- ✅ OAuth 2.0/OIDC integration
+- ✅ Security audit completed
+
+**Connection Pooling (26-29):**
+- ✅ Built-in connection pool operational
+- ✅ Statement caching working
+- ✅ Result caching functional
+- ✅ Pool statistics available
+
+**UDR Plugins (30-38):**
+- ✅ UDR plugin system functional
+- ✅ postgresql_fdw operational
+- ✅ mysql_fdw operational
+- ⏸️ mssql_fdw - DEFERRED (use ODBC/JDBC)
+- ✅ firebird_fdw operational
+- ✅ odbc_fdw operational
+- ✅ jdbc_fdw operational
+- ✅ Foreign table queries working
+- ✅ Passthrough queries functional
+
+**Performance (39-41):**
+- ✅ Load testing completed (1000+ connections)
+- ✅ No memory leaks in 72-hour stress test
+- ✅ Protocol compliance verified
+
+**Nice to Have (42-44):**
+- ⭕ Git integration for metadata versioning
+- ⭕ Docker image and compose files
+- ⭕ deb/rpm installation packages
 
 ---
 
-## Next Phase: Alpha 3 - Network Listeners 🚀
+## Alpha 3 Specifications (13 Documents, ~22,300 lines)
 
-**Alpha 3: Network Listeners**
+All specifications created December 10, 2025:
 
-- 4 wire protocols: PostgreSQL, MySQL, TDS/MSSQL, ScratchBird native
-- Client authentication, SSL/TLS
-- Connection pooling
+| # | Specification | Lines | Path |
+|---|--------------|-------|------|
+| 1 | Native Wire Protocol | ~2,800 | `wire_protocols/scratchbird_native_wire_protocol.md` |
+| 2 | systemd Service | ~1,800 | `SYSTEMD_SERVICE_SPECIFICATION.md` |
+| 3 | Connection Pooling | ~1,400 | `CONNECTION_POOLING_SPECIFICATION.md` |
+| 4 | Remote Database UDR | ~7,400 | `remote_database_udr/` (9 modular docs) |
+| 5 | Client Library API | ~1,300 | `CLIENT_LIBRARY_API_SPECIFICATION.md` |
+| 6 | Alpha 3 Test Plan | ~730 | `ALPHA3_TEST_PLAN.md` |
+| 7 | sb_admin CLI | ~600 | `SB_ADMIN_CLI_SPECIFICATION.md` |
+| 8 | Prometheus Metrics | ~820 | `PROMETHEUS_METRICS_REFERENCE.md` |
+| 9 | Live Migration | ~1,820 | `LIVE_MIGRATION_PASSTHROUGH_SPECIFICATION.md` |
+| 10 | Migration Guide | ~1,020 | `/docs/MIGRATION_GUIDE.md` |
+| 11 | ODBC Driver | ~730 | `ODBC_DRIVER_SPECIFICATION.md` |
+| 12 | JDBC Driver | ~900 | `JDBC_DRIVER_SPECIFICATION.md` |
+| 13 | Git Integration | ~980 | `GIT_METADATA_INTEGRATION_SPECIFICATION.md` |
 
-**Beta 1: Cluster Implementation**
+### Key Architectural Decisions
 
-- Distributed architecture with automatic sharding
-- Replication and failover
-- Distributed transactions (2PC)
+1. **Native Protocol Port:** 3092 (IANA unassigned)
+2. **Cluster Key Architecture:** Hybrid (Cluster CA + Session Keys) for forward secrecy
+3. **Federation:** Full cross-database queries (`SELECT * FROM db2.schema.table`)
+4. **Serialization:** Custom binary optimized for 86 types
+5. **Connection Pooling:** Built-in only (no pgBouncer dependency)
+6. **Security Auth:** All 11 methods in Alpha 3
+7. **TDS/MSSQL:** DEFERRED - Connect via ODBC only (open source DBs first)
+8. **ODBC/JDBC:** Required for connecting TO external databases
+9. **Git Integration:** Nice-to-have for DDL version control
 
-**Beta 2: Heterogeneous Clusters**
+---
 
-- Foreign Data Wrappers for PostgreSQL, MySQL, MSSQL, FirebirdSQL
-- Cross-database query federation
-- XA distributed transactions
+## Previous Phases: ✅ COMPLETE
 
-**Beta 3: Encryption & Advanced Indexes**
+### Alpha 1: Core Engine (June-November 2025)
 
-- Field-level and database-level encryption
-- Key management server
-- Advanced indexes (Bloom Filter, ML indexes, Graph indexes, etc.)
+| Component | Status | Tests |
+|-----------|--------|-------|
+| Storage Engine | ✅ Complete | MGA-based heap pages |
+| Transaction Manager | ✅ Complete | TIP-based visibility |
+| Index Types | ✅ Complete | BTree, GIN, GiST, LSM |
+| TOAST | ✅ Complete | Large object storage |
+| Catalog Manager | ✅ Complete | System tables |
+| Parser v1 | ✅ Complete | Basic SQL parsing |
+| SBLR Executor | ✅ Complete | Bytecode interpreter |
+| CLI Tools | ✅ Complete | sb_isql, sb_verify, sb_backup, sb_security |
+| Local Server | ✅ Complete | IPC, wire protocol, sessions |
 
-**Beta 4: NoSQL Dialects & Integration Tools** (MAJOR PHASE)
+### Alpha 2: Parser Separation (December 2025)
 
-- **9 NoSQL models** with dedicated query dialects:
-  1. Graph Database (Cypher, Gremlin, ScratchBird native)
-  2. Vector Database (k-NN, ANN queries)
-  3. Document Store (MongoDB-compatible)
-  4. Key-Value Store (Redis-compatible)
-  5. Time-Series Database (InfluxDB-style)
-  6. Column-Family Store (Cassandra CQL)
-  7. Full-Text Search (Elasticsearch DSL)
-  8. Stream Processing (continuous queries)
-  9. Object/Blob Store (S3-compatible)
-- Integration tools: Kafka, message queues, AI agents, observability
-
-**RC1: Native Drivers**
-
-- 12 language drivers: ODBC, JDBC, C++, C, C#, Rust, Pascal, Python, Go, Node.js, Ruby, PHP
-- Beta user testing
-
-**RC2/RC3: Stabilization**
-
-- Bug fixing, performance optimization
-- Security audits
-
-**Gold: Production Release**
-
-- Full feature completion
-- All quality criteria met
+| Component | Status | Tests |
+|-----------|--------|-------|
+| Parser V2 | ✅ Complete | 171 tests |
+| Firebird Parser | ✅ Complete | 52 tests |
+| MySQL Parser | ✅ Complete | 30 tests |
+| PostgreSQL Parser | ✅ Complete | 52 tests |
+| **Total** | ✅ **293 tests** | 100% passing |
 
 ---
 
@@ -140,9 +242,14 @@ if (isSnapshotVisible(tuple, snapshot)) { ... }
 - [/MGA_RULES.md](/MGA_RULES.md) - Mandatory architecture rules
 - [/docs/IMPLEMENTATION_AUDIT.md](/docs/IMPLEMENTATION_AUDIT.md) - Complete code locations
 
-### Specifications
+### Alpha 3 Specifications
 
-- [/docs/specifications/](/docs/specifications/) - SQL dialect, DDL, NoSQL models, indexes
+- [/docs/specifications/wire_protocols/](/docs/specifications/wire_protocols/) - Protocol specifications
+- [/docs/specifications/remote_database_udr/](/docs/specifications/remote_database_udr/) - Foreign data wrappers
+- [/docs/specifications/SYSTEMD_SERVICE_SPECIFICATION.md](/docs/specifications/SYSTEMD_SERVICE_SPECIFICATION.md) - Service mode
+- [/docs/specifications/CONNECTION_POOLING_SPECIFICATION.md](/docs/specifications/CONNECTION_POOLING_SPECIFICATION.md) - Pooling
+- [/docs/specifications/ODBC_DRIVER_SPECIFICATION.md](/docs/specifications/ODBC_DRIVER_SPECIFICATION.md) - ODBC driver
+- [/docs/specifications/JDBC_DRIVER_SPECIFICATION.md](/docs/specifications/JDBC_DRIVER_SPECIFICATION.md) - JDBC driver
 
 ### Core Implementation
 
@@ -153,7 +260,10 @@ src/core/toast.cpp                   - Large object storage
 src/core/transaction_manager.cpp    - TIP-based transactions
 src/core/btree.cpp                   - B-Tree index
 src/core/catalog_manager.cpp        - System catalog
-src/parser/parser.cpp                - SQL parser
+src/parser/parser.cpp                - SQL parser v2
+src/server/scratchbird_server.cpp   - Server daemon
+src/server/server_session.cpp       - Session management
+src/protocol/wire_protocol.cpp      - Wire protocol
 src/sblr/executor.cpp                - SBLR bytecode interpreter
 ```
 
@@ -168,7 +278,7 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 1. Read `/MGA_RULES.md` at session start
 2. Re-read `/MGA_RULES.md` after context compaction
 3. Read `/MGA_RULES.md` BEFORE any transaction or index work
-4. Refer to `/docs/IMPLEMENTATION_AUDIT.md` for function signatures
+4. Read relevant specification before implementing any Alpha 3 feature
 
 **DO:**
 
@@ -177,6 +287,7 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 - ✅ In-place updates with back versions
 - ✅ Follow error handling patterns (Status enum, ErrorContext)
 - ✅ Use RAII for all resources
+- ✅ Read specification before implementing feature
 
 **DON'T:**
 
@@ -185,28 +296,62 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 - ❌ Use forward-versioning
 - ❌ Update index TIDs unless indexed column changes
 - ❌ Skip reading `/MGA_RULES.md`
+- ❌ Implement without reading specification first
 
 **CRITICAL:** Violating MGA rules means the code is architecturally WRONG and must be rewritten.
 
 ---
 
+## Next Steps for New AI Session
+
+### Immediate Action: Start Phase 3.1
+
+**Phase 3.1: Network Infrastructure** is the foundation for Alpha 3.
+
+**Files to Create:**
+```
+include/scratchbird/network/
+├── socket_manager.h       - Socket abstraction layer
+├── event_loop.h           - epoll/kqueue event loop
+├── connection_handler.h   - Connection state machine
+└── thread_pool.h          - Worker thread pool
+
+src/network/
+├── socket_manager.cpp
+├── event_loop.cpp
+├── connection_handler.cpp
+└── thread_pool.cpp
+
+tests/unit/
+├── test_socket_manager.cpp
+├── test_event_loop.cpp
+└── test_connection_handler.cpp
+```
+
+**Key Components:**
+1. Socket management (TCP/IP, Unix domain sockets)
+2. epoll/kqueue event loop for async I/O
+3. Thread pool for connection handling
+4. Connection state machine
+5. Session management layer
+
+**Reference:**
+- Existing IPC code: `src/server/ipc_*.cpp`
+- Wire protocol: `src/protocol/wire_protocol.cpp`
+- Server session: `src/server/server_session.cpp`
+
+---
+
 ## Summary
 
-**Current Focus:** Alpha 2 ✅ **COMPLETE** - Ready for Alpha 3
+**Current Phase:** Alpha 3 - Network & Service Mode 🚀 **IN PROGRESS**
 
-**All Alpha 2 Work Complete!**
-- Parser v2.0 with context-sensitive architecture
-- Firebird, MySQL, and PostgreSQL dialect parsers
-- 293 parser tests (100% passing)
-- 1255 total tests (100% passing)
+**Start With:** Phase 3.1 Network Infrastructure
 
-**Next Major Milestones:**
+**Specifications Ready:** 13 documents (~22,300 lines)
 
-1. ✅ Alpha 1: Core engine - **COMPLETE**
-2. ✅ Alpha 2: Multi-dialect parsers - **COMPLETE** (December 10, 2025)
-3. 🔜 Alpha 3: Network protocols (libpq, MySQL, TDS, native)
-4. Beta 1-4: Distributed systems + NoSQL models
-5. RC1-3: Native drivers + stabilization
-6. Gold: Production release
+**Completion Criteria:** 44 items (41 required, 3 nice-to-have)
+
+**Estimated Duration:** 27-38 weeks
 
 **Full Details:** See [OFFICIAL_ROADMAP.md](/OFFICIAL_ROADMAP.md)
