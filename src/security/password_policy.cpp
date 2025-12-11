@@ -337,11 +337,12 @@ bool CommonPasswordChecker::isCommonPassword(std::string_view password) const {
            != common_passwords_.end();
 }
 
-core::Status CommonPasswordChecker::loadFromFile(std::string_view filename, ErrorContext* ctx) {
-    std::ifstream file(std::string(filename));
+core::Status CommonPasswordChecker::loadFromFile(std::string_view filename, core::ErrorContext* ctx) {
+    std::ifstream file{std::string{filename}};
     if (!file.is_open()) {
         if (ctx) {
-            ctx->setError("Failed to open common passwords file: " + std::string(filename));
+            ctx->message = "Failed to open common passwords file: " + std::string(filename);
+            ctx->code = core::Status::IO_ERROR;
         }
         return core::Status::IO_ERROR;
     }

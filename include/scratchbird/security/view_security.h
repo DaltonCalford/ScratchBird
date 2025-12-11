@@ -28,6 +28,10 @@
 #include <optional>
 #include <vector>
 #include <memory>
+#include <unordered_map>
+#include <unordered_set>
+#include <shared_mutex>
+#include <mutex>
 
 namespace scratchbird::security {
 
@@ -171,7 +175,7 @@ public:
     core::Status registerView(
         uint32_t view_id,
         const ViewSecurityOptions& options,
-        ErrorContext* ctx = nullptr);
+        core::ErrorContext* ctx = nullptr);
 
     // Unregister a view
     void unregisterView(uint32_t view_id);
@@ -180,7 +184,7 @@ public:
     core::Status updateViewSecurity(
         uint32_t view_id,
         const ViewSecurityOptions& options,
-        ErrorContext* ctx = nullptr);
+        core::ErrorContext* ctx = nullptr);
 
     // Get view security options
     std::optional<ViewSecurityOptions> getViewOptions(uint32_t view_id) const;
@@ -209,14 +213,14 @@ public:
     core::Status checkTableAccess(
         uint32_t table_id,
         uint32_t required_privileges,
-        ErrorContext* ctx = nullptr);
+        core::ErrorContext* ctx = nullptr);
 
     // Check if current context allows a column access
     core::Status checkColumnAccess(
         uint32_t table_id,
         uint32_t column_id,
         uint32_t required_privileges,
-        ErrorContext* ctx = nullptr);
+        core::ErrorContext* ctx = nullptr);
 
     // ========================================================================
     // Security Barrier Support
@@ -236,7 +240,7 @@ public:
     core::Status validateCheckOption(
         uint32_t view_id,
         const void* row_data,  // Would be actual row type
-        ErrorContext* ctx = nullptr);
+        core::ErrorContext* ctx = nullptr);
 
     // Get check option mode for a view
     enum class CheckOptionMode : uint8_t {

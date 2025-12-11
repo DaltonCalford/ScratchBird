@@ -162,6 +162,46 @@ set_target_properties(scratchbird_optimizer PROPERTIES
 target_link_libraries(scratchbird_core PUBLIC scratchbird_optimizer nlohmann_json::nlohmann_json)
 
 # ==============================================================================
+# Security Library: scratchbird_security (Alpha 3 Phase 3.4)
+# ==============================================================================
+# SSL/TLS, authentication methods, HBA configuration, audit logging
+# Components: TLS context, SCRAM-SHA-256/512, certificate auth, rate limiting
+
+file(GLOB SCRATCHBIRD_SECURITY_SOURCES
+    security/*.cpp
+)
+
+add_library(scratchbird_security STATIC
+    ${SCRATCHBIRD_SECURITY_SOURCES}
+)
+
+target_include_directories(scratchbird_security PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+# OpenSSL required for TLS and crypto
+if(OPENSSL_FOUND)
+    target_include_directories(scratchbird_security PUBLIC ${OPENSSL_INCLUDE_DIR})
+    target_link_libraries(scratchbird_security PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+    message(STATUS "Security library: OpenSSL found, full TLS/SSL support enabled")
+else()
+    message(FATAL_ERROR "OpenSSL not found: Required for security library")
+endif()
+
+# Thread support for auth state management
+find_package(Threads REQUIRED)
+target_link_libraries(scratchbird_security PUBLIC Threads::Threads scratchbird_core)
+
+set_target_properties(scratchbird_security PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE ON
+)
+
+message(STATUS "Security library: scratchbird_security (TLS, auth, HBA, audit)")
+
+# ==============================================================================
 # Network Library: scratchbird_network (Alpha 3 Phase 3.1)
 # ==============================================================================
 # High-performance network infrastructure for multi-protocol server
@@ -208,6 +248,9 @@ file(GLOB SCRATCHBIRD_SERVER_SOURCES
     server/ipc_*.cpp
     server/server_session.cpp
     server/scratchbird_server.cpp
+    server/config_parser.cpp
+    server/daemon.cpp
+    server/service_controller.cpp
 )
 
 add_library(scratchbird_server STATIC
@@ -230,6 +273,11 @@ endif()
 find_package(Threads REQUIRED)
 target_link_libraries(scratchbird_server PUBLIC Threads::Threads)
 
+# Dynamic loading for libsystemd (Phase 3.3 Service Mode)
+if(NOT WIN32)
+    target_link_libraries(scratchbird_server PUBLIC ${CMAKE_DL_LIBS})
+endif()
+
 set_target_properties(scratchbird_server PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
@@ -244,7 +292,7 @@ message(STATUS "Server library: scratchbird_server (IPC + session management)")
 # ==============================================================================
 # Wire protocol for client-server message encoding/decoding
 
-file(GLOB SCRATCHBIRD_PROTOCOL_SOURCES
+file(GLOB_RECURSE SCRATCHBIRD_PROTOCOL_SOURCES
     protocol/*.cpp
 )
 
@@ -258,6 +306,7 @@ target_include_directories(scratchbird_protocol PUBLIC
 
 target_link_libraries(scratchbird_protocol PUBLIC
     scratchbird_server
+    scratchbird_network
     scratchbird_core
 )
 

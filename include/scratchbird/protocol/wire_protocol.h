@@ -456,7 +456,21 @@ public:
     size_t getReadOffset() const { return read_offset_; }
     void setReadOffset(size_t offset) { read_offset_ = offset; }
     void resetReadOffset() { read_offset_ = 0; }
+    void resetReadPosition() { read_offset_ = 0; }  // Alias for convenience
     size_t getRemainingBytes() const { return payload_.size() - read_offset_; }
+
+    // Convenience read methods (return value directly, default on error)
+    uint8_t readUInt8() { uint8_t v = 0; readUInt8(v); return v; }
+    uint16_t readUInt16() { uint16_t v = 0; readUInt16(v); return v; }
+    uint32_t readUInt32() { uint32_t v = 0; readUInt32(v); return v; }
+    uint64_t readUInt64() { uint64_t v = 0; readUInt64(v); return v; }
+    int32_t readInt32() { int32_t v = 0; readInt32(v); return v; }
+    int64_t readInt64() { int64_t v = 0; readInt64(v); return v; }
+    std::string readLengthPrefixedString() { std::string s; readLengthPrefixedString(s); return s; }
+
+    // Header access
+    const MessageHeader& getHeader() const { return header_; }
+    const uint8_t* getPayloadData() const { return payload_.data(); }
 
     // Serialization
     core::Status serialize(std::vector<uint8_t>& buffer) const;

@@ -10,6 +10,7 @@
 #include "scratchbird/security/view_security.h"
 #include <algorithm>
 #include <sstream>
+#include <mutex>
 
 namespace scratchbird::security {
 
@@ -89,15 +90,16 @@ ViewSecurityManager& ViewSecurityManager::getInstance() {
 core::Status ViewSecurityManager::registerView(
     uint32_t view_id,
     const ViewSecurityOptions& options,
-    ErrorContext* ctx) {
+    core::ErrorContext* ctx) {
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
 
     if (view_options_.find(view_id) != view_options_.end()) {
         if (ctx) {
-            ctx->setError("View already registered: " + std::to_string(view_id));
+            ctx->message = "View already registered: " + std::to_string(view_id);
+            ctx->code = core::Status::CONSTRAINT_VIOLATION;
         }
-        return core::Status::ALREADY_EXISTS;
+        return core::Status::CONSTRAINT_VIOLATION;
     }
 
     view_options_[view_id] = options;
@@ -112,14 +114,15 @@ void ViewSecurityManager::unregisterView(uint32_t view_id) {
 core::Status ViewSecurityManager::updateViewSecurity(
     uint32_t view_id,
     const ViewSecurityOptions& options,
-    ErrorContext* ctx) {
+    core::ErrorContext* ctx) {
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
 
     auto it = view_options_.find(view_id);
     if (it == view_options_.end()) {
         if (ctx) {
-            ctx->setError("View not found: " + std::to_string(view_id));
+            ctx->message = "View not found: " + std::to_string(view_id);
+            ctx->code = core::Status::NOT_FOUND;
         }
         return core::Status::NOT_FOUND;
     }
@@ -173,7 +176,7 @@ ViewSecurityStack& ViewSecurityManager::currentStack() {
 core::Status ViewSecurityManager::checkTableAccess(
     uint32_t table_id,
     uint32_t required_privileges,
-    ErrorContext* ctx) {
+    core::ErrorContext* ctx) {
 
     // Get effective user from security stack
     uint32_t effective_user = current_stack_.effectiveUserId();
@@ -197,7 +200,7 @@ core::Status ViewSecurityManager::checkColumnAccess(
     uint32_t table_id,
     uint32_t column_id,
     uint32_t required_privileges,
-    ErrorContext* ctx) {
+    core::ErrorContext* ctx) {
 
     uint32_t effective_user = current_stack_.effectiveUserId();
 
@@ -230,7 +233,7 @@ void ViewSecurityManager::markSecurityBarrier(uint32_t subquery_id) {
 core::Status ViewSecurityManager::validateCheckOption(
     uint32_t view_id,
     const void* row_data,
-    ErrorContext* ctx) {
+    core::ErrorContext* ctx) {
 
     std::shared_lock<std::shared_mutex> lock(mutex_);
 

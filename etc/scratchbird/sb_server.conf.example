@@ -1,0 +1,181 @@
+# ScratchBird Server Configuration
+# /etc/scratchbird/sb_server.conf
+#
+# Lines starting with # or ; are comments
+# Values can be quoted: key = "value with spaces"
+# Environment variables: key = ${ENV_VAR}
+# Include other files: @include /path/to/other.conf
+
+#==============================================================================
+# SERVER SECTION
+#==============================================================================
+[server]
+# Operation mode: single-database | multi-database
+mode = multi-database
+
+# Data directory for multi-database mode
+# Each .sbdb file in this directory is a separate database
+data_dir = /var/lib/scratchbird
+
+# Single database path (for mode = single-database)
+# database = /var/lib/scratchbird/main.sbdb
+
+# Create databases if they don't exist
+auto_create = false
+
+# PID file location
+pid_file = /var/run/scratchbird/sb_server.pid
+
+# Maximum time to wait for graceful shutdown (seconds)
+shutdown_timeout = 30
+
+# Worker thread count (0 = auto-detect based on CPU cores)
+worker_threads = 0
+
+# Maximum concurrent connections across all protocols
+max_connections = 100
+
+# Per-user connection limit (0 = unlimited)
+max_connections_per_user = 0
+
+# Per-database connection limit (0 = unlimited)
+max_connections_per_database = 0
+
+# Idle connection timeout (seconds, 0 = never)
+idle_timeout = 3600
+
+# Statement timeout (milliseconds, 0 = unlimited)
+statement_timeout = 0
+
+#==============================================================================
+# NETWORK SECTION
+#==============================================================================
+[network]
+# Bind address (0.0.0.0 for all interfaces, 127.0.0.1 for localhost only)
+bind_address = 0.0.0.0
+
+# ScratchBird native protocol port (0 to disable)
+native_port = 3092
+
+# PostgreSQL protocol port (0 to disable)
+pg_port = 5432
+
+# MySQL protocol port (0 to disable)
+mysql_port = 3306
+
+# Firebird protocol port (0 to disable)
+fb_port = 3050
+
+# Unix domain socket path (empty to disable)
+unix_socket = /var/run/scratchbird/sb.sock
+
+# Unix socket permissions (octal)
+unix_socket_permissions = 0770
+
+# Unix socket group
+unix_socket_group = scratchbird
+
+# TCP keepalive interval (seconds)
+tcp_keepalive = 60
+
+# Listen backlog
+listen_backlog = 128
+
+# Enable TCP_NODELAY (disable Nagle's algorithm)
+tcp_nodelay = true
+
+#==============================================================================
+# SSL/TLS SECTION
+#==============================================================================
+[ssl]
+# Enable SSL/TLS (required for production)
+enabled = false
+
+# Server certificate file (PEM format)
+cert_file = /etc/scratchbird/ssl/server.crt
+
+# Server private key file (PEM format)
+key_file = /etc/scratchbird/ssl/server.key
+
+# Certificate authority file for client verification
+ca_file = /etc/scratchbird/ssl/ca.crt
+
+# Minimum TLS version: TLSv1.2 | TLSv1.3
+min_protocol = TLSv1.2
+
+# Require client certificate
+require_client_cert = false
+
+#==============================================================================
+# MEMORY SECTION
+#==============================================================================
+[memory]
+# Shared buffer pool size
+# Format: 128MB, 1GB, etc.
+shared_buffers = 128MB
+
+# Work memory per operation (sorts, hash joins)
+work_mem = 4MB
+
+# Maintenance work memory (VACUUM, CREATE INDEX)
+maintenance_work_mem = 64MB
+
+#==============================================================================
+# AUTHENTICATION SECTION
+#==============================================================================
+[authentication]
+# Authentication methods (comma-separated)
+methods = scram-sha-256
+
+# Password hashing algorithm: bcrypt | argon2id
+password_hash = argon2id
+
+# Minimum password length
+password_min_length = 12
+
+# Maximum failed login attempts before lockout
+max_failed_attempts = 5
+
+# Account lockout duration (seconds)
+lockout_duration = 300
+
+# Allow superuser remote login
+allow_superuser_remote = false
+
+#==============================================================================
+# LOGGING SECTION
+#==============================================================================
+[logging]
+# Log level: debug | info | notice | warning | error
+level = info
+
+# Log destination: stderr | syslog | file
+destination = file
+
+# Log file path (for destination = file)
+file = /var/log/scratchbird/sb_server.log
+
+# Include timestamps
+timestamps = true
+
+# Log slow queries (milliseconds, 0 = disabled)
+log_slow_queries = 1000
+
+# Log all connections
+log_connections = true
+
+# Log all disconnections
+log_disconnections = true
+
+#==============================================================================
+# STATISTICS SECTION
+#==============================================================================
+[statistics]
+# Enable statistics collection
+enabled = true
+
+# Export statistics: none | prometheus
+export = none
+
+# Prometheus metrics endpoint port (0 = disabled)
+prometheus_port = 0

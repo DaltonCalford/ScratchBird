@@ -11,20 +11,31 @@ So the project was restarted, from first principles and all steps taken are kept
 ## Current Status
 
 **Phase:** Alpha 3 - Network & Service Mode 🚀 **IN PROGRESS**
-**Previous:** Alpha 1 & Alpha 2 ✅ **COMPLETE** (1255/1255 tests = 100% pass rate)
+**Previous:** Alpha 1 & Alpha 2 ✅ **COMPLETE**
+**Test Suite:** 1337/1337 tests = 100% pass rate
 **Started:** June 2025 (6 months of development)
 **Project Type:** Educational/Research (no time constraints)
-**Last Updated:** December 10, 2025
+**Last Updated:** December 11, 2025
 
-### Alpha 3 Goals (Current Phase)
+### Alpha 3 Progress (Current Phase)
 
-- **Wire Protocols:** PostgreSQL, MySQL, Firebird, ScratchBird Native (TDS deferred to Beta)
-- **Service Mode:** systemd daemon, configuration hot-reload, multi-database support
-- **Security Suite:** SSL/TLS, 11 authentication methods (LDAP, Kerberos, OAuth, MFA, etc.)
-- **Connection Pooling:** Built-in pooling with statement/result caching
-- **ODBC/JDBC Drivers:** Standard database connectivity
-- **UDR Plugin System:** Foreign data wrappers for external databases
-- **Live Migration:** Zero-downtime migration from PostgreSQL, MySQL, Firebird
+| Component | Status | Description |
+|-----------|--------|-------------|
+| Network Infrastructure | ✅ Complete | Socket, EventLoop, ThreadPool, ConnectionHandler (~6,200 lines) |
+| Wire Protocol Adapters | ✅ Complete | PostgreSQL, MySQL, Firebird, Native (~4,637 lines) |
+| Service Mode & systemd | ✅ Complete | Daemon, config parser, PID management (~3,270 lines) |
+| Security Suite | ✅ Complete | SSL/TLS, SCRAM-SHA-256/512, certificates, HBA (~3,500 lines) |
+| Connection Pooling | 🔜 Pending | Built-in pooling with caching |
+| UDR Plugin System | 🔜 Pending | Foreign data wrappers |
+| ODBC/JDBC Drivers | 🔜 Pending | Standard connectivity |
+
+**Wire Protocols Implemented:**
+| Protocol | Port | Version |
+|----------|------|---------|
+| PostgreSQL | 5432 | v3 (MD5 auth, Simple/Extended Query) |
+| MySQL | 3306 | 5.7+ (native password, prepared statements) |
+| Firebird | 3050 | 5.0 (XDR encoding, SRP auth) |
+| Native ScratchBird | 3092 | Binary (full message types) |
 
 ### Completed Phases
 

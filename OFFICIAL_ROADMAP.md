@@ -1,10 +1,10 @@
 # ScratchBird Official Development Roadmap
 
 **Created:** November 20, 2025
-**Last Updated:** December 10, 2025
+**Last Updated:** December 11, 2025
 **Status:** AUTHORITATIVE - Official development phases and goals
-**Current Phase:** Alpha 2 ✅ **100% COMPLETE** (Multi-Dialect Parser Separation)
-**Next Phase:** Alpha 3 - Network Listeners, Security Suite, Service Mode, Plugin UDRs
+**Current Phase:** Alpha 3 🚀 **IN PROGRESS** (Network & Service Mode)
+**Previous Phase:** Alpha 2 ✅ **100% COMPLETE** (Multi-Dialect Parser Separation)
 
 **Project Nature:** This is an educational/development project with **NO fixed timeframe constraints**. Each stage is complete when ALL defined elements are implemented, not based on time estimates.
 
@@ -24,7 +24,7 @@ The term "production-ready" in technical documentation refers to **component sta
 ALPHA STAGE (Embedded Engine → Networked Server)
 ├── Alpha 1: Engine Functionality ✅ **100% COMPLETE** (1020 tests)
 ├── Alpha 2: Parser Separation ✅ **100% COMPLETE** (1255 tests)
-└── Alpha 3: Network + Security + Service Mode ← NEXT
+└── Alpha 3: Network + Security + Service Mode 🚀 **IN PROGRESS** (1337 tests)
 
 BETA STAGE (Distributed & Multi-Model)
 ├── Beta 1: Cluster Implementation (Not Started)
@@ -504,11 +504,94 @@ Transform the monolithic embedded engine into a **multi-parser system**:
 
 ## Alpha 3: Network Listeners + Security Suite + Service Mode + Plugin UDRs
 
-**Status:** Not Started
+**Status:** 🚀 **IN PROGRESS** (Started December 10, 2025)
 **Dependencies:** Alpha 2 ✅ 100% complete
+**Test Suite:** 1337/1337 = 100% pass rate
 **Goal:** Transform ScratchBird into a production-capable networked database service
 
 **Completion Policy:** Alpha 3 is complete when ALL wire protocols, full security suite, systemd service mode, and remote database UDR plugins are fully functional.
+
+### Implementation Progress (December 11, 2025)
+
+| Phase | Component | Status | Lines | Description |
+|-------|-----------|--------|-------|-------------|
+| 3.1 | Network Infrastructure | ✅ **COMPLETE** | ~6,200 | Socket, EventLoop, ThreadPool, ConnectionHandler |
+| 3.2 | Wire Protocol Adapters | ✅ **COMPLETE** | ~4,637 | All 4 protocols implemented |
+| 3.3 | Service Mode & systemd | ✅ **COMPLETE** | ~3,000 | Daemon, config parser, systemd integration |
+| 3.4 | Security Suite - Core | ✅ **COMPLETE** | ~3,500 | SSL/TLS, SCRAM-SHA-256/512, certificates, HBA |
+| 3.5 | Security Suite - Enterprise | 🔜 Pending | - | LDAP, Kerberos, OAuth, SAML, MFA |
+| 3.6 | Connection Pooling | 🔜 Pending | - | Built-in pooling |
+| 3.7 | UDR Plugin System | 🔜 Pending | - | Foreign data wrappers |
+| 3.8 | ODBC/JDBC Drivers | 🔜 Pending | - | Standard connectivity |
+
+**Phase 3.1: Network Infrastructure** ✅ **COMPLETE** (December 10, 2025)
+- Socket abstraction (TCP/IP, Unix domain sockets) - ~1,028 lines
+- Event loop (epoll/kqueue/poll multiplexing) - ~767 lines
+- Thread pool with priority queue - ~490 lines
+- Connection handler with protocol detection - ~652 lines
+- 30 unit tests passing
+
+**Phase 3.2: Wire Protocol Adapters** ✅ **COMPLETE** (December 11, 2025)
+
+| Protocol | Port | Version | Lines | Features |
+|----------|------|---------|-------|----------|
+| PostgreSQL | 5432 | v3 | ~1,517 | MD5 auth, Simple/Extended Query |
+| MySQL | 3306 | 5.7+ | ~1,120 | Native password auth, prepared statements |
+| Firebird | 3050 | 5.0 (v18) | ~1,300 | XDR encoding, SRP auth support |
+| Native ScratchBird | 3092 | Binary | ~700 | Full message types, session management |
+
+All adapters integrated via `createProtocolAdapter()` factory in `protocol_adapter.cpp`.
+
+**Phase 3.3: Service Mode & systemd** ✅ **COMPLETE** (December 11, 2025)
+
+| File | Lines | Description |
+|------|-------|-------------|
+| `include/scratchbird/server/config_parser.h` | ~300 | INI config parser with env var expansion |
+| `src/server/config_parser.cpp` | ~700 | Full config parser implementation |
+| `include/scratchbird/server/daemon.h` | ~300 | PIDFile, SystemdNotify, Daemon classes |
+| `src/server/daemon.cpp` | ~600 | Unix daemonization, sd_notify, signals |
+| `include/scratchbird/server/service_controller.h` | ~400 | Service lifecycle management |
+| `src/server/service_controller.cpp` | ~700 | Full service implementation |
+| `etc/systemd/scratchbird.service` | ~90 | systemd unit file |
+| `etc/scratchbird/sb_server.conf.example` | ~180 | Example configuration |
+| **Total** | **~3,270** | Service mode complete |
+
+**Key Features:**
+- Unix daemonization (double-fork pattern)
+- PID file management with file locking (flock)
+- Dynamic loading of libsystemd for sd_notify
+- Signal handling (SIGTERM, SIGHUP, SIGUSR1, SIGUSR2, SIGQUIT)
+- Privilege dropping (setuid/setgid)
+- INI configuration with @include and ${VAR:-default} support
+- Size parsing (128MB, 1GB) and duration parsing (30s, 5m, 1h)
+- Multi-database mode support
+- Health check API
+
+**Phase 3.4: Security Suite - Core** ✅ **COMPLETE** (December 11, 2025)
+
+| File | Lines | Description |
+|------|-------|-------------|
+| `include/scratchbird/security/tls_config.h` | ~450 | TLS configuration, CertificateInfo, TLSContext |
+| `src/security/tls_context.cpp` | ~1,100 | OpenSSL TLS context implementation |
+| `include/scratchbird/security/auth_method.h` | ~400 | AuthMethod interface, AuthContext, AuthState |
+| `src/security/auth_method.cpp` | ~350 | Trust, Reject, Peer auth implementations |
+| `include/scratchbird/security/auth_manager.h` | ~450 | HBA rules, RateLimiter, AuditLogger |
+| `src/security/auth_manager.cpp` | ~750 | HBA parser, rate limiting, audit logging |
+| `include/scratchbird/security/scram_auth.h` | ~340 | SCRAM-SHA-256/512 interface |
+| `src/security/scram_auth.cpp` | ~950 | Full RFC 5802 SCRAM implementation |
+| `include/scratchbird/security/cert_auth.h` | ~240 | Certificate authentication interface |
+| `src/security/cert_auth.cpp` | ~575 | Certificate-to-user mapping, DN parsing |
+| **Total** | **~3,500** | Core security suite complete |
+
+**Key Features:**
+- OpenSSL TLS 1.2/1.3 with certificate verification and CRL/OCSP support
+- SCRAM-SHA-256/512 challenge-response authentication (RFC 5802)
+- Certificate authentication with configurable mapping (CN, DN, SAN, fingerprint)
+- Host-Based Authentication (pg_hba.conf style) with IPv4/IPv6 CIDR matching
+- Brute force protection with configurable rate limiting and lockout
+- Audit logging to file or syslog
+- Password hashing with PBKDF2 and secure salt generation
+- Pluggable authentication method framework for extensibility
 
 ### Expanded Scope (December 2025 Update)
 

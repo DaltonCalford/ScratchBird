@@ -1,9 +1,9 @@
 # ScratchBird Project Context
 
-**Last Updated:** December 10, 2025
+**Last Updated:** December 11, 2025
 **Current Phase:** Alpha Phase 3 - Network & Service Mode 🚀 **IN PROGRESS**
 **Previous Phases:** Alpha 1 & Alpha 2 ✅ **COMPLETE**
-**Test Suite:** 1255/1255 = 100% pass rate
+**Test Suite:** 1337/1337 = 100% pass rate
 **Project Type:** Educational/Research (no time constraints)
 **Detailed Status:** [IMPLEMENTATION_STATUS_DASHBOARD.md](docs/IMPLEMENTATION_STATUS_DASHBOARD.md)
 
@@ -23,67 +23,132 @@ Alpha 3 transforms ScratchBird from an embedded database into a **full network s
 - ODBC/JDBC connectivity for universal database access
 - Live migration from existing databases
 
-### Implementation Phases (15 Total, ~27-38 weeks)
+### Implementation Progress (December 11, 2025)
 
-| Phase | Component | Status | Specification |
-|-------|-----------|--------|---------------|
-| 3.1 | Network Infrastructure | 🔜 **START HERE** | Foundation for all protocols |
-| 3.2 | ScratchBird Native Protocol | Pending | [Native Wire Protocol](docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md) |
-| 3.3 | PostgreSQL Wire Protocol | Pending | [PostgreSQL Protocol](docs/specifications/wire_protocols/postgresql_wire_protocol.md) |
-| 3.4 | MySQL Wire Protocol | Pending | [MySQL Protocol](docs/specifications/wire_protocols/mysql_wire_protocol.md) |
-| 3.5 | TDS Wire Protocol | ⏸️ **DEFERRED** | Moved to Beta (MSSQL via ODBC only) |
-| 3.6 | Firebird Wire Protocol | Pending | [Firebird Protocol](docs/specifications/wire_protocols/firebird_wire_protocol.md) |
-| 3.7 | Service Mode & systemd | Pending | [systemd Service](docs/specifications/SYSTEMD_SERVICE_SPECIFICATION.md) |
-| 3.8 | Connection Pooling | Pending | [Connection Pooling](docs/specifications/CONNECTION_POOLING_SPECIFICATION.md) |
-| 3.9 | Security Suite - Core | Pending | SSL/TLS, cert auth, password policies |
-| 3.10 | Security Suite - Enterprise | Pending | LDAP, Kerberos, OAuth, SAML, MFA |
-| 3.11 | UDR Plugin System | Pending | [Remote Database UDR](docs/specifications/remote_database_udr/) |
-| 3.12 | ODBC Driver | Pending | [ODBC Driver](docs/specifications/ODBC_DRIVER_SPECIFICATION.md) |
-| 3.13 | JDBC Driver | Pending | [JDBC Driver](docs/specifications/JDBC_DRIVER_SPECIFICATION.md) |
-| 3.14 | Git Integration | ⭕ Nice to Have | [Git Integration](docs/specifications/GIT_METADATA_INTEGRATION_SPECIFICATION.md) |
-| 3.15 | Testing & Performance | Pending | [Alpha 3 Test Plan](docs/specifications/ALPHA3_TEST_PLAN.md) |
+| Phase | Component | Status | Lines | Specification |
+|-------|-----------|--------|-------|---------------|
+| 3.1 | Network Infrastructure | ✅ **COMPLETE** | ~6,200 | Foundation for all protocols |
+| 3.2 | Wire Protocol Adapters | ✅ **COMPLETE** | ~4,637 | All 4 protocols implemented |
+| 3.3 | Service Mode & systemd | ✅ **COMPLETE** | ~3,270 | [systemd Service](docs/specifications/SYSTEMD_SERVICE_SPECIFICATION.md) |
+| 3.4 | Security Suite - Core | ✅ **COMPLETE** | ~3,500 | SSL/TLS, SCRAM-SHA-256/512, certificates, HBA |
+| 3.5 | Security Suite - Enterprise | 🔜 Pending | - | LDAP, Kerberos, OAuth, SAML, MFA |
+| 3.6 | Connection Pooling | 🔜 Pending | - | [Connection Pooling](docs/specifications/CONNECTION_POOLING_SPECIFICATION.md) |
+| 3.7 | UDR Plugin System | 🔜 Pending | - | [Remote Database UDR](docs/specifications/remote_database_udr/) |
+| 3.8 | ODBC Driver | 🔜 Pending | - | [ODBC Driver](docs/specifications/ODBC_DRIVER_SPECIFICATION.md) |
+| 3.9 | JDBC Driver | 🔜 Pending | - | [JDBC Driver](docs/specifications/JDBC_DRIVER_SPECIFICATION.md) |
+| 3.10 | TDS Wire Protocol | ⏸️ **DEFERRED** | - | Moved to Beta (MSSQL via ODBC only) |
+| 3.11 | Git Integration | ⭕ Nice to Have | - | [Git Integration](docs/specifications/GIT_METADATA_INTEGRATION_SPECIFICATION.md) |
+| 3.12 | Testing & Performance | 🔜 Pending | - | [Alpha 3 Test Plan](docs/specifications/ALPHA3_TEST_PLAN.md) |
 
-### Recommended Implementation Order
+### Phase 3.1: Network Infrastructure ✅ **COMPLETE** (December 10, 2025)
 
-**Week 1-4: Foundation**
-1. **Phase 3.1: Network Infrastructure** (3-4 weeks)
-   - Socket management (TCP/IP, Unix domain sockets)
-   - epoll/kqueue event loop
-   - Thread pool for connection handling
-   - Connection state machine
-   - Session management layer
+| File | Lines | Description |
+|------|-------|-------------|
+| `include/scratchbird/network/socket_types.h` | ~410 | Types, enums, NetworkAddress, SocketOptions |
+| `include/scratchbird/network/socket.h` | ~381 | Socket class interface |
+| `include/scratchbird/network/event_loop.h` | ~388 | EventLoop (epoll/kqueue/poll) |
+| `include/scratchbird/network/thread_pool.h` | ~483 | ThreadPool, Task with priority queue |
+| `include/scratchbird/network/connection_handler.h` | ~552 | Connection, ConnectionManager |
+| `src/network/socket.cpp` | ~1,028 | Full socket implementation |
+| `src/network/event_loop.cpp` | ~767 | Platform-specific event loops |
+| `src/network/thread_pool.cpp` | ~490 | Thread pool with scheduling |
+| `src/network/connection_handler.cpp` | ~652 | Connection management |
+| `tests/unit/test_network.cpp` | ~755 | 30 unit tests |
+| **Total** | **~6,200** | Network infrastructure complete |
 
-**Week 5-6: Service Mode**
-2. **Phase 3.7: Service Mode & systemd** (1-2 weeks)
-   - Daemonization, PID file management
-   - Configuration file parser (INI format)
-   - Hot configuration reload (SIGHUP)
-   - systemd notify integration
+### Phase 3.2: Wire Protocol Adapters ✅ **COMPLETE** (December 11, 2025)
 
-**Week 7-9: Native Protocol**
-3. **Phase 3.2: ScratchBird Native Protocol** (2-3 weeks)
-   - Binary message format (16-byte header)
-   - Authentication handshake
-   - Query/result protocol
-   - Cluster PKI infrastructure
+| Protocol | Port | Version | Lines | Features |
+|----------|------|---------|-------|----------|
+| PostgreSQL | 5432 | v3 | ~1,517 | MD5 auth, Simple/Extended Query protocol |
+| MySQL | 3306 | 5.7+ | ~1,120 | Native password auth, prepared statements |
+| Firebird | 3050 | 5.0 (v18) | ~1,300 | XDR encoding, SRP auth support |
+| Native ScratchBird | 3092 | Binary | ~700 | Full message types, session management |
+| **Total** | | | **~4,637** | All protocols implemented |
 
-**Week 10-15: External Protocols**
-4. **Phase 3.3: PostgreSQL Protocol** (2 weeks)
-5. **Phase 3.4: MySQL Protocol** (2 weeks)
-6. **Phase 3.6: Firebird Protocol** (2 weeks)
+**Implementation Files:**
+- `include/scratchbird/protocol/adapters/postgresql_adapter.h` (~429 lines)
+- `src/protocol/adapters/postgresql_adapter.cpp` (~1,088 lines)
+- `include/scratchbird/protocol/adapters/mysql_adapter.h` (~370 lines)
+- `src/protocol/adapters/mysql_adapter.cpp` (~750 lines)
+- `include/scratchbird/protocol/adapters/firebird_adapter.h` (~400 lines)
+- `src/protocol/adapters/firebird_adapter.cpp` (~900 lines)
+- `include/scratchbird/protocol/adapters/native_adapter.h` (~150 lines)
+- `src/protocol/adapters/native_adapter.cpp` (~550 lines)
+- `include/scratchbird/protocol/adapters/protocol_adapter.h` (~373 lines)
+- `src/protocol/adapters/protocol_adapter.cpp` (~340 lines)
 
-**Week 16-18: Connection Pooling**
-7. **Phase 3.8: Connection Pooling** (2-3 weeks)
+### Phase 3.3: Service Mode & systemd ✅ **COMPLETE** (December 11, 2025)
 
-**Week 19-24: Security**
-8. **Phase 3.9-3.10: Security Suite** (4-6 weeks)
+| File | Lines | Description |
+|------|-------|-------------|
+| `include/scratchbird/server/config_parser.h` | ~300 | INI config parser with env var expansion |
+| `src/server/config_parser.cpp` | ~700 | Full config parser implementation |
+| `include/scratchbird/server/daemon.h` | ~300 | PIDFile, SystemdNotify, Daemon classes |
+| `src/server/daemon.cpp` | ~600 | Unix daemonization, sd_notify, signals |
+| `include/scratchbird/server/service_controller.h` | ~400 | Service lifecycle management |
+| `src/server/service_controller.cpp` | ~700 | Full service implementation |
+| `etc/systemd/scratchbird.service` | ~90 | systemd unit file with security hardening |
+| `etc/scratchbird/sb_server.conf.example` | ~180 | Example configuration file |
+| **Total** | **~3,270** | Service mode complete |
 
-**Week 25-28: Foreign Data & Drivers**
-9. **Phase 3.11: UDR Plugin System** (3-4 weeks)
-10. **Phase 3.12-3.13: ODBC/JDBC Drivers** (3-4 weeks)
+**Key Features Implemented:**
+- Unix daemonization (double-fork pattern)
+- PID file management with file locking (flock)
+- Dynamic loading of libsystemd for sd_notify
+- Signal handling (SIGTERM, SIGHUP, SIGUSR1, SIGUSR2, SIGQUIT)
+- Privilege dropping (setuid/setgid)
+- INI configuration with @include and ${VAR:-default} support
+- Size parsing (128MB, 1GB) and duration parsing (30s, 5m, 1h)
+- Command-line argument parsing with getopt_long
+- Multi-database mode support
+- Health check API
 
-**Week 29-31: Testing**
-11. **Phase 3.15: Testing & Performance** (2-3 weeks)
+### Phase 3.4: Security Suite - Core ✅ **COMPLETE** (December 11, 2025)
+
+| File | Lines | Description |
+|------|-------|-------------|
+| `include/scratchbird/security/tls_config.h` | ~450 | TLS configuration, CertificateInfo, TLSContext |
+| `src/security/tls_context.cpp` | ~1,100 | OpenSSL TLS context, certificate extraction |
+| `include/scratchbird/security/auth_method.h` | ~400 | AuthMethod interface, AuthContext, AuthState |
+| `src/security/auth_method.cpp` | ~350 | Trust, Reject, Peer auth implementations |
+| `include/scratchbird/security/auth_manager.h` | ~450 | HBA rules, RateLimiter, AuditLogger, AuthManager |
+| `src/security/auth_manager.cpp` | ~750 | HBA parser, rate limiting, audit logging |
+| `include/scratchbird/security/scram_auth.h` | ~340 | SCRAM-SHA-256/512 interface |
+| `src/security/scram_auth.cpp` | ~950 | Full RFC 5802 SCRAM implementation |
+| `include/scratchbird/security/cert_auth.h` | ~240 | Certificate authentication interface |
+| `src/security/cert_auth.cpp` | ~575 | Certificate-to-user mapping, DN parsing |
+| **Total** | **~3,500** | Core security suite complete |
+
+**Key Features Implemented:**
+- OpenSSL TLS 1.2/1.3 with certificate verification
+- SCRAM-SHA-256/512 (RFC 5802) challenge-response authentication
+- Certificate authentication with CN/DN/SAN/fingerprint mapping
+- Host-Based Authentication (pg_hba.conf style) with IPv4/IPv6 CIDR
+- Rate limiting for brute force protection
+- Audit logging (file and syslog)
+- Password hashing (PBKDF2) with secure salt generation
+- Pluggable authentication method framework
+
+### Next Phase: 3.5 Security Suite - Enterprise
+
+**Key Components:**
+- LDAP/LDAPS authentication
+- Active Directory integration
+- Kerberos/GSSAPI
+- OAuth 2.0/OIDC
+- SAML 2.0 federation
+- Multi-factor authentication (TOTP)
+
+### Future Phase: 3.6 Connection Pooling
+
+**Reference Specification:** [CONNECTION_POOLING_SPECIFICATION.md](docs/specifications/CONNECTION_POOLING_SPECIFICATION.md)
+
+**Key Components:**
+- Built-in connection pool
+- Statement caching
+- Result caching
+- Pool statistics and monitoring
 
 ### Completion Criteria (44 Items)
 
@@ -304,41 +369,43 @@ src/sblr/executor.cpp                - SBLR bytecode interpreter
 
 ## Next Steps for New AI Session
 
-### Immediate Action: Start Phase 3.1
+### Immediate Action: Start Phase 3.5 - Security Suite Enterprise
 
-**Phase 3.1: Network Infrastructure** is the foundation for Alpha 3.
+**Phases 3.1, 3.2, 3.3, and 3.4 are COMPLETE.** Network infrastructure, wire protocols, service mode, and core security suite are implemented.
 
-**Files to Create:**
-```
-include/scratchbird/network/
-├── socket_manager.h       - Socket abstraction layer
-├── event_loop.h           - epoll/kqueue event loop
-├── connection_handler.h   - Connection state machine
-└── thread_pool.h          - Worker thread pool
-
-src/network/
-├── socket_manager.cpp
-├── event_loop.cpp
-├── connection_handler.cpp
-└── thread_pool.cpp
-
-tests/unit/
-├── test_socket_manager.cpp
-├── test_event_loop.cpp
-└── test_connection_handler.cpp
-```
+**Next: Phase 3.5 Security Suite - Enterprise**
 
 **Key Components:**
-1. Socket management (TCP/IP, Unix domain sockets)
-2. epoll/kqueue event loop for async I/O
-3. Thread pool for connection handling
-4. Connection state machine
-5. Session management layer
+1. LDAP/LDAPS authentication
+2. Active Directory integration
+3. Kerberos/GSSAPI authentication
+4. OAuth 2.0/OIDC integration
+5. SAML 2.0 federation
+6. Multi-factor authentication (TOTP)
 
-**Reference:**
-- Existing IPC code: `src/server/ipc_*.cpp`
-- Wire protocol: `src/protocol/wire_protocol.cpp`
-- Server session: `src/server/server_session.cpp`
+**Recently Completed (Phase 3.4):**
+```
+include/scratchbird/security/
+├── tls_config.h          - TLS configuration, CertificateInfo (~450 lines)
+├── auth_method.h         - AuthMethod interface, AuthContext (~400 lines)
+├── auth_manager.h        - HBA rules, RateLimiter, AuditLogger (~450 lines)
+├── scram_auth.h          - SCRAM-SHA-256/512 interface (~340 lines)
+└── cert_auth.h           - Certificate authentication (~240 lines)
+
+src/security/
+├── tls_context.cpp       - OpenSSL TLS context (~1,100 lines)
+├── auth_method.cpp       - Trust, Reject, Peer auth (~350 lines)
+├── auth_manager.cpp      - HBA parser, rate limiting, audit (~750 lines)
+├── scram_auth.cpp        - RFC 5802 SCRAM implementation (~950 lines)
+└── cert_auth.cpp         - Certificate-to-user mapping (~575 lines)
+```
+
+**Existing Reference:**
+- Current server: `src/server/scratchbird_server.cpp`
+- Wire protocol adapters: `src/protocol/adapters/`
+- Network layer: `src/network/`
+- Service controller: `src/server/service_controller.cpp`
+- Security library: `src/security/` (NEW)
 
 ---
 
@@ -346,12 +413,16 @@ tests/unit/
 
 **Current Phase:** Alpha 3 - Network & Service Mode 🚀 **IN PROGRESS**
 
-**Start With:** Phase 3.1 Network Infrastructure
+**Completed:** Phase 3.1 (Network Infrastructure), Phase 3.2 (Wire Protocol Adapters), Phase 3.3 (Service Mode & systemd), Phase 3.4 (Security Suite - Core)
+
+**Next:** Phase 3.5 (Security Suite - Enterprise)
+
+**Total Code (Alpha 3 so far):** ~17,600 lines (6,200 + 4,637 + 3,270 + 3,500)
 
 **Specifications Ready:** 13 documents (~22,300 lines)
 
 **Completion Criteria:** 44 items (41 required, 3 nice-to-have)
 
-**Estimated Duration:** 27-38 weeks
+**Test Suite:** 1337/1337 = 100% pass rate
 
 **Full Details:** See [OFFICIAL_ROADMAP.md](/OFFICIAL_ROADMAP.md)

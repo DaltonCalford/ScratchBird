@@ -273,7 +273,7 @@ public:
     bool isCommonPassword(std::string_view password) const;
 
     // Load common passwords from file
-    core::Status loadFromFile(std::string_view filename, ErrorContext* ctx = nullptr);
+    core::Status loadFromFile(std::string_view filename, core::ErrorContext* ctx = nullptr);
 
     // Add password to common list
     void addCommonPassword(std::string_view password);
