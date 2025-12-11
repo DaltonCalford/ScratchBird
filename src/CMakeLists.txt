@@ -162,6 +162,42 @@ set_target_properties(scratchbird_optimizer PROPERTIES
 target_link_libraries(scratchbird_core PUBLIC scratchbird_optimizer nlohmann_json::nlohmann_json)
 
 # ==============================================================================
+# Network Library: scratchbird_network (Alpha 3 Phase 3.1)
+# ==============================================================================
+# High-performance network infrastructure for multi-protocol server
+# Components: socket abstraction, event loop (epoll/kqueue), thread pool, connection management
+
+file(GLOB SCRATCHBIRD_NETWORK_SOURCES
+    network/*.cpp
+)
+
+add_library(scratchbird_network STATIC
+    ${SCRATCHBIRD_NETWORK_SOURCES}
+)
+
+target_include_directories(scratchbird_network PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+# Thread support for thread pool
+find_package(Threads REQUIRED)
+target_link_libraries(scratchbird_network PUBLIC Threads::Threads scratchbird_core)
+
+# Platform-specific linking for network
+if(WIN32)
+    target_link_libraries(scratchbird_network PUBLIC ws2_32)
+endif()
+
+set_target_properties(scratchbird_network PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE ON
+)
+
+message(STATUS "Network library: scratchbird_network (socket, event loop, thread pool, connections)")
+
+# ==============================================================================
 # Server Library: scratchbird_server (Local Server Architecture - Phase 1 & 3)
 # ==============================================================================
 # IPC infrastructure and server components for client-server communication

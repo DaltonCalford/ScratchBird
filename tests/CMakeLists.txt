@@ -233,6 +233,7 @@ target_link_libraries(scratchbird_tests
     scratchbird_sblr
     scratchbird_optimizer
     scratchbird_server
+    scratchbird_network
     GTest::gtest
     GTest::gtest_main
 )
