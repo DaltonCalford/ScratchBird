@@ -1499,6 +1499,10 @@ namespace scratchbird::core
         auto getViewIdByName(const std::string& name, ID& id_out,
                              ErrorContext* ctx = nullptr) -> Status;
 
+        // List all views (materialized and regular) within a schema
+        auto listViewsForSchema(const ID& schema_id, std::vector<ViewInfo>& views_out,
+                                ErrorContext* ctx = nullptr) -> Status;
+
         // OPT-5: Get view info directly by ID (for optimizer MV rewriting)
         auto getViewById(const ID& view_id, ViewInfo& info_out,
                         ErrorContext* ctx = nullptr) -> Status;
@@ -1528,6 +1532,16 @@ namespace scratchbird::core
 
         auto hasDependents(const ID& object_id, bool& has_dependents,
                           ErrorContext* ctx = nullptr) -> Status;
+
+        // Replace dependency set for a dependent object. Removes obsolete links and adds the provided set.
+        auto replaceDependencies(const ID& dependent_object_id,
+                                 ObjectType dependent_type,
+                                 const std::vector<std::pair<ID, ObjectType>>& referenced_objects,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        // Remove all dependencies where the object is the dependent (used on DROP).
+        auto clearDependenciesFor(const ID& dependent_object_id,
+                                  ErrorContext* ctx = nullptr) -> Status;
 
         // Comment operations (Phase 5.2 - Comments table)
         auto setComment(const ID& object_id, ObjectType object_type,
@@ -2914,6 +2928,7 @@ namespace scratchbird::core
             SqlSecurity sql_security = SqlSecurity::INVOKER;  // Phase 3.1
             std::vector<uint8_t> bytecode;  // Compiled SBLR bytecode
             std::string source_text;        // Original PSQL source
+            std::vector<std::pair<ID, ObjectType>> referenced_objects;  // Dependency targets
             uint64_t created_time = 0;
             uint64_t modified_time = 0;
         };
@@ -2935,6 +2950,7 @@ namespace scratchbird::core
             SqlSecurity sql_security = SqlSecurity::INVOKER;  // Phase 3.1
             std::vector<uint8_t> bytecode;  // Compiled SBLR bytecode
             std::string source_text;        // Original PSQL source
+            std::vector<std::pair<ID, ObjectType>> referenced_objects;  // Dependency targets
             uint64_t created_time = 0;
             uint64_t modified_time = 0;
         };

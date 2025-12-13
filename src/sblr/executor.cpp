@@ -1,4 +1,5 @@
 #include "scratchbird/sblr/executor.h"
+#include <unordered_set>
 #include "scratchbird/parser/ast.h"        // For shared types (JoinType, etc.)
 #include "scratchbird/sblr/query_compiler_v2.h"  // Parser V2 pipeline for view compilation
 #include "scratchbird/core/catalog_manager.h"
@@ -4056,6 +4057,28 @@ namespace scratchbird
                 error(err_msg);
             }
 
+            // Record dependencies between this view and referenced tables using compiler-reported SBLR tables
+            QueryCompilerV2 dep_compiler(db_);
+            dep_compiler.setCurrentSchema(schema_info.schema_id);
+            auto dep_result = dep_compiler.compile(definition);
+
+            std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>> deps_to_link;
+            if (dep_result.success()) {
+                deps_to_link.reserve(dep_result.involvedTables().size());
+                for (const auto& tbl_id : dep_result.involvedTables()) {
+                    deps_to_link.emplace_back(tbl_id, core::CatalogManager::ObjectType::TABLE);
+                }
+            }
+
+            core::ID view_id;
+            if (db_->catalog_manager()->getViewIdByName(view_name, view_id, &ctx) == core::Status::OK) {
+                db_->catalog_manager()->replaceDependencies(
+                    view_id,
+                    core::CatalogManager::ObjectType::VIEW,
+                    deps_to_link,
+                    &ctx);
+            }
+
             std::cout << "CREATE " << (materialized ? "MATERIALIZED " : "") << "VIEW" << std::endl;
         }
 
@@ -4096,6 +4119,9 @@ namespace scratchbird
                 db_->catalog_manager()->dropTable(view_info.materialized_table_id, cascade, &ctx);
                 LOG_INFO(EXECUTOR, "Dropped materialized table for view '%s'", view_name.c_str());
             }
+
+            // Clear dependency links for this view prior to dropping it
+            db_->catalog_manager()->clearDependenciesFor(view_id, &ctx);
 
             // Drop view
             status = db_->catalog_manager()->dropView(view_id, cascade, &ctx);

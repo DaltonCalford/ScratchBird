@@ -8264,6 +8264,19 @@ auto CatalogManager::createTrigger(const TriggerInfo &trigger, ErrorContext *ctx
     trigger_cache_[trigger_copy.trigger_id] = trigger_copy;
     trigger_name_to_id_[trigger_copy.trigger_name] = trigger_copy.trigger_id;
     table_triggers_.insert({trigger_copy.table_id, trigger_copy.trigger_id});
+
+    // Record dependencies: trigger -> table, trigger -> procedure (if resolvable)
+    std::vector<std::pair<ID, ObjectType>> refs;
+    refs.emplace_back(trigger_copy.table_id, ObjectType::TABLE);
+    ProcedureInfo proc_info;
+    if (!trigger_copy.procedure_name.empty() &&
+        getProcedure(trigger_copy.procedure_name, proc_info, ctx) == Status::OK) {
+        refs.emplace_back(proc_info.procedure_id, ObjectType::PROCEDURE);
+    }
+    replaceDependencies(trigger_copy.trigger_id,
+                        ObjectType::TRIGGER,
+                        refs,
+                        ctx);
     
     LOG_INFO(CATALOG, "Created trigger '%s' on table '%s'", 
              trigger_copy.trigger_name.c_str(), trigger_copy.table_name.c_str());
@@ -8300,6 +8313,9 @@ auto CatalogManager::dropTrigger(const std::string &trigger_name, ErrorContext *
     // Remove from caches
     trigger_cache_.erase(trigger_id);
     trigger_name_to_id_.erase(trigger_name);
+
+    // Remove dependency links for this trigger
+    clearDependenciesFor(trigger_id, ctx);
     
     LOG_INFO(CATALOG, "Dropped trigger '%s'", trigger_name.c_str());
     
@@ -8438,6 +8454,18 @@ auto CatalogManager::createDatabaseTrigger(const DatabaseTriggerInfo &trigger, E
     db_trigger_name_to_id_[trigger_copy.trigger_name] = trigger_copy.trigger_id;
     event_triggers_.insert({trigger_copy.event, trigger_copy.trigger_id});
 
+    // Record dependency: database trigger -> procedure (if resolvable)
+    std::vector<std::pair<ID, ObjectType>> refs;
+    ProcedureInfo proc_info;
+    if (!trigger_copy.procedure_name.empty() &&
+        getProcedure(trigger_copy.procedure_name, proc_info, ctx) == Status::OK) {
+        refs.emplace_back(proc_info.procedure_id, ObjectType::PROCEDURE);
+    }
+    replaceDependencies(trigger_copy.trigger_id,
+                        ObjectType::TRIGGER,
+                        refs,
+                        ctx);
+
     const char* event_name = "UNKNOWN";
     switch (trigger_copy.event) {
         case DatabaseTriggerEvent::ON_CONNECT: event_name = "ON CONNECT"; break;
@@ -8487,6 +8515,9 @@ auto CatalogManager::dropDatabaseTrigger(const std::string &trigger_name, ErrorC
     // Remove from caches
     db_trigger_cache_.erase(trigger_id);
     db_trigger_name_to_id_.erase(trigger_name);
+
+    // Remove dependency links for this database trigger
+    clearDependenciesFor(trigger_id, ctx);
 
     LOG_INFO(CATALOG, "Dropped database trigger '%s'", trigger_name.c_str());
 
@@ -8628,6 +8659,12 @@ auto CatalogManager::registerFunction(const FunctionInfo &info, ErrorContext *ct
         LOG_INFO(CATALOG, "Function '%s' registered", info.name.c_str());
     }
 
+    // Replace dependency set for this function using provided referenced objects (if any)
+    replaceDependencies(info.function_id,
+                        ObjectType::FUNCTION,
+                        info.referenced_objects,
+                        ctx);
+
     return Status::OK;
 }
 
@@ -8656,6 +8693,12 @@ auto CatalogManager::registerProcedure(const ProcedureInfo &info, ErrorContext *
         procedures_[info.name] = info;
         LOG_INFO(CATALOG, "Procedure '%s' registered", info.name.c_str());
     }
+
+    // Replace dependency set for this procedure using provided referenced objects (if any)
+    replaceDependencies(info.procedure_id,
+                        ObjectType::PROCEDURE,
+                        info.referenced_objects,
+                        ctx);
 
     return Status::OK;
 }
@@ -8710,6 +8753,12 @@ auto CatalogManager::dropFunction(const std::string &name, bool if_exists,
         return Status::NOT_FOUND;
     }
 
+    // Remove dependency links for this function
+    replaceDependencies(it->second.function_id,
+                        ObjectType::FUNCTION,
+                        {},
+                        ctx);
+
     functions_.erase(it);
     LOG_INFO(CATALOG, "Function '%s' dropped", name.c_str());
 
@@ -8733,6 +8782,12 @@ auto CatalogManager::dropProcedure(const std::string &name, bool if_exists,
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Procedure not found");
         return Status::NOT_FOUND;
     }
+
+    // Remove dependency links for this procedure
+    replaceDependencies(it->second.procedure_id,
+                        ObjectType::PROCEDURE,
+                        {},
+                        ctx);
 
     procedures_.erase(it);
     LOG_INFO(CATALOG, "Procedure '%s' dropped", name.c_str());
@@ -10448,6 +10503,26 @@ auto CatalogManager::getView(const ID& schema_id, const std::string& name,
     return Status::OK;
 }
 
+auto CatalogManager::listViewsForSchema(const ID& schema_id, std::vector<ViewInfo>& views_out,
+                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(view_cache_mutex_);
+
+    views_out.clear();
+    views_out.reserve(view_cache_.size());
+
+    for (const auto& [view_id, view_info] : view_cache_)
+    {
+        if (view_info.schema_id == schema_id)
+        {
+            views_out.push_back(view_info);
+        }
+    }
+
+    (void)ctx;
+    return Status::OK;
+}
+
 auto CatalogManager::getViewIdByName(const std::string& name, ID& id_out,
                                        ErrorContext* ctx) -> Status
 {
@@ -10670,6 +10745,105 @@ auto CatalogManager::hasDependents(const ID& object_id, bool& has_dependents,
             has_dependents = true;
             break;
         }
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::replaceDependencies(const ID& dependent_object_id,
+                                         ObjectType dependent_type,
+                                         const std::vector<std::pair<ID, ObjectType>>& referenced_objects,
+                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(dependency_cache_mutex_);
+
+    // Build lookup of desired references for quick membership test
+    std::unordered_set<ID, IDHash> desired_ids;
+    desired_ids.reserve(referenced_objects.size());
+    for (const auto& ref : referenced_objects) {
+        desired_ids.insert(ref.first);
+    }
+
+    // Collect dependency_ids to delete for this dependent
+    std::vector<ID> to_delete;
+    for (const auto& [dep_id, dep_info] : dependency_cache_) {
+        if (dep_info.dependent_object_id == dependent_object_id) {
+            // If referenced object is no longer in desired set, schedule removal
+            if (desired_ids.find(dep_info.referenced_object_id) == desired_ids.end()) {
+                to_delete.push_back(dep_id);
+            }
+        }
+    }
+
+    // Delete obsolete dependencies
+    for (const auto& dep_id : to_delete) {
+        dependency_cache_.erase(dep_id);
+    }
+    for (const auto& dep_id : to_delete) {
+        // Remove from lookup map
+        for (auto it = object_to_dependencies_.begin(); it != object_to_dependencies_.end(); ) {
+            if (it->second == dep_id) {
+                it = object_to_dependencies_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        deleteDependencyRecord(dep_id, ctx);
+    }
+
+    // Add missing dependencies
+    for (const auto& [ref_id, ref_type] : referenced_objects) {
+        bool exists = false;
+        for (const auto& [dep_id, dep_info] : dependency_cache_) {
+            if (dep_info.dependent_object_id == dependent_object_id &&
+                dep_info.referenced_object_id == ref_id) {
+                exists = true;
+                break;
+            }
+        }
+        if (exists) continue;
+
+        DependencyInfo dep_info;
+        dep_info.dependency_id = generateUuidV7();
+        dep_info.dependent_object_id = dependent_object_id;
+        dep_info.dependent_type = dependent_type;
+        dep_info.referenced_object_id = ref_id;
+        dep_info.referenced_type = ref_type;
+        dep_info.dependency_type = DependencyType::NORMAL;
+        dep_info.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+
+        dependency_cache_[dep_info.dependency_id] = dep_info;
+        object_to_dependencies_.insert({dependent_object_id, dep_info.dependency_id});
+        object_to_dependencies_.insert({ref_id, dep_info.dependency_id});
+        writeDependencyRecord(dep_info, ctx);
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::clearDependenciesFor(const ID& dependent_object_id,
+                                          ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(dependency_cache_mutex_);
+
+    std::vector<ID> to_delete;
+    for (const auto& [dep_id, dep_info] : dependency_cache_) {
+        if (dep_info.dependent_object_id == dependent_object_id) {
+            to_delete.push_back(dep_id);
+        }
+    }
+
+    for (const auto& dep_id : to_delete) {
+        dependency_cache_.erase(dep_id);
+        for (auto it = object_to_dependencies_.begin(); it != object_to_dependencies_.end(); ) {
+            if (it->second == dep_id) {
+                it = object_to_dependencies_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        deleteDependencyRecord(dep_id, ctx);
     }
 
     return Status::OK;
@@ -14562,6 +14736,23 @@ auto CatalogManager::dropForeignKey(const ID& fk_id,
 
     const ForeignKeyInfo& fk = it->second;
 
+    // Remove dependency link (child -> parent)
+    std::vector<ID> deps_to_drop;
+    {
+        std::lock_guard<std::mutex> dep_lock(dependency_cache_mutex_);
+        for (const auto& [dep_id, dep_info] : dependency_cache_) {
+            if (dep_info.dependent_object_id == fk.child_table_id &&
+                dep_info.referenced_object_id == fk.parent_table_id &&
+                dep_info.dependent_type == ObjectType::TABLE &&
+                dep_info.referenced_type == ObjectType::TABLE) {
+                deps_to_drop.push_back(dep_id);
+            }
+        }
+    }
+    for (const auto& dep_id : deps_to_drop) {
+        deleteDependency(dep_id, ctx);
+    }
+
     // Remove from index maps
     auto child_range = table_child_fks_.equal_range(fk.child_table_id);
     for (auto child_it = child_range.first; child_it != child_range.second; )
@@ -16340,4 +16531,3 @@ auto CatalogManager::listEmulatedDatabases(const ID& server_id,
 }
 
 } // namespace scratchbird::core
-
