@@ -14,6 +14,11 @@
 #include "scratchbird/protocol/wire_protocol.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/database.h"
+#include "scratchbird/core/connection_context.h"
+#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/executor.h"
+#include <filesystem>
 
 #include <memory>
 #include <string>
@@ -38,6 +43,9 @@ struct ProtocolAdapterConfig {
     uint32_t read_timeout_ms = 30000;       // Read timeout
     uint32_t write_timeout_ms = 30000;      // Write timeout
     uint32_t idle_timeout_ms = 3600000;     // 1 hour idle timeout
+    std::string database_path;              // Database location for adapter
+    uint32_t page_size = 16384;             // Page size for new databases
+    bool auto_create_db = true;             // Create database if missing
 
     // Buffer settings
     size_t read_buffer_size = 65536;        // 64KB read buffer
@@ -123,6 +131,8 @@ struct ResultContext {
     // Row data callback
     using RowCallback = std::function<bool(const std::vector<ProtocolCodec::ColumnValue>& row)>;
     RowCallback row_callback;
+    // Materialized rows (optional)
+    std::vector<std::vector<ProtocolCodec::ColumnValue>> rows;
 
     // Completion info
     std::string command_tag;        // e.g., "SELECT 100"
@@ -190,6 +200,19 @@ public:
      * Send ready for query
      */
     void sendReady(network::Connection* conn) override;
+
+protected:
+    // Engine helpers
+    virtual core::Status compileQuery(const std::string& sql,
+                                      std::vector<uint8_t>& bytecode_out,
+                                      std::string& error_out);
+    core::Status ensureEngine(core::ErrorContext* ctx);
+    core::Status executeBytecode(const std::string& sql,
+                                 const std::vector<uint8_t>& bytecode,
+                                 ResultContext& result,
+                                 core::ErrorContext* ctx);
+    protocol::WireType mapDataType(core::DataType type) const;
+    protocol::ProtocolCodec::ColumnValue toColumnValue(const sblr::Value& val) const;
 
     // ========================================================================
     // Protocol-Specific Methods (to be implemented by subclasses)
@@ -355,6 +378,13 @@ protected:
     uint64_t queries_executed_ = 0;
     uint64_t bytes_received_ = 0;
     uint64_t bytes_sent_ = 0;
+
+    // Engine state
+    std::filesystem::path database_path_;
+    std::unique_ptr<core::Database> database_;
+    std::unique_ptr<core::ConnectionContext> connection_ctx_;
+    std::unique_ptr<sblr::Executor> executor_;
+    std::unique_ptr<sblr::QueryCompilerV2> compiler_v2_;
 };
 
 // ============================================================================

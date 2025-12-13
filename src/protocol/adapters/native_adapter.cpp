@@ -170,8 +170,9 @@ core::Status NativeAdapter::sendQueryResult(network::Connection* conn,
         // Send row description
         sendRowDescription(conn, result.columns);
 
-        // Rows would be sent via row_callback
-        // For now, just send end of results
+        for (const auto& row : result.rows) {
+            sendRowData(conn, row);
+        }
     }
 
     // Send command complete

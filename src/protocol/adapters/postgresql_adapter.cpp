@@ -8,11 +8,18 @@
 
 #include "scratchbird/protocol/adapters/postgresql_adapter.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/types.h"
+#include "scratchbird/sblr/postgresql_query_compiler.h"
+#include "scratchbird/server/ipc_server.h"
+#include "scratchbird/client/connection.h"
 
+#include <filesystem>
 #include <cstring>
 #include <random>
 #include <sstream>
 #include <iomanip>
+#include <cctype>
 
 // For MD5
 #ifdef HAVE_OPENSSL
@@ -55,6 +62,98 @@ PostgresqlAdapter::PostgresqlAdapter(const ProtocolAdapterConfig& config)
 }
 
 PostgresqlAdapter::~PostgresqlAdapter() = default;
+core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
+    if (client_) {
+        return core::Status::OK;
+    }
+
+    client_config_.database_name = database_name_.empty() ? "default" : database_name_;
+    client_config_.ipc_method = server::IPCMethod::UNIX_SOCKET;
+    client_config_.socket_path = server::getIPCPath(client_config_.database_name, client_config_.ipc_method);
+    client_config_.connect_timeout_ms = config_.read_timeout_ms;
+    client_config_.read_timeout_ms = config_.read_timeout_ms;
+    client_config_.write_timeout_ms = config_.write_timeout_ms;
+    client_config_.auto_commit = true;
+    client_config_.auto_start_server = false;
+    client_config_.username = username_.empty() ? "BOOTSTRAP" : username_;
+
+    client_ = std::make_unique<client::Connection>();
+    auto status = client_->connect(client_config_, ctx);
+    if (status != core::Status::OK) {
+        client_.reset();
+        return status;
+    }
+
+    // Set search_path to emulated schema (if it exists or can be created)
+    if (!search_path_set_) {
+        std::string schema_name = "remote.emulated.postgresql." +
+            (database_name_.empty() ? std::string("default") : database_name_);
+        std::string set_path = "SET search_path TO \"" + schema_name + "\"";
+        client::ResultSet rs;
+        auto set_status = client_->executeQuery(set_path, &rs, ctx);
+        if (set_status == core::Status::OK) {
+            search_path_set_ = true;
+        }
+    }
+
+    return core::Status::OK;
+}
+
+core::Status PostgresqlAdapter::executeRemoteQuery(const QueryContext& query,
+                                                   ResultContext& result,
+                                                   core::ErrorContext* ctx) {
+    auto status = ensureRemoteClient(ctx);
+    if (status != core::Status::OK) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(status);
+        result.error_message = ctx ? ctx->message : "Failed to connect to engine";
+        return status;
+    }
+
+    client::ResultSet rs;
+    QueryContext rewritten = query;
+    if (!query.parameter_values.empty()) {
+        rewritten.query = substitutePositionalParameters(query);
+    }
+    status = client_->executeQuery(rewritten.query, &rs, ctx);
+    if (status != core::Status::OK) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(status);
+        std::string err = client_->getLastError();
+        if (err.empty() && ctx) {
+            err = ctx->message;
+        }
+        result.error_message = err.empty() ? "Query execution failed" : err;
+        return status;
+    }
+
+    result.columns.clear();
+    for (const auto& col : rs.getColumns()) {
+        ProtocolCodec::ColumnInfo info;
+        info.name = col.name;
+        info.type = col.type;
+        info.type_modifier = col.type_modifier;
+        result.columns.push_back(info);
+    }
+
+    result.rows.clear();
+    const auto row_count = static_cast<size_t>(rs.getRowCount());
+    for (size_t i = 0; i < row_count; ++i) {
+        result.rows.push_back(rs.getRowValues(i));
+    }
+
+    result.rows_affected = rs.getRowsAffected();
+    result.command_tag = rs.getCommandTag();
+    if (result.command_tag.empty()) {
+        if (row_count > 0) {
+            result.command_tag = "SELECT " + std::to_string(row_count);
+        } else if (result.rows_affected > 0) {
+            result.command_tag = "OK";
+        }
+    }
+
+    return core::Status::OK;
+}
 
 // ============================================================================
 // Configuration
@@ -221,10 +320,9 @@ core::Status PostgresqlAdapter::sendQueryResult(network::Connection* conn,
         // Send row description
         sendRowDescription(conn, result.columns);
 
-        // If there's a row callback, call it to get rows
-        if (result.row_callback) {
-            // The callback will call sendDataRow for each row
-            // For now, just send completion
+        // Send rows if available
+        for (const auto& row : result.rows) {
+            sendDataRow(conn, result.columns, row);
         }
     }
 
@@ -235,12 +333,14 @@ core::Status PostgresqlAdapter::sendQueryResult(network::Connection* conn,
 }
 
 core::Status PostgresqlAdapter::sendProtocolError(network::Connection* conn,
-                                                   uint32_t /*error_code*/,
+                                                   uint32_t error_code,
                                                    const std::string& sqlstate,
                                                    const std::string& message,
                                                    const std::string& detail,
                                                    const std::string& hint) {
-    sendErrorResponse(conn, "ERROR", sqlstate, message, detail, hint);
+    std::string mapped_state = sqlstate;
+    mapStatusToSqlstate(error_code, mapped_state);
+    sendErrorResponse(conn, "ERROR", mapped_state.empty() ? "XX000" : mapped_state, message, detail, hint);
     return core::Status::OK;
 }
 
@@ -387,7 +487,9 @@ core::Status PostgresqlAdapter::handleQuery(network::Connection* conn) {
     ctx.query = query;
 
     ResultContext result;
-    auto status = executeQuery(ctx, result);
+    auto status = executeRemoteQuery(ctx, result);
+
+    updateTransactionStatus(query, result.has_error);
 
     if (result.has_error) {
         sendProtocolError(conn, result.error_code, result.sqlstate,
@@ -490,8 +592,19 @@ core::Status PostgresqlAdapter::handleBind(network::Connection* conn) {
     PgPortal portal;
     portal.name = portal_name;
     portal.statement_name = stmt_name;
+    portal.fetch_pos = 0;
+    portal.buffered_rows.clear();
+    portal.more_rows_available = false;
 
     for (int16_t i = 0; i < num_params; ++i) {
+        int16_t fmt = 0;
+        if (!param_formats.empty()) {
+            if (param_formats.size() == 1) {
+                fmt = param_formats.front();
+            } else if (static_cast<size_t>(i) < param_formats.size()) {
+                fmt = param_formats[i];
+            }
+        }
         if (offset + 4 > current_msg_data_.size()) break;
         int32_t len = readInt32(current_msg_data_.data() + offset);
         offset += 4;
@@ -500,12 +613,26 @@ core::Status PostgresqlAdapter::handleBind(network::Connection* conn) {
             // NULL
             portal.param_values.emplace_back("");
             portal.param_nulls.push_back(true);
+            portal.param_formats.push_back(fmt);
         } else {
             // Value
             if (offset + static_cast<size_t>(len) > current_msg_data_.size()) break;
-            portal.param_values.emplace_back(
-                reinterpret_cast<const char*>(current_msg_data_.data() + offset), len);
+            WireType ptype = WireType::UNKNOWN;
+            if (static_cast<size_t>(i) < stmt_it->second.param_types.size()) {
+                ptype = oidToWireType(stmt_it->second.param_types[i]);
+            }
+            if (fmt == 1) {
+                std::string text_val = decodeBinaryParamToText(
+                    ptype,
+                    current_msg_data_.data() + offset,
+                    static_cast<size_t>(len));
+                portal.param_values.emplace_back(std::move(text_val));
+            } else {
+                portal.param_values.emplace_back(
+                    reinterpret_cast<const char*>(current_msg_data_.data() + offset), len);
+            }
             portal.param_nulls.push_back(false);
+            portal.param_formats.push_back(fmt);
             offset += len;
         }
     }
@@ -571,7 +698,7 @@ core::Status PostgresqlAdapter::handleDescribe(network::Connection* conn) {
         } else if (stmt_it->second.result_columns.empty()) {
             sendNoData(conn);
         } else {
-            sendRowDescription(conn, stmt_it->second.result_columns);
+            sendRowDescription(conn, stmt_it->second.result_columns, it->second.result_formats);
         }
     }
 
@@ -598,12 +725,51 @@ core::Status PostgresqlAdapter::handleExecute(network::Connection* conn) {
     }
 
     PgPortal& portal = it->second;
-
     // Find statement
     auto stmt_it = statements_.find(portal.statement_name);
     if (stmt_it == statements_.end()) {
         sendErrorResponse(conn, "ERROR", "26000", "Prepared statement does not exist");
         return core::Status::NOT_FOUND;
+    }
+
+    // If this portal already executed, reuse buffered rows instead of re-executing
+    if (portal.executed) {
+        if (!portal.buffered_rows.empty() && portal.fetch_pos < portal.buffered_rows.size()) {
+            size_t remaining = portal.buffered_rows.size() - portal.fetch_pos;
+            size_t to_send = max_rows > 0
+                ? std::min<size_t>(static_cast<size_t>(max_rows), remaining)
+                : remaining;
+
+            if (!stmt_it->second.result_columns.empty()) {
+                for (size_t i = 0; i < to_send; ++i) {
+                    sendDataRow(conn, stmt_it->second.result_columns,
+                                portal.buffered_rows[portal.fetch_pos + i],
+                                portal.result_formats);
+                }
+            }
+
+            portal.fetch_pos += to_send;
+            if (portal.fetch_pos < portal.buffered_rows.size()) {
+                sendPortalSuspended(conn);
+            } else {
+                std::string tag = portal.command_tag.empty()
+                    ? "SELECT " + std::to_string(portal.fetch_pos)
+                    : portal.command_tag;
+                sendCommandComplete(conn, tag);
+                portal.completed = true;
+            }
+            pending_operations_.push_back('E');
+            return sendBuffer(conn);
+        }
+
+        // Already executed and drained: acknowledge completion without rerun
+        std::string tag = portal.command_tag.empty()
+            ? "SELECT " + std::to_string(portal.fetch_pos)
+            : portal.command_tag;
+        sendCommandComplete(conn, tag);
+        pending_operations_.push_back('E');
+        portal.completed = true;
+        return sendBuffer(conn);
     }
 
     // Execute
@@ -613,26 +779,142 @@ core::Status PostgresqlAdapter::handleExecute(network::Connection* conn) {
     ctx.portal_name = portal_name;
     ctx.parameter_values = portal.param_values;
     ctx.parameter_nulls = portal.param_nulls;
+    ctx.parameter_formats.clear();
+    ctx.parameter_formats.reserve(portal.param_formats.size());
+    for (auto f : portal.param_formats) {
+        ctx.parameter_formats.push_back(static_cast<int32_t>(f));
+    }
+    ctx.result_formats = portal.result_formats;
     ctx.max_rows = max_rows;
 
     ResultContext result;
-    executeQuery(ctx, result);
+    result.row_callback = [&](const std::vector<ProtocolCodec::ColumnValue>& row) {
+        // Buffer rows when a max_rows limit is present
+        if (max_rows > 0) {
+            if (portal.buffered_rows.size() < static_cast<size_t>(max_rows)) {
+                portal.buffered_rows.push_back(row);
+            }
+            // Stop fetching once we've buffered the requested slice
+            if (portal.buffered_rows.size() >= static_cast<size_t>(max_rows)) {
+                portal.more_rows_available = true;
+                return false;
+            }
+            return true;
+        }
+        if (!result.columns.empty()) {
+            sendDataRow(conn, result.columns, row, portal.result_formats);
+        }
+        return true;
+    };
+    executeRemoteQuery(ctx, result);
+
+    updateTransactionStatus(stmt_it->second.query, result.has_error);
 
     if (result.has_error) {
         sendProtocolError(conn, result.error_code, result.sqlstate,
                   result.error_message, result.error_detail, result.error_hint);
     } else {
-        // Send results
-        if (!result.columns.empty()) {
-            // Rows would be sent here via row_callback
+        if (portal.buffered_rows.empty() && !result.rows.empty() && max_rows > 0) {
+            portal.buffered_rows = result.rows;
         }
-        sendCommandComplete(conn, result.command_tag);
+        if (!result.columns.empty()) {
+            sendRowDescription(conn, result.columns, portal.result_formats);
+            // Send buffered rows according to portal fetch state
+            if (max_rows > 0) {
+                const auto& source_rows = portal.buffered_rows.empty() ? result.rows : portal.buffered_rows;
+                size_t remaining = source_rows.size() > portal.fetch_pos
+                    ? source_rows.size() - portal.fetch_pos
+                    : 0;
+                size_t to_send = std::min<size_t>(static_cast<size_t>(max_rows), remaining);
+                for (size_t i = 0; i < to_send; ++i) {
+                    const auto& row = source_rows[portal.fetch_pos + i];
+                    sendDataRow(conn, result.columns, row, portal.result_formats);
+                }
+                portal.fetch_pos += to_send;
+                if (portal.more_rows_available || remaining > static_cast<size_t>(max_rows)) {
+                    sendPortalSuspended(conn);
+                } else {
+                    sendCommandComplete(conn, result.command_tag);
+                }
+            } else {
+                const auto& source_rows = portal.buffered_rows.empty() ? result.rows : portal.buffered_rows;
+                for (const auto& row : source_rows) {
+                    sendDataRow(conn, result.columns, row, portal.result_formats);
+                }
+                portal.fetch_pos = source_rows.size();
+                sendCommandComplete(conn, result.command_tag);
+            }
+        } else {
+            sendCommandComplete(conn, result.command_tag);
+        }
+        if (stmt_it->second.result_columns.empty() && !result.columns.empty()) {
+            stmt_it->second.result_columns = result.columns;
+        }
     }
 
     portal.executed = true;
+    portal.command_tag = result.command_tag;
+    // If we suspended due to max_rows, keep the portal open for fetches
+    if (!portal.more_rows_available && portal.fetch_pos >= portal.buffered_rows.size()) {
+        portal.completed = true;
+    }
     pending_operations_.push_back('E');
 
     return core::Status::OK;
+}
+
+core::Status PostgresqlAdapter::handleFetch(network::Connection* conn) {
+    // Treat fetch as an execute against an already-bound portal
+    // Portal name
+    std::string portal_name = readString(current_msg_data_.data(), current_msg_data_.size());
+    size_t offset = portal_name.size() + 1;
+
+    // Max rows (optional)
+    int32_t max_rows = 0;
+    if (offset + 4 <= current_msg_data_.size()) {
+        max_rows = readInt32(current_msg_data_.data() + offset);
+    }
+
+    auto it = portals_.find(portal_name);
+    if (it == portals_.end()) {
+        sendErrorResponse(conn, "ERROR", "34000", "Portal does not exist: " + portal_name);
+        return core::Status::NOT_FOUND;
+    }
+
+    PgPortal& portal = it->second;
+    auto stmt_it = statements_.find(portal.statement_name);
+    if (stmt_it == statements_.end()) {
+        sendErrorResponse(conn, "ERROR", "26000", "Prepared statement does not exist");
+        return core::Status::NOT_FOUND;
+    }
+    // Reuse existing buffered rows
+    size_t remaining = portal.buffered_rows.size() > portal.fetch_pos
+        ? portal.buffered_rows.size() - portal.fetch_pos
+        : 0;
+    size_t to_send = max_rows > 0
+        ? std::min<size_t>(static_cast<size_t>(max_rows), remaining)
+        : remaining;
+
+    if (!portal.buffered_rows.empty()) {
+        // Only send rows; RowDescription has already been sent
+        for (size_t i = 0; i < to_send; ++i) {
+            sendDataRow(conn, stmt_it->second.result_columns,
+                        portal.buffered_rows[portal.fetch_pos + i],
+                        portal.result_formats);
+        }
+    }
+
+    portal.fetch_pos += to_send;
+    if (portal.fetch_pos < portal.buffered_rows.size() || portal.more_rows_available) {
+        sendPortalSuspended(conn);
+    } else {
+        std::string tag = "SELECT " + std::to_string(portal.fetch_pos);
+        sendCommandComplete(conn, tag);
+        portal.completed = true;
+        portal.more_rows_available = false;
+    }
+    pending_operations_.push_back('E');
+    return sendBuffer(conn);
 }
 
 core::Status PostgresqlAdapter::handleClose(network::Connection* conn) {
@@ -748,19 +1030,489 @@ void PostgresqlAdapter::sendParameterStatus(network::Connection* conn,
 
 void PostgresqlAdapter::sendReadyForQuery(network::Connection* conn) {
     std::vector<uint8_t> payload;
-    char status = in_transaction_ ? pg::TransactionStatus::IN_TRANSACTION : pg::TransactionStatus::IDLE;
+    char status = pg::TransactionStatus::IDLE;
+    if (txn_failed_) {
+        status = pg::TransactionStatus::FAILED;
+    } else if (in_transaction_) {
+        status = pg::TransactionStatus::IN_TRANSACTION;
+    }
     writeByte(payload, static_cast<uint8_t>(status));
     sendMessage(conn, pg::BackendMsg::READY_FOR_QUERY, payload);
 }
 
+core::Status PostgresqlAdapter::ensurePostgresSystemCatalog(core::ErrorContext* ctx) {
+    if (!database_) {
+        SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT, "Database not initialized");
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    auto* catalog = database_->catalog_manager();
+    if (!catalog) {
+        SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT, "Catalog manager not available");
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    std::string schema_name = "remote.emulated.postgresql";
+    if (!database_path_.empty()) {
+        auto stem = std::filesystem::path(database_path_).stem().string();
+        if (!stem.empty()) {
+            schema_name += "." + stem;
+        }
+    }
+
+    core::CatalogManager::SchemaInfo schema_info;
+    auto status = catalog->getSchema(schema_name, schema_info, ctx);
+    if (status != core::Status::OK) {
+        if (status != core::Status::INVALID_ARGUMENT) {
+            return status;
+        }
+        core::ID schema_id;
+        status = catalog->createSchema(schema_name, "system", schema_id, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+        status = catalog->getSchema(schema_id, schema_info, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+    }
+    pg_schema_id_ = schema_info.schema_id;
+
+    auto ensure_view = [&](const std::string& name, const std::string& definition) -> core::Status {
+        core::CatalogManager::ViewInfo view_info;
+        auto s = catalog->getView(schema_info.schema_id, name, view_info, ctx);
+        if (s == core::Status::OK) {
+            return core::Status::OK;
+        }
+        if (s != core::Status::INVALID_ARGUMENT && s != core::Status::NOT_FOUND) {
+            return s;
+        }
+        return catalog->createView(schema_info.schema_id, name, definition, false,
+                                   false, false, {}, core::ID{}, ctx);
+    };
+
+    // Minimal pg_catalog placeholders
+    status = ensure_view("pg_database", "SELECT NULL AS datname, NULL AS oid, NULL AS encoding, NULL AS datcollate, NULL AS datctype, NULL AS datistemplate, NULL AS datallowconn WHERE 1 = 0");
+    if (status != core::Status::OK) return status;
+    status = ensure_view("pg_namespace", "SELECT NULL AS nspname, NULL AS oid, NULL AS nspowner WHERE 1 = 0");
+    if (status != core::Status::OK) return status;
+    status = ensure_view("pg_class", "SELECT NULL AS relname, NULL AS oid, NULL AS relnamespace, NULL AS relkind, NULL AS relowner WHERE 1 = 0");
+    if (status != core::Status::OK) return status;
+    status = ensure_view("pg_attribute", "SELECT NULL AS attname, NULL AS attrelid, NULL AS attnum, NULL AS atttypid, NULL AS attnotnull WHERE 1 = 0");
+    if (status != core::Status::OK) return status;
+    status = ensure_view("pg_type", "SELECT NULL AS typname, NULL AS oid, NULL AS typnamespace, NULL AS typlen, NULL AS typtype WHERE 1 = 0");
+    if (status != core::Status::OK) return status;
+    status = ensure_view("pg_roles", "SELECT NULL AS rolname, NULL AS rolsuper, NULL AS rolcreaterole, NULL AS rolcreatedb, NULL AS rolinherit, NULL AS rolcanlogin, NULL AS rolreplication WHERE 1 = 0");
+    if (status != core::Status::OK) return status;
+    status = ensure_view("pg_proc", "SELECT NULL AS proname, NULL AS pronamespace, NULL AS proowner, NULL AS prolang, NULL AS prorettype WHERE 1 = 0");
+    if (status != core::Status::OK) return status;
+    status = ensure_view("pg_index", "SELECT NULL AS indexrelid, NULL AS indrelid, NULL AS indkey WHERE 1 = 0");
+    if (status != core::Status::OK) return status;
+
+    return core::Status::OK;
+}
+
+core::Status PostgresqlAdapter::compileQuery(const std::string& sql,
+                                             std::vector<uint8_t>& bytecode_out,
+                                             std::string& error_out) {
+    core::ErrorContext ctx;
+    auto status = ensureEngine(&ctx);
+    if (status != core::Status::OK) {
+        error_out = ctx.message;
+        return status;
+    }
+
+    status = ensurePostgresSystemCatalog(&ctx);
+    if (status != core::Status::OK) {
+        error_out = ctx.message.empty() ? "Failed to initialize PostgreSQL catalog" : ctx.message;
+        return status;
+    }
+
+    sblr::PostgreSQLQueryCompiler compiler(database_.get());
+    if (pg_schema_id_ != core::ID{}) {
+        compiler.setCurrentSchema(pg_schema_id_);
+    }
+    auto result = compiler.compile(sql);
+    if (!result.success()) {
+        error_out = result.errors().empty() ? "Compilation failed" : result.errors().front();
+        return core::Status::INVALID_ARGUMENT;
+    }
+    bytecode_out = result.bytecode();
+    return core::Status::OK;
+}
+
+int16_t PostgresqlAdapter::selectFormatForColumn(size_t idx,
+                                                 const std::vector<int16_t>& formats,
+                                                 WireType type) {
+    int16_t format = 0;
+    if (!formats.empty()) {
+        if (formats.size() == 1) {
+            format = formats.front();
+        } else if (idx < formats.size()) {
+            format = formats[idx];
+        }
+    }
+    if (format == 1 && !supportsBinaryFormat(type)) {
+        format = 0;
+    }
+    return format;
+}
+
+bool PostgresqlAdapter::supportsBinaryFormat(WireType type) {
+    switch (type) {
+        case WireType::BOOLEAN:
+        case WireType::INT16:
+        case WireType::INT32:
+        case WireType::INT64:
+        case WireType::FLOAT32:
+        case WireType::FLOAT64:
+        case WireType::BYTEA:
+        case WireType::VARCHAR:
+        case WireType::CHAR:
+        case WireType::JSON:
+        case WireType::JSONB:
+        case WireType::XML:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static std::string hexEncode(const std::vector<uint8_t>& bytes) {
+    std::ostringstream oss;
+    oss << "\\x";
+    oss << std::hex << std::setfill('0');
+    for (uint8_t b : bytes) {
+        oss << std::setw(2) << static_cast<int>(b);
+    }
+    return oss.str();
+}
+
+std::vector<uint8_t> PostgresqlAdapter::encodeTextValue(const ProtocolCodec::ColumnValue& val,
+                                                        WireType type) {
+    if (val.is_null) {
+        return {};
+    }
+
+    auto toStringInt = [&](auto value) {
+        return std::to_string(value);
+    };
+
+    std::string out;
+    switch (type) {
+        case WireType::BOOLEAN: {
+            bool b = !val.data.empty() && val.data[0] != 0;
+            out = b ? "t" : "f";
+            break;
+        }
+        case WireType::INT16: {
+            int16_t v = 0;
+            if (val.data.size() >= sizeof(int16_t)) {
+                std::memcpy(&v, val.data.data(), sizeof(int16_t));
+            }
+            out = toStringInt(v);
+            break;
+        }
+        case WireType::INT32: {
+            int32_t v = 0;
+            if (val.data.size() >= sizeof(int32_t)) {
+                std::memcpy(&v, val.data.data(), sizeof(int32_t));
+            }
+            out = toStringInt(v);
+            break;
+        }
+        case WireType::INT64: {
+            int64_t v = 0;
+            if (val.data.size() >= sizeof(int64_t)) {
+                std::memcpy(&v, val.data.data(), sizeof(int64_t));
+            }
+            out = toStringInt(v);
+            break;
+        }
+        case WireType::FLOAT32: {
+            float v = 0.0f;
+            if (val.data.size() >= sizeof(float)) {
+                std::memcpy(&v, val.data.data(), sizeof(float));
+            }
+            out = toStringInt(static_cast<double>(v));
+            break;
+        }
+        case WireType::FLOAT64: {
+            double v = 0.0;
+            if (val.data.size() >= sizeof(double)) {
+                std::memcpy(&v, val.data.data(), sizeof(double));
+            }
+            out = toStringInt(v);
+            break;
+        }
+        case WireType::BYTEA: {
+            out = hexEncode(val.data);
+            break;
+        }
+        default: {
+            out.assign(reinterpret_cast<const char*>(val.data.data()),
+                       val.data.size());
+            break;
+        }
+    }
+
+    return std::vector<uint8_t>(out.begin(), out.end());
+}
+
+template <typename T>
+static void appendBigEndian(std::vector<uint8_t>& out, T value) {
+    for (int i = sizeof(T) - 1; i >= 0; --i) {
+        out.push_back(static_cast<uint8_t>((static_cast<uint64_t>(value) >> (i * 8)) & 0xFF));
+    }
+}
+
+std::vector<uint8_t> PostgresqlAdapter::encodeBinaryValue(const ProtocolCodec::ColumnValue& val,
+                                                          WireType type,
+                                                          bool& ok) {
+    ok = true;
+    if (val.is_null) {
+        return {};
+    }
+    std::vector<uint8_t> out;
+    switch (type) {
+        case WireType::BOOLEAN: {
+            out.push_back(!val.data.empty() && val.data[0] != 0 ? 1 : 0);
+            break;
+        }
+        case WireType::INT16: {
+            int16_t v = 0;
+            if (val.data.size() >= sizeof(int16_t)) {
+                std::memcpy(&v, val.data.data(), sizeof(int16_t));
+            }
+            appendBigEndian<int16_t>(out, v);
+            break;
+        }
+        case WireType::INT32: {
+            int32_t v = 0;
+            if (val.data.size() >= sizeof(int32_t)) {
+                std::memcpy(&v, val.data.data(), sizeof(int32_t));
+            }
+            appendBigEndian<int32_t>(out, v);
+            break;
+        }
+        case WireType::INT64: {
+            int64_t v = 0;
+            if (val.data.size() >= sizeof(int64_t)) {
+                std::memcpy(&v, val.data.data(), sizeof(int64_t));
+            }
+            appendBigEndian<int64_t>(out, v);
+            break;
+        }
+        case WireType::FLOAT32: {
+            uint32_t bits = 0;
+            if (val.data.size() >= sizeof(uint32_t)) {
+                std::memcpy(&bits, val.data.data(), sizeof(uint32_t));
+            }
+            appendBigEndian<uint32_t>(out, bits);
+            break;
+        }
+        case WireType::FLOAT64: {
+            uint64_t bits = 0;
+            if (val.data.size() >= sizeof(uint64_t)) {
+                std::memcpy(&bits, val.data.data(), sizeof(uint64_t));
+            }
+            appendBigEndian<uint64_t>(out, bits);
+            break;
+        }
+        case WireType::BYTEA:
+        case WireType::VARCHAR:
+        case WireType::CHAR:
+        case WireType::JSON:
+        case WireType::JSONB:
+        case WireType::XML: {
+            out = val.data;
+            break;
+        }
+        default: {
+            ok = false;
+            break;
+        }
+    }
+    return out;
+}
+
+std::string PostgresqlAdapter::decodeBinaryParamToText(WireType type,
+                                                       const uint8_t* data,
+                                                       size_t len) {
+    if (data == nullptr || len == 0) {
+        return {};
+    }
+    auto readBE16 = [&](const uint8_t* p) -> int16_t {
+        return static_cast<int16_t>((p[0] << 8) | p[1]);
+    };
+    auto readBE32 = [&](const uint8_t* p) -> int32_t {
+        return (static_cast<int32_t>(p[0]) << 24) |
+               (static_cast<int32_t>(p[1]) << 16) |
+               (static_cast<int32_t>(p[2]) << 8) |
+               static_cast<int32_t>(p[3]);
+    };
+    auto readBE64 = [&](const uint8_t* p) -> int64_t {
+        uint64_t v = 0;
+        for (int i = 0; i < 8; ++i) {
+            v = (v << 8) | p[i];
+        }
+        return static_cast<int64_t>(v);
+    };
+
+    switch (type) {
+        case WireType::BOOLEAN:
+            return data[0] ? "t" : "f";
+        case WireType::INT16:
+            if (len >= 2) return std::to_string(readBE16(data));
+            break;
+        case WireType::INT32:
+            if (len >= 4) return std::to_string(readBE32(data));
+            break;
+        case WireType::INT64:
+            if (len >= 8) return std::to_string(readBE64(data));
+            break;
+        case WireType::FLOAT32:
+            if (len >= 4) {
+                uint32_t bits = static_cast<uint32_t>(readBE32(data));
+                float f;
+                std::memcpy(&f, &bits, sizeof(float));
+                return std::to_string(static_cast<double>(f));
+            }
+            break;
+        case WireType::FLOAT64:
+            if (len >= 8) {
+                uint64_t bits = static_cast<uint64_t>(readBE64(data));
+                double d;
+                std::memcpy(&d, &bits, sizeof(double));
+                return std::to_string(d);
+            }
+            break;
+        case WireType::BYTEA:
+            return hexEncode(std::vector<uint8_t>(data, data + len));
+        default:
+            break;
+    }
+    return std::string(reinterpret_cast<const char*>(data), len);
+}
+
+std::string PostgresqlAdapter::escapeLiteral(const std::string& input) {
+    std::string out;
+    out.reserve(input.size() + 8);
+    for (char c : input) {
+        out.push_back(c);
+        if (c == '\'') {
+            out.push_back('\'');
+        }
+    }
+    return out;
+}
+
+std::string PostgresqlAdapter::substitutePositionalParameters(const QueryContext& query) {
+    if (query.parameter_values.empty()) {
+        return query.query;
+    }
+
+    std::string sql = query.query;
+    size_t param_count = query.parameter_values.size();
+
+    auto literal_for_index = [&](size_t idx) -> std::string {
+        if (idx >= query.parameter_values.size()) {
+            return "NULL";
+        }
+        if (!query.parameter_nulls.empty() && query.parameter_nulls[idx]) {
+            return "NULL";
+        }
+        return "'" + escapeLiteral(query.parameter_values[idx]) + "'";
+    };
+
+    // Scan and replace while skipping quoted literals and identifiers
+    for (size_t i = param_count; i >= 1; --i) {
+        std::string placeholder = "$" + std::to_string(i);
+        std::string replacement = literal_for_index(i - 1);
+
+        std::string rewritten;
+        rewritten.reserve(sql.size());
+        enum class ScanState { Normal, SingleQuote, DoubleQuote, DollarQuote };
+        ScanState state = ScanState::Normal;
+        std::string dollar_tag;
+
+        for (size_t pos = 0; pos < sql.size();) {
+            char c = sql[pos];
+            if (state == ScanState::Normal) {
+                if (c == '\'') {
+                    state = ScanState::SingleQuote;
+                    rewritten.push_back(c);
+                    ++pos;
+                    continue;
+                }
+                if (c == '"') {
+                    state = ScanState::DoubleQuote;
+                    rewritten.push_back(c);
+                    ++pos;
+                    continue;
+                }
+                if (c == '$') {
+                    // Check for dollar-quote start
+                    size_t tag_end = sql.find('$', pos + 1);
+                    if (tag_end != std::string::npos && tag_end > pos + 1) {
+                        dollar_tag = sql.substr(pos, tag_end - pos + 1);
+                        state = ScanState::DollarQuote;
+                        rewritten.append(dollar_tag);
+                        pos = tag_end + 1;
+                        continue;
+                    }
+                }
+                // Placeholder replacement
+                if (sql.compare(pos, placeholder.size(), placeholder) == 0) {
+                    rewritten.append(replacement);
+                    pos += placeholder.size();
+                    continue;
+                }
+                rewritten.push_back(c);
+                ++pos;
+            } else if (state == ScanState::SingleQuote) {
+                rewritten.push_back(c);
+                ++pos;
+                if (c == '\'' && !(pos < sql.size() && sql[pos] == '\'')) {
+                    state = ScanState::Normal;
+                } else if (c == '\'' && pos < sql.size() && sql[pos] == '\'') {
+                    // Escaped single quote
+                    rewritten.push_back(sql[pos]);
+                    ++pos;
+                }
+            } else if (state == ScanState::DoubleQuote) {
+                rewritten.push_back(c);
+                ++pos;
+                if (c == '"') {
+                    state = ScanState::Normal;
+                }
+            } else if (state == ScanState::DollarQuote) {
+                if (!dollar_tag.empty() && sql.compare(pos, dollar_tag.size(), dollar_tag) == 0) {
+                    rewritten.append(dollar_tag);
+                    pos += dollar_tag.size();
+                    state = ScanState::Normal;
+                } else {
+                    rewritten.push_back(c);
+                    ++pos;
+                }
+            }
+        }
+        sql.swap(rewritten);
+        if (i == 1) break;  // prevent underflow
+    }
+    return sql;
+}
+
 void PostgresqlAdapter::sendRowDescription(network::Connection* conn,
-                                            const std::vector<ProtocolCodec::ColumnInfo>& columns) {
+                                            const std::vector<ProtocolCodec::ColumnInfo>& columns,
+                                            const std::vector<int16_t>& formats) {
     std::vector<uint8_t> payload;
 
     // Number of fields
     writeInt16(payload, static_cast<int16_t>(columns.size()));
 
-    for (const auto& col : columns) {
+    for (size_t i = 0; i < columns.size(); ++i) {
+        const auto& col = columns[i];
         // Field name
         writeString(payload, col.name);
 
@@ -780,28 +1532,46 @@ void PostgresqlAdapter::sendRowDescription(network::Connection* conn,
         writeInt32(payload, static_cast<int32_t>(col.type_modifier));
 
         // Format code (0 = text, 1 = binary)
-        writeInt16(payload, 0);  // Text format
+        writeInt16(payload, selectFormatForColumn(i, formats, col.type));
     }
 
     sendMessage(conn, pg::BackendMsg::ROW_DESCRIPTION, payload);
 }
 
 void PostgresqlAdapter::sendDataRow(network::Connection* conn,
-                                     const std::vector<ProtocolCodec::ColumnValue>& values) {
+                                     const std::vector<ProtocolCodec::ColumnInfo>& columns,
+                                     const std::vector<ProtocolCodec::ColumnValue>& values,
+                                     const std::vector<int16_t>& formats) {
     std::vector<uint8_t> payload;
 
     // Number of columns
     writeInt16(payload, static_cast<int16_t>(values.size()));
 
-    for (const auto& val : values) {
+    for (size_t i = 0; i < values.size(); ++i) {
+        const auto& val = values[i];
+        WireType type = i < columns.size() ? columns[i].type : WireType::UNKNOWN;
+        int16_t format = selectFormatForColumn(i, formats, type);
+
         if (val.is_null) {
             // NULL value
             writeInt32(payload, -1);
         } else {
-            // Value length
-            writeInt32(payload, static_cast<int32_t>(val.data.size()));
-            // Value data
-            writeBytes(payload, val.data.data(), val.data.size());
+            std::vector<uint8_t> encoded;
+            if (format == 1) {
+                bool ok = false;
+                encoded = encodeBinaryValue(val, type, ok);
+                if (!ok) {
+                    // Fallback to text if binary not supported for this type/value
+                    encoded = encodeTextValue(val, type);
+                    format = 0;
+                }
+            } else {
+                encoded = encodeTextValue(val, type);
+            }
+            writeInt32(payload, static_cast<int32_t>(encoded.size()));
+            if (!encoded.empty()) {
+                writeBytes(payload, encoded.data(), encoded.size());
+            }
         }
     }
 
@@ -1039,6 +1809,143 @@ WireType PostgresqlAdapter::oidToWireType(int32_t oid) {
         case pg::TypeOid::JSON: return WireType::JSON;
         case pg::TypeOid::JSONB: return WireType::JSONB;
         default: return WireType::VARCHAR;
+    }
+}
+
+void PostgresqlAdapter::mapStatusToSqlstate(uint32_t status, std::string& sqlstate) {
+    switch (static_cast<core::Status>(status)) {
+        case core::Status::SYNTAX_ERROR:
+        case core::Status::INVALID_ARGUMENT:
+            sqlstate = "42601";
+            break;
+        case core::Status::UNDEFINED_TABLE:
+        case core::Status::NOT_FOUND:
+            sqlstate = "42P01";
+            break;
+        case core::Status::UNDEFINED_COLUMN:
+            sqlstate = "42703";
+            break;
+        case core::Status::CONSTRAINT_VIOLATION:
+        case core::Status::UNIQUE_VIOLATION:
+            sqlstate = "23505";
+            break;
+        case core::Status::FOREIGN_KEY_VIOLATION:
+            sqlstate = "23503";
+            break;
+        case core::Status::CHECK_VIOLATION:
+            sqlstate = "23514";
+            break;
+        case core::Status::NOT_NULL_VIOLATION:
+        case core::Status::NULL_VALUE_NOT_ALLOWED:
+            sqlstate = "23502";
+            break;
+        case core::Status::PERMISSION_DENIED:
+        case core::Status::INSUFFICIENT_PRIVILEGE:
+            sqlstate = "42501";
+            break;
+        case core::Status::INVALID_CURSOR_NAME:
+        case core::Status::CURSOR_NOT_FOUND:
+            sqlstate = "34000";
+            break;
+        case core::Status::INVALID_CURSOR_STATE:
+        case core::Status::CURSOR_NOT_OPEN:
+        case core::Status::CURSOR_ALREADY_OPEN:
+            sqlstate = "24000";
+            break;
+        case core::Status::READ_ONLY_TRANSACTION:
+            sqlstate = "25006";
+            break;
+        case core::Status::INVALID_TRANSACTION_STATE:
+        case core::Status::NO_ACTIVE_TRANSACTION:
+            sqlstate = "25P01";
+            break;
+        case core::Status::DEADLOCK:
+            sqlstate = "40P01";
+            break;
+        case core::Status::SERIALIZATION_FAILURE:
+            sqlstate = "40001";
+            break;
+        case core::Status::LOCK_TIMEOUT:
+        case core::Status::LOCK_NOT_AVAILABLE:
+            sqlstate = "55P03";
+            break;
+        case core::Status::QUERY_CANCELED:
+            sqlstate = "57014";
+            break;
+        case core::Status::TOO_MANY_CONNECTIONS:
+            sqlstate = "53300";
+            break;
+        case core::Status::NUMERIC_VALUE_OUT_OF_RANGE:
+        case core::Status::OUT_OF_RANGE:
+            sqlstate = "22003";
+            break;
+        case core::Status::STRING_DATA_RIGHT_TRUNCATION:
+            sqlstate = "22001";
+            break;
+        case core::Status::DIVISION_BY_ZERO:
+            sqlstate = "22012";
+            break;
+        case core::Status::INVALID_TEXT_REPRESENTATION:
+            sqlstate = "22P02";
+            break;
+        case core::Status::DATETIME_FIELD_OVERFLOW:
+        case core::Status::INVALID_DATETIME_FORMAT:
+            sqlstate = "22007";
+            break;
+        case core::Status::NOT_IMPLEMENTED:
+        case core::Status::NOT_SUPPORTED:
+            sqlstate = "0A000";
+            break;
+        default:
+            if (sqlstate.empty()) {
+                sqlstate = "XX000";
+            }
+            break;
+    }
+}
+
+void PostgresqlAdapter::updateTransactionStatus(const std::string& sql, bool has_error) {
+    auto ltrim_upper = [](const std::string& input) {
+        size_t pos = 0;
+        while (pos < input.size() && std::isspace(static_cast<unsigned char>(input[pos]))) {
+            ++pos;
+        }
+        std::string upper;
+        upper.reserve(input.size() - pos);
+        for (; pos < input.size(); ++pos) {
+            upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(input[pos]))));
+        }
+        return upper;
+    };
+
+    std::string normalized = ltrim_upper(sql);
+    auto starts_with = [&](const std::string& prefix) {
+        return normalized.rfind(prefix, 0) == 0;
+    };
+
+    if (starts_with("BEGIN") || starts_with("START TRANSACTION")) {
+        in_transaction_ = true;
+        txn_failed_ = false;
+        return;
+    }
+    if (starts_with("COMMIT")) {
+        in_transaction_ = false;
+        txn_failed_ = false;
+        return;
+    }
+    if (starts_with("ROLLBACK")) {
+        in_transaction_ = false;
+        txn_failed_ = false;
+        return;
+    }
+
+    if (has_error && in_transaction_) {
+        txn_failed_ = true;
+        return;
+    }
+
+    if (!in_transaction_) {
+        txn_failed_ = false;
     }
 }
 

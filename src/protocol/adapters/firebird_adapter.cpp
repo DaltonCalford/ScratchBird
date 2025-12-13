@@ -8,13 +8,263 @@
 
 #include "scratchbird/protocol/adapters/firebird_adapter.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/types.h"
+#include "scratchbird/core/uuidv7.h"
+#include "scratchbird/sblr/firebird_query_compiler.h"
 
+#include <filesystem>
 #include <cstring>
 #include <random>
 #include <algorithm>
+#include <limits>
+#include <sstream>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace scratchbird {
 namespace protocol {
+
+namespace {
+// Minimal BLR parser for SQLDA (scalar fields only; text/varchar/int sizes)
+core::Status parseBlr(const std::vector<uint8_t>& blr,
+                      std::vector<FirebirdStatement::BlrField>& fields_out,
+                      uint32_t& message_length_out,
+                      std::string& error_out) {
+    fields_out.clear();
+    message_length_out = 0;
+
+    if (blr.empty()) {
+        return core::Status::OK;  // No BLR supplied
+    }
+
+    size_t idx = 0;
+    auto require = [&](size_t n) -> bool {
+        if (idx + n > blr.size()) {
+            error_out = "BLR truncated";
+            return false;
+        }
+        return true;
+    };
+
+    if (!require(1)) return core::Status::INVALID_ARGUMENT;
+    uint8_t version = blr[idx++];
+    if (version != 4) {  // Firebird BLR version 4
+        error_out = "Unsupported BLR version";
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    if (!require(1) || blr[idx++] != 2) {  // blr_begin
+        error_out = "Expected BLR begin";
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    if (!require(1) || blr[idx++] != 4) {  // blr_message
+        error_out = "Expected BLR message";
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    if (!require(1)) return core::Status::INVALID_ARGUMENT; // message number
+    idx++;
+
+    if (!require(2)) return core::Status::INVALID_ARGUMENT;
+    uint16_t field_count = static_cast<uint16_t>(blr[idx] | (blr[idx + 1] << 8));
+    idx += 2;
+
+    for (uint16_t i = 0; i < field_count; ++i) {
+        if (!require(1)) return core::Status::INVALID_ARGUMENT;
+        uint8_t opcode = blr[idx++];
+        FirebirdStatement::BlrField field{};
+
+        switch (opcode) {
+            case 7: { // blr_short
+                if (!require(1)) return core::Status::INVALID_ARGUMENT;
+                int8_t scale = static_cast<int8_t>(blr[idx++]);
+                field.dtype = opcode;
+                field.scale = scale;
+                field.length = 2;
+                break;
+            }
+            case 8: { // blr_long
+                if (!require(1)) return core::Status::INVALID_ARGUMENT;
+                int8_t scale = static_cast<int8_t>(blr[idx++]);
+                field.dtype = opcode;
+                field.scale = scale;
+                field.length = 4;
+                break;
+            }
+            case 16: { // blr_int64
+                if (!require(1)) return core::Status::INVALID_ARGUMENT;
+                int8_t scale = static_cast<int8_t>(blr[idx++]);
+                field.dtype = opcode;
+                field.scale = scale;
+                field.length = 8;
+                break;
+            }
+            case 14: { // blr_text
+                if (!require(2)) return core::Status::INVALID_ARGUMENT;
+                uint16_t len = static_cast<uint16_t>(blr[idx] | (blr[idx + 1] << 8));
+                idx += 2;
+                field.dtype = opcode;
+                field.scale = 0;
+                field.length = len;
+                field.is_text = true;
+                break;
+            }
+            case 37: { // blr_varying
+                if (!require(2)) return core::Status::INVALID_ARGUMENT;
+                uint16_t len = static_cast<uint16_t>(blr[idx] | (blr[idx + 1] << 8));
+                idx += 2;
+                field.dtype = opcode;
+                field.scale = 0;
+                field.length = len + 2; // includes length prefix
+                field.is_varying = true;
+                break;
+            }
+            default:
+                error_out = "Unsupported BLR datatype opcode " + std::to_string(opcode);
+                return core::Status::INVALID_ARGUMENT;
+        }
+
+        fields_out.push_back(field);
+    }
+
+    if (!require(1) || blr[idx] != 255) {  // blr_end
+        error_out = "Missing BLR end marker";
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    // Compute message length as sum of field lengths plus NULL indicators
+    uint32_t total_len = 0;
+    for (const auto& f : fields_out) {
+        total_len += f.length;
+    }
+    if (!fields_out.empty()) {
+        total_len += static_cast<uint32_t>(fields_out.size()) * 2; // null indicators (int16 each)
+    }
+    message_length_out = total_len;
+    return core::Status::OK;
+}
+
+int32_t mapStatusToFirebird(core::Status st) {
+    using core::Status;
+    switch (st) {
+        case Status::OK:
+            return firebird::ErrorCode::isc_sqlerr;
+        case Status::INVALID_ARGUMENT:
+        case Status::SYNTAX_ERROR:
+        case Status::UNDEFINED_TABLE:
+        case Status::UNDEFINED_COLUMN:
+        case Status::UNDEFINED_FUNCTION:
+        case Status::DUPLICATE_TABLE:
+        case Status::DUPLICATE_COLUMN:
+        case Status::DUPLICATE_OBJECT:
+        case Status::CONSTRAINT_VIOLATION:
+        case Status::NOT_NULL_VIOLATION:
+        case Status::FOREIGN_KEY_VIOLATION:
+        case Status::UNIQUE_VIOLATION:
+        case Status::CHECK_VIOLATION:
+        case Status::EXCLUSION_VIOLATION:
+        case Status::TYPE_MISMATCH:
+        case Status::STRING_DATA_RIGHT_TRUNCATION:
+        case Status::INVALID_TEXT_REPRESENTATION:
+            return firebird::ErrorCode::isc_dsql_error;
+        case Status::CONNECTION_FAILURE:
+        case Status::CONNECTION_DOES_NOT_EXIST:
+        case Status::IO_ERROR:
+        case Status::CRASH_SHUTDOWN:
+        case Status::DATABASE_DROPPED:
+        case Status::ADMIN_SHUTDOWN:
+            return firebird::ErrorCode::isc_unavailable;
+        case Status::PERMISSION_DENIED:
+        case Status::INVALID_PASSWORD:
+        case Status::INVALID_AUTHORIZATION:
+            return firebird::ErrorCode::isc_login;
+        case Status::NOT_IMPLEMENTED:
+        case Status::NOT_SUPPORTED:
+        case Status::STATEMENT_TOO_COMPLEX:
+        case Status::TOO_MANY_COLUMNS:
+        case Status::CONFIGURATION_LIMIT_EXCEEDED:
+            return firebird::ErrorCode::isc_unavailable;
+        default:
+            return firebird::ErrorCode::isc_dsql_error;
+    }
+}
+
+} // namespace
+
+namespace {
+FirebirdStatement::BlrField columnToBlrField(const ProtocolCodec::ColumnInfo& col) {
+    FirebirdStatement::BlrField field{};
+    switch (col.type) {
+        case WireType::BOOLEAN:
+            field.dtype = 7;  // blr_short for booleans (int16)
+            field.length = 2;
+            break;
+        case WireType::INT16:
+            field.dtype = 7;  // blr_short
+            field.length = 2;
+            break;
+        case WireType::INT32:
+        case WireType::DATE:
+            field.dtype = 8;  // blr_long
+            field.length = 4;
+            break;
+        case WireType::INT64:
+        case WireType::TIMESTAMP:
+        case WireType::TIMESTAMPTZ:
+            field.dtype = 16;  // blr_int64
+            field.length = 8;
+            break;
+        case WireType::FLOAT32:
+            field.dtype = 27;  // blr_float
+            field.length = 4;
+            break;
+        case WireType::FLOAT64:
+            field.dtype = 26;  // blr_double
+            field.length = 8;
+            break;
+        case WireType::CHAR: {
+            field.dtype = 14;  // blr_text
+            // type_modifier typically encodes length for fixed-width char
+            uint16_t len = col.type_modifier > 0
+                               ? static_cast<uint16_t>(std::min<uint32_t>(col.type_modifier, std::numeric_limits<uint16_t>::max()))
+                               : static_cast<uint16_t>(32);
+            field.length = len;
+            field.is_text = true;
+            break;
+        }
+        case WireType::VARCHAR:
+        case WireType::JSON:
+        case WireType::JSONB:
+        case WireType::XML: {
+            field.dtype = 37;  // blr_varying
+            uint16_t len = col.type_modifier > 0
+                               ? static_cast<uint16_t>(std::min<uint32_t>(col.type_modifier, std::numeric_limits<uint16_t>::max()))
+                               : static_cast<uint16_t>(256);
+            // BLR varying length includes the 2-byte prefix in the message
+            field.length = len + 2;
+            field.is_varying = true;
+            break;
+        }
+        case WireType::BYTEA:
+        case WireType::UUID:
+        case WireType::INET:
+        case WireType::CIDR:
+        case WireType::MACADDR:
+        default: {
+            field.dtype = 37;  // blr_varying for generic/binary payloads
+            uint16_t len = col.type_modifier > 0
+                               ? static_cast<uint16_t>(std::min<uint32_t>(col.type_modifier, std::numeric_limits<uint16_t>::max()))
+                               : static_cast<uint16_t>(512);
+            field.length = len + 2;
+            field.is_varying = true;
+            break;
+        }
+    }
+    return field;
+}
+} // namespace
 
 // ============================================================================
 // Constructor/Destructor
@@ -251,7 +501,10 @@ core::Status FirebirdAdapter::sendAuthResult(network::Connection* conn,
 core::Status FirebirdAdapter::sendQueryResult(network::Connection* conn,
                                                const ResultContext& result) {
     if (result.has_error) {
-        sendErrorResponse(conn, static_cast<int32_t>(result.error_code), result.error_message);
+        int32_t code = result.error_code
+            ? static_cast<int32_t>(result.error_code)
+            : firebird::ErrorCode::isc_dsql_error;
+        sendErrorResponse(conn, code, result.error_message, result.sqlstate);
         return core::Status::OK;
     }
 
@@ -271,7 +524,724 @@ core::Status FirebirdAdapter::sendProtocolError(network::Connection* conn,
                                                  const std::string& message,
                                                  const std::string& /*detail*/,
                                                  const std::string& /*hint*/) {
-    sendErrorResponse(conn, static_cast<int32_t>(error_code), message);
+    int32_t fb_code = error_code == 0
+        ? firebird::ErrorCode::isc_dsql_error
+        : static_cast<int32_t>(error_code);
+    sendErrorResponse(conn, fb_code, message);
+    return core::Status::OK;
+}
+
+core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx) {
+    if (!database_) {
+        SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT, "Database not initialized");
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    auto* catalog = database_->catalog_manager();
+    if (!catalog) {
+        SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT, "Catalog manager not available");
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    auto schema_name = std::string("remote.emulated.firebird");
+    if (!database_path_.empty()) {
+        auto stem = std::filesystem::path(database_path_).stem().string();
+        if (!stem.empty()) {
+            schema_name += "." + stem;
+        }
+    }
+    firebird_schema_name_ = schema_name;
+
+    core::CatalogManager::SchemaInfo fb_schema;
+    auto status = catalog->getSchema(schema_name, fb_schema, ctx);
+    if (status != core::Status::OK) {
+        if (status != core::Status::INVALID_ARGUMENT) {
+            return status;
+        }
+        core::ID schema_id;
+        status = catalog->createSchema(schema_name, "system", schema_id, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+        status = catalog->getSchema(schema_id, fb_schema, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+    }
+    firebird_schema_id_ = fb_schema.schema_id;
+
+    core::CatalogManager::TableInfo table_info;
+    status = catalog->getTable(fb_schema.schema_id, "RDB$DATABASE", table_info, ctx);
+    if (status == core::Status::OK) {
+        // Ensure minimal catalog views exist alongside the table
+    } else {
+        if (status != core::Status::INVALID_ARGUMENT) {
+            return status;
+        }
+
+        std::vector<core::CatalogManager::ColumnInfo> columns;
+        core::CatalogManager::ColumnInfo col{};
+        col.column_name = "DUMMY";
+        col.data_type = static_cast<uint16_t>(core::DataType::INT32);
+        col.nullable = true;
+        columns.push_back(col);
+
+        core::ID table_id;
+        status = catalog->createTable(fb_schema.schema_id, "RDB$DATABASE", columns, table_id, 0, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+    }
+
+    auto ensure_view = [&](const std::string& name, const std::string& definition) -> core::Status {
+        core::CatalogManager::ViewInfo view_info;
+        auto s = catalog->getView(fb_schema.schema_id, name, view_info, ctx);
+        if (s == core::Status::OK) {
+            return core::Status::OK;
+        }
+        if (s != core::Status::INVALID_ARGUMENT && s != core::Status::NOT_FOUND) {
+            return s;
+        }
+        return catalog->createView(fb_schema.schema_id, name, definition, false,
+                                   false, false, {}, core::ID{}, ctx);
+    };
+
+    auto escape_literal = [](const std::string& in) {
+        std::string out;
+        out.reserve(in.size() + 8);
+        for (char c : in) {
+            out.push_back(c);
+            if (c == '\'') out.push_back('\'');
+        }
+        return out;
+    };
+
+    std::vector<core::CatalogManager::TableInfo> tables;
+    catalog->listTables(fb_schema.schema_id, tables, ctx);
+
+    std::unordered_map<core::ID, core::CatalogManager::TableInfo, core::IDHash> table_by_id;
+    std::unordered_map<std::string, std::string> table_by_name;  // lowercase -> canonical
+    for (const auto& t : tables) {
+        table_by_id.emplace(t.table_id, t);
+        std::string key = t.table_name;
+        std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+        table_by_name.emplace(key, t.table_name);
+    }
+
+    std::unordered_map<core::ID, std::vector<core::CatalogManager::ColumnInfo>, core::IDHash> columns_by_table;
+    for (const auto& t : tables) {
+        std::vector<core::CatalogManager::ColumnInfo> cols;
+        catalog->getColumns(t.table_id, cols, ctx);
+        columns_by_table.emplace(t.table_id, std::move(cols));
+    }
+
+    // Build RDB$RELATIONS
+    std::string rel_sql;
+    if (tables.empty()) {
+        rel_sql = "SELECT NULL AS RDB$RELATION_NAME, NULL AS RDB$SYSTEM_FLAG, NULL AS RDB$VIEW_BLR WHERE 1 = 0";
+    } else {
+        std::ostringstream ss;
+        bool first = true;
+        for (const auto& t : tables) {
+            if (!first) ss << " UNION ALL ";
+            ss << "SELECT '" << escape_literal(t.table_name) << "' AS RDB$RELATION_NAME, 0 AS RDB$SYSTEM_FLAG, NULL AS RDB$VIEW_BLR";
+            first = false;
+        }
+        rel_sql = ss.str();
+    }
+    ensure_view("RDB$RELATIONS", rel_sql);
+
+    // Build RDB$RELATION_FIELDS and RDB$FIELDS
+    std::string rel_fields_sql;
+    std::string fields_sql;
+    {
+        std::ostringstream rf, f;
+        bool rf_first = true;
+        bool f_first = true;
+        std::unordered_set<std::string> seen_fields;
+        for (const auto& t : tables) {
+            auto it = columns_by_table.find(t.table_id);
+            if (it == columns_by_table.end()) {
+                continue;
+            }
+            const auto& cols = it->second;
+            for (const auto& col : cols) {
+                if (!rf_first) rf << " UNION ALL ";
+                rf << "SELECT '" << escape_literal(col.column_name) << "' AS RDB$FIELD_NAME, '"
+                   << escape_literal(t.table_name) << "' AS RDB$RELATION_NAME, "
+                   << static_cast<int>(col.ordinal) << " AS RDB$FIELD_POSITION, "
+                   << (col.nullable ? 0 : 1) << " AS RDB$NULL_FLAG";
+                rf_first = false;
+
+                std::string field_key = col.column_name;
+                if (seen_fields.insert(field_key).second) {
+                    if (!f_first) f << " UNION ALL ";
+                    uint32_t length = col.type_precision ? col.type_precision : (col.max_length ? col.max_length : 0);
+                    f << "SELECT '" << escape_literal(col.column_name) << "' AS RDB$FIELD_NAME, "
+                      << static_cast<int>(col.data_type) << " AS RDB$FIELD_TYPE, "
+                      << "0 AS RDB$FIELD_SUB_TYPE, "
+                      << length << " AS RDB$FIELD_LENGTH, "
+                      << length << " AS RDB$SEGMENT_LENGTH, "
+                      << (col.nullable ? 0 : 1) << " AS RDB$NULL_FLAG, "
+                      << (col.default_value.empty() ? "NULL" : ("'" + escape_literal(col.default_value) + "'")) << " AS RDB$DEFAULT_SOURCE";
+                    f_first = false;
+                }
+            }
+        }
+        if (rf_first) {
+            rel_fields_sql = "SELECT NULL AS RDB$FIELD_NAME, NULL AS RDB$RELATION_NAME, NULL AS RDB$FIELD_POSITION, NULL AS RDB$NULL_FLAG WHERE 1 = 0";
+        } else {
+            rel_fields_sql = rf.str();
+        }
+        if (f_first) {
+            fields_sql = "SELECT NULL AS RDB$FIELD_NAME, NULL AS RDB$FIELD_TYPE, NULL AS RDB$FIELD_SUB_TYPE, NULL AS RDB$FIELD_LENGTH, NULL AS RDB$SEGMENT_LENGTH, NULL AS RDB$NULL_FLAG, NULL AS RDB$DEFAULT_SOURCE WHERE 1 = 0";
+        } else {
+            fields_sql = f.str();
+        }
+    }
+
+    ensure_view("RDB$DATABASE", "SELECT DUMMY FROM RDB$DATABASE");
+    // Build RDB$INDICES and RDB$INDEX_SEGMENTS
+    std::string indices_sql;
+    std::string index_segments_sql;
+    {
+        std::ostringstream idx_ss;
+        std::ostringstream seg_ss;
+        bool idx_first = true;
+        bool seg_first = true;
+        for (const auto& t : tables) {
+            std::vector<core::CatalogManager::IndexInfo> indexes;
+            auto s = catalog->listIndexesForTable(t.table_id, indexes, ctx);
+            if (s != core::Status::OK) {
+                continue;
+            }
+            auto col_it = columns_by_table.find(t.table_id);
+            for (const auto& idx : indexes) {
+                if (!idx_first) idx_ss << " UNION ALL ";
+                idx_ss << "SELECT '" << escape_literal(idx.index_name) << "' AS RDB$INDEX_NAME, '"
+                       << escape_literal(t.table_name) << "' AS RDB$RELATION_NAME, "
+                       << (idx.is_unique ? 1 : 0) << " AS RDB$UNIQUE_FLAG, 0 AS RDB$INDEX_TYPE";
+                idx_first = false;
+
+                if (col_it == columns_by_table.end()) {
+                    continue;
+                }
+                for (size_t pos = 0; pos < idx.column_ids.size(); ++pos) {
+                    const auto& col_id = idx.column_ids[pos];
+                    std::string col_name = "COLUMN_" + std::to_string(pos);
+                    for (const auto& col : col_it->second) {
+                        if (col.column_id == col_id) {
+                            col_name = col.column_name;
+                            break;
+                        }
+                    }
+                    if (!seg_first) seg_ss << " UNION ALL ";
+                    seg_ss << "SELECT '" << escape_literal(idx.index_name) << "' AS RDB$INDEX_NAME, '"
+                           << escape_literal(col_name) << "' AS RDB$FIELD_NAME, "
+                           << static_cast<int>(pos) << " AS RDB$FIELD_POSITION";
+                    seg_first = false;
+                }
+            }
+        }
+
+        if (idx_first) {
+            indices_sql = "SELECT NULL AS RDB$INDEX_NAME, NULL AS RDB$RELATION_NAME, NULL AS RDB$UNIQUE_FLAG, NULL AS RDB$INDEX_TYPE WHERE 1 = 0";
+        } else {
+            indices_sql = idx_ss.str();
+        }
+
+        if (seg_first) {
+            index_segments_sql = "SELECT NULL AS RDB$INDEX_NAME, NULL AS RDB$FIELD_NAME, NULL AS RDB$FIELD_POSITION WHERE 1 = 0";
+        } else {
+            index_segments_sql = seg_ss.str();
+        }
+    }
+
+    // Build RDB$RELATION_CONSTRAINTS, RDB$CHECK_CONSTRAINTS, RDB$REF_CONSTRAINTS
+    std::string relation_constraints_sql;
+    std::string check_constraints_sql;
+    std::string ref_constraints_sql;
+    {
+        std::ostringstream rc, cc, rf;
+        bool rc_first = true;
+        bool cc_first = true;
+        bool rf_first = true;
+
+        auto constraint_type = [](core::CatalogManager::ConstraintType type) -> std::string {
+            switch (type) {
+                case core::CatalogManager::ConstraintType::PRIMARY_KEY: return "PRIMARY KEY";
+                case core::CatalogManager::ConstraintType::UNIQUE: return "UNIQUE";
+                case core::CatalogManager::ConstraintType::FOREIGN_KEY: return "FOREIGN KEY";
+                case core::CatalogManager::ConstraintType::CHECK: return "CHECK";
+                case core::CatalogManager::ConstraintType::NOT_NULL: return "NOT NULL";
+                case core::CatalogManager::ConstraintType::EXCLUSION: return "EXCLUSION";
+            }
+            return "UNKNOWN";
+        };
+
+        auto fk_action = [](core::CatalogManager::FKAction action) -> std::string {
+            switch (action) {
+                case core::CatalogManager::FKAction::NO_ACTION: return "NO ACTION";
+                case core::CatalogManager::FKAction::RESTRICT: return "RESTRICT";
+                case core::CatalogManager::FKAction::CASCADE: return "CASCADE";
+                case core::CatalogManager::FKAction::SET_NULL: return "SET NULL";
+                case core::CatalogManager::FKAction::SET_DEFAULT: return "SET DEFAULT";
+            }
+            return "NO ACTION";
+        };
+
+        auto fk_match = [](core::CatalogManager::FKMatchType match) -> std::string {
+            switch (match) {
+                case core::CatalogManager::FKMatchType::FULL: return "FULL";
+                case core::CatalogManager::FKMatchType::PARTIAL: return "PARTIAL";
+                case core::CatalogManager::FKMatchType::SIMPLE:
+                default: return "SIMPLE";
+            }
+        };
+
+        auto find_matching_constraint = [&](const core::CatalogManager::ConstraintInfo& fk) -> std::string {
+            if (fk.referenced_table_id == core::ID{}) {
+                return {};
+            }
+            std::vector<core::CatalogManager::ConstraintInfo> target;
+            if (catalog->getConstraintsByType(fk.referenced_table_id,
+                                              core::CatalogManager::ConstraintType::PRIMARY_KEY,
+                                              target, ctx) != core::Status::OK) {
+                target.clear();
+            }
+            if (target.empty()) {
+                catalog->getConstraintsByType(fk.referenced_table_id,
+                                              core::CatalogManager::ConstraintType::UNIQUE,
+                                              target, ctx);
+            }
+            for (const auto& c : target) {
+                if (c.column_names == fk.referenced_columns) {
+                    return c.constraint_name;
+                }
+            }
+            return {};
+        };
+
+        for (const auto& t : tables) {
+            std::vector<core::CatalogManager::ConstraintInfo> constraints;
+            auto s = catalog->getConstraintsForTable(t.table_id, constraints, ctx);
+            if (s != core::Status::OK) {
+                continue;
+            }
+
+            for (const auto& c : constraints) {
+                if (!rc_first) rc << " UNION ALL ";
+                rc << "SELECT '" << escape_literal(c.constraint_name) << "' AS RDB$CONSTRAINT_NAME, '"
+                   << constraint_type(c.constraint_type) << "' AS RDB$CONSTRAINT_TYPE, '"
+                   << escape_literal(t.table_name) << "' AS RDB$RELATION_NAME, "
+                   << "'" << escape_literal(c.constraint_name) << "' AS RDB$INDEX_NAME, "
+                   << (c.is_deferrable ? 1 : 0) << " AS RDB$DEFERRABLE, "
+                   << (c.initially_deferred ? 1 : 0) << " AS RDB$INITIALLY_DEFERRED";
+                rc_first = false;
+
+                if (c.constraint_type == core::CatalogManager::ConstraintType::CHECK) {
+                    if (!cc_first) cc << " UNION ALL ";
+                    cc << "SELECT '" << escape_literal(c.constraint_name) << "' AS RDB$CONSTRAINT_NAME, "
+                       << "'" << escape_literal(c.constraint_name) << "' AS RDB$TRIGGER_NAME";
+                    cc_first = false;
+                } else if (c.constraint_type == core::CatalogManager::ConstraintType::FOREIGN_KEY) {
+                    auto ref = find_matching_constraint(c);
+                    if (!rf_first) rf << " UNION ALL ";
+                    rf << "SELECT '" << escape_literal(c.constraint_name) << "' AS RDB$CONSTRAINT_NAME, "
+                       << (ref.empty() ? "NULL" : ("'" + escape_literal(ref) + "'")) << " AS RDB$CONST_NAME_UQ, "
+                       << "'" << fk_match(c.match_type) << "' AS RDB$MATCH_OPTION, "
+                       << "'" << fk_action(c.on_update) << "' AS RDB$UPDATE_RULE, "
+                       << "'" << fk_action(c.on_delete) << "' AS RDB$DELETE_RULE";
+                    rf_first = false;
+                }
+            }
+        }
+
+        if (rc_first) {
+            relation_constraints_sql = "SELECT NULL AS RDB$CONSTRAINT_NAME, NULL AS RDB$CONSTRAINT_TYPE, NULL AS RDB$RELATION_NAME, NULL AS RDB$INDEX_NAME, NULL AS RDB$DEFERRABLE, NULL AS RDB$INITIALLY_DEFERRED WHERE 1 = 0";
+        } else {
+            relation_constraints_sql = rc.str();
+        }
+
+        if (cc_first) {
+            check_constraints_sql = "SELECT NULL AS RDB$CONSTRAINT_NAME, NULL AS RDB$TRIGGER_NAME WHERE 1 = 0";
+        } else {
+            check_constraints_sql = cc.str();
+        }
+
+        if (rf_first) {
+            ref_constraints_sql = "SELECT NULL AS RDB$CONSTRAINT_NAME, NULL AS RDB$CONST_NAME_UQ, NULL AS RDB$MATCH_OPTION, NULL AS RDB$UPDATE_RULE, NULL AS RDB$DELETE_RULE WHERE 1 = 0";
+        } else {
+            ref_constraints_sql = rf.str();
+        }
+    }
+
+    ensure_view("RDB$FIELDS", fields_sql);
+    ensure_view("RDB$FORMATS", "SELECT NULL AS RDB$FORMAT, NULL AS RDB$RELATION_ID WHERE 1 = 0");
+    ensure_view("RDB$TYPES", "SELECT NULL AS RDB$TYPE, NULL AS RDB$FIELD_NAME WHERE 1 = 0");
+    ensure_view("RDB$RELATION_FIELDS", rel_fields_sql);
+    ensure_view("RDB$INDICES", indices_sql);
+    ensure_view("RDB$INDEX_SEGMENTS", index_segments_sql);
+    ensure_view("RDB$RELATION_CONSTRAINTS", relation_constraints_sql);
+    ensure_view("RDB$CHECK_CONSTRAINTS", check_constraints_sql);
+    ensure_view("RDB$REF_CONSTRAINTS", ref_constraints_sql);
+
+    // Build RDB$TRIGGERS
+    std::string triggers_sql;
+    {
+        std::ostringstream tr;
+        bool tr_first = true;
+        for (const auto& t : tables) {
+            std::vector<core::CatalogManager::TriggerInfo> triggers;
+            auto s = catalog->listAllTriggersForTable(t.table_id, triggers, ctx);
+            if (s != core::Status::OK) {
+                continue;
+            }
+            int32_t seq = 0;
+            for (const auto& trig : triggers) {
+                if (!trig.enabled) {
+                    continue;
+                }
+                int32_t trigger_type = 0;
+                if (trig.timing == core::CatalogManager::TriggerTiming::BEFORE &&
+                    trig.event == core::CatalogManager::TriggerEvent::INSERT) {
+                    trigger_type = 1;
+                } else if (trig.timing == core::CatalogManager::TriggerTiming::AFTER &&
+                           trig.event == core::CatalogManager::TriggerEvent::INSERT) {
+                    trigger_type = 2;
+                } else if (trig.timing == core::CatalogManager::TriggerTiming::BEFORE &&
+                           trig.event == core::CatalogManager::TriggerEvent::UPDATE) {
+                    trigger_type = 3;
+                } else if (trig.timing == core::CatalogManager::TriggerTiming::AFTER &&
+                           trig.event == core::CatalogManager::TriggerEvent::UPDATE) {
+                    trigger_type = 4;
+                } else if (trig.timing == core::CatalogManager::TriggerTiming::BEFORE &&
+                           trig.event == core::CatalogManager::TriggerEvent::DELETE) {
+                    trigger_type = 5;
+                } else if (trig.timing == core::CatalogManager::TriggerTiming::AFTER &&
+                           trig.event == core::CatalogManager::TriggerEvent::DELETE) {
+                    trigger_type = 6;
+                }
+
+                if (!tr_first) tr << " UNION ALL ";
+                tr << "SELECT '" << escape_literal(trig.trigger_name) << "' AS RDB$TRIGGER_NAME, '"
+                   << escape_literal(t.table_name) << "' AS RDB$RELATION_NAME, "
+                   << seq++ << " AS RDB$TRIGGER_SEQUENCE, "
+                   << trigger_type << " AS RDB$TRIGGER_TYPE";
+                tr_first = false;
+            }
+        }
+        if (tr_first) {
+            triggers_sql = "SELECT NULL AS RDB$TRIGGER_NAME, NULL AS RDB$RELATION_NAME, NULL AS RDB$TRIGGER_SEQUENCE, NULL AS RDB$TRIGGER_TYPE WHERE 1 = 0";
+        } else {
+            triggers_sql = tr.str();
+        }
+    }
+    ensure_view("RDB$TRIGGERS", triggers_sql);
+
+    // Build RDB$PROCEDURES and RDB$PROCEDURE_PARAMETERS
+    std::string procedures_sql;
+    std::string procedure_params_sql;
+    {
+        std::vector<core::CatalogManager::ProcedureInfo> procedures;
+        auto s = catalog->listProcedures(procedures, ctx);
+        if (s != core::Status::OK) {
+            procedures.clear();
+        }
+        std::ostringstream proc_ss;
+        std::ostringstream param_ss;
+        bool proc_first = true;
+        bool param_first = true;
+        for (const auto& proc : procedures) {
+            uint32_t output_count = 0;
+            for (const auto& p : proc.parameters) {
+                if (p.mode == core::CatalogManager::ParameterMode::OUT ||
+                    p.mode == core::CatalogManager::ParameterMode::INOUT) {
+                    ++output_count;
+                }
+            }
+            if (!proc_first) proc_ss << " UNION ALL ";
+            proc_ss << "SELECT '" << escape_literal(proc.name) << "' AS RDB$PROCEDURE_NAME, "
+                    << output_count << " AS RDB$PROCEDURE_OUTPUTS";
+            proc_first = false;
+
+            for (size_t i = 0; i < proc.parameters.size(); ++i) {
+                const auto& p = proc.parameters[i];
+                int param_type = 0;
+                switch (p.mode) {
+                    case core::CatalogManager::ParameterMode::IN: param_type = 0; break;
+                    case core::CatalogManager::ParameterMode::OUT: param_type = 1; break;
+                    case core::CatalogManager::ParameterMode::INOUT: param_type = 2; break;
+                }
+                if (!param_first) param_ss << " UNION ALL ";
+                param_ss << "SELECT '" << escape_literal(proc.name) << "' AS RDB$PROCEDURE_NAME, '"
+                         << escape_literal(p.name) << "' AS RDB$PARAMETER_NAME, "
+                         << param_type << " AS RDB$PARAMETER_TYPE, "
+                         << "'" << escape_literal(p.name) << "' AS RDB$FIELD_SOURCE, "
+                         << static_cast<int>(i) << " AS RDB$PARAMETER_NUMBER";
+                param_first = false;
+            }
+        }
+        if (proc_first) {
+            procedures_sql = "SELECT NULL AS RDB$PROCEDURE_NAME, NULL AS RDB$PROCEDURE_OUTPUTS WHERE 1 = 0";
+        } else {
+            procedures_sql = proc_ss.str();
+        }
+        if (param_first) {
+            procedure_params_sql = "SELECT NULL AS RDB$PROCEDURE_NAME, NULL AS RDB$PARAMETER_NAME, NULL AS RDB$PARAMETER_TYPE, NULL AS RDB$FIELD_SOURCE, NULL AS RDB$PARAMETER_NUMBER WHERE 1 = 0";
+        } else {
+            procedure_params_sql = param_ss.str();
+        }
+    }
+
+    ensure_view("RDB$PROCEDURES", procedures_sql);
+    ensure_view("RDB$PROCEDURE_PARAMETERS", procedure_params_sql);
+
+    // Build RDB$VIEW_RELATIONS (map views to their base relations if known; otherwise list view names)
+    auto to_lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+        return s;
+    };
+
+    auto extract_from_clause = [&](const std::string& definition) -> std::vector<std::string> {
+        std::vector<std::string> result;
+        if (definition.empty()) {
+            return result;
+        }
+        std::string def_lower = to_lower(definition);
+        auto pos = def_lower.find(" from ");
+        if (pos == std::string::npos) {
+            return result;
+        }
+        pos += 6;  // move past " from "
+        while (pos < def_lower.size()) {
+            while (pos < def_lower.size() && std::isspace(static_cast<unsigned char>(def_lower[pos]))) {
+                ++pos;
+            }
+            if (pos >= def_lower.size()) break;
+            size_t start = pos;
+            while (pos < def_lower.size()) {
+                char c = def_lower[pos];
+                if (std::isspace(static_cast<unsigned char>(c)) || c == ',' || c == ';') {
+                    break;
+                }
+                ++pos;
+            }
+            if (pos > start) {
+                result.emplace_back(definition.substr(start, pos - start));
+            }
+            while (pos < def_lower.size() && def_lower[pos] != ',' && def_lower[pos] != ';') {
+                ++pos;
+            }
+            if (pos < def_lower.size() && (def_lower[pos] == ',' || def_lower[pos] == ';')) {
+                ++pos;
+            } else {
+                break;
+            }
+        }
+        return result;
+    };
+
+    std::string view_relations_sql;
+    {
+        std::vector<core::CatalogManager::ViewInfo> views;
+        auto s = catalog->listViewsForSchema(fb_schema.schema_id, views, ctx);
+        if (s != core::Status::OK) {
+            views.clear();
+        }
+        std::ostringstream vr;
+        bool vr_first = true;
+        for (const auto& v : views) {
+            // Attempt to resolve base relations from dependency graph
+            std::vector<core::CatalogManager::DependencyInfo> deps;
+            if (catalog->getDependenciesFor(v.view_id, deps, ctx) != core::Status::OK) {
+                deps.clear();
+            }
+            size_t emitted = 0;
+            for (const auto& dep : deps) {
+                if (dep.dependent_type != core::CatalogManager::ObjectType::VIEW ||
+                    dep.referenced_type != core::CatalogManager::ObjectType::TABLE) {
+                    continue;
+                }
+                std::string rel_name;
+                auto t_it = table_by_id.find(dep.referenced_object_id);
+                if (t_it != table_by_id.end()) {
+                    rel_name = t_it->second.table_name;
+                }
+                if (!vr_first) vr << " UNION ALL ";
+                vr << "SELECT '" << escape_literal(v.name) << "' AS RDB$VIEW_NAME, "
+                   << (rel_name.empty() ? "NULL" : ("'" + escape_literal(rel_name) + "'"))
+                   << " AS RDB$RELATION_NAME";
+                vr_first = false;
+                ++emitted;
+            }
+            if (emitted == 0 && !v.definition.empty()) {
+                auto bases = extract_from_clause(v.definition);
+                for (const auto& base : bases) {
+                    std::string rel_name;
+                    auto name_key = to_lower(base);
+                    auto by_name = table_by_name.find(name_key);
+                    if (by_name != table_by_name.end()) {
+                        rel_name = by_name->second;
+                    } else {
+                        rel_name = base;
+                    }
+                    if (!vr_first) vr << " UNION ALL ";
+                    vr << "SELECT '" << escape_literal(v.name) << "' AS RDB$VIEW_NAME, '"
+                       << escape_literal(rel_name) << "' AS RDB$RELATION_NAME";
+                    vr_first = false;
+                    ++emitted;
+                }
+            }
+            if (emitted == 0) {
+                if (!vr_first) vr << " UNION ALL ";
+                vr << "SELECT '" << escape_literal(v.name) << "' AS RDB$VIEW_NAME, NULL AS RDB$RELATION_NAME";
+                vr_first = false;
+            }
+        }
+        if (vr_first) {
+            view_relations_sql = "SELECT NULL AS RDB$VIEW_NAME, NULL AS RDB$RELATION_NAME WHERE 1 = 0";
+        } else {
+            view_relations_sql = vr.str();
+        }
+    }
+    ensure_view("RDB$VIEW_RELATIONS", view_relations_sql);
+
+    return core::Status::OK;
+}
+
+core::Status FirebirdAdapter::compileQuery(const std::string& sql,
+                                           std::vector<uint8_t>& bytecode_out,
+                                           std::string& error_out) {
+    core::ErrorContext ctx;
+    auto status = ensureEngine(&ctx);
+    if (status != core::Status::OK) {
+        error_out = ctx.message;
+        return status;
+    }
+
+    status = ensureFirebirdSystemTables(&ctx);
+    if (status != core::Status::OK) {
+        error_out = ctx.message.empty() ? "Failed to initialize Firebird system tables" : ctx.message;
+        return status;
+    }
+
+    sblr::FirebirdQueryCompiler compiler(database_.get());
+    if (firebird_schema_id_ != core::ID{}) {
+        compiler.setCurrentSchema(firebird_schema_id_);
+    }
+    auto result = compiler.compile(sql);
+    if (!result.success()) {
+        error_out = result.errors().empty() ? "Compilation failed" : result.errors().front();
+        return core::Status::INVALID_ARGUMENT;
+    }
+    bytecode_out = result.bytecode();
+    return core::Status::OK;
+}
+
+core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
+    if (client_) {
+        return core::Status::OK;
+    }
+
+    client_config_.database_name = database_name_.empty() ? "default" : database_name_;
+    client_config_.ipc_method = server::IPCMethod::UNIX_SOCKET;
+    client_config_.socket_path = server::getIPCPath(client_config_.database_name, client_config_.ipc_method);
+    client_config_.connect_timeout_ms = config_.read_timeout_ms;
+    client_config_.read_timeout_ms = config_.read_timeout_ms;
+    client_config_.write_timeout_ms = config_.write_timeout_ms;
+    client_config_.auto_commit = true;
+    client_config_.auto_start_server = false;
+    if (!username_.empty()) {
+        client_config_.username = username_;
+    } else {
+        client_config_.username = "BOOTSTRAP";
+    }
+
+    client_ = std::make_unique<client::Connection>();
+    auto status = client_->connect(client_config_, ctx);
+    if (status != core::Status::OK) {
+        client_.reset();
+    }
+    if (status == core::Status::OK && !firebird_schema_name_.empty()) {
+        auto set_path_sql = "SET search_path TO \"" + firebird_schema_name_ + "\"";
+        auto set_status = client_->execute(set_path_sql, nullptr, ctx);
+        if (set_status != core::Status::OK) {
+            client_->disconnect();
+            client_.reset();
+            return set_status;
+        }
+    }
+    return status;
+}
+
+core::Status FirebirdAdapter::executeRemoteQuery(const QueryContext& query,
+                                                 ResultContext& result,
+                                                 core::ErrorContext* ctx) {
+    auto status = ensureEngine(ctx);
+    if (status != core::Status::OK) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(status);
+        result.error_message = ctx ? ctx->message : "Failed to initialize engine";
+        return status;
+    }
+
+    status = ensureFirebirdSystemTables(ctx);
+    if (status != core::Status::OK) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(status);
+        result.error_message = ctx ? ctx->message : "Failed to initialize Firebird catalogs";
+        return status;
+    }
+
+    status = ensureRemoteClient(ctx);
+    if (status != core::Status::OK) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(status);
+        result.error_message = ctx ? ctx->message : "Failed to connect to engine";
+        return status;
+    }
+
+    client::ResultSet rs;
+    status = client_->executeQuery(query.query, &rs, ctx);
+    if (status != core::Status::OK) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(status);
+        std::string err = client_->getLastError();
+        if (err.empty() && ctx) {
+            err = ctx->message;
+        }
+        result.error_message = err.empty() ? "Query execution failed" : err;
+        return status;
+    }
+
+    result.columns.clear();
+    for (const auto& col : rs.getColumns()) {
+        ProtocolCodec::ColumnInfo info;
+        info.name = col.name;
+        info.type = col.type;
+        info.type_modifier = col.type_modifier;
+        result.columns.push_back(info);
+    }
+
+    result.rows.clear();
+    const auto row_count = static_cast<size_t>(rs.getRowCount());
+    for (size_t i = 0; i < row_count; ++i) {
+        result.rows.push_back(rs.getRowValues(i));
+    }
+
+    result.rows_affected = rs.getRowsAffected();
+    if (!rs.getCommandTag().empty()) {
+        result.command_tag = rs.getCommandTag();
+    }
+    if (result.command_tag.empty()) {
+        if (row_count > 0) {
+            result.command_tag = "SELECT " + std::to_string(row_count);
+        } else if (result.rows_affected > 0) {
+            result.command_tag = "OK";
+        }
+    }
+
     return core::Status::OK;
 }
 
@@ -355,9 +1325,18 @@ core::Status FirebirdAdapter::handleAttach(network::Connection* conn) {
     parseDpb(dpb);
 
     database_name_ = db_path;
+    client_.reset();
+    client_config_.database_name = database_name_;
+    client_config_.ipc_method = server::IPCMethod::UNIX_SOCKET;
+    client_config_.socket_path = server::getIPCPath(client_config_.database_name,
+                                                   client_config_.ipc_method);
+    client_config_.username = username_.empty() ? "BOOTSTRAP" : username_;
+    client_config_.auto_start_server = false;
 
     // Assign database handle
     db_handle_ = next_db_handle_++;
+    active_transactions_.clear();
+    current_transaction_ = 0;
     fb_state_ = FirebirdProtocolState::ATTACHED;
 
     // Send response
@@ -377,8 +1356,14 @@ core::Status FirebirdAdapter::handleDetach(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
     db_handle_ = 0;
+    active_transactions_.clear();
     fb_state_ = FirebirdProtocolState::AUTHENTICATED;
+    current_transaction_ = 0;
 
     std::vector<uint8_t> data;
     sendResponse(conn, 0, 0, data);
@@ -403,7 +1388,12 @@ core::Status FirebirdAdapter::handleDropDatabase(network::Connection* conn) {
 
     // TODO: Actually drop database
 
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
     db_handle_ = 0;
+    active_transactions_.clear();
     fb_state_ = FirebirdProtocolState::AUTHENTICATED;
 
     std::vector<uint8_t> data;
@@ -427,14 +1417,26 @@ core::Status FirebirdAdapter::handleTransaction(network::Connection* conn) {
     std::vector<uint8_t> tpb = readBuffer(current_packet_.data(), offset, current_packet_.size());
     (void)tpb;  // Parse if needed
 
-    // Begin transaction
-    auto status = beginTransaction();
+    if (!active_transactions_.empty()) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_tr_handle, "Transaction already active");
+        return sendBuffer(conn);
+    }
+
+    core::ErrorContext ctx;
+    auto status = ensureRemoteClient(&ctx);
+    if (status != core::Status::OK) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Failed to connect engine");
+        return sendBuffer(conn);
+    }
+
+    status = client_->beginTransaction(&ctx);
     if (status != core::Status::OK) {
         sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Failed to start transaction");
         return sendBuffer(conn);
     }
 
     current_transaction_ = next_tr_handle_++;
+    active_transactions_.insert(current_transaction_);
 
     std::vector<uint8_t> data;
     sendResponse(conn, current_transaction_, 0, data);
@@ -447,17 +1449,25 @@ core::Status FirebirdAdapter::handleCommit(network::Connection* conn) {
 
     uint32_t tr_handle = readUInt32(current_packet_.data() + offset);
 
-    if (tr_handle != current_transaction_) {
+    if (active_transactions_.find(tr_handle) == active_transactions_.end()) {
         sendErrorResponse(conn, firebird::ErrorCode::isc_bad_tr_handle, "Invalid transaction handle");
         return sendBuffer(conn);
     }
 
-    auto status = commitTransaction();
+    core::ErrorContext ctx;
+    auto status = ensureRemoteClient(&ctx);
+    if (status != core::Status::OK) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Engine unavailable");
+        return sendBuffer(conn);
+    }
+
+    status = client_->commit(&ctx);
     if (status != core::Status::OK) {
         sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Commit failed");
         return sendBuffer(conn);
     }
 
+    active_transactions_.erase(tr_handle);
     current_transaction_ = 0;
 
     std::vector<uint8_t> data;
@@ -471,17 +1481,25 @@ core::Status FirebirdAdapter::handleRollback(network::Connection* conn) {
 
     uint32_t tr_handle = readUInt32(current_packet_.data() + offset);
 
-    if (tr_handle != current_transaction_) {
+    if (active_transactions_.find(tr_handle) == active_transactions_.end()) {
         sendErrorResponse(conn, firebird::ErrorCode::isc_bad_tr_handle, "Invalid transaction handle");
         return sendBuffer(conn);
     }
 
-    auto status = rollbackTransaction();
+    core::ErrorContext ctx;
+    auto status = ensureRemoteClient(&ctx);
+    if (status != core::Status::OK) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Engine unavailable");
+        return sendBuffer(conn);
+    }
+
+    status = client_->rollback(&ctx);
     if (status != core::Status::OK) {
         sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Rollback failed");
         return sendBuffer(conn);
     }
 
+    active_transactions_.erase(tr_handle);
     current_transaction_ = 0;
 
     std::vector<uint8_t> data;
@@ -496,14 +1514,23 @@ core::Status FirebirdAdapter::handleCommitRetaining(network::Connection* conn) {
 
     uint32_t tr_handle = readUInt32(current_packet_.data() + offset);
 
-    if (tr_handle != current_transaction_) {
+    if (active_transactions_.find(tr_handle) == active_transactions_.end()) {
         sendErrorResponse(conn, firebird::ErrorCode::isc_bad_tr_handle, "Invalid transaction handle");
         return sendBuffer(conn);
     }
 
-    // In ScratchBird, we commit and start a new transaction
-    commitTransaction();
-    beginTransaction();
+    core::ErrorContext ctx;
+    auto status = ensureRemoteClient(&ctx);
+    if (status == core::Status::OK) {
+        status = client_->commit(&ctx);
+    }
+    if (status == core::Status::OK) {
+        status = client_->beginTransaction(&ctx);
+    }
+    if (status != core::Status::OK) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Commit retaining failed");
+        return sendBuffer(conn);
+    }
 
     std::vector<uint8_t> data;
     sendResponse(conn, tr_handle, 0, data);
@@ -516,13 +1543,23 @@ core::Status FirebirdAdapter::handleRollbackRetaining(network::Connection* conn)
 
     uint32_t tr_handle = readUInt32(current_packet_.data() + offset);
 
-    if (tr_handle != current_transaction_) {
+    if (active_transactions_.find(tr_handle) == active_transactions_.end()) {
         sendErrorResponse(conn, firebird::ErrorCode::isc_bad_tr_handle, "Invalid transaction handle");
         return sendBuffer(conn);
     }
 
-    rollbackTransaction();
-    beginTransaction();
+    core::ErrorContext ctx;
+    auto status = ensureRemoteClient(&ctx);
+    if (status == core::Status::OK) {
+        status = client_->rollback(&ctx);
+    }
+    if (status == core::Status::OK) {
+        status = client_->beginTransaction(&ctx);
+    }
+    if (status != core::Status::OK) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Rollback retaining failed");
+        return sendBuffer(conn);
+    }
 
     std::vector<uint8_t> data;
     sendResponse(conn, tr_handle, 0, data);
@@ -571,11 +1608,10 @@ core::Status FirebirdAdapter::handlePrepareStatement(network::Connection* conn) 
     // SQL statement
     std::string sql = readString(current_packet_.data(), offset, current_packet_.size());
 
-    // Description items (BLR)
+    // Description items (BLR) - store for future SQLDA parsing
     std::vector<uint8_t> items = readBuffer(current_packet_.data(), offset, current_packet_.size());
-    (void)items;
 
-    if (tr_handle != current_transaction_ && current_transaction_ != 0) {
+    if (active_transactions_.find(tr_handle) == active_transactions_.end()) {
         sendErrorResponse(conn, firebird::ErrorCode::isc_bad_tr_handle, "Invalid transaction handle");
         return sendBuffer(conn);
     }
@@ -589,6 +1625,23 @@ core::Status FirebirdAdapter::handlePrepareStatement(network::Connection* conn) 
     // Store prepared statement
     it->second.query = sql;
     it->second.prepared = true;
+    it->second.input_blr.clear();
+    it->second.output_blr = std::move(items);
+    it->second.output_fields.clear();
+    it->second.output_message_length = 0;
+
+    if (!it->second.output_blr.empty()) {
+        std::string blr_err;
+        auto parse_status = parseBlr(it->second.output_blr,
+                                     it->second.output_fields,
+                                     it->second.output_message_length,
+                                     blr_err);
+        if (parse_status != core::Status::OK) {
+            sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable,
+                              blr_err.empty() ? "Unsupported BLR" : blr_err);
+            return sendBuffer(conn);
+        }
+    }
 
     // Determine statement type (simplified)
     std::string upper_sql = sql;
@@ -621,7 +1674,12 @@ core::Status FirebirdAdapter::handleExecute(network::Connection* conn) {
     uint32_t stmt_handle = readUInt32(current_packet_.data() + offset);
     offset += 4;
 
-    if (tr_handle != current_transaction_ && current_transaction_ != 0) {
+    // BLR for input parameters (if any)
+    std::vector<uint8_t> input_blr = readBuffer(current_packet_.data(), offset, current_packet_.size());
+    // Input message buffer (values)
+    std::vector<uint8_t> input_message = readBuffer(current_packet_.data(), offset, current_packet_.size());
+
+    if (active_transactions_.find(tr_handle) == active_transactions_.end()) {
         sendErrorResponse(conn, firebird::ErrorCode::isc_bad_tr_handle, "Invalid transaction handle");
         return sendBuffer(conn);
     }
@@ -632,16 +1690,206 @@ core::Status FirebirdAdapter::handleExecute(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
-    // Execute the statement
+    // Parse input BLR if provided
+    if (!input_blr.empty()) {
+        std::string blr_err;
+        auto parse_status = parseBlr(input_blr, it->second.input_fields,
+                                     it->second.input_message_length, blr_err);
+        if (parse_status != core::Status::OK) {
+            sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable,
+                              blr_err.empty() ? "Unsupported input BLR" : blr_err);
+            return sendBuffer(conn);
+        }
+    }
+
     QueryContext ctx;
+
+    // Decode parameters (text only for now)
+    std::vector<std::string> param_values;
+    if (!input_message.empty() && !it->second.input_fields.empty()) {
+        const size_t field_count = it->second.input_fields.size();
+        const size_t null_bytes = field_count * 2;
+
+        // Validate message length when provided
+        if (it->second.input_message_length > 0 &&
+            input_message.size() < it->second.input_message_length) {
+            sendErrorResponse(conn, firebird::ErrorCode::isc_dsql_error,
+                              "Input message truncated");
+            return sendBuffer(conn);
+        }
+
+        // Position of null indicator vector (trailing)
+        size_t null_offset = input_message.size() >= null_bytes
+                                 ? input_message.size() - null_bytes
+                                 : input_message.size();
+        if (it->second.input_message_length > 0 &&
+            it->second.input_message_length >= null_bytes &&
+            it->second.input_message_length <= input_message.size()) {
+            null_offset = it->second.input_message_length - null_bytes;
+        }
+        std::vector<int16_t> nulls(field_count, 0);
+        if (null_offset + null_bytes <= input_message.size()) {
+            for (size_t i = 0; i < field_count; ++i) {
+                size_t pos = null_offset + (i * 2);
+                nulls[i] = static_cast<int16_t>(
+                    (static_cast<uint16_t>(input_message[pos]) << 8) |
+                    static_cast<uint16_t>(input_message[pos + 1]));
+            }
+        }
+
+        size_t m_idx = 0;
+        for (size_t idx_field = 0; idx_field < it->second.input_fields.size(); ++idx_field) {
+            const auto& field = it->second.input_fields[idx_field];
+            const bool is_null = nulls[idx_field] < 0;
+            ctx.parameter_formats.push_back(0); // text format
+            ctx.parameter_nulls.push_back(is_null);
+
+            // Skip over field bytes if the null indicator is set
+            auto advance = [&](size_t bytes) {
+                size_t max_bytes = (null_offset > m_idx) ? (null_offset - m_idx) : 0;
+                bytes = std::min(bytes, max_bytes);
+                m_idx = std::min(input_message.size(), m_idx + bytes);
+            };
+
+            if (is_null) {
+                param_values.emplace_back("");
+                advance(field.length);
+                continue;
+            }
+
+            if (field.is_text || field.is_varying) {
+                if (m_idx + 2 > null_offset) {
+                    sendErrorResponse(conn, firebird::ErrorCode::isc_dsql_error,
+                                      "Input message truncated (text length)");
+                    return sendBuffer(conn);
+                }
+                uint16_t len = static_cast<uint16_t>(
+                    (static_cast<uint16_t>(input_message[m_idx]) << 8) |
+                    static_cast<uint16_t>(input_message[m_idx + 1]));
+                m_idx += 2;
+                if (m_idx + len > null_offset) {
+                    sendErrorResponse(conn, firebird::ErrorCode::isc_dsql_error,
+                                      "Input message truncated (text payload)");
+                    return sendBuffer(conn);
+                }
+                std::string val(reinterpret_cast<const char*>(&input_message[m_idx]), len);
+                param_values.push_back(val);
+                m_idx += len;
+            } else if (field.is_numeric() && field.length == 4) {
+                if (m_idx + 4 > null_offset) {
+                    sendErrorResponse(conn, firebird::ErrorCode::isc_dsql_error,
+                                      "Input message truncated (int32)");
+                    return sendBuffer(conn);
+                }
+                int32_t ival = static_cast<int32_t>(
+                    (input_message[m_idx] << 24) |
+                    (input_message[m_idx + 1] << 16) |
+                    (input_message[m_idx + 2] << 8) |
+                    (input_message[m_idx + 3]));
+                param_values.push_back(std::to_string(ival));
+                m_idx += 4;
+            } else if (field.is_numeric() && field.length == 2) {
+                if (m_idx + 2 > null_offset) {
+                    sendErrorResponse(conn, firebird::ErrorCode::isc_dsql_error,
+                                      "Input message truncated (int16)");
+                    return sendBuffer(conn);
+                }
+                int16_t sval = static_cast<int16_t>(
+                    (static_cast<uint16_t>(input_message[m_idx]) << 8) |
+                    static_cast<uint16_t>(input_message[m_idx + 1]));
+                param_values.push_back(std::to_string(sval));
+                m_idx += 2;
+            } else {
+                // Unsupported type; skip
+                param_values.push_back("");
+                advance(field.length);
+            }
+        }
+    }
+
+    // Execute the statement
     ctx.query = it->second.query;
+    ctx.parameter_values = param_values;
 
     ResultContext result;
-    executeQuery(ctx, result);
+    core::ErrorContext err;
+    auto status = executeRemoteQuery(ctx, result, &err);
 
-    if (result.has_error) {
-        sendErrorResponse(conn, static_cast<int32_t>(result.error_code), result.error_message);
+    if (status != core::Status::OK || result.has_error) {
+        std::string message = result.error_message.empty() ? err.message : result.error_message;
+        int32_t code = result.error_code ? static_cast<int32_t>(result.error_code)
+                                         : mapStatusToFirebird(status);
+        sendErrorResponse(conn, code, message.empty() ? "Query failed" : message, result.sqlstate);
     } else {
+        // Materialize rows for fetch if needed
+        it->second.row_buffers.clear();
+        it->second.fetch_pos = 0;
+
+        if (!result.columns.empty()) {
+            // If client did not supply an output BLR, synthesize field layout from column metadata
+            if (it->second.output_fields.empty()) {
+                uint32_t msg_len = 0;
+                it->second.output_fields.reserve(result.columns.size());
+                for (const auto& col : result.columns) {
+                    auto f = columnToBlrField(col);
+                    msg_len += f.length;
+                    it->second.output_fields.push_back(f);
+                }
+                if (!it->second.output_fields.empty()) {
+                    msg_len += static_cast<uint32_t>(it->second.output_fields.size()) * 2; // null indicators
+                }
+                it->second.output_message_length = msg_len;
+            }
+            it->second.columns = result.columns;
+            for (const auto& row : result.rows) {
+                std::vector<uint8_t> buf;
+                std::vector<int16_t> nulls;
+                nulls.reserve(row.size());
+
+                const bool have_blr = !it->second.output_fields.empty();
+                for (size_t col_idx = 0; col_idx < row.size(); ++col_idx) {
+                    const auto& val = row[col_idx];
+                    size_t out_len = val.data.size();
+                    if (have_blr && col_idx < it->second.output_fields.size()) {
+                        // Clamp to BLR-declared length when available
+                        uint16_t declared_len = it->second.output_fields[col_idx].length;
+                        if (declared_len > 0) {
+                            out_len = std::min<size_t>(out_len, declared_len);
+                        }
+                    }
+
+                    if (val.is_null) {
+                        writeInt32(buf, -1);
+                        nulls.push_back(-1);
+                    } else {
+                        writeInt32(buf, static_cast<int32_t>(out_len));
+                        buf.insert(buf.end(), val.data.begin(), val.data.begin() + out_len);
+                        nulls.push_back(0);
+                    }
+                }
+
+                if (have_blr) {
+                    for (auto n : nulls) {
+                        uint16_t v = static_cast<uint16_t>(n);
+                        buf.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+                        buf.push_back(static_cast<uint8_t>(v & 0xFF));
+                    }
+                }
+
+                // Honor declared message length (pad or truncate)
+                uint32_t target_len = it->second.output_message_length;
+                if (target_len > 0) {
+                    if (buf.size() < target_len) {
+                        buf.resize(target_len, 0);
+                    } else if (buf.size() > target_len) {
+                        buf.resize(target_len);
+                    }
+                }
+
+                it->second.row_buffers.push_back(std::move(buf));
+            }
+        }
+
         std::vector<uint8_t> data;
         sendResponse(conn, stmt_handle, static_cast<uint64_t>(result.rows_affected), data);
     }
@@ -674,20 +1922,24 @@ core::Status FirebirdAdapter::handleExecImmediate(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
-    if (tr_handle != current_transaction_ && current_transaction_ != 0) {
+    if (active_transactions_.find(tr_handle) == active_transactions_.end()) {
         sendErrorResponse(conn, firebird::ErrorCode::isc_bad_tr_handle, "Invalid transaction handle");
         return sendBuffer(conn);
     }
 
-    // Execute immediately
+    // Execute immediately (no BLR parsing here yet)
     QueryContext ctx;
     ctx.query = sql;
 
     ResultContext result;
-    executeQuery(ctx, result);
+    core::ErrorContext err;
+    auto status = executeRemoteQuery(ctx, result, &err);
 
-    if (result.has_error) {
-        sendErrorResponse(conn, static_cast<int32_t>(result.error_code), result.error_message);
+    if (status != core::Status::OK || result.has_error) {
+        std::string message = result.error_message.empty() ? err.message : result.error_message;
+        int32_t code = result.error_code ? static_cast<int32_t>(result.error_code)
+                                         : mapStatusToFirebird(status);
+        sendErrorResponse(conn, code, message.empty() ? "Query failed" : message, result.sqlstate);
     } else {
         std::vector<uint8_t> data;
         sendResponse(conn, 0, static_cast<uint64_t>(result.rows_affected), data);
@@ -708,12 +1960,10 @@ core::Status FirebirdAdapter::handleFetch(network::Connection* conn) {
 
     // BLR for output
     std::vector<uint8_t> blr = readBuffer(current_packet_.data(), offset, current_packet_.size());
-    (void)blr;
 
     // Message length
     uint32_t msg_len = readUInt32(current_packet_.data() + offset);
     offset += 4;
-    (void)msg_len;
 
     auto it = statements_.find(stmt_handle);
     if (it == statements_.end()) {
@@ -721,10 +1971,38 @@ core::Status FirebirdAdapter::handleFetch(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
-    // For now, return empty result (no more rows)
-    // In a real implementation, we'd stream rows from the query result
+    // If client supplied BLR/message length, record them (no full parsing yet)
+    if (!blr.empty()) {
+        it->second.output_blr = blr;
+        it->second.output_fields.clear();
+        std::string blr_err;
+        auto parse_status = parseBlr(it->second.output_blr,
+                                     it->second.output_fields,
+                                     it->second.output_message_length,
+                                     blr_err);
+        if (parse_status != core::Status::OK) {
+            sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable,
+                              blr_err.empty() ? "Unsupported BLR" : blr_err);
+            return sendBuffer(conn);
+        }
+    }
+    if (msg_len > 0) {
+        it->second.output_message_length = msg_len;
+    }
+
     std::vector<std::vector<uint8_t>> rows;
-    sendFetchResponse(conn, 100, 0, rows);  // 100 = end of cursor
+    uint32_t status = 0;  // 0 = success, 100 = end
+
+    // Return all remaining rows in one fetch for simplicity
+    while (it->second.fetch_pos < it->second.row_buffers.size()) {
+        rows.push_back(it->second.row_buffers[it->second.fetch_pos++]);
+    }
+
+    if (rows.empty()) {
+        status = 100;  // end of cursor
+    }
+
+    sendFetchResponse(conn, status, static_cast<uint32_t>(rows.size()), rows);
 
     return sendBuffer(conn);
 }
@@ -827,6 +2105,10 @@ core::Status FirebirdAdapter::handleCancel(network::Connection* conn) {
 
 core::Status FirebirdAdapter::handleDisconnect(network::Connection* conn) {
     fb_state_ = FirebirdProtocolState::CLOSING;
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
     conn->close(network::CloseReason::CLIENT_DISCONNECT);
     return core::Status::OK;
 }
@@ -924,7 +2206,8 @@ void FirebirdAdapter::sendSqlResponse(network::Connection* conn, uint32_t count)
 }
 
 void FirebirdAdapter::sendErrorResponse(network::Connection* conn, int32_t error_code,
-                                         const std::string& message) {
+                                         const std::string& message,
+                                         const std::string& sqlstate) {
     std::vector<uint8_t> data;
 
     // Handle
@@ -939,8 +2222,16 @@ void FirebirdAdapter::sendErrorResponse(network::Connection* conn, int32_t error
     // Status vector
     writeInt32(data, firebird::ErrorCode::isc_arg_gds);
     writeInt32(data, error_code);
-    writeInt32(data, firebird::ErrorCode::isc_arg_string);
-    writeString(data, message);
+
+    if (!message.empty()) {
+        writeInt32(data, firebird::ErrorCode::isc_arg_string);
+        writeString(data, message);
+    }
+    if (!sqlstate.empty()) {
+        writeInt32(data, firebird::ErrorCode::isc_arg_sql_state);
+        writeString(data, sqlstate);
+    }
+
     writeInt32(data, firebird::ErrorCode::isc_arg_end);
 
     sendPacket(conn, firebird::Opcode::op_response, data);

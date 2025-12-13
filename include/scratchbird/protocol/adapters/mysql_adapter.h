@@ -12,6 +12,8 @@
 #pragma once
 
 #include "scratchbird/protocol/adapters/protocol_adapter.h"
+#include "scratchbird/client/connection.h"
+#include "scratchbird/server/ipc_server.h"
 
 #include <unordered_map>
 #include <deque>
@@ -226,6 +228,7 @@ struct MySqlPreparedStatement {
     uint16_t num_params;
     uint16_t num_columns;
     std::vector<uint8_t> param_types;
+    std::vector<uint8_t> param_unsigned;
     std::vector<ProtocolCodec::ColumnInfo> columns;
 };
 
@@ -273,6 +276,15 @@ protected:
                                    const std::string& message,
                                    const std::string& detail = "",
                                    const std::string& hint = "") override;
+    core::Status compileQuery(const std::string& sql,
+                              std::vector<uint8_t>& bytecode_out,
+                              std::string& error_out) override;
+
+    // IPC bridge helpers
+    core::Status ensureRemoteClient(core::ErrorContext* ctx = nullptr);
+    core::Status executeRemoteQuery(const QueryContext& query,
+                                    ResultContext& result,
+                                    core::ErrorContext* ctx = nullptr);
 
 private:
     // ========================================================================
@@ -351,10 +363,21 @@ private:
     // Type conversion
     uint8_t wireTypeToMySqlType(WireType type);
     WireType mysqlTypeToWireType(uint8_t type);
+    void mapStatusToMySqlError(uint32_t status,
+                               uint16_t& error_code,
+                               std::string& sqlstate);
+    uint16_t mysqlCharsetForType(WireType type) const;
 
     // Authentication
     std::vector<uint8_t> computeNativePasswordAuth(const std::string& password,
                                                     const uint8_t* scramble);
+    void updateTransactionStatus(const std::string& sql, bool has_error);
+    void bootstrapInformationSchema(core::ErrorContext* ctx);
+    // Prepared statement helpers
+    uint16_t countParameters(const std::string& query) const;
+    std::string escapeLiteral(const std::string& value) const;
+    bool decodePsParameter(uint8_t type, bool is_unsigned, const uint8_t* data,
+                           size_t& offset, size_t max_len, std::string& out_literal);
 
     // ========================================================================
     // State
@@ -398,6 +421,12 @@ private:
     // Prepared statements
     uint32_t next_stmt_id_ = 1;
     std::unordered_map<uint32_t, MySqlPreparedStatement> prepared_statements_;
+
+    // IPC client (bridge to engine)
+    std::unique_ptr<client::Connection> client_;
+    client::ConnectionConfig client_config_;
+    bool default_db_set_ = false;
+    bool information_schema_bootstrapped_ = false;
 };
 
 } // namespace protocol

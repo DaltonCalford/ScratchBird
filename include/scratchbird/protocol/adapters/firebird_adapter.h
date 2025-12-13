@@ -13,8 +13,11 @@
 #pragma once
 
 #include "scratchbird/protocol/adapters/protocol_adapter.h"
+#include "scratchbird/client/connection.h"
+#include "scratchbird/server/ipc_server.h"
 
 #include <unordered_map>
+#include <unordered_set>
 #include <deque>
 
 namespace scratchbird {
@@ -258,8 +261,23 @@ struct FirebirdStatement {
     std::string query;
     uint32_t type;
     std::vector<ProtocolCodec::ColumnInfo> columns;
-    std::vector<uint8_t> param_types;
+    std::vector<uint8_t> input_blr;
+    std::vector<uint8_t> output_blr;
+    struct BlrField {
+        uint8_t dtype = 0;
+        int16_t scale = 0;
+        uint16_t length = 0;
+        bool is_text = false;
+        bool is_varying = false;
+        bool is_numeric() const { return dtype == 7 || dtype == 8 || dtype == 16; }
+    };
+    std::vector<BlrField> output_fields;
+    std::vector<BlrField> input_fields;
+    uint32_t output_message_length = 0;
+    uint32_t input_message_length = 0;
     bool prepared = false;
+    std::vector<std::vector<uint8_t>> row_buffers;  // Serialized rows for fetch
+    size_t fetch_pos = 0;
 };
 
 // ============================================================================
@@ -287,6 +305,13 @@ public:
     const std::string& getServerVersion() const { return server_version_; }
 
 protected:
+    // Execute against native server over IPC (bridge path)
+    core::Status executeRemoteQuery(const QueryContext& query,
+                                    ResultContext& result,
+                                    core::ErrorContext* ctx = nullptr);
+    core::Status ensureRemoteClient(core::ErrorContext* ctx);
+
+protected:
     // ========================================================================
     // ProtocolAdapter Implementation
     // ========================================================================
@@ -306,6 +331,9 @@ protected:
                                    const std::string& message,
                                    const std::string& detail = "",
                                    const std::string& hint = "") override;
+    core::Status compileQuery(const std::string& sql,
+                              std::vector<uint8_t>& bytecode_out,
+                              std::string& error_out) override;
 
 private:
     // ========================================================================
@@ -358,11 +386,15 @@ private:
                            const std::vector<std::vector<uint8_t>>& rows);
     void sendSqlResponse(network::Connection* conn, uint32_t count);
     void sendErrorResponse(network::Connection* conn, int32_t error_code,
-                           const std::string& message);
+                           const std::string& message,
+                           const std::string& sqlstate = "");
 
     // ========================================================================
     // Helper Methods
     // ========================================================================
+
+    // Ensure Firebird-specific catalog objects exist in the local engine
+    core::Status ensureFirebirdSystemTables(core::ErrorContext* ctx);
 
     // Packet I/O
     void sendPacket(network::Connection* conn, uint32_t opcode,
@@ -393,6 +425,9 @@ private:
     // ========================================================================
     // State
     // ========================================================================
+    core::ID firebird_schema_id_;
+    std::string firebird_schema_name_;
+    std::unordered_set<uint32_t> active_transactions_;
 
     FirebirdProtocolState fb_state_ = FirebirdProtocolState::INITIAL;
 
@@ -425,6 +460,10 @@ private:
     // Client info from attach
     uint8_t sql_dialect_ = 3;
     std::string client_charset_ = "UTF8";
+
+    // Remote engine client (IPC to native ScratchBird server)
+    client::ConnectionConfig client_config_;
+    std::unique_ptr<client::Connection> client_;
 };
 
 } // namespace protocol

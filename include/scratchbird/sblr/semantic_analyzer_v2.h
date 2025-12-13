@@ -60,15 +60,23 @@ public:
     ResolvedStatement* statement() const { return statement_; }
     const std::vector<SemanticError>& errors() const { return errors_; }
     const std::vector<SemanticError>& warnings() const { return warnings_; }
+    StringPool* stringPool() const { return string_pool_; }
+    const std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>>& dependencies() const { return dependencies_; }
 
     void setStatement(ResolvedStatement* stmt) { statement_ = stmt; }
     void addError(const SemanticError& error);
     void addWarning(const SemanticError& warning);
+    void setStringPool(StringPool* pool) { string_pool_ = pool; }
+    void addDependency(const core::ID& id, core::CatalogManager::ObjectType type) {
+        dependencies_.emplace_back(id, type);
+    }
 
 private:
     ResolvedStatement* statement_ = nullptr;
     std::vector<SemanticError> errors_;
     std::vector<SemanticError> warnings_;
+    StringPool* string_pool_ = nullptr;
+    std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>> dependencies_;
 };
 
 /**

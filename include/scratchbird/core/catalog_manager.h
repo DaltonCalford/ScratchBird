@@ -614,20 +614,21 @@ namespace scratchbird::core
             CHARSET = 21,
             PACKAGE = 22,       // Firebird packages
             UDR = 23,           // User-Defined Resources
-            COMMENT = 24,
-            DEPENDENCY = 25,
-            PERMISSION = 26,
-            STATISTIC = 27,
-            TIMEZONE = 28,
-            EXTENSION = 29,
-            FOREIGN_SERVER = 30,
-            FOREIGN_TABLE = 31,
-            USER_MAPPING = 32,      // Phase B: FDW user mapping
-            SERVER_REGISTRY = 33,   // Phase B: Distributed MVCC server registry
-            UDR_ENGINE = 34,        // Phase B: UDR engine plugin
-            UDR_MODULE = 35,        // Phase B: UDR module
-            CLUSTER = 36,           // Phase B: Distributed MVCC cluster
-            SYNONYM = 37            // Phase B: Cross-schema pointer/alias
+            EXCEPTION = 24,     // Firebird-style exceptions
+            COMMENT = 25,
+            DEPENDENCY = 26,
+            PERMISSION = 27,
+            STATISTIC = 28,
+            TIMEZONE = 29,
+            EXTENSION = 30,
+            FOREIGN_SERVER = 31,
+            FOREIGN_TABLE = 32,
+            USER_MAPPING = 33,      // Phase B: FDW user mapping
+            SERVER_REGISTRY = 34,   // Phase B: Distributed MVCC server registry
+            UDR_ENGINE = 35,        // Phase B: UDR engine plugin
+            UDR_MODULE = 36,        // Phase B: UDR module
+            CLUSTER = 37,           // Phase B: Distributed MVCC cluster
+            SYNONYM = 38            // Phase B: Cross-schema pointer/alias
         };
 
         // Dependency types (Phase 1.4 - Catalog Corrections)
@@ -1078,6 +1079,42 @@ namespace scratchbird::core
             std::string package_body;    // Stored in TOAST on disk
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
+        };
+
+        // Exception record persisted on disk (Phase 3)
+        struct ExceptionRecord
+        {
+            ID exception_id;                 // UUID v7
+            ID schema_id;                    // Schema containing the exception
+            char name[CatalogConstants::MAX_IDENTIFIER_STORAGE]{}; // Exception name (UTF-8, truncated)
+            uint32_t message_oid = 0;        // TOAST OID for message text
+            ID owner_id;                     // Owner user UUID
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            uint8_t is_valid = 1;
+            uint8_t padding[7]{};
+        };
+
+        // Exception information (Phase 3 - Stored Code Tables)
+        struct ExceptionInfo
+        {
+            ID exception_id;                 // UUID v7
+            ID schema_id;                    // Schema containing the exception
+            std::string name;                // Exception name
+            std::string message;             // Exception message text
+            ID owner_id;                     // Owner user UUID
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        // Unified object lookup entry (for dependency resolution)
+        struct ObjectLookup
+        {
+            ID object_id;
+            ObjectType type;
+            ID schema_id;
+            std::string name;
         };
 
         // Emulation type information (Phase 4 - Emulation Tables)
@@ -1636,6 +1673,30 @@ namespace scratchbird::core
 
         auto listPackages(const ID& schema_id, std::vector<PackageInfo>& packages_out,
                           ErrorContext* ctx = nullptr) -> Status;
+
+        // ========================================================================
+        // Exception Operations (Phase 3 - Stored Code Tables)
+        // ========================================================================
+
+        auto createException(const ID& schema_id, const std::string& name,
+                             const std::string& message, ID& exception_id_out,
+                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto getException(const ID& exception_id, ExceptionInfo& info_out,
+                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto getExceptionByName(const ID& schema_id, const std::string& name,
+                                ExceptionInfo& info_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto dropException(const ID& exception_id, bool cascade = false,
+                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto listExceptions(const ID& schema_id, std::vector<ExceptionInfo>& exceptions_out,
+                            ErrorContext* ctx = nullptr) -> Status;
+
+        // Unified object lookup (name → object_id/type/schema) for dependency resolution
+        auto lookupObject(const ID& schema_id, const std::string& name,
+                          ObjectLookup& out, ErrorContext* ctx = nullptr) -> Status;
 
         // ========================================================================
         // Emulation Type Operations (Phase A CRUD - Catalog Cleanup)
@@ -3030,6 +3091,7 @@ namespace scratchbird::core
         std::unordered_map<ID, DependencyInfo> dependency_cache_;
         std::unordered_multimap<ID, ID> object_to_dependencies_;  // object_id -> dependency_ids
         std::mutex dependency_cache_mutex_;
+        std::unordered_map<ID, ExceptionInfo, IDHash> exception_cache_;
 
         // Comment cache (Phase 5.2 - Comments table)
         std::unordered_map<ID, CommentInfo> comment_cache_;  // object_id -> CommentInfo
@@ -3227,6 +3289,7 @@ namespace scratchbird::core
         uint32_t collation_defs_table_page_ = 0; // Will be allocated during init (sb_collation)
         uint32_t tablespaces_table_page_ = TABLESPACES_TABLE_PAGE;           // sb_tablespace
         uint32_t tablespace_files_table_page_ = TABLESPACE_FILES_TABLE_PAGE; // sb_tablespace_files
+        uint32_t extensions_table_page_ = 0;     // Extensions (Phase 5 placeholder)
 
         // Phase 6.1: New system table pages (16 new tables - added group_memberships and group_mappings)
         uint32_t dependencies_table_page_ = 0;      // Dependencies tracking (Phase 1.4)
@@ -3241,6 +3304,7 @@ namespace scratchbird::core
         uint32_t procedure_params_table_page_ = 0;  // Procedure parameters (Phase 3)
         uint32_t domains_table_page_ = 0;           // User-defined domains (Phase 3)
         uint32_t udr_table_page_ = 0;               // UDR - external functions (Phase 3)
+        uint32_t exceptions_table_page_ = 0;        // Exceptions (Phase 3)
         uint32_t packages_table_page_ = 0;          // Firebird packages (Phase 3)
         uint32_t emulation_types_table_page_ = 0;   // Emulation types (Phase 4)
         uint32_t emulation_servers_table_page_ = 0; // Emulation servers (Phase 4)

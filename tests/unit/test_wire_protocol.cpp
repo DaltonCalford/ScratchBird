@@ -16,6 +16,7 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
+#include <filesystem>
 #include <unistd.h>
 
 #include "scratchbird/protocol/wire_protocol.h"
@@ -584,22 +585,29 @@ TEST_F(UtilityFunctionTest, SessionIdToString) {
 class ProtocolSessionTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // Use unique port for each test, based on PID to avoid conflicts during parallel execution
-        // Each process gets a unique port range: base + (pid % 1000) * 10 + counter % 10
-        static std::atomic<uint16_t> port_counter{0};
-        uint16_t base_port = 30000 + (static_cast<uint16_t>(getpid()) % 1000) * 10;
-        test_port_ = base_port + (port_counter++ % 10);
+        // Use unique Unix socket path under build/ to avoid network restrictions
+        static std::atomic<uint32_t> socket_counter{0};
+        uint32_t idx = socket_counter.fetch_add(1);
+        std::filesystem::path base = std::filesystem::path("build") / "ipc_tests";
+        std::filesystem::create_directories(base);
+        socket_path_ = (base / ("wireproto_" + std::to_string(getpid()) + "_" + std::to_string(idx) + ".sock")).string();
+        // Clean any stale socket file
+        std::error_code ec;
+        std::filesystem::remove(socket_path_, ec);
     }
 
-    void TearDown() override {}
+    void TearDown() override {
+        std::error_code ec;
+        std::filesystem::remove(socket_path_, ec);
+    }
 
-    uint16_t test_port_;
+    std::string socket_path_;
 };
 
 TEST_F(ProtocolSessionTest, SendReceiveMessage) {
-    // Set up TCP server and client
-    IPCServerConfig server_config("proto_test", IPCMethod::TCP_LOCALHOST);
-    server_config.tcp_port = test_port_;
+    // Set up Unix socket server and client
+    IPCServerConfig server_config("proto_test", IPCMethod::UNIX_SOCKET);
+    server_config.socket_path = socket_path_;
     server_config.accept_timeout_ms = 2000;
     ErrorContext ctx;
 
@@ -619,8 +627,8 @@ TEST_F(ProtocolSessionTest, SendReceiveMessage) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     // Connect client
-    IPCClientConfig client_config("proto_test", IPCMethod::TCP_LOCALHOST);
-    client_config.tcp_port = test_port_;
+    IPCClientConfig client_config("proto_test", IPCMethod::UNIX_SOCKET);
+    client_config.socket_path = socket_path_;
     auto client = IPCClient::create(client_config, &ctx);
     ASSERT_NE(client, nullptr);
 
@@ -679,9 +687,9 @@ TEST_F(ProtocolSessionTest, SendReceiveMessage) {
 }
 
 TEST_F(ProtocolSessionTest, FullHandshake) {
-    // Set up TCP server and client
-    IPCServerConfig server_config("handshake_test", IPCMethod::TCP_LOCALHOST);
-    server_config.tcp_port = test_port_;
+    // Set up Unix socket server and client
+    IPCServerConfig server_config("handshake_test", IPCMethod::UNIX_SOCKET);
+    server_config.socket_path = socket_path_;
     server_config.accept_timeout_ms = 2000;
     ErrorContext ctx;
 
@@ -696,8 +704,8 @@ TEST_F(ProtocolSessionTest, FullHandshake) {
 
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    IPCClientConfig client_config("handshake_test", IPCMethod::TCP_LOCALHOST);
-    client_config.tcp_port = test_port_;
+    IPCClientConfig client_config("handshake_test", IPCMethod::UNIX_SOCKET);
+    client_config.socket_path = socket_path_;
     auto client = IPCClient::create(client_config, &ctx);
     client->connect(&ctx);
 

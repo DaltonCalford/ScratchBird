@@ -116,6 +116,18 @@ bool ResultSet::isEmpty() const {
     return impl_->rows_.empty();
 }
 
+const std::vector<protocol::ProtocolCodec::ColumnValue>& ResultSet::getRowValues(size_t index) const {
+    static const std::vector<protocol::ProtocolCodec::ColumnValue> kEmptyRow;
+    if (index >= impl_->rows_.size()) {
+        return kEmptyRow;
+    }
+    return impl_->rows_[index];
+}
+
+const std::string& ResultSet::getCommandTag() const {
+    return impl_->command_tag_;
+}
+
 bool ResultSet::next() {
     if (impl_->current_row_ + 1 < static_cast<int64_t>(impl_->rows_.size())) {
         ++impl_->current_row_;

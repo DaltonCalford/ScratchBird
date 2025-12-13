@@ -44,6 +44,9 @@ const char* protocolStateToString(ProtocolState state) {
 
 ProtocolAdapter::ProtocolAdapter(const ProtocolAdapterConfig& config)
     : config_(config) {
+    if (!config.database_path.empty()) {
+        database_path_ = config.database_path;
+    }
 }
 
 ProtocolAdapter::~ProtocolAdapter() = default;
@@ -126,89 +129,30 @@ core::Status ProtocolAdapter::handleData(network::Connection* conn) {
 // ============================================================================
 
 core::Status ProtocolAdapter::executeQuery(const QueryContext& query, ResultContext& result) {
-    // TODO: Connect to ScratchBird engine and execute query
-    // For now, return a simple result to test the protocol layer
-
     queries_executed_++;
 
-    // Parse simple commands for testing
-    std::string upper_query = query.query;
-    for (char& c : upper_query) {
-        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    core::ErrorContext ctx;
+    auto status = ensureEngine(&ctx);
+    if (status != core::Status::OK) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(status);
+        result.sqlstate = "58000";
+        result.error_message = ctx.message;
+        return status;
     }
 
-    // Handle SELECT 1 type queries
-    if (upper_query.find("SELECT") == 0) {
-        // Simple SELECT result
-        result.command_tag = "SELECT 1";
-        result.rows_affected = 1;
-
-        // Add a simple column
-        ProtocolCodec::ColumnInfo col;
-        col.name = "result";
-        col.type = WireType::INT32;
-        col.type_modifier = 0;
-        result.columns.push_back(col);
-
+    std::vector<uint8_t> bytecode;
+    std::string compile_error;
+    status = compileQuery(query.query, bytecode, compile_error);
+    if (status != core::Status::OK) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(status);
+        result.sqlstate = "42000";
+        result.error_message = compile_error.empty() ? "Compilation error" : compile_error;
         return core::Status::OK;
     }
 
-    // Handle other commands
-    if (upper_query.find("INSERT") == 0) {
-        result.command_tag = "INSERT 0 1";
-        result.rows_affected = 1;
-        return core::Status::OK;
-    }
-
-    if (upper_query.find("UPDATE") == 0) {
-        result.command_tag = "UPDATE 1";
-        result.rows_affected = 1;
-        return core::Status::OK;
-    }
-
-    if (upper_query.find("DELETE") == 0) {
-        result.command_tag = "DELETE 1";
-        result.rows_affected = 1;
-        return core::Status::OK;
-    }
-
-    if (upper_query.find("CREATE") == 0 || upper_query.find("DROP") == 0 ||
-        upper_query.find("ALTER") == 0) {
-        // DDL command
-        if (upper_query.find("TABLE") != std::string::npos) {
-            result.command_tag = upper_query.substr(0, upper_query.find(' ')) + " TABLE";
-        } else {
-            result.command_tag = "OK";
-        }
-        result.rows_affected = 0;
-        return core::Status::OK;
-    }
-
-    if (upper_query.find("BEGIN") == 0 || upper_query.find("START TRANSACTION") == 0) {
-        in_transaction_ = true;
-        result.command_tag = "BEGIN";
-        return core::Status::OK;
-    }
-
-    if (upper_query.find("COMMIT") == 0) {
-        in_transaction_ = false;
-        result.command_tag = "COMMIT";
-        return core::Status::OK;
-    }
-
-    if (upper_query.find("ROLLBACK") == 0) {
-        in_transaction_ = false;
-        result.command_tag = "ROLLBACK";
-        return core::Status::OK;
-    }
-
-    // Unknown command - return error
-    result.has_error = true;
-    result.error_code = static_cast<uint32_t>(core::Status::INVALID_ARGUMENT);
-    result.sqlstate = "42601";  // Syntax error
-    result.error_message = "Unrecognized command";
-
-    return core::Status::OK;
+    return executeBytecode(query.query, bytecode, result, &ctx);
 }
 
 core::Status ProtocolAdapter::prepareStatement(const std::string& name,
@@ -309,6 +253,168 @@ core::Status ProtocolAdapter::sendBuffer(network::Connection* conn) {
         // Mark connection as wanting write notification
         return core::Status::OK;
     }
+    return core::Status::OK;
+}
+
+// ============================================================================
+// Engine Helpers
+// ============================================================================
+
+protocol::WireType ProtocolAdapter::mapDataType(core::DataType type) const {
+    using core::DataType;
+    switch (type) {
+        case DataType::BOOLEAN: return protocol::WireType::BOOLEAN;
+        case DataType::INT16:   return protocol::WireType::INT16;
+        case DataType::INT32:   return protocol::WireType::INT32;
+        case DataType::INT64:   return protocol::WireType::INT64;
+        case DataType::FLOAT32: return protocol::WireType::FLOAT32;
+        case DataType::FLOAT64: return protocol::WireType::FLOAT64;
+        case DataType::DECIMAL: return protocol::WireType::DECIMAL;
+        case DataType::CHAR:    return protocol::WireType::CHAR;
+        case DataType::VARCHAR:
+        case DataType::TEXT:    return protocol::WireType::VARCHAR;
+        case DataType::BYTEA:   return protocol::WireType::BYTEA;
+        case DataType::DATE:    return protocol::WireType::DATE;
+        case DataType::TIME:    return protocol::WireType::TIME;
+        case DataType::TIMESTAMP: return protocol::WireType::TIMESTAMP;
+        case DataType::INTERVAL: return protocol::WireType::INTERVAL;
+        case DataType::UUID:    return protocol::WireType::UUID;
+        case DataType::JSON:    return protocol::WireType::JSON;
+        case DataType::JSONB:   return protocol::WireType::JSONB;
+        case DataType::ARRAY:   return protocol::WireType::ARRAY;
+        case DataType::COMPOSITE: return protocol::WireType::COMPOSITE;
+        case DataType::VECTOR:   return protocol::WireType::VECTOR;
+        default: return protocol::WireType::UNKNOWN;
+    }
+}
+
+protocol::ProtocolCodec::ColumnValue ProtocolAdapter::toColumnValue(const sblr::Value& val) const {
+    if (val.isNull()) {
+        return protocol::ProtocolCodec::ColumnValue(nullptr);
+    }
+
+    using core::DataType;
+    switch (val.type()) {
+        case DataType::INT16:
+        case DataType::INT32:
+            return protocol::ProtocolCodec::ColumnValue::fromInt32(val.getInt32());
+        case DataType::INT64:
+            return protocol::ProtocolCodec::ColumnValue::fromInt64(val.getInt64());
+        case DataType::FLOAT32:
+        case DataType::FLOAT64:
+            return protocol::ProtocolCodec::ColumnValue::fromDouble(val.getFloat64());
+        case DataType::BOOLEAN:
+            return protocol::ProtocolCodec::ColumnValue::fromBool(val.getBool());
+        default:
+            return protocol::ProtocolCodec::ColumnValue::fromString(val.toString());
+    }
+}
+
+core::Status ProtocolAdapter::ensureEngine(core::ErrorContext* ctx) {
+    if (database_ && connection_ctx_ && executor_) {
+        return core::Status::OK;
+    }
+
+    // Default database path under build/database
+    if (database_path_.empty()) {
+        database_path_ = std::filesystem::path("build") / "database" / "protocol_default.sbdb";
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(database_path_.parent_path(), ec);
+    if (ec) {
+        SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR, "Failed to create database directory");
+        return core::Status::IO_ERROR;
+    }
+
+    if (!std::filesystem::exists(database_path_)) {
+        auto status = core::Database::create(database_path_.string(), 16384, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+    }
+
+    database_ = std::make_unique<core::Database>();
+    auto status = database_->open(database_path_.string(), ctx);
+    if (status != core::Status::OK) {
+        database_.reset();
+        return status;
+    }
+
+    status = database_->connect(connection_ctx_, ctx);
+    if (status != core::Status::OK) {
+        database_.reset();
+        connection_ctx_.reset();
+        return status;
+    }
+
+    executor_ = std::make_unique<sblr::Executor>(database_.get());
+    executor_->setConnectionContext(connection_ctx_.get());
+    compiler_v2_ = std::make_unique<sblr::QueryCompilerV2>(database_.get());
+
+    return core::Status::OK;
+}
+
+core::Status ProtocolAdapter::compileQuery(const std::string& sql,
+                                           std::vector<uint8_t>& bytecode_out,
+                                           std::string& error_out) {
+    auto result = compiler_v2_->compile(sql);
+    if (!result.success()) {
+        error_out = result.errors().empty() ? "Compilation failed" : result.errors().front();
+        return core::Status::INVALID_ARGUMENT;
+    }
+    bytecode_out = result.bytecode();
+    return core::Status::OK;
+}
+
+core::Status ProtocolAdapter::executeBytecode(const std::string& sql,
+                                              const std::vector<uint8_t>& bytecode,
+                                              ResultContext& result,
+                                              core::ErrorContext* ctx) {
+    auto exec_result = executor_->execute(bytecode);
+    if (!exec_result.success()) {
+        result.has_error = true;
+        result.error_message = exec_result.error();
+        result.sqlstate = "42000";
+        return core::Status::OK;
+    }
+
+    if (exec_result.hasResultSet()) {
+        auto* rs = exec_result.resultSet();
+        result.columns.clear();
+        for (size_t i = 0; i < rs->columnCount(); ++i) {
+            ProtocolCodec::ColumnInfo col;
+            col.name = rs->columnName(i);
+            col.type = mapDataType(rs->columnType(i));
+            col.type_modifier = 0;
+            result.columns.push_back(col);
+        }
+
+        result.rows.clear();
+        for (size_t r = 0; r < rs->rowCount(); ++r) {
+            std::vector<ProtocolCodec::ColumnValue> row;
+            for (size_t c = 0; c < rs->columnCount(); ++c) {
+                row.push_back(toColumnValue(rs->getValue(r, c)));
+            }
+            result.rows.push_back(std::move(row));
+        }
+        result.rows_affected = static_cast<int64_t>(rs->rowCount());
+        result.command_tag = "SELECT " + std::to_string(result.rows_affected);
+    } else {
+        result.rows_affected = exec_result.affectedCount();
+
+        // Rough command tag inference
+        std::string sql_upper = sql;
+        for (auto& c : sql_upper) c = static_cast<char>(std::toupper(c));
+        if (sql_upper.find("INSERT") == 0) result.command_tag = "INSERT";
+        else if (sql_upper.find("UPDATE") == 0) result.command_tag = "UPDATE";
+        else if (sql_upper.find("DELETE") == 0) result.command_tag = "DELETE";
+        else if (sql_upper.find("CREATE") == 0) result.command_tag = "CREATE";
+        else if (sql_upper.find("DROP") == 0) result.command_tag = "DROP";
+        else if (sql_upper.find("ALTER") == 0) result.command_tag = "ALTER";
+        else result.command_tag = "OK";
+    }
+
     return core::Status::OK;
 }
 

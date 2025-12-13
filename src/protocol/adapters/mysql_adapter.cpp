@@ -8,10 +8,16 @@
 
 #include "scratchbird/protocol/adapters/mysql_adapter.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/sblr/mysql_query_compiler.h"
+#include "scratchbird/server/ipc_server.h"
+#include "scratchbird/client/connection.h"
 
 #include <cstring>
 #include <random>
 #include <algorithm>
+#include <cctype>
+#include <sstream>
+#include <functional>
 
 // For SHA1 (native password auth)
 #ifdef HAVE_OPENSSL
@@ -43,6 +49,96 @@ MySqlAdapter::MySqlAdapter(const ProtocolAdapterConfig& config)
 }
 
 MySqlAdapter::~MySqlAdapter() = default;
+
+core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
+    if (client_) {
+        return core::Status::OK;
+    }
+
+    client_config_.database_name = database_name_.empty() ? "default" : database_name_;
+    client_config_.ipc_method = server::IPCMethod::UNIX_SOCKET;
+    client_config_.socket_path = server::getIPCPath(client_config_.database_name, client_config_.ipc_method);
+    client_config_.connect_timeout_ms = config_.read_timeout_ms;
+    client_config_.read_timeout_ms = config_.read_timeout_ms;
+    client_config_.write_timeout_ms = config_.write_timeout_ms;
+    client_config_.auto_commit = true;
+    client_config_.auto_start_server = false;
+    client_config_.username = username_.empty() ? "BOOTSTRAP" : username_;
+
+    client_ = std::make_unique<client::Connection>();
+    auto status = client_->connect(client_config_, ctx);
+    if (status != core::Status::OK) {
+        client_.reset();
+        return status;
+    }
+
+    // Switch to emulated MySQL schema for this database if possible
+    if (!default_db_set_) {
+        std::string schema_name = "remote.emulated.mysql." +
+            (database_name_.empty() ? std::string("default") : database_name_);
+        std::string use_stmt = "SET search_path TO \"" + schema_name + "\"";
+        client::ResultSet rs;
+        auto set_status = client_->executeQuery(use_stmt, &rs, ctx);
+        if (set_status == core::Status::OK) {
+            default_db_set_ = true;
+            bootstrapInformationSchema(ctx);
+        }
+    }
+
+    return core::Status::OK;
+}
+
+core::Status MySqlAdapter::executeRemoteQuery(const QueryContext& query,
+                                              ResultContext& result,
+                                              core::ErrorContext* ctx) {
+    auto status = ensureRemoteClient(ctx);
+    if (status != core::Status::OK) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(status);
+        result.error_message = ctx ? ctx->message : "Failed to connect to engine";
+        return status;
+    }
+
+    client::ResultSet rs;
+    status = client_->executeQuery(query.query, &rs, ctx);
+    if (status != core::Status::OK) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(status);
+        std::string err = client_->getLastError();
+        if (err.empty() && ctx) {
+            err = ctx->message;
+        }
+        result.error_message = err.empty() ? "Query execution failed" : err;
+        return status;
+    }
+
+    result.columns.clear();
+    for (const auto& col : rs.getColumns()) {
+        ProtocolCodec::ColumnInfo info;
+        info.name = col.name;
+        info.type = col.type;
+        info.type_modifier = col.type_modifier;
+        result.columns.push_back(info);
+    }
+
+    result.rows.clear();
+    const auto row_count = static_cast<size_t>(rs.getRowCount());
+    for (size_t i = 0; i < row_count; ++i) {
+        result.rows.push_back(rs.getRowValues(i));
+    }
+
+    result.rows_affected = rs.getRowsAffected();
+    result.command_tag = rs.getCommandTag();
+    if (result.command_tag.empty()) {
+        if (row_count > 0) {
+            result.command_tag = "SELECT " + std::to_string(row_count);
+        } else if (result.rows_affected > 0) {
+            result.command_tag = "OK";
+        }
+    }
+
+    return core::Status::OK;
+}
 
 // ============================================================================
 // ProtocolAdapter Implementation
@@ -143,8 +239,10 @@ core::Status MySqlAdapter::sendQueryResult(network::Connection* conn,
             sendEofPacket(conn);
         }
 
-        // Rows would be sent via row_callback
-        // For now, just send EOF/OK
+        // Rows
+        for (const auto& row : result.rows) {
+            sendResultRow(conn, row);
+        }
 
         // Final EOF/OK
         if (client_capabilities_ & mysql::Capability::DEPRECATE_EOF) {
@@ -157,15 +255,250 @@ core::Status MySqlAdapter::sendQueryResult(network::Connection* conn,
     return core::Status::OK;
 }
 
+core::Status MySqlAdapter::compileQuery(const std::string& sql,
+                                        std::vector<uint8_t>& bytecode_out,
+                                        std::string& error_out) {
+    core::ErrorContext ctx;
+    auto status = ensureEngine(&ctx);
+    if (status != core::Status::OK) {
+        error_out = ctx.message;
+        return status;
+    }
+
+    sblr::MySQLQueryCompiler compiler(database_.get());
+    compiler.setDefaultSchema("/remote/emulated/mysql/localhost/");
+    auto result = compiler.compile(sql);
+    if (!result.success()) {
+        error_out = result.errors().empty() ? "Compilation failed" : result.errors().front();
+        return core::Status::INVALID_ARGUMENT;
+    }
+    bytecode_out = result.bytecode();
+    return core::Status::OK;
+}
+
 core::Status MySqlAdapter::sendProtocolError(network::Connection* conn,
                                               uint32_t error_code,
                                               const std::string& sqlstate,
                                               const std::string& message,
                                               const std::string& /*detail*/,
                                               const std::string& /*hint*/) {
-    sendErrorPacket(conn, static_cast<uint16_t>(error_code),
-                   sqlstate.empty() ? "HY000" : sqlstate, message);
+    uint16_t mapped_code = static_cast<uint16_t>(error_code);
+    std::string mapped_state = sqlstate;
+    mapStatusToMySqlError(error_code, mapped_code, mapped_state);
+    if (mapped_state.empty()) {
+        mapped_state = "HY000";
+    }
+    sendErrorPacket(conn, mapped_code, mapped_state, message);
     return core::Status::OK;
+}
+
+void MySqlAdapter::updateTransactionStatus(const std::string& sql, bool has_error) {
+    auto ltrim_upper = [](const std::string& input) {
+        size_t pos = 0;
+        while (pos < input.size() && std::isspace(static_cast<unsigned char>(input[pos]))) {
+            ++pos;
+        }
+        std::string upper;
+        upper.reserve(input.size() - pos);
+        for (; pos < input.size(); ++pos) {
+            upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(input[pos]))));
+        }
+        return upper;
+    };
+
+    std::string normalized = ltrim_upper(sql);
+    auto starts_with = [&](const std::string& prefix) {
+        return normalized.rfind(prefix, 0) == 0;
+    };
+
+    if (starts_with("SET AUTOCOMMIT")) {
+        if (normalized.find("=0") != std::string::npos) {
+            server_status_ &= ~mysql::ServerStatus::AUTOCOMMIT;
+            server_status_ |= mysql::ServerStatus::IN_TRANS;
+            in_transaction_ = true;
+        } else if (normalized.find("=1") != std::string::npos) {
+            server_status_ |= mysql::ServerStatus::AUTOCOMMIT;
+            server_status_ &= ~mysql::ServerStatus::IN_TRANS;
+            in_transaction_ = false;
+        }
+        return;
+    }
+
+    if (starts_with("BEGIN") || starts_with("START TRANSACTION")) {
+        server_status_ |= mysql::ServerStatus::IN_TRANS;
+        in_transaction_ = true;
+        return;
+    }
+
+    if (starts_with("COMMIT") || starts_with("ROLLBACK")) {
+        server_status_ &= ~mysql::ServerStatus::IN_TRANS;
+        in_transaction_ = false;
+        return;
+    }
+
+    if (has_error) {
+        server_status_ |= mysql::ServerStatus::IN_TRANS;
+        in_transaction_ = true;
+        return;
+    }
+
+    if (server_status_ & mysql::ServerStatus::AUTOCOMMIT) {
+        server_status_ &= ~mysql::ServerStatus::IN_TRANS;
+        in_transaction_ = false;
+    } else {
+        server_status_ |= mysql::ServerStatus::IN_TRANS;
+        in_transaction_ = true;
+    }
+}
+
+uint16_t MySqlAdapter::countParameters(const std::string& query) const {
+    bool in_single = false;
+    bool in_double = false;
+    bool escape = false;
+    uint16_t count = 0;
+
+    for (char c : query) {
+        if (escape) {
+            escape = false;
+            continue;
+        }
+        if (c == '\\') {
+            escape = true;
+            continue;
+        }
+        if (c == '\'' && !in_double) {
+            in_single = !in_single;
+            continue;
+        }
+        if (c == '"' && !in_single) {
+            in_double = !in_double;
+            continue;
+        }
+        if (c == '?' && !in_single && !in_double) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+std::string MySqlAdapter::escapeLiteral(const std::string& value) const {
+    std::string escaped;
+    escaped.reserve(value.size() + 4);
+    for (char c : value) {
+        if (c == '\'' || c == '\\') {
+            escaped.push_back('\\');
+        }
+        escaped.push_back(c);
+    }
+    return escaped;
+}
+
+bool MySqlAdapter::decodePsParameter(uint8_t type, bool is_unsigned,
+                                     const uint8_t* data, size_t& offset,
+                                     size_t max_len, std::string& out_literal) {
+    if (offset >= max_len) {
+        return false;
+    }
+
+    switch (type) {
+        case mysql::FieldType::TINY: {
+            if (offset + 1 > max_len) return false;
+            uint8_t raw = data[offset++];
+            if (is_unsigned) {
+                out_literal = std::to_string(raw);
+            } else {
+                out_literal = std::to_string(static_cast<int8_t>(raw));
+            }
+            return true;
+        }
+        case mysql::FieldType::SHORT: {
+            if (offset + 2 > max_len) return false;
+            uint16_t raw = readInt2(data + offset);
+            offset += 2;
+            if (is_unsigned) {
+                out_literal = std::to_string(raw);
+            } else {
+                out_literal = std::to_string(static_cast<int16_t>(raw));
+            }
+            return true;
+        }
+        case mysql::FieldType::LONG: {
+            if (offset + 4 > max_len) return false;
+            uint32_t raw = readInt4(data + offset);
+            offset += 4;
+            if (is_unsigned) {
+                out_literal = std::to_string(raw);
+            } else {
+                out_literal = std::to_string(static_cast<int32_t>(raw));
+            }
+            return true;
+        }
+        case mysql::FieldType::LONGLONG: {
+            if (offset + 8 > max_len) return false;
+            uint64_t raw = readInt8(data + offset);
+            offset += 8;
+            if (is_unsigned) {
+                out_literal = std::to_string(raw);
+            } else {
+                out_literal = std::to_string(static_cast<int64_t>(raw));
+            }
+            return true;
+        }
+        case mysql::FieldType::FLOAT: {
+            if (offset + sizeof(float) > max_len) return false;
+            float val = 0.0f;
+            std::memcpy(&val, data + offset, sizeof(float));
+            offset += sizeof(float);
+            out_literal = std::to_string(val);
+            return true;
+        }
+        case mysql::FieldType::DOUBLE: {
+            if (offset + sizeof(double) > max_len) return false;
+            double val = 0.0;
+            std::memcpy(&val, data + offset, sizeof(double));
+            offset += sizeof(double);
+            out_literal = std::to_string(val);
+            return true;
+        }
+        case mysql::FieldType::DECIMAL:
+        case mysql::FieldType::NEWDECIMAL:
+        case mysql::FieldType::VARCHAR:
+        case mysql::FieldType::VAR_STRING:
+        case mysql::FieldType::STRING:
+        case mysql::FieldType::BLOB:
+        case mysql::FieldType::TINY_BLOB:
+        case mysql::FieldType::MEDIUM_BLOB:
+        case mysql::FieldType::LONG_BLOB:
+        case mysql::FieldType::JSON: {
+            std::string val = readLenEncString(data, offset, max_len);
+            out_literal = "'" + escapeLiteral(val) + "'";
+            return true;
+        }
+        case mysql::FieldType::DATE:
+        case mysql::FieldType::TIME:
+        case mysql::FieldType::TIME2:
+        case mysql::FieldType::TIMESTAMP:
+        case mysql::FieldType::TIMESTAMP2:
+        case mysql::FieldType::DATETIME:
+        case mysql::FieldType::DATETIME2: {
+            uint64_t len = readLenEncInt(data, offset, max_len);
+            if (offset + len > max_len) return false;
+            std::string temporal(reinterpret_cast<const char*>(data + offset),
+                                 static_cast<size_t>(len));
+            offset += static_cast<size_t>(len);
+            if (temporal.empty()) {
+                out_literal = "NULL";
+            } else {
+                out_literal = "'" + escapeLiteral(temporal) + "'";
+            }
+            return true;
+        }
+        default: {
+            std::string fallback = readLenEncString(data, offset, max_len);
+            out_literal = "'" + escapeLiteral(fallback) + "'";
+            return true;
+        }
+    }
 }
 
 // ============================================================================
@@ -355,7 +688,9 @@ core::Status MySqlAdapter::handleComQuery(network::Connection* conn) {
     ctx.query = query;
 
     ResultContext result;
-    executeQuery(ctx, result);
+    executeRemoteQuery(ctx, result);
+
+    updateTransactionStatus(query, result.has_error);
 
     sendQueryResult(conn, result);
     return sendBuffer(conn);
@@ -370,6 +705,11 @@ core::Status MySqlAdapter::handleComInitDb(network::Connection* conn) {
 
     database_name_.assign(reinterpret_cast<const char*>(current_packet_.data() + 1),
                           current_packet_.size() - 1);
+    default_db_set_ = false;
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
 
     // TODO: Validate database exists
     sendOkPacket(conn);
@@ -401,12 +741,69 @@ core::Status MySqlAdapter::handleComStmtPrepare(network::Connection* conn) {
     MySqlPreparedStatement stmt;
     stmt.id = next_stmt_id_++;
     stmt.query = query;
-    stmt.num_params = 0;  // TODO: Parse query for parameters
+    stmt.num_params = countParameters(query);
     stmt.num_columns = 0;
+    stmt.param_types.assign(stmt.num_params, mysql::FieldType::VAR_STRING);
+    stmt.param_unsigned.assign(stmt.num_params, 0);
+
+    // Try to collect result-set metadata for SELECT/SHOW statements
+    auto ltrim_upper = [](const std::string& input) {
+        size_t pos = 0;
+        while (pos < input.size() && std::isspace(static_cast<unsigned char>(input[pos]))) {
+            ++pos;
+        }
+        std::string upper;
+        upper.reserve(input.size() - pos);
+        for (; pos < input.size(); ++pos) {
+            upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(input[pos]))));
+        }
+        return upper;
+    };
+    std::string normalized = ltrim_upper(query);
+    auto starts_with = [&](const std::string& prefix) {
+        return normalized.rfind(prefix, 0) == 0;
+    };
+    if (starts_with("SELECT") || starts_with("WITH")) {
+        core::ErrorContext ctx;
+        if (ensureRemoteClient(&ctx) == core::Status::OK) {
+            client::ResultSet rs;
+            std::string describe_sql = query + " LIMIT 0";
+            if (client_->executeQuery(describe_sql, &rs, &ctx) == core::Status::OK) {
+                const auto& cols = rs.getColumns();
+                for (size_t i = 0; i < cols.size(); ++i) {
+                    ProtocolCodec::ColumnInfo ci;
+                    ci.name = cols[i].name;
+                    ci.type = cols[i].type;
+                    ci.type_modifier = cols[i].type_modifier;
+                    stmt.columns.push_back(ci);
+                }
+                stmt.num_columns = static_cast<uint16_t>(stmt.columns.size());
+            }
+        }
+    }
 
     prepared_statements_[stmt.id] = stmt;
 
     sendPrepareOk(conn, stmt.id, stmt.num_columns, stmt.num_params);
+    if (stmt.num_params > 0) {
+        for (uint16_t i = 0; i < stmt.num_params; ++i) {
+            ProtocolCodec::ColumnInfo param_col;
+            param_col.name = "param" + std::to_string(i + 1);
+            param_col.type = WireType::VARCHAR;
+            sendColumnDefinition(conn, param_col, "", "", "", param_col.name);
+        }
+        if (!(client_capabilities_ & mysql::Capability::DEPRECATE_EOF)) {
+            sendEofPacket(conn);
+        }
+    }
+    if (stmt.num_columns > 0) {
+        for (const auto& col : stmt.columns) {
+            sendColumnDefinition(conn, col, database_name_);
+        }
+        if (!(client_capabilities_ & mysql::Capability::DEPRECATE_EOF)) {
+            sendEofPacket(conn);
+        }
+    }
     return sendBuffer(conn);
 }
 
@@ -428,10 +825,120 @@ core::Status MySqlAdapter::handleComStmtExecute(network::Connection* conn) {
 
     // Execute the prepared statement
     QueryContext ctx;
-    ctx.query = it->second.query;
+    auto& stmt = it->second;
+
+    size_t offset = 5;  // command byte + statement id already consumed
+    if (offset >= current_packet_.size()) {
+        sendErrorPacket(conn, mysql::ErrorCode::UNKNOWN_ERROR, "HY000",
+                       "Malformed execute packet");
+        return sendBuffer(conn);
+    }
+
+    uint8_t flags = readInt1(current_packet_.data() + offset);
+    (void)flags;
+    offset += 1;  // flags
+
+    // Iteration count (always 1 for our purposes)
+    if (offset + 4 > current_packet_.size()) {
+        sendErrorPacket(conn, mysql::ErrorCode::UNKNOWN_ERROR, "HY000",
+                        "Truncated iteration count");
+        return sendBuffer(conn);
+    }
+    offset += 4;
+
+    size_t null_bitmap_len = (stmt.num_params + 7) / 8;
+    std::vector<bool> is_null(stmt.num_params, false);
+    if (offset + null_bitmap_len > current_packet_.size()) {
+        sendErrorPacket(conn, mysql::ErrorCode::UNKNOWN_ERROR, "HY000",
+                       "Invalid NULL-bitmap in execute");
+        return sendBuffer(conn);
+    }
+    for (uint16_t i = 0; i < stmt.num_params; ++i) {
+        size_t byte_idx = i / 8;
+        size_t bit_idx = i % 8;
+        if (current_packet_[offset + byte_idx] & (1U << bit_idx)) {
+            is_null[i] = true;
+        }
+    }
+    offset += null_bitmap_len;
+
+    if (offset >= current_packet_.size()) {
+        sendErrorPacket(conn, mysql::ErrorCode::UNKNOWN_ERROR, "HY000",
+                        "Missing parameter metadata");
+        return sendBuffer(conn);
+    }
+
+    uint8_t new_params_bound_flag = readInt1(current_packet_.data() + offset);
+    offset += 1;
+
+    if (new_params_bound_flag) {
+        if (offset + stmt.num_params * 2 > current_packet_.size()) {
+            sendErrorPacket(conn, mysql::ErrorCode::UNKNOWN_ERROR, "HY000",
+                            "Parameter types truncated");
+            return sendBuffer(conn);
+        }
+        stmt.param_types.resize(stmt.num_params);
+        stmt.param_unsigned.resize(stmt.num_params);
+        for (uint16_t i = 0; i < stmt.num_params; ++i) {
+            stmt.param_types[i] = readInt1(current_packet_.data() + offset);
+            uint8_t attr = readInt1(current_packet_.data() + offset + 1);
+            stmt.param_unsigned[i] = attr;
+            offset += 2;
+        }
+    } else {
+        // Ensure we have metadata
+        if (stmt.param_types.size() < stmt.num_params) {
+            stmt.param_types.assign(stmt.num_params, mysql::FieldType::VAR_STRING);
+            stmt.param_unsigned.assign(stmt.num_params, 0);
+        }
+    }
+
+    std::vector<std::string> param_literals;
+    param_literals.reserve(stmt.num_params);
+    for (uint16_t i = 0; i < stmt.num_params; ++i) {
+        if (is_null[i]) {
+            param_literals.emplace_back("NULL");
+            continue;
+        }
+        const uint8_t* buf = current_packet_.data();
+        std::string literal;
+        if (!decodePsParameter(stmt.param_types[i],
+                               (stmt.param_unsigned.size() > i) && (stmt.param_unsigned[i] & 0x80),
+                               buf, offset, current_packet_.size(), literal)) {
+            sendErrorPacket(conn, mysql::ErrorCode::UNKNOWN_ERROR, "HY000",
+                            "Failed to decode parameter " + std::to_string(i));
+            return sendBuffer(conn);
+        }
+        param_literals.push_back(literal);
+    }
+
+    // Reconstruct the SQL by substituting '?' in order
+    std::string rewritten;
+    rewritten.reserve(stmt.query.size() + param_literals.size() * 8);
+    size_t param_idx = 0;
+    for (char c : stmt.query) {
+        if (c == '?' && param_idx < param_literals.size()) {
+            rewritten.append(param_literals[param_idx++]);
+        } else {
+            rewritten.push_back(c);
+        }
+    }
+    if (param_idx != param_literals.size()) {
+        sendErrorPacket(conn, mysql::ErrorCode::UNKNOWN_ERROR, "HY000",
+                        "Parameter count mismatch");
+        return sendBuffer(conn);
+    }
+    ctx.query = rewritten;
 
     ResultContext result;
-    executeQuery(ctx, result);
+    executeRemoteQuery(ctx, result);
+
+    if (!result.columns.empty()) {
+        stmt.columns = result.columns;
+        stmt.num_columns = static_cast<uint16_t>(result.columns.size());
+    }
+
+    updateTransactionStatus(rewritten, result.has_error);
 
     sendQueryResult(conn, result);
     return sendBuffer(conn);
@@ -617,16 +1124,55 @@ void MySqlAdapter::sendColumnDefinition(network::Connection* conn,
     writeLenEncInt(payload, 0x0c);
 
     // Character set
-    writeInt2(payload, mysql::Charset::UTF8MB4_GENERAL_CI);
+    writeInt2(payload, mysqlCharsetForType(col.type));
 
     // Column length
-    writeInt4(payload, 255);  // TODO: Use actual column length
+    uint32_t column_length = 255;
+    if (col.type_modifier > 0) {
+        column_length = static_cast<uint32_t>(col.type_modifier);
+    } else {
+        switch (col.type) {
+            case WireType::INT16: column_length = 6; break;
+            case WireType::INT32: column_length = 11; break;
+            case WireType::INT64: column_length = 20; break;
+            case WireType::FLOAT32: column_length = 12; break;
+            case WireType::FLOAT64: column_length = 22; break;
+            case WireType::BYTEA: column_length = 65535; break;
+            default: break;
+        }
+    }
+    writeInt4(payload, column_length);
 
     // Column type
-    writeInt1(payload, wireTypeToMySqlType(col.type));
+    uint8_t mysql_type = wireTypeToMySqlType(col.type);
+    writeInt1(payload, mysql_type);
 
     // Flags
-    writeInt2(payload, 0);
+    uint16_t flags = 0;
+    switch (mysql_type) {
+        case mysql::FieldType::TINY:
+        case mysql::FieldType::SHORT:
+        case mysql::FieldType::LONG:
+        case mysql::FieldType::LONGLONG:
+        case mysql::FieldType::FLOAT:
+        case mysql::FieldType::DOUBLE:
+        case mysql::FieldType::DECIMAL:
+        case mysql::FieldType::NEWDECIMAL:
+            flags |= mysql::FieldFlag::NUM;
+            break;
+        default:
+            break;
+    }
+    if (mysql_type == mysql::FieldType::BLOB ||
+        mysql_type == mysql::FieldType::TINY_BLOB ||
+        mysql_type == mysql::FieldType::MEDIUM_BLOB ||
+        mysql_type == mysql::FieldType::LONG_BLOB) {
+        flags |= mysql::FieldFlag::BLOB;
+    }
+    if (mysql_type == mysql::FieldType::TIMESTAMP) {
+        flags |= mysql::FieldFlag::TIMESTAMP;
+    }
+    writeInt2(payload, flags);
 
     // Decimals
     writeInt1(payload, 0);
@@ -878,6 +1424,84 @@ WireType MySqlAdapter::mysqlTypeToWireType(uint8_t type) {
     }
 }
 
+uint16_t MySqlAdapter::mysqlCharsetForType(WireType type) const {
+    switch (type) {
+        case WireType::BYTEA:
+            return mysql::Charset::BINARY;
+        default:
+            return mysql::Charset::UTF8MB4_GENERAL_CI;
+    }
+}
+
+void MySqlAdapter::mapStatusToMySqlError(uint32_t status,
+                                         uint16_t& error_code,
+                                         std::string& sqlstate) {
+    switch (static_cast<core::Status>(status)) {
+        case core::Status::SYNTAX_ERROR:
+        case core::Status::INVALID_ARGUMENT:
+            error_code = mysql::ErrorCode::SYNTAX_ERROR;
+            sqlstate = "42000";
+            break;
+        case core::Status::NOT_FOUND:
+            error_code = mysql::ErrorCode::NO_SUCH_TABLE;
+            sqlstate = "42S02";
+            break;
+        case core::Status::PERMISSION_DENIED:
+            error_code = mysql::ErrorCode::ACCESS_DENIED;
+            sqlstate = "28000";
+            break;
+        case core::Status::FILE_EXISTS:
+        case core::Status::DUPLICATE_TABLE:
+            error_code = mysql::ErrorCode::TABLE_EXISTS_ERROR;
+            sqlstate = "42S01";
+            break;
+        case core::Status::CONSTRAINT_VIOLATION:
+        case core::Status::UNIQUE_VIOLATION:
+            error_code = 1062;  // ER_DUP_ENTRY
+            sqlstate = "23000";
+            break;
+        case core::Status::FOREIGN_KEY_VIOLATION:
+            error_code = 1215;  // ER_CANNOT_ADD_FOREIGN
+            sqlstate = "23000";
+            break;
+        case core::Status::NOT_NULL_VIOLATION:
+        case core::Status::NULL_VALUE_NOT_ALLOWED:
+            error_code = 1048;  // ER_BAD_NULL_ERROR
+            sqlstate = "23000";
+            break;
+        case core::Status::LOCK_TIMEOUT:
+        case core::Status::LOCK_NOT_AVAILABLE:
+            error_code = 1205;  // ER_LOCK_WAIT_TIMEOUT
+            sqlstate = "HY000";
+            break;
+        case core::Status::DEADLOCK:
+            error_code = 1213;  // ER_LOCK_DEADLOCK
+            sqlstate = "40001";
+            break;
+        case core::Status::TOO_MANY_CONNECTIONS:
+            error_code = 1040;  // ER_CON_COUNT_ERROR
+            sqlstate = "08004";
+            break;
+        case core::Status::NOT_IMPLEMENTED:
+            error_code = 1235;  // ER_NOT_SUPPORTED_YET
+            sqlstate = "0A000";
+            break;
+        case core::Status::IO_ERROR:
+            error_code = 2013;  // Lost connection or generic IO
+            sqlstate = "HY000";
+            break;
+        case core::Status::INTERNAL_ERROR:
+        default:
+            if (error_code == 0) {
+                error_code = mysql::ErrorCode::UNKNOWN_ERROR;
+            }
+            if (sqlstate.empty()) {
+                sqlstate = "HY000";
+            }
+            break;
+    }
+}
+
 // ============================================================================
 // Authentication
 // ============================================================================
@@ -922,6 +1546,318 @@ std::vector<uint8_t> MySqlAdapter::computeNativePasswordAuth(const std::string& 
 #endif
 
     return result;
+}
+
+void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
+    if (information_schema_bootstrapped_ || !client_) {
+        return;
+    }
+
+    std::string db_name = database_name_.empty() ? "default" : database_name_;
+    std::string base_schema = "remote.emulated.mysql." + db_name;
+    std::string info_schema = base_schema + ".information_schema";
+
+    auto safeExec = [&](const std::string& sql) {
+        client::ResultSet rs;
+        client_->executeQuery(sql, &rs, ctx);
+    };
+
+    safeExec("CREATE SCHEMA IF NOT EXISTS \"" + info_schema + "\"");
+    safeExec("CREATE TABLE IF NOT EXISTS \"" + info_schema + "\".\"schemata\" ("
+             "catalog_name TEXT, schema_name TEXT, default_character_set_name TEXT, default_collation_name TEXT)");
+    safeExec("CREATE TABLE IF NOT EXISTS \"" + info_schema + "\".\"tables\" ("
+             "table_schema TEXT, table_name TEXT, table_type TEXT)");
+    safeExec("CREATE TABLE IF NOT EXISTS \"" + info_schema + "\".\"columns\" ("
+             "table_schema TEXT, table_name TEXT, column_name TEXT, ordinal_position INT,"
+             "data_type TEXT, is_nullable TEXT, character_maximum_length INT, numeric_precision INT, numeric_scale INT)");
+    safeExec("CREATE TABLE IF NOT EXISTS \"" + info_schema + "\".\"table_constraints\" ("
+             "constraint_schema TEXT, constraint_name TEXT, table_schema TEXT, table_name TEXT, constraint_type TEXT)");
+    safeExec("CREATE TABLE IF NOT EXISTS \"" + info_schema + "\".\"key_column_usage\" ("
+             "constraint_schema TEXT, constraint_name TEXT, table_schema TEXT, table_name TEXT,"
+             "column_name TEXT, ordinal_position INT)");
+    safeExec("CREATE TABLE IF NOT EXISTS \"" + info_schema + "\".\"referential_constraints\" ("
+             "constraint_schema TEXT, constraint_name TEXT, unique_constraint_schema TEXT, unique_constraint_name TEXT,"
+             "match_option TEXT, update_rule TEXT, delete_rule TEXT, table_name TEXT, referenced_table_name TEXT)");
+    safeExec("CREATE TABLE IF NOT EXISTS \"" + info_schema + "\".\"statistics\" ("
+             "table_schema TEXT, table_name TEXT, non_unique INT, index_schema TEXT, index_name TEXT, "
+             "seq_in_index INT, column_name TEXT, collation TEXT, cardinality BIGINT, index_type TEXT)");
+    safeExec("CREATE TABLE IF NOT EXISTS \"" + info_schema + "\".\"routines\" ("
+             "routine_schema TEXT, routine_name TEXT, routine_type TEXT, data_type TEXT)");
+
+    std::string delete_existing = "DELETE FROM \"" + info_schema + "\".\"schemata\" "
+                                  "WHERE schema_name = '" + escapeLiteral(db_name) + "'";
+    safeExec(delete_existing);
+    std::string insert_schema = "INSERT INTO \"" + info_schema + "\".\"schemata\" "
+        "(catalog_name, schema_name, default_character_set_name, default_collation_name) VALUES "
+        "('def','" + escapeLiteral(db_name) + "','utf8mb4','utf8mb4_general_ci')";
+    safeExec(insert_schema);
+
+    // Describe the bootstrap tables themselves
+    safeExec("DELETE FROM \"" + info_schema + "\".\"tables\" WHERE table_schema IN ('information_schema')");
+    safeExec("DELETE FROM \"" + info_schema + "\".\"columns\" WHERE table_schema IN ('information_schema')");
+    safeExec("DELETE FROM \"" + info_schema + "\".\"table_constraints\" WHERE constraint_schema IN ('information_schema')");
+    safeExec("DELETE FROM \"" + info_schema + "\".\"key_column_usage\" WHERE constraint_schema IN ('information_schema')");
+    safeExec("DELETE FROM \"" + info_schema + "\".\"referential_constraints\" WHERE constraint_schema IN ('information_schema')");
+    safeExec("DELETE FROM \"" + info_schema + "\".\"statistics\" WHERE table_schema IN ('information_schema')");
+
+    auto insertTable = [&](const std::string& name) {
+        std::string sql = "INSERT INTO \"" + info_schema + "\".\"tables\" "
+                          "(table_schema, table_name, table_type) VALUES "
+                          "('information_schema','" + escapeLiteral(name) + "','BASE TABLE')";
+        safeExec(sql);
+    };
+
+    auto insertColumn = [&](const std::string& tbl, int pos, const std::string& col,
+                            const std::string& type, const std::string& nullable,
+                            int char_len = -1, int num_prec = -1, int num_scale = -1) {
+        std::string sql = "INSERT INTO \"" + info_schema + "\".\"columns\" "
+                          "(table_schema, table_name, column_name, ordinal_position, data_type, is_nullable, "
+                          "character_maximum_length, numeric_precision, numeric_scale) VALUES "
+                          "('information_schema','" + escapeLiteral(tbl) + "','" + escapeLiteral(col) + "'," +
+                          std::to_string(pos) + ",'" + escapeLiteral(type) + "','" + escapeLiteral(nullable) + "',";
+        sql += (char_len >= 0 ? std::to_string(char_len) : "NULL");
+        sql += ",";
+        sql += (num_prec >= 0 ? std::to_string(num_prec) : "NULL");
+        sql += ",";
+        sql += (num_scale >= 0 ? std::to_string(num_scale) : "NULL");
+        sql += ")";
+        safeExec(sql);
+    };
+
+    insertTable("schemata");
+    insertColumn("schemata", 1, "catalog_name", "varchar", "YES", 256);
+    insertColumn("schemata", 2, "schema_name", "varchar", "NO", 256);
+    insertColumn("schemata", 3, "default_character_set_name", "varchar", "YES", 64);
+    insertColumn("schemata", 4, "default_collation_name", "varchar", "YES", 64);
+
+    insertTable("tables");
+    insertColumn("tables", 1, "table_schema", "varchar", "YES", 256);
+    insertColumn("tables", 2, "table_name", "varchar", "YES", 256);
+    insertColumn("tables", 3, "table_type", "varchar", "YES", 64);
+
+    insertTable("columns");
+    insertColumn("columns", 1, "table_schema", "varchar", "YES", 256);
+    insertColumn("columns", 2, "table_name", "varchar", "YES", 256);
+    insertColumn("columns", 3, "column_name", "varchar", "YES", 256);
+    insertColumn("columns", 4, "ordinal_position", "int", "NO");
+    insertColumn("columns", 5, "data_type", "varchar", "YES", 64);
+    insertColumn("columns", 6, "is_nullable", "varchar", "YES", 3);
+    insertColumn("columns", 7, "character_maximum_length", "int", "YES");
+    insertColumn("columns", 8, "numeric_precision", "int", "YES");
+    insertColumn("columns", 9, "numeric_scale", "int", "YES");
+
+    insertTable("table_constraints");
+    insertColumn("table_constraints", 1, "constraint_schema", "varchar", "YES", 256);
+    insertColumn("table_constraints", 2, "constraint_name", "varchar", "YES", 256);
+    insertColumn("table_constraints", 3, "table_schema", "varchar", "YES", 256);
+    insertColumn("table_constraints", 4, "table_name", "varchar", "YES", 256);
+    insertColumn("table_constraints", 5, "constraint_type", "varchar", "YES", 64);
+
+    insertTable("key_column_usage");
+    insertColumn("key_column_usage", 1, "constraint_schema", "varchar", "YES", 256);
+    insertColumn("key_column_usage", 2, "constraint_name", "varchar", "YES", 256);
+    insertColumn("key_column_usage", 3, "table_schema", "varchar", "YES", 256);
+    insertColumn("key_column_usage", 4, "table_name", "varchar", "YES", 256);
+    insertColumn("key_column_usage", 5, "column_name", "varchar", "YES", 256);
+    insertColumn("key_column_usage", 6, "ordinal_position", "int", "YES");
+
+    insertTable("referential_constraints");
+    insertColumn("referential_constraints", 1, "constraint_schema", "varchar", "YES", 256);
+    insertColumn("referential_constraints", 2, "constraint_name", "varchar", "YES", 256);
+    insertColumn("referential_constraints", 3, "unique_constraint_schema", "varchar", "YES", 256);
+    insertColumn("referential_constraints", 4, "unique_constraint_name", "varchar", "YES", 256);
+    insertColumn("referential_constraints", 5, "match_option", "varchar", "YES", 64);
+    insertColumn("referential_constraints", 6, "update_rule", "varchar", "YES", 16);
+    insertColumn("referential_constraints", 7, "delete_rule", "varchar", "YES", 16);
+    insertColumn("referential_constraints", 8, "table_name", "varchar", "YES", 256);
+    insertColumn("referential_constraints", 9, "referenced_table_name", "varchar", "YES", 256);
+
+    insertTable("statistics");
+    insertColumn("statistics", 1, "table_schema", "varchar", "YES", 256);
+    insertColumn("statistics", 2, "table_name", "varchar", "YES", 256);
+    insertColumn("statistics", 3, "non_unique", "int", "YES");
+    insertColumn("statistics", 4, "index_schema", "varchar", "YES", 256);
+    insertColumn("statistics", 5, "index_name", "varchar", "YES", 256);
+    insertColumn("statistics", 6, "seq_in_index", "int", "YES");
+    insertColumn("statistics", 7, "column_name", "varchar", "YES", 256);
+    insertColumn("statistics", 8, "collation", "varchar", "YES", 1);
+    insertColumn("statistics", 9, "cardinality", "bigint", "YES");
+    insertColumn("statistics", 10, "index_type", "varchar", "YES", 16);
+
+    insertTable("routines");
+    insertColumn("routines", 1, "routine_schema", "varchar", "YES", 256);
+    insertColumn("routines", 2, "routine_name", "varchar", "YES", 256);
+    insertColumn("routines", 3, "routine_type", "varchar", "YES", 16);
+    insertColumn("routines", 4, "data_type", "varchar", "YES", 64);
+
+    // Copy real catalog projections into the emulated schema if available
+    auto toString = [](const protocol::ProtocolCodec::ColumnValue& cv) {
+        return std::string(cv.data.begin(), cv.data.end());
+    };
+    auto numberOrNull = [](const std::string& s) {
+        if (s.empty()) return std::string("NULL");
+        return s;
+    };
+
+    auto copyQuery = [&](const std::string& sql,
+                         const std::function<void(const client::ResultSet&, size_t)>& rowHandler) {
+        client::ResultSet rs;
+        if (client_->executeQuery(sql, &rs, ctx) != core::Status::OK) {
+            return;
+        }
+        int64_t rows = rs.getRowCount();
+        for (int64_t i = 0; i < rows; ++i) {
+            rowHandler(rs, static_cast<size_t>(i));
+        }
+    };
+
+    std::string insert_prefix_schemata = "INSERT INTO \"" + info_schema + "\".\"schemata\" "
+        "(catalog_name, schema_name, default_character_set_name, default_collation_name) VALUES ";
+    copyQuery("SELECT catalog_name, schema_name, default_character_set_name, default_collation_name "
+              "FROM information_schema.schemata "
+              "WHERE schema_name NOT IN ('information_schema','pg_catalog')",
+              [&](const client::ResultSet& rs, size_t idx) {
+        const auto& row = rs.getRowValues(idx);
+        if (row.size() < 4) return;
+        std::string sql = insert_prefix_schemata + "('def','" + escapeLiteral(toString(row[1])) +
+            "','" + escapeLiteral(toString(row[2])) + "','" + escapeLiteral(toString(row[3])) + "')";
+        safeExec(sql);
+    });
+
+    std::string insert_prefix_constraints = "INSERT INTO \"" + info_schema + "\".\"table_constraints\" "
+        "(constraint_schema, constraint_name, table_schema, table_name, constraint_type) VALUES ";
+    copyQuery("SELECT constraint_schema, constraint_name, table_schema, table_name, constraint_type "
+              "FROM information_schema.table_constraints "
+              "WHERE constraint_schema NOT IN ('information_schema','pg_catalog')",
+              [&](const client::ResultSet& rs, size_t idx) {
+        const auto& row = rs.getRowValues(idx);
+        if (row.size() < 5) return;
+        std::string sql = insert_prefix_constraints + "('" +
+            escapeLiteral(toString(row[0])) + "','" +
+            escapeLiteral(toString(row[1])) + "','" +
+            escapeLiteral(toString(row[2])) + "','" +
+            escapeLiteral(toString(row[3])) + "','" +
+            escapeLiteral(toString(row[4])) + "')";
+        safeExec(sql);
+    });
+
+    std::string insert_prefix_kcu = "INSERT INTO \"" + info_schema + "\".\"key_column_usage\" "
+        "(constraint_schema, constraint_name, table_schema, table_name, column_name, ordinal_position) VALUES ";
+    copyQuery("SELECT constraint_schema, constraint_name, table_schema, table_name, column_name, ordinal_position "
+              "FROM information_schema.key_column_usage "
+              "WHERE constraint_schema NOT IN ('information_schema','pg_catalog')",
+              [&](const client::ResultSet& rs, size_t idx) {
+        const auto& row = rs.getRowValues(idx);
+        if (row.size() < 6) return;
+        std::string sql = insert_prefix_kcu + "('" +
+            escapeLiteral(toString(row[0])) + "','" +
+            escapeLiteral(toString(row[1])) + "','" +
+            escapeLiteral(toString(row[2])) + "','" +
+            escapeLiteral(toString(row[3])) + "','" +
+            escapeLiteral(toString(row[4])) + "'," +
+            numberOrNull(toString(row[5])) + ")";
+        safeExec(sql);
+    });
+
+    std::string insert_prefix_ref = "INSERT INTO \"" + info_schema + "\".\"referential_constraints\" "
+        "(constraint_schema, constraint_name, unique_constraint_schema, unique_constraint_name, "
+        "match_option, update_rule, delete_rule, table_name, referenced_table_name) VALUES ";
+    copyQuery("SELECT constraint_schema, constraint_name, unique_constraint_schema, unique_constraint_name, "
+              "match_option, update_rule, delete_rule, table_name, referenced_table_name "
+              "FROM information_schema.referential_constraints "
+              "WHERE constraint_schema NOT IN ('information_schema','pg_catalog')",
+              [&](const client::ResultSet& rs, size_t idx) {
+        const auto& row = rs.getRowValues(idx);
+        if (row.size() < 9) return;
+        std::string sql = insert_prefix_ref + "('" +
+            escapeLiteral(toString(row[0])) + "','" +
+            escapeLiteral(toString(row[1])) + "','" +
+            escapeLiteral(toString(row[2])) + "','" +
+            escapeLiteral(toString(row[3])) + "','" +
+            escapeLiteral(toString(row[4])) + "','" +
+            escapeLiteral(toString(row[5])) + "','" +
+            escapeLiteral(toString(row[6])) + "','" +
+            escapeLiteral(toString(row[7])) + "','" +
+            escapeLiteral(toString(row[8])) + "')";
+        safeExec(sql);
+    });
+
+    std::string insert_prefix_stats = "INSERT INTO \"" + info_schema + "\".\"statistics\" "
+        "(table_schema, table_name, non_unique, index_schema, index_name, seq_in_index, column_name, collation, cardinality, index_type) VALUES ";
+    copyQuery("SELECT table_schema, table_name, non_unique, index_schema, index_name, seq_in_index, "
+              "column_name, collation, cardinality, index_type "
+              "FROM information_schema.statistics "
+              "WHERE table_schema NOT IN ('information_schema','pg_catalog')",
+              [&](const client::ResultSet& rs, size_t idx) {
+        const auto& row = rs.getRowValues(idx);
+        if (row.size() < 10) return;
+        std::string sql = insert_prefix_stats + "('" +
+            escapeLiteral(toString(row[0])) + "','" +
+            escapeLiteral(toString(row[1])) + "'," +
+            numberOrNull(toString(row[2])) + ",'" +
+            escapeLiteral(toString(row[3])) + "','" +
+            escapeLiteral(toString(row[4])) + "'," +
+            numberOrNull(toString(row[5])) + ",'" +
+            escapeLiteral(toString(row[6])) + "','" +
+            escapeLiteral(toString(row[7])) + "'," +
+            numberOrNull(toString(row[8])) + ",'" +
+            escapeLiteral(toString(row[9])) + "')";
+        safeExec(sql);
+    });
+
+    std::string insert_prefix_routines = "INSERT INTO \"" + info_schema + "\".\"routines\" "
+        "(routine_schema, routine_name, routine_type, data_type) VALUES ";
+    copyQuery("SELECT routine_schema, routine_name, routine_type, data_type "
+              "FROM information_schema.routines "
+              "WHERE routine_schema NOT IN ('information_schema','pg_catalog')",
+              [&](const client::ResultSet& rs, size_t idx) {
+        const auto& row = rs.getRowValues(idx);
+        if (row.size() < 4) return;
+        std::string sql = insert_prefix_routines + "('" +
+            escapeLiteral(toString(row[0])) + "','" +
+            escapeLiteral(toString(row[1])) + "','" +
+            escapeLiteral(toString(row[2])) + "','" +
+            escapeLiteral(toString(row[3])) + "')";
+        safeExec(sql);
+    });
+
+    std::string insert_prefix_tables = "INSERT INTO \"" + info_schema + "\".\"tables\" "
+        "(table_schema, table_name, table_type) VALUES ";
+    copyQuery("SELECT table_schema, table_name, table_type "
+              "FROM information_schema.tables "
+              "WHERE table_schema NOT IN ('information_schema','pg_catalog')",
+              [&](const client::ResultSet& rs, size_t idx) {
+        const auto& row = rs.getRowValues(idx);
+        if (row.size() < 3) return;
+        std::string sql = insert_prefix_tables + "('" + escapeLiteral(toString(row[0])) + "','" +
+            escapeLiteral(toString(row[1])) + "','" + escapeLiteral(toString(row[2])) + "')";
+        safeExec(sql);
+    });
+
+    std::string insert_prefix_columns = "INSERT INTO \"" + info_schema + "\".\"columns\" "
+        "(table_schema, table_name, column_name, ordinal_position, data_type, is_nullable, "
+        "character_maximum_length, numeric_precision, numeric_scale) VALUES ";
+    copyQuery("SELECT table_schema, table_name, column_name, ordinal_position, data_type, "
+              "is_nullable, character_maximum_length, numeric_precision, numeric_scale "
+              "FROM information_schema.columns "
+              "WHERE table_schema NOT IN ('information_schema','pg_catalog')",
+              [&](const client::ResultSet& rs, size_t idx) {
+        const auto& row = rs.getRowValues(idx);
+        if (row.size() < 9) return;
+        std::string sql = insert_prefix_columns + "('" +
+            escapeLiteral(toString(row[0])) + "','" +
+            escapeLiteral(toString(row[1])) + "','" +
+            escapeLiteral(toString(row[2])) + "'," +
+            numberOrNull(toString(row[3])) + ",'" +
+            escapeLiteral(toString(row[4])) + "','" +
+            escapeLiteral(toString(row[5])) + "'," +
+            numberOrNull(toString(row[6])) + "," +
+            numberOrNull(toString(row[7])) + "," +
+            numberOrNull(toString(row[8])) + ")";
+        safeExec(sql);
+    });
+
+    information_schema_bootstrapped_ = true;
 }
 
 } // namespace protocol

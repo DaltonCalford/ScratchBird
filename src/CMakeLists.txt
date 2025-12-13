@@ -364,6 +364,137 @@ set_target_properties(scratchbird_client PROPERTIES
 message(STATUS "Client library: scratchbird_client (connection, result sets, pooling)")
 
 # ==============================================================================
+# Pool Library: scratchbird_pool (Alpha 3 Phase 3.6)
+# ==============================================================================
+# Connection pooling with statement and result caching
+# Components: PoolManager, DatabasePool, PooledConnection, StatementCache, ResultCache
+
+file(GLOB SCRATCHBIRD_POOL_SOURCES
+    pool/*.cpp
+)
+
+add_library(scratchbird_pool STATIC
+    ${SCRATCHBIRD_POOL_SOURCES}
+)
+
+target_include_directories(scratchbird_pool PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+# Thread support for connection pool management
+find_package(Threads REQUIRED)
+target_link_libraries(scratchbird_pool PUBLIC Threads::Threads scratchbird_core)
+
+set_target_properties(scratchbird_pool PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE ON
+)
+
+message(STATUS "Pool library: scratchbird_pool (connection pooling, statement/result caching)")
+
+# ==============================================================================
+# FDW Library: scratchbird_fdw (Alpha 3 Phase 3.7)
+# ==============================================================================
+# Foreign Data Wrapper for connecting to remote databases
+# Components: PostgreSQL, MySQL, Firebird adapters, connection pooling
+
+file(GLOB SCRATCHBIRD_FDW_SOURCES
+    fdw/*.cpp
+)
+
+add_library(scratchbird_fdw STATIC
+    ${SCRATCHBIRD_FDW_SOURCES}
+)
+
+target_include_directories(scratchbird_fdw PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+# OpenSSL required for MySQL password hashing and TLS
+if(OPENSSL_FOUND)
+    target_include_directories(scratchbird_fdw PUBLIC ${OPENSSL_INCLUDE_DIR})
+    target_link_libraries(scratchbird_fdw PUBLIC OpenSSL::Crypto)
+endif()
+
+# Thread support for connection pool management
+find_package(Threads REQUIRED)
+target_link_libraries(scratchbird_fdw PUBLIC Threads::Threads scratchbird_core)
+
+set_target_properties(scratchbird_fdw PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE ON
+)
+
+message(STATUS "FDW library: scratchbird_fdw (PostgreSQL, MySQL, Firebird adapters)")
+
+# ==============================================================================
+# ODBC Library: scratchbird_odbc (Alpha 3 Phase 3.8)
+# ==============================================================================
+# ODBC driver for client connectivity and odbc_fdw for external database access
+# Components: ODBC 3.8 API, connection strings, type mapping, catalog functions
+
+file(GLOB SCRATCHBIRD_ODBC_SOURCES
+    odbc/*.cpp
+)
+
+add_library(scratchbird_odbc STATIC
+    ${SCRATCHBIRD_ODBC_SOURCES}
+)
+
+target_include_directories(scratchbird_odbc PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+# Thread support for connection management
+find_package(Threads REQUIRED)
+target_link_libraries(scratchbird_odbc PUBLIC Threads::Threads scratchbird_core)
+
+set_target_properties(scratchbird_odbc PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE ON
+)
+
+message(STATUS "ODBC library: scratchbird_odbc (ODBC 3.8 driver)")
+
+# ==============================================================================
+# Testing Library: scratchbird_testing (Alpha 3 Phase 3.12)
+# ==============================================================================
+# Comprehensive testing framework for protocol compliance, authentication,
+# load/stress testing, security testing, and performance benchmarks
+# Components: ProtocolTester, AuthTester, LoadTester, SecurityTester, BenchmarkRunner
+
+file(GLOB SCRATCHBIRD_TESTING_SOURCES
+    testing/*.cpp
+)
+
+add_library(scratchbird_testing STATIC
+    ${SCRATCHBIRD_TESTING_SOURCES}
+)
+
+target_include_directories(scratchbird_testing PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+)
+
+# Thread support for load testing
+find_package(Threads REQUIRED)
+target_link_libraries(scratchbird_testing PUBLIC Threads::Threads scratchbird_core)
+
+set_target_properties(scratchbird_testing PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+    POSITION_INDEPENDENT_CODE ON
+)
+
+message(STATUS "Testing library: scratchbird_testing (protocol, auth, load, security, benchmarks)")
+
+# ==============================================================================
 # sb_server Executable (Local Server Architecture - Phase 3)
 # ==============================================================================
 # Database server daemon
@@ -511,7 +642,7 @@ set_target_properties(sb_fb_isql PROPERTIES
 message(STATUS "CLI tool: sb_fb_isql (Firebird SQL shell)")
 
 # Installation (for future use)
-install(TARGETS scratchbird sb_server sb_charset_loader sb_isql sb_fb_isql sb_verify sb_backup sb_security scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer scratchbird_server scratchbird_protocol scratchbird_client
+install(TARGETS scratchbird sb_server sb_charset_loader sb_isql sb_fb_isql sb_verify sb_backup sb_security scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer scratchbird_server scratchbird_protocol scratchbird_client scratchbird_pool scratchbird_fdw scratchbird_odbc scratchbird_testing
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib

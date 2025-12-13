@@ -1,5 +1,6 @@
 #include "scratchbird/sblr/executor.h"
 #include <unordered_set>
+#include <chrono>
 #include "scratchbird/parser/ast.h"        // For shared types (JoinType, etc.)
 #include "scratchbird/sblr/query_compiler_v2.h"  // Parser V2 pipeline for view compilation
 #include "scratchbird/core/catalog_manager.h"
@@ -17,6 +18,7 @@
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/proc_array.h"
+#include "scratchbird/core/uuidv7.h"
 #include "scratchbird/optimizer/statistics_manager.h"  // P1-10: ANALYZE command
 #include "scratchbird/spatial/wkt_parser.h"
 #include "scratchbird/spatial/wkb.h"
@@ -885,6 +887,36 @@ namespace scratchbird
                         {
                             // P1-10: ANALYZE statement execution
                             executeAnalyze();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CREATE_FUNCTION_STMT))
+                        {
+                            executeCreateFunctionStatement();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CREATE_PROCEDURE_STMT))
+                        {
+                            executeCreateProcedureStatement();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_CREATE_PACKAGE_STMT))
+                        {
+                            executeCreatePackageStatement();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_DROP_FUNCTION_STMT))
+                        {
+                            executeDropFunctionStatement();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_DROP_PROCEDURE_STMT))
+                        {
+                            executeDropProcedureStatement();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint8_t>(Opcode::EXT_DROP_PACKAGE_STMT))
+                        {
+                            executeDropPackageStatement();
                             result = ExecutionResult();
                         }
                         else if (ext_op == static_cast<uint8_t>(Opcode::EXT_SUBQUERY_SCALAR) ||
@@ -29592,6 +29624,387 @@ namespace scratchbird
                     return core::Status::INTERNAL_ERROR;
                 }
             }
+        }
+
+        namespace {
+            inline core::CatalogManager::ParameterMode decodeParameterMode(uint8_t mode_byte)
+            {
+                using Mode = core::CatalogManager::ParameterMode;
+                switch (mode_byte)
+                {
+                    case 1: return Mode::OUT;
+                    case 2: return Mode::INOUT;
+                    default: return Mode::IN;
+                }
+            }
+
+            inline core::DataType decodeDataType(uint8_t type_byte)
+            {
+                if (type_byte == 0)
+                {
+                    return core::DataType::UNKNOWN;
+                }
+                return static_cast<core::DataType>(type_byte);
+            }
+
+            inline core::CatalogManager::FunctionInfo::SqlSecurity decodeSqlSecurity(uint8_t flags)
+            {
+                return (flags & 0x04)
+                    ? core::CatalogManager::FunctionInfo::SqlSecurity::DEFINER
+                    : core::CatalogManager::FunctionInfo::SqlSecurity::INVOKER;
+            }
+
+            inline core::CatalogManager::ProcedureInfo::SqlSecurity decodeProcSqlSecurity(uint8_t flags)
+            {
+                return (flags & 0x04)
+                    ? core::CatalogManager::ProcedureInfo::SqlSecurity::DEFINER
+                    : core::CatalogManager::ProcedureInfo::SqlSecurity::INVOKER;
+            }
+
+            inline bool isZeroUuid(const core::ID& id)
+            {
+                for (auto b : id.bytes) {
+                    if (b != 0) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            core::ID resolveDefaultSchema(core::CatalogManager* catalog)
+            {
+                core::ID schema_id{};
+                if (!catalog) { return schema_id; }
+                core::CatalogManager::SchemaInfo schema_info;
+                core::ErrorContext ctx;
+                if (catalog->getSchema("PUBLIC", schema_info, &ctx) == core::Status::OK)
+                {
+                    schema_id = schema_info.schema_id;
+                }
+                return schema_id;
+            }
+        } // namespace
+
+        void Executor::executeCreateFunctionStatement()
+        {
+            uint8_t flags = readByte();
+            bool or_replace = (flags & 0x01) != 0;
+            bool deterministic = (flags & 0x02) != 0;
+
+            std::string function_name = readString();
+
+            uint8_t param_count = readByte();
+            std::vector<core::CatalogManager::ParameterInfo> params;
+            params.reserve(param_count);
+            for (uint8_t i = 0; i < param_count; ++i)
+            {
+                uint8_t mode_byte = readByte();
+                std::string param_name = readString();
+                uint8_t type_byte = readByte();
+                uint32_t precision = readInt32();
+                uint32_t scale = readInt32();
+
+                core::CatalogManager::ParameterInfo param;
+                param.name = param_name;
+                param.type = decodeDataType(type_byte);
+                param.type_precision = precision;
+                param.type_scale = scale;
+                param.mode = decodeParameterMode(mode_byte);
+                params.push_back(param);
+            }
+
+            uint8_t return_type_byte = readByte();
+            uint32_t return_precision = readInt32();
+            uint32_t return_scale = readInt32();
+
+            std::string body = readString();
+
+            core::ID schema_id = resolveDefaultSchema(db_->catalog_manager());
+            if (conn_ctx_)
+            {
+                auto ctx_schema = conn_ctx_->getCurrentSchemaId();
+                if (!isZeroUuid(ctx_schema))
+                {
+                    schema_id = ctx_schema;
+                }
+            }
+
+            core::CatalogManager::FunctionInfo info;
+            info.function_id = core::generateUuidV7();
+            info.name = function_name;
+            info.owner_id = conn_ctx_ ? conn_ctx_->getCurrentUserId()
+                                      : core::SecurityConstants::makeSystemUserID();
+            info.parameters = params;
+            info.return_type = decodeDataType(return_type_byte);
+            info.return_type_precision = return_precision;
+            info.return_type_scale = return_scale;
+            info.or_replace = or_replace;
+            info.deterministic = deterministic;
+            info.sql_security = decodeSqlSecurity(flags);
+            info.source_text = body;
+            info.created_time = info.modified_time =
+                static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
+
+            QueryCompilerV2 dep_compiler(db_);
+            if (!isZeroUuid(schema_id))
+            {
+                dep_compiler.setCurrentSchema(schema_id);
+            }
+
+            auto dep_result = dep_compiler.compile(body);
+            if (dep_result.success())
+            {
+                for (const auto& dep : dep_result.dependencies())
+                {
+                    info.referenced_objects.push_back(dep);
+                }
+            }
+            else if (!dep_result.errors().empty())
+            {
+                LOG_WARNING(EXECUTOR, "Function dependency extraction failed for '%s': %s",
+                            function_name.c_str(),
+                            dep_result.errors().front().c_str());
+            }
+
+            core::ErrorContext ctx;
+            auto status = db_->catalog_manager()->registerFunction(info, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string msg = "Failed to create function '" + function_name + "'";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+        }
+
+        void Executor::executeCreateProcedureStatement()
+        {
+            uint8_t flags = readByte();
+            bool or_replace = (flags & 0x01) != 0;
+
+            std::string procedure_name = readString();
+
+            uint8_t param_count = readByte();
+            std::vector<core::CatalogManager::ParameterInfo> params;
+            params.reserve(param_count);
+            for (uint8_t i = 0; i < param_count; ++i)
+            {
+                uint8_t mode_byte = readByte();
+                std::string param_name = readString();
+                uint8_t type_byte = readByte();
+                uint32_t precision = readInt32();
+                uint32_t scale = readInt32();
+
+                core::CatalogManager::ParameterInfo param;
+                param.name = param_name;
+                param.type = decodeDataType(type_byte);
+                param.type_precision = precision;
+                param.type_scale = scale;
+                param.mode = decodeParameterMode(mode_byte);
+                params.push_back(param);
+            }
+
+            std::string body = readString();
+
+            core::ID schema_id = resolveDefaultSchema(db_->catalog_manager());
+            if (conn_ctx_)
+            {
+                auto ctx_schema = conn_ctx_->getCurrentSchemaId();
+                if (!isZeroUuid(ctx_schema))
+                {
+                    schema_id = ctx_schema;
+                }
+            }
+
+            core::CatalogManager::ProcedureInfo info;
+            info.procedure_id = core::generateUuidV7();
+            info.name = procedure_name;
+            info.owner_id = conn_ctx_ ? conn_ctx_->getCurrentUserId()
+                                      : core::SecurityConstants::makeSystemUserID();
+            info.parameters = params;
+            info.or_replace = or_replace;
+            info.sql_security = decodeProcSqlSecurity(flags);
+            info.source_text = body;
+            info.created_time = info.modified_time =
+                static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
+
+            QueryCompilerV2 dep_compiler(db_);
+            if (!isZeroUuid(schema_id))
+            {
+                dep_compiler.setCurrentSchema(schema_id);
+            }
+
+            auto dep_result = dep_compiler.compile(body);
+            if (dep_result.success())
+            {
+                for (const auto& dep : dep_result.dependencies())
+                {
+                    info.referenced_objects.push_back(dep);
+                }
+            }
+            else if (!dep_result.errors().empty())
+            {
+                LOG_WARNING(EXECUTOR, "Procedure dependency extraction failed for '%s': %s",
+                            procedure_name.c_str(),
+                            dep_result.errors().front().c_str());
+            }
+
+            core::ErrorContext ctx;
+            auto status = db_->catalog_manager()->registerProcedure(info, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string msg = "Failed to create procedure '" + procedure_name + "'";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+        }
+
+        void Executor::executeCreatePackageStatement()
+        {
+            uint8_t flags = readByte();
+            bool or_replace = (flags & 0x01) != 0;
+
+            std::string package_name = readString();
+            std::string package_header = readString();
+            std::string package_body = readString();
+
+            core::ID schema_id = resolveDefaultSchema(db_->catalog_manager());
+            if (conn_ctx_)
+            {
+                auto ctx_schema = conn_ctx_->getCurrentSchemaId();
+                if (!isZeroUuid(ctx_schema))
+                {
+                    schema_id = ctx_schema;
+                }
+            }
+
+            core::ErrorContext ctx;
+            core::ID package_id;
+            auto status = db_->catalog_manager()->createPackage(schema_id,
+                                                                package_name,
+                                                                package_header,
+                                                                package_body,
+                                                                package_id,
+                                                                &ctx);
+            if (status == core::Status::FILE_EXISTS && or_replace)
+            {
+                core::CatalogManager::PackageInfo existing;
+                if (db_->catalog_manager()->getPackageByName(schema_id, package_name, existing, &ctx) == core::Status::OK)
+                {
+                    db_->catalog_manager()->dropPackage(existing.package_id, false, &ctx);
+                    status = db_->catalog_manager()->createPackage(schema_id,
+                                                                   package_name,
+                                                                   package_header,
+                                                                   package_body,
+                                                                   package_id,
+                                                                   &ctx);
+                }
+            }
+
+            if (status != core::Status::OK)
+            {
+                std::string msg = "Failed to create package '" + package_name + "'";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+
+            QueryCompilerV2 dep_compiler(db_);
+            if (!isZeroUuid(schema_id))
+            {
+                dep_compiler.setCurrentSchema(schema_id);
+            }
+
+            std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>> deps;
+            auto dep_result = dep_compiler.compile(package_body);
+            if (dep_result.success())
+            {
+                for (const auto& dep : dep_result.dependencies())
+                {
+                    deps.push_back(dep);
+                }
+            }
+            else if (!dep_result.errors().empty())
+            {
+                LOG_WARNING(EXECUTOR, "Package dependency extraction failed for '%s': %s",
+                            package_name.c_str(),
+                            dep_result.errors().front().c_str());
+            }
+
+            db_->catalog_manager()->replaceDependencies(package_id,
+                                                        core::CatalogManager::ObjectType::PACKAGE,
+                                                        deps,
+                                                        &ctx);
+        }
+
+        void Executor::executeDropFunctionStatement()
+        {
+            uint8_t flags = readByte();
+            bool if_exists = (flags & 0x01) != 0;
+            std::string function_name = readString();
+
+            core::ErrorContext ctx;
+            auto status = db_->catalog_manager()->dropFunction(function_name, if_exists, &ctx);
+            if (status != core::Status::OK && !(if_exists && status == core::Status::NOT_FOUND))
+            {
+                std::string msg = "Failed to drop function '" + function_name + "'";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+        }
+
+        void Executor::executeDropProcedureStatement()
+        {
+            uint8_t flags = readByte();
+            bool if_exists = (flags & 0x01) != 0;
+            std::string procedure_name = readString();
+
+            core::ErrorContext ctx;
+            auto status = db_->catalog_manager()->dropProcedure(procedure_name, if_exists, &ctx);
+            if (status != core::Status::OK && !(if_exists && status == core::Status::NOT_FOUND))
+            {
+                std::string msg = "Failed to drop procedure '" + procedure_name + "'";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+        }
+
+        void Executor::executeDropPackageStatement()
+        {
+            uint8_t flags = readByte();
+            bool if_exists = (flags & 0x01) != 0;
+            std::string package_name = readString();
+
+            core::ID schema_id = resolveDefaultSchema(db_->catalog_manager());
+            if (conn_ctx_)
+            {
+                schema_id = conn_ctx_->getCurrentSchemaId();
+            }
+
+            core::CatalogManager::PackageInfo pkg_info;
+            core::ErrorContext ctx;
+            auto status = db_->catalog_manager()->getPackageByName(schema_id, package_name, pkg_info, &ctx);
+            if (status != core::Status::OK)
+            {
+                if (if_exists)
+                {
+                    return;
+                }
+                std::string msg = "Failed to drop package '" + package_name + "'";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+
+            status = db_->catalog_manager()->dropPackage(pkg_info.package_id, false, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string msg = "Failed to drop package '" + package_name + "'";
+                if (!ctx.message.empty()) { msg += ": " + ctx.message; }
+                error(msg);
+            }
+
+            db_->catalog_manager()->replaceDependencies(pkg_info.package_id,
+                                                        core::CatalogManager::ObjectType::PACKAGE,
+                                                        {},
+                                                        &ctx);
         }
 
     } // namespace sblr

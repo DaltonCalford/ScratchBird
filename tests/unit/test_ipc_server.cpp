@@ -82,7 +82,7 @@ protected:
 
 TEST_F(IPCPathTest, UnixSocketPath) {
     std::string path = getIPCPath("testdb", IPCMethod::UNIX_SOCKET);
-    EXPECT_EQ(path, "/tmp/scratchbird-testdb.sock");
+    EXPECT_EQ(path, "build/ipc/scratchbird-testdb.sock");
 }
 
 TEST_F(IPCPathTest, NamedPipePath) {
@@ -104,12 +104,12 @@ TEST_F(IPCPathTest, AutoResolvesToPlatformDefault) {
 TEST_F(IPCPathTest, SpecialCharactersSanitized) {
     // Special characters should be removed
     std::string path = getIPCPath("test@db#name!", IPCMethod::UNIX_SOCKET);
-    EXPECT_EQ(path, "/tmp/scratchbird-testdbname.sock");
+    EXPECT_EQ(path, "build/ipc/scratchbird-testdbname.sock");
 }
 
 TEST_F(IPCPathTest, EmptyNameUsesDefault) {
     std::string path = getIPCPath("", IPCMethod::UNIX_SOCKET);
-    EXPECT_EQ(path, "/tmp/scratchbird-default.sock");
+    EXPECT_EQ(path, "build/ipc/scratchbird-default.sock");
 }
 
 TEST_F(IPCPathTest, PIDFilePath) {
@@ -119,7 +119,7 @@ TEST_F(IPCPathTest, PIDFilePath) {
     // Windows uses %TEMP% - just check it ends correctly
     EXPECT_TRUE(pid_path.find("scratchbird-mydb.pid") != std::string::npos);
 #else
-    EXPECT_EQ(pid_path, "/tmp/scratchbird-mydb.pid");
+    EXPECT_EQ(pid_path, "build/run/scratchbird-mydb.pid");
 #endif
 }
 

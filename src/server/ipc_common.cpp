@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <string>
 
@@ -87,9 +88,14 @@ std::string getIPCPath(const std::string& database_name, IPCMethod method) {
     }
 
     switch (method) {
-        case IPCMethod::UNIX_SOCKET:
-            // Unix socket path: /tmp/scratchbird-{name}.sock
-            return "/tmp/scratchbird-" + safe_name + ".sock";
+        case IPCMethod::UNIX_SOCKET: {
+            // Keep socket files inside the build tree (no /tmp usage per project rules)
+            std::filesystem::path base = std::filesystem::path("build") / "ipc";
+            std::error_code ec;
+            std::filesystem::create_directories(base, ec);
+            auto path = base / ("scratchbird-" + safe_name + ".sock");
+            return path.string();
+        }
 
         case IPCMethod::NAMED_PIPE:
             // Windows named pipe: \\.\pipe\scratchbird-{name}
@@ -100,7 +106,12 @@ std::string getIPCPath(const std::string& database_name, IPCMethod method) {
             return "127.0.0.1:5433";
 
         default:
-            return "/tmp/scratchbird-" + safe_name + ".sock";
+            // Fallback to the build IPC directory
+            std::filesystem::path base = std::filesystem::path("build") / "ipc";
+            std::error_code ec;
+            std::filesystem::create_directories(base, ec);
+            auto path = base / ("scratchbird-" + safe_name + ".sock");
+            return path.string();
     }
 }
 
@@ -124,8 +135,12 @@ std::string getPIDFilePath(const std::string& database_name) {
     }
     return "C:\\temp\\scratchbird-" + safe_name + ".pid";
 #else
-    // Unix: use /tmp
-    return "/tmp/scratchbird-" + safe_name + ".pid";
+    // Unix: keep PID files inside the build tree (no /tmp usage per project rules)
+    std::filesystem::path base = std::filesystem::path("build") / "run";
+    std::error_code ec;
+    std::filesystem::create_directories(base, ec);
+    auto path = base / ("scratchbird-" + safe_name + ".pid");
+    return path.string();
 #endif
 }
 

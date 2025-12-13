@@ -321,7 +321,7 @@ public:
     /**
      * Get the socket/pipe path or TCP address string
      *
-     * @return Connection address (e.g., "/tmp/scratchbird-mydb.sock" or "127.0.0.1:5433")
+     * @return Connection address (e.g., "build/ipc/scratchbird-mydb.sock" or "127.0.0.1:5433")
      */
     virtual std::string getAddress() const = 0;
 
@@ -414,7 +414,7 @@ IPCMethod getDefaultIPCMethod();
  *
  * @param database_name Database name
  * @param method IPC method (AUTO uses platform default)
- * @return Socket path (e.g., "/tmp/scratchbird-mydb.sock")
+ * @return Socket path (e.g., "build/ipc/scratchbird-mydb.sock")
  */
 std::string getIPCPath(const std::string& database_name, IPCMethod method = IPCMethod::AUTO);
 
@@ -432,7 +432,7 @@ bool isServerRunning(const std::string& database_name);
  * Get the PID file path for a database
  *
  * @param database_name Database name
- * @return PID file path (e.g., "/tmp/scratchbird-mydb.pid")
+ * @return PID file path (e.g., "build/run/scratchbird-mydb.pid")
  */
 std::string getPIDFilePath(const std::string& database_name);
 

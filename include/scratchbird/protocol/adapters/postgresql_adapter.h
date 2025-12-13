@@ -12,6 +12,8 @@
 #pragma once
 
 #include "scratchbird/protocol/adapters/protocol_adapter.h"
+#include "scratchbird/client/connection.h"
+#include "scratchbird/server/ipc_server.h"
 
 #include <unordered_map>
 #include <deque>
@@ -202,9 +204,15 @@ struct PgPortal {
     std::string statement_name;
     std::vector<std::string> param_values;
     std::vector<bool> param_nulls;
+    std::vector<int16_t> param_formats;
     std::vector<int16_t> result_formats;  // 0 = text, 1 = binary
     int32_t max_rows = 0;  // 0 = unlimited
     bool executed = false;
+    bool completed = false;
+    bool more_rows_available = false;
+    std::string command_tag;
+    size_t fetch_pos = 0;
+    std::vector<std::vector<ProtocolCodec::ColumnValue>> buffered_rows;
 };
 
 // ============================================================================
@@ -274,6 +282,9 @@ protected:
                                    const std::string& message,
                                    const std::string& detail = "",
                                    const std::string& hint = "") override;
+    core::Status compileQuery(const std::string& sql,
+                              std::vector<uint8_t>& bytecode_out,
+                              std::string& error_out) override;
 
 private:
     // ========================================================================
@@ -296,6 +307,7 @@ private:
     core::Status handleBind(network::Connection* conn);
     core::Status handleDescribe(network::Connection* conn);
     core::Status handleExecute(network::Connection* conn);
+    core::Status handleFetch(network::Connection* conn);
     core::Status handleClose(network::Connection* conn);
     core::Status handleSync(network::Connection* conn);
     core::Status handleFlush(network::Connection* conn);
@@ -326,9 +338,12 @@ private:
 
     // Query result messages
     void sendRowDescription(network::Connection* conn,
-                            const std::vector<ProtocolCodec::ColumnInfo>& columns);
+                            const std::vector<ProtocolCodec::ColumnInfo>& columns,
+                            const std::vector<int16_t>& formats = {});
     void sendDataRow(network::Connection* conn,
-                     const std::vector<ProtocolCodec::ColumnValue>& values);
+                     const std::vector<ProtocolCodec::ColumnInfo>& columns,
+                     const std::vector<ProtocolCodec::ColumnValue>& values,
+                     const std::vector<int16_t>& formats = {});
     void sendCommandComplete(network::Connection* conn, const std::string& tag);
     void sendEmptyQueryResponse(network::Connection* conn);
 
@@ -380,14 +395,39 @@ private:
     // Type conversion
     int32_t wireTypeToOid(WireType type);
     WireType oidToWireType(int32_t oid);
+    void mapStatusToSqlstate(uint32_t status, std::string& sqlstate);
+    void updateTransactionStatus(const std::string& sql, bool has_error);
+    int16_t selectFormatForColumn(size_t idx,
+                                  const std::vector<int16_t>& formats,
+                                  WireType type);
+    bool supportsBinaryFormat(WireType type);
+    std::vector<uint8_t> encodeTextValue(const ProtocolCodec::ColumnValue& val,
+                                         WireType type);
+    std::vector<uint8_t> encodeBinaryValue(const ProtocolCodec::ColumnValue& val,
+                                           WireType type,
+                                           bool& ok);
+    std::string decodeBinaryParamToText(WireType type,
+                                        const uint8_t* data,
+                                        size_t len);
+    std::string substitutePositionalParameters(const QueryContext& query);
+    std::string escapeLiteral(const std::string& input);
 
     // MD5 authentication
     std::string computeMD5Hash(const std::string& password,
                                const std::string& username,
                                const uint8_t salt[4]);
 
+    // Ensure per-emulated PostgreSQL catalog schema/views exist
+    core::Status ensurePostgresSystemCatalog(core::ErrorContext* ctx);
+
     // Send message helper
     void sendMessage(network::Connection* conn, char type, const std::vector<uint8_t>& payload);
+
+    // IPC bridge helpers
+    core::Status ensureRemoteClient(core::ErrorContext* ctx = nullptr);
+    core::Status executeRemoteQuery(const QueryContext& query,
+                                    ResultContext& result,
+                                    core::ErrorContext* ctx = nullptr);
 
     // ========================================================================
     // State
@@ -413,6 +453,9 @@ private:
     // Server parameters to send
     std::unordered_map<std::string, std::string> server_parameters_;
 
+    // Emulated schema for PostgreSQL catalog
+    core::ID pg_schema_id_;
+
     // Prepared statements
     std::unordered_map<std::string, PgPreparedStatement> statements_;
 
@@ -422,6 +465,12 @@ private:
     // Extended query state
     bool sync_pending_ = false;
     std::deque<char> pending_operations_;  // Queue of operations before Sync
+
+    // IPC client (bridge to engine)
+    std::unique_ptr<client::Connection> client_;
+    client::ConnectionConfig client_config_;
+    bool search_path_set_ = false;
+    bool txn_failed_ = false;
 };
 
 } // namespace protocol

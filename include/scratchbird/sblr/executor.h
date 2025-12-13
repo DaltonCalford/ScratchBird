@@ -387,6 +387,14 @@ namespace scratchbird
             void executeDropView();
             void executeRefreshMaterializedView();  // ALPHA Phase 1 - Materialized Views
 
+            // Stored code DDL (Alpha Phase 3)
+            void executeCreateFunctionStatement();
+            void executeCreateProcedureStatement();
+            void executeCreatePackageStatement();
+            void executeDropFunctionStatement();
+            void executeDropProcedureStatement();
+            void executeDropPackageStatement();
+
             // Monitoring/system table execution
             void executeMonitoringQuery(const std::string &table_name);
 

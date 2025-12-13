@@ -210,7 +210,7 @@ bool ScratchBirdServer::isServerRunning(const std::string& database_path) {
 }
 
 pid_t ScratchBirdServer::getServerPID(const std::string& database_path) {
-    std::string pid_path = getDefaultPIDPath(database_path);
+    std::string pid_path = getPIDFilePath(database_path);
     return readPIDFile(pid_path);
 }
 
@@ -352,7 +352,7 @@ void ScratchBirdServer::handleClient(std::unique_ptr<IPCConnection> connection) 
 core::Status ScratchBirdServer::writePIDFile(core::ErrorContext* ctx) {
     std::string pid_path = config_.pid_file;
     if (pid_path.empty()) {
-        pid_path = getDefaultPIDPath(config_.database_path);
+        pid_path = getPIDFilePath(config_.database_path);
     }
 
     std::ofstream file(pid_path);
@@ -372,7 +372,7 @@ core::Status ScratchBirdServer::writePIDFile(core::ErrorContext* ctx) {
 void ScratchBirdServer::removePIDFile() {
     std::string pid_path = config_.pid_file;
     if (pid_path.empty()) {
-        pid_path = getDefaultPIDPath(config_.database_path);
+        pid_path = getPIDFilePath(config_.database_path);
     }
 
     std::remove(pid_path.c_str());
@@ -389,8 +389,7 @@ void ScratchBirdServer::log(const std::string& message) {
 // ============================================================================
 
 std::string getDefaultPIDPath(const std::string& database_path) {
-    // Use database path with .pid extension
-    return database_path + ".pid";
+    return getPIDFilePath(database_path);
 }
 
 pid_t readPIDFile(const std::string& pid_path) {

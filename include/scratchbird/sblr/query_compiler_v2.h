@@ -67,12 +67,19 @@ public:
         return involved_tables_;
     }
 
+    const std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>>& dependencies() const {
+        return dependencies_;
+    }
+
     // Internal setters (used by QueryCompilerV2)
     void setBytecode(std::vector<uint8_t> bc) { bytecode_ = std::move(bc); }
     void addError(const std::string& err) { errors_.push_back(err); }
     void addWarning(const std::string& warn) { warnings_.push_back(warn); }
     void setStats(const CompilationStats& s) { stats_ = s; }
     void addInvolvedTable(const core::ID& table_id) { involved_tables_.insert(table_id); }
+    void addDependency(const std::pair<core::ID, core::CatalogManager::ObjectType>& dep) {
+        dependencies_.push_back(dep);
+    }
 
 private:
     std::vector<uint8_t> bytecode_;
@@ -80,6 +87,7 @@ private:
     std::vector<std::string> warnings_;
     CompilationStats stats_;
     std::unordered_set<core::ID, core::IDHash> involved_tables_;
+    std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>> dependencies_;
 };
 
 /**
@@ -160,6 +168,7 @@ public:
 private:
     core::Database* db_;
     core::CatalogManager* catalog_;
+    core::ID default_schema_;
     core::ID current_schema_;
     bool optimizations_enabled_ = true;
     bool stats_enabled_ = false;
@@ -172,6 +181,11 @@ private:
     // Extract table IDs from resolved AST for cache invalidation
     void extractInvolvedTables(parser::v2::ResolvedStatement* stmt,
                                std::unordered_set<core::ID, core::IDHash>& tables);
+
+    // Extract dependency object IDs (tables, functions, sequences, schemas where available)
+    void collectDependencies(parser::v2::ResolvedStatement* stmt,
+                             parser::v2::StringPool* pool,
+                             std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>>& deps);
 };
 
 /**

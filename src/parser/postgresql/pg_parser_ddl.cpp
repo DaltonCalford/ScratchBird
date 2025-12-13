@@ -5,9 +5,56 @@
  */
 
 #include "scratchbird/parser/postgresql/pg_parser.h"
+#include "scratchbird/core/types.h"
 #include <algorithm>
 
 namespace scratchbird::parser::postgresql {
+
+namespace {
+uint8_t encodeDataType(const PgDataType& dt) {
+    using core::DataType;
+    switch (dt.kind) {
+        case PgDataType::Kind::SMALLINT:
+        case PgDataType::Kind::INTEGER:
+        case PgDataType::Kind::SERIAL:
+        case PgDataType::Kind::SMALLSERIAL:
+            return static_cast<uint8_t>(DataType::INT32);
+        case PgDataType::Kind::BIGINT:
+        case PgDataType::Kind::BIGSERIAL:
+            return static_cast<uint8_t>(DataType::INT64);
+        case PgDataType::Kind::REAL:
+            return static_cast<uint8_t>(DataType::FLOAT32);
+        case PgDataType::Kind::DOUBLE_PRECISION:
+            return static_cast<uint8_t>(DataType::FLOAT64);
+        case PgDataType::Kind::DECIMAL:
+        case PgDataType::Kind::NUMERIC:
+        case PgDataType::Kind::MONEY:
+            return static_cast<uint8_t>(DataType::DECIMAL);
+        case PgDataType::Kind::CHAR:
+            return static_cast<uint8_t>(DataType::CHAR);
+        case PgDataType::Kind::VARCHAR:
+            return static_cast<uint8_t>(DataType::VARCHAR);
+        case PgDataType::Kind::TEXT:
+            return static_cast<uint8_t>(DataType::TEXT);
+        case PgDataType::Kind::BYTEA:
+            return static_cast<uint8_t>(DataType::BLOB);
+        case PgDataType::Kind::DATE:
+            return static_cast<uint8_t>(DataType::DATE);
+        case PgDataType::Kind::TIME:
+        case PgDataType::Kind::TIMETZ:
+            return static_cast<uint8_t>(DataType::TIME);
+        case PgDataType::Kind::TIMESTAMP:
+        case PgDataType::Kind::TIMESTAMPTZ:
+            return static_cast<uint8_t>(DataType::TIMESTAMP);
+        case PgDataType::Kind::BOOLEAN:
+            return static_cast<uint8_t>(DataType::BOOLEAN);
+        case PgDataType::Kind::UUID:
+            return static_cast<uint8_t>(DataType::UUID);
+        default:
+            return static_cast<uint8_t>(DataType::VARCHAR);
+    }
+}
+} // namespace
 
 // ============================================================================
 // CREATE Statement Dispatch
@@ -949,7 +996,7 @@ void Parser::parseCreateSchema() {
 
 void Parser::parseCreateFunction() {
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_FUNCTION));
+    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CREATE_FUNCTION_STMT));
 
     std::string schema;
     std::string func_name = parseIdentifier();
@@ -957,113 +1004,129 @@ void Parser::parseCreateFunction() {
         schema = func_name;
         func_name = parseIdentifier();
     }
+
+    // Flags: bit0 = OR REPLACE, bit2 = SQL SECURITY DEFINER (not parsed yet)
+    uint8_t flags = 0;
+    emitByte(flags);
     emitString(func_name);
 
-    // Parameters
     consume(TokenType::LEFT_PAREN, "Expected (");
-    emit(sblr::Opcode::BEGIN_LIST);
-    size_t count_pos = bytecode_.size();
-    emitU32(0);
-    uint32_t count = 0;
+
+    std::vector<PgDataType> param_types;
+    std::vector<std::string> param_names;
+    std::vector<uint8_t> param_modes;
 
     if (!check(TokenType::RIGHT_PAREN)) {
         do {
-            // IN/OUT/INOUT/VARIADIC
-            if (matchKeyword(TokenType::KW_IN)) {
-                emit(sblr::Opcode::EXTENDED_OPCODE);
-                emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_PARAM_IN));
-            } else if (matchKeyword(TokenType::KW_OUT)) {
-                emit(sblr::Opcode::EXTENDED_OPCODE);
-                emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_PARAM_OUT));
-            } else if (matchKeyword(TokenType::KW_INOUT)) {
-                emit(sblr::Opcode::EXTENDED_OPCODE);
-                emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_PARAM_INOUT));
-            } else if (matchKeyword(TokenType::KW_VARIADIC)) {
-                // Variadic parameter
-            }
+            uint8_t mode = 0; // IN
+            if (matchKeyword(TokenType::KW_OUT)) mode = 1;
+            else if (matchKeyword(TokenType::KW_INOUT)) mode = 2;
+            else if (matchKeyword(TokenType::KW_IN)) mode = 0;
+
+            param_modes.push_back(mode);
 
             std::string param_name = parseIdentifier();
-            emitString(param_name);
+            param_names.push_back(param_name);
+
             PgDataType param_type = parseDataType();
-            emit(typeToOpcode(param_type.kind));
+            param_types.push_back(param_type);
 
-            // DEFAULT
             if (matchKeyword(TokenType::KW_DEFAULT) || match(TokenType::EQUAL)) {
-                parseExpression();
+                parseExpression(); // ignore value
             }
-
-            count++;
         } while (match(TokenType::COMMA));
     }
-
-    sblr::writeInt32(&bytecode_[count_pos], count);
-    emit(sblr::Opcode::END_LIST);
     consume(TokenType::RIGHT_PAREN, "Expected )");
 
-    // RETURNS
+    emitByte(static_cast<uint8_t>(param_names.size()));
+    for (size_t i = 0; i < param_names.size(); ++i) {
+        emitByte(param_modes[i]);
+        emitString(param_names[i]);
+        emitByte(encodeDataType(param_types[i]));
+        emitU32(param_types[i].precision);
+        emitU32(param_types[i].scale);
+    }
+
+    PgDataType return_type{};
     if (matchKeyword(TokenType::KW_RETURNS)) {
         if (matchKeyword(TokenType::KW_TABLE)) {
-            // RETURNS TABLE
             consume(TokenType::LEFT_PAREN, "Expected (");
-            // Parse return columns
             consume(TokenType::RIGHT_PAREN, "Expected )");
         } else if (matchKeyword(TokenType::KW_SETOF)) {
-            parseDataType();
+            return_type = parseDataType();
         } else {
-            parseDataType();
+            return_type = parseDataType();
         }
     }
 
-    // Function body and options
-    while (true) {
-        if (matchKeyword(TokenType::KW_LANGUAGE)) {
-            std::string lang = parseIdentifier();
-            emitString(lang);
-        } else if (matchKeyword(TokenType::KW_AS)) {
-            // Function body
-            if (check(TokenType::STRING_LITERAL) || check(TokenType::DOLLAR_STRING)) {
-                uint32_t id = current_token_.value.string_id;
-                std::string body(lexer_.stringPool().get(id));
-                emitString(body);
-                advance();
-            }
-        } else if (matchKeyword(TokenType::KW_IMMUTABLE)) {
-            emitByte(1);
-        } else if (matchKeyword(TokenType::KW_STABLE)) {
-            emitByte(2);
-        } else if (matchKeyword(TokenType::KW_VOLATILE)) {
-            emitByte(3);
-        } else if (matchKeyword(TokenType::KW_STRICT)) {
-            // STRICT / RETURNS NULL ON NULL INPUT
-        } else {
-            break;
+    emitByte(encodeDataType(return_type));
+    emitU32(return_type.precision);
+    emitU32(return_type.scale);
+
+    std::string body;
+    if (matchKeyword(TokenType::KW_AS)) {
+        if (check(TokenType::STRING_LITERAL) || check(TokenType::DOLLAR_STRING)) {
+            uint32_t id = current_token_.value.string_id;
+            body = lexer_.stringPool().get(id);
+            advance();
         }
     }
+    emitString(body);
 }
 
 void Parser::parseCreateProcedure() {
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_PROCEDURE));
+    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CREATE_PROCEDURE_STMT));
 
-    // Similar to CREATE FUNCTION but for procedures
     std::string proc_name = parseIdentifier();
+
+    uint8_t flags = 0;
+    emitByte(flags);
     emitString(proc_name);
 
     consume(TokenType::LEFT_PAREN, "Expected (");
-    // Parameters - similar to function
+    std::vector<PgDataType> param_types;
+    std::vector<std::string> param_names;
+    std::vector<uint8_t> param_modes;
+
+    if (!check(TokenType::RIGHT_PAREN)) {
+        do {
+            uint8_t mode = 0; // IN
+            if (matchKeyword(TokenType::KW_OUT)) mode = 1;
+            else if (matchKeyword(TokenType::KW_INOUT)) mode = 2;
+            else if (matchKeyword(TokenType::KW_IN)) mode = 0;
+
+            param_modes.push_back(mode);
+            std::string param_name = parseIdentifier();
+            param_names.push_back(param_name);
+            PgDataType param_type = parseDataType();
+            param_types.push_back(param_type);
+
+            if (matchKeyword(TokenType::KW_DEFAULT) || match(TokenType::EQUAL)) {
+                parseExpression(); // ignore
+            }
+        } while (match(TokenType::COMMA));
+    }
     consume(TokenType::RIGHT_PAREN, "Expected )");
 
-    while (true) {
-        if (matchKeyword(TokenType::KW_LANGUAGE)) {
-            parseIdentifier();
-        } else if (matchKeyword(TokenType::KW_AS)) {
-            if (check(TokenType::STRING_LITERAL) || check(TokenType::DOLLAR_STRING)) {
-                advance();
-            }
-        } else {
-            break;
+    emitByte(static_cast<uint8_t>(param_names.size()));
+    for (size_t i = 0; i < param_names.size(); ++i) {
+        emitByte(param_modes[i]);
+        emitString(param_names[i]);
+        emitByte(encodeDataType(param_types[i]));
+        emitU32(param_types[i].precision);
+        emitU32(param_types[i].scale);
+    }
+
+    std::string body;
+    if (matchKeyword(TokenType::KW_AS)) {
+        if (check(TokenType::STRING_LITERAL) || check(TokenType::DOLLAR_STRING)) {
+            uint32_t id = current_token_.value.string_id;
+            body = lexer_.stringPool().get(id);
+            advance();
         }
     }
+    emitString(body);
 }
 
 void Parser::parseCreateTrigger() {

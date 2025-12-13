@@ -520,6 +520,14 @@ namespace scratchbird
             EXT_RANGE_UPPER_INF = 0xC8,    // UPPER_INF(range) - check if upper bound is infinite
             EXT_RANGE_MERGE = 0xC9,        // RANGE_MERGE(r1, r2) - smallest range containing both
 
+            // Stored code DDL (Alpha Phase 3)
+            EXT_CREATE_FUNCTION_STMT = 0x30,   // CREATE [OR REPLACE] FUNCTION
+            EXT_CREATE_PROCEDURE_STMT = 0x31,  // CREATE [OR REPLACE] PROCEDURE
+            EXT_CREATE_PACKAGE_STMT = 0x32,    // CREATE [OR REPLACE] PACKAGE
+            EXT_DROP_FUNCTION_STMT = 0x33,     // DROP FUNCTION [IF EXISTS]
+            EXT_DROP_PROCEDURE_STMT = 0x34,    // DROP PROCEDURE [IF EXISTS]
+            EXT_DROP_PACKAGE_STMT = 0x35,      // DROP PACKAGE [IF EXISTS]
+
             // Security System (ALPHA Phase 1 - Security System Phase 2) - 0xCA-0xD6 range
             // User management opcodes
             EXT_CREATE_USER = 0xCA,        // CREATE USER username [WITH PASSWORD 'xxx'] [SUPERUSER]

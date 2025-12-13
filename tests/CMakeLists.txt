@@ -232,6 +232,8 @@ target_link_libraries(scratchbird_tests
     scratchbird_parser
     scratchbird_sblr
     scratchbird_optimizer
+    scratchbird_protocol
+    scratchbird_client
     scratchbird_server
     scratchbird_network
     GTest::gtest

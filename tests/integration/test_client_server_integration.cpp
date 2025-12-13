@@ -49,7 +49,7 @@ using scratchbird::server::IPCMethod;
 class ClientServerIntegrationTest : public ::testing::Test {
 protected:
     static constexpr uint16_t TEST_PORT = 15450;
-    static constexpr const char* TEST_DB_PATH = "/tmp/scratchbird_integration_test.sbdb";
+    static constexpr const char* TEST_DB_PATH = "build/scratchbird_integration_test.sbdb";
     // Use full path for sb_server - this is set relative to build directory
     static const char* getServerExecutable() {
         // Try multiple paths

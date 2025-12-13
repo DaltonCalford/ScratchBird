@@ -71,6 +71,7 @@ namespace scratchbird::core
         uint32_t proc_params_page;    // Page containing procedure parameters table
         uint32_t domains_page;        // Page containing domains table
         uint32_t udr_page;            // Page containing UDR (User-Defined Resources) table
+        uint32_t exceptions_page;     // Page containing exceptions table
         uint32_t packages_page;       // Page containing packages table (Firebird)
 
         // Phase 4: Emulation tables (Catalog Corrections)
@@ -95,7 +96,7 @@ namespace scratchbird::core
         // WP-2 CAT-L2: Migration history
         uint32_t migration_history_page;  // Page containing migration history table
 
-        uint8_t reserved[3860];       // Padding for 16KB page (188 bytes used)
+        uint8_t reserved[3856];       // Padding for 4KB page (240 bytes used)
     };
 
     // Schema record on disk
@@ -842,6 +843,7 @@ namespace scratchbird::core
     CatalogManager::CatalogManager(Database *db) : db_(db)
     {
         DEBUG_LOG_DB("CatalogManager created");
+        exception_cache_.clear();
     }
 
     CatalogManager::~CatalogManager()
@@ -1103,6 +1105,13 @@ namespace scratchbird::core
         if (status != Status::OK) return status;
         heap->header.page_id = dependencies_table_page_;
         status = db_->write_page(dependencies_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Exceptions table (Phase 3)
+        status = pm->allocatePage(exceptions_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = exceptions_table_page_;
+        status = db_->write_page(exceptions_table_page_, page_buffer.get(), ctx);
         if (status != Status::OK) return status;
 
         // Comments table (Phase 1.5)
@@ -2749,10 +2758,13 @@ namespace scratchbird::core
         root->proc_params_page = procedure_params_table_page_;
         root->domains_page = domains_table_page_;
         root->udr_page = udr_table_page_;
+        root->exceptions_page = exceptions_table_page_;
         root->packages_page = packages_table_page_;
         root->emulation_types_page = emulation_types_table_page_;
         root->emulation_servers_page = emulation_servers_table_page_;
         root->emulated_dbs_page = emulated_dbs_table_page_;
+        root->tablespaces_page = tablespaces_table_page_;
+        root->extensions_page = extensions_table_page_;
         root->foreign_keys_page = foreign_keys_table_page_;
 
         // Phase B: Synonyms, FDW, Server Registry, UDR Engine/Module
@@ -2834,10 +2846,13 @@ namespace scratchbird::core
         procedure_params_table_page_ = root->proc_params_page;
         domains_table_page_ = root->domains_page;
         udr_table_page_ = root->udr_page;
+        exceptions_table_page_ = root->exceptions_page;
         packages_table_page_ = root->packages_page;
         emulation_types_table_page_ = root->emulation_types_page;
         emulation_servers_table_page_ = root->emulation_servers_page;
         emulated_dbs_table_page_ = root->emulated_dbs_page;
+        tablespaces_table_page_ = root->tablespaces_page;
+        extensions_table_page_ = root->extensions_page;
         foreign_keys_table_page_ = root->foreign_keys_page;
 
         // Phase B: Synonyms, FDW, Server Registry, UDR Engine/Module
@@ -15759,11 +15774,11 @@ auto CatalogManager::dropPackage(const ID& package_id, bool cascade, ErrorContex
     return found ? Status::OK : Status::NOT_FOUND;
 }
 
-auto CatalogManager::listPackages(const ID& schema_id, std::vector<PackageInfo>& packages_out,
-                                  ErrorContext* ctx) -> Status
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    packages_out.clear();
+    auto CatalogManager::listPackages(const ID& schema_id, std::vector<PackageInfo>& packages_out,
+                                      ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        packages_out.clear();
 
     auto filter = [&schema_id](const PackageRecord& rec) {
         return rec.schema_id == schema_id && rec.is_valid == 1;
@@ -15784,6 +15799,258 @@ auto CatalogManager::listPackages(const ID& schema_id, std::vector<PackageInfo>&
 
     return readRecordsToVector<PackageRecord, PackageInfo>(packages_table_page_, packages_out,
                                                            filter, converter, ctx);
+}
+
+// ============================================================================
+// Exception CRUD Operations (Phase 3 - Stored Code Tables)
+// ============================================================================
+
+Status CatalogManager::createException(const ID& schema_id, const std::string& name,
+                                       const std::string& message, ID& exception_id_out,
+                                       ErrorContext* ctx)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (schema_cache_.find(schema_id) == schema_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found");
+        return Status::NOT_FOUND;
+    }
+
+    exception_id_out = generateUuidV7();
+
+    ExceptionRecord rec{};
+    rec.exception_id = exception_id_out;
+    rec.schema_id = schema_id;
+    std::string truncated = UTF8Utils::truncateToBytes(name, sizeof(rec.name));
+    strncpy(rec.name, truncated.c_str(), sizeof(rec.name) - 1);
+    rec.owner_id = SecurityConstants::makeSystemUserID();
+    rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    rec.last_modified_time = rec.created_time;
+    rec.is_valid = 1;
+
+    // Store message in TOAST
+    if (!message.empty()) {
+        uint64_t xmin = 0;
+        Status st = storeStringInToast(message, xmin, rec.message_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    Status st = writeRecordToHeapPage(exceptions_table_page_, rec, ctx);
+    if (st != Status::OK) {
+        SET_ERROR_CONTEXT(ctx, st, "Failed to write exception record");
+        return st;
+    }
+
+    exception_cache_[exception_id_out] = {
+        rec.exception_id,
+        rec.schema_id,
+        std::string(rec.name),
+        message,
+        rec.owner_id,
+        rec.created_time,
+        rec.last_modified_time,
+        true
+    };
+
+    return Status::OK;
+}
+
+Status CatalogManager::getException(const ID& exception_id, ExceptionInfo& info_out,
+                                    ErrorContext* ctx)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = exception_cache_.find(exception_id);
+    if (it != exception_cache_.end()) {
+        info_out = it->second;
+        return Status::OK;
+    }
+
+    auto predicate = [&exception_id](const ExceptionRecord& rec) {
+        return rec.exception_id == exception_id && rec.is_valid == 1;
+    };
+
+    auto result = findRecordInHeapPage<ExceptionRecord>(exceptions_table_page_, predicate, ctx);
+    if (result.status != Status::OK) {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Exception not found");
+        return Status::NOT_FOUND;
+    }
+
+    ExceptionInfo info{};
+    info.exception_id = result.record.exception_id;
+    info.schema_id = result.record.schema_id;
+    info.name = std::string(result.record.name);
+    info.owner_id = result.record.owner_id;
+    info.created_time = result.record.created_time;
+    info.last_modified_time = result.record.last_modified_time;
+    info.is_valid = (result.record.is_valid == 1);
+    if (result.record.message_oid != 0) {
+        uint64_t xmin = 0;
+        loadStringFromToast(result.record.message_oid, xmin, info.message, ctx);
+    }
+
+    exception_cache_[exception_id] = info;
+    info_out = info;
+    return Status::OK;
+}
+
+Status CatalogManager::getExceptionByName(const ID& schema_id, const std::string& name,
+                                          ExceptionInfo& info_out, ErrorContext* ctx)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto predicate = [&schema_id, &name](const ExceptionRecord& rec) {
+        return rec.schema_id == schema_id && strcmp(rec.name, name.c_str()) == 0 && rec.is_valid == 1;
+    };
+
+    auto result = findRecordInHeapPage<ExceptionRecord>(exceptions_table_page_, predicate, ctx);
+    if (result.status != Status::OK) {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Exception not found");
+        return Status::NOT_FOUND;
+    }
+
+    return getException(result.record.exception_id, info_out, ctx);
+}
+
+Status CatalogManager::dropException(const ID& exception_id, bool /*cascade*/, ErrorContext* ctx)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    BufferPool* bp = db_->buffer_pool();
+    void* page_data;
+    Status status = bp->pinPage(exceptions_table_page_, &page_data, ctx);
+    if (status != Status::OK) return status;
+
+    HeapPage heap_page(static_cast<uint8_t*>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    bool found = false;
+    auto* mutable_page_data = static_cast<uint8_t*>(page_data);
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t* tuple_data;
+        uint32_t tuple_size;
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(ExceptionRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t*>(page_data);
+                auto* record = reinterpret_cast<ExceptionRecord*>(mutable_page_data + offset + sizeof(TupleHeader));
+
+                if (record->exception_id == exception_id && record->is_valid == 1)
+                {
+                    record->is_valid = 0;
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(exceptions_table_page_, found, ctx);
+
+    if (!found) {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Exception not found");
+        return Status::NOT_FOUND;
+    }
+
+    exception_cache_.erase(exception_id);
+    return Status::OK;
+}
+
+Status CatalogManager::listExceptions(const ID& schema_id, std::vector<ExceptionInfo>& exceptions_out,
+                                      ErrorContext* ctx)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    exceptions_out.clear();
+
+    auto filter = [&schema_id](const ExceptionRecord& rec) {
+        return rec.schema_id == schema_id && rec.is_valid == 1;
+    };
+    auto converter = [this, ctx](const ExceptionRecord& rec, ExceptionInfo& info) {
+        info.exception_id = rec.exception_id;
+        info.schema_id = rec.schema_id;
+        info.name = std::string(rec.name);
+        info.owner_id = rec.owner_id;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        info.is_valid = (rec.is_valid == 1);
+        if (rec.message_oid != 0) {
+            uint64_t xmin = 0;
+            loadStringFromToast(rec.message_oid, xmin, info.message, ctx);
+        }
+    };
+
+    return readRecordsToVector<ExceptionRecord, ExceptionInfo>(exceptions_table_page_, exceptions_out,
+                                                               filter, converter, ctx);
+}
+
+// Unified object lookup
+Status CatalogManager::lookupObject(const ID& schema_id, const std::string& name,
+                                    ObjectLookup& out, ErrorContext* ctx)
+{
+    // Try function
+    FunctionInfo fn;
+    if (getFunction(name, fn, ctx) == Status::OK) {
+        out.object_id = fn.function_id;
+        out.type = ObjectType::FUNCTION;
+        out.schema_id = schema_id; // functions are global in current impl
+        out.name = name;
+        return Status::OK;
+    }
+
+    // Procedure
+    ProcedureInfo pr;
+    if (getProcedure(name, pr, ctx) == Status::OK) {
+        out.object_id = pr.procedure_id;
+        out.type = ObjectType::PROCEDURE;
+        out.schema_id = schema_id;
+        out.name = name;
+        return Status::OK;
+    }
+
+    // Package
+    PackageInfo pkg;
+    if (getPackageByName(schema_id, name, pkg, ctx) == Status::OK) {
+        out.object_id = pkg.package_id;
+        out.type = ObjectType::PACKAGE;
+        out.schema_id = schema_id;
+        out.name = name;
+        return Status::OK;
+    }
+
+    // UDR
+    UDRInfo ui;
+    if (getUDRByName(schema_id, name, ui, ctx) == Status::OK) {
+        out.object_id = ui.udr_id;
+        out.type = ObjectType::UDR;
+        out.schema_id = schema_id;
+        out.name = name;
+        return Status::OK;
+    }
+
+    // Exception
+    ExceptionInfo ex;
+    if (getExceptionByName(schema_id, name, ex, ctx) == Status::OK) {
+        out.object_id = ex.exception_id;
+        out.type = ObjectType::EXCEPTION;
+        out.schema_id = schema_id;
+        out.name = name;
+        return Status::OK;
+    }
+
+    // Sequence
+    ID seq_id;
+    if (getSequenceIdByName(name, seq_id, ctx) == Status::OK) {
+        out.object_id = seq_id;
+        out.type = ObjectType::SEQUENCE;
+        out.schema_id = schema_id;
+        out.name = name;
+        return Status::OK;
+    }
+
+    return Status::NOT_FOUND;
 }
 
 // ============================================================================

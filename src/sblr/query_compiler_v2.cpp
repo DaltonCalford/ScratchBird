@@ -6,6 +6,7 @@
 
 #include "scratchbird/sblr/query_compiler_v2.h"
 #include <chrono>
+#include <functional>
 
 namespace scratchbird {
 namespace sblr {
@@ -22,6 +23,7 @@ QueryCompilerV2::QueryCompilerV2(core::Database* db)
         core::ErrorContext ctx;
         if (catalog_->getSchema("public", public_schema_info, &ctx) == core::Status::OK) {
             current_schema_ = public_schema_info.schema_id;
+            default_schema_ = public_schema_info.schema_id;
         }
     }
 }
@@ -164,9 +166,19 @@ CompilationResultV2 QueryCompilerV2::compileInternal(const std::string& sql) {
 
     result.setBytecode(bc_result.bytecode());
 
+    // Seed dependencies collected during semantic analysis (domains, catalog-resolved functions/UDRs)
+    for (const auto& dep : sem_result.dependencies()) {
+        const_cast<std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>>&>(result.dependencies()).push_back(dep);
+    }
+
     // Extract involved tables for cache invalidation
     extractInvolvedTables(sem_result.statement(),
         const_cast<std::unordered_set<core::ID, core::IDHash>&>(result.involvedTables()));
+
+    // Collect broader dependencies (tables, functions, sequences, schemas)
+    collectDependencies(sem_result.statement(),
+        sem_result.stringPool(),
+        const_cast<std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>>&>(result.dependencies()));
 
     // Update stats
     auto total_end = std::chrono::steady_clock::now();
@@ -218,6 +230,187 @@ void QueryCompilerV2::extractInvolvedTables(ResolvedStatement* stmt,
             tables.insert(del->target_table.table_uuid);
         }
     }
+}
+
+static std::string toString(parser::v2::StringPool* pool, parser::v2::StringPool::StringId id) {
+    if (!pool || id == parser::v2::StringPool::INVALID_ID) return {};
+    return std::string(pool->get(id));
+}
+
+static bool isZeroUuid(const core::ID& id) {
+    for (auto b : id.bytes) {
+        if (b != 0) return false;
+    }
+    return true;
+}
+
+void QueryCompilerV2::collectDependencies(ResolvedStatement* stmt,
+                             parser::v2::StringPool* pool,
+                             std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>>& deps) {
+    if (!stmt) return;
+
+    auto add = [&](const core::ID& id, core::CatalogManager::ObjectType type) {
+        if (id.bytes[0] == 0 && id.bytes[1] == 0) return;
+        deps.emplace_back(id, type);
+    };
+
+    auto addByLookup = [&](const std::string& name) -> bool {
+        if (name.empty() || !catalog_ || isZeroUuid(default_schema_)) {
+            return false;
+        }
+        core::CatalogManager::ObjectLookup lookup{};
+        core::ErrorContext ctx;
+        if (catalog_->lookupObject(default_schema_, name, lookup, &ctx) == core::Status::OK) {
+            add(lookup.object_id, lookup.type);
+            return true;
+        }
+        return false;
+    };
+
+    auto addFunctionByName = [&](const std::string& name) {
+        if (name.empty() || !catalog_) return;
+
+        if (addByLookup(name)) return;
+
+        core::CatalogManager::FunctionInfo fi;
+        core::ErrorContext ctx;
+        if (catalog_->getFunction(name, fi, &ctx) == core::Status::OK) {
+            add(fi.function_id, core::CatalogManager::ObjectType::FUNCTION);
+            return;
+        }
+        core::CatalogManager::ProcedureInfo pi;
+        if (catalog_->getProcedure(name, pi, &ctx) == core::Status::OK) {
+            add(pi.procedure_id, core::CatalogManager::ObjectType::PROCEDURE);
+        }
+    };
+
+    auto addPackageByName = [&](const std::string& name) {
+        if (name.empty() || !catalog_ || isZeroUuid(default_schema_)) return;
+        core::CatalogManager::PackageInfo pkg;
+        core::ErrorContext ctx;
+        if (catalog_->getPackageByName(default_schema_, name, pkg, &ctx) == core::Status::OK) {
+            add(pkg.package_id, core::CatalogManager::ObjectType::PACKAGE);
+        }
+    };
+
+    auto tryAddSequenceFromLiteral = [&](ResolvedExpression* expr) {
+        auto* lit = dynamic_cast<ResolvedLiteral*>(expr);
+        if (!lit || lit->literal_type != LiteralType::STRING || lit->string_value == parser::v2::StringPool::INVALID_ID || !catalog_) {
+            return;
+        }
+        std::string seq_name = toString(pool, lit->string_value);
+        core::ID seq_id;
+        core::ErrorContext ctx;
+        if (catalog_->getSequenceIdByName(seq_name, seq_id, &ctx) == core::Status::OK) {
+            add(seq_id, core::CatalogManager::ObjectType::SEQUENCE);
+            return;
+        }
+        // Try schema-qualified with default schema
+        if (!isZeroUuid(default_schema_)) {
+            core::CatalogManager::SequenceInfo sinfo;
+            if (catalog_->getSequence(default_schema_, seq_name, sinfo, &ctx) == core::Status::OK) {
+                add(sinfo.sequence_id, core::CatalogManager::ObjectType::SEQUENCE);
+            }
+        }
+    };
+
+    std::function<void(ResolvedExpression*)> walkExpr = [&](ResolvedExpression* expr) {
+        if (!expr) return;
+        if (auto* fn = dynamic_cast<ResolvedFunctionCall*>(expr)) {
+            if (!isZeroUuid(fn->function.function_uuid)) {
+                add(fn->function.function_uuid, core::CatalogManager::ObjectType::FUNCTION);
+            } else {
+                std::string fname = toString(pool, fn->function.function_name);
+                addFunctionByName(fname);
+                // Package-qualified names: record package dependency (best-effort)
+                auto pos = fname.find('.');
+                if (pos != std::string::npos) {
+                    addPackageByName(fname.substr(0, pos));
+                }
+                // Detect sequence functions by name with literal arg
+                if (fname == "nextval" || fname == "currval" || fname == "setval") {
+                    if (!fn->arguments.empty()) {
+                        tryAddSequenceFromLiteral(fn->arguments[0]);
+                    }
+                }
+            }
+            for (auto* arg : fn->arguments) walkExpr(arg);
+            if (fn->filter) walkExpr(fn->filter);
+            if (fn->separator) walkExpr(fn->separator);
+        } else if (auto* cast = dynamic_cast<ResolvedCast*>(expr)) {
+            walkExpr(cast->expr);
+        } else if (auto* case_expr = dynamic_cast<ResolvedCase*>(expr)) {
+            if (case_expr->operand) walkExpr(case_expr->operand);
+            for (const auto& when : case_expr->when_clauses) {
+                walkExpr(when.when_expr);
+                walkExpr(when.then_expr);
+            }
+            if (case_expr->else_expr) walkExpr(case_expr->else_expr);
+        } else if (auto* sub = dynamic_cast<ResolvedSubqueryExpr*>(expr)) {
+            collectDependencies(sub->subquery, pool, deps);
+        }
+    };
+
+    if (auto* select = dynamic_cast<ResolvedSelectStmt*>(stmt)) {
+        for (const auto& table_ref : select->from_tables) {
+            add(table_ref->table_uuid, core::CatalogManager::ObjectType::TABLE);
+            add(table_ref->schema_uuid, core::CatalogManager::ObjectType::SCHEMA);
+        }
+        for (const auto& join : select->joins) {
+            if (join->right) {
+                add(join->right->table_uuid, core::CatalogManager::ObjectType::TABLE);
+                add(join->right->schema_uuid, core::CatalogManager::ObjectType::SCHEMA);
+            }
+            if (join->on_condition) walkExpr(join->on_condition);
+        }
+        if (select->where) walkExpr(select->where);
+        for (auto* expr : select->group_by) walkExpr(expr);
+        if (select->having) walkExpr(select->having);
+        for (auto* ob : select->order_by) walkExpr(ob->expr);
+        if (select->limit) walkExpr(select->limit);
+        if (select->offset) walkExpr(select->offset);
+        for (auto& item : select->select_list) {
+            walkExpr(item.expr);
+        }
+    } else if (auto* insert = dynamic_cast<ResolvedInsertStmt*>(stmt)) {
+        add(insert->target_table.table_uuid, core::CatalogManager::ObjectType::TABLE);
+        add(insert->target_table.schema_uuid, core::CatalogManager::ObjectType::SCHEMA);
+        for (auto& row : insert->values_rows) {
+            for (auto* expr : row) walkExpr(expr);
+        }
+        if (insert->select_source) collectDependencies(insert->select_source, pool, deps);
+    } else if (auto* update = dynamic_cast<ResolvedUpdateStmt*>(stmt)) {
+        add(update->target_table.table_uuid, core::CatalogManager::ObjectType::TABLE);
+        add(update->target_table.schema_uuid, core::CatalogManager::ObjectType::SCHEMA);
+        for (const auto& jt : update->from_tables) {
+            add(jt->table_uuid, core::CatalogManager::ObjectType::TABLE);
+            add(jt->schema_uuid, core::CatalogManager::ObjectType::SCHEMA);
+        }
+        if (update->where) walkExpr(update->where);
+        for (const auto& asn : update->assignments) walkExpr(asn.second);
+        for (const auto& join : update->joins) {
+            if (join->right) {
+                add(join->right->table_uuid, core::CatalogManager::ObjectType::TABLE);
+                add(join->right->schema_uuid, core::CatalogManager::ObjectType::SCHEMA);
+            }
+            if (join->on_condition) walkExpr(join->on_condition);
+        }
+    } else if (auto* del = dynamic_cast<ResolvedDeleteStmt*>(stmt)) {
+        add(del->target_table.table_uuid, core::CatalogManager::ObjectType::TABLE);
+        add(del->target_table.schema_uuid, core::CatalogManager::ObjectType::SCHEMA);
+        if (del->where) walkExpr(del->where);
+    }
+
+    // Deduplicate deps vector
+    std::unordered_set<core::ID, core::IDHash> seen;
+    std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>> deduped;
+    deduped.reserve(deps.size());
+    for (const auto& d : deps) {
+        if (seen.insert(d.first).second) {
+            deduped.push_back(d);
+        }
+    }
+    deps.swap(deduped);
 }
 
 } // namespace sblr

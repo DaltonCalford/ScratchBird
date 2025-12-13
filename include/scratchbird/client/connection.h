@@ -172,6 +172,16 @@ public:
      */
     bool isEmpty() const;
 
+    /**
+     * Get raw row values by index (adapter use)
+     */
+    const std::vector<protocol::ProtocolCodec::ColumnValue>& getRowValues(size_t index) const;
+
+    /**
+     * Get the command tag returned by the server (if any)
+     */
+    const std::string& getCommandTag() const;
+
     // ============================
     // Navigation
     // ============================

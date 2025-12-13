@@ -241,6 +241,13 @@ bool ResolvedType::isAssignableTo(const ResolvedType& target) const {
 // SemanticAnalyzerV2 Implementation
 // =============================================================================
 
+namespace {
+    bool isZeroUuidLocal(const ID& id) {
+        for (auto b : id.bytes) { if (b != 0) return false; }
+        return true;
+    }
+}
+
 SemanticAnalyzerV2::SemanticAnalyzerV2(CatalogManager& catalog, StringPool& string_pool)
     : catalog_(catalog)
     , string_pool_(string_pool)
@@ -258,6 +265,7 @@ SemanticAnalyzerV2::~SemanticAnalyzerV2() = default;
 SemanticResult SemanticAnalyzerV2::analyze(Statement* stmt) {
     SemanticResult result;
     current_result_ = &result;
+    result.setStringPool(&string_pool_);
 
     // Reset state
     scope_stack_.clear();
@@ -478,6 +486,16 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
         func_name = std::string(string_pool_.get(path.components[0]));
     } else {
         func_name = std::string(string_pool_.get(path.components.back()));
+        // Try package dependency on prefix
+        std::string pkg_name = std::string(string_pool_.get(path.components.front()));
+        core::CatalogManager::PackageInfo pkg;
+        core::ErrorContext ctx;
+        if (!isZeroUuidLocal(current_schema_) &&
+            catalog_.getPackageByName(current_schema_, pkg_name, pkg, &ctx) == Status::OK) {
+            if (current_result_) {
+                current_result_->addDependency(pkg.package_id, core::CatalogManager::ObjectType::PACKAGE);
+            }
+        }
     }
 
     ResolvedFunctionRef ref;
@@ -580,6 +598,49 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
             *ret_type = arg_types[0];
         }
         ref.return_type = ret_type;
+        return ref;
+    }
+
+    // Not a built-in: try catalog-resolved function/procedure/UDR
+    core::ErrorContext ctx;
+    core::CatalogManager::FunctionInfo fi;
+    if (catalog_.getFunction(func_name, fi, &ctx) == Status::OK) {
+        ref.function_uuid = fi.function_id;
+        ref.is_builtin = false;
+        ret_type->data_type = fi.return_type;
+        ret_type->precision = static_cast<int32_t>(fi.return_type_precision);
+        ret_type->scale = static_cast<int32_t>(fi.return_type_scale);
+        ret_type->is_nullable = true;
+        ref.return_type = ret_type;
+        if (current_result_) {
+            current_result_->addDependency(fi.function_id, core::CatalogManager::ObjectType::FUNCTION);
+        }
+        return ref;
+    }
+
+    core::CatalogManager::ProcedureInfo pi;
+    if (catalog_.getProcedure(func_name, pi, &ctx) == Status::OK) {
+        ref.function_uuid = pi.procedure_id;
+        ref.is_builtin = false;
+        ret_type->data_type = DataType::UNKNOWN;
+        ret_type->is_nullable = true;
+        ref.return_type = ret_type;
+        if (current_result_) {
+            current_result_->addDependency(pi.procedure_id, core::CatalogManager::ObjectType::PROCEDURE);
+        }
+        return ref;
+    }
+
+    core::CatalogManager::UDRInfo ui;
+    if (catalog_.getUDRByName(current_schema_, func_name, ui, &ctx) == Status::OK) {
+        ref.function_uuid = ui.udr_id;
+        ref.is_builtin = false;
+        ret_type->data_type = DataType::UNKNOWN;
+        ret_type->is_nullable = true;
+        ref.return_type = ret_type;
+        if (current_result_) {
+            current_result_->addDependency(ui.udr_id, core::CatalogManager::ObjectType::UDR);
+        }
         return ref;
     }
 
@@ -2472,6 +2533,25 @@ ResolvedType SemanticAnalyzerV2::resolveTypeName(const TypeName& type_name) {
         } else if (name_str == "jsonb") {
             resolved.data_type = DataType::JSONB;
         } else {
+            // Try resolving as a domain
+            core::ErrorContext ctx;
+            core::CatalogManager::DomainInfo dinfo;
+            // Search current schema then search_path
+            bool found = false;
+            if (!isZeroUuidLocal(current_schema_) &&
+                catalog_.getDomainByName(current_schema_, name_str, dinfo, &ctx) == Status::OK) {
+                found = true;
+            } else {
+                for (const auto& sch : search_path_) {
+                    if (catalog_.getDomainByName(sch, name_str, dinfo, &ctx) == Status::OK) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (found && current_result_) {
+                current_result_->addDependency(dinfo.domain_id, core::CatalogManager::ObjectType::DOMAIN);
+            }
             resolved.data_type = DataType::UNKNOWN;
         }
     } else {
