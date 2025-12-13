@@ -3,8 +3,10 @@
 Purpose: quick sweep of expected DB-engine capabilities that are missing or unclear in current codebase. Not exhaustive; prioritizes ambiguity and feature holes.
 
 ## Storage/Recovery
-- [ ] WAL/redo and crash recovery path not evident; clarify durability story beyond page writes.  
-- [ ] Backup/restore tooling (hot/online) unclear; only page-level primitives seen.  
+- [ ] WAL/redo: not present (by design). Beta will add WAL for logging/ETL/replication only, not crash recovery.  
+- [ ] Backup/restore: two modes to formalize/verify  
+  - Transaction-isolated logical backup: full SQL metadata + inserts; optional disable indexes/deps; plain text or compressed; snapshot at txn start.  
+  - Shadow/live backup: page-by-page copy into backup tablespace; tracks changes during copy; finalize to obtain consistent image at end time.  
 - [ ] Checkpointing frequency/policy not documented.  
 
 ## Query Planning/Stats
