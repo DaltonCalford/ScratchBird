@@ -1,7 +1,8 @@
 # TODO: 128-bit Numeric Support (UINT128, FLOAT128)
 
 ## Goal
-Add unsigned 128-bit integers and quad-precision floats to the type system and execution stack, with consistent storage, wire, and index semantics.
+Add unsigned 128-bit integers and quad-precision floats to the ScratchBird type system and execution stack, with consistent storage, wire, and index semantics.
+**Scope constraint:** ScratchBird-only. Emulated engines must not surface capabilities beyond their native support; adapters may only map to compatible fallback types (e.g., DECIMAL/text) without extending emulated behavior.
 
 ## Scope
 - Types: `UINT128`, `FLOAT128` (quad/long double or libquadmath-backed).
@@ -32,7 +33,7 @@ Add unsigned 128-bit integers and quad-precision floats to the type system and e
    - Update any SIMD/SIMD-less compare paths.
 
 6) **Wire/Adapters**
-   - Map to client-visible types per dialect: fallback to DECIMAL/NUMERIC for adapters that lack native uint128/quad-float; document behavior.
+   - Map to client-visible types per dialect: ScratchBird wire can expose native types; emulated adapters must use compatible fallbacks (e.g., DECIMAL/NUMERIC/text) and must not add non-native capabilities.
 
 7) **Tests**
    - Unit: arithmetic, comparison, casts, hashing, serialization, index ordering.
