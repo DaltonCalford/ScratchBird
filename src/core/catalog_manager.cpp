@@ -8892,8 +8892,11 @@ Status CatalogManager::closeAllIndexes(ErrorContext *ctx)
 
 Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext *ctx)
 {
-    // DROP TABLE implementation (ALPHA Phase 1 - DDL Modifications)
-    // Implements soft delete with MGA compliance
+    // DROP TABLE implementation (Phase 2: Dependency Tracking)
+    // Implements conservative RESTRICT-only policy:
+    // - Auto-drop: indexes, triggers, constraints owned by table
+    // - BLOCK: views, functions, parent-side FKs that reference table
+    // - No CASCADE support (removed - conservative policy)
 
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -8907,45 +8910,95 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
 
     const TableInfo &table_info = table_it->second;
 
-    // 2. Check for dependent indexes
-    std::vector<IndexInfo> indexes;
-    Status status = listIndexesForTable(table_id, indexes, ctx);
-    if (status != Status::OK)
-    {
+    // 2. Check for dependencies using dependency API
+    std::vector<DependencyInfo> all_deps;
+    Status status = getDependents(table_id, all_deps, ctx);
+    if (status != Status::OK) {
         return status;
     }
 
-    if (!indexes.empty() && !cascade)
-    {
-        // RESTRICT: fail if dependent indexes exist
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                         "Table has dependent indexes - use CASCADE to drop them");
-        return Status::INVALID_ARGUMENT;
+    // 3. Filter owned vs blocking dependencies
+    auto filtered = filterDependencies(table_id, ObjectType::TABLE, all_deps, ctx);
+
+    // 4. If blocking dependencies exist, fail with detailed error
+    if (!filtered.blocking.empty()) {
+        std::string error_msg = buildDependencyErrorMessage(
+            table_info.table_name, ObjectType::TABLE, filtered.blocking, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
+        return Status::CONSTRAINT_VIOLATION;
     }
 
-    // 3. DROP dependent indexes if CASCADE
-    if (cascade && !indexes.empty())
-    {
-        for (const auto &index : indexes)
-        {
-            status = dropIndex(index.index_id, ctx);
-            if (status != Status::OK)
-            {
-                // Failed to drop index - abort
-                return status;
-            }
+    // 5. Drop owned objects (indexes, triggers, constraints, child-side FKs)
+    // Group owned objects by type for proper drop order
+    std::vector<DependencyInfo> owned_triggers;
+    std::vector<DependencyInfo> owned_indexes;
+    std::vector<DependencyInfo> owned_constraints;
+
+    for (const auto& dep : filtered.owned) {
+        switch (dep.dependent_type) {
+            case ObjectType::TRIGGER:
+                owned_triggers.push_back(dep);
+                break;
+            case ObjectType::INDEX:
+                owned_indexes.push_back(dep);
+                break;
+            case ObjectType::CONSTRAINT:
+                owned_constraints.push_back(dep);
+                break;
+            default:
+                break;
         }
     }
 
-    // 4. Soft delete the table record (mark is_valid = 0)
+    // Drop in proper order: triggers first, then indexes, then constraints
+    for (const auto& dep : owned_triggers) {
+        // Get trigger name (dropTrigger requires name, not ID)
+        TriggerInfo trig_info;
+        status = getTrigger(dep.dependent_object_id, trig_info, ctx);
+        if (status == Status::OK) {
+            status = dropTrigger(trig_info.trigger_name, ctx);
+        }
+        if (status != Status::OK) {
+            LOG_ERROR(CATALOG, "Failed to drop trigger during table drop");
+            return status;
+        }
+    }
+
+    for (const auto& dep : owned_indexes) {
+        status = dropIndex(dep.dependent_object_id, ctx);
+        if (status != Status::OK) {
+            LOG_ERROR(CATALOG, "Failed to drop index during table drop");
+            return status;
+        }
+    }
+
+    for (const auto& dep : owned_constraints) {
+        // Drop constraint (includes FKs, checks, unique, etc.)
+        status = dropConstraint(dep.dependent_object_id, ctx);
+        if (status != Status::OK) {
+            LOG_ERROR(CATALOG, "Failed to drop constraint during table drop");
+            return status;
+        }
+    }
+
+    // 6. Soft delete the table record (mark is_valid = 0)
     status = deleteTableRecord(table_id, ctx);
     if (status != Status::OK)
     {
         return status;
     }
 
-    // 5. Remove from cache
+    // 7. Clear dependencies (remove this table from dependency graph)
+    status = clearDependenciesFor(table_id, ctx);
+    if (status != Status::OK) {
+        LOG_ERROR(CATALOG, "Failed to clear dependencies for table");
+        // Continue anyway - table is already deleted
+    }
+
+    // 8. Remove from cache
     table_cache_.erase(table_it);
+
+    LOG_INFO(CATALOG, "Dropped table '%s' with owned objects", table_info.table_name.c_str());
 
     return Status::OK;
 }
@@ -14819,6 +14872,61 @@ auto CatalogManager::createForeignKey(const std::string& fk_name,
     table_child_fks_.insert({child_table_id, fk_id_out});
     table_parent_fks_.insert({parent_table_id, fk_id_out});
 
+    // Phase 2: Create dependency links
+    // FK is owned by child table (child-side dependency - auto-drop)
+    ID child_dep_id;
+    Status dep_status = createDependency(
+        fk_id_out, ObjectType::CONSTRAINT,  // FK is dependent
+        child_table_id, ObjectType::TABLE,   // On child table
+        DependencyType::AUTO,                // Auto-drop when child table dropped
+        child_dep_id,
+        ctx
+    );
+    if (dep_status != Status::OK) {
+        // Rollback cache changes
+        foreign_keys_cache_.erase(fk_id_out);
+        table_child_fks_.erase(child_table_id);
+        table_parent_fks_.erase(parent_table_id);
+        SET_ERROR_CONTEXT(ctx, dep_status, "Failed to create child dependency for foreign key");
+        return dep_status;
+    }
+
+    // FK references parent table (parent-side dependency - blocks drop)
+    ID parent_dep_id;
+    dep_status = createDependency(
+        fk_id_out, ObjectType::CONSTRAINT,   // FK is dependent
+        parent_table_id, ObjectType::TABLE,  // On parent table
+        DependencyType::NORMAL,              // Blocks parent table drop
+        parent_dep_id,
+        ctx
+    );
+    if (dep_status != Status::OK) {
+        // Rollback both dependency and cache changes
+        deleteDependency(child_dep_id, ctx);
+        foreign_keys_cache_.erase(fk_id_out);
+        auto child_range = table_child_fks_.equal_range(child_table_id);
+        for (auto it = child_range.first; it != child_range.second; ) {
+            if (it->second == fk_id_out)
+                it = table_child_fks_.erase(it);
+            else
+                ++it;
+        }
+        auto parent_range = table_parent_fks_.equal_range(parent_table_id);
+        for (auto it = parent_range.first; it != parent_range.second; ) {
+            if (it->second == fk_id_out)
+                it = table_parent_fks_.erase(it);
+            else
+                ++it;
+        }
+        SET_ERROR_CONTEXT(ctx, dep_status, "Failed to create parent dependency for foreign key");
+        return dep_status;
+    }
+
+    // Store dependency IDs in FK info for cleanup
+    fk_info.child_dependency_id = child_dep_id;
+    fk_info.parent_dependency_id = parent_dep_id;
+    foreign_keys_cache_[fk_id_out] = fk_info;  // Update with dependency IDs
+
     // Phase D: Persist to disk
     if (foreign_keys_table_page_ != 0)
     {
@@ -14857,6 +14965,10 @@ auto CatalogManager::createForeignKey(const std::string& fk_name,
         Status status = writeRecordToHeapPage(foreign_keys_table_page_, fk_rec, ctx);
         if (status != Status::OK)
         {
+            // Rollback dependencies first
+            deleteDependency(child_dep_id, ctx);
+            deleteDependency(parent_dep_id, ctx);
+
             // Rollback cache changes
             foreign_keys_cache_.erase(fk_id_out);
             auto child_range = table_child_fks_.equal_range(child_table_id);
@@ -14959,21 +15071,12 @@ auto CatalogManager::dropForeignKey(const ID& fk_id,
 
     const ForeignKeyInfo& fk = it->second;
 
-    // Remove dependency link (child -> parent)
-    std::vector<ID> deps_to_drop;
-    {
-        std::lock_guard<std::mutex> dep_lock(dependency_cache_mutex_);
-        for (const auto& [dep_id, dep_info] : dependency_cache_) {
-            if (dep_info.dependent_object_id == fk.child_table_id &&
-                dep_info.referenced_object_id == fk.parent_table_id &&
-                dep_info.dependent_type == ObjectType::TABLE &&
-                dep_info.referenced_type == ObjectType::TABLE) {
-                deps_to_drop.push_back(dep_id);
-            }
-        }
+    // Phase 2: Delete dependency links using stored IDs
+    if (fk.child_dependency_id != ID{}) {
+        deleteDependency(fk.child_dependency_id, ctx);
     }
-    for (const auto& dep_id : deps_to_drop) {
-        deleteDependency(dep_id, ctx);
+    if (fk.parent_dependency_id != ID{}) {
+        deleteDependency(fk.parent_dependency_id, ctx);
     }
 
     // Remove from index maps

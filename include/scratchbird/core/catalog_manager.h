@@ -701,6 +701,10 @@ namespace scratchbird::core
             bool initially_deferred = false;   // Defer by default in new transactions?
 
             uint64_t created_time = 0;
+
+            // Phase 2: Dependency tracking IDs for cleanup
+            ID child_dependency_id;            // Dependency: FK → child table (AUTO)
+            ID parent_dependency_id;           // Dependency: FK → parent table (NORMAL)
         };
 
         // P1-9: Constraint types for unified constraints table
