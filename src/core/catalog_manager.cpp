@@ -12,6 +12,8 @@
 #include <cstring>
 #include "scratchbird/core/toast.h"       // Phase 5 Task 5.1.3: TOAST migration
 #include <algorithm>
+#include <sstream>  // Phase 1: Dependency error messages
+#include <map>      // Phase 1: Dependency grouping
 #include <chrono>  // Phase 4 Task 4.1.3: Progress tracking
 #include <thread>  // Phase 4 Task 4.1.3: Sleep simulation in STUB
 // WP-2 CAT-1/2: MV refresh - Parser/Executor includes removed due to circular dependency
@@ -10862,6 +10864,212 @@ auto CatalogManager::clearDependenciesFor(const ID& dependent_object_id,
     }
 
     return Status::OK;
+}
+
+// ========================================================================
+// Dependency Infrastructure Helpers (Phase 1)
+// ========================================================================
+
+auto CatalogManager::objectTypeToString(ObjectType type) -> std::string
+{
+    switch (type) {
+        case ObjectType::TABLE: return "table";
+        case ObjectType::VIEW: return "view";
+        case ObjectType::INDEX: return "index";
+        case ObjectType::SEQUENCE: return "sequence";
+        case ObjectType::FUNCTION: return "function";
+        case ObjectType::PROCEDURE: return "procedure";
+        case ObjectType::TRIGGER: return "trigger";
+        case ObjectType::CONSTRAINT: return "constraint";
+        case ObjectType::DOMAIN: return "domain";
+        case ObjectType::PACKAGE: return "package";
+        case ObjectType::UDR: return "UDR";
+        case ObjectType::EXCEPTION: return "exception";
+        case ObjectType::SYNONYM: return "synonym";
+        case ObjectType::SCHEMA: return "schema";
+        case ObjectType::DATABASE: return "database";
+        case ObjectType::USER: return "user";
+        case ObjectType::ROLE: return "role";
+        case ObjectType::COLUMN: return "column";
+        case ObjectType::EMULATION_SERVER: return "emulation server";
+        case ObjectType::FOREIGN_SERVER: return "foreign server";
+        case ObjectType::FOREIGN_TABLE: return "foreign table";
+        case ObjectType::USER_MAPPING: return "user mapping";
+        default: return "object";
+    }
+}
+
+auto CatalogManager::getObjectName(const ID& object_id, ObjectType type,
+                                   ErrorContext* ctx) -> std::string
+{
+    switch (type) {
+        case ObjectType::TABLE: {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = table_cache_.find(object_id);
+            return it != table_cache_.end() ? it->second.table_name : "<unknown>";
+        }
+
+        case ObjectType::VIEW: {
+            std::lock_guard<std::mutex> lock(view_cache_mutex_);
+            auto it = view_cache_.find(object_id);
+            return it != view_cache_.end() ? it->second.name : "<unknown>";
+        }
+
+        case ObjectType::INDEX: {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = index_cache_.find(object_id);
+            return it != index_cache_.end() ? it->second.index_name : "<unknown>";
+        }
+
+        case ObjectType::SEQUENCE: {
+            std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+            auto it = sequence_cache_.find(object_id);
+            return it != sequence_cache_.end() ? it->second->name : "<unknown>";
+        }
+
+        case ObjectType::FUNCTION: {
+            std::lock_guard<std::mutex> lock(psql_mutex_);
+            for (const auto& [name, info] : functions_) {
+                if (info.function_id == object_id) return name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::PROCEDURE: {
+            std::lock_guard<std::mutex> lock(psql_mutex_);
+            for (const auto& [name, info] : procedures_) {
+                if (info.procedure_id == object_id) return name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::TRIGGER: {
+            std::lock_guard<std::mutex> lock(trigger_mutex_);
+            auto it = trigger_cache_.find(object_id);
+            return it != trigger_cache_.end() ? it->second.trigger_name : "<unknown>";
+        }
+
+        case ObjectType::SCHEMA: {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = schema_cache_.find(object_id);
+            return it != schema_cache_.end() ? it->second.schema_name : "<unknown>";
+        }
+
+        case ObjectType::DOMAIN: {
+            std::lock_guard<std::mutex> lock(mutex_);
+            // Search domain cache (assuming it exists, implementation may vary)
+            // This is a placeholder - actual implementation depends on domain cache structure
+            return "<domain>";
+        }
+
+        case ObjectType::EXCEPTION: {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = exception_cache_.find(object_id);
+            return it != exception_cache_.end() ? it->second.name : "<unknown>";
+        }
+
+        default:
+            return "<unknown type: " + objectTypeToString(type) + ">";
+    }
+}
+
+auto CatalogManager::filterDependencies(const ID& owner_id, ObjectType owner_type,
+                                       const std::vector<DependencyInfo>& all_deps,
+                                       ErrorContext* ctx) -> DependencyFilter
+{
+    DependencyFilter result;
+
+    for (const auto& dep : all_deps) {
+        bool is_owned = false;
+
+        // Determine if this dependency is owned by the parent object
+        switch (owner_type) {
+            case ObjectType::TABLE:
+                // Table owns: indexes, triggers, constraints (including FKs)
+                if (dep.dependent_type == ObjectType::INDEX ||
+                    dep.dependent_type == ObjectType::TRIGGER ||
+                    dep.dependent_type == ObjectType::CONSTRAINT) {
+                    is_owned = true;
+                }
+                break;
+
+            case ObjectType::VIEW:
+                // View owns: triggers on view (rare, but possible)
+                if (dep.dependent_type == ObjectType::TRIGGER) {
+                    is_owned = true;
+                }
+                break;
+
+            case ObjectType::PACKAGE:
+                // Package owns: package members (functions/procedures in package)
+                // Note: This is a simplified check - actual implementation may need
+                // to verify package membership more carefully
+                if (dep.dependent_type == ObjectType::FUNCTION ||
+                    dep.dependent_type == ObjectType::PROCEDURE) {
+                    // TODO: Verify that function/procedure is actually a package member
+                    // For now, assume any function/procedure dependency on package is owned
+                    is_owned = true;
+                }
+                break;
+
+            default:
+                // Most objects don't own other objects
+                is_owned = false;
+        }
+
+        if (is_owned) {
+            result.owned.push_back(dep);
+        } else {
+            result.blocking.push_back(dep);
+        }
+    }
+
+    return result;
+}
+
+auto CatalogManager::buildDependencyErrorMessage(
+    const std::string& object_name,
+    ObjectType object_type,
+    const std::vector<DependencyInfo>& blocking_deps,
+    ErrorContext* ctx) -> std::string
+{
+    // Group dependencies by type for better readability
+    std::map<ObjectType, std::vector<std::string>> grouped;
+
+    for (const auto& dep : blocking_deps) {
+        std::string dep_name = getObjectName(dep.dependent_object_id,
+                                            dep.dependent_type, ctx);
+        grouped[dep.dependent_type].push_back(dep_name);
+    }
+
+    // Build error message
+    std::ostringstream msg;
+    msg << "Cannot drop " << objectTypeToString(object_type)
+        << " \"" << object_name << "\" because other objects depend on it\n";
+    msg << "DETAIL:\n";
+
+    // Format dependencies grouped by type
+    for (const auto& [type, names] : grouped) {
+        // Pluralize type name
+        std::string type_plural = objectTypeToString(type);
+        if (!names.empty() && names.size() > 1) {
+            // Simple pluralization - add 's' if not already ending in 's'
+            if (type_plural.back() != 's' && type_plural != "foreign key") {
+                type_plural += "s";
+            } else if (type_plural == "foreign key") {
+                type_plural = "foreign keys";
+            }
+        }
+
+        msg << "  " << (names.size() > 1 ? type_plural : objectTypeToString(type)) << ":\n";
+        for (const auto& name : names) {
+            msg << "    - " << name << "\n";
+        }
+    }
+
+    msg << "HINT: Drop dependent objects first.";
+
+    return msg.str();
 }
 
 // ========================================================================

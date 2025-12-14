@@ -3068,6 +3068,32 @@ namespace scratchbird::core
         static void extractColumnRefsFromBytecode(const std::vector<uint8_t>& bytecode,
                                                    std::vector<std::string>& column_names_out);
 
+        // Phase 1: Dependency Infrastructure - Helper methods for DROP operations
+
+        // Dependency filter result - separates owned from blocking dependencies
+        struct DependencyFilter {
+            std::vector<DependencyInfo> owned;      // Auto-drop (indexes, triggers, etc.)
+            std::vector<DependencyInfo> blocking;   // Error if exist (views, FKs, etc.)
+        };
+
+        // Convert ObjectType enum to user-friendly string
+        static auto objectTypeToString(ObjectType type) -> std::string;
+
+        // Get object name by ID and type (for error messages)
+        auto getObjectName(const ID& object_id, ObjectType type,
+                          ErrorContext* ctx) -> std::string;
+
+        // Filter dependencies into owned vs blocking categories
+        auto filterDependencies(const ID& owner_id, ObjectType owner_type,
+                               const std::vector<DependencyInfo>& all_deps,
+                               ErrorContext* ctx) -> DependencyFilter;
+
+        // Build detailed error message for blocked DROP operations
+        auto buildDependencyErrorMessage(const std::string& object_name,
+                                        ObjectType object_type,
+                                        const std::vector<DependencyInfo>& blocking_deps,
+                                        ErrorContext* ctx) -> std::string;
+
         Database *db_;
         mutable std::mutex mutex_;
 

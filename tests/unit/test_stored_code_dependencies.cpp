@@ -146,7 +146,7 @@ TEST_F(StoredCodeDependencyTest, CreateFunctionRegistersDependencies) {
     ASSERT_EQ(catalog_->getDependenciesFor(fn_info.function_id, deps, &ctx), Status::OK);
     ASSERT_FALSE(deps.empty());
     EXPECT_EQ(deps[0].referenced_object_id, table_info_.table_id);
-    EXPECT_EQ(deps[0].referenced_object_type, CatalogManager::ObjectType::TABLE);
+    EXPECT_EQ(deps[0].referenced_type, CatalogManager::ObjectType::TABLE);
 }
 
 TEST_F(StoredCodeDependencyTest, DropFunctionClearsDependencies) {
