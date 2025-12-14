@@ -22,6 +22,8 @@ Current codebase has table trigger catalog structures; need verification of SELE
 - Confirm table trigger firing on INSERT/UPDATE/DELETE; verify SELECT triggers are supported or mark unsupported.
 - Dependency and drop-blocking: ensure triggers are linked to underlying tables/routines and prevent drops when referenced.
 - Emulated engines: preserve native behavior; do not add trigger capabilities beyond their dialects.
+- Trigger ordering: triggers have a smallint order and should run lowest→highest for before/after chains; verify implementation honors ordering.
+- Runtime path: before trigger runs before data is prepared/returned; after trigger runs after prepare/row emission; document/verify these points.
 
 ## Actions
 - Audit executor/server codepaths for trigger firing per event and add missing hooks.  
