@@ -29,3 +29,4 @@ Current codebase has table trigger catalog structures; need verification of SELE
 - Audit executor/server codepaths for trigger firing per event and add missing hooks.  
 - If SELECT triggers unsupported, document and/or remove from advertised surface.  
 - Add tests: DB triggers per event; table triggers per DML; (if applicable) SELECT triggers.  
+- Confirm runtime behavior matches intent: before triggers fire before prepare/return; after triggers fire post-prepare/row emission; honor ordering.  
