@@ -2469,6 +2469,31 @@ namespace scratchbird::core
             index_object_cache_[index.index_id] = {index_ptr, index_type};
         }
 
+        // Phase 2: Create dependency link (index → table)
+        ID dep_id;
+        status = createDependency(
+            index.index_id, ObjectType::INDEX,
+            index.table_id, ObjectType::TABLE,
+            DependencyType::AUTO,  // Auto-drop when table dropped
+            dep_id,
+            ctx
+        );
+        if (status != Status::OK) {
+            // Rollback: Remove from caches
+            {
+                std::lock_guard<std::mutex> lock(index_object_mutex_);
+                index_object_cache_.erase(index.index_id);
+            }
+            index_cache_.erase(index.index_id);
+            pm->freePage(root_page, ctx);
+            LOG_ERROR(CATALOG, "Failed to create dependency for index");
+            return status;
+        }
+
+        // Store dependency ID in index info for cleanup
+        index.dependency_id = dep_id;
+        index_cache_[index.index_id] = index;  // Update with dependency ID
+
         return Status::OK;
     }
 
@@ -2620,6 +2645,31 @@ namespace scratchbird::core
             std::lock_guard<std::mutex> lock(index_object_mutex_);
             index_object_cache_[index.index_id] = {index_ptr, index_type};
         }
+
+        // Phase 2: Create dependency link (index → table)
+        ID dep_id;
+        status = createDependency(
+            index.index_id, ObjectType::INDEX,
+            index.table_id, ObjectType::TABLE,
+            DependencyType::AUTO,  // Auto-drop when table dropped
+            dep_id,
+            ctx
+        );
+        if (status != Status::OK) {
+            // Rollback: Remove from caches
+            {
+                std::lock_guard<std::mutex> lock(index_object_mutex_);
+                index_object_cache_.erase(index.index_id);
+            }
+            index_cache_.erase(index.index_id);
+            pm->freePage(root_page, ctx);
+            LOG_ERROR(CATALOG, "Failed to create dependency for index");
+            return status;
+        }
+
+        // Store dependency ID in index info for cleanup
+        index.dependency_id = dep_id;
+        index_cache_[index.index_id] = index;  // Update with dependency ID
 
         return Status::OK;
     }
@@ -9024,6 +9074,9 @@ Status CatalogManager::dropIndex(const ID &index_id, ErrorContext *ctx)
     {
         return status;
     }
+
+    // Phase 2: Clear dependency tracking for this index
+    clearDependenciesFor(index_id, ctx);
 
     // 3. Remove from cache
     // Note: Any cached index objects will be released when the cache entry is removed

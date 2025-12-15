@@ -585,6 +585,9 @@ namespace scratchbird::core
             // Binary serialized data (for small expressions, store directly; larger ones use TOAST)
             std::vector<uint8_t> expression_data;  // Serialized expression list
             std::vector<uint8_t> predicate_data;   // Serialized WHERE predicate
+
+            // Phase 2: Dependency tracking ID for cleanup
+            ID dependency_id;                      // Dependency: index → table (AUTO)
         };
 
         // Object types for dependencies and comments (Phase 1.4-1.5 - Catalog Corrections)
