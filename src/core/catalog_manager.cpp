@@ -11088,39 +11088,46 @@ auto CatalogManager::filterDependencies(const ID& owner_id, ObjectType owner_typ
     for (const auto& dep : all_deps) {
         bool is_owned = false;
 
-        // Determine if this dependency is owned by the parent object
-        switch (owner_type) {
-            case ObjectType::TABLE:
-                // Table owns: indexes, triggers, constraints (including FKs)
-                if (dep.dependent_type == ObjectType::INDEX ||
-                    dep.dependent_type == ObjectType::TRIGGER ||
-                    dep.dependent_type == ObjectType::CONSTRAINT) {
-                    is_owned = true;
-                }
-                break;
+        // CRITICAL: Check dependency_type first
+        // NORMAL dependencies are ALWAYS blocking (views, functions, parent-side FKs)
+        // INTERNAL/PIN dependencies are also blocking (system-critical)
+        if (dep.dependency_type == DependencyType::NORMAL ||
+            dep.dependency_type == DependencyType::INTERNAL ||
+            dep.dependency_type == DependencyType::PIN) {
+            is_owned = false;  // Blocking
+        }
+        // AUTO dependencies are owned (auto-drop)
+        else if (dep.dependency_type == DependencyType::AUTO) {
+            // Verify object type makes sense for ownership
+            switch (owner_type) {
+                case ObjectType::TABLE:
+                    // Table owns: indexes, triggers, constraints (child-side FKs only)
+                    if (dep.dependent_type == ObjectType::INDEX ||
+                        dep.dependent_type == ObjectType::TRIGGER ||
+                        dep.dependent_type == ObjectType::CONSTRAINT) {
+                        is_owned = true;
+                    }
+                    break;
 
-            case ObjectType::VIEW:
-                // View owns: triggers on view (rare, but possible)
-                if (dep.dependent_type == ObjectType::TRIGGER) {
-                    is_owned = true;
-                }
-                break;
+                case ObjectType::VIEW:
+                    // View owns: triggers on view (rare, but possible)
+                    if (dep.dependent_type == ObjectType::TRIGGER) {
+                        is_owned = true;
+                    }
+                    break;
 
-            case ObjectType::PACKAGE:
-                // Package owns: package members (functions/procedures in package)
-                // Note: This is a simplified check - actual implementation may need
-                // to verify package membership more carefully
-                if (dep.dependent_type == ObjectType::FUNCTION ||
-                    dep.dependent_type == ObjectType::PROCEDURE) {
-                    // TODO: Verify that function/procedure is actually a package member
-                    // For now, assume any function/procedure dependency on package is owned
-                    is_owned = true;
-                }
-                break;
+                case ObjectType::PACKAGE:
+                    // Package owns: package members (functions/procedures in package)
+                    if (dep.dependent_type == ObjectType::FUNCTION ||
+                        dep.dependent_type == ObjectType::PROCEDURE) {
+                        is_owned = true;
+                    }
+                    break;
 
-            default:
-                // Most objects don't own other objects
-                is_owned = false;
+                default:
+                    // Most objects don't own other objects
+                    is_owned = false;
+            }
         }
 
         if (is_owned) {
