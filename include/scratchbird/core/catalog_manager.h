@@ -3071,6 +3071,10 @@ namespace scratchbird::core
         auto getUserByNameUnlocked(const std::string& username, UserInfo& user_out,
                                    ErrorContext* ctx) -> Status;
 
+        // Internal unlocked version of dropIndex - caller must hold mutex_
+        // Used by dropTable to avoid deadlock
+        auto dropIndexInternal(const ID &index_id, ErrorContext *ctx) -> Status;
+
         // WP-2 CAT-M3: Extract column references from expression bytecode
         static void extractColumnRefsFromBytecode(const std::vector<uint8_t>& bytecode,
                                                    std::vector<std::string>& column_names_out);

@@ -214,6 +214,10 @@ TEST_F(TableDependencyTest, DropTableAutoDropsIndexes)
 
     // Drop table - should succeed and auto-drop indexes
     Status status = catalog->dropTable(table_id, false, &ctx);
+    if (status != Status::OK) {
+        std::cerr << "DROP TABLE failed with status: " << static_cast<int>(status)
+                  << ", message: '" << ctx.message << "'" << std::endl;
+    }
     EXPECT_EQ(status, Status::OK) << "DROP TABLE should succeed: " << ctx.message;
 
     // Verify table is gone

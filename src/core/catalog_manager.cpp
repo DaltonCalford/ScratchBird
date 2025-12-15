@@ -9015,7 +9015,7 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
     }
 
     for (const auto& dep : owned_indexes) {
-        status = dropIndex(dep.dependent_object_id, ctx);
+        status = dropIndexInternal(dep.dependent_object_id, ctx);
         if (status != Status::OK) {
             LOG_ERROR(CATALOG, "Failed to drop index during table drop");
             return status;
@@ -9053,13 +9053,9 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
     return Status::OK;
 }
 
-Status CatalogManager::dropIndex(const ID &index_id, ErrorContext *ctx)
+// Internal helper - assumes mutex_ is already held
+Status CatalogManager::dropIndexInternal(const ID &index_id, ErrorContext *ctx)
 {
-    // DROP INDEX implementation (ALPHA Phase 1 - DDL Modifications)
-    // Implements soft delete with MGA compliance
-
-    std::lock_guard<std::mutex> lock(mutex_);
-
     // 1. Check if index exists in cache
     auto index_it = index_cache_.find(index_id);
     if (index_it == index_cache_.end())
@@ -9083,6 +9079,15 @@ Status CatalogManager::dropIndex(const ID &index_id, ErrorContext *ctx)
     index_cache_.erase(index_it);
 
     return Status::OK;
+}
+
+Status CatalogManager::dropIndex(const ID &index_id, ErrorContext *ctx)
+{
+    // DROP INDEX implementation (ALPHA Phase 1 - DDL Modifications)
+    // Implements soft delete with MGA compliance
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    return dropIndexInternal(index_id, ctx);
 }
 
 // ============================================================================
