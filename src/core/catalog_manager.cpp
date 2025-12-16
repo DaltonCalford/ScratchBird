@@ -2956,6 +2956,7 @@ namespace scratchbird::core
                 memcpy(dest_record, &record, sizeof(RecordType));
 
                 heap->record_count++;
+                heap->header.item_count++;  // CRITICAL: HeapPage uses header.item_count!
                 heap->free_offset += sizeof(RecordType);
                 heap->header.free_space -= sizeof(RecordType);
                 heap->header.generation++;
@@ -3018,6 +3019,7 @@ namespace scratchbird::core
                 reinterpret_cast<uint8_t *>(new_page_buffer) + new_heap->free_offset);
             memcpy(dest_record, &record, sizeof(RecordType));
             new_heap->record_count++;
+            new_heap->header.item_count++;  // CRITICAL: HeapPage uses header.item_count!
             new_heap->free_offset += sizeof(RecordType);
             new_heap->header.free_space -= sizeof(RecordType);
             new_heap->header.generation++;
@@ -3125,6 +3127,7 @@ namespace scratchbird::core
 
             // Update heap metadata
             heap->record_count++;
+            heap->header.item_count++;  // CRITICAL: HeapPage uses header.item_count!
             heap->free_offset += sizeof(RecordType);
             heap->header.free_space -= sizeof(RecordType);
             heap->header.generation++;
@@ -3451,44 +3454,27 @@ namespace scratchbird::core
             return status;
         }
 
-        HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
-
-        // Scan through all records to find the matching table_id
-        uint16_t item_count = heap_page.getItemCount();
+        // Use CatalogHeapPage to scan records (matches writeRecordToHeapPage)
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+        uint32_t record_count = heap->record_count;
         bool found = false;
 
-        // Access page data directly as mutable (we own it via pinPage)
-        auto *mutable_page_data = static_cast<uint8_t *>(page_data);
-
-        for (uint16_t i = 0; i < item_count; ++i)
+        // Scan through all records directly (no TupleHeader - raw records)
+        uint32_t offset = sizeof(CatalogHeapPage);
+        for (uint32_t i = 0; i < record_count; ++i)
         {
-            // Get tuple location using const API for bounds checking
-            const uint8_t *tuple_data;
-            uint32_t tuple_size;
+            auto *record = reinterpret_cast<TableRecord *>(
+                static_cast<uint8_t *>(page_data) + offset);
 
-            if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+            if (record->table_id == table_id && record->is_valid == 1)
             {
-                if (tuple_size >= sizeof(TupleHeader) + sizeof(TableRecord))
-                {
-                    // Calculate mutable pointer to same location
-                    // (getTuple validates bounds, but returns const pointer)
-                    const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
-                    uint8_t *mutable_tuple_data = mutable_page_data + offset;
-
-                    // Now we can access the record as mutable (no const_cast needed)
-                    auto *record =
-                        reinterpret_cast<TableRecord *>(mutable_tuple_data + sizeof(TupleHeader));
-
-                    if (record->table_id == table_id && record->is_valid == 1)
-                    {
-                        // Found the record - mark it as invalid
-                        // Safe: we own the page (pinned with write intent)
-                        record->is_valid = 0;
-                        found = true;
-                        break;
-                    }
-                }
+                // Found the record - mark it as invalid
+                record->is_valid = 0;
+                found = true;
+                break;
             }
+
+            offset += sizeof(TableRecord);
         }
 
         // Mark page as dirty if we found and updated the record
@@ -3502,6 +3488,12 @@ namespace scratchbird::core
         // Mark the index record as invalid (logical delete) by setting is_valid = 0
         // Similar to deleteTableRecord but for indexes
 
+        // Check if indexes_table_page_ is initialized
+        if (indexes_table_page_ == 0) {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Index catalog not initialized");
+            return Status::NOT_FOUND;
+        }
+
         BufferPool *bp = db_->buffer_pool();
         void *page_data;
         Status status = bp->pinPage(indexes_table_page_, &page_data, ctx);
@@ -3510,42 +3502,27 @@ namespace scratchbird::core
             return status;
         }
 
-        HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
-
-        // Scan through all records to find the matching index_id
-        uint16_t item_count = heap_page.getItemCount();
+        // Use CatalogHeapPage to scan records (matches writeRecordToHeapPage)
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+        uint32_t record_count = heap->record_count;
         bool found = false;
 
-        // Access page data directly as mutable (we own it via pinPage)
-        auto *mutable_page_data = static_cast<uint8_t *>(page_data);
-
-        for (uint16_t i = 0; i < item_count; ++i)
+        // Scan through all records directly (no TupleHeader - raw records)
+        uint32_t offset = sizeof(CatalogHeapPage);
+        for (uint32_t i = 0; i < record_count; ++i)
         {
-            // Get tuple location using const API for bounds checking
-            const uint8_t *tuple_data;
-            uint32_t tuple_size;
+            auto *record = reinterpret_cast<IndexRecord *>(
+                static_cast<uint8_t *>(page_data) + offset);
 
-            if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+            if (record->index_id == index_id && record->is_valid == 1)
             {
-                if (tuple_size >= sizeof(TupleHeader) + sizeof(IndexRecord))
-                {
-                    // Calculate mutable pointer to same location
-                    const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
-                    uint8_t *mutable_tuple_data = mutable_page_data + offset;
-
-                    // Access the record as mutable
-                    auto *record =
-                        reinterpret_cast<IndexRecord *>(mutable_tuple_data + sizeof(TupleHeader));
-
-                    if (record->index_id == index_id && record->is_valid == 1)
-                    {
-                        // Found the record - mark it as invalid
-                        record->is_valid = 0;
-                        found = true;
-                        break;
-                    }
-                }
+                // Found the record - mark it as invalid
+                record->is_valid = 0;
+                found = true;
+                break;
             }
+
+            offset += sizeof(IndexRecord);
         }
 
         // Mark page as dirty if we found and updated the record
@@ -8320,9 +8297,11 @@ auto CatalogManager::createTrigger(const TriggerInfo &trigger, ErrorContext *ctx
         return Status::NOT_FOUND;
     }
     
-    // Generate trigger ID
+    // Generate trigger ID if not already set
     TriggerInfo trigger_copy = trigger;
-    trigger_copy.trigger_id = generateUuidV7();
+    if (trigger_copy.trigger_id == ID{}) {
+        trigger_copy.trigger_id = generateUuidV7();
+    }
     trigger_copy.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
     trigger_copy.enabled = true;
@@ -8332,22 +8311,50 @@ auto CatalogManager::createTrigger(const TriggerInfo &trigger, ErrorContext *ctx
     trigger_name_to_id_[trigger_copy.trigger_name] = trigger_copy.trigger_id;
     table_triggers_.insert({trigger_copy.table_id, trigger_copy.trigger_id});
 
-    // Record dependencies: trigger -> table, trigger -> procedure (if resolvable)
+    // Phase 2: Create AUTO dependency link (trigger → table)
+    // This allows the table to auto-drop the trigger when dropped
+    ID dep_id;
+    Status status = createDependency(
+        trigger_copy.trigger_id, ObjectType::TRIGGER,
+        trigger_copy.table_id, ObjectType::TABLE,
+        DependencyType::AUTO,  // Auto-drop when table dropped
+        dep_id,
+        ctx
+    );
+    if (status != Status::OK) {
+        // Rollback: Remove from caches
+        trigger_cache_.erase(trigger_copy.trigger_id);
+        trigger_name_to_id_.erase(trigger_copy.trigger_name);
+        // Remove from multimap (need to iterate since it's key-value pair)
+        auto range = table_triggers_.equal_range(trigger_copy.table_id);
+        for (auto it = range.first; it != range.second; ++it) {
+            if (it->second == trigger_copy.trigger_id) {
+                table_triggers_.erase(it);
+                break;
+            }
+        }
+        LOG_ERROR(CATALOG, "Failed to create dependency for trigger");
+        return status;
+    }
+
+    // Record additional dependencies: trigger -> procedure (if resolvable)
+    // Note: trigger -> table dependency already created above with AUTO type
     std::vector<std::pair<ID, ObjectType>> refs;
-    refs.emplace_back(trigger_copy.table_id, ObjectType::TABLE);
     ProcedureInfo proc_info;
     if (!trigger_copy.procedure_name.empty() &&
         getProcedure(trigger_copy.procedure_name, proc_info, ctx) == Status::OK) {
         refs.emplace_back(proc_info.procedure_id, ObjectType::PROCEDURE);
     }
-    replaceDependencies(trigger_copy.trigger_id,
-                        ObjectType::TRIGGER,
-                        refs,
-                        ctx);
-    
-    LOG_INFO(CATALOG, "Created trigger '%s' on table '%s'", 
+    if (!refs.empty()) {
+        replaceDependencies(trigger_copy.trigger_id,
+                            ObjectType::TRIGGER,
+                            refs,
+                            ctx);
+    }
+
+    LOG_INFO(CATALOG, "Created trigger '%s' on table '%s'",
              trigger_copy.trigger_name.c_str(), trigger_copy.table_name.c_str());
-    
+
     return Status::OK;
 }
 
@@ -10984,29 +10991,29 @@ auto CatalogManager::clearDependenciesFor(const ID& dependent_object_id,
 auto CatalogManager::objectTypeToString(ObjectType type) -> std::string
 {
     switch (type) {
-        case ObjectType::TABLE: return "table";
-        case ObjectType::VIEW: return "view";
-        case ObjectType::INDEX: return "index";
-        case ObjectType::SEQUENCE: return "sequence";
-        case ObjectType::FUNCTION: return "function";
-        case ObjectType::PROCEDURE: return "procedure";
-        case ObjectType::TRIGGER: return "trigger";
-        case ObjectType::CONSTRAINT: return "constraint";
-        case ObjectType::DOMAIN: return "domain";
-        case ObjectType::PACKAGE: return "package";
+        case ObjectType::TABLE: return "TABLE";
+        case ObjectType::VIEW: return "VIEW";
+        case ObjectType::INDEX: return "INDEX";
+        case ObjectType::SEQUENCE: return "SEQUENCE";
+        case ObjectType::FUNCTION: return "FUNCTION";
+        case ObjectType::PROCEDURE: return "PROCEDURE";
+        case ObjectType::TRIGGER: return "TRIGGER";
+        case ObjectType::CONSTRAINT: return "CONSTRAINT";
+        case ObjectType::DOMAIN: return "DOMAIN";
+        case ObjectType::PACKAGE: return "PACKAGE";
         case ObjectType::UDR: return "UDR";
-        case ObjectType::EXCEPTION: return "exception";
-        case ObjectType::SYNONYM: return "synonym";
-        case ObjectType::SCHEMA: return "schema";
-        case ObjectType::DATABASE: return "database";
-        case ObjectType::USER: return "user";
-        case ObjectType::ROLE: return "role";
-        case ObjectType::COLUMN: return "column";
-        case ObjectType::EMULATION_SERVER: return "emulation server";
-        case ObjectType::FOREIGN_SERVER: return "foreign server";
-        case ObjectType::FOREIGN_TABLE: return "foreign table";
-        case ObjectType::USER_MAPPING: return "user mapping";
-        default: return "object";
+        case ObjectType::EXCEPTION: return "EXCEPTION";
+        case ObjectType::SYNONYM: return "SYNONYM";
+        case ObjectType::SCHEMA: return "SCHEMA";
+        case ObjectType::DATABASE: return "DATABASE";
+        case ObjectType::USER: return "USER";
+        case ObjectType::ROLE: return "ROLE";
+        case ObjectType::COLUMN: return "COLUMN";
+        case ObjectType::EMULATION_SERVER: return "EMULATION SERVER";
+        case ObjectType::FOREIGN_SERVER: return "FOREIGN SERVER";
+        case ObjectType::FOREIGN_TABLE: return "FOREIGN TABLE";
+        case ObjectType::USER_MAPPING: return "USER MAPPING";
+        default: return "OBJECT";
     }
 }
 
@@ -11171,11 +11178,12 @@ auto CatalogManager::buildDependencyErrorMessage(
         // Pluralize type name
         std::string type_plural = objectTypeToString(type);
         if (!names.empty() && names.size() > 1) {
-            // Simple pluralization - add 's' if not already ending in 's'
-            if (type_plural.back() != 's' && type_plural != "foreign key") {
+            // Simple pluralization - add 's' if not already ending in 's' or 'S'
+            char last_char = type_plural.back();
+            if (last_char != 's' && last_char != 'S' && type != ObjectType::CONSTRAINT) {
                 type_plural += "s";
-            } else if (type_plural == "foreign key") {
-                type_plural = "foreign keys";
+            } else if (type == ObjectType::CONSTRAINT) {
+                type_plural = "CONSTRAINTs";
             }
         }
 

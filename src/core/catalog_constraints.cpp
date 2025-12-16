@@ -209,6 +209,27 @@ auto CatalogManager::updateConstraint(const ID& constraint_id,
 auto CatalogManager::dropConstraint(const ID& constraint_id,
                                    ErrorContext* ctx) -> Status
 {
+    // Phase 2: Check if this is a Foreign Key constraint first
+    // FKs are tracked separately in foreign_keys_cache_
+    {
+        std::lock_guard<std::mutex> fk_lock(foreign_keys_cache_mutex_);
+        auto fk_it = foreign_keys_cache_.find(constraint_id);
+        if (fk_it != foreign_keys_cache_.end()) {
+            // This is an FK - drop the lock and delegate to dropForeignKey
+            // (dropForeignKey manages its own locking)
+        }
+        else {
+            // Not an FK, continue with regular constraint drop below
+        }
+    }
+
+    // Try dropping as FK (handles its own locking)
+    Status fk_status = dropForeignKey(constraint_id, ctx);
+    if (fk_status == Status::OK) {
+        return Status::OK;
+    }
+
+    // Not an FK or FK drop failed - try as regular constraint
     std::lock_guard<std::mutex> lock(constraints_cache_mutex_);
 
     auto it = constraints_cache_.find(constraint_id);
