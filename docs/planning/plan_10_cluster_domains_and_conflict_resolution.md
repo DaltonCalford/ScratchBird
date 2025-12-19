@@ -23,8 +23,10 @@ P0 (core metadata consistency and cross-node correctness).
 
 ## Implementation Tasks
 - Implement cluster-wide domain catalog tables with conflict/history/alias support.
+- Add domain detail tables (constraints, fields, enum values, variant types, policy options) for runtime enforcement.
 - Extend DomainRecord with dialect/compat/state/origin/hash fields.
 - Enforce CREATE/ALTER/DROP DOMAIN privileges (cluster-wide).
+- Implement ALTER DOMAIN full validation and cross-node pending status/reporting.
 - Implement conflict detection during CREATE/ALTER and join/rejoin reconciliation.
 - Implement shadow domain gating (existing dependencies allowed, new usage blocked).
 - Implement domain rebind (repoint dependencies to new domain UUID).
@@ -33,6 +35,9 @@ P0 (core metadata consistency and cross-node correctness).
 
 ## Required Data/Schema Changes
 - `sb_domains` (global domains, no schema_id).
+- `sb_domain_constraints`, `sb_domain_fields`, `sb_domain_enum_values`, `sb_domain_enum_options`, `sb_domain_variant_types`.
+- `sb_domain_security`, `sb_domain_integrity`, `sb_domain_validation`, `sb_domain_quality`.
+- `sb_domain_validation_reports` (per-node validation results and violating row keys).
 - `sb_domain_collisions` and `sb_domain_collision_members`.
 - `sb_domain_history` (audit/epoch).
 - `sb_domain_aliases` (optional name mapping).
@@ -46,7 +51,7 @@ P0 (core metadata consistency and cross-node correctness).
 - [ ] Shadow domains block new dependencies.
 - [ ] Rebind updates all dependent objects and dependency records.
 - [ ] Domain changes bump cluster epoch and invalidate caches.
-- [ ] SHOW DOMAIN exposes dialect_tag, compat_name, state, collision info.
+- [ ] SHOW DOMAIN exposes dialect_tag, compat_name, domain_kind, state, collision info.
 
 ## Completion Checklist (Auditor)
 - [ ] No schema-scoped domains remain; all domains are global.
@@ -56,6 +61,7 @@ P0 (core metadata consistency and cross-node correctness).
 
 ## Testing Requirements
 - Cluster replication tests for domain DDL (CREATE/ALTER/DROP).
+- ALTER DOMAIN validation tests (local fail with PK report; cluster pending until all nodes confirm).
 - Join/rejoin conflict tests (same name + dialect across nodes).
 - Shadow gating tests (new usage blocked, old usage allowed).
 - Rebind tests with cast-allowed vs storage-mismatch cases.
@@ -72,12 +78,16 @@ P0 (core metadata consistency and cross-node correctness).
 - **Global domains**: `domain_name` is global; no `schema_id` or `schema_path`.
 - **Dialect tag**: `dialect_tag` required (scratchbird/firebird/mysql/postgres).
 - **Compatibility name**: `compat_name` optional and used for cross-dialect resolution.
+- **Domain kind**: store `domain_kind` (BASIC/RECORD/ENUM/SET/VARIANT) and `parent_domain_id` for inheritance.
+- **Element types**: store `element_type_oid`/`element_domain_id` for SET/ARRAY domains.
+- **Runtime enforcement**: see `docs/planning/plan_12_domain_runtime_and_type_system.md` for constraint evaluation, casting, and advanced domain type semantics.
 - **Canonical ordering**: compare UUIDv7 timestamps; tie-break with full UUID bytes.
 - **Conflict key**: `domain_name|dialect_tag` and `compat_name|*` (if compat provided).
 - **State**:
   - `ACTIVE`: can be used for new dependencies.
   - `SHADOW`: only existing dependencies allowed.
   - `DEPRECATED`: allowed but warned; no new usage by default.
+  - `PENDING_VALIDATE`: local validation passed; awaiting cluster validation reports.
   - `DROPPED`: retained only for history.
 
 ## Expanded API/Schema Details
@@ -91,7 +101,7 @@ P0 (core metadata consistency and cross-node correctness).
 - **Dependency gating**:
   - On column/type usage, fail if target domain is `SHADOW` or `DEPRECATED` (configurable).
 - **SBLR requirements**:
-  - `EXT_CREATE_DOMAIN` payload includes: `domain_id`, `domain_name`, `dialect_tag`, `compat_name`, `owner_id`, `base_type_oid`, `default_expr_oid`, `check_expr_oid`, `cast_map_oid`, `storage_hash`, `definition_hash`, `not_null`, `origin_node_id`, `origin_cluster_id`.
+  - `EXT_CREATE_DOMAIN` payload includes: `domain_id`, `domain_name`, `dialect_tag`, `compat_name`, `domain_kind`, `parent_domain_id`, `owner_id`, `base_type_oid`, `default_expr_oid`, `check_expr_oid`, `cast_map_oid`, `element_type_oid`, `element_domain_id`, `collation_id`, `storage_hash`, `definition_hash`, `not_null`, `origin_node_id`, `origin_cluster_id`.
   - `EXT_ALTER_DOMAIN` for rename/default/check/compat updates.
   - `EXT_DROP_DOMAIN` (RESTRICT only).
   - `EXT_REBIND_DOMAIN` (old_id → new_id with mode).
@@ -106,10 +116,15 @@ CREATE TABLE sb_domains (
   domain_name TEXT NOT NULL,
   dialect_tag TEXT NOT NULL,
   compat_name TEXT,
+  domain_kind SMALLINT NOT NULL,
+  parent_domain_id UUID,
   base_type_oid OID NOT NULL,
   default_expr_oid OID,
   check_expr_oid OID,
   cast_map_oid OID,
+  element_type_oid OID,
+  element_domain_id UUID,
+  collation_id INTEGER,
   storage_hash BINARY(32) NOT NULL,
   definition_hash BINARY(32) NOT NULL,
   not_null SMALLINT NOT NULL,
@@ -122,6 +137,94 @@ CREATE TABLE sb_domains (
   created_time BIGINT NOT NULL,
   last_modified_time BIGINT NOT NULL,
   is_valid SMALLINT NOT NULL
+);
+
+CREATE TABLE sb_domain_constraints (
+  constraint_id UUID PRIMARY KEY,
+  domain_id UUID NOT NULL,
+  constraint_name TEXT,
+  constraint_type SMALLINT NOT NULL,
+  expr_oid OID,
+  is_enforced SMALLINT NOT NULL,
+  created_time BIGINT NOT NULL,
+  last_modified_time BIGINT NOT NULL
+);
+
+CREATE TABLE sb_domain_fields (
+  field_id UUID PRIMARY KEY,
+  domain_id UUID NOT NULL,
+  field_position SMALLINT NOT NULL,
+  field_name TEXT NOT NULL,
+  field_type_oid OID NOT NULL,
+  field_domain_id UUID,
+  not_null SMALLINT NOT NULL,
+  default_expr_oid OID,
+  check_expr_oid OID,
+  collation_id INTEGER,
+  created_time BIGINT NOT NULL,
+  last_modified_time BIGINT NOT NULL
+);
+
+CREATE TABLE sb_domain_enum_values (
+  enum_value_id UUID PRIMARY KEY,
+  domain_id UUID NOT NULL,
+  value_label TEXT NOT NULL,
+  value_position INTEGER NOT NULL,
+  is_active SMALLINT NOT NULL,
+  created_time BIGINT NOT NULL,
+  last_modified_time BIGINT NOT NULL
+);
+
+CREATE TABLE sb_domain_enum_options (
+  domain_id UUID PRIMARY KEY,
+  wrap SMALLINT NOT NULL,
+  created_time BIGINT NOT NULL,
+  last_modified_time BIGINT NOT NULL
+);
+
+CREATE TABLE sb_domain_variant_types (
+  variant_type_id UUID PRIMARY KEY,
+  domain_id UUID NOT NULL,
+  type_oid OID NOT NULL,
+  created_time BIGINT NOT NULL
+);
+
+CREATE TABLE sb_domain_security (
+  domain_id UUID PRIMARY KEY,
+  mask_function TEXT,
+  mask_type TEXT,
+  audit_access SMALLINT NOT NULL,
+  require_permission TEXT,
+  encryption TEXT,
+  created_time BIGINT NOT NULL,
+  last_modified_time BIGINT NOT NULL
+);
+
+CREATE TABLE sb_domain_integrity (
+  domain_id UUID PRIMARY KEY,
+  unique_across_database SMALLINT NOT NULL,
+  case_insensitive SMALLINT NOT NULL,
+  normalize_function TEXT,
+  created_time BIGINT NOT NULL,
+  last_modified_time BIGINT NOT NULL
+);
+
+CREATE TABLE sb_domain_validation (
+  domain_id UUID PRIMARY KEY,
+  validate_function TEXT,
+  on_violation SMALLINT NOT NULL,
+  error_message TEXT,
+  created_time BIGINT NOT NULL,
+  last_modified_time BIGINT NOT NULL
+);
+
+CREATE TABLE sb_domain_quality (
+  domain_id UUID PRIMARY KEY,
+  parse_function TEXT,
+  standardize_function TEXT,
+  enrich_function TEXT,
+  created_time BIGINT NOT NULL,
+  last_modified_time BIGINT NOT NULL
 );
 
 CREATE TABLE sb_domain_collisions (
@@ -155,6 +258,17 @@ CREATE TABLE sb_domain_history (
   cluster_epoch BIGINT NOT NULL
 );
 
+CREATE TABLE sb_domain_validation_reports (
+  report_id UUID PRIMARY KEY,
+  domain_id UUID NOT NULL,
+  node_id UUID NOT NULL,
+  status SMALLINT NOT NULL,          -- 0=PASS, 1=FAIL
+  table_id UUID,                     -- table with violations (NULL if PASS)
+  pk_values_oid OID,                 -- serialized primary key values for violating rows
+  detail_text_oid OID,               -- optional human-readable summary
+  created_time BIGINT NOT NULL
+);
+
 CREATE TABLE sb_domain_aliases (
   alias_id UUID PRIMARY KEY,
   alias_name TEXT NOT NULL,
@@ -175,6 +289,7 @@ CREATE TABLE sb_domain_aliases (
      - Create/update `sb_domain_collisions`.
      - Canonical = smallest UUIDv7 timestamp (tie-break by UUID bytes).
      - Block new dependencies on non-canonical domains.
+   - If ALTER passes local validation and cluster mode is enabled, set `domain_state = PENDING_VALIDATE` and wait for `sb_domain_validation_reports` from all members before activating.
 2) **Join/Rejoin reconciliation**:
    - For each local domain:
      - If no cluster match: promote to `ACTIVE` cluster domain.

@@ -29,6 +29,9 @@ P1 (blocks SQL feature coverage and compatibility).
 - Complete PostgreSQL parser ESCAPE handling, array subscripts, CREATE statements.
 - Extend DOMAIN DDL parsing to carry `dialect_tag` and `compat_name` into SBLR.
 - Add SBLR opcodes for ALTER/DROP DOMAIN and domain conflict resolution operations.
+- Implement CREATE DOMAIN grammar for RECORD/ENUM/SET/VARIANT and INHERITS clauses.
+- Parse domain-specific WITH blocks (SECURITY/INTEGRITY/VALIDATION/QUALITY) and WITH OPTIONS (ENUM WRAP).
+- Emit domain type descriptors in column definitions (TYPE_DOMAIN + UUID, arrays-of-domain).
 
 ## Required Data/Schema Changes
 - None (parser/bytecode changes only).
@@ -58,6 +61,8 @@ P1 (blocks SQL feature coverage and compatibility).
 ## Implementation Notes (Concrete)
 - **V2**: implement missing CREATE/ALTER handlers in `parser_v2.cpp`; ensure SBLR bytecode for each DDL action.
 - **DOMAIN DDL**: accept optional `WITH DIALECT(<tag>)` and `WITH COMPAT(<name>)` clauses; default `dialect_tag` = current parser dialect (scratchbird/firebird/mysql/postgres).
+- **DOMAIN advanced forms**: support `CREATE DOMAIN ... AS RECORD (...)`, `AS ENUM (...)`, `AS SET OF <type>`, and `AS VARIANT (...)` plus `INHERITS <parent_domain>`.
+- **WITH blocks**: parse `WITH SECURITY(...)`, `WITH INTEGRITY(...)`, `WITH VALIDATION(...)`, `WITH QUALITY(...)`, and `WITH OPTIONS(WRAP=...)` and serialize options into SBLR payloads.
 - **Semantic**: implement `validateGroupBy()`; enforce non-aggregate columns must be in GROUP BY.
 - **Firebird**: add window specification parsing and predicate variants mapping.
 - **MySQL**: implement NULL-safe equality (`<=>`), placeholder handling, table constraints, geometry mapping.
@@ -84,6 +89,14 @@ P1 (blocks SQL feature coverage and compatibility).
 - **ALTER coverage**:
   - Implement `ALTER INDEX`, `ALTER VIEW`, `ALTER SEQUENCE` parsing and bytecode.
   - Implement `ALTER DOMAIN` with rename, default/check changes, and optional `WITH COMPAT` updates.
+- **Domain type refs**:
+  - Add `TYPE_DOMAIN` opcode that emits domain UUID.
+  - Add `TYPE_ARRAY` descriptor that can embed a `TYPE_DOMAIN` element descriptor.
+- **Record/Enum/Set/Variant**:
+  - `CREATE DOMAIN ... AS RECORD (...)` must emit field list and per-field type descriptors.
+  - `CREATE DOMAIN ... AS ENUM (...)` must emit ordered labels and WRAP option.
+  - `CREATE DOMAIN ... AS SET OF <type>` must emit element type descriptor and set options.
+  - `CREATE DOMAIN ... AS VARIANT (...)` must emit allowed type list.
 - **Semantic validation**:
   - Enforce GROUP BY rules: every non-aggregate SELECT column must be present in GROUP BY.
 - **Dialect-specific**:
@@ -101,6 +114,7 @@ P1 (blocks SQL feature coverage and compatibility).
 ## Concrete Test Cases
 - **V2**: parse/compile each new CREATE/ALTER statement and execute DDL.
 - **V2 DOMAIN**: parse `CREATE DOMAIN ... WITH DIALECT(...) WITH COMPAT(...)` and verify SBLR payload fields.
+- **V2 DOMAIN advanced**: parse RECORD/ENUM/SET/VARIANT and WITH SECURITY/INTEGRITY/VALIDATION/QUALITY blocks, verify payload structure.
 - **Firebird**: parse WHERE predicates with CONTAINING/STARTING/SIMILAR TO and window clauses.
 - **MySQL**: parse `<=>`, placeholders, and constraints in CREATE TABLE.
 - **PostgreSQL**: parse ESCAPE in LIKE and array subscripts in expressions.

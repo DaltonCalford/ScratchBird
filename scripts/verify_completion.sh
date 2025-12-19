@@ -24,7 +24,11 @@ WARNINGS=0
 echo "1. TODO CHECK"
 echo "----------------------------------------------------------------------"
 TODOS=$(grep -r "TODO" src/ include/ 2>/dev/null | grep -i "$FEATURE" || true)
-TODO_COUNT=$(echo "$TODOS" | grep -c "TODO" || echo "0")
+if [ -n "$TODOS" ]; then
+    TODO_COUNT=$(echo "$TODOS" | wc -l)
+else
+    TODO_COUNT=0
+fi
 
 if [ "$TODO_COUNT" -gt 0 ]; then
     echo "❌ FAILED: Found $TODO_COUNT related TODO(s)"
