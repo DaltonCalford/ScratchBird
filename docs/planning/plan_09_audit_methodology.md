@@ -16,6 +16,7 @@ P0 (required for governance and beta readiness).
 - `docs/planning/plan_06_metadata_show_and_catalog.md`
 - `docs/planning/plan_07_emulated_protocol_compatibility.md`
 - `docs/planning/plan_08_protocol_conformance_testing.md`
+- `docs/planning/plan_10_cluster_domains_and_conflict_resolution.md`
 
 ## Audit Inputs (Required Artifacts)
 - Implemented code changes (diffs or commit list).

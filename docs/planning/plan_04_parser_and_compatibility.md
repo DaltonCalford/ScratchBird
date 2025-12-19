@@ -27,6 +27,8 @@ P1 (blocks SQL feature coverage and compatibility).
 - Complete Firebird parser window/predicate parsing.
 - Complete MySQL parser NULL-safe equality, placeholders, constraints, geometry.
 - Complete PostgreSQL parser ESCAPE handling, array subscripts, CREATE statements.
+- Extend DOMAIN DDL parsing to carry `dialect_tag` and `compat_name` into SBLR.
+- Add SBLR opcodes for ALTER/DROP DOMAIN and domain conflict resolution operations.
 
 ## Required Data/Schema Changes
 - None (parser/bytecode changes only).
@@ -55,6 +57,7 @@ P1 (blocks SQL feature coverage and compatibility).
 
 ## Implementation Notes (Concrete)
 - **V2**: implement missing CREATE/ALTER handlers in `parser_v2.cpp`; ensure SBLR bytecode for each DDL action.
+- **DOMAIN DDL**: accept optional `WITH DIALECT(<tag>)` and `WITH COMPAT(<name>)` clauses; default `dialect_tag` = current parser dialect (scratchbird/firebird/mysql/postgres).
 - **Semantic**: implement `validateGroupBy()`; enforce non-aggregate columns must be in GROUP BY.
 - **Firebird**: add window specification parsing and predicate variants mapping.
 - **MySQL**: implement NULL-safe equality (`<=>`), placeholder handling, table constraints, geometry mapping.
@@ -77,9 +80,10 @@ P1 (blocks SQL feature coverage and compatibility).
 ## Full Implementation Detail (No Ambiguity)
 - **V2 CREATE coverage**:
   - Implement `CREATE FUNCTION/PROCEDURE/TRIGGER/PACKAGE/DOMAIN/EXCEPTION` parsing in `parser_v2.cpp`.
-  - Ensure `BytecodeGeneratorV2` emits appropriate opcodes and required metadata (UUIDs, schema IDs).
+  - Ensure `BytecodeGeneratorV2` emits appropriate opcodes and required metadata (UUIDs, schema IDs, and domain dialect/compat fields).
 - **ALTER coverage**:
   - Implement `ALTER INDEX`, `ALTER VIEW`, `ALTER SEQUENCE` parsing and bytecode.
+  - Implement `ALTER DOMAIN` with rename, default/check changes, and optional `WITH COMPAT` updates.
 - **Semantic validation**:
   - Enforce GROUP BY rules: every non-aggregate SELECT column must be present in GROUP BY.
 - **Dialect-specific**:
@@ -87,8 +91,16 @@ P1 (blocks SQL feature coverage and compatibility).
   - MySQL: implement NULL-safe equality and placeholders; parse table constraints and geometry types.
   - PostgreSQL: implement ESCAPE char, array subscripts, and missing CREATE statements.
 
+- **SBLR opcode requirements for domains**:
+  - `EXT_CREATE_DOMAIN` payload must include: `domain_id`, `domain_name`, `dialect_tag`, `compat_name`, `owner_id`, `base_type_oid`, `default_expr_oid`, `check_expr_oid`, `cast_map_oid`, `storage_hash`, `definition_hash`, `not_null`, `origin_node_id`, `origin_cluster_id`.
+  - Add `EXT_ALTER_DOMAIN` (rename, default/check, compat updates).
+  - Add `EXT_DROP_DOMAIN` (RESTRICT-only in executor).
+  - Add `EXT_REBIND_DOMAIN` (repoint dependent objects to new domain UUID).
+  - Add `EXT_RESOLVE_DOMAIN_CONFLICT` (admin resolution).
+
 ## Concrete Test Cases
 - **V2**: parse/compile each new CREATE/ALTER statement and execute DDL.
+- **V2 DOMAIN**: parse `CREATE DOMAIN ... WITH DIALECT(...) WITH COMPAT(...)` and verify SBLR payload fields.
 - **Firebird**: parse WHERE predicates with CONTAINING/STARTING/SIMILAR TO and window clauses.
 - **MySQL**: parse `<=>`, placeholders, and constraints in CREATE TABLE.
 - **PostgreSQL**: parse ESCAPE in LIKE and array subscripts in expressions.

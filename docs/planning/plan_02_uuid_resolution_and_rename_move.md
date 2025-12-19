@@ -1,7 +1,7 @@
 # Plan 02 - UUID Resolution, Rename, and Schema Move
 
 ## Scope
-Implement unified UUID ↔ name/path resolver and object rename/move support across object types.
+Implement unified UUID ↔ name/path resolver and object rename/move support across object types, including global (non-schema) domains.
 
 ## Priority
 P0 (foundation for security, auditing, and catalog usability).
@@ -18,15 +18,15 @@ P0 (foundation for security, auditing, and catalog usability).
 1) Unified resolver view/indexes in catalog.
 2) Resolver API in CatalogManager.
 3) Object rename for tables/views/sequences/etc.
-4) Schema move support (SET SCHEMA or MOVE).
+4) Schema move support (SET SCHEMA or MOVE) for schema-scoped objects.
 5) Update SHOW commands to use resolver API.
 
 ## Implementation Tasks
-- Add unified resolver view across catalog tables (id, schema_path, full_path, name, type).
+- Add unified resolver view across catalog tables (id, schema_path, full_path, name, type, dialect_tag, compat_name where applicable).
 - Back resolver with hash index on UUID and B-tree on schema/name.
 - Implement CatalogManager API: resolve UUID → (path, name, type), and reverse.
 - Implement renameTable and rename for other object types.
-- Implement object move to new schema (with optional rename).
+- Implement object move to new schema (with optional rename) for schema-scoped objects only.
 - Update SBLR executor to handle RENAME TABLE and SET SCHEMA.
 
 ## Required Data/Schema Changes
@@ -38,7 +38,7 @@ P0 (foundation for security, auditing, and catalog usability).
 - [ ] Unified resolver view exists with indexes.
 - [ ] CatalogManager exposes resolver APIs (UUID→path and path→UUID).
 - [ ] Rename implemented for all core object types.
-- [ ] Move-to-schema implemented for all core object types.
+- [ ] Move-to-schema implemented for all schema-scoped object types (domains excluded).
 - [ ] SBLR executor uses resolver for SHOW LOCATION/RESOLVED.
 
 ## Completion Checklist (Auditor)
@@ -49,17 +49,17 @@ P0 (foundation for security, auditing, and catalog usability).
 
 ## Testing Requirements
 - Unit tests for resolver API (UUID→path and path→UUID).
-- Rename/move tests for tables/views/sequences/functions.
+- Rename tests for global domains; rename/move tests for schema-scoped objects.
 - Dependency graph remains intact after rename/move.
 
 ## Acceptance Criteria
 - Resolver returns correct schema path/name/type for all object types.
-- Rename/move does not change UUIDs and does not break dependencies.
+- Rename/move does not change UUIDs and does not break dependencies (domains are rename-only).
 - RENAME TABLE and SET SCHEMA execute end-to-end via SBLR.
 
 ## Implementation Notes (Concrete)
-- **Resolver view schema** (example): `sb_object_resolver(object_id, schema_path, full_path, object_name, object_type)`.
-- **Indexes**: hash index on `object_id`; B-tree on `(schema_path, object_name)`.
+- **Resolver view schema** (example): `sb_object_resolver(object_id, schema_path, full_path, object_name, object_type, dialect_tag, compat_name)`.
+- **Indexes**: hash index on `object_id`; B-tree on `(schema_path, object_name)` and `(object_name, dialect_tag)` for domains.
 - **CatalogManager APIs**:
   - `resolveObject(const ID& object_id, ResolvedObject& out)`
   - `resolveObject(const std::string& schema_path, const std::string& name, ObjectType type, ID& out)`
@@ -70,47 +70,59 @@ P0 (foundation for security, auditing, and catalog usability).
 
 ## Expanded API/Schema Details
 - **Resolver view sources** (expected UNION): `sb_tables`, `sb_views`, `sb_indexes`, `sb_sequences`, `sb_functions`, `sb_procedures`, `sb_packages`, `sb_domains`, `sb_triggers`, `sb_roles` (as applicable).
+- **Domain resolver behavior**:
+  - `schema_path` = empty string for domains.
+  - `full_path` = `domain_name`.
+  - Resolution requires `(object_name, dialect_tag)` or `(compat_name)` when provided.
 - **Resolver columns**:
   - `object_id` (UUID)
   - `schema_path` (text)
   - `full_path` (text, `schema_path.object_name`)
   - `object_name` (text)
   - `object_type` (enum or text)
+  - `dialect_tag` (text, null for non-domain objects)
+  - `compat_name` (text, null for non-domain objects)
 - **Object rename APIs** (CatalogManager):
   - `renameTable(const ID& table_id, const std::string& new_name, ErrorContext* ctx)`
   - `renameView(...)`, `renameSequence(...)`, `renameIndex(...)`, `renameFunction(...)`, `renameProcedure(...)`, `renamePackage(...)`, `renameDomain(...)`, `renameTrigger(...)`
 - **Move-to-schema API** (CatalogManager):
-  - `moveObject(const ID& object_id, const ID& schema_id, std::optional<std::string> new_name, ErrorContext* ctx)`
+  - `moveObject(const ID& object_id, const ID& schema_id, std::optional<std::string> new_name, ErrorContext* ctx)` (not valid for domains)
 - **SBLR opcodes/handlers**:
   - Ensure `ALTER TABLE ... RENAME TO` and `ALTER ... SET SCHEMA` bytecode exist and are routed in `Executor`.
+  - Ensure `ALTER DOMAIN ... RENAME TO` is supported; no `SET SCHEMA` for domains.
 
 ## Full Implementation Detail (No Ambiguity)
 - **Resolver view DDL (example)**:
-  - `CREATE VIEW sb_object_resolver AS` UNION ALL of each catalog table, with columns: `object_id`, `schema_path`, `full_path`, `object_name`, `object_type`.
-  - `schema_path` = resolved hierarchical path; `full_path` = `schema_path || '.' || object_name`.
+  - `CREATE VIEW sb_object_resolver AS` UNION ALL of each catalog table, with columns: `object_id`, `schema_path`, `full_path`, `object_name`, `object_type`, `dialect_tag`, `compat_name`.
+  - `schema_path` = resolved hierarchical path; `full_path` = `schema_path || '.' || object_name` (for domains, `schema_path` is empty and `full_path` is `domain_name`).
 - **Indexing**:
   - Hash index on `object_id` for O(1) UUID lookups.
   - B-tree index on `(schema_path, object_name)` for name resolution.
+  - B-tree index on `(object_name, dialect_tag)` for domain lookups.
 - **Rename/move invariants**:
   - UUIDs never change.
   - Dependencies update to new name/path; dependency edges remain intact.
   - Search path resolution uses resolver view for SHOW LOCATION/RESOLVED.
 - **Executor behavior**:
   - Implement `ALTER TABLE ... RENAME TO` using `CatalogManager::renameTable`.
-  - Implement `ALTER ... SET SCHEMA` for tables, views, sequences, functions, procedures, packages, domains, triggers.
+  - Implement `ALTER ... SET SCHEMA` for tables, views, sequences, functions, procedures, packages, triggers (domains are global).
 
 ## Concrete View + Index DDL (Example)
 - `CREATE VIEW sb_object_resolver AS
    SELECT table_id AS object_id, schema_path, schema_path || '.' || table_name AS full_path,
-          table_name AS object_name, 'TABLE' AS object_type FROM sb_tables
+          table_name AS object_name, 'TABLE' AS object_type, NULL AS dialect_tag, NULL AS compat_name FROM sb_tables
    UNION ALL
-   SELECT view_id, schema_path, schema_path || '.' || name, name, 'VIEW' FROM sb_views
+   SELECT view_id, schema_path, schema_path || '.' || name, name, 'VIEW', NULL, NULL FROM sb_views
    UNION ALL
-   SELECT sequence_id, schema_path, schema_path || '.' || name, name, 'SEQUENCE' FROM sb_sequences
+   SELECT sequence_id, schema_path, schema_path || '.' || name, name, 'SEQUENCE', NULL, NULL FROM sb_sequences
    UNION ALL
-   SELECT function_id, schema_path, schema_path || '.' || name, name, 'FUNCTION' FROM sb_functions;`
+   SELECT function_id, schema_path, schema_path || '.' || name, name, 'FUNCTION', NULL, NULL FROM sb_functions
+   UNION ALL
+   SELECT domain_id, '' AS schema_path, domain_name AS full_path, domain_name AS object_name,
+          'DOMAIN' AS object_type, dialect_tag, compat_name FROM sb_domains;`
 - `CREATE INDEX sb_object_resolver_uuid_hash ON sb_object_resolver USING HASH (object_id);`
 - `CREATE INDEX sb_object_resolver_name_btree ON sb_object_resolver (schema_path, object_name);`
+- `CREATE INDEX sb_object_resolver_domain_btree ON sb_object_resolver (object_name, dialect_tag);`
 
 ## Full Catalog DDL (Required)
 ```sql
@@ -166,9 +178,9 @@ CREATE TABLE sb_packages (
 
 CREATE TABLE sb_domains (
   domain_id UUID PRIMARY KEY,
-  schema_id UUID NOT NULL,
-  name TEXT NOT NULL,
-  schema_path TEXT NOT NULL,
+  domain_name TEXT NOT NULL,
+  dialect_tag TEXT NOT NULL,
+  compat_name TEXT,
   owner_id UUID NOT NULL
 );
 

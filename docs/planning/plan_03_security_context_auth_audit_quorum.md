@@ -29,12 +29,14 @@ P0 (security baseline for server/cluster modes).
 - Add tamper-evident audit integrity (hash chain/signature/WORM options).
 - Implement quorum checks for security cache with configurable fail behavior.
 - Enforce role switching only at transaction boundaries with default action per user/role/group.
+- Enforce cluster-wide DOMAIN DDL privileges (CREATE/ALTER/DROP) for all domain operations.
 
 ## Required Data/Schema Changes
 - AuthKey catalog table with issuer, validity window, role/group scope, usage limits.
 - Session catalog must link to AuthKey and security context fields.
 - Policy epoch storage (global + per-table).
 - Audit log storage with integrity metadata (hash chain/signature).
+- Object permission support for DOMAIN object type (cluster-wide scope).
 
 ## Completion Checklist (Developer)
 - [ ] AuthKey catalog/table implemented with validation logic.
@@ -58,6 +60,7 @@ P0 (security baseline for server/cluster modes).
 - Audit persistence + integrity validation tests.
 - Quorum simulation tests (partition/fail modes).
 - Role switch behavior tests (default actions).
+- Domain DDL permission tests (allowed/denied by role).
 
 ## Acceptance Criteria
 - AuthKey/session binding present in all security decisions and audit events.
