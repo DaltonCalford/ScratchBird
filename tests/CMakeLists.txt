@@ -98,6 +98,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_charset_loader.cpp$")  # Mi
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_constraints_crud.cpp$")  # API incompatibilities
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_extract.cpp$")  # TypeExtractor API changes
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_multi_geometry.cpp$")  # TypedValue API changes
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_stored_code_dependencies.cpp$")  # Duplicate of test_code_dependencies.cpp
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_new_integer_types.cpp$")  # API incompatibilities
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_password_policy.cpp$")  # ErrorContext assignment operator deleted
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_session_timeout.cpp$")  # API incompatibilities
@@ -254,8 +255,14 @@ endif()
 include(GoogleTest)
 gtest_discover_tests(scratchbird_tests)
 
+# Slow tests: explicit timeouts and labels for expected long runtimes
+
 # Explicit add_test for validator
 add_test(NAME scratchbird_tests COMMAND scratchbird_tests)
+set_tests_properties(scratchbird_tests PROPERTIES
+    LABELS "aggregate"
+    TIMEOUT 1800
+)
 
 # ==============================================================================
 # IPC Server Infrastructure Tests (Local Server Architecture - Phase 1)
@@ -322,7 +329,7 @@ target_link_libraries(test_client_server_integration
 add_test(NAME ClientServerIntegrationTests COMMAND test_client_server_integration)
 set_tests_properties(ClientServerIntegrationTests PROPERTIES
     LABELS "integration;client;server"
-    TIMEOUT 60
+    TIMEOUT 120
 )
 
 # ThreadSanitizer (TSAN) Tests for Critical Race Conditions

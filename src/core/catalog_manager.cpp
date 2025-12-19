@@ -13,6 +13,8 @@
 #include "scratchbird/core/toast.h"       // Phase 5 Task 5.1.3: TOAST migration
 #include <algorithm>
 #include <sstream>  // Phase 1: Dependency error messages
+#include <cctype>
+#include "scratchbird/sblr/opcodes.h"
 #include <map>      // Phase 1: Dependency grouping
 #include <chrono>  // Phase 4 Task 4.1.3: Progress tracking
 #include <thread>  // Phase 4 Task 4.1.3: Sleep simulation in STUB
@@ -29,6 +31,13 @@
 
 namespace scratchbird::core
 {
+
+namespace {
+std::vector<uint8_t> hexToBytesLocal(const std::string& hex_str);
+bool isReasonableSequenceName(const std::string& name);
+void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
+                                   std::vector<std::string>& names_out);
+}
 
 // Catalog page structures
 #pragma pack(push, 1)
@@ -1887,149 +1896,174 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    // Phase A CRUD: Drop schema with optional cascade
+    // Phase A CRUD: Drop schema (RESTRICT-only policy)
     auto CatalogManager::dropSchema(const ID &schema_id, bool cascade, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        (void)cascade;  // RESTRICT-only policy
 
-        // 1. Check if schema exists in cache
-        auto schema_it = schema_cache_.find(schema_id);
-        if (schema_it == schema_cache_.end())
+        SchemaInfo schema_info;
+        std::unordered_set<ID, IDHash> table_ids;
+
         {
-            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found");
-            return Status::NOT_FOUND;
-        }
-
-        const SchemaInfo &schema_info = schema_it->second;
-
-        // 2. Check for dependent tables
-        std::vector<TableInfo> tables;
-        for (const auto &[id, table] : table_cache_)
-        {
-            if (table.schema_id == schema_id)
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto schema_it = schema_cache_.find(schema_id);
+            if (schema_it == schema_cache_.end())
             {
-                tables.push_back(table);
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found");
+                return Status::NOT_FOUND;
             }
-        }
+            schema_info = schema_it->second;
 
-        // 3. Check for dependent views
-        std::vector<ViewInfo> views;
-        for (const auto &[id, view] : view_cache_)
-        {
-            if (view.schema_id == schema_id)
+            for (const auto &[id, table] : table_cache_)
             {
-                views.push_back(view);
-            }
-        }
-
-        // 4. Check for dependent sequences (WP-2 CAT-M1: Now uses listSequencesBySchema)
-        std::vector<ID> sequence_ids;
-        {
-            // Unlock mutex_ temporarily to call listSequencesBySchema (it uses sequence_cache_mutex_)
-            mutex_.unlock();
-            listSequencesBySchema(schema_id, sequence_ids, ctx);
-            mutex_.lock();
-        }
-
-        // 5. Check for child schemas (schemas with this schema as parent)
-        std::vector<SchemaInfo> child_schemas;
-        for (const auto &[id, child] : schema_cache_)
-        {
-            if (child.parent_schema_id == schema_id && id != schema_id)
-            {
-                child_schemas.push_back(child);
-            }
-        }
-
-        // 6. If not cascade, fail if any dependents exist
-        if (!cascade)
-        {
-            if (!tables.empty())
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                  "Schema has dependent tables - use CASCADE to drop them");
-                return Status::INVALID_ARGUMENT;
-            }
-            if (!views.empty())
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                  "Schema has dependent views - use CASCADE to drop them");
-                return Status::INVALID_ARGUMENT;
-            }
-            if (!sequence_ids.empty())  // WP-2 CAT-M1: Now checking sequences
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                  "Schema has dependent sequences - use CASCADE to drop them");
-                return Status::INVALID_ARGUMENT;
-            }
-            if (!child_schemas.empty())
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                  "Schema has child schemas - use CASCADE to drop them");
-                return Status::INVALID_ARGUMENT;
-            }
-        }
-
-        // 7. CASCADE: drop all dependents
-        if (cascade)
-        {
-            // Drop child schemas first (recursive)
-            for (const auto &child : child_schemas)
-            {
-                Status status = dropSchema(child.schema_id, true, ctx);
-                if (status != Status::OK)
+                if (table.schema_id == schema_id)
                 {
-                    return status;
-                }
-            }
-
-            // Drop views
-            for (const auto &view : views)
-            {
-                Status status = dropView(view.view_id, true, ctx);
-                if (status != Status::OK)
-                {
-                    return status;
-                }
-            }
-
-            // Drop sequences (WP-2 CAT-M1)
-            for (const auto &seq_id : sequence_ids)
-            {
-                Status status = dropSequence(seq_id, true, ctx);
-                if (status != Status::OK && status != Status::NOT_FOUND)
-                {
-                    return status;
-                }
-            }
-
-            // Drop tables (which will cascade to their indexes)
-            for (const auto &table : tables)
-            {
-                Status status = dropTable(table.table_id, true, ctx);
-                if (status != Status::OK)
-                {
-                    return status;
+                    table_ids.insert(id);
                 }
             }
         }
 
-        // 8. Soft delete the schema record (mark is_valid = 0)
-        Status status = deleteSchemaRecord(schema_id, ctx);
-        if (status != Status::OK)
+        struct SchemaCounts {
+            size_t tables = 0;
+            size_t views = 0;
+            size_t sequences = 0;
+            size_t domains = 0;
+            size_t triggers = 0;
+            size_t indexes = 0;
+            size_t packages = 0;
+            size_t udrs = 0;
+            size_t exceptions = 0;
+            size_t functions = 0;
+            size_t procedures = 0;
+            size_t child_schemas = 0;
+            size_t total() const {
+                return tables + views + sequences + domains + triggers + indexes +
+                       packages + udrs + exceptions + functions + procedures + child_schemas;
+            }
+        } counts;
+
         {
-            return status;
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (const auto &[id, table] : table_cache_) {
+                if (table.schema_id == schema_id) {
+                    counts.tables++;
+                }
+            }
+            for (const auto &[id, schema] : schema_cache_) {
+                if (schema.parent_schema_id == schema_id && id != schema_id) {
+                    counts.child_schemas++;
+                }
+            }
+            for (const auto &[id, index] : index_cache_) {
+                if (table_ids.find(index.table_id) != table_ids.end()) {
+                    counts.indexes++;
+                }
+            }
         }
 
-        // 9. Remove from cache
-        schema_cache_.erase(schema_it);
-        schema_count_--;
-
-        // 10. Update root page
-        status = writeCatalogRoot(ctx);
-        if (status == Status::OK)
         {
-            db_->sync(ctx);
+            std::lock_guard<std::mutex> lock(view_cache_mutex_);
+            for (const auto &[id, view] : view_cache_) {
+                if (view.schema_id == schema_id) {
+                    counts.views++;
+                }
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+            for (const auto& [seq_id, state] : sequence_cache_) {
+                if (state && state->schema_id == schema_id) {
+                    counts.sequences++;
+                }
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(trigger_mutex_);
+            for (const auto& [id, trig] : trigger_cache_) {
+                if (table_ids.find(trig.table_id) != table_ids.end()) {
+                    counts.triggers++;
+                }
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(psql_mutex_);
+            for (const auto& [name, func] : functions_) {
+                if (func.schema_id == schema_id) {
+                    counts.functions++;
+                }
+            }
+            for (const auto& [name, proc] : procedures_) {
+                if (proc.schema_id == schema_id) {
+                    counts.procedures++;
+                }
+            }
+        }
+
+        std::vector<DomainInfo> domains;
+        if (listDomains(schema_id, domains, ctx) == Status::OK) {
+            counts.domains = domains.size();
+        }
+
+        std::vector<PackageInfo> packages;
+        if (listPackages(schema_id, packages, ctx) == Status::OK) {
+            counts.packages = packages.size();
+        }
+
+        std::vector<UDRInfo> udrs;
+        if (listUDRs(schema_id, udrs, ctx) == Status::OK) {
+            counts.udrs = udrs.size();
+        }
+
+        std::vector<ExceptionInfo> exceptions;
+        if (listExceptions(schema_id, exceptions, ctx) == Status::OK) {
+            counts.exceptions = exceptions.size();
+        }
+
+        if (counts.total() > 0)
+        {
+            std::ostringstream msg;
+            msg << "Cannot drop schema \"" << schema_info.schema_name
+                << "\" because it contains objects\n";
+            msg << "DETAIL:\n";
+            if (counts.tables > 0) msg << "  Tables: " << counts.tables << "\n";
+            if (counts.views > 0) msg << "  Views: " << counts.views << "\n";
+            if (counts.functions > 0) msg << "  Functions: " << counts.functions << "\n";
+            if (counts.procedures > 0) msg << "  Procedures: " << counts.procedures << "\n";
+            if (counts.sequences > 0) msg << "  Sequences: " << counts.sequences << "\n";
+            if (counts.domains > 0) msg << "  Domains: " << counts.domains << "\n";
+            if (counts.triggers > 0) msg << "  Triggers: " << counts.triggers << "\n";
+            if (counts.indexes > 0) msg << "  Indexes: " << counts.indexes << "\n";
+            if (counts.packages > 0) msg << "  Packages: " << counts.packages << "\n";
+            if (counts.udrs > 0) msg << "  UDRs: " << counts.udrs << "\n";
+            if (counts.exceptions > 0) msg << "  Exceptions: " << counts.exceptions << "\n";
+            if (counts.child_schemas > 0) msg << "  Child Schemas: " << counts.child_schemas << "\n";
+
+            msg << "  Total: " << counts.total() << " objects\n";
+            msg << "HINT: Drop or move all objects from schema first.\n";
+            msg << "  To see list: SELECT object_name, object_type FROM SYS.OBJECTS ";
+            msg << "WHERE schema_name = '" << schema_info.schema_name << "';";
+
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, msg.str().c_str());
+            return Status::CONSTRAINT_VIOLATION;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            Status status = deleteSchemaRecord(schema_id, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            schema_cache_.erase(schema_id);
+            schema_count_--;
+            status = writeCatalogRoot(ctx);
+            if (status == Status::OK)
+            {
+                db_->sync(ctx);
+            }
         }
 
         return Status::OK;
@@ -2039,48 +2073,45 @@ namespace scratchbird::core
     auto CatalogManager::deleteSchemaRecord(const ID &schema_id, ErrorContext *ctx) -> Status
     {
         BufferPool *bp = db_->buffer_pool();
-        void *page_data;
-        Status status = bp->pinPage(schemas_table_page_, &page_data, ctx);
-        if (status != Status::OK)
+        uint32_t current_page_id = schemas_table_page_;
+
+        while (current_page_id != 0)
         {
-            return status;
-        }
-
-        HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
-
-        uint16_t item_count = heap_page.getItemCount();
-        bool found = false;
-
-        auto *mutable_page_data = static_cast<uint8_t *>(page_data);
-
-        for (uint16_t i = 0; i < item_count; ++i)
-        {
-            const uint8_t *tuple_data;
-            uint32_t tuple_size;
-
-            if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+            void *page_data = nullptr;
+            Status status = bp->pinPage(current_page_id, &page_data, ctx);
+            if (status != Status::OK)
             {
-                if (tuple_size >= sizeof(TupleHeader) + sizeof(SchemaRecord))
-                {
-                    const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
-                    uint8_t *mutable_tuple_data = mutable_page_data + offset;
-
-                    auto *record =
-                        reinterpret_cast<SchemaRecord *>(mutable_tuple_data + sizeof(TupleHeader));
-
-                    if (record->schema_id == schema_id && record->is_valid == 1)
-                    {
-                        record->is_valid = 0;
-                        found = true;
-                        break;
-                    }
-                }
+                return status;
             }
+
+            auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+            uint32_t offset = sizeof(CatalogHeapPage);
+            bool found = false;
+
+            for (uint32_t i = 0; i < heap->record_count; ++i)
+            {
+                auto *record = reinterpret_cast<SchemaRecord *>(
+                    reinterpret_cast<uint8_t *>(page_data) + offset);
+
+                if (record->is_valid == 1 && record->schema_id == schema_id)
+                {
+                    record->is_valid = 0;
+                    heap->header.generation++;
+                    found = true;
+                    bp->unpinPage(current_page_id, true, ctx);
+                    return Status::OK;
+                }
+
+                offset += sizeof(SchemaRecord);
+            }
+
+            uint32_t next_page = heap->next_page;
+            bp->unpinPage(current_page_id, false, ctx);
+            current_page_id = next_page;
         }
 
-        bp->unpinPage(schemas_table_page_, found, ctx);
-
-        return found ? Status::OK : Status::NOT_FOUND;
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema record not found on disk");
+        return Status::NOT_FOUND;
     }
 
     auto CatalogManager::createTable(const ID &schema_id, const std::string &table_name,
@@ -2173,6 +2204,100 @@ namespace scratchbird::core
         column_cache_[table.table_id] = columns_with_ids;
         table_count_++;
         table_id = table.table_id;
+
+        // Phase 2: Create dependencies for domain-based columns (column -> domain)
+        for (const auto& col : columns_with_ids) {
+            if (col.domain_id == ID{}) {
+                continue;
+            }
+            ID dep_id;
+            status = createDependency(
+                col.column_id, ObjectType::COLUMN,
+                col.domain_id, ObjectType::DOMAIN,
+                DependencyType::NORMAL,
+                dep_id,
+                ctx
+            );
+            if (status != Status::OK) {
+                LOG_ERROR(CATALOG, "Failed to create dependency for domain");
+                return status;
+            }
+        }
+
+        // Phase 5: Track sequence usage in DEFAULT expressions (column -> sequence)
+        for (const auto& col : columns_with_ids) {
+            if (col.default_expr.empty()) {
+                continue;
+            }
+
+        std::vector<uint8_t> bytecode = hexToBytesLocal(col.default_expr);
+        std::vector<std::string> seq_names;
+        parseDefaultExprSequenceNames(bytecode, seq_names);
+
+        std::unordered_set<ID, IDHash> sequence_ids;
+        for (const auto& name : seq_names) {
+            ID seq_id;
+            if (getSequenceIdByName(name, seq_id, ctx) == Status::OK) {
+                sequence_ids.insert(seq_id);
+                continue;
+            }
+            SequenceInfo sinfo;
+            if (getSequence(schema_id, name, sinfo, ctx) == Status::OK) {
+                sequence_ids.insert(sinfo.sequence_id);
+            }
+        }
+
+        for (const auto& seq_id : sequence_ids) {
+            ID dep_id;
+            status = createDependency(
+                col.column_id, ObjectType::COLUMN,
+                seq_id, ObjectType::SEQUENCE,
+                DependencyType::NORMAL,
+                dep_id,
+                ctx
+            );
+            if (status != Status::OK) {
+                LOG_ERROR(CATALOG, "Failed to create dependency for default sequence");
+                return status;
+            }
+        }
+    }
+
+        // Phase 2: Create dependencies for identity sequences
+        std::unordered_set<ID, IDHash> identity_sequence_ids;
+        for (const auto& col : columns_with_ids) {
+            if (col.is_identity && col.identity_sequence_id != ID{}) {
+                identity_sequence_ids.insert(col.identity_sequence_id);
+            }
+        }
+
+        for (const auto& seq_id : identity_sequence_ids) {
+            ID dep_id = ID{};
+            status = createDependency(
+                table.table_id, ObjectType::TABLE,
+                seq_id, ObjectType::SEQUENCE,
+                DependencyType::NORMAL,
+                dep_id,
+                ctx
+            );
+            if (status != Status::OK) {
+                LOG_ERROR(CATALOG, "Failed to create dependency for identity sequence");
+                return status;
+            }
+
+            ID auto_dep_id = ID{};
+            status = createDependency(
+                seq_id, ObjectType::SEQUENCE,
+                table.table_id, ObjectType::TABLE,
+                DependencyType::AUTO,
+                auto_dep_id,
+                ctx
+            );
+            if (status != Status::OK) {
+                LOG_ERROR(CATALOG, "Failed to create auto dependency for identity sequence");
+                return status;
+            }
+        }
 
         // Update root page
         status = writeCatalogRoot(ctx);
@@ -8827,11 +8952,25 @@ auto CatalogManager::dropFunction(const std::string &name, bool if_exists,
         return Status::NOT_FOUND;
     }
 
-    // Remove dependency links for this function
-    replaceDependencies(it->second.function_id,
-                        ObjectType::FUNCTION,
-                        {},
-                        ctx);
+    const FunctionInfo& func = it->second;
+
+    // Check for dependents (views, triggers, other functions that call this function)
+    std::vector<DependencyInfo> dependents;
+    Status status = getDependents(func.function_id, dependents, ctx);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    // Functions don't own other objects, so all dependents are blocking
+    if (!dependents.empty()) {
+        std::string error_msg = buildDependencyErrorMessage(
+            name, ObjectType::FUNCTION, dependents, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
+        return Status::CONSTRAINT_VIOLATION;
+    }
+
+    // Clear dependencies (what this function references)
+    clearDependenciesFor(func.function_id, ctx);
 
     functions_.erase(it);
     LOG_INFO(CATALOG, "Function '%s' dropped", name.c_str());
@@ -8857,11 +8996,25 @@ auto CatalogManager::dropProcedure(const std::string &name, bool if_exists,
         return Status::NOT_FOUND;
     }
 
-    // Remove dependency links for this procedure
-    replaceDependencies(it->second.procedure_id,
-                        ObjectType::PROCEDURE,
-                        {},
-                        ctx);
+    const ProcedureInfo& proc = it->second;
+
+    // Check for dependents (triggers, other procedures/functions that call this procedure)
+    std::vector<DependencyInfo> dependents;
+    Status status = getDependents(proc.procedure_id, dependents, ctx);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    // Procedures don't own other objects, so all dependents are blocking
+    if (!dependents.empty()) {
+        std::string error_msg = buildDependencyErrorMessage(
+            name, ObjectType::PROCEDURE, dependents, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
+        return Status::CONSTRAINT_VIOLATION;
+    }
+
+    // Clear dependencies (what this procedure references)
+    clearDependenciesFor(proc.procedure_id, ctx);
 
     procedures_.erase(it);
     LOG_INFO(CATALOG, "Procedure '%s' dropped", name.c_str());
@@ -8985,11 +9138,12 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
         return Status::CONSTRAINT_VIOLATION;
     }
 
-    // 5. Drop owned objects (indexes, triggers, constraints, child-side FKs)
+    // 5. Drop owned objects (indexes, triggers, constraints, identity sequences, child-side FKs)
     // Group owned objects by type for proper drop order
     std::vector<DependencyInfo> owned_triggers;
     std::vector<DependencyInfo> owned_indexes;
     std::vector<DependencyInfo> owned_constraints;
+    std::vector<DependencyInfo> owned_sequences;
 
     for (const auto& dep : filtered.owned) {
         switch (dep.dependent_type) {
@@ -9001,6 +9155,9 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
                 break;
             case ObjectType::CONSTRAINT:
                 owned_constraints.push_back(dep);
+                break;
+            case ObjectType::SEQUENCE:
+                owned_sequences.push_back(dep);
                 break;
             default:
                 break;
@@ -9035,6 +9192,61 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
         if (status != Status::OK) {
             LOG_ERROR(CATALOG, "Failed to drop constraint during table drop");
             return status;
+        }
+    }
+
+    if (!owned_sequences.empty()) {
+        // Remove table->sequence dependencies so sequence drops are not blocked.
+        std::vector<DependencyInfo> table_deps;
+        Status deps_status = getDependenciesFor(table_id, table_deps, ctx);
+        if (deps_status == Status::OK) {
+            for (const auto& dep : table_deps) {
+                if (dep.dependent_type == ObjectType::TABLE &&
+                    dep.referenced_type == ObjectType::SEQUENCE) {
+                    deleteDependency(dep.dependency_id, ctx);
+                }
+            }
+        }
+    }
+
+    for (const auto& dep : owned_sequences) {
+        std::vector<DependencyInfo> seq_dependents;
+        Status dep_status = getDependents(dep.dependent_object_id, seq_dependents, ctx);
+        if (dep_status != Status::OK) {
+            return dep_status;
+        }
+        if (!seq_dependents.empty()) {
+            LOG_INFO(CATALOG, "Skipping sequence drop; sequence has other dependents");
+            continue;
+        }
+
+        status = dropSequence(dep.dependent_object_id, false, ctx);
+        if (status != Status::OK) {
+            LOG_ERROR(CATALOG, "Failed to drop sequence during table drop");
+            return status;
+        }
+    }
+
+    // 6. Clear dependencies for columns in this table (defaults/domains/etc.)
+    std::vector<ColumnInfo> table_columns;
+    auto col_it = column_cache_.find(table_id);
+    if (col_it != column_cache_.end()) {
+        table_columns = col_it->second;
+    } else {
+        Status col_status = readColumnRecords(table_id, ctx);
+        if (col_status == Status::OK) {
+            auto cache_it = column_cache_.find(table_id);
+            if (cache_it != column_cache_.end()) {
+                table_columns = cache_it->second;
+            }
+        }
+    }
+
+    for (const auto& col : table_columns) {
+        Status dep_status = clearDependenciesFor(col.column_id, ctx);
+        if (dep_status != Status::OK) {
+            LOG_ERROR(CATALOG, "Failed to clear dependencies for column during table drop");
+            return dep_status;
         }
     }
 
@@ -9172,7 +9384,7 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
 
     // 3. Create new ColumnInfo with generated UUID
     ColumnInfo new_column = column_info;
-    new_column.column_id = ID(); // Generate new UUID
+    new_column.column_id = generateUuidV7();
     new_column.ordinal = next_ordinal;
 
     // 4. Write ColumnRecord to disk
@@ -9235,6 +9447,57 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
     if (status != Status::OK)
     {
         return status;
+    }
+
+    // Phase 2: Create dependencies for domain-based column (column -> domain)
+    if (new_column.domain_id != ID{}) {
+        ID dep_id;
+        status = createDependency(
+            new_column.column_id, ObjectType::COLUMN,
+            new_column.domain_id, ObjectType::DOMAIN,
+            DependencyType::NORMAL,
+            dep_id,
+            ctx
+        );
+        if (status != Status::OK) {
+            LOG_ERROR(CATALOG, "Failed to create dependency for domain");
+            return status;
+        }
+    }
+
+    // Phase 5: Track sequence usage in DEFAULT expressions (column -> sequence)
+    if (!new_column.default_expr.empty()) {
+        std::vector<uint8_t> bytecode = hexToBytesLocal(new_column.default_expr);
+        std::vector<std::string> seq_names;
+        parseDefaultExprSequenceNames(bytecode, seq_names);
+
+        std::unordered_set<ID, IDHash> sequence_ids;
+        for (const auto& name : seq_names) {
+            ID seq_id;
+            if (getSequenceIdByName(name, seq_id, ctx) == Status::OK) {
+                sequence_ids.insert(seq_id);
+                continue;
+            }
+            SequenceInfo sinfo;
+            if (getSequence(table_it->second.schema_id, name, sinfo, ctx) == Status::OK) {
+                sequence_ids.insert(sinfo.sequence_id);
+            }
+        }
+
+        for (const auto& seq_id : sequence_ids) {
+            ID dep_id;
+            status = createDependency(
+                new_column.column_id, ObjectType::COLUMN,
+                seq_id, ObjectType::SEQUENCE,
+                DependencyType::NORMAL,
+                dep_id,
+                ctx
+            );
+            if (status != Status::OK) {
+                LOG_ERROR(CATALOG, "Failed to create dependency for default sequence");
+                return status;
+            }
+        }
     }
 
     return Status::OK;
@@ -9406,6 +9669,12 @@ Status CatalogManager::dropColumn(const ID &table_id, const std::string &column_
     if (status != Status::OK)
     {
         return status;
+    }
+
+    // Phase 5: Clear dependencies tied to this column (defaults/domains/etc.)
+    status = clearDependenciesFor(column_id, ctx);
+    if (status != Status::OK) {
+        LOG_ERROR(CATALOG, "Failed to clear dependencies for column");
     }
 
     return Status::OK;
@@ -10030,27 +10299,60 @@ auto CatalogManager::alterSequence(const ID& sequence_id, const std::optional<in
 
 auto CatalogManager::dropSequence(const ID& sequence_id, bool cascade, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> cache_lock(sequence_cache_mutex_);
-
-    LOG_INFO(CATALOG, "Dropping sequence %s (cascade=%s)", "<sequence_id>", cascade ? "true" : "false");
-
-    // Find sequence
-    auto it = sequence_cache_.find(sequence_id);
-    if (it == sequence_cache_.end()) {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
-        return Status::NOT_FOUND;
+    (void)cascade;  // RESTRICT-only policy
+    std::string seq_name;
+    {
+        std::lock_guard<std::mutex> cache_lock(sequence_cache_mutex_);
+        auto it = sequence_cache_.find(sequence_id);
+        if (it == sequence_cache_.end()) {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
+            return Status::NOT_FOUND;
+        }
+        seq_name = it->second->name;
     }
 
-    // Get name before removing
-    std::string seq_name = it->second->name;
+    std::vector<DependencyInfo> deps;
+    Status status = getDependents(sequence_id, deps, ctx);
+    if (status != Status::OK) {
+        return status;
+    }
 
-    // Remove from cache
-    sequence_cache_.erase(it);
+    if (!deps.empty()) {
+        std::string error_msg = buildDependencyErrorMessage(
+            seq_name, ObjectType::SEQUENCE, deps, ctx);
+        bool has_column = false;
+        for (const auto& dep : deps) {
+            if (dep.dependent_type == ObjectType::COLUMN) {
+                has_column = true;
+                break;
+            }
+        }
+        if (has_column) {
+            error_msg += "\nHINT: Columns with DEFAULTs may reference this sequence. "
+                         "Use ALTER TABLE ... DROP DEFAULT.";
+        }
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
+        return Status::CONSTRAINT_VIOLATION;
+    }
 
-    // Remove from name map
+    {
+        std::lock_guard<std::mutex> cache_lock(sequence_cache_mutex_);
+        auto it = sequence_cache_.find(sequence_id);
+        if (it == sequence_cache_.end()) {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
+            return Status::NOT_FOUND;
+        }
+        sequence_cache_.erase(it);
+    }
+
     {
         std::lock_guard<std::mutex> name_lock(sequence_name_mutex_);
         sequence_name_to_id_.erase(seq_name);
+    }
+
+    status = clearDependenciesFor(sequence_id, ctx);
+    if (status != Status::OK) {
+        LOG_ERROR(CATALOG, "Failed to clear dependencies for sequence");
     }
 
     LOG_INFO(CATALOG, "Dropped sequence '%s' successfully", seq_name.c_str());
@@ -10323,70 +10625,69 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
 
 auto CatalogManager::dropView(const ID& view_id, bool cascade, ErrorContext* ctx) -> Status
 {
-    // Collect dependent views while holding the lock
-    std::vector<ID> dependent_view_ids;
+    // 1. Get view info
+    ViewInfo view_info;
     std::string view_name;
-
     {
         std::lock_guard<std::mutex> lock(view_cache_mutex_);
-
         auto it = view_cache_.find(view_id);
         if (it == view_cache_.end())
         {
             SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "View not found");
             return Status::NOT_FOUND;
         }
-
+        view_info = it->second;
         view_name = it->second.name;
+    }
 
-        // Check for dependent views (WP-2 CAT-M6)
-        // A view depends on this view if its definition references the view name
-        for (const auto& [dep_id, dep_view] : view_cache_)
-        {
-            if (dep_id != view_id)
-            {
-                // Check if definition contains a reference to this view name
-                // This is a simple text search - a more robust approach would parse the SQL
-                if (dep_view.definition.find(view_name) != std::string::npos)
-                {
-                    dependent_view_ids.push_back(dep_id);
+    // 2. Check for dependencies using dependency API (not string matching!)
+    std::vector<DependencyInfo> all_deps;
+    Status status = getDependents(view_id, all_deps, ctx);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    // 3. Filter owned vs blocking dependencies
+    auto filtered = filterDependencies(view_id, ObjectType::VIEW, all_deps, ctx);
+
+    // 4. If blocking dependencies exist, fail with detailed error (RESTRICT-only policy)
+    if (!filtered.blocking.empty()) {
+        std::string error_msg = buildDependencyErrorMessage(
+            view_name, ObjectType::VIEW, filtered.blocking, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
+        return Status::CONSTRAINT_VIOLATION;
+    }
+
+    // 5. Drop owned objects (triggers on view, if any)
+    for (const auto& dep : filtered.owned) {
+        if (dep.dependent_type == ObjectType::TRIGGER) {
+            // Get trigger name to drop it
+            std::string trigger_name = getObjectName(dep.dependent_object_id, ObjectType::TRIGGER, ctx);
+            if (!trigger_name.empty() && trigger_name.find("<unknown>") == std::string::npos) {
+                status = dropTrigger(trigger_name, ctx);
+                if (status != Status::OK && status != Status::NOT_FOUND) {
+                    return status;
                 }
             }
         }
-
-        if (!dependent_view_ids.empty() && !cascade)
-        {
-            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
-                             "View has dependent views - use CASCADE to drop them");
-            return Status::CONSTRAINT_VIOLATION;
-        }
     }
 
-    // CASCADE: Drop dependent views first (outside lock to avoid deadlock)
-    if (cascade && !dependent_view_ids.empty())
+    // 6. Drop materialized table if this is a materialized view
+    if (view_info.materialized && view_info.materialized_table_id != ID{})
     {
-        for (const auto& dep_id : dependent_view_ids)
-        {
-            Status status = dropView(dep_id, true, ctx);
-            if (status != Status::OK && status != Status::NOT_FOUND)
-            {
-                return status;
-            }
+        status = dropTable(view_info.materialized_table_id, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            LOG_WARNING(CATALOG, "Failed to drop materialized table for view '%s'", view_name.c_str());
         }
     }
 
-    // Now drop the actual view
+    // 7. Clear dependencies
+    clearDependenciesFor(view_id, ctx);
+
+    // 8. Remove from cache
     {
         std::lock_guard<std::mutex> lock(view_cache_mutex_);
-
-        auto it = view_cache_.find(view_id);
-        if (it == view_cache_.end())
-        {
-            // Already dropped in cascade or by another thread
-            return Status::OK;
-        }
-
-        view_cache_.erase(it);
+        view_cache_.erase(view_id);
         view_name_to_id_.erase(view_name);
     }
 
@@ -10984,6 +11285,138 @@ auto CatalogManager::clearDependenciesFor(const ID& dependent_object_id,
     return Status::OK;
 }
 
+namespace {
+
+std::vector<uint8_t> hexToBytesLocal(const std::string& hex_str) {
+    std::vector<uint8_t> out;
+    if (hex_str.size() % 2 != 0) {
+        return out;
+    }
+    out.reserve(hex_str.size() / 2);
+    for (size_t i = 0; i < hex_str.size(); i += 2) {
+        auto hex_digit = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+            if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+            return -1;
+        };
+        int hi = hex_digit(hex_str[i]);
+        int lo = hex_digit(hex_str[i + 1]);
+        if (hi < 0 || lo < 0) {
+            out.clear();
+            return out;
+        }
+        out.push_back(static_cast<uint8_t>((hi << 4) | lo));
+    }
+    return out;
+}
+
+bool isReasonableSequenceName(const std::string& name) {
+    if (name.empty() || name.size() > 255) {
+        return false;
+    }
+    for (char c : name) {
+        if (!(std::isalnum(static_cast<unsigned char>(c)) ||
+              c == '_' || c == '$' || c == '.')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
+                                   std::vector<std::string>& names_out) {
+    names_out.clear();
+    size_t pc = 0;
+
+    auto read_u8 = [&](uint8_t& out) -> bool {
+        if (pc + 1 > bytecode.size()) return false;
+        out = bytecode[pc++];
+        return true;
+    };
+    auto read_u32 = [&](uint32_t& out) -> bool {
+        if (pc + 4 > bytecode.size()) return false;
+        out = scratchbird::sblr::readInt32(&bytecode[pc]);
+        pc += 4;
+        return true;
+    };
+    auto read_string = [&](std::string& out) -> bool {
+        uint32_t len = 0;
+        if (!read_u32(len)) return false;
+        if (len > 4096) return false;  // guard
+        if (pc + len > bytecode.size()) return false;
+        out.assign(reinterpret_cast<const char*>(&bytecode[pc]), len);
+        pc += len;
+        return true;
+    };
+
+    while (pc < bytecode.size()) {
+        uint8_t op_byte = 0;
+        if (!read_u8(op_byte)) break;
+        auto op = static_cast<scratchbird::sblr::Opcode>(op_byte);
+        switch (op) {
+            case scratchbird::sblr::Opcode::LITERAL_NULL:
+                break;
+            case scratchbird::sblr::Opcode::LITERAL_INT32:
+                pc += 4;
+                break;
+            case scratchbird::sblr::Opcode::LITERAL_INT64:
+            case scratchbird::sblr::Opcode::LITERAL_DOUBLE:
+                pc += 8;
+                break;
+            case scratchbird::sblr::Opcode::LITERAL_STRING: {
+                std::string val;
+                if (!read_string(val)) {
+                    pc = bytecode.size();
+                    break;
+                }
+                if (isReasonableSequenceName(val)) {
+                    names_out.push_back(val);
+                }
+                break;
+            }
+            case scratchbird::sblr::Opcode::COLUMN_REF: {
+                std::string dummy;
+                if (!read_string(dummy)) {
+                    pc = bytecode.size();
+                }
+                break;
+            }
+            case scratchbird::sblr::Opcode::EXPR_CAST: {
+                // EXPR_CAST payload: try_cast flag (1 byte) + target type opcode + optional precision
+                pc += 1;  // try_cast flag
+                if (pc >= bytecode.size()) break;
+                uint8_t type_op = bytecode[pc++];
+                auto type_opcode = static_cast<scratchbird::sblr::Opcode>(type_op);
+                if (type_opcode == scratchbird::sblr::Opcode::TYPE_VARCHAR ||
+                    type_opcode == scratchbird::sblr::Opcode::TYPE_CHAR) {
+                    pc += 4;  // length
+                } else if (type_opcode == scratchbird::sblr::Opcode::TYPE_DECIMAL) {
+                    pc += 8;  // precision + scale
+                }
+                break;
+            }
+            case scratchbird::sblr::Opcode::DEFAULT_VALUE:
+            case scratchbird::sblr::Opcode::CHECK_CONSTRAINT:
+            case scratchbird::sblr::Opcode::GENERATED_COLUMN:
+            case scratchbird::sblr::Opcode::IDENTITY_COLUMN:
+            case scratchbird::sblr::Opcode::FOREIGN_KEY:
+            case scratchbird::sblr::Opcode::TABLE_FK:
+            case scratchbird::sblr::Opcode::BEGIN_LIST:
+            case scratchbird::sblr::Opcode::END_LIST:
+                // These should not appear inside default expressions; stop to avoid mis-parse.
+                pc = bytecode.size();
+                break;
+            default:
+                // Unknown opcode; bail out to avoid misalignment.
+                pc = bytecode.size();
+                break;
+        }
+    }
+}
+
+}  // namespace
+
 // ========================================================================
 // Dependency Infrastructure Helpers (Phase 1)
 // ========================================================================
@@ -10991,29 +11424,46 @@ auto CatalogManager::clearDependenciesFor(const ID& dependent_object_id,
 auto CatalogManager::objectTypeToString(ObjectType type) -> std::string
 {
     switch (type) {
-        case ObjectType::TABLE: return "TABLE";
-        case ObjectType::VIEW: return "VIEW";
-        case ObjectType::INDEX: return "INDEX";
-        case ObjectType::SEQUENCE: return "SEQUENCE";
-        case ObjectType::FUNCTION: return "FUNCTION";
-        case ObjectType::PROCEDURE: return "PROCEDURE";
-        case ObjectType::TRIGGER: return "TRIGGER";
-        case ObjectType::CONSTRAINT: return "CONSTRAINT";
-        case ObjectType::DOMAIN: return "DOMAIN";
-        case ObjectType::PACKAGE: return "PACKAGE";
-        case ObjectType::UDR: return "UDR";
-        case ObjectType::EXCEPTION: return "EXCEPTION";
-        case ObjectType::SYNONYM: return "SYNONYM";
-        case ObjectType::SCHEMA: return "SCHEMA";
-        case ObjectType::DATABASE: return "DATABASE";
-        case ObjectType::USER: return "USER";
-        case ObjectType::ROLE: return "ROLE";
-        case ObjectType::COLUMN: return "COLUMN";
-        case ObjectType::EMULATION_SERVER: return "EMULATION SERVER";
-        case ObjectType::FOREIGN_SERVER: return "FOREIGN SERVER";
-        case ObjectType::FOREIGN_TABLE: return "FOREIGN TABLE";
-        case ObjectType::USER_MAPPING: return "USER MAPPING";
-        default: return "OBJECT";
+        case ObjectType::SCHEMA: return "schema";
+        case ObjectType::TABLE: return "table";
+        case ObjectType::COLUMN: return "column";
+        case ObjectType::VIEW: return "view";
+        case ObjectType::INDEX: return "index";
+        case ObjectType::SEQUENCE: return "sequence";
+        case ObjectType::CONSTRAINT: return "constraint";
+        case ObjectType::TRIGGER: return "trigger";
+        case ObjectType::FUNCTION: return "function";
+        case ObjectType::PROCEDURE: return "procedure";
+        case ObjectType::DOMAIN: return "domain";
+        case ObjectType::COMPOSITE_TYPE: return "composite type";
+        case ObjectType::ROLE: return "role";
+        case ObjectType::PACKAGE: return "package";
+        case ObjectType::UDR: return "udr";
+        case ObjectType::EXCEPTION: return "exception";
+        case ObjectType::SYNONYM: return "synonym";
+        case ObjectType::USER: return "user";
+        case ObjectType::GROUP: return "group";
+        case ObjectType::TABLESPACE: return "tablespace";
+        case ObjectType::DATABASE: return "database";
+        case ObjectType::EMULATION_TYPE: return "emulation type";
+        case ObjectType::EMULATION_SERVER: return "emulation server";
+        case ObjectType::EMULATED_DATABASE: return "emulated database";
+        case ObjectType::COLLATION: return "collation";
+        case ObjectType::CHARSET: return "charset";
+        case ObjectType::COMMENT: return "comment";
+        case ObjectType::DEPENDENCY: return "dependency";
+        case ObjectType::PERMISSION: return "permission";
+        case ObjectType::STATISTIC: return "statistic";
+        case ObjectType::TIMEZONE: return "timezone";
+        case ObjectType::EXTENSION: return "extension";
+        case ObjectType::FOREIGN_SERVER: return "foreign server";
+        case ObjectType::FOREIGN_TABLE: return "foreign table";
+        case ObjectType::USER_MAPPING: return "user mapping";
+        case ObjectType::SERVER_REGISTRY: return "server registry";
+        case ObjectType::UDR_ENGINE: return "udr engine";
+        case ObjectType::UDR_MODULE: return "udr module";
+        case ObjectType::CLUSTER: return "cluster";
+        default: return "object";
     }
 }
 
@@ -11025,6 +11475,56 @@ auto CatalogManager::getObjectName(const ID& object_id, ObjectType type,
             std::lock_guard<std::mutex> lock(mutex_);
             auto it = table_cache_.find(object_id);
             return it != table_cache_.end() ? it->second.table_name : "<unknown>";
+        }
+
+        case ObjectType::COLUMN: {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (columns_table_page_ == 0) {
+                return "<unknown>";
+            }
+
+            BufferPool *bp = db_->buffer_pool();
+            void *page_data;
+            Status status = bp->pinPage(columns_table_page_, &page_data, ctx);
+            if (status != Status::OK) {
+                return "<unknown>";
+            }
+
+            HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+            uint16_t item_count = heap_page.getItemCount();
+            std::string result = "<unknown>";
+
+            for (uint16_t i = 0; i < item_count; ++i)
+            {
+                const uint8_t *tuple_data;
+                uint32_t tuple_size;
+                if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+                {
+                    if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnRecord))
+                    {
+                        const auto *record = reinterpret_cast<const ColumnRecord *>(
+                            tuple_data + sizeof(TupleHeader));
+
+                        if (record->column_id == object_id && record->is_valid == 1)
+                        {
+                            std::string column_name(record->column_name);
+                            auto table_it = table_cache_.find(record->table_id);
+                            if (table_it != table_cache_.end())
+                            {
+                                result = table_it->second.table_name + "." + column_name;
+                            }
+                            else
+                            {
+                                result = column_name;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            bp->unpinPage(columns_table_page_, false, ctx);
+            return result;
         }
 
         case ObjectType::VIEW: {
@@ -11074,16 +11574,91 @@ auto CatalogManager::getObjectName(const ID& object_id, ObjectType type,
         }
 
         case ObjectType::DOMAIN: {
-            std::lock_guard<std::mutex> lock(mutex_);
-            // Search domain cache (assuming it exists, implementation may vary)
-            // This is a placeholder - actual implementation depends on domain cache structure
-            return "<domain>";
+            DomainInfo info;
+            if (getDomain(object_id, info, ctx) == Status::OK) {
+                return info.domain_name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::CONSTRAINT: {
+            ConstraintInfo info;
+            if (getConstraint(object_id, info, ctx) == Status::OK) {
+                return info.constraint_name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::PACKAGE: {
+            PackageInfo info;
+            if (getPackage(object_id, info, ctx) == Status::OK) {
+                return info.package_name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::UDR: {
+            UDRInfo info;
+            if (getUDR(object_id, info, ctx) == Status::OK) {
+                return info.udr_name;
+            }
+            return "<unknown>";
         }
 
         case ObjectType::EXCEPTION: {
-            std::lock_guard<std::mutex> lock(mutex_);
-            auto it = exception_cache_.find(object_id);
-            return it != exception_cache_.end() ? it->second.name : "<unknown>";
+            ExceptionInfo info;
+            if (getException(object_id, info, ctx) == Status::OK) {
+                return info.name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::USER: {
+            UserInfo info;
+            if (getUser(object_id, info, ctx) == Status::OK) {
+                return info.username;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::ROLE: {
+            RoleInfo info;
+            if (getRole(object_id, info, ctx) == Status::OK) {
+                return info.role_name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::GROUP: {
+            GroupInfo info;
+            if (getGroup(object_id, info, ctx) == Status::OK) {
+                return info.group_name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::EMULATION_TYPE: {
+            EmulationTypeInfo info;
+            if (getEmulationType(object_id, info, ctx) == Status::OK) {
+                return info.emulation_name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::EMULATION_SERVER: {
+            EmulationServerInfo info;
+            if (getEmulationServer(object_id, info, ctx) == Status::OK) {
+                return info.server_name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::EMULATED_DATABASE: {
+            EmulatedDatabaseInfo info;
+            if (getEmulatedDatabase(object_id, info, ctx) == Status::OK) {
+                return info.database_name;
+            }
+            return "<unknown>";
         }
 
         default:
@@ -11116,7 +11691,8 @@ auto CatalogManager::filterDependencies(const ID& owner_id, ObjectType owner_typ
                     // Table owns: indexes, triggers, constraints (child-side FKs only)
                     if (dep.dependent_type == ObjectType::INDEX ||
                         dep.dependent_type == ObjectType::TRIGGER ||
-                        dep.dependent_type == ObjectType::CONSTRAINT) {
+                        dep.dependent_type == ObjectType::CONSTRAINT ||
+                        dep.dependent_type == ObjectType::SEQUENCE) {
                         is_owned = true;
                     }
                     break;
@@ -11178,12 +11754,10 @@ auto CatalogManager::buildDependencyErrorMessage(
         // Pluralize type name
         std::string type_plural = objectTypeToString(type);
         if (!names.empty() && names.size() > 1) {
-            // Simple pluralization - add 's' if not already ending in 's' or 'S'
+            // Simple pluralization - add 's' if not already ending in 's'
             char last_char = type_plural.back();
-            if (last_char != 's' && last_char != 'S' && type != ObjectType::CONSTRAINT) {
+            if (last_char != 's') {
                 type_plural += "s";
-            } else if (type == ObjectType::CONSTRAINT) {
-                type_plural = "CONSTRAINTs";
             }
         }
 
@@ -15492,40 +16066,31 @@ auto CatalogManager::updateDomain(const ID& domain_id,
 
 auto CatalogManager::dropDomain(const ID& domain_id, bool cascade, ErrorContext* ctx) -> Status
 {
-    // WP-2 CAT-M7: Check for dependent columns before taking the lock
-    // (findColumnsByDomain takes its own locks internally)
-    std::vector<std::pair<ID, std::string>> dependent_columns;
-    Status status = findColumnsByDomain(domain_id, dependent_columns, ctx);
+    (void)cascade;  // RESTRICT-only policy
+    // Find existing domain
+    DomainInfo existing;
+    Status status = getDomain(domain_id, existing, ctx);
     if (status != Status::OK)
     {
         return status;
     }
 
-    if (!dependent_columns.empty() && !cascade)
+    // Check dependency graph before taking the main mutex to avoid lock ordering issues.
+    std::vector<DependencyInfo> deps;
+    status = getDependents(domain_id, deps, ctx);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    if (!deps.empty())
     {
-        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
-            "Cannot drop domain - columns depend on it (use CASCADE)");
+        std::string error_msg = buildDependencyErrorMessage(
+            existing.domain_name, ObjectType::DOMAIN, deps, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
         return Status::CONSTRAINT_VIOLATION;
     }
 
-    // TODO: If cascade is true, we would need to ALTER TABLE to remove the domain
-    // from dependent columns. For now, just reject if there are dependents.
-    if (!dependent_columns.empty())
-    {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-            "CASCADE for DROP DOMAIN not yet implemented - no columns may use this domain");
-        return Status::NOT_IMPLEMENTED;
-    }
-
     std::lock_guard<std::mutex> lock(mutex_);
-
-    // Find existing domain
-    DomainInfo existing;
-    status = getDomain(domain_id, existing, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
 
     // Soft delete the domain record (mark is_valid = 0)
     BufferPool *bp = db_->buffer_pool();
@@ -15569,7 +16134,18 @@ auto CatalogManager::dropDomain(const ID& domain_id, bool cascade, ErrorContext*
 
     bp->unpinPage(domains_table_page_, found, ctx);
 
-    return found ? Status::OK : Status::NOT_FOUND;
+    if (!found)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found on disk");
+        return Status::NOT_FOUND;
+    }
+
+    status = clearDependenciesFor(domain_id, ctx);
+    if (status != Status::OK) {
+        LOG_ERROR(CATALOG, "Failed to clear dependencies for domain");
+    }
+
+    return Status::OK;
 }
 
 auto CatalogManager::listDomains(const ID& schema_id, std::vector<DomainInfo>& domains_out,
@@ -15869,11 +16445,30 @@ auto CatalogManager::updateUDR(const ID& udr_id,
 
 auto CatalogManager::dropUDR(const ID& udr_id, bool cascade, ErrorContext* ctx) -> Status
 {
+    UDRInfo existing;
+    Status status = getUDR(udr_id, existing, ctx);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    std::vector<DependencyInfo> deps;
+    status = getDependents(udr_id, deps, ctx);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    if (!deps.empty()) {
+        std::string error_msg = buildDependencyErrorMessage(
+            existing.udr_name, ObjectType::UDR, deps, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
+        return Status::CONSTRAINT_VIOLATION;
+    }
+
     std::lock_guard<std::mutex> lock(mutex_);
 
     BufferPool *bp = db_->buffer_pool();
     void *page_data;
-    Status status = bp->pinPage(udr_table_page_, &page_data, ctx);
+    status = bp->pinPage(udr_table_page_, &page_data, ctx);
     if (status != Status::OK) return status;
 
     HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
@@ -15904,7 +16499,17 @@ auto CatalogManager::dropUDR(const ID& udr_id, bool cascade, ErrorContext* ctx) 
     }
 
     bp->unpinPage(udr_table_page_, found, ctx);
-    return found ? Status::OK : Status::NOT_FOUND;
+    if (!found) {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR not found");
+        return Status::NOT_FOUND;
+    }
+
+    status = clearDependenciesFor(udr_id, ctx);
+    if (status != Status::OK) {
+        LOG_ERROR(CATALOG, "Failed to clear dependencies for UDR");
+    }
+
+    return Status::OK;
 }
 
 auto CatalogManager::listUDRs(const ID& schema_id, std::vector<UDRInfo>& udrs_out,
@@ -16120,11 +16725,30 @@ auto CatalogManager::updatePackage(const ID& package_id,
 
 auto CatalogManager::dropPackage(const ID& package_id, bool cascade, ErrorContext* ctx) -> Status
 {
+    PackageInfo existing;
+    Status status = getPackage(package_id, existing, ctx);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    std::vector<DependencyInfo> deps;
+    status = getDependents(package_id, deps, ctx);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    if (!deps.empty()) {
+        std::string error_msg = buildDependencyErrorMessage(
+            existing.package_name, ObjectType::PACKAGE, deps, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
+        return Status::CONSTRAINT_VIOLATION;
+    }
+
     std::lock_guard<std::mutex> lock(mutex_);
 
     BufferPool *bp = db_->buffer_pool();
     void *page_data;
-    Status status = bp->pinPage(packages_table_page_, &page_data, ctx);
+    status = bp->pinPage(packages_table_page_, &page_data, ctx);
     if (status != Status::OK) return status;
 
     HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
@@ -16155,7 +16779,17 @@ auto CatalogManager::dropPackage(const ID& package_id, bool cascade, ErrorContex
     }
 
     bp->unpinPage(packages_table_page_, found, ctx);
-    return found ? Status::OK : Status::NOT_FOUND;
+    if (!found) {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Package not found");
+        return Status::NOT_FOUND;
+    }
+
+    status = clearDependenciesFor(package_id, ctx);
+    if (status != Status::OK) {
+        LOG_ERROR(CATALOG, "Failed to clear dependencies for package");
+    }
+
+    return Status::OK;
 }
 
     auto CatalogManager::listPackages(const ID& schema_id, std::vector<PackageInfo>& packages_out,
@@ -16299,11 +16933,30 @@ Status CatalogManager::getExceptionByName(const ID& schema_id, const std::string
 
 Status CatalogManager::dropException(const ID& exception_id, bool /*cascade*/, ErrorContext* ctx)
 {
+    ExceptionInfo existing;
+    Status status = getException(exception_id, existing, ctx);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    std::vector<DependencyInfo> deps;
+    status = getDependents(exception_id, deps, ctx);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    if (!deps.empty()) {
+        std::string error_msg = buildDependencyErrorMessage(
+            existing.name, ObjectType::EXCEPTION, deps, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
+        return Status::CONSTRAINT_VIOLATION;
+    }
+
     std::lock_guard<std::mutex> lock(mutex_);
 
     BufferPool* bp = db_->buffer_pool();
     void* page_data;
-    Status status = bp->pinPage(exceptions_table_page_, &page_data, ctx);
+    status = bp->pinPage(exceptions_table_page_, &page_data, ctx);
     if (status != Status::OK) return status;
 
     HeapPage heap_page(static_cast<uint8_t*>(page_data), db_->page_size());
@@ -16340,6 +16993,10 @@ Status CatalogManager::dropException(const ID& exception_id, bool /*cascade*/, E
     }
 
     exception_cache_.erase(exception_id);
+    status = clearDependenciesFor(exception_id, ctx);
+    if (status != Status::OK) {
+        LOG_ERROR(CATALOG, "Failed to clear dependencies for exception");
+    }
     return Status::OK;
 }
 

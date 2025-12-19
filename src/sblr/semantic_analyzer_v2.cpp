@@ -388,7 +388,20 @@ std::optional<ResolvedTableRef> SemanticAnalyzerV2::resolveTable(
     ref.table_uuid = table_info.table_id;
     ref.schema_uuid = table_info.schema_id;
     ref.name = internString(table_name);  // Store original name for v1 bytecode compat
-    ref.object_type = ResolvedTableRef::ObjectType::TABLE;
+
+    // Check if this is actually a view, not a table
+    CatalogManager::ViewInfo view_info;
+    if (catalog_.getViewById(table_info.table_id, view_info) == Status::OK) {
+        // It's a view
+        if (view_info.materialized) {
+            ref.object_type = ResolvedTableRef::ObjectType::MATERIALIZED_VIEW;
+        } else {
+            ref.object_type = ResolvedTableRef::ObjectType::VIEW;
+        }
+    } else {
+        // It's a real table
+        ref.object_type = ResolvedTableRef::ObjectType::TABLE;
+    }
 
     // Load columns
     loadTableColumns(ref);

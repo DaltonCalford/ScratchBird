@@ -279,6 +279,7 @@ TEST_F(GarbageCollectorTest, BackgroundGCRunsAndUpdatesStatistics)
     ASSERT_EQ(gc->startBackgroundGC(&ctx), Status::OK);
 
     // Wait for at least one background run
+    // Expected runtime: ~6-7 seconds.
     std::this_thread::sleep_for(std::chrono::milliseconds(6000));
 
     // Stop background GC
@@ -431,6 +432,7 @@ TEST_F(GarbageCollectorTest, CleanPageScanning)
     ASSERT_EQ(gc->startBackgroundGC(&ctx), Status::OK);
 
     // Wait for GC to run
+    // Expected runtime: ~6-7 seconds.
     std::this_thread::sleep_for(std::chrono::milliseconds(6000));
 
     // Stop background GC
@@ -454,6 +456,7 @@ TEST_F(GarbageCollectorTest, ZeroDirtyPages)
     ASSERT_EQ(gc->startBackgroundGC(&ctx), Status::OK);
 
     // Wait for GC to run
+    // Expected runtime: ~6-7 seconds.
     std::this_thread::sleep_for(std::chrono::milliseconds(6000));
 
     // Stop background GC

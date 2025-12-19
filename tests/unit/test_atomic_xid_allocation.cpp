@@ -297,6 +297,7 @@ TEST_F(AtomicXIDTest, ConcurrentWithDelays) {
 
 // Test 5: Verify XID sequence has no gaps (within reason)
 TEST_F(AtomicXIDTest, SequentialConsistency) {
+    // Expected runtime: ~3-4 seconds depending on CPU.
     constexpr int NUM_TRANSACTIONS = 1000;
     std::vector<uint64_t> xids;
 
@@ -331,6 +332,7 @@ TEST_F(AtomicXIDTest, SequentialConsistency) {
 
 // Test 6: Performance benchmark
 TEST_F(AtomicXIDTest, PerformanceBenchmark) {
+    // Expected runtime: ~3-4 seconds depending on CPU.
     constexpr int NUM_THREADS = 10;
     constexpr int XIDS_PER_THREAD = 1000;
     std::vector<uint32_t> proc_ids(NUM_THREADS);

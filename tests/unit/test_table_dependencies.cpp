@@ -5,6 +5,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/parser/ast_v2.h"
 #include <cstdio>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -340,10 +341,10 @@ TEST_F(TableDependencyTest, DropTableErrorListsAllDependencies)
 
     // Should list both views and function (note: may not have names in error since
     // we didn't actually create the view/function objects, just the dependencies)
-    EXPECT_NE(error_msg.find("VIEW"), std::string::npos)
-        << "Should mention VIEW type";
-    EXPECT_NE(error_msg.find("FUNCTION"), std::string::npos)
-        << "Should mention FUNCTION type";
+    EXPECT_NE(error_msg.find("view"), std::string::npos)
+        << "Should mention view type";
+    EXPECT_NE(error_msg.find("function"), std::string::npos)
+        << "Should mention function type";
 }
 
 // ========================================================================
@@ -468,6 +469,114 @@ TEST_F(TableDependencyTest, DependencyTrackingVerification)
 
     EXPECT_TRUE(found_index) << "Should have index dependency";
     EXPECT_TRUE(found_trigger) << "Should have trigger dependency";
+}
+
+// ========================================================================
+// TEST: Identity sequence dependencies are registered and enforced
+// ========================================================================
+TEST_F(TableDependencyTest, IdentitySequenceDependencies)
+{
+    ErrorContext ctx;
+
+    const std::string seq_name = "identity_seq";
+    ASSERT_EQ(catalog->createSequence(schema_id, seq_name,
+                                      1, 1, INT64_MAX, 1, 1, false, &ctx),
+              Status::OK);
+
+    ID seq_id;
+    ASSERT_EQ(catalog->getSequenceIdByName(seq_name, seq_id, &ctx), Status::OK);
+
+    std::vector<CatalogManager::ColumnInfo> columns;
+    CatalogManager::ColumnInfo col;
+    col.column_name = "id";
+    col.data_type = static_cast<uint16_t>(DataType::INT32);
+    col.nullable = false;
+    col.is_identity = true;
+    col.identity_sequence_id = seq_id;
+    columns.push_back(col);
+
+    ID table_id;
+    ASSERT_EQ(catalog->createTable(schema_id, "identity_table", columns,
+                                   table_id, 0, &ctx), Status::OK);
+
+    std::vector<CatalogManager::DependencyInfo> seq_dependents;
+    ASSERT_EQ(catalog->getDependents(seq_id, seq_dependents, &ctx), Status::OK);
+
+    bool found_table_dep = false;
+    for (const auto& dep : seq_dependents) {
+        if (dep.dependent_object_id == table_id &&
+            dep.dependent_type == CatalogManager::ObjectType::TABLE &&
+            dep.referenced_type == CatalogManager::ObjectType::SEQUENCE &&
+            dep.dependency_type == CatalogManager::DependencyType::NORMAL) {
+            found_table_dep = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_table_dep);
+
+    std::vector<CatalogManager::DependencyInfo> table_dependents;
+    ASSERT_EQ(catalog->getDependents(table_id, table_dependents, &ctx), Status::OK);
+
+    bool found_seq_dep = false;
+    for (const auto& dep : table_dependents) {
+        if (dep.dependent_object_id == seq_id &&
+            dep.dependent_type == CatalogManager::ObjectType::SEQUENCE &&
+            dep.referenced_type == CatalogManager::ObjectType::TABLE &&
+            dep.dependency_type == CatalogManager::DependencyType::AUTO) {
+            found_seq_dep = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_seq_dep);
+
+    EXPECT_EQ(catalog->dropSequence(seq_id, false, &ctx), Status::CONSTRAINT_VIOLATION);
+
+    ASSERT_EQ(catalog->dropTable(table_id, false, &ctx), Status::OK);
+    EXPECT_EQ(catalog->getSequenceIdByName(seq_name, seq_id, &ctx), Status::NOT_FOUND);
+}
+
+// ========================================================================
+// TEST: Shared sequence is not dropped when one dependent table is dropped
+// ========================================================================
+TEST_F(TableDependencyTest, SharedSequenceNotDroppedWithSingleTable)
+{
+    ErrorContext ctx;
+
+    const std::string seq_name = "shared_seq";
+    ASSERT_EQ(catalog->createSequence(schema_id, seq_name,
+                                      1, 1, INT64_MAX, 1, 1, false, &ctx),
+              Status::OK);
+
+    ID seq_id;
+    ASSERT_EQ(catalog->getSequenceIdByName(seq_name, seq_id, &ctx), Status::OK);
+
+    std::vector<CatalogManager::ColumnInfo> columns_a;
+    CatalogManager::ColumnInfo col_a;
+    col_a.column_name = "id";
+    col_a.data_type = static_cast<uint16_t>(DataType::INT32);
+    col_a.nullable = false;
+    col_a.is_identity = true;
+    col_a.identity_sequence_id = seq_id;
+    columns_a.push_back(col_a);
+
+    ID table_a_id;
+    ASSERT_EQ(catalog->createTable(schema_id, "shared_table_a", columns_a,
+                                   table_a_id, 0, &ctx), Status::OK);
+
+    std::vector<CatalogManager::ColumnInfo> columns_b = columns_a;
+    columns_b[0].column_name = "idb";
+
+    ID table_b_id;
+    ASSERT_EQ(catalog->createTable(schema_id, "shared_table_b", columns_b,
+                                   table_b_id, 0, &ctx), Status::OK);
+
+    ASSERT_EQ(catalog->dropTable(table_a_id, false, &ctx), Status::OK);
+
+    ID remaining_seq_id;
+    EXPECT_EQ(catalog->getSequenceIdByName(seq_name, remaining_seq_id, &ctx), Status::OK);
+
+    EXPECT_EQ(catalog->dropTable(table_b_id, false, &ctx), Status::OK);
+    EXPECT_EQ(catalog->getSequenceIdByName(seq_name, remaining_seq_id, &ctx), Status::NOT_FOUND);
 }
 
 // ========================================================================

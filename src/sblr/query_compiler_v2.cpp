@@ -353,12 +353,26 @@ void QueryCompilerV2::collectDependencies(ResolvedStatement* stmt,
 
     if (auto* select = dynamic_cast<ResolvedSelectStmt*>(stmt)) {
         for (const auto& table_ref : select->from_tables) {
-            add(table_ref->table_uuid, core::CatalogManager::ObjectType::TABLE);
+            // Use correct object type from semantic analyzer (could be TABLE, VIEW, or MATERIALIZED_VIEW)
+            core::CatalogManager::ObjectType obj_type = core::CatalogManager::ObjectType::TABLE;
+            if (table_ref->object_type == ResolvedTableRef::ObjectType::VIEW) {
+                obj_type = core::CatalogManager::ObjectType::VIEW;
+            } else if (table_ref->object_type == ResolvedTableRef::ObjectType::MATERIALIZED_VIEW) {
+                obj_type = core::CatalogManager::ObjectType::VIEW;  // Materialized views are still views
+            }
+            add(table_ref->table_uuid, obj_type);
             add(table_ref->schema_uuid, core::CatalogManager::ObjectType::SCHEMA);
         }
         for (const auto& join : select->joins) {
             if (join->right) {
-                add(join->right->table_uuid, core::CatalogManager::ObjectType::TABLE);
+                // Use correct object type from semantic analyzer
+                core::CatalogManager::ObjectType obj_type = core::CatalogManager::ObjectType::TABLE;
+                if (join->right->object_type == ResolvedTableRef::ObjectType::VIEW) {
+                    obj_type = core::CatalogManager::ObjectType::VIEW;
+                } else if (join->right->object_type == ResolvedTableRef::ObjectType::MATERIALIZED_VIEW) {
+                    obj_type = core::CatalogManager::ObjectType::VIEW;
+                }
+                add(join->right->table_uuid, obj_type);
                 add(join->right->schema_uuid, core::CatalogManager::ObjectType::SCHEMA);
             }
             if (join->on_condition) walkExpr(join->on_condition);

@@ -182,6 +182,7 @@ TEST_F(LoginAttemptTrackerTest, ExponentialBackoffMaxMultiplier) {
     LoginAttemptTracker tracker(policy);
 
     // Trigger multiple lockouts
+    // Expected runtime: ~20-25 seconds (10 iterations x ~2.1s sleep each).
     for (int i = 0; i < 10; i++) {
         // Wait for previous lockout to expire
         sleepMs(policy.base_lockout_ms * policy.max_lockout_multiplier + 100);

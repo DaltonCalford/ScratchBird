@@ -4089,17 +4089,15 @@ namespace scratchbird
                 error(err_msg);
             }
 
-            // Record dependencies between this view and referenced tables using compiler-reported SBLR tables
+            // Record dependencies between this view and referenced tables/views using compiler-reported dependencies
             QueryCompilerV2 dep_compiler(db_);
             dep_compiler.setCurrentSchema(schema_info.schema_id);
             auto dep_result = dep_compiler.compile(definition);
 
             std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>> deps_to_link;
             if (dep_result.success()) {
-                deps_to_link.reserve(dep_result.involvedTables().size());
-                for (const auto& tbl_id : dep_result.involvedTables()) {
-                    deps_to_link.emplace_back(tbl_id, core::CatalogManager::ObjectType::TABLE);
-                }
+                // Use dependencies() instead of involvedTables() to get correct object types (TABLE vs VIEW)
+                deps_to_link = dep_result.dependencies();
             }
 
             core::ID view_id;
@@ -4124,6 +4122,11 @@ namespace scratchbird
             bool if_exists = (flags & 0x01) != 0;
             bool cascade = (flags & 0x02) != 0;
 
+            // Note: CASCADE is ignored - RESTRICT-only policy per dependency tracking plan
+            if (cascade) {
+                std::cout << "WARNING: CASCADE is not supported, using RESTRICT behavior" << std::endl;
+            }
+
             // Look up view ID
             core::ID view_id;
             core::ErrorContext ctx;
@@ -4139,23 +4142,7 @@ namespace scratchbird
                 error("View not found: " + view_name);
             }
 
-            // ALPHA Phase 1 - Materialized Views: Check if we need to drop the materialized table
-            core::CatalogManager::ViewInfo view_info;
-            core::CatalogManager::SchemaInfo schema_info;
-            db_->catalog_manager()->getSchema("PUBLIC", schema_info, &ctx);
-            status = db_->catalog_manager()->getView(schema_info.schema_id, view_name, view_info, &ctx);
-
-            if (status == core::Status::OK && view_info.materialized && view_info.materialized_table_id != core::ID{})
-            {
-                // Drop the materialized data table first
-                db_->catalog_manager()->dropTable(view_info.materialized_table_id, cascade, &ctx);
-                LOG_INFO(EXECUTOR, "Dropped materialized table for view '%s'", view_name.c_str());
-            }
-
-            // Clear dependency links for this view prior to dropping it
-            db_->catalog_manager()->clearDependenciesFor(view_id, &ctx);
-
-            // Drop view
+            // Drop view (dependency checking and cleanup now handled by dropView)
             status = db_->catalog_manager()->dropView(view_id, cascade, &ctx);
             if (status != core::Status::OK)
             {
@@ -26844,7 +26831,7 @@ namespace scratchbird
         // Helper: Get last XML error message
         static std::string getLastXMLError()
         {
-            xmlErrorPtr err = xmlGetLastError();
+            const xmlError* err = xmlGetLastError();
             if (err) {
                 return std::string(err->message);
             }
@@ -29731,6 +29718,7 @@ namespace scratchbird
 
             core::CatalogManager::FunctionInfo info;
             info.function_id = core::generateUuidV7();
+            info.schema_id = schema_id;
             info.name = function_name;
             info.owner_id = conn_ctx_ ? conn_ctx_->getCurrentUserId()
                                       : core::SecurityConstants::makeSystemUserID();
@@ -29817,6 +29805,7 @@ namespace scratchbird
 
             core::CatalogManager::ProcedureInfo info;
             info.procedure_id = core::generateUuidV7();
+            info.schema_id = schema_id;
             info.name = procedure_name;
             info.owner_id = conn_ctx_ ? conn_ctx_->getCurrentUserId()
                                       : core::SecurityConstants::makeSystemUserID();

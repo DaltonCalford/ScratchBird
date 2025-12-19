@@ -5,6 +5,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include <cstdio>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace scratchbird::core;
@@ -307,4 +308,43 @@ TEST_F(DependencyTrackingTest, MultipleDependencyTypes)
     EXPECT_EQ(functions, 1);
     EXPECT_EQ(procedures, 1);
     EXPECT_EQ(triggers, 1);
+}
+
+TEST_F(DependencyTrackingTest, ConcurrentDependencyOperations)
+{
+    CreateAndOpenDatabase();
+    ErrorContext ctx;
+
+    CatalogManager *catalog = db->catalog_manager();
+
+    ID table_id = generateUuidV7();
+    const int thread_count = 4;
+    const int per_thread = 50;
+
+    std::vector<std::thread> threads;
+    threads.reserve(thread_count);
+
+    for (int t = 0; t < thread_count; ++t)
+    {
+        threads.emplace_back([catalog, table_id]() {
+            ErrorContext local_ctx;
+            for (int i = 0; i < per_thread; ++i)
+            {
+                ID dep_id;
+                catalog->createDependency(
+                    generateUuidV7(), CatalogManager::ObjectType::VIEW,
+                    table_id, CatalogManager::ObjectType::TABLE,
+                    CatalogManager::DependencyType::NORMAL, dep_id, &local_ctx);
+            }
+        });
+    }
+
+    for (auto &t : threads)
+    {
+        t.join();
+    }
+
+    std::vector<CatalogManager::DependencyInfo> deps;
+    ASSERT_EQ(catalog->getDependents(table_id, deps, &ctx), Status::OK);
+    EXPECT_EQ(deps.size(), static_cast<size_t>(thread_count * per_thread));
 }

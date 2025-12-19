@@ -262,6 +262,7 @@ private:
 class ClientConnectionTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        // Expected runtime for this suite: ~2-4 seconds (mock server startup per test).
         mock_server_ = std::make_unique<MockServer>("testdb");
         ASSERT_TRUE(mock_server_->start()) << "Failed to start mock server";
 

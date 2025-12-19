@@ -29,6 +29,10 @@ endif()
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 
+# Enable CTest registration
+include(CTest)
+enable_testing()
+
 # Find optional packages
 find_package(PkgConfig)
 if(PkgConfig_FOUND)

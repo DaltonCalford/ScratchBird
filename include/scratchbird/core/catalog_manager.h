@@ -2984,6 +2984,7 @@ namespace scratchbird::core
             };
 
             ID function_id;                        // UUID v7
+            ID schema_id;                          // Owning schema UUID
             std::string name;
             bool name_is_delimited = false;        // True if name was double-quoted (case-sensitive)
             ID owner_id;                           // Phase 3.1: Owner user UUID
@@ -3010,6 +3011,7 @@ namespace scratchbird::core
             };
 
             ID procedure_id;                       // UUID v7
+            ID schema_id;                          // Owning schema UUID
             std::string name;
             bool name_is_delimited = false;        // True if name was double-quoted (case-sensitive)
             ID owner_id;                           // Phase 3.1: Owner user UUID
