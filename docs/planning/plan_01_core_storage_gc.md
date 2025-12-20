@@ -104,6 +104,7 @@ P0 (blocks correctness and long-term durability).
   - **Old index GC rule**: safe when `retired_xid < TransactionManager::getOldestActiveXid()` and (if snapshot txns exist) `retired_xid < TransactionManager::getOldestSnapshot()`; otherwise OAT alone.
 
 ## Index GC + Migration Implementation Map (Explicit)
+See `docs/planning/plan_01_index_gc_clarifications.md` for per-index GC traversal/removal specifics.
 - **BTREE**: `src/core/btree.cpp` `BTree::removeDeadEntries` and `BTree::updateTIDsAfterMigration`.
 - **HASH**: `src/core/hash_index.cpp` `HashIndex::removeDeadEntries` and `HashIndex::updateTIDsAfterMigration`.
 - **HNSW/VECTOR**: `src/core/hnsw_index.cpp` `HnswIndex::removeDeadEntries` and `HnswIndex::updateTIDsAfterMigration` (wire into `CatalogManager::updateIndexTIDs`).
