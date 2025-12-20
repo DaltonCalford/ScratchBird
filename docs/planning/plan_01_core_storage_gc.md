@@ -88,7 +88,8 @@ P0 (blocks correctness and long-term durability).
 ## Implementation Notes (Concrete)
 - **Heap page ownership**: add `table_id` (UUID) to heap page header; do not implement sidecar mapping.
 - **Enumeration API**: `CatalogManager::enumerateTablePages(const ID& table_id, std::vector<GPID>& pages_out, ErrorContext* ctx)` must filter by ownership.
-- **Columnstore**: persist segment catalog to meta page; implement `loadSegmentCatalog()` / `saveSegmentCatalog()` to read/write via `PageManager`. Use dual meta pages with generation counter + CRC32C checksum.
+- **Columnstore (Simple)**: persist segment catalog to dual meta pages owned by `ColumnstoreIndexSimple` (`src/core/columnstore_index.cpp`). This is the runtime columnstore used by executor/storage_engine; do not switch to `ColumnstoreIndex` (`src/core/columnstore.cpp`) in this plan.
+- **Columnstore**: implement `loadSegmentCatalog()` / `saveSegmentCatalog()` to read/write via `PageManager`. Use dual meta pages with generation counter + CRC32C checksum (`scratchbird::core::crc32cCompute(data, len, 0xFFFFFFFF) ^ 0xFFFFFFFF`).
 - **GC interface**: every index type implements `IndexGCInterface::removeDeadEntries(const std::vector<TID>&, ...)`.
 - **Migration**: `updateIndexTIDs` must handle all `IndexType` values and enforce rollback on failure.
 - **Migration (preferred)**: shadow index rebuild + versioned swap; `updateIndexTIDs` is fallback only if in-place migration is explicitly enabled.
@@ -99,6 +100,8 @@ P0 (blocks correctness and long-term durability).
   - Maintain a stable `logical_index_id` across rebuilds (derive from `table_id + index_name`, or store explicit `logical_index_id` in catalog).
   - Index names are unique **within a table namespace**; `table_id` is the parent for name resolution (same rule for table triggers).
   - Shadow rebuild must not create a second user-visible name in the same table. Use an internal shadow name (e.g., `__sb_shadow_<logical_id>_<build_xid>`) or a hidden flag, but expose only the logical index name to users.
+  - **Index version visibility rule**: choose version where `state == ACTIVE`, `valid_from_xid <= txn_xid`, and (`retired_xid == 0` or `txn_xid < retired_xid`). No per-transaction tracking table required; XID range is the contract.
+  - **Old index GC rule**: safe when `retired_xid < TransactionManager::getOldestActiveXid()` and (if snapshot txns exist) `retired_xid < TransactionManager::getOldestSnapshot()`; otherwise OAT alone.
 
 ## Index GC + Migration Implementation Map (Explicit)
 - **BTREE**: `src/core/btree.cpp` `BTree::removeDeadEntries` and `BTree::updateTIDsAfterMigration`.
@@ -130,8 +133,11 @@ P0 (blocks correctness and long-term durability).
   - Bump on-disk format version; no upgrade path required (tests recreate databases).
   - If a heap page is encountered with zero/invalid `table_id`, treat as corruption and hard error.
 - **Columnstore segment catalog format**:
-  - Store catalog in meta page: header (`magic`, `version`, `generation`, `segment_count`, `checksum`), followed by fixed-size `ColumnSegment` entries.
+  - **Dual meta pages**: `meta_page_a = index_info.root_page` and `meta_page_b` allocated during `ColumnstoreIndexSimple::create()` and stored in the meta header as `peer_page_id`. Always read both pages using `meta_page_a` and its `peer_page_id` (even if `meta_page_a` checksum fails).
+  - Store catalog in meta page: header (`magic`, `version`, `generation`, `segment_count`, `peer_page_id`, `checksum`), followed by fixed-size `ColumnSegment` entries.
   - Use CRC32C over the catalog payload for meta page validation.
+  - If both meta pages are invalid, mark index failed and require rebuild.
+  - `generation` is `uint64_t`; no wrap handling required for alpha (if it ever wraps, treat as corruption and rebuild).
   - Each `ColumnSegment` must include `column_id`, `start_row`, `row_count`, `page_number`, `compression_type`, `min_value`, `max_value`.
 - **Index GC contract**:
   - Each index class implements `removeDeadEntries(const std::vector<TID>& dead_tids, uint64_t* entries_removed_out, uint64_t* pages_modified_out, ErrorContext* ctx)`.
