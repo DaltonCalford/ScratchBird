@@ -14,14 +14,14 @@ P0 (blocks correctness and long-term durability).
 - `docs/specifications/HEAP_TOAST_INTEGRATION.md`
 
 ## Order of Implementation
-1) Heap page ownership metadata (table_id on heap pages or mapping index).
+1) Heap page ownership metadata (table_id in PageHeader).
 2) Columnstore persistence + segment catalog.
 3) Columnstore GC and vacuum.
 4) Index GC coverage for all index types.
 5) Table migration end-to-end correctness and index TID updates.
 
 ## Decision Gates (Must Be Resolved Before Coding)
-- **Heap page ownership**: **A) PageHeader table_id** (update on-disk format and page allocation).
+- **Heap page ownership**: **A) PageHeader table_id** (update on-disk format and page allocation; no upgrade path required).
 - **Columnstore catalog persistence**: **dual meta page** with generation counter + checksum; newest valid wins on open.
 - **Migration safety**: **shadow index rebuild + versioned swap**:
   - Build new index while old index remains active.
@@ -30,7 +30,7 @@ P0 (blocks correctness and long-term durability).
   - If migration fails mid-build, new index is never made visible.
 
 ## Implementation Tasks
-- Add table ownership metadata for heap pages (PageHeader or separate map).
+- Add table ownership metadata for heap pages (PageHeader table_id).
 - Update enumerateTablePages to return exact table pages.
 - Persist columnstore segment catalog and implement read/write path.
 - Implement ColumnstoreIndexSimple::removeDeadEntries and vacuum compaction.
@@ -86,7 +86,7 @@ P0 (blocks correctness and long-term durability).
 - Table migration produces identical query results before/after move, with shadow index swap preserving transaction isolation.
 
 ## Implementation Notes (Concrete)
-- **Heap page ownership**: add `table_id` (UUID) to heap page header or a sidecar mapping table. If sidecar, add `CatalogManager::registerPageOwner(GPID, table_id)` and `getPageOwner(GPID)`.
+- **Heap page ownership**: add `table_id` (UUID) to heap page header; do not implement sidecar mapping.
 - **Enumeration API**: `CatalogManager::enumerateTablePages(const ID& table_id, std::vector<GPID>& pages_out, ErrorContext* ctx)` must filter by ownership.
 - **Columnstore**: persist segment catalog to meta page; implement `loadSegmentCatalog()` / `saveSegmentCatalog()` to read/write via `PageManager`. Use dual meta pages with generation counter + checksum if crash-safety is required.
 - **GC interface**: every index type implements `IndexGCInterface::removeDeadEntries(const std::vector<TID>&, ...)`.
@@ -113,7 +113,7 @@ P0 (blocks correctness and long-term durability).
 - **LSM**: `src/core/lsm_tree_index.cpp` must implement IndexGCInterface `removeDeadEntries` and migration update method.
 
 ## Expanded API/Schema Details
-- **Page ownership field**: extend `PageHeader` with `table_id` for `PAGE_TYPE_HEAP`, or add `sb_page_owners(gpid, table_id)`.
+- **Page ownership field**: extend `PageHeader` with `table_id` for `PAGE_TYPE_HEAP`.
 - **CatalogManager**:
   - `enumerateTablePages(const ID& table_id, std::vector<GPID>& pages_out, ErrorContext* ctx)`
   - `copyPageWithTIDRemapping(...)` must set target `table_id`.
@@ -125,7 +125,7 @@ P0 (blocks correctness and long-term durability).
 - **On-disk heap page ownership**:
   - Add `UuidV7Bytes table_id` to `PageHeader` for heap pages in `docs/specifications/ON_DISK_FORMAT.md`.
   - Set `table_id` when allocating new heap pages and when copying during migration.
-  - If PageHeader changes: bump on-disk format version and add upgrade logic to populate table_id for existing pages (or require explicit offline upgrade tool).
+  - Bump on-disk format version; no upgrade path required (tests recreate databases).
 - **Columnstore segment catalog format**:
   - Store catalog in meta page: header (`version`, `segment_count`), followed by fixed-size `ColumnSegment` entries.
   - Each `ColumnSegment` must include `column_id`, `start_row`, `row_count`, `page_number`, `compression_type`, `min_value`, `max_value`.
@@ -150,9 +150,6 @@ P0 (blocks correctness and long-term durability).
 - **Migration**: migrate table with multiple index types; run identical SELECTs before/after; verify indexes remain valid.
 
 ## Concrete DDL / Structs (Example)
-- `sb_page_owners` (if sidecar mapping is used):
-  - `gpid BIGINT PRIMARY KEY`
-  - `table_id UUID`
 - `ColumnSegment` struct (persisted):
   - `uint16 column_id; uint32 start_row; uint32 row_count; uint32 page_number; uint8 compression_type; int64 min_value; int64 max_value;`
 - **Index version metadata (required for shadow rebuild + swap)**:
@@ -166,13 +163,8 @@ P0 (blocks correctness and long-term durability).
     - `build_completed_time BIGINT`
     - `created_time BIGINT NOT NULL`
 
-## Full Catalog DDL (Index version metadata + optional sidecar mapping)
+## Full Catalog DDL (Index version metadata)
 ```sql
-CREATE TABLE sb_page_owners (
-  gpid BIGINT PRIMARY KEY,
-  table_id UUID NOT NULL
-);
-
 CREATE TABLE sb_index_versions (
   logical_index_id UUID NOT NULL,
   index_id UUID NOT NULL,
