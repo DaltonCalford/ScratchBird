@@ -21,12 +21,13 @@ P0 (blocks correctness and long-term durability).
 5) Table migration end-to-end correctness and index TID updates.
 
 ## Decision Gates (Must Be Resolved Before Coding)
-- **Heap page ownership**: choose one and document in the plan:
-  - **A) PageHeader table_id**: update on-disk format and page allocation.
-  - **B) Sidecar mapping**: `sb_page_owners(gpid, table_id)` and `CatalogManager::registerPageOwner/getPageOwner`.
-- **Columnstore catalog persistence**: choose format + crash-safety strategy:
-  - Recommend **dual meta page** with generation counter + checksum; newest valid wins on open.
-- **Migration safety**: confirm offline-only for alpha and required rollback strategy (abort on any index update failure).
+- **Heap page ownership**: **A) PageHeader table_id** (update on-disk format and page allocation).
+- **Columnstore catalog persistence**: **dual meta page** with generation counter + checksum; newest valid wins on open.
+- **Migration safety**: **shadow index rebuild + versioned swap**:
+  - Build new index while old index remains active.
+  - Switch new transactions to the new index only after build completes.
+  - Old transactions keep using the old index until they finish, then old index is GC’d.
+  - If migration fails mid-build, new index is never made visible.
 
 ## Implementation Tasks
 - Add table ownership metadata for heap pages (PageHeader or separate map).
@@ -34,7 +35,8 @@ P0 (blocks correctness and long-term durability).
 - Persist columnstore segment catalog and implement read/write path.
 - Implement ColumnstoreIndexSimple::removeDeadEntries and vacuum compaction.
 - Extend GarbageCollector to open and clean FULLTEXT, GIST, RTREE, SPGIST, BITMAP, COLUMNSTORE, LSM.
-- Implement index TID update for VECTOR/HNSW, FULLTEXT, GIN, GIST, BRIN, RTREE, SPGIST, BITMAP, COLUMNSTORE, LSM during migration.
+- Implement shadow index rebuild + versioned swap for all index types (preferred migration path).
+- Keep/update `updateIndexTIDs` only if required for offline in-place migration; otherwise route migration to shadow rebuild.
 - Reconcile moveTableToTablespace stub messaging with actual logic.
 
 ## Known Stub Locations (Must Be Replaced)
@@ -72,12 +74,16 @@ P0 (blocks correctness and long-term durability).
 - GC tests per index type (with dead TIDs).
 - Migration tests with multiple indexes and TOAST data.
 - Per-index TID update tests (each IndexType exercised at least once).
+- Shadow index rebuild tests:
+  - New index stays invisible during build.
+  - New transactions use new index after swap; old transactions remain on old index.
+  - Old index GC after last reader.
 
 ## Acceptance Criteria
 - Mixed tablespace enumeration returns only target table pages.
 - Columnstore data persists across restart and matches pre-restart reads.
 - GC removes dead entries from every index type with no false deletions.
-- Table migration produces identical query results before/after move.
+- Table migration produces identical query results before/after move, with shadow index swap preserving transaction isolation.
 
 ## Implementation Notes (Concrete)
 - **Heap page ownership**: add `table_id` (UUID) to heap page header or a sidecar mapping table. If sidecar, add `CatalogManager::registerPageOwner(GPID, table_id)` and `getPageOwner(GPID)`.
@@ -85,6 +91,11 @@ P0 (blocks correctness and long-term durability).
 - **Columnstore**: persist segment catalog to meta page; implement `loadSegmentCatalog()` / `saveSegmentCatalog()` to read/write via `PageManager`. Use dual meta pages with generation counter + checksum if crash-safety is required.
 - **GC interface**: every index type implements `IndexGCInterface::removeDeadEntries(const std::vector<TID>&, ...)`.
 - **Migration**: `updateIndexTIDs` must handle all `IndexType` values and enforce rollback on failure.
+- **Migration (preferred)**: shadow index rebuild + versioned swap; `updateIndexTIDs` is fallback only if in-place migration is explicitly enabled.
+- **Shadow index rebuild**:
+  - New index state: `BUILDING` → `ACTIVE` (for new transactions only) → old index `RETIRED` → GC when no transactions reference it.
+  - Index metadata must track `valid_from_xid` (or epoch) and `retired_xid` for visibility.
+  - Migration must not switch index visibility until build completes successfully.
 
 ## Index GC + Migration Implementation Map (Explicit)
 - **BTREE**: `src/core/btree.cpp` `BTree::removeDeadEntries` and `BTree::updateTIDsAfterMigration`.
@@ -129,7 +140,7 @@ P0 (blocks correctness and long-term durability).
 - **Checkpoint B**: Heap ownership mechanism implemented + unit test + restart test.
 - **Checkpoint C**: Columnstore catalog persistence implemented + restart test.
 - **Checkpoint D**: GC implemented for all index types + per-index tests.
-- **Checkpoint E**: Table migration updates all index types + regression tests before/after.
+- **Checkpoint E**: Shadow index rebuild + version swap implemented + regression tests before/after.
 
 ## Concrete Test Cases
 - **Heap ownership**: create two tables in same tablespace; verify `enumerateTablePages` returns correct page counts for each table.
