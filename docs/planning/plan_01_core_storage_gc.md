@@ -21,8 +21,8 @@ P0 (blocks correctness and long-term durability).
 5) Table migration end-to-end correctness and index TID updates.
 
 ## Decision Gates (Must Be Resolved Before Coding)
-- **Heap page ownership**: **A) PageHeader table_id** (update on-disk format and page allocation; no upgrade path required).
-- **Columnstore catalog persistence**: **dual meta page** with generation counter + checksum; newest valid wins on open.
+- **Heap page ownership**: **A) PageHeader table_id** (insert immediately after `database_uuid`, PageHeader grows to 80 bytes; bump on-disk format; no upgrade path required).
+- **Columnstore catalog persistence**: **dual meta page** with generation counter + CRC32C checksum; newest valid wins on open; if both invalid, mark index failed and require rebuild.
 - **Migration safety**: **shadow index rebuild + versioned swap**:
   - Build new index while old index remains active.
   - Switch new transactions to the new index only after build completes.
@@ -47,7 +47,7 @@ P0 (blocks correctness and long-term durability).
 - `src/core/gist_index.cpp` GC signature uses `oldest_active_xid` (not IndexGCInterface) and must be reconciled.
 
 ## Required Data/Schema Changes
-- Heap page metadata must include table ownership (UUID) or a reliable mapping table.
+- Heap page metadata must include table ownership UUID in the PageHeader (no sidecar mapping table).
 - Columnstore segment catalog must be persisted and versioned.
 - Index GC interface must be implemented for all IndexType values in CatalogManager.
 
@@ -88,7 +88,7 @@ P0 (blocks correctness and long-term durability).
 ## Implementation Notes (Concrete)
 - **Heap page ownership**: add `table_id` (UUID) to heap page header; do not implement sidecar mapping.
 - **Enumeration API**: `CatalogManager::enumerateTablePages(const ID& table_id, std::vector<GPID>& pages_out, ErrorContext* ctx)` must filter by ownership.
-- **Columnstore**: persist segment catalog to meta page; implement `loadSegmentCatalog()` / `saveSegmentCatalog()` to read/write via `PageManager`. Use dual meta pages with generation counter + checksum if crash-safety is required.
+- **Columnstore**: persist segment catalog to meta page; implement `loadSegmentCatalog()` / `saveSegmentCatalog()` to read/write via `PageManager`. Use dual meta pages with generation counter + CRC32C checksum.
 - **GC interface**: every index type implements `IndexGCInterface::removeDeadEntries(const std::vector<TID>&, ...)`.
 - **Migration**: `updateIndexTIDs` must handle all `IndexType` values and enforce rollback on failure.
 - **Migration (preferred)**: shadow index rebuild + versioned swap; `updateIndexTIDs` is fallback only if in-place migration is explicitly enabled.
@@ -96,7 +96,9 @@ P0 (blocks correctness and long-term durability).
   - New index state: `BUILDING` → `ACTIVE` (for new transactions only) → old index `RETIRED` → GC when no transactions reference it.
   - Index metadata must track `valid_from_xid` (or epoch) and `retired_xid` for visibility.
   - Migration must not switch index visibility until build completes successfully.
-  - Maintain a stable `logical_index_id` across rebuilds (add to `sb_indexes` or derive from `index_name` and store in `sb_index_versions`).
+  - Maintain a stable `logical_index_id` across rebuilds (derive from `table_id + index_name`, or store explicit `logical_index_id` in catalog).
+  - Index names are unique **within a table namespace**; `table_id` is the parent for name resolution (same rule for table triggers).
+  - Shadow rebuild must not create a second user-visible name in the same table. Use an internal shadow name (e.g., `__sb_shadow_<logical_id>_<build_xid>`) or a hidden flag, but expose only the logical index name to users.
 
 ## Index GC + Migration Implementation Map (Explicit)
 - **BTREE**: `src/core/btree.cpp` `BTree::removeDeadEntries` and `BTree::updateTIDsAfterMigration`.
@@ -113,7 +115,7 @@ P0 (blocks correctness and long-term durability).
 - **LSM**: `src/core/lsm_tree_index.cpp` must implement IndexGCInterface `removeDeadEntries` and migration update method.
 
 ## Expanded API/Schema Details
-- **Page ownership field**: extend `PageHeader` with `table_id` for `PAGE_TYPE_HEAP`.
+- **Page ownership field**: extend `PageHeader` with `table_id` for `PAGE_TYPE_HEAP` (placed immediately after `database_uuid`; header size becomes 80 bytes).
 - **CatalogManager**:
   - `enumerateTablePages(const ID& table_id, std::vector<GPID>& pages_out, ErrorContext* ctx)`
   - `copyPageWithTIDRemapping(...)` must set target `table_id`.
@@ -123,11 +125,13 @@ P0 (blocks correctness and long-term durability).
 
 ## Full Implementation Detail (No Ambiguity)
 - **On-disk heap page ownership**:
-  - Add `UuidV7Bytes table_id` to `PageHeader` for heap pages in `docs/specifications/ON_DISK_FORMAT.md`.
+  - Add `UuidV7Bytes table_id` to `PageHeader` for heap pages in `docs/specifications/ON_DISK_FORMAT.md`, immediately after `database_uuid` (PageHeader becomes 80 bytes).
   - Set `table_id` when allocating new heap pages and when copying during migration.
   - Bump on-disk format version; no upgrade path required (tests recreate databases).
+  - If a heap page is encountered with zero/invalid `table_id`, treat as corruption and hard error.
 - **Columnstore segment catalog format**:
-  - Store catalog in meta page: header (`version`, `segment_count`), followed by fixed-size `ColumnSegment` entries.
+  - Store catalog in meta page: header (`magic`, `version`, `generation`, `segment_count`, `checksum`), followed by fixed-size `ColumnSegment` entries.
+  - Use CRC32C over the catalog payload for meta page validation.
   - Each `ColumnSegment` must include `column_id`, `start_row`, `row_count`, `page_number`, `compression_type`, `min_value`, `max_value`.
 - **Index GC contract**:
   - Each index class implements `removeDeadEntries(const std::vector<TID>& dead_tids, uint64_t* entries_removed_out, uint64_t* pages_modified_out, ErrorContext* ctx)`.
@@ -154,7 +158,7 @@ P0 (blocks correctness and long-term durability).
   - `uint16 column_id; uint32 start_row; uint32 row_count; uint32 page_number; uint8 compression_type; int64 min_value; int64 max_value;`
 - **Index version metadata (required for shadow rebuild + swap)**:
   - `sb_index_versions` (tracks visibility of physical index instances):
-    - `logical_index_id UUID NOT NULL`  -- stable id for the index name
+    - `logical_index_id UUID NOT NULL`  -- stable id for (table_id + index_name), or explicit stored logical ID
     - `index_id UUID NOT NULL`          -- physical index instance id
     - `state SMALLINT NOT NULL`         -- 0=BUILDING, 1=ACTIVE, 2=RETIRED, 3=FAILED
     - `valid_from_xid BIGINT NOT NULL`  -- XID at which new txns can use this index
@@ -162,6 +166,7 @@ P0 (blocks correctness and long-term durability).
     - `build_started_time BIGINT NOT NULL`
     - `build_completed_time BIGINT`
     - `created_time BIGINT NOT NULL`
+  - Index name uniqueness is enforced within a table namespace; shadow rebuild uses internal names or hidden flags to avoid user-visible name conflicts.
 
 ## Full Catalog DDL (Index version metadata)
 ```sql
