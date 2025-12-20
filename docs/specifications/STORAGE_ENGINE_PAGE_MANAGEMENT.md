@@ -19,7 +19,8 @@ typedef struct sb_page_header {
     
     // Page location
     uint64_t        pd_page_number;        // Physical page number
-    UUID            pd_table_uuid;         // Table UUID this page belongs to
+    UUID            pd_database_uuid;      // Database UUID (v7)
+    UUID            pd_table_uuid;         // Table UUID for heap pages (0 for non-heap; zero on heap is corruption)
     
     // Page type and version
     uint16_t        pd_type;               // Page type
@@ -47,6 +48,9 @@ typedef struct sb_page_header {
     // Reserved for future use
     uint8_t         pd_reserved[16];       // Reserved space
 } SBPageHeader;
+
+// NOTE: On-disk PageHeader layout is authoritative in ON_DISK_FORMAT.md (80 bytes).
+// This structure mirrors the database_uuid + table_uuid fields and their semantics.
 
 // Page flags
 #define PD_FLAG_HAS_FREE_LINES  0x0001     // Has free line pointers

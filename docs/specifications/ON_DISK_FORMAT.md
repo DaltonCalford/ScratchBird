@@ -6,6 +6,7 @@
 - v1.1.0 - Stage 1.1: Added 64KB/128KB page support with extended structures
 - v1.2.0 - Stage 1.1: Added compression support with LZ4 baseline
 - v1.3.0 - Stage 1.1: Added TOAST/LOB storage for large attributes
+- v1.4.0 - Stage 1.1: Added table_id to PageHeader (80 bytes total)
 
 ---
 
@@ -16,12 +17,13 @@
 3. **All text is UTF-8 encoded**
 4. **All checksums are CRC32C (Castagnoli polynomial)**
 5. **All UUIDs are version 7 (time-ordered)**
+6. **Heap pages MUST have non-zero table_id; zero table_id is corruption**
 
 ---
 
 ## Page Layout
 
-### Page Header (64 bytes) - EVERY page starts with this
+### Page Header (80 bytes) - EVERY page starts with this
 
 ```c
 #pragma pack(push, 1)  // Ensure no padding
@@ -39,16 +41,17 @@ typedef struct PageHeader {
     uint32_t page_id;        // 0x18: Page number in file (0-based)
     uint32_t flags;          // 0x1C: Page-specific flags
     
-    // Identity (16 bytes)
+    // Identity (32 bytes)
     uint8_t  database_uuid[16]; // 0x20: Database UUID (v7)
+    uint8_t  table_id[16];      // 0x30: Table UUID (v7) (0 for non-heap pages)
     
     // MVCC (16 bytes)
-    uint64_t generation;     // 0x30: Page generation for MVCC
-    uint16_t free_space;     // 0x38: Bytes of free space
-    uint16_t item_count;     // 0x3A: Number of items on page
-    uint16_t free_offset;    // 0x3C: Offset to start of free space
-    uint16_t special_size;   // 0x3E: Size of special area at page end
-} PageHeader;  // Total: 64 bytes EXACTLY
+    uint64_t generation;     // 0x40: Page generation for MVCC
+    uint16_t free_space;     // 0x48: Bytes of free space
+    uint16_t item_count;     // 0x4A: Number of items on page
+    uint16_t free_offset;    // 0x4C: Offset to start of free space
+    uint16_t special_size;   // 0x4E: Size of special area at page end
+} PageHeader;  // Total: 80 bytes EXACTLY
 
 #pragma pack(pop)
 
@@ -107,7 +110,7 @@ Page 0 is special - it contains database-wide metadata:
 
 ```c
 typedef struct DatabaseHeader {
-    PageHeader page_header;      // Standard 64-byte header
+    PageHeader page_header;      // Standard 80-byte header
     
     // Database identification (64 bytes)
     char     db_name[32];        // Database name (null-terminated)
@@ -180,7 +183,7 @@ Data pages store tuples (rows):
 
 ```c
 typedef struct HeapPage {
-    PageHeader page_header;      // Standard 64-byte header
+    PageHeader page_header;      // Standard 80-byte header
     ItemPointer items[];         // Array of item pointers
     // ... free space ...
     // ... tuple data grows backward from end ...
@@ -243,8 +246,8 @@ typedef struct TupleHeader {
 
 ```
 +------------------+ 0x0000 (Page Start)
-|   Page Header    | 64 bytes
-+------------------+ 0x0040
+|   Page Header    | 80 bytes
++------------------+ 0x0050
 |  Item Pointer[0] | 6 bytes
 |  Item Pointer[1] | 6 bytes
 |      ...         |
@@ -473,7 +476,7 @@ When a page is compressed:
 3. After the CompressedPageHeader comes the compressed page data
 
 ```
-[PageHeader - 64 bytes]
+[PageHeader - 80 bytes]
 [CompressedPageHeader - 16 bytes]
 [Compressed Data - variable size]
 [Padding to page_size]
