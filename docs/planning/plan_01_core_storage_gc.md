@@ -96,6 +96,7 @@ P0 (blocks correctness and long-term durability).
   - New index state: `BUILDING` → `ACTIVE` (for new transactions only) → old index `RETIRED` → GC when no transactions reference it.
   - Index metadata must track `valid_from_xid` (or epoch) and `retired_xid` for visibility.
   - Migration must not switch index visibility until build completes successfully.
+  - Maintain a stable `logical_index_id` across rebuilds (add to `sb_indexes` or derive from `index_name` and store in `sb_index_versions`).
 
 ## Index GC + Migration Implementation Map (Explicit)
 - **BTREE**: `src/core/btree.cpp` `BTree::removeDeadEntries` and `BTree::updateTIDsAfterMigration`.
@@ -154,13 +155,39 @@ P0 (blocks correctness and long-term durability).
   - `table_id UUID`
 - `ColumnSegment` struct (persisted):
   - `uint16 column_id; uint32 start_row; uint32 row_count; uint32 page_number; uint8 compression_type; int64 min_value; int64 max_value;`
+- **Index version metadata (required for shadow rebuild + swap)**:
+  - `sb_index_versions` (tracks visibility of physical index instances):
+    - `logical_index_id UUID NOT NULL`  -- stable id for the index name
+    - `index_id UUID NOT NULL`          -- physical index instance id
+    - `state SMALLINT NOT NULL`         -- 0=BUILDING, 1=ACTIVE, 2=RETIRED, 3=FAILED
+    - `valid_from_xid BIGINT NOT NULL`  -- XID at which new txns can use this index
+    - `retired_xid BIGINT`              -- XID after which no new txns use this index
+    - `build_started_time BIGINT NOT NULL`
+    - `build_completed_time BIGINT`
+    - `created_time BIGINT NOT NULL`
 
-## Full Catalog DDL (Required if sidecar mapping used)
+## Full Catalog DDL (Index version metadata + optional sidecar mapping)
 ```sql
 CREATE TABLE sb_page_owners (
   gpid BIGINT PRIMARY KEY,
   table_id UUID NOT NULL
 );
+
+CREATE TABLE sb_index_versions (
+  logical_index_id UUID NOT NULL,
+  index_id UUID NOT NULL,
+  state SMALLINT NOT NULL,
+  valid_from_xid BIGINT NOT NULL,
+  retired_xid BIGINT,
+  build_started_time BIGINT NOT NULL,
+  build_completed_time BIGINT,
+  created_time BIGINT NOT NULL,
+  PRIMARY KEY (logical_index_id, index_id)
+);
+
+CREATE INDEX sb_index_versions_state_idx
+  ON sb_index_versions(logical_index_id, state);
+```
 ```
 
 ## Common Failure Patterns
