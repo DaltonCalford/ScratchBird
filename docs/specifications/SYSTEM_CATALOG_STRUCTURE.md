@@ -88,6 +88,7 @@ struct CatalogRootPage {
     uint32_t tables_page;             // Page containing tables table
     uint32_t columns_page;            // Page containing columns table
     uint32_t indexes_page;            // Page containing indexes table
+    uint32_t index_versions_page;     // Page containing index versions table
     uint32_t constraints_page;        // Page containing constraints table
     uint32_t sequences_page;          // ✅ Page containing sequences table
     uint32_t views_page;              // ✅ Page containing views table
@@ -98,7 +99,7 @@ struct CatalogRootPage {
     uint32_t timezones_page;          // Page containing timezones table
     uint32_t charsets_page;           // Page containing character sets (pg_charset)
     uint32_t collation_defs_page;     // Page containing collations (pg_collation)
-    uint8_t reserved[4024];           // Padding to 16KB
+    uint8_t reserved[4020];           // Padding to 16KB
 };
 ```
 
@@ -377,7 +378,55 @@ struct IndexInfo {
 
 ---
 
-### 5. Constraints Table (`constraints_page`)
+### 5. Index Versions Table (`index_versions_page`)
+
+Stores versioning metadata for shadow index rebuild + swap.
+
+#### Disk Structure (IndexVersionRecord)
+
+```cpp
+enum class IndexVersionState : uint8_t {
+    BUILDING = 0,
+    ACTIVE = 1,
+    RETIRED = 2,
+    FAILED = 3
+};
+
+struct IndexVersionRecord {
+    ID logical_index_id;             // Stable index identity (logical name)
+    ID index_id;                     // Physical index instance ID
+    uint8_t state;                   // IndexVersionState
+    uint8_t reserved[7];             // Padding for alignment
+    uint64_t valid_from_xid;         // XID at which new txns can use this index
+    uint64_t retired_xid;            // XID after which no new txns use this index
+    uint64_t build_started_time;
+    uint64_t build_completed_time;
+    uint64_t created_time;
+};
+```
+
+**Size**: ~80 bytes per record
+
+#### In-Memory Structure (IndexVersionInfo)
+
+```cpp
+struct IndexVersionInfo {
+    ID logical_index_id;
+    ID index_id;
+    IndexVersionState state = IndexVersionState::BUILDING;
+    uint64_t valid_from_xid = 0;
+    uint64_t retired_xid = 0;
+    uint64_t build_started_time = 0;
+    uint64_t build_completed_time = 0;
+    uint64_t created_time = 0;
+};
+```
+
+**Cache**: `std::unordered_map<ID, std::vector<IndexVersionInfo>> index_versions_cache_`
+
+---
+
+### 6. Constraints Table (`constraints_page`)
 
 **Status**: ❌ **NOT IMPLEMENTED** (structure defined, no DDL support)
 
@@ -422,7 +471,7 @@ struct ConstraintRecord {
 
 ---
 
-### 6. Sequences Table (`sequences_page`)
+### 7. Sequences Table (`sequences_page`)
 
 **Status**: ✅ **FULLY IMPLEMENTED** (November 3, 2025)
 
@@ -491,7 +540,7 @@ struct SequenceState {
 
 ---
 
-### 7. Views Table (`views_page`)
+### 8. Views Table (`views_page`)
 
 **Status**: ✅ **FULLY IMPLEMENTED** (November 7, 2025)
 
@@ -552,7 +601,7 @@ struct ViewInfo {
 
 ---
 
-### 8. Triggers Table (`triggers_page`)
+### 9. Triggers Table (`triggers_page`)
 
 **Status**: ❌ **NOT IMPLEMENTED** (structure defined, no DDL support)
 
@@ -583,7 +632,7 @@ struct TriggerRecord {
 
 ---
 
-### 9. Permissions Table (`permissions_page`)
+### 10. Permissions Table (`permissions_page`)
 
 **Status**: ❌ **NOT IMPLEMENTED** (structure defined, no GRANT/REVOKE)
 
@@ -614,7 +663,7 @@ struct PermissionRecord {
 
 ---
 
-### 10. Statistics Table (`statistics_page`)
+### 11. Statistics Table (`statistics_page`)
 
 **Status**: ⚠️ **PARTIALLY IMPLEMENTED** (storage only, no ANALYZE support)
 
@@ -644,7 +693,7 @@ struct StatisticsRecord {
 
 ---
 
-### 11. Timezones Table (`timezones_page`)
+### 12. Timezones Table (`timezones_page`)
 
 **Status**: ⚠️ **PARTIALLY IMPLEMENTED** (structure defined, minimal usage)
 
@@ -684,7 +733,7 @@ struct TimezoneRecord {
 
 ---
 
-### 12. Character Sets Table (`charsets_page`)
+### 13. Character Sets Table (`charsets_page`)
 
 **Status**: ⚠️ **PARTIALLY IMPLEMENTED** (pg_charset)
 
@@ -715,7 +764,7 @@ struct CharsetRecord {
 
 ---
 
-### 13. Collations Table (`collation_defs_page`)
+### 14. Collations Table (`collation_defs_page`)
 
 **Status**: ⚠️ **PARTIALLY IMPLEMENTED** (pg_collation)
 
@@ -770,6 +819,9 @@ private:
     // Index cache
     std::unordered_map<ID, IndexInfo> index_cache_;
 
+    // Index version cache (logical index -> versions)
+    std::unordered_map<ID, std::vector<IndexVersionInfo>> index_versions_cache_;
+
     // Sequence cache (thread-safe atomic operations)
     std::unordered_map<ID, std::shared_ptr<SequenceState>> sequence_cache_;
     std::unordered_map<std::string, ID> sequence_name_to_id_;
@@ -796,8 +848,9 @@ On `Database::open()`:
 3. Load all tables
 4. Load columns for each table
 5. Load all indexes
-6. ❌ Sequences NOT loaded (created on-demand)
-7. ❌ Views NOT loaded (created on-demand, lost on restart)
+6. Load index versions (shadow rebuild metadata)
+7. ❌ Sequences NOT loaded (created on-demand)
+8. ❌ Views NOT loaded (created on-demand, lost on restart)
 
 ---
 
@@ -859,6 +912,7 @@ On `Database::open()`:
    - ⚠️ SP-GiST (60%)
    - ⚠️ BRIN (60%)
    - ❌ Full-text (0%)
+   - ❌ Index versioning / shadow rebuild + swap (0%)
 
 3. **Statistics**
    - ⚠️ ANALYZE statement (parsed, limited functionality)
@@ -973,7 +1027,7 @@ Consider adding in-memory views for metadata queries:
 
 - **Fully Implemented**: Schemas, Tables, Columns, Indexes (most types), Sequences, Views (DDL + query)
 - **Partially Implemented**: Statistics, Timezones, Charsets, Collations, some Index types
-- **Not Implemented**: Constraints, Permissions, Triggers, most ALTER operations
+- **Not Implemented**: Constraints, Permissions, Triggers, index versioning/shadow rebuild, most ALTER operations
 - **Critical Gap**: No dependency tracking, no constraint enforcement
 
 ### Size Estimates (16KB pages)
@@ -984,6 +1038,7 @@ Consider adding in-memory views for metadata queries:
 | Tables | ~580 bytes | ~28 | Medium volume |
 | Columns | ~700 bytes | ~23 | High volume |
 | Indexes | ~320 bytes | ~51 | Medium volume |
+| Index Versions | ~80 bytes | ~200 | Low volume |
 | Constraints | ~660 bytes | ~24 | NOT USED |
 | Sequences | ~580 bytes | ~28 | Low volume |
 | Views | ~552 bytes | ~29 | Low volume (in-memory) |
