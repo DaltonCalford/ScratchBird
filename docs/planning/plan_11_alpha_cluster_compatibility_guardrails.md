@@ -24,6 +24,26 @@ P0 (prevents incompatible on-disk or API assumptions).
 5) LSN/order metadata.
 6) Shard routing placeholders.
 
+## Concrete Code Touchpoints (Exact Files + Functions)
+- Cluster identity:
+  - `include/scratchbird/core/database.h` (`DatabaseHeader` fields)
+  - `src/core/database.cpp` (`init_header_page`, `validate_header`)
+- Time source:
+  - `include/scratchbird/core/uuidv7.h` / `src/core/uuidv7.cpp` (injectable time source)
+- Storage lock provider:
+  - `src/core/database.cpp` (flock usage)
+  - `src/server/daemon.cpp` (flock usage)
+- Transaction ID extensibility:
+  - `src/core/transaction_manager.cpp` (XID allocation, comparisons)
+  - `src/core/clog.cpp` / TIP format
+- Sequence scope:
+  - `src/core/catalog_manager.cpp` (SequenceRecord)
+  - `include/scratchbird/core/catalog_manager.h` (SequenceInfo)
+- LSN/order:
+  - `src/core/page_manager.cpp` / `src/core/buffer_pool.cpp`
+- Shard placeholders:
+  - `src/core/catalog_manager.cpp` / `include/scratchbird/core/catalog_manager.h`
+
 ## Implementation Tasks
 - Add `cluster_id` and `node_id` to database header or catalog root (persisted).
 - Introduce `TimeSource` interface for UUIDv7 and security timestamps.
@@ -37,7 +57,8 @@ P0 (prevents incompatible on-disk or API assumptions).
 ## Required Data/Schema Changes
 - Database header: `cluster_id`, `node_id`, `cluster_epoch` (reserved fields).
 - Sequence catalog: `sequence_scope` and optional lease metadata.
-- Shard routing catalog placeholders: `sb_shards`, `sb_shard_mapping`, `sb_cluster_nodes`.
+- Shard routing catalog placeholders: `sys.cluster.configuration.shards`, `sys.cluster.configuration.shard_mapping`,
+  `sys.cluster.configuration.cluster_nodes`.
 
 ## Completion Checklist (Developer)
 - [ ] `cluster_id` and `node_id` are persisted and retrievable.
@@ -65,20 +86,47 @@ P0 (prevents incompatible on-disk or API assumptions).
 - Alpha remains stable and local-only.
 - No schema or storage decisions require incompatible migrations for beta cluster support.
 
-## Concrete API/Schema Details
-- **TimeSource**:
-  - `class TimeSource { uint64_t nowMicros(); uint64_t nowMillis(); }`
-  - Default: system clock; future: cluster time service.
-- **StorageLockProvider**:
-  - `acquireExclusive(path)`; `release(path)`; future: distributed lock manager.
-- **Transaction ID format**:
-  - Reserve fields in TIP/CLOG entries for `origin_node_id` and `origin_epoch`.
-- **Sequence scope**:
-  - `sequence_scope SMALLINT` (0=LOCAL, 1=GLOBAL).
-- **Shard placeholders**:
-  - `sb_shards(shard_id, shard_name, shard_key_spec)`
-  - `sb_shard_mapping(object_id, shard_id, rule_spec)`
-  - `sb_cluster_nodes(node_id, cluster_id, role, status)`
+## Full Implementation Detail (No Ambiguity)
+### 1) Database Header Fields
+- Update `DatabaseHeader` in `include/scratchbird/core/database.h`:
+  - Add `cluster_id` (UUID v7 bytes)
+  - Add `node_id` (UUID v7 bytes)
+  - Add `cluster_epoch` (uint64_t)
+- Update `src/core/database.cpp`:
+  - Set these fields in `init_header_page()` for new DBs.
+  - Validate them in `validate_header()`.
+
+### 2) TimeSource Abstraction
+- Add `TimeSource` interface in `include/scratchbird/core/time_source.h`.
+- Update `generateUuidV7()` to call `TimeSource::nowMillis()`.
+- Default implementation uses system clock; inject cluster time in beta.
+
+### 3) StorageLockProvider Abstraction
+- Add `StorageLockProvider` interface (`acquireExclusive(path)`, `release(path)`).
+- Replace `flock()` usage in `src/core/database.cpp` and `src/server/daemon.cpp` with provider calls.
+- Default provider uses `flock` for alpha.
+
+### 4) Transaction ID Extensibility
+- Reserve bits or fields for `origin_node_id` in transaction metadata (TIP/CL0G).
+- Add helper for composite XID: `{origin_node_id, local_xid}`.
+- Ensure comparisons use composite ordering (origin node first, then local xid).
+
+### 5) Sequence Scope
+- Extend `SequenceRecord` and `SequenceInfo`:
+  - `sequence_scope` (0=LOCAL, 1=GLOBAL)
+  - `lease_owner_id` (UUID) and `lease_expiry` (timestamp) placeholders.
+- Enforce GLOBAL scope as unsupported in alpha (return clear error).
+
+### 6) LSN / Order Counter
+- Add `lsn_counter` to `DatabaseHeader` (monotonic increment).
+- Update page write path (buffer flush) to set `PageHeader.lsn = ++lsn_counter`.
+
+### 7) Shard Metadata Placeholders
+- Add tables and minimal DDL in `CatalogManager`:
+  - `sys.cluster.configuration.shards(shard_id, shard_name, shard_key_spec)`
+  - `sys.cluster.configuration.shard_mapping(object_id, shard_id, rule_spec)`
+  - `sys.cluster.configuration.cluster_nodes(node_id, cluster_id, role, status)`
+- Populate with minimal defaults in standalone mode (single node).
 
 ## Common Failure Patterns
 - Direct `flock` use scattered in code (bypasses abstraction).

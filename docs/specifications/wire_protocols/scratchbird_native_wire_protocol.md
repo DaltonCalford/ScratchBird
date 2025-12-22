@@ -1,6 +1,6 @@
 # ScratchBird Native Wire Protocol Specification
 
-**Version:** 1.0
+**Version:** 1.1
 **Date:** December 10, 2025
 **Status:** Design Complete - Ready for Implementation
 **Port:** 3092 (TCP) - IANA Unassigned
@@ -78,7 +78,7 @@ While ScratchBird supports PostgreSQL, MySQL, Firebird, and TDS protocols for co
 
 1. Human readability (use psql/mysql for that)
 2. Compatibility with other databases (that's what emulated protocols are for)
-3. Backwards compatibility with pre-1.0 versions (this is v1.0)
+3. Backward compatibility (not required in Alpha; server accepts v1.1 only)
 
 ---
 
@@ -114,7 +114,7 @@ While ScratchBird supports PostgreSQL, MySQL, Firebird, and TDS protocols for co
          ▼
     ┌──────────┐
     │  READY   │◄────────────────────────────────────┐
-    │          │ Ready for queries                    │
+    │ (TXN ON) │ Ready for queries, always in txn     │
     └────┬─────┘                                      │
          │ Query/Prepare/Execute                      │
          ▼                                            │
@@ -123,14 +123,7 @@ While ScratchBird supports PostgreSQL, MySQL, Firebird, and TDS protocols for co
     │          │────────────────────────────────────►│
     └────┬─────┘ Query complete                       │
          │                                            │
-         │ Transaction BEGIN                          │
-         ▼                                            │
-    ┌──────────┐                                      │
-    │   TXN    │ Inside transaction                   │
-    │          │────────────────────────────────────►│
-    └────┬─────┘ COMMIT/ROLLBACK                      │
-         │                                            │
-         │ Streaming query                            │
+         │ COMMIT/ROLLBACK (new txn auto-starts)      │
          ▼                                            │
     ┌──────────┐                                      │
     │ STREAM   │ Streaming results with backpressure  │
@@ -144,25 +137,36 @@ While ScratchBird supports PostgreSQL, MySQL, Firebird, and TDS protocols for co
     └──────────┘
 ```
 
+**Always-in-transaction:** After authentication, the server creates a default attachment and immediately starts a transaction. The server returns the attachment_id and txn_id; clients must include them in all subsequent messages.
+
 ---
 
 ## 4. Message Format
 
-### 4.1 Message Header (16 bytes)
+### 4.1 Message Header (40 bytes)
 
-All messages begin with a fixed 16-byte header:
+All messages begin with a fixed 40-byte header:
 
 ```c
 struct MessageHeader {
     uint32_t magic;          // 0x5342_5750 ('SBWP' in ASCII)
     uint8_t  version_major;  // Protocol major version (1)
-    uint8_t  version_minor;  // Protocol minor version (0)
+    uint8_t  version_minor;  // Protocol minor version (1)
     uint8_t  msg_type;       // Message type code
     uint8_t  flags;          // Message flags
     uint32_t length;         // Payload length (excluding header)
     uint32_t sequence;       // Sequence number (for pipelining)
+    uint8_t  attachment_id[16]; // Attachment UUID (required after AUTH_OK)
+    uint64_t txn_id;            // Transaction ID (required for transactional messages)
 };
 ```
+
+**Version requirement:** Protocol v1.1 (minor=1) is required. v1.0 (16-byte header) is not supported in Alpha builds.
+**Header requirements:**
+- Before `AUTH_OK`, `attachment_id` and `txn_id` must be zero.
+- After `AUTH_OK`, every message **must** include non-zero `attachment_id` and `txn_id`.
+- `AUTH_OK` is the first message that includes the assigned non-zero `attachment_id` and `txn_id` in its header.
+- `attachment_id`/`txn_id` values are assigned by the server; the client must echo them back on every request.
 
 ### 4.2 Message Flags
 
@@ -173,8 +177,8 @@ struct MessageHeader {
 #define MSG_FLAG_URGENT         0x08  // Priority message (cancel, etc.)
 #define MSG_FLAG_ENCRYPTED      0x10  // Additional encryption (cluster keys)
 #define MSG_FLAG_CHECKSUM       0x20  // CRC32 checksum appended
-#define MSG_FLAG_RESERVED1      0x40  // Reserved
-#define MSG_FLAG_RESERVED2      0x80  // Reserved
+#define MSG_FLAG_RESERVED1      0x40  // Reserved (must be 0 in v1.1)
+#define MSG_FLAG_RESERVED2      0x80  // Reserved (must be 0 in v1.1)
 ```
 
 ### 4.3 Message Types
@@ -212,6 +216,9 @@ struct MessageHeader {
 | 0x1B | `PING` | Keepalive ping |
 | 0x1C | `SET_OPTION` | Set session option |
 | 0x1D | `CLUSTER_AUTH` | Cluster inter-database auth |
+| 0x1E | `ATTACH_CREATE` | Create a new attachment on this connection |
+| 0x1F | `ATTACH_DETACH` | Detach and destroy an attachment |
+| 0x20 | `ATTACH_LIST` | List attachments on this connection |
 
 #### Server → Client Messages (0x40 - 0x7F)
 
@@ -745,13 +752,15 @@ struct SblrCompiled {
     MessageHeader header;  // msg_type = 0x57
 
     uint64_t sblr_hash;      // Hash for caching/matching
-    uint32_t sblr_version;   // SBLR bytecode version
+    uint32_t sblr_version;   // SBLR bytecode version (current: 2)
     uint32_t sblr_length;
 
     // Compiled SBLR bytecode
     uint8_t sblr_bytecode[];
 };
 ```
+
+**Version requirement**: Clients must send `sblr_version = 2`. Earlier versions are rejected.
 
 ---
 
@@ -1025,6 +1034,45 @@ Coordinator                   Participant A                 Participant B
     │  [Write WAL: TXN COMPLETE]   │                              │
 ```
 
+### 10.6 Attachment Protocol (Native ScratchBird Only)
+
+ScratchBird supports multiple attachments per TCP connection. An attachment owns its own transaction context and security/session state.
+
+**Routing rules:**
+- `attachment_id` and `txn_id` are carried in the message header.
+- If either is missing/zero when required, the server returns an error and does not execute the request.
+- The server returns the initial `attachment_id` and `txn_id` after authentication; clients must cache and echo them on every request.
+
+**ATTACH_CREATE (0x1E):**
+```c
+struct AttachCreateMessage {
+    MessageHeader header;  // msg_type = 0x1E
+    uint32_t emulation_mode_len;
+    char     emulation_mode[];  // "scratchbird"|"mysql"|"postgresql"|"firebird"
+    uint32_t db_name_len;
+    char     db_name[];
+};
+```
+**Request rules:** client supplies a non-zero `attachment_id` and `txn_id` in the header (the caller's attachment/transaction).
+**Response:** `READY` with `PARAMETER_STATUS` fields `attachment_id` and `current_txn_id`.
+
+**ATTACH_DETACH (0x1F):**
+```c
+struct AttachDetachMessage {
+    MessageHeader header;  // msg_type = 0x1F
+    // attachment_id is in the message header
+};
+```
+Server rolls back active transactions for that attachment and removes it.
+
+**ATTACH_LIST (0x20):**
+```c
+struct AttachListMessage {
+    MessageHeader header;  // msg_type = 0x20
+};
+```
+**Response:** standard result set (`ROW_DESCRIPTION` + `DATA_ROW` + `COMMAND_COMPLETE`) with attachment_id and summary fields.
+
 ---
 
 ## 11. Transaction Protocol
@@ -1035,11 +1083,14 @@ Coordinator                   Participant A                 Participant B
 struct TxnBeginMessage {
     MessageHeader header;  // msg_type = 0x15
 
-    uint8_t  isolation_level;  // See below
-    uint8_t  access_mode;      // 0=read-write, 1=read-only
-    uint8_t  deferrable;       // For serializable read-only
-    uint8_t  distributed;      // 1=distributed transaction
-    uint32_t timeout_ms;       // 0=default
+    uint16_t flags;            // see TXN_FLAG_* below
+    uint8_t  conflict_action;  // 0=DEFAULT,1=COMMIT,2=ROLLBACK,3=ERROR,4=KEEP
+    uint8_t  autocommit_mode;  // 0=UNCHANGED,1=ON,2=OFF
+    uint8_t  isolation_level;  // See below (only if flags HAS_ISOLATION)
+    uint8_t  access_mode;      // 0=read-write, 1=read-only (only if flags HAS_ACCESS)
+    uint8_t  deferrable;       // 0/1 (only if flags HAS_DEFERRABLE)
+    uint8_t  wait_mode;        // 0=NO WAIT, 1=WAIT (only if flags HAS_WAIT)
+    uint32_t timeout_ms;       // 0=default (only if flags HAS_TIMEOUT)
 };
 
 #define ISOLATION_READ_UNCOMMITTED  0  // Not supported (aliased to READ_COMMITTED)
@@ -1047,15 +1098,22 @@ struct TxnBeginMessage {
 #define ISOLATION_REPEATABLE_READ   2  // Snapshot isolation
 #define ISOLATION_SERIALIZABLE      3  // Full serializability (MGA)
 
+#define TXN_FLAG_HAS_ISOLATION   0x0001
+#define TXN_FLAG_HAS_ACCESS      0x0002
+#define TXN_FLAG_HAS_DEFERRABLE  0x0004
+#define TXN_FLAG_HAS_WAIT        0x0008
+#define TXN_FLAG_HAS_TIMEOUT     0x0010
+#define TXN_FLAG_HAS_AUTOCOMMIT  0x0020
+
 struct TxnCommitMessage {
     MessageHeader header;  // msg_type = 0x16
-    uint8_t  and_chain;    // 1=start new txn immediately
+    uint8_t  flags;        // bit0=AND_CHAIN, bit1=AND_NO_CHAIN, bit2=RETAINING
     uint8_t  reserved[3];
 };
 
 struct TxnRollbackMessage {
     MessageHeader header;  // msg_type = 0x17
-    uint8_t  and_chain;
+    uint8_t  flags;        // bit0=AND_CHAIN, bit1=AND_NO_CHAIN, bit2=RETAINING
     uint8_t  reserved[3];
 };
 
@@ -1078,7 +1136,7 @@ struct TxnRollbackToMessage {
 struct TxnStatusMessage {
     MessageHeader header;  // msg_type = 0x5C
 
-    uint8_t  status;           // 'I'=idle, 'T'=in_txn, 'E'=error
+    uint8_t  status;           // 'T'=in_txn, 'E'=error (always in txn)
     uint8_t  isolation_level;
     uint8_t  access_mode;
     uint8_t  reserved;
@@ -1723,14 +1781,16 @@ StartupMessage startup = {
     .header = {
         .magic = 0x53425750,
         .version_major = 1,
-        .version_minor = 0,
+        .version_minor = 1,
         .msg_type = 0x01,
         .flags = 0,
         .length = sizeof(startup) - sizeof(MessageHeader),
-        .sequence = 0
+        .sequence = 0,
+        .attachment_id = {0},
+        .txn_id = 0
     },
     .protocol_major = 1,
-    .protocol_minor = 0,
+    .protocol_minor = 1,
     .features = FEATURE_COMPRESSION | FEATURE_STREAMING
 };
 // Add parameters: database, user
@@ -1817,6 +1877,7 @@ send_message(ssl, &sync);
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1 | 2025-12 | Header includes attachment_id/txn_id; ATTACH_* messages; always-in-transaction clarification |
 | 1.0 | 2025-12 | Initial specification |
 
 ---

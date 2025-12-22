@@ -16,6 +16,7 @@ P0 (required for governance and beta readiness).
 - `docs/planning/plan_06_metadata_show_and_catalog.md`
 - `docs/planning/plan_07_emulated_protocol_compatibility.md`
 - `docs/planning/plan_08_protocol_conformance_testing.md`
+- `docs/planning/plan_16_attachment_transaction_model.md`
 - `docs/planning/plan_10_cluster_domains_and_conflict_resolution.md`
 - `docs/planning/plan_11_alpha_cluster_compatibility_guardrails.md`
 - `docs/planning/plan_12_domain_runtime_and_type_system.md`
@@ -39,14 +40,33 @@ P0 (required for governance and beta readiness).
 4) **Security Context**
    - Confirm AuthKey/session binding is present and immutable per transaction.
    - Check policy epochs and role switching behavior.
-5) **Testing Coverage**
+5) **Transaction/Attachment Model**
+   - Verify always-in-transaction behavior (no "idle" state).
+   - Confirm transactions are scoped to attachments and not shared.
+   - Confirm autocommit ON executes per-statement transactions.
+   - Confirm attachment multiplexing works on native protocol.
+6) **Testing Coverage**
    - Ensure all plan test requirements exist and run.
    - Verify regression tests cover all protocol gap items.
-6) **Negative Testing**
+7) **Negative Testing**
    - Confirm unsupported features fail cleanly with correct errors.
-7) **Audit Report**
+8) **Audit Report**
    - Summarize pass/fail per plan with evidence.
    - List all deviations or missing items with code references.
+
+## Concrete Audit Commands (Exact)
+- Find TODO/stub markers:
+  - `rg -n "TODO|stub|not implemented" src include tests`
+- Verify new catalog tables:
+  - `rg -n "CREATE TABLE sys\\." docs/specifications docs/planning`
+- Verify opcode changes:
+  - `rg -n "EXT_" include/scratchbird/sblr/opcodes.h src/sblr`
+- Verify SHOW handlers:
+  - `rg -n "executeShow" src/sblr/executor.cpp`
+- Verify protocol adapter gaps:
+  - `rg -n "TODO" src/protocol/adapters src/odbc`
+- Verify attachment/transaction routing:
+  - `rg -n "attachment_id|txn_id" src/protocol src/server src/core`
 
 ## Completion Checklist (Auditor)
 - [ ] Every plan has a mapped code change or explicit deferral.
@@ -61,6 +81,16 @@ An audit report under `docs/findings/audit_results/` with:
 - Per-plan compliance status (PASS/FAIL/DEFERRED).
 - Evidence: file paths, test outputs, and trace diffs.
 - Any required remediation or follow-up tasks.
+
+## Audit Report Template
+- Header: project, date, auditor, commit range.
+- Per-plan matrix:
+  - Plan ID
+  - Status (PASS/FAIL/DEFERRED)
+  - Evidence (file paths + tests)
+  - Notes
+- Open gaps with required remediation steps.
+- Summary risk assessment.
 
 ## Common Failure Patterns
 - Implemented only in executor/parser; `CatalogManager` direct calls still bypass logic.

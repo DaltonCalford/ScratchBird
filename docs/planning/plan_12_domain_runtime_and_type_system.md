@@ -23,6 +23,28 @@ P0 (domains are core to data correctness and dialect compatibility).
 7) Add compatibility catalog exposure and SHOW DOMAIN details.
 8) Tests (SQL + runtime + restart persistence).
 
+## Concrete Code Touchpoints (Exact Files + Functions)
+- `src/core/domain_manager.cpp` / `include/scratchbird/core/domain_manager.h`:
+  - Replace in-memory domain store with runtime wrapper over `CatalogManager` tables.
+- `src/core/catalog_manager.cpp` / `include/scratchbird/core/catalog_manager.h`:
+  - Domain DDL create/alter/drop methods and domain table records.
+- `src/sblr/executor.cpp`:
+  - DDL executor paths for domain opcodes.
+  - DML paths (INSERT/UPDATE) for domain constraint enforcement.
+- `src/sblr/semantic_analyzer_v2.cpp`:
+  - Type resolution includes domain_id.
+- `src/sblr/bytecode_generator_v2.cpp`:
+  - `TYPE_DOMAIN` and `TYPE_ARRAY` emission for domain types.
+- `include/scratchbird/core/types.h`:
+  - Add `TypeDescriptor` struct and serialization helpers.
+- `src/core/type_system.cpp` / `src/core/type_extractor.cpp`:
+  - Decode/encode TypeDescriptor and map domain->base types.
+- Tests:
+  - `tests/unit/domains/test_domain_manager.cpp`
+  - `tests/unit/domains/test_enum_domain.cpp`
+  - `tests/unit/domains/test_set_domain.cpp`
+  - `tests/unit/domains/test_variant_domain.cpp`
+
 ## Implementation Tasks
 - Replace or refactor `DomainManager` to be a runtime wrapper over `CatalogManager` domain tables.
 - Add `TypeDescriptor` (domain-aware, array-aware) and persist it for columns/parameters/domains.
@@ -35,20 +57,25 @@ P0 (domains are core to data correctness and dialect compatibility).
 - Implement RECORD field access and ENUM/SET/VARIANT runtime operations.
 
 ## Required Data/Schema Changes
-- Use the domain tables defined in Plan 10/Plan 06:
-  - `sb_domains`, `sb_domain_constraints`, `sb_domain_fields`, `sb_domain_enum_values`, `sb_domain_enum_options`, `sb_domain_variant_types`
-  - `sb_domain_security`, `sb_domain_integrity`, `sb_domain_validation`, `sb_domain_quality`
+- Use the domain tables defined in Plan 10/Plan 06 (authoritative tables live in `sys.cluster.configuration`):
+  - `sys.cluster.configuration.domains`, `sys.cluster.configuration.domain_constraints`, `sys.cluster.configuration.domain_fields`
+  - `sys.cluster.configuration.domain_enum_values`, `sys.cluster.configuration.domain_enum_options`, `sys.cluster.configuration.domain_variant_types`
+  - `sys.cluster.configuration.domain_security`, `sys.cluster.configuration.domain_integrity`
+  - `sys.cluster.configuration.domain_validation`, `sys.cluster.configuration.domain_quality`
+  - `sys.cluster.configuration.domain_history`, `sys.cluster.configuration.domain_collisions`, `sys.cluster.configuration.domain_collision_members`
+  - `sys.cluster.configuration.domain_aliases`
 - Add validation reporting for ALTER DOMAIN:
-  - `sb_domain_validation_reports` (per-node validation results + violating rows)
+  - `sys.cluster.configuration.domain_validation_reports` (per-node validation results + violating rows)
+- User-facing catalog views live in `sys.catalog` without the `sb_` prefix.
 - Extend column/parameter records to persist full type descriptors:
   - Add `type_descriptor_oid` (preferred) and `domain_id` fallback fields where needed.
 
 ## Completion Checklist (Developer)
-- [ ] Domain definitions are loaded from `sb_domain_*` tables (no in-memory-only domains).
+- [ ] Domain definitions are loaded from `sys.cluster.configuration.domain_*` tables (no in-memory-only domains).
 - [ ] `TypeDescriptor` persists and round-trips for columns/parameters/domains.
 - [ ] Domain types resolve to base types while retaining domain_id.
 - [ ] Domain constraints/defaults are enforced on INSERT/UPDATE/parameter binding.
-- [ ] ALTER DOMAIN performs full validation and reports table_id + primary-key values for violations.
+- [ ] ALTER DOMAIN performs full validation and reports table_id + primary-key values.
 - [ ] Cluster-wide ALTER DOMAIN uses pending status until all members confirm validation.
 - [ ] Domain inheritance merges constraints and rejects cycles.
 - [ ] Domain casts are checked and enforced (including storage hash checks).
@@ -118,7 +145,7 @@ P0 (domains are core to data correctness and dialect compatibility).
 - Add `type_descriptor_oid` to:
   - `ColumnRecord` (src/core/catalog_manager.cpp)
   - Procedure/function parameter records
-  - Domain field records (`sb_domain_fields`)
+  - Domain field records (`sys.cluster.configuration.domain_fields`)
 - When `type_descriptor_oid != 0`, use it instead of `data_type/type_precision/type_scale` fields.
 
 ### 2) Semantic Resolution
@@ -139,18 +166,19 @@ P0 (domains are core to data correctness and dialect compatibility).
 - Update executor to decode `TYPE_DOMAIN`/`TYPE_ARRAY` and build `TypeDescriptor` for catalog insertion.
 
 ### 4) Domain DDL Execution
-- Implement `EXT_CREATE_DOMAIN` in executor:
-  - Insert into `sb_domains` with `domain_kind`, `parent_domain_id`, `base_type_oid`, `default_expr_oid`, `check_expr_oid`, `element_type_oid`, `element_domain_id`.
-  - Insert per-domain rows into `sb_domain_constraints`, `sb_domain_fields`, `sb_domain_enum_values`, `sb_domain_variant_types` and policy tables.
-- Implement `ALTER DOMAIN` actions:
+-- Implement `EXT_CREATE_DOMAIN` in executor:
+  - Insert into `sys.cluster.configuration.domains` with `domain_kind`, `parent_domain_id`, `base_type_oid`, `default_expr_oid`, `check_expr_oid`, `element_type_oid`, `element_domain_id`.
+  - Insert per-domain rows into `sys.cluster.configuration.domain_constraints`, `sys.cluster.configuration.domain_fields`,
+    `sys.cluster.configuration.domain_enum_values`, `sys.cluster.configuration.domain_variant_types`, and policy tables.
+-- Implement `ALTER DOMAIN` actions:
   - Rename, default change, add/drop/rename constraint, update policy blocks.
-  - Record history in `sb_domain_history`.
+  - Record history in `sys.cluster.configuration.domain_history`.
 - ALTER validation flow:
   - Evaluate all dependent objects (tables/views/functions/procedures/constraints).
   - For tables, scan rows and collect violating PK values.
   - If violations exist, fail ALTER and return a report with `table_id` and PK values.
   - If in cluster and local validation passes, set `domain_state = PENDING_VALIDATE` until all nodes report success.
-  - Persist validation outcomes in `sb_domain_validation_reports` for auditing and cross-node reconciliation.
+  - Persist validation outcomes in `sys.cluster.configuration.domain_validation_reports` for auditing and cross-node reconciliation.
   - `pk_values_oid` payload format: JSON array of objects `{table_id, pk_columns:[column_id], pk_values:[typed_literal]}`; `typed_literal` uses the same literal serialization as CHECK/DEFAULT bytecode literals.
 - Implement `DROP DOMAIN` as RESTRICT-only (fail if dependencies exist).
 
@@ -177,14 +205,14 @@ P0 (domains are core to data correctness and dialect compatibility).
 - Domain -> base type: allowed if storage hash matches base type descriptor.
 - Base -> domain: allowed if cast exists AND constraints pass.
 - Domain -> domain: allowed if compatible base type (or cast exists) AND target constraints pass.
-- Store cast rules in `sb_domains.cast_map_oid` as a serialized map of target_type -> cast_fn.
+- Store cast rules in `sys.cluster.configuration.domains.cast_map_oid` as a serialized map of target_type -> cast_fn.
 
 ### 8) Named Elements and Advanced Types
 - RECORD:
   - Support `ROW(...)::domain` construction and `record.field`/`EXTRACT(field FROM record)` access.
-  - Implement `DomainRuntime::extractField()` using `sb_domain_fields` definitions.
+  - Implement `DomainRuntime::extractField()` using `sys.cluster.configuration.domain_fields` definitions.
 - ENUM:
-  - Implement enum ordering, `SET NEXT VALUE`, and `GET VALUE/POSITION FOR` ops via `sb_domain_enum_values`.
+  - Implement enum ordering, `SET NEXT VALUE`, and `GET VALUE/POSITION FOR` ops via `sys.cluster.configuration.domain_enum_values`.
 - SET:
   - Store SET values as ARRAY with uniqueness enforced; implement `@>` and `&&` operators.
 - VARIANT:
@@ -198,10 +226,3 @@ P0 (domains are core to data correctness and dialect compatibility).
 - RECORD: `address.city` returns correct value and type.
 - ENUM wrap option enabled/disabled behavior.
 - CAST(domain AS base) and CAST(base AS domain) behave as specified.
-
-## Common Failure Patterns
-- Domain constraints stored but never evaluated in DML.
-- Domain IDs lost because `type_descriptor_oid` is not persisted.
-- Array element domains ignored due to missing element descriptor.
-- Record fields stored but not accessible from SQL.
-- CAST allows incompatible storage types without warning.

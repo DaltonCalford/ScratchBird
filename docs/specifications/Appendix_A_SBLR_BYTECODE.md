@@ -104,6 +104,17 @@ enum blr\_legacy\_opcodes {
 
 An SBLR module is a binary structure composed of a header followed by several data sections.
 
+### **3.0. Compact Stream Format (Engine Default)**
+
+ScratchBird currently uses a compact stream format for most statements:
+
+```
+[VERSION opcode][sblr_version byte]...[bytecode]...[END opcode]
+```
+
+The `sblr_version` byte is authoritative for opcode decoding in the executor.
+As of this update, the active version is **2** and earlier versions are rejected.
+
 ### **3.1. SBLR File Header**
 
 The header contains metadata about the bytecode, including version, section sizes, and execution requirements.
@@ -111,8 +122,8 @@ The header contains metadata about the bytecode, including version, section size
 typedef struct SBLR\_Header {  
     // Magic number and versioning  
     uint32\_t    magic;              // 0x53424C52 ('SBLR')  
-    uint16\_t    version\_major;      // e.g., 1  
-    uint16\_t    version\_minor;      // e.g., 1  
+    uint16\_t    version\_major;      // 2  
+    uint16\_t    version\_minor;      // 0  
     uint8\_t     blr\_compat\_version; // BLR compatibility level (e.g., 5 for Firebird v5)  
     uint8\_t     reserved\_flags;     // Alignment and future flags  
       
@@ -180,7 +191,88 @@ typedef struct SBLR\_Module {
 
 ## **4\. Complete Instruction Set (Opcodes)**
 
-SBLR opcodes are byte-sized. The range 0x00-0xFF is reserved for BLR-compatible instructions. Extended SBLR-specific instructions use a prefixing system or occupy higher ranges.
+Base SBLR opcodes are byte-sized. The range 0x00-0xFF is reserved for BLR-compatible instructions.
+Extended SBLR-specific instructions use a prefixing system:
+- **Version 2+**: `0xFF` followed by a **16-bit little-endian** extended opcode.
+- **Version 1**: `0xFF` followed by an 8-bit extended opcode (deprecated, not accepted by the engine).
+
+### **4.1. Extended Opcode Encoding (v2)**
+
+**Encoding rule (v2)**:
+
+```
+0xFF <ext_opcode_lo> <ext_opcode_hi> [payload...]
+```
+
+All existing extended opcodes are re-encoded as 16-bit values using their original 8-bit numeric IDs (e.g., `0x0028` instead of `0x28`).
+New extended opcodes may use values above `0x00FF`.
+
+**New extended opcodes (v2)**:
+
+- `EXT_RENAME_OBJECT = 0x0100`
+- `EXT_MOVE_OBJECT   = 0x0101`
+- `EXT_SET_AUTOCOMMIT = 0x0102`
+- `EXT_COMMIT_RETAINING = 0x0103` (deprecated alias; prefer COMMIT with RETAINING flag)
+- `EXT_ROLLBACK_RETAINING = 0x0104` (deprecated alias; prefer ROLLBACK with RETAINING flag)
+- `EXT_PREPARE_TRANSACTION = 0x0105`
+- `EXT_COMMIT_PREPARED = 0x0106`
+- `EXT_ROLLBACK_PREPARED = 0x0107`
+
+### **4.2. Transaction Opcodes (SBLR v2)**
+
+ScratchBird is **always in a transaction**. Transaction opcodes therefore **always** end by starting a new transaction unless an explicit conflict action says otherwise.
+
+#### **START_TRANSACTION (0x13)**
+```
+[START_TRANSACTION]
+[flags:uint16]
+[conflict_action:uint8]               // 0=DEFAULT,1=COMMIT,2=ROLLBACK,3=ERROR,4=KEEP
+[conflict_error_code:int32]           // only if flags has CONFLICT_ERROR_CODE
+[autocommit_mode:uint8]               // 0=UNCHANGED,1=ON,2=OFF (only if flags has AUTOCOMMIT)
+[isolation_level:uint8]               // only if flags has ISOLATION
+[access_mode:uint8]                   // only if flags has ACCESS_MODE (0=RW,1=RO)
+[deferrable:uint8]                    // only if flags has DEFERRABLE (0=NOT,1=YES)
+[wait_mode:uint8]                     // only if flags has WAIT_MODE (0=NO WAIT,1=WAIT)
+[lock_timeout:uint32]                 // only if flags has LOCK_TIMEOUT
+[reservations:list]                   // only if flags has RESERVATIONS
+```
+
+#### **SET_TRANSACTION (0x17)**
+Identical payload to `START_TRANSACTION`. There is **no** in-place modification of the current transaction.
+
+#### **COMMIT (0x14)**
+```
+[COMMIT]
+[flags:uint8] // bit0=AND_CHAIN, bit1=AND_NO_CHAIN, bit2=RETAINING
+```
+
+#### **ROLLBACK (0x15)**
+```
+[ROLLBACK]
+[flags:uint8] // bit0=AND_CHAIN, bit1=AND_NO_CHAIN, bit2=RETAINING
+```
+
+#### **Extended Transaction Opcodes (16-bit)**
+- `EXT_SET_AUTOCOMMIT (0x0102)`
+  ```
+  [EXT_SET_AUTOCOMMIT]
+  [mode:uint8]            // 0=OFF,1=ON
+  [conflict_action:uint8]
+  [conflict_error_code:int32]  // only if conflict_action == ERROR
+  ```
+- `EXT_PREPARE_TRANSACTION (0x0105)` -> `[gid:string]`
+- `EXT_COMMIT_PREPARED (0x0106)` -> `[gid:string]`
+- `EXT_ROLLBACK_PREPARED (0x0107)` -> `[gid:string]`
+
+#### **Transaction Flags**
+- `0x0001` HAS_ISOLATION
+- `0x0002` HAS_ACCESS_MODE
+- `0x0004` HAS_DEFERRABLE
+- `0x0008` HAS_WAIT_MODE
+- `0x0010` HAS_LOCK_TIMEOUT
+- `0x0020` HAS_RESERVATIONS
+- `0x0040` HAS_AUTOCOMMIT
+- `0x0080` HAS_CONFLICT_ERROR_CODE
 
 enum SBLR\_Opcodes {  
     // \============================================  

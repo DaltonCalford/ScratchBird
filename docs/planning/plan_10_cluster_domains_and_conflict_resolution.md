@@ -12,6 +12,7 @@ P0 (core metadata consistency and cross-node correctness).
 - `docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md`
 - `docs/specifications/draft_security_architecture_specification.md`
 - `docs/findings/engine_gap_report.md` (domains + cluster gaps)
+- `docs/planning/plan_12_domain_runtime_and_type_system.md`
 
 ## Order of Implementation
 1) Catalog schema changes for cluster domains and conflict tracking.
@@ -20,6 +21,22 @@ P0 (core metadata consistency and cross-node correctness).
 4) Dependency gating for shadow domains.
 5) SHOW DOMAIN + resolver integration.
 6) Tests (cluster, conflict, rebind, permissions).
+
+## Concrete Code Touchpoints (Exact Files + Functions)
+- `include/scratchbird/core/catalog_manager.h`:
+  - Extend `DomainInfo` with dialect/compat/origin/state fields.
+  - Add APIs: `resolveDomain`, `rebindDomain`, `resolveDomainConflict`.
+- `src/core/catalog_manager.cpp`:
+  - Add `DomainRecord` fields for dialect/compat/hash/origin/state.
+  - Implement create/alter/drop with conflict detection + collision tables.
+- `src/sblr/executor.cpp`:
+  - Implement `EXT_CREATE_DOMAIN`, `EXT_ALTER_DOMAIN`, `EXT_DROP_DOMAIN`, `EXT_REBIND_DOMAIN`, `EXT_RESOLVE_DOMAIN_CONFLICT`.
+- `src/core/domain_manager.cpp`:
+  - Remove in-memory-only logic; use catalog tables (see Plan 12).
+- Dependency gating:
+  - `CatalogManager::createTable` and `addColumn` paths (block SHADOW domains).
+- SHOW DOMAIN:
+  - `Executor::executeShowDomain()`
 
 ## Implementation Tasks
 - Implement cluster-wide domain catalog tables with conflict/history/alias support.
@@ -34,13 +51,15 @@ P0 (core metadata consistency and cross-node correctness).
 - Add SBLR opcodes for ALTER/DROP/REBIND/RESOLVE and include domain metadata in CREATE.
 
 ## Required Data/Schema Changes
-- `sb_domains` (global domains, no schema_id).
-- `sb_domain_constraints`, `sb_domain_fields`, `sb_domain_enum_values`, `sb_domain_enum_options`, `sb_domain_variant_types`.
-- `sb_domain_security`, `sb_domain_integrity`, `sb_domain_validation`, `sb_domain_quality`.
-- `sb_domain_validation_reports` (per-node validation results and violating row keys).
-- `sb_domain_collisions` and `sb_domain_collision_members`.
-- `sb_domain_history` (audit/epoch).
-- `sb_domain_aliases` (optional name mapping).
+- `sys.cluster.configuration.domains` (global domains, no schema_id).
+- `sys.cluster.configuration.domain_constraints`, `sys.cluster.configuration.domain_fields`, `sys.cluster.configuration.domain_enum_values`,
+  `sys.cluster.configuration.domain_enum_options`, `sys.cluster.configuration.domain_variant_types`.
+- `sys.cluster.configuration.domain_security`, `sys.cluster.configuration.domain_integrity`, `sys.cluster.configuration.domain_validation`,
+  `sys.cluster.configuration.domain_quality`.
+- `sys.cluster.configuration.domain_validation_reports` (per-node validation results and violating row keys).
+- `sys.cluster.configuration.domain_collisions` and `sys.cluster.configuration.domain_collision_members`.
+- `sys.cluster.configuration.domain_history` (audit/epoch).
+- `sys.cluster.configuration.domain_aliases` (optional name mapping).
 - Indexes on `(domain_name, dialect_tag)` and `compat_name`.
 
 ## Completion Checklist (Developer)
@@ -104,14 +123,20 @@ P0 (core metadata consistency and cross-node correctness).
   - `EXT_CREATE_DOMAIN` payload includes: `domain_id`, `domain_name`, `dialect_tag`, `compat_name`, `domain_kind`, `parent_domain_id`, `owner_id`, `base_type_oid`, `default_expr_oid`, `check_expr_oid`, `cast_map_oid`, `element_type_oid`, `element_domain_id`, `collation_id`, `storage_hash`, `definition_hash`, `not_null`, `origin_node_id`, `origin_cluster_id`.
   - `EXT_ALTER_DOMAIN` for rename/default/check/compat updates.
   - `EXT_DROP_DOMAIN` (RESTRICT only).
-  - `EXT_REBIND_DOMAIN` (old_id → new_id with mode).
+  - `EXT_REBIND_DOMAIN` (old_id -> new_id with mode).
   - `EXT_RESOLVE_DOMAIN_CONFLICT` (collision_id + action).
   - `SBLR_TYPE_DOMAIN` must carry domain UUID.
 
 ## Full Implementation Detail (No Ambiguity)
+### Catalog Schema Placement (Required)
+- **Authoritative cluster tables**: `sys.cluster.configuration` schema path.
+- **User-facing catalog**: views/synonyms in `sys.catalog` (no `sb_` prefix).
+- **Naming rule**: `sb_` prefixes are documentation-only; do not create physical tables/views with `sb_` prefixes.
+- **Example**: `sys.catalog.domains` -> `sys.cluster.configuration.domains`.
+
 ### Catalog DDL (Required)
 ```sql
-CREATE TABLE sb_domains (
+CREATE TABLE sys.cluster.configuration.domains (
   domain_id UUID PRIMARY KEY,
   domain_name TEXT NOT NULL,
   dialect_tag TEXT NOT NULL,
@@ -139,7 +164,7 @@ CREATE TABLE sb_domains (
   is_valid SMALLINT NOT NULL
 );
 
-CREATE TABLE sb_domain_constraints (
+CREATE TABLE sys.cluster.configuration.domain_constraints (
   constraint_id UUID PRIMARY KEY,
   domain_id UUID NOT NULL,
   constraint_name TEXT,
@@ -150,7 +175,7 @@ CREATE TABLE sb_domain_constraints (
   last_modified_time BIGINT NOT NULL
 );
 
-CREATE TABLE sb_domain_fields (
+CREATE TABLE sys.cluster.configuration.domain_fields (
   field_id UUID PRIMARY KEY,
   domain_id UUID NOT NULL,
   field_position SMALLINT NOT NULL,
@@ -165,7 +190,7 @@ CREATE TABLE sb_domain_fields (
   last_modified_time BIGINT NOT NULL
 );
 
-CREATE TABLE sb_domain_enum_values (
+CREATE TABLE sys.cluster.configuration.domain_enum_values (
   enum_value_id UUID PRIMARY KEY,
   domain_id UUID NOT NULL,
   value_label TEXT NOT NULL,
@@ -175,21 +200,21 @@ CREATE TABLE sb_domain_enum_values (
   last_modified_time BIGINT NOT NULL
 );
 
-CREATE TABLE sb_domain_enum_options (
+CREATE TABLE sys.cluster.configuration.domain_enum_options (
   domain_id UUID PRIMARY KEY,
   wrap SMALLINT NOT NULL,
   created_time BIGINT NOT NULL,
   last_modified_time BIGINT NOT NULL
 );
 
-CREATE TABLE sb_domain_variant_types (
+CREATE TABLE sys.cluster.configuration.domain_variant_types (
   variant_type_id UUID PRIMARY KEY,
   domain_id UUID NOT NULL,
   type_oid OID NOT NULL,
   created_time BIGINT NOT NULL
 );
 
-CREATE TABLE sb_domain_security (
+CREATE TABLE sys.cluster.configuration.domain_security (
   domain_id UUID PRIMARY KEY,
   mask_function TEXT,
   mask_type TEXT,
@@ -200,7 +225,7 @@ CREATE TABLE sb_domain_security (
   last_modified_time BIGINT NOT NULL
 );
 
-CREATE TABLE sb_domain_integrity (
+CREATE TABLE sys.cluster.configuration.domain_integrity (
   domain_id UUID PRIMARY KEY,
   unique_across_database SMALLINT NOT NULL,
   case_insensitive SMALLINT NOT NULL,
@@ -209,7 +234,7 @@ CREATE TABLE sb_domain_integrity (
   last_modified_time BIGINT NOT NULL
 );
 
-CREATE TABLE sb_domain_validation (
+CREATE TABLE sys.cluster.configuration.domain_validation (
   domain_id UUID PRIMARY KEY,
   validate_function TEXT,
   on_violation SMALLINT NOT NULL,
@@ -218,7 +243,7 @@ CREATE TABLE sb_domain_validation (
   last_modified_time BIGINT NOT NULL
 );
 
-CREATE TABLE sb_domain_quality (
+CREATE TABLE sys.cluster.configuration.domain_quality (
   domain_id UUID PRIMARY KEY,
   parse_function TEXT,
   standardize_function TEXT,
@@ -227,7 +252,7 @@ CREATE TABLE sb_domain_quality (
   last_modified_time BIGINT NOT NULL
 );
 
-CREATE TABLE sb_domain_collisions (
+CREATE TABLE sys.cluster.configuration.domain_collisions (
   collision_id UUID PRIMARY KEY,
   conflict_key TEXT NOT NULL,
   conflict_type SMALLINT NOT NULL,
@@ -239,7 +264,7 @@ CREATE TABLE sb_domain_collisions (
   status SMALLINT NOT NULL
 );
 
-CREATE TABLE sb_domain_collision_members (
+CREATE TABLE sys.cluster.configuration.domain_collision_members (
   collision_id UUID NOT NULL,
   domain_id UUID NOT NULL,
   is_canonical SMALLINT NOT NULL,
@@ -247,7 +272,7 @@ CREATE TABLE sb_domain_collision_members (
   PRIMARY KEY (collision_id, domain_id)
 );
 
-CREATE TABLE sb_domain_history (
+CREATE TABLE sys.cluster.configuration.domain_history (
   history_id UUID PRIMARY KEY,
   domain_id UUID NOT NULL,
   action SMALLINT NOT NULL,
@@ -258,7 +283,7 @@ CREATE TABLE sb_domain_history (
   cluster_epoch BIGINT NOT NULL
 );
 
-CREATE TABLE sb_domain_validation_reports (
+CREATE TABLE sys.cluster.configuration.domain_validation_reports (
   report_id UUID PRIMARY KEY,
   domain_id UUID NOT NULL,
   node_id UUID NOT NULL,
@@ -269,7 +294,7 @@ CREATE TABLE sb_domain_validation_reports (
   created_time BIGINT NOT NULL
 );
 
-CREATE TABLE sb_domain_aliases (
+CREATE TABLE sys.cluster.configuration.domain_aliases (
   alias_id UUID PRIMARY KEY,
   alias_name TEXT NOT NULL,
   dialect_tag TEXT NOT NULL,
@@ -278,6 +303,37 @@ CREATE TABLE sb_domain_aliases (
   created_time BIGINT NOT NULL,
   is_active SMALLINT NOT NULL
 );
+
+CREATE VIEW sys.catalog.domains AS
+  SELECT * FROM sys.cluster.configuration.domains;
+CREATE VIEW sys.catalog.domain_constraints AS
+  SELECT * FROM sys.cluster.configuration.domain_constraints;
+CREATE VIEW sys.catalog.domain_fields AS
+  SELECT * FROM sys.cluster.configuration.domain_fields;
+CREATE VIEW sys.catalog.domain_enum_values AS
+  SELECT * FROM sys.cluster.configuration.domain_enum_values;
+CREATE VIEW sys.catalog.domain_enum_options AS
+  SELECT * FROM sys.cluster.configuration.domain_enum_options;
+CREATE VIEW sys.catalog.domain_variant_types AS
+  SELECT * FROM sys.cluster.configuration.domain_variant_types;
+CREATE VIEW sys.catalog.domain_security AS
+  SELECT * FROM sys.cluster.configuration.domain_security;
+CREATE VIEW sys.catalog.domain_integrity AS
+  SELECT * FROM sys.cluster.configuration.domain_integrity;
+CREATE VIEW sys.catalog.domain_validation AS
+  SELECT * FROM sys.cluster.configuration.domain_validation;
+CREATE VIEW sys.catalog.domain_quality AS
+  SELECT * FROM sys.cluster.configuration.domain_quality;
+CREATE VIEW sys.catalog.domain_collisions AS
+  SELECT * FROM sys.cluster.configuration.domain_collisions;
+CREATE VIEW sys.catalog.domain_collision_members AS
+  SELECT * FROM sys.cluster.configuration.domain_collision_members;
+CREATE VIEW sys.catalog.domain_history AS
+  SELECT * FROM sys.cluster.configuration.domain_history;
+CREATE VIEW sys.catalog.domain_validation_reports AS
+  SELECT * FROM sys.cluster.configuration.domain_validation_reports;
+CREATE VIEW sys.catalog.domain_aliases AS
+  SELECT * FROM sys.cluster.configuration.domain_aliases;
 ```
 
 ### Conflict Algorithm (Deterministic)
@@ -286,10 +342,11 @@ CREATE TABLE sb_domain_aliases (
    - If identical `definition_hash`, return existing domain.
    - If conflict:
      - Insert domain as `SHADOW`.
-     - Create/update `sb_domain_collisions`.
+     - Create/update `sys.cluster.configuration.domain_collisions`.
      - Canonical = smallest UUIDv7 timestamp (tie-break by UUID bytes).
      - Block new dependencies on non-canonical domains.
-   - If ALTER passes local validation and cluster mode is enabled, set `domain_state = PENDING_VALIDATE` and wait for `sb_domain_validation_reports` from all members before activating.
+   - If ALTER passes local validation and cluster mode is enabled, set `domain_state = PENDING_VALIDATE` and wait for
+     `sys.cluster.configuration.domain_validation_reports` from all members before activating.
 2) **Join/Rejoin reconciliation**:
    - For each local domain:
      - If no cluster match: promote to `ACTIVE` cluster domain.
@@ -304,7 +361,7 @@ CREATE TABLE sb_domain_aliases (
 ### Rebind Rules
 - Allowed if `storage_hash` matches or cast exists in `cast_map_oid`.
 - Updates all domain references in columns, defaults, checks, procedures/functions, and dependencies.
-- Records change in `sb_domain_history` and bumps cluster epoch.
+- Records change in `sys.cluster.configuration.domain_history` and bumps cluster epoch.
 
 ## Concrete Test Cases
 - Create same `domain_name` in two nodes with different definitions; verify collision record and canonical selection.

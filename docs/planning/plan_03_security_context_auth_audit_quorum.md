@@ -11,6 +11,7 @@ P0 (security baseline for server/cluster modes).
 - `docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md`
 - `docs/specifications/SECURITY_IMPLIMENTATION_DETAILS.md`
 - `docs/findings/engine_gap_report.md` (security gaps + matrix)
+- `docs/planning/plan_16_attachment_transaction_model.md` (transaction defaults + attachment scoping)
 
 ## Order of Implementation
 1) AuthKey model and storage.
@@ -19,6 +20,39 @@ P0 (security baseline for server/cluster modes).
 4) Audit persistence and tamper-evident logging.
 5) Quorum-aware caching with configurable behavior.
 6) Role switching bound to transaction with default action policy.
+
+## Concrete Code Touchpoints (Exact Files + Functions)
+- `include/scratchbird/core/catalog_manager.h`
+  - Add `AuthKeyInfo`, `AuthKeyStatus`, `AuthKeyUsage`.
+  - Extend `SessionInfo` with `authkey_id`, `emulation_mode`, `policy_epoch_global`, `policy_epoch_table`.
+  - Add APIs: `createAuthKey`, `getAuthKey`, `revokeAuthKey`, `consumeAuthKey`, `listAuthKeys`.
+  - Add policy epoch APIs: `getSecurityPolicyEpoch`, `bumpSecurityPolicyEpoch`, `getTablePolicyEpoch`, `bumpTablePolicyEpoch`.
+- `src/core/catalog_manager.cpp`
+  - Add `AuthKeyRecord` near other security records.
+  - Allocate table pages for `sys.cluster.security.authkeys`, `sys.security.sessions`,
+    `sys.security.audit_log`, `sys.cluster.security.security_policy_epoch`.
+  - Extend `CatalogRootPage` and update `writeCatalogRoot`/`readCatalogRoot` for new pages.
+  - Implement AuthKey CRUD + usage-limit decrements.
+  - Persist sessions (currently in-memory only) to `sys.security.sessions`.
+- `include/scratchbird/core/connection_context.h` / `src/core/connection_context.cpp`
+  - Add `session_id_`, `authkey_id_`, `emulation_mode_`, `policy_epoch_global_`, `policy_epoch_table_`.
+  - Enforce immutability of user/role/authkey while a transaction is active.
+  - Add `setSessionContext(session_id, authkey_id, emulation_mode, policy_epoch_global, policy_epoch_table)`.
+- `src/core/auth_provider.cpp`
+  - Create AuthKey on authentication, bind to session, log audit with authkey_id/session_id.
+- `include/scratchbird/core/audit_logger.h` / `src/core/audit_logger.cpp`
+  - Add fields to `AuditEvent` for `session_id` and `authkey_id` as UUIDs (not string-only).
+  - Implement `writeEventToCatalog` and `queryAuditLog` using `sys.security.audit_log`.
+  - Add hash-chain support for tamper-evident mode.
+  - Add multi-sink support (catalog/file/broadcast).
+- `src/core/permission_cache.cpp`
+  - Add quorum gate in `PermissionCache::checkPermission` before using cached data.
+  - Invalidate cache when policy epoch changes.
+- `src/sblr/executor.cpp`
+  - Ensure permission checks include session/authkey metadata from `ConnectionContext`.
+  - Enforce role-switch actions at transaction boundaries (commit/rollback/default policy).
+- `src/server/config_parser.cpp` / `include/scratchbird/server/config_parser.h`
+  - Add config keys for audit/quorum and policy defaults (see Config section below).
 
 ## Implementation Tasks
 - Add AuthKey entity: UUID, issuer, validity window, role/group scope, usage limits.
@@ -37,6 +71,7 @@ P0 (security baseline for server/cluster modes).
 - Policy epoch storage (global + per-table).
 - Audit log storage with integrity metadata (hash chain/signature).
 - Object permission support for DOMAIN object type (cluster-wide scope).
+- Extend `CatalogRootPage` with: `authkeys_page`, `sessions_page`, `audit_log_page`, `security_policy_epoch_page`.
 
 ## Completion Checklist (Developer)
 - [ ] AuthKey catalog/table implemented with validation logic.
@@ -55,12 +90,18 @@ P0 (security baseline for server/cluster modes).
 - [ ] Policy epoch changes invalidate cached plans.
 
 ## Testing Requirements
-- AuthKey lifecycle tests (issue, expire, revoke).
+- AuthKey lifecycle tests (issue, expire, revoke, usage-limit consumption).
 - Security context immutability tests (transaction-scoped).
 - Audit persistence + integrity validation tests.
 - Quorum simulation tests (partition/fail modes).
 - Role switch behavior tests (default actions).
 - Domain DDL permission tests (allowed/denied by role).
+- Update/add tests in:
+  - `tests/unit/test_audit_logger.cpp`
+  - `tests/unit/test_connection_context.cpp`
+  - `tests/unit/test_security_issues.cpp`
+  - `tests/unit/test_session_timeout.cpp`
+  - `tests/unit/test_password_policy.cpp`
 
 ## Acceptance Criteria
 - AuthKey/session binding present in all security decisions and audit events.
@@ -69,10 +110,10 @@ P0 (security baseline for server/cluster modes).
 - Audit logs persist across restart and verify integrity chain.
 
 ## Implementation Notes (Concrete)
-- **AuthKey table schema** (example): `sb_authkeys(authkey_id, issuer, valid_from, valid_to, usage_limit, role_scope_oid, group_scope_oid, status)`.
-- **Session table linkage**: `sb_sessions(session_id, user_id, authkey_id, emulation_mode, last_seen)`.
+- **AuthKey table schema** (example): `sys.cluster.security.authkeys(authkey_id, issuer, valid_from, valid_to, usage_limit, role_scope_oid, group_scope_oid, status)`.
+- **Session table linkage**: `sys.security.sessions(session_id, user_id, authkey_id, emulation_mode, last_seen, policy_epoch_global, policy_epoch_table)`.
 - **Security context fields**: extend `ConnectionContext::SecurityContext` to include `session_id`, `authkey_id`, `emulation_mode`, `policy_epoch_global`, `policy_epoch_table`.
-- **Audit storage**: `sb_audit_log(event_id, timestamp, session_id, authkey_id, user_id, role_id, action, object_id, details, hash_prev, hash_curr)`.
+- **Audit storage**: `sys.security.audit_log(event_id, timestamp, session_id, authkey_id, user_id, role_id, action, object_id, details, hash_prev, hash_curr)`.
 - **Quorum config**: `security_quorum_n`, `security_quorum_m`, `quorum_failure_mode` with optional key escrow/decryption requirement.
 - **Role switching**: require explicit `SET ROLE ... WITH COMMIT|ROLLBACK` or apply per-user default policy.
 
@@ -82,16 +123,23 @@ P0 (security baseline for server/cluster modes).
   - `getSession(session_id, SessionInfo& out, ErrorContext* ctx)`
   - `closeSession(session_id, ErrorContext* ctx)`
   - `updateSessionActivity(session_id, ErrorContext* ctx)`
+- **CatalogManager AuthKey APIs**:
+  - `createAuthKey(const AuthKeyInfo& in, ID& out_id, ErrorContext* ctx)`
+  - `getAuthKey(const ID& authkey_id, AuthKeyInfo& out, ErrorContext* ctx)`
+  - `revokeAuthKey(const ID& authkey_id, ErrorContext* ctx)`
+  - `consumeAuthKey(const ID& authkey_id, uint32_t uses, ErrorContext* ctx)`
 - **ConnectionContext APIs**:
   - `setCurrentUser(const ID& user_id, bool is_superuser)`
   - `setActiveRole(const ID& role_id)`
   - `pushSecurityContext(...)` / `popSecurityContext()`
+  - `setSessionContext(const ID& session_id, const ID& authkey_id, const std::string& emulation_mode,
+     uint64_t policy_epoch_global, uint64_t policy_epoch_table)`
 - **Audit APIs**:
   - `AuditLogger::logEvent(AuditEvent&, ErrorContext*)`
   - `AuditLogger::queryAuditLog(const AuditQuery&, std::vector<AuditEvent>&, ErrorContext*)`
 - **Policy epochs**:
-  - global epoch stored in catalog (e.g., `sb_security_policy_epoch`).
-  - per-table epoch stored in `sb_table` or a policy table.
+  - global epoch stored in catalog (e.g., `sys.cluster.security.security_policy_epoch`).
+  - per-table epoch stored in `sys.catalog.tables.policy_epoch`.
 
 ## Full Implementation Detail (No Ambiguity)
 - **AuthKey fields**:
@@ -104,11 +152,16 @@ P0 (security baseline for server/cluster modes).
 - **Audit persistence**:
   - Append-only table or file with hash chain (`hash_prev`, `hash_curr`).
   - Must survive restart and be queryable via `AuditLogger::queryAuditLog`.
+- **Policy epoch**:
+  - `sys.cluster.security.security_policy_epoch` has one row with `global_epoch` (BIGINT).
+  - `sys.catalog.tables` gains `policy_epoch` (BIGINT) for per-table tracking.
+  - Any GRANT/REVOKE/ALTER POLICY bumps `global_epoch`; any table-specific policy change bumps table epoch.
 - **Quorum checks**:
-  - Configurable `N-of-M` with fail mode; if required, decrypt audit/security cache using key retrieved from another cluster member.
+  - `PermissionCache::checkPermission` must call `SecurityQuorum::isQuorumSatisfied(ctx)` before using cached data.
+  - On quorum failure: follow config `quorum_failure_mode` (`fail_closed`, `fail_open`, `require_remote`).
 
 ## Concrete Schema DDL (Example)
-- `sb_authkeys`:
+- `sys.cluster.security.authkeys`:
   - `authkey_id UUID PRIMARY KEY`
   - `issuer TEXT`
   - `valid_from TIMESTAMP`
@@ -117,13 +170,15 @@ P0 (security baseline for server/cluster modes).
   - `status SMALLINT`
   - `role_scope_oid OID` (TOAST)
   - `group_scope_oid OID` (TOAST)
-- `sb_sessions`:
+- `sys.security.sessions`:
   - `session_id UUID PRIMARY KEY`
   - `user_id UUID`
   - `authkey_id UUID`
   - `emulation_mode TEXT`
   - `last_seen TIMESTAMP`
-- `sb_audit_log`:
+  - `policy_epoch_global BIGINT`
+  - `policy_epoch_table BIGINT`
+- `sys.security.audit_log`:
   - `event_id BIGINT PRIMARY KEY`
   - `timestamp BIGINT`
   - `session_id UUID`
@@ -135,12 +190,17 @@ P0 (security baseline for server/cluster modes).
   - `details TEXT`
   - `hash_prev BINARY(32)`
   - `hash_curr BINARY(32)`
-- `sb_security_policy_epoch`:
+- `sys.cluster.security.security_policy_epoch`:
   - `global_epoch BIGINT`
+
+## Catalog Schema Placement (Required)
+- **Authoritative security tables**: `sys.cluster.security` schema path.
+- **Node-local runtime/persistence**: `sys.security` schema path.
+- **Local cache tables** (if persisted): `sys.security.cache` schema path.
 
 ## Full Catalog DDL (Required)
 ```sql
-CREATE TABLE sb_authkeys (
+CREATE TABLE sys.cluster.security.authkeys (
   authkey_id UUID PRIMARY KEY,
   issuer TEXT NOT NULL,
   valid_from TIMESTAMP NOT NULL,
@@ -151,15 +211,17 @@ CREATE TABLE sb_authkeys (
   group_scope_oid OID
 );
 
-CREATE TABLE sb_sessions (
+CREATE TABLE sys.security.sessions (
   session_id UUID PRIMARY KEY,
   user_id UUID NOT NULL,
   authkey_id UUID NOT NULL,
   emulation_mode TEXT NOT NULL,
-  last_seen TIMESTAMP NOT NULL
+  last_seen TIMESTAMP NOT NULL,
+  policy_epoch_global BIGINT NOT NULL,
+  policy_epoch_table BIGINT NOT NULL
 );
 
-CREATE TABLE sb_audit_log (
+CREATE TABLE sys.security.audit_log (
   event_id BIGINT PRIMARY KEY,
   timestamp BIGINT NOT NULL,
   session_id UUID NOT NULL,
@@ -173,7 +235,7 @@ CREATE TABLE sb_audit_log (
   hash_curr BINARY(32)
 );
 
-CREATE TABLE sb_security_policy_epoch (
+CREATE TABLE sys.cluster.security.security_policy_epoch (
   global_epoch BIGINT NOT NULL
 );
 ```
@@ -183,6 +245,32 @@ CREATE TABLE sb_security_policy_epoch (
 - `audit_sink_catalog`, `audit_sink_file`, `audit_sink_kafka`
 - `audit_integrity_mode`, `audit_encryption_mode`, `audit_key_source`
 - `role_switch_default_action` (per user/role/group)
+
+## Step-by-Step Implementation (No Gaps)
+1) **Catalog tables + root page**:
+   - Add `authkeys_table_page_`, `sessions_table_page_`, `audit_log_table_page_`, `security_policy_epoch_table_page_` to
+     `include/scratchbird/core/catalog_manager.h`.
+   - Extend `CatalogRootPage` in `src/core/catalog_manager.cpp` to store those page IDs and update read/write.
+   - Allocate pages in `CatalogManager::initializeCatalogTables()` (same block as users/roles).
+2) **AuthKey persistence**:
+   - Add `AuthKeyRecord` in `src/core/catalog_manager.cpp`.
+   - Implement `createAuthKey/getAuthKey/revokeAuthKey/consumeAuthKey` in `CatalogManager`.
+   - Enforce `valid_from/valid_to/status/usage_limit` at lookup time.
+3) **Session persistence**:
+   - Extend `SessionInfo` with authkey/session metadata and policy epochs.
+   - Persist sessions in `sys.security.sessions` inside `CatalogManager::createSession` and `closeSession`.
+4) **ConnectionContext binding**:
+   - Add fields for `session_id_`, `authkey_id_`, `emulation_mode_`, `policy_epoch_global_`, `policy_epoch_table_`.
+   - Disallow `setCurrentUser/setActiveRole` when `current_xid_ != 0` (active transaction) unless a commit/rollback is done.
+5) **Audit logger persistence**:
+   - Implement `AuditLogger::writeEventToCatalog()` to insert into `sys.security.audit_log`.
+   - Add hash-chain: `hash_curr = H(hash_prev + canonical_event_bytes)`; store `hash_prev/hash_curr`.
+6) **Quorum-aware cache**:
+   - Add `SecurityQuorum` helper (new file `src/core/security_quorum.cpp` + header).
+   - Gate `PermissionCache::checkPermission` on quorum status.
+7) **Role switching rules**:
+   - Implement `SET ROLE` behavior in executor: if a transaction is active and default action is not provided,
+     apply per-user default policy (`commit`, `rollback`, `reject`).
 
 ## Concrete Test Cases
 - **AuthKey lifecycle**: issue, expire, revoke; ensure denied when invalid.

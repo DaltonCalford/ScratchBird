@@ -164,7 +164,7 @@ See `docs/planning/plan_01_index_gc_clarifications.md` for per-index GC traversa
 - `ColumnSegment` struct (persisted):
   - `uint16 column_id; uint32 start_row; uint32 row_count; uint32 page_number; uint8 compression_type; int64 min_value; int64 max_value;`
 - **Index version metadata (required for shadow rebuild + swap)**:
-  - `sb_index_versions` (tracks visibility of physical index instances):
+  - `sys.catalog.index_versions` (tracks visibility of physical index instances):
     - `logical_index_id UUID NOT NULL`  -- stable id for (table_id + index_name), or explicit stored logical ID
     - `index_id UUID NOT NULL`          -- physical index instance id
     - `state SMALLINT NOT NULL`         -- 0=BUILDING, 1=ACTIVE, 2=RETIRED, 3=FAILED
@@ -177,7 +177,7 @@ See `docs/planning/plan_01_index_gc_clarifications.md` for per-index GC traversa
 
 ## Full Catalog DDL (Index version metadata)
 ```sql
-CREATE TABLE sb_index_versions (
+CREATE TABLE sys.catalog.index_versions (
   logical_index_id UUID NOT NULL,
   index_id UUID NOT NULL,
   state SMALLINT NOT NULL,
@@ -189,8 +189,8 @@ CREATE TABLE sb_index_versions (
   PRIMARY KEY (logical_index_id, index_id)
 );
 
-CREATE INDEX sb_index_versions_state_idx
-  ON sb_index_versions(logical_index_id, state);
+CREATE INDEX index_versions_state_idx
+  ON sys.catalog.index_versions(logical_index_id, state);
 ```
 ```
 
