@@ -1,9 +1,35 @@
 # Plan 04 - Parser and Compatibility - COMPLETE IMPLEMENTATION CHECKLIST
 
-**Version:** 1.0 ALPHA PREPARATION
+**Version:** 1.1 (Updated 2025-12-26)
 **Created:** 2025-12-21
-**Status:** PRE-IMPLEMENTATION - Awaiting Approval
+**Status:** ⚠️ BLOCKED - Schema/Database DDL opcodes missing
 **Requirement:** ZERO deferrals, stubs, or partial implementations
+
+---
+
+## ⚠️ CRITICAL BLOCKER (Discovered 2025-12-26)
+
+**CANNOT PROCEED UNTIL RESOLVED:**
+
+Plan 04 implementation is **BLOCKED** by missing Schema/Database DDL infrastructure:
+- ❌ CREATE/DROP SCHEMA opcodes do not exist
+- ❌ CREATE/DROP DATABASE opcodes do not exist
+- ❌ PostgreSQL/MySQL/Firebird parsers have broken/missing schema DDL
+- ❌ No executor handlers for schema/database operations
+
+**Impact:**
+- Domains are schema-scoped; cannot test without working schema creation
+- Emulated database parsers cannot create test schemas
+- PostgreSQL parser generates corrupt SBLR bytecode
+
+**Resolution Required:**
+- Plan 02B (Schema/Database DDL) must be completed first, OR
+- Minimal schema opcodes must be implemented in Plan 04 scope
+
+**See:** `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md` for full analysis
+**See:** `PLAN_04_PREREQUISITES.md` Section "Critical Blocker" for details
+
+**User Decision Required Before Implementation Can Begin**
 
 ---
 
@@ -17,6 +43,7 @@
 6. **DUAL SYNTAX SUPPORT** - When SQL Standard and Firebird conflict, implement BOTH for Firebird compatibility while allowing SQL Standard to be followed moving forward
 7. **PARSER ARCHITECTURE** - ScratchBird parser is context-aware with flexible keywords; emulated parsers (Firebird/PostgreSQL/MySQL) must match their target engine's reserved keyword lists and grammar restrictions
 8. **TEST REQUIRED** - Every feature needs corresponding test
+9. **⚠️ SCHEMA DDL DEPENDENCY** - Schema/Database DDL opcodes MUST exist before Plan 04 implementation (currently MISSING)
 
 ---
 

@@ -1,8 +1,8 @@
 # Plan 04 Prerequisites - WITH Block Infrastructure
 
-**Version:** 1.0
-**Date:** 2025-12-22
-**Status:** ANALYSIS COMPLETE - AWAITING USER REVIEW
+**Version:** 1.1
+**Date:** 2025-12-26 (Updated)
+**Status:** CRITICAL BLOCKER IDENTIFIED - AWAITING USER REVIEW
 
 ---
 
@@ -10,7 +10,55 @@
 
 This document identifies all infrastructure components that MUST exist before Plan 04 (Domain DDL) can be implemented. The WITH blocks (SECURITY, INTEGRITY, VALIDATION, QUALITY) require significant underlying infrastructure for full Alpha implementation.
 
+**CRITICAL BLOCKER DISCOVERED (2025-12-26):** Schema/Database DDL opcodes are missing. This blocks not only Plan 04 but ALL emulated database support. See "Critical Blocker" section below.
+
 **CRITICAL:** These prerequisites must be completed BEFORE Plan 04 implementation begins, or Plan 04 must be scoped to exclude WITH blocks until prerequisites are ready.
+
+---
+
+## ⚠️ CRITICAL BLOCKER: Schema/Database DDL Opcodes Missing
+
+**Discovered:** 2025-12-26
+**Severity:** BLOCKS Plan 04 AND All Emulation
+**Status:** REQUIRES PLAN_02B OR IMMEDIATE FIX
+
+### Problem
+
+Domains are **schema-scoped**, but the SBLR opcodes for CREATE/DROP SCHEMA and CREATE/DROP DATABASE do not exist. The emulation architecture depends on CREATE DATABASE mapping to schema creation under the emulation tree (e.g., `emulation.postgres.mydb`), but:
+
+- ❌ `EXT_CREATE_SCHEMA` opcode does NOT exist
+- ❌ `EXT_DROP_SCHEMA` opcode does NOT exist
+- ❌ `EXT_CREATE_DATABASE` opcode does NOT exist
+- ❌ `EXT_DROP_DATABASE` opcode does NOT exist
+- ❌ PostgreSQL `parseCreateDatabase()` uses wrong placeholder opcode
+- ❌ PostgreSQL `parseCreateSchema()` emits NO opcode (corrupt bytecode)
+- ❌ MySQL `parseCreateDatabase()` is just a TODO stub
+- ❌ Firebird has no CREATE DATABASE implementation
+- ❌ No executor handlers for schema/database DDL
+
+### Impact on Plan 04
+
+1. **Cannot test domains** - Domains are schema-scoped; need working schema creation
+2. **Cannot test emulated parsers** - PostgreSQL/MySQL/Firebird parsers can't create schemas for domain testing
+3. **Invalid bytecode** - Current PostgreSQL parser generates corrupt SBLR
+
+### Dependencies
+
+**Plan 04 now depends on:**
+- ✅ Plan 03B (WITH block infrastructure) - 138-192 hours
+- ⚠️ **Plan 02B (Schema/Database DDL)** - 60-80 hours **[NEW BLOCKER]**
+
+**Total prerequisite work:** 198-272 hours before Plan 04 can proceed
+
+### Resolution Options
+
+**Option A:** Wait for Plan 02B completion (other AI working on it)
+**Option B:** Create minimal schema opcodes in Plan 04 scope (violates separation of concerns)
+**Option C:** User provides interim fix for schema creation
+
+**Detailed Analysis:** See `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md`
+
+**User Decision Required:** How should Plan 04 proceed given this blocker?
 
 ---
 
