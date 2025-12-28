@@ -17,7 +17,7 @@ auto CatalogManager::createConstraint(const ConstraintInfo& constraint,
                                      ID& constraint_id_out,
                                      ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(constraints_cache_mutex_);
+    std::scoped_lock lock(mutex_, constraints_cache_mutex_);
 
     // Generate constraint ID if not provided
     if (constraint.constraint_id == ID{})
@@ -49,6 +49,26 @@ auto CatalogManager::createConstraint(const ConstraintInfo& constraint,
     constraints_cache_[constraint_id_out] = new_constraint;
     table_constraints_.insert({constraint.table_id, constraint_id_out});
     constraint_name_lookup_[name_key] = constraint_id_out;
+
+    Status persist_status = writeConstraintRecord(new_constraint, ctx);
+    if (persist_status != Status::OK)
+    {
+        constraints_cache_.erase(constraint_id_out);
+        auto range = table_constraints_.equal_range(constraint.table_id);
+        for (auto it = range.first; it != range.second; )
+        {
+            if (it->second == constraint_id_out)
+            {
+                it = table_constraints_.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+        constraint_name_lookup_.erase(name_key);
+        return persist_status;
+    }
 
     DEBUG_LOG_DB("Created constraint " << new_constraint.constraint_name
                  << " (ID: " << constraint_id_out.toString() << ")");
@@ -183,7 +203,7 @@ auto CatalogManager::updateConstraint(const ID& constraint_id,
                                      const ConstraintInfo& updated_constraint,
                                      ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(constraints_cache_mutex_);
+    std::scoped_lock lock(mutex_, constraints_cache_mutex_);
 
     auto it = constraints_cache_.find(constraint_id);
     if (it == constraints_cache_.end())
@@ -192,13 +212,45 @@ auto CatalogManager::updateConstraint(const ID& constraint_id,
         return Status::NOT_FOUND;
     }
 
+    ConstraintInfo old_info = it->second;
+    auto old_key = std::make_pair(old_info.table_id, old_info.constraint_name);
+
     // Update constraint (preserve ID and creation time)
     ConstraintInfo new_info = updated_constraint;
     new_info.constraint_id = constraint_id;
     new_info.created_time = it->second.created_time;
 
+    bool name_changed = false;
+    std::pair<ID, std::string> new_key;
+    if (!IdentifierUtils::namesMatch(new_info.constraint_name, false /*search_delimited*/,
+                                     old_info.constraint_name, false /*stored_delimited*/))
+    {
+        new_key = std::make_pair(new_info.table_id, new_info.constraint_name);
+        auto name_it = constraint_name_lookup_.find(new_key);
+        if (name_it != constraint_name_lookup_.end() && name_it->second != constraint_id)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::DUPLICATE_OBJECT, "Constraint name already exists on table");
+            return Status::DUPLICATE_OBJECT;
+        }
+        constraint_name_lookup_.erase(old_key);
+        constraint_name_lookup_[new_key] = constraint_id;
+        name_changed = true;
+    }
+
     // Update cache
     it->second = new_info;
+
+    Status persist_status = updateConstraintRecord(new_info, ctx);
+    if (persist_status != Status::OK)
+    {
+        it->second = old_info;
+        if (name_changed)
+        {
+            constraint_name_lookup_.erase(new_key);
+            constraint_name_lookup_[old_key] = constraint_id;
+        }
+        return persist_status;
+    }
 
     DEBUG_LOG_DB("Updated constraint " << new_info.constraint_name);
 
@@ -259,6 +311,12 @@ auto CatalogManager::dropConstraint(const ID& constraint_id,
         }
     }
 
+    Status persist_status = deleteConstraintRecord(constraint_id, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
+
     // Remove from cache
     constraints_cache_.erase(it);
 
@@ -272,7 +330,7 @@ auto CatalogManager::setConstraintEnabled(const ID& constraint_id,
                                          bool enabled,
                                          ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(constraints_cache_mutex_);
+    std::scoped_lock lock(mutex_, constraints_cache_mutex_);
 
     auto it = constraints_cache_.find(constraint_id);
     if (it == constraints_cache_.end())
@@ -281,7 +339,15 @@ auto CatalogManager::setConstraintEnabled(const ID& constraint_id,
         return Status::NOT_FOUND;
     }
 
+    ConstraintInfo old_info = it->second;
     it->second.is_enabled = enabled;
+
+    Status persist_status = updateConstraintRecord(it->second, ctx);
+    if (persist_status != Status::OK)
+    {
+        it->second = old_info;
+        return persist_status;
+    }
 
     DEBUG_LOG_DB((enabled ? "Enabled" : "Disabled") << " constraint "
                  << it->second.constraint_name);
@@ -295,7 +361,7 @@ auto CatalogManager::validateConstraint(const ID& constraint_id,
                                        std::string& violation_message_out,
                                        ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(constraints_cache_mutex_);
+    std::scoped_lock lock(mutex_, constraints_cache_mutex_);
 
     auto it = constraints_cache_.find(constraint_id);
     if (it == constraints_cache_.end())
@@ -304,6 +370,7 @@ auto CatalogManager::validateConstraint(const ID& constraint_id,
         return Status::NOT_FOUND;
     }
 
+    ConstraintInfo old_info = it->second;
     ConstraintInfo& constraint = it->second;
 
     // Phase 3 Enhancement: Implement actual validation logic by scanning table rows
@@ -315,6 +382,13 @@ auto CatalogManager::validateConstraint(const ID& constraint_id,
     {
         constraint.is_validated = true;
         constraint.validated_time = static_cast<uint64_t>(std::time(nullptr));
+    }
+
+    Status persist_status = updateConstraintRecord(constraint, ctx);
+    if (persist_status != Status::OK)
+    {
+        it->second = old_info;
+        return persist_status;
     }
 
     return Status::OK;

@@ -6,6 +6,17 @@ Complete metadata visibility, SHOW commands, catalog tables for core object type
 ## Priority
 P1 (admin usability and tooling).
 
+## Status (Current)
+Completed:
+- SHOW TRIGGER/PROCEDURE/FUNCTION/VIEW/COMMENTS/DEPENDENCIES/PACKAGE now pull from catalog caches and honor body redaction when source is missing.
+- SHOW outputs now include object comments where available.
+- SHOW DOMAIN/GRANTS/CHECKS now use catalog lookups (constraints/permissions/domain manager) with redaction hooks.
+
+Partial / Outstanding:
+- Metadata visibility policy hooks (redaction levels, restricted enumeration) are still stubbed beyond basic body redaction.
+- Decision gate: finalize metadata redaction/visibility rules after Plan 03 role/priv enforcement is complete.
+- Emulated catalog views and runtime monitoring views are still pending.
+
 ## References
 - `docs/specifications/SYSTEM_CATALOG_STRUCTURE.md`
 - `docs/specifications/DDL_TRIGGERS.md`

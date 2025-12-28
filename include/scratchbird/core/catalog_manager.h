@@ -6,6 +6,7 @@
 #include <memory>
 #include <unordered_map>
 #include <mutex>
+#include <map>
 #include <optional>
 #include <cstring>  // for std::memcpy
 #include "scratchbird/core/status.h"
@@ -24,6 +25,7 @@ namespace scratchbird::core
     class PageManager;
     class TIDResolver;
     class ToastManager;
+    struct DomainInfo;
 
     using ID = UuidV7Bytes;
 
@@ -110,6 +112,21 @@ namespace scratchbird::core
             return toUpper(search_name) == toUpper(stored_name);
         }
     }
+
+    // Schema/object path resolution (core)
+    enum class PathType : uint8_t
+    {
+        UNQUALIFIED = 0,
+        CURRENT = 1,
+        PARENT = 2,
+        ABSOLUTE = 3
+    };
+
+    struct ObjectPath
+    {
+        PathType type = PathType::UNQUALIFIED;
+        std::vector<std::string> components;
+    };
 
     /**
      * SecurityConstants - Well-known security object UUIDs
@@ -437,11 +454,17 @@ namespace scratchbird::core
             ID sequence_id;
             ID schema_id;  // WP-2 CAT-M1: Track schema for cascade drop
             std::string name;  // Sequence name (for cleanup in drop)
+            bool name_is_delimited = false;  // True if name was double-quoted (case-sensitive)
+            ID owner_id;  // Owner UUID reference
             std::atomic<int64_t> current_value;
             int64_t increment_by;
             int64_t min_value;
             int64_t max_value;
+            int64_t start_value = 0;
+            int64_t cache_size = 1;
             bool cycle;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
             std::mutex config_mutex;  // Protect ALTER SEQUENCE changes
         };
 
@@ -552,6 +575,15 @@ namespace scratchbird::core
             LSM = 11          // LSM-Tree (Log-Structured Merge-Tree)
         };
 
+        // Plan 01 Task E: Index states for shadow rebuild + versioning
+        enum class IndexState : uint8_t
+        {
+            BUILDING = 0,   // Index is being built (not yet visible to queries)
+            ACTIVE = 1,     // Index is active and available for use
+            RETIRED = 2,    // Index is retired (old version after rebuild)
+            FAILED = 3      // Index build failed
+        };
+
         // Index information
         struct IndexInfo
         {
@@ -588,6 +620,14 @@ namespace scratchbird::core
 
             // Phase 2: Dependency tracking ID for cleanup
             ID dependency_id;                      // Dependency: index → table (AUTO)
+
+            // Plan 01 Task E: Shadow index rebuild + versioning
+            ID logical_index_id;                   // Stable ID across rebuilds (derived from table_id + index_name)
+            uint8_t state = 1;                     // 0=BUILDING, 1=ACTIVE, 2=RETIRED, 3=FAILED (default ACTIVE)
+            uint64_t valid_from_xid = 0;           // XID when new txns can use this index (0 = immediately)
+            uint64_t retired_xid = 0;              // XID after which no new txns use this index (0 = not retired)
+            uint64_t build_started_time = 0;
+            uint64_t build_completed_time = 0;
         };
 
         // Object types for dependencies and comments (Phase 1.4-1.5 - Catalog Corrections)
@@ -989,6 +1029,77 @@ namespace scratchbird::core
             std::string expiration_reason;   // Reason for expiration (idle/lifetime)
         };
 
+        // Dormant transaction tracking (Track 3.2 - Reattach + GC)
+        enum class DormantStatementType : uint8_t
+        {
+            UNKNOWN = 0,
+            DDL = 1,
+            DML = 2,
+            OTHER = 3
+        };
+
+        enum class DormantStatementStatus : uint8_t
+        {
+            UNKNOWN = 0,
+            IN_PROGRESS = 1,
+            COMPLETED = 2,
+            FAILED = 3
+        };
+
+        enum class DormantTransactionState : uint8_t
+        {
+            DORMANT = 0,
+            REATTACHED = 1,
+            ROLLED_BACK = 2,
+            EXPIRED = 3
+        };
+
+        enum class DormantAccessMode : uint8_t
+        {
+            READ_WRITE = 0,
+            READ_ONLY = 1
+        };
+
+        enum class DormantWaitMode : uint8_t
+        {
+            WAIT = 0,
+            NO_WAIT = 1
+        };
+
+        struct DormantTransactionInfo
+        {
+            ID dormant_id;                 // Reattach token (UUID v7)
+            ID attachment_id;
+            uint32_t proc_id = 0;          // ProcArray slot
+            uint64_t txn_id = 0;           // MGA transaction ID
+            ID session_id;                 // Protocol session UUID
+            ID user_id;
+            ID session_user_id;
+            ID role_id;
+            uint8_t isolation_level = 0;   // core::IsolationLevel enum value
+            DormantAccessMode access_mode = DormantAccessMode::READ_WRITE;
+            DormantWaitMode wait_mode = DormantWaitMode::WAIT;
+            bool autocommit_mode = false;
+            uint32_t lock_timeout_seconds = 0;
+            ID current_schema_id;
+            std::string session_settings;  // JSON string (search_path, dialect, parser version, etc.)
+            std::string last_statement_text;
+            uint64_t last_statement_hash = 0;
+            DormantStatementType last_statement_type = DormantStatementType::UNKNOWN;
+            DormantStatementStatus last_statement_status = DormantStatementStatus::UNKNOWN;
+            DormantTransactionState state = DormantTransactionState::DORMANT;
+            uint64_t start_time = 0;
+            uint64_t last_activity_time = 0;
+            uint64_t dormant_since = 0;
+            uint64_t lease_expires_at = 0;
+            uint64_t last_statement_time = 0;
+            int64_t last_rows_affected = 0;
+            uint32_t last_error_code = 0;
+            std::string last_sqlstate;     // 5-char SQLSTATE if available
+            ID server_instance_id;
+            bool is_valid = true;
+        };
+
         // Procedure types (Phase 3 - Stored Code Tables)
         enum class ProcedureType : uint8_t
         {
@@ -1046,19 +1157,7 @@ namespace scratchbird::core
             std::string default_value;   // Stored in TOAST on disk
         };
 
-        // Domain information (Phase 3 - Stored Code Tables)
-        struct DomainInfo
-        {
-            ID domain_id;
-            ID schema_id;
-            std::string domain_name;
-            ID owner_id;
-            std::string base_type;       // Stored in TOAST on disk
-            std::string check_expr;      // Stored in TOAST on disk
-            bool not_null = false;
-            uint64_t created_time = 0;
-            uint64_t last_modified_time = 0;
-        };
+        // Domain information removed - use DomainManager::DomainInfo instead
 
         // UDR information (Phase 3 - Stored Code Tables)
         struct UDRInfo
@@ -1450,6 +1549,30 @@ namespace scratchbird::core
         // DDL Modifications (ALPHA Phase 1)
         auto dropIndex(const ID &index_id, ErrorContext *ctx = nullptr) -> Status;
 
+        // ===== Plan 01 Task E: Shadow index rebuild + versioning =====
+
+        // Generate stable logical index ID from table_id + index_name
+        auto generateLogicalIndexId(const ID &table_id, const std::string &index_name) -> ID;
+
+        // Get the visible index version for a transaction XID
+        // Returns the index_id of the version that should be used by txn_xid
+        auto getVisibleIndexVersion(const ID &table_id, const std::string &index_name,
+                                     uint64_t txn_xid, IndexInfo &info_out,
+                                     ErrorContext *ctx = nullptr) -> Status;
+
+        // Create a shadow index for rebuild (BUILDING state)
+        // Returns the new shadow index ID
+        auto createShadowIndex(const ID &existing_index_id, ID &shadow_index_id_out,
+                               ErrorContext *ctx = nullptr) -> Status;
+
+        // Promote shadow index to ACTIVE and retire the old version
+        auto promoteShadowIndex(const ID &shadow_index_id, ErrorContext *ctx = nullptr) -> Status;
+
+        // Garbage collect retired index versions (safe to delete)
+        // Returns number of indexes GC'd
+        auto gcRetiredIndexes(uint64_t *indexes_removed_out = nullptr,
+                              ErrorContext *ctx = nullptr) -> Status;
+
         // ALTER TABLE operations (ALPHA Phase 1)
         auto addColumn(const ID &table_id, const ColumnInfo &column_info,
                        ErrorContext *ctx = nullptr) -> Status;
@@ -1460,6 +1583,12 @@ namespace scratchbird::core
         auto alterColumnType(const ID &table_id, const std::string &column_name,
                              DataType new_type, uint32_t new_precision, uint32_t new_scale,
                              ErrorContext *ctx = nullptr) -> Status;
+        auto renameObject(ObjectType object_type, const ID& object_id,
+                          const std::string& new_name, ErrorContext* ctx = nullptr) -> Status;
+        auto moveObject(ObjectType object_type, const ID& object_id,
+                        const ID& target_schema_id,
+                        const std::optional<std::string>& new_name = std::nullopt,
+                        ErrorContext* ctx = nullptr) -> Status;
 
         // TRUNCATE TABLE operations (ALPHA Phase 1 - final DDL operation)
         // Async truncate: Starts background job, returns immediately with job ID
@@ -1501,6 +1630,8 @@ namespace scratchbird::core
         auto sequenceSetVal(const ID& sequence_id, int64_t value, bool is_called,
                             ErrorContext* ctx = nullptr) -> Status;
 
+        auto getSequenceIdByName(const ID& schema_id, const std::string& name, ID& id_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
         auto getSequenceIdByName(const std::string& name, ID& id_out,
                                  ErrorContext* ctx = nullptr) -> Status;
 
@@ -1577,6 +1708,9 @@ namespace scratchbird::core
         auto hasDependents(const ID& object_id, bool& has_dependents,
                           ErrorContext* ctx = nullptr) -> Status;
 
+        auto listDependencies(std::vector<DependencyInfo>& dependencies_out,
+                              ErrorContext* ctx = nullptr) -> Status;
+
         // Replace dependency set for a dependent object. Removes obsolete links and adds the provided set.
         auto replaceDependencies(const ID& dependent_object_id,
                                  ObjectType dependent_type,
@@ -1595,39 +1729,24 @@ namespace scratchbird::core
         auto getComment(const ID& object_id, std::string& comment_out,
                        ErrorContext* ctx = nullptr) -> Status;
 
+        auto listComments(std::vector<CommentInfo>& comments_out,
+                         ErrorContext* ctx = nullptr) -> Status;
+
         auto deleteComment(const ID& object_id,
                           ErrorContext* ctx = nullptr) -> Status;
 
         // ========================================================================
-        // Domain Operations (Phase A CRUD - Catalog Cleanup)
+        // Domain dependency checking (Domain CRUD now in DomainManager)
         // ========================================================================
-
-        auto createDomain(const ID& schema_id, const std::string& domain_name,
-                          const std::string& base_type, const std::string& check_expr,
-                          bool not_null, ID& domain_id_out,
-                          ErrorContext* ctx = nullptr) -> Status;
-
-        auto getDomain(const ID& domain_id, DomainInfo& info_out,
-                       ErrorContext* ctx = nullptr) -> Status;
-
-        auto getDomainByName(const ID& schema_id, const std::string& domain_name,
-                             DomainInfo& info_out, ErrorContext* ctx = nullptr) -> Status;
-
-        auto updateDomain(const ID& domain_id,
-                          const std::optional<std::string>& new_check_expr,
-                          const std::optional<bool>& new_not_null,
-                          ErrorContext* ctx = nullptr) -> Status;
-
-        auto dropDomain(const ID& domain_id, bool cascade = false,
-                        ErrorContext* ctx = nullptr) -> Status;
-
-        auto listDomains(const ID& schema_id, std::vector<DomainInfo>& domains_out,
-                         ErrorContext* ctx = nullptr) -> Status;
 
         // WP-2 CAT-M7: Find columns using a specific domain for DROP DOMAIN dependency check
         auto findColumnsByDomain(const ID& domain_id,
                                  std::vector<std::pair<ID, std::string>>& table_column_out,
                                  ErrorContext* ctx = nullptr) -> Status;
+
+        // Domain lookup wrappers (delegate to DomainManager)
+        auto getDomainByName(const ID& schema_id, const std::string& domain_name,
+                             DomainInfo& info_out, ErrorContext* ctx = nullptr) -> Status;
 
         // ========================================================================
         // UDR Operations (Phase A CRUD - Catalog Cleanup)
@@ -1810,8 +1929,64 @@ namespace scratchbird::core
                                 ErrorContext* ctx = nullptr) -> Status;
 
         // Schema path resolution (Phase B - Schema Architecture)
-        auto resolveObjectPath(const std::string& path, ID& object_id_out,
+        struct ResolvedObject
+        {
+            ID object_id;
+            ObjectType object_type;
+            ID schema_id;           // zero for global objects
+            ID parent_object_id;    // table_id for table-scoped objects
+            std::string object_name;
+            std::string schema_path;
+            std::string full_path;
+            std::string dialect_tag;  // domains only
+            std::string compat_name;  // domains only
+        };
+
+        struct ResolveOptions
+        {
+            bool allow_ambiguity = false;
+            bool follow_synonyms = false;
+            std::string dialect_tag = "scratchbird";
+        };
+
+        struct ResolveFilter
+        {
+            ObjectType object_type = ObjectType::UNKNOWN;
+            bool filter_schema_id = false;
+            ID schema_id;
+            bool filter_parent_object_id = false;
+            ID parent_object_id;
+            std::string schema_path_prefix;
+            std::string name_prefix;
+        };
+
+        struct ResolverKey
+        {
+            ID scope_id;
+            ObjectType object_type;
+            std::string normalized_name;
+            bool name_is_delimited = false;
+
+            bool operator<(const ResolverKey& other) const
+            {
+                if (scope_id != other.scope_id) return scope_id < other.scope_id;
+                if (object_type != other.object_type) return object_type < other.object_type;
+                if (name_is_delimited != other.name_is_delimited)
+                {
+                    return name_is_delimited < other.name_is_delimited;
+                }
+                return normalized_name < other.normalized_name;
+            }
+        };
+
+        auto resolveObjectPath(const ObjectPath& path, ObjectType expected_type,
+                               const ResolveOptions& opts, ID& object_id_out,
                                ObjectType& type_out, ErrorContext* ctx = nullptr) -> Status;
+        auto resolveObjectId(const ID& object_id, ResolvedObject& out,
+                             ErrorContext* ctx = nullptr) -> Status;
+        auto listResolvedObjects(const ResolveFilter& filter,
+                                 std::vector<ResolvedObject>& out,
+                                 ErrorContext* ctx = nullptr) -> Status;
         auto getSchemaPath(const ID& schema_id, std::string& path_out,
                            ErrorContext* ctx = nullptr) -> Status;
         auto createSchemaPath(const std::string& path, SchemaType type,
@@ -2167,6 +2342,22 @@ namespace scratchbird::core
         auto getSessionTimeoutConfig(SessionTimeoutConfig& config_out,
                                     ErrorContext* ctx = nullptr) -> Status;
 
+        // Dormant transaction persistence (Track 3.2)
+        auto createDormantTransaction(DormantTransactionInfo& info,
+                                     ErrorContext* ctx = nullptr) -> Status;
+
+        auto getDormantTransaction(const ID& dormant_id, DormantTransactionInfo& info_out,
+                                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto updateDormantTransaction(const DormantTransactionInfo& info,
+                                     ErrorContext* ctx = nullptr) -> Status;
+
+        auto deleteDormantTransaction(const ID& dormant_id,
+                                     ErrorContext* ctx = nullptr) -> Status;
+
+        auto listDormantTransactions(std::vector<DormantTransactionInfo>& dormants_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
+
         // Compute transitive closure of roles (including roles granted to roles)
         auto getEffectiveRoles(const ID& user_id, std::vector<ID>& roles_out,
                               ErrorContext* ctx = nullptr) -> Status;
@@ -2201,6 +2392,8 @@ namespace scratchbird::core
 
         auto getUserPermissions(const ID& user_id, std::vector<PermissionInfo>& permissions_out,
                                ErrorContext* ctx = nullptr) -> Status;
+        auto listPermissions(std::vector<PermissionInfo>& permissions_out,
+                             ErrorContext* ctx = nullptr) -> Status;
 
         // Security Phase 3.3: Column-level permission operations
         auto grantColumnPermission(const ID& table_id, const std::string& column_name,
@@ -3064,7 +3257,18 @@ namespace scratchbird::core
         auto storeStringInToast(const std::string& str, uint64_t xmin,
                                uint32_t& oid_out, ErrorContext* ctx = nullptr) -> Status;
 
+        // Plan 01 Task B: Heap page enumeration (now public)
+        // Enumerates all heap pages belonging to a table
+        // Filters by table_id field in PageHeader (ON_DISK_FORMAT.md v1.4.0)
+        // Returns Status::OK on success, error status otherwise
+        auto enumerateTablePages(const ID &table_id,
+                                std::vector<GPID> &pages_out,
+                                ErrorContext *ctx = nullptr) -> Status;
+
     private:
+        // Resolver cache rebuild (Plan 02 - UUID resolution)
+        auto rebuildResolverCache(ErrorContext* ctx = nullptr) -> Status;
+
         // Internal helper functions (assume mutex_ is already held)
         auto getColumnInternal(const ID &table_id, const std::string &column_name,
                                ColumnInfo &info, ErrorContext *ctx) -> Status;
@@ -3118,12 +3322,14 @@ namespace scratchbird::core
         // Sequence cache (ALPHA Phase 1 - Sequences)
         std::unordered_map<ID, std::shared_ptr<SequenceState>> sequence_cache_;
         std::mutex sequence_cache_mutex_;
-        std::unordered_map<std::string, ID> sequence_name_to_id_;  // name -> sequence_id lookup
+        std::unordered_map<std::pair<ID, std::string>, ID, PairHash<ID, std::string>>
+            sequence_name_to_id_;  // (schema_id, normalized_name) -> sequence_id lookup
         std::mutex sequence_name_mutex_;  // Protect name map
 
         // View cache (ALPHA Phase 1 - Views)
         std::unordered_map<ID, ViewInfo> view_cache_;
-        std::unordered_map<std::string, ID> view_name_to_id_;
+        std::unordered_map<std::pair<ID, std::string>, ID, PairHash<ID, std::string>>
+            view_name_to_id_;  // (schema_id, normalized_name) -> view_id lookup
         std::mutex view_cache_mutex_;
 
         // Dependency cache (Phase 5.2 - Dependencies table)
@@ -3222,14 +3428,6 @@ namespace scratchbird::core
                             const std::unordered_map<uint64_t, uint64_t> &tid_mapping,
                             ErrorContext *ctx = nullptr) -> Status;
 
-        // Heap page enumeration helper (Phase 5 Task 5.1.1)
-        // Enumerates all heap pages belonging to a table for migration
-        // Uses PageManager::getAllocatedPages() to get candidate pages, then filters
-        // for pages with matching table_id and PageType::HEAP_PAGE
-        // Returns Status::OK on success, error status otherwise
-        auto enumerateTablePages(const ID &table_id,
-                                std::vector<GPID> &pages_out,
-                                ErrorContext *ctx = nullptr) -> Status;
 
         // Page copying with TID remapping helper (Phase 5 Task 5.1.2)
         // Copies a heap page from source to target buffer, updating all TID references
@@ -3267,6 +3465,14 @@ namespace scratchbird::core
         std::unordered_map<ID, std::vector<ColumnInfo>> column_cache_;
         std::unordered_map<ID, IndexInfo> index_cache_;
         std::unordered_map<uint16_t, TablespaceInfo> tablespace_cache_;  // keyed by tablespace_id
+
+        // Resolver cache (Plan 02 - UUID resolution)
+        std::unordered_map<ID, ResolvedObject, IDHash> resolver_by_id_;
+        std::map<ResolverKey, ID> resolver_by_name_;
+        std::unordered_map<std::pair<ID, std::string>, ID, PairHash<ID, std::string>>
+            schema_name_lookup_;
+        std::unordered_map<ID, ID, IDHash> schema_parent_lookup_;
+        std::mutex resolver_cache_mutex_;
 
         // LSM Integration Phase 3.3: Index object cache
         // Maps index_id -> (index_ptr, index_type) for actual index objects
@@ -3359,6 +3565,7 @@ namespace scratchbird::core
         uint32_t udr_engines_table_page_ = 0;       // UDR engines (Phase B - UDR Plugin)
         uint32_t udr_modules_table_page_ = 0;       // UDR modules (Phase B - UDR Plugin)
         uint32_t migration_history_table_page_ = 0; // Migration history (WP-2 CAT-L2)
+        uint32_t dormant_transactions_table_page_ = 0; // Dormant transactions (Track 3.2)
 
         // Internal methods
         auto writeCatalogRoot(ErrorContext *ctx) -> Status;
@@ -3666,6 +3873,61 @@ namespace scratchbird::core
         auto writeCommentRecord(const CommentInfo &comment, ErrorContext *ctx) -> Status;
         auto deleteCommentRecord(const ID &object_id, ErrorContext *ctx) -> Status;
         auto readCommentRecords(ErrorContext *ctx) -> Status;
+
+        // Object persistence for sequences/views/triggers/procedures
+        auto writeSequenceRecord(const SequenceState &state, ErrorContext *ctx) -> Status;
+        auto readSequenceRecords(ErrorContext *ctx) -> Status;
+        auto writeViewRecord(const ViewInfo &view, ErrorContext *ctx) -> Status;
+        auto updateViewRecord(const ViewInfo &view, ErrorContext *ctx) -> Status;
+        auto readViewRecords(ErrorContext *ctx) -> Status;
+        auto writeTriggerRecord(const TriggerInfo &trigger, ErrorContext *ctx) -> Status;
+        auto writeDatabaseTriggerRecord(const DatabaseTriggerInfo &trigger, ErrorContext *ctx) -> Status;
+        auto readTriggerRecords(ErrorContext *ctx) -> Status;
+        auto writeProcedureRecord(const ProcedureInfo &info, ErrorContext *ctx) -> Status;
+        auto updateProcedureRecord(const ProcedureInfo &info, ErrorContext *ctx) -> Status;
+        auto writeFunctionRecord(const FunctionInfo &info, ErrorContext *ctx) -> Status;
+        auto updateFunctionRecord(const FunctionInfo &info, ErrorContext *ctx) -> Status;
+        auto writeProcedureParameterRecords(const ID &procedure_id,
+                                             const std::vector<ParameterInfo> &params,
+                                             ErrorContext *ctx) -> Status;
+        auto deleteProcedureParameterRecords(const ID &procedure_id, ErrorContext *ctx) -> Status;
+        auto readProcedureRecords(ErrorContext *ctx) -> Status;
+        auto readProcedureParameterRecords(ErrorContext *ctx) -> Status;
+
+        // Phase B: Synonym and foreign table persistence
+        auto writeSynonymRecord(const SynonymInfo &synonym, ErrorContext *ctx) -> Status;
+        auto updateSynonymRecord(const SynonymInfo &synonym, ErrorContext *ctx) -> Status;
+        auto readSynonymRecords(ErrorContext *ctx) -> Status;
+        auto writeForeignTableRecord(const ForeignTableInfo &table, ErrorContext *ctx) -> Status;
+        auto updateForeignTableRecord(const ForeignTableInfo &table, ErrorContext *ctx) -> Status;
+        auto readForeignTableRecords(ErrorContext *ctx) -> Status;
+
+        // P1-9: Constraint persistence
+        auto writeConstraintRecord(const ConstraintInfo &constraint, ErrorContext *ctx) -> Status;
+        auto updateConstraintRecord(const ConstraintInfo &constraint, ErrorContext *ctx) -> Status;
+        auto deleteConstraintRecord(const ID &constraint_id, ErrorContext *ctx) -> Status;
+        auto readConstraintRecords(ErrorContext *ctx) -> Status;
+
+        // Phase B: Foreign server/user mapping persistence
+        auto writeForeignServerRecord(const ForeignServerInfo &server, ErrorContext *ctx) -> Status;
+        auto updateForeignServerRecord(const ForeignServerInfo &server, ErrorContext *ctx) -> Status;
+        auto readForeignServerRecords(ErrorContext *ctx) -> Status;
+        auto writeUserMappingRecord(const UserMappingInfo &mapping, ErrorContext *ctx) -> Status;
+        auto updateUserMappingRecord(const UserMappingInfo &mapping, ErrorContext *ctx) -> Status;
+        auto readUserMappingRecords(ErrorContext *ctx) -> Status;
+
+        // Phase B: Server registry persistence
+        auto writeServerRegistryRecord(const ServerRegistryInfo &server, ErrorContext *ctx) -> Status;
+        auto updateServerRegistryRecord(const ServerRegistryInfo &server, ErrorContext *ctx) -> Status;
+        auto readServerRegistryRecords(ErrorContext *ctx) -> Status;
+
+        // Phase B: UDR engine/module persistence
+        auto writeUDREngineRecord(const UDREngineInfo &engine, ErrorContext *ctx) -> Status;
+        auto updateUDREngineRecord(const UDREngineInfo &engine, ErrorContext *ctx) -> Status;
+        auto readUDREngineRecords(ErrorContext *ctx) -> Status;
+        auto writeUDRModuleRecord(const UDRModuleInfo &module, ErrorContext *ctx) -> Status;
+        auto updateUDRModuleRecord(const UDRModuleInfo &module, ErrorContext *ctx) -> Status;
+        auto readUDRModuleRecords(ErrorContext *ctx) -> Status;
 
         // Phase D: Foreign key disk persistence
         auto readForeignKeyRecords(ErrorContext *ctx) -> Status;

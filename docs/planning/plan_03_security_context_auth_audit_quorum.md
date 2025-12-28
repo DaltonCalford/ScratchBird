@@ -64,6 +64,7 @@ P0 (security baseline for server/cluster modes).
 - Implement quorum checks for security cache with configurable fail behavior.
 - Enforce role switching only at transaction boundaries with default action per user/role/group.
 - Enforce cluster-wide DOMAIN DDL privileges (CREATE/ALTER/DROP) for all domain operations.
+- Finalize metadata redaction/visibility policy once role/privilege enforcement is in place (feeds Plan 06 SHOW visibility rules).
 
 ## Required Data/Schema Changes
 - AuthKey catalog table with issuer, validity window, role/group scope, usage limits.

@@ -57,6 +57,12 @@
 ## Current Workspace State
 - Many uncommitted changes across planning/spec files and some code/tests. Do not commit without coordination (other AI is implementing Plan 01).
 - The old planning directory cleanup has already happened; new plans live in `docs/planning/`.
+- Added dormant transaction catalog scaffolding (CatalogRootPage pointer, `DormantTransactionRecord`, CatalogManager CRUD + TOAST-backed text fields). General catalog TOAST manager still pending.
+- Wired statement tracking in ServerSession/ProtocolAdapter and added Database-level dormant detach/reattach registry (keeps ProcArray/locks alive). Server restart purges dormant records from prior instances; GC/lease enforcement still pending.
+- CatalogManager now persists sequences, views, triggers, procedures/functions (including parameter records), synonyms, and foreign tables and reloads them on startup; rename/move updates are persisted for those types.
+- SHOW TRIGGER/PROCEDURE/FUNCTION/VIEW/COMMENTS/DEPENDENCIES/PACKAGE/DOMAIN/GRANTS/CHECKS read from catalog data with body redaction hooks when source text is missing.
+- Constraint + FDW/server-registry/UDR engine/module persistence is now wired (record structs, CRUD, cache load); remaining gaps are migration/backfill for older catalogs missing pages and persistence tests.
+- Redaction policy details are deferred to the security/visibility workstream; current SHOW paths only guarantee missing-body redaction where implemented.
 
 ## Next Steps for New Session
 - Keep all catalog references canonical (no `sb_` prefix in physical names).

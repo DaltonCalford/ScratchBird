@@ -1,4 +1,5 @@
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
@@ -14,6 +15,7 @@
 #include <algorithm>
 #include <sstream>  // Phase 1: Dependency error messages
 #include <cctype>
+#include <array>
 #include "scratchbird/sblr/opcodes.h"
 #include <map>      // Phase 1: Dependency grouping
 #include <chrono>  // Phase 4 Task 4.1.3: Progress tracking
@@ -37,6 +39,189 @@ std::vector<uint8_t> hexToBytesLocal(const std::string& hex_str);
 bool isReasonableSequenceName(const std::string& name);
 void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
                                    std::vector<std::string>& names_out);
+bool isZeroUuidLocal(const ID& id) {
+    for (auto b : id.bytes) {
+        if (b != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string normalizeResolverName(const std::string& name, bool name_is_delimited) {
+    return name_is_delimited ? name : IdentifierUtils::toUpper(name);
+}
+
+std::vector<std::string> splitSchemaPath(const std::string& path) {
+    std::vector<std::string> components;
+    if (path.empty()) {
+        return components;
+    }
+    size_t start = 0;
+    while (start < path.size()) {
+        size_t dot = path.find('.', start);
+        if (dot == std::string::npos) {
+            dot = path.size();
+        }
+        if (dot > start) {
+            components.emplace_back(path.substr(start, dot - start));
+        }
+        start = dot + 1;
+    }
+    return components;
+}
+
+uint32_t readUint32LE(const uint8_t* data) {
+    return static_cast<uint32_t>(data[0]) |
+           (static_cast<uint32_t>(data[1]) << 8) |
+           (static_cast<uint32_t>(data[2]) << 16) |
+           (static_cast<uint32_t>(data[3]) << 24);
+}
+
+// Binary list encoding for TOAST: [count:u32][len:u32][bytes...]...
+std::string encodeStringList(const std::vector<std::string>& items) {
+    std::string out;
+    out.resize(4);
+    sblr::writeInt32(reinterpret_cast<uint8_t*>(out.data()),
+                     static_cast<uint32_t>(items.size()));
+    for (const auto& item : items) {
+        if (item.size() > UINT32_MAX) {
+            continue;
+        }
+        size_t offset = out.size();
+        out.resize(offset + 4 + item.size());
+        sblr::writeInt32(reinterpret_cast<uint8_t*>(&out[offset]),
+                         static_cast<uint32_t>(item.size()));
+        if (!item.empty()) {
+            std::memcpy(&out[offset + 4], item.data(), item.size());
+        }
+    }
+    return out;
+}
+
+bool decodeStringList(const std::string& blob, std::vector<std::string>& out) {
+    out.clear();
+    if (blob.size() < 4) {
+        return false;
+    }
+    const uint8_t* data = reinterpret_cast<const uint8_t*>(blob.data());
+    size_t offset = 0;
+    uint32_t count = readUint32LE(data);
+    offset += 4;
+    out.reserve(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        if (offset + 4 > blob.size()) {
+            return false;
+        }
+        uint32_t len = readUint32LE(data + offset);
+        offset += 4;
+        if (offset + len > blob.size()) {
+            return false;
+        }
+        out.emplace_back(reinterpret_cast<const char*>(data + offset), len);
+        offset += len;
+    }
+    return offset == blob.size();
+}
+
+std::string encodeIdList(const std::vector<ID>& ids) {
+    std::string out;
+    out.resize(4);
+    sblr::writeInt32(reinterpret_cast<uint8_t*>(out.data()),
+                     static_cast<uint32_t>(ids.size()));
+    for (const auto& id : ids) {
+        size_t offset = out.size();
+        out.resize(offset + id.bytes.size());
+        std::memcpy(&out[offset], id.bytes.data(), id.bytes.size());
+    }
+    return out;
+}
+
+bool decodeIdList(const std::string& blob, std::vector<ID>& out) {
+    out.clear();
+    if (blob.size() < 4) {
+        return false;
+    }
+    const uint8_t* data = reinterpret_cast<const uint8_t*>(blob.data());
+    size_t offset = 0;
+    uint32_t count = readUint32LE(data);
+    offset += 4;
+    if (blob.size() < offset + (static_cast<size_t>(count) * ID{}.bytes.size())) {
+        return false;
+    }
+    out.reserve(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        ID id{};
+        std::memcpy(id.bytes.data(), data + offset, id.bytes.size());
+        offset += id.bytes.size();
+        out.push_back(id);
+    }
+    return offset == blob.size();
+}
+
+struct TypeDescriptorBlob {
+    DataType type = DataType::INT32;
+    uint32_t precision = 0;
+    uint32_t scale = 0;
+};
+
+std::string encodeTypeDescriptor(DataType type, uint32_t precision, uint32_t scale) {
+    std::string out;
+    out.resize(1 + 4 + 4);
+    out[0] = static_cast<char>(static_cast<uint8_t>(type));
+    sblr::writeInt32(reinterpret_cast<uint8_t*>(&out[1]), precision);
+    sblr::writeInt32(reinterpret_cast<uint8_t*>(&out[5]), scale);
+    return out;
+}
+
+bool decodeTypeDescriptor(const std::string& blob, TypeDescriptorBlob& out) {
+    if (blob.size() < 9) {
+        return false;
+    }
+    const uint8_t* data = reinterpret_cast<const uint8_t*>(blob.data());
+    out.type = static_cast<DataType>(data[0]);
+    out.precision = readUint32LE(data + 1);
+    out.scale = readUint32LE(data + 5);
+    return true;
+}
+
+std::pair<ID, std::string> makeSequenceNameKey(const ID& schema_id,
+                                               const std::string& name,
+                                               bool name_is_delimited) {
+    return {schema_id, normalizeResolverName(name, name_is_delimited)};
+}
+
+std::pair<ID, std::string> makeViewNameKey(const ID& schema_id,
+                                           const std::string& name,
+                                           bool name_is_delimited) {
+    return {schema_id, normalizeResolverName(name, name_is_delimited)};
+}
+
+std::pair<ID, std::string> makeSynonymNameKey(const ID& schema_id,
+                                              const std::string& name) {
+    return {schema_id, normalizeResolverName(name, false)};
+}
+
+std::pair<ID, std::string> makeForeignTableNameKey(const ID& schema_id,
+                                                   const std::string& name) {
+    return {schema_id, normalizeResolverName(name, false)};
+}
+
+std::string makeForeignServerNameKey(const std::string& name) {
+    return normalizeResolverName(name, false);
+}
+
+std::string makeServerRegistryNameKey(const std::string& name) {
+    return normalizeResolverName(name, false);
+}
+
+std::string makeUDREngineNameKey(const std::string& name) {
+    return normalizeResolverName(name, false);
+}
+
+std::string makeUDRModuleNameKey(const std::string& name) {
+    return normalizeResolverName(name, false);
+}
 }
 
 // Catalog page structures
@@ -107,7 +292,10 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         // WP-2 CAT-L2: Migration history
         uint32_t migration_history_page;  // Page containing migration history table
 
-        uint8_t reserved[3856];       // Padding for 4KB page (240 bytes used)
+        // Track 3.2: Dormant transactions
+        uint32_t dormant_transactions_page; // Page containing dormant transactions table
+
+        uint8_t reserved[3852];       // Padding for 4KB page (244 bytes used)
     };
 
     // Schema record on disk
@@ -224,7 +412,15 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         uint32_t index_params_oid; // TOAST reference for index parameters (HNSW config, etc.) - IMPLEMENTED
         uint64_t created_time;
         uint32_t is_valid;
-        uint32_t padding;          // Alignment
+
+        // Plan 01 Task E: Shadow index rebuild + versioning
+        ID logical_index_id;       // Stable ID across rebuilds (table_id + index_name hash)
+        uint8_t state;             // 0=BUILDING, 1=ACTIVE, 2=RETIRED, 3=FAILED
+        uint8_t padding1[7];       // Alignment
+        uint64_t valid_from_xid;   // XID when new txns can use this index
+        uint64_t retired_xid;      // XID after which no new txns use this index (0 = not retired)
+        uint64_t build_started_time;
+        uint64_t build_completed_time;
     };
 
     // Timezone record on disk
@@ -324,8 +520,8 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         uint32_t padding2;            // Alignment
     };
 
-    // Constraint types
-    enum class ConstraintType : uint8_t
+    // Constraint types (file-local to avoid conflict with DomainManager::ConstraintType)
+    enum class CatalogConstraintType : uint8_t
     {
         PRIMARY_KEY = 0, // Primary key constraint
         FOREIGN_KEY = 1, // Foreign key constraint
@@ -346,14 +542,23 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         uint8_t constraint_type;    // ConstraintType enum
         uint8_t is_deferrable;      // Can be deferred to end of transaction
         uint8_t initially_deferred; // Initially deferred or immediate
-        uint8_t reserved_flags;
-        uint16_t column_count;  // Number of columns involved
-        ID column_ids[16];      // Columns involved in constraint (max 16)
-        ID referenced_table_id; // For foreign keys
+        uint8_t is_enabled;         // Enabled flag
+        uint8_t is_validated;       // Validated flag
+        uint8_t is_system_generated; // System-generated name flag
+        uint8_t on_delete;          // FKAction enum
+        uint8_t on_update;          // FKAction enum
+        uint8_t match_type;         // FKMatchType enum
+        uint16_t column_count;      // Number of columns involved
+        ID column_ids[16];          // Columns involved in constraint (max 16)
+        ID referenced_table_id;     // For foreign keys
         uint16_t referenced_column_count;
+        uint16_t reserved;
         ID referenced_column_ids[16]; // Referenced columns for FK
-        uint32_t check_expr_oid;      // TOAST reference for check expression - IMPLEMENTED
+        uint32_t check_expr_oid;       // TOAST reference for check expression
+        uint32_t exclusion_operator_oid; // TOAST reference for exclusion operator
+        uint32_t index_method_oid;      // TOAST reference for exclusion index method
         uint64_t created_time;
+        uint64_t validated_time;
         uint32_t is_valid;
         uint32_t padding;
     };
@@ -369,10 +574,13 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         int64_t increment_by;
         int64_t min_value;
         int64_t max_value;
+        int64_t start_value;
         int64_t cache_size;
-        uint8_t cycle;       // 1 if cycle, 0 if no cycle
-        uint8_t reserved[7]; // Alignment
+        uint8_t cycle;             // 1 if cycle, 0 if no cycle
+        uint8_t name_is_delimited; // 1 if quoted identifier
+        uint8_t reserved[6];       // Alignment
         uint64_t created_time;
+        uint64_t last_modified_time;
         uint32_t is_valid;
         uint32_t padding;
     };
@@ -384,10 +592,20 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         ID schema_id;
         char view_name[512];     // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
         ID owner_id;             // Owner UUID reference
+        ID materialized_table_id; // Physical table backing materialized view
+        ID change_log_table_id;  // Change log table for fast refresh (0 if none)
         uint32_t definition_oid; // TOAST reference for view definition SQL - IMPLEMENTED
+        uint32_t columns_oid;    // TOAST reference for explicit column list
+        uint32_t base_table_ids_oid; // TOAST reference for base table IDs (MV)
+        uint8_t name_is_delimited; // 1 if quoted identifier
+        uint8_t check_option;    // 1 if WITH CHECK OPTION
         uint8_t is_materialized; // 1 if materialized view
-        uint8_t reserved[3];
+        uint8_t refresh_strategy; // MVRefreshStrategy enum
+        uint8_t refresh_on_commit; // 1 if refresh on commit
+        uint8_t supports_concurrent; // 1 if concurrent refresh supported
+        uint8_t reserved[2];
         uint64_t created_time;
+        uint64_t last_modified_time;
         uint64_t last_refreshed; // For materialized views
         uint32_t is_valid;
         uint32_t padding;
@@ -397,15 +615,23 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
     struct TriggerRecord
     {
         ID trigger_id;
-        ID table_id;
+        ID table_id; // Zero for database triggers
         char trigger_name[512]; // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
-        uint8_t trigger_timing; // 0=BEFORE, 1=AFTER, 2=INSTEAD OF
-        uint8_t trigger_events; // Bitmask: 0x01=INSERT, 0x02=UPDATE, 0x04=DELETE
-        uint8_t for_each_row;   // 1 if FOR EACH ROW, 0 if FOR EACH STATEMENT
-        uint8_t enabled;        // 1 if enabled
+        ID owner_id;            // Owner UUID reference
+        uint8_t scope;          // 0=TABLE trigger, 1=DATABASE trigger
+        uint8_t name_is_delimited; // 1 if quoted identifier
+        uint8_t trigger_timing; // Table triggers: BEFORE/AFTER
+        uint8_t trigger_event;  // Table: TriggerEvent, DB: DatabaseTriggerEvent
+        uint8_t granularity;    // Table: FOR_EACH_ROW/FOR_EACH_STATEMENT
+        uint8_t enabled;        // 1 if enabled/active
+        uint8_t reserved[2];
+        int32_t position;       // DB trigger position (0 for table triggers)
         uint32_t condition_oid; // TOAST reference for WHEN condition
-        uint32_t action_oid;    // TOAST reference for trigger action
+        uint32_t action_oid;    // TOAST reference for trigger action or procedure name
+        uint32_t old_alias_oid; // TOAST reference for OLD TABLE alias (statement triggers)
+        uint32_t new_alias_oid; // TOAST reference for NEW TABLE alias (statement triggers)
         uint64_t created_time;
+        uint64_t last_modified_time;
         uint32_t is_valid;
         uint32_t padding;
     };
@@ -635,10 +861,14 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         uint8_t is_selectable;      // 1 if has SUSPEND (Firebird selectable procedures)
         uint8_t language;           // PSQL, SQL, UDR, etc.
         uint8_t sql_security;       // Phase 3.1: 0=DEFINER, 1=INVOKER (default)
-        uint8_t reserved[4];        // Alignment
+        uint8_t name_is_delimited;  // 1 if quoted identifier
+        uint8_t body_redacted;      // 1 if body was intentionally not stored
+        uint8_t deterministic;      // Function determinism flag (0/1)
+        uint8_t reserved;           // Alignment
         uint32_t parameter_count;
         uint32_t return_type_oid;   // TOAST reference for return type definition
         uint32_t body_oid;          // TOAST reference - procedure/function body
+        uint32_t bytecode_oid;      // TOAST reference - compiled SBLR bytecode
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
@@ -660,22 +890,7 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         uint32_t padding;
     };
 
-    // Domain record on disk (Phase 3 - Stored Code Tables)
-    struct DomainRecord
-    {
-        ID domain_id;
-        ID schema_id;
-        char domain_name[512];
-        ID owner_id;                // Owner UUID reference
-        uint32_t base_type_oid;     // TOAST reference for base data type
-        uint32_t check_expr_oid;    // TOAST reference for CHECK constraint expression
-        uint8_t not_null;           // 1 if NOT NULL constraint
-        uint8_t reserved[7];        // Alignment
-        uint64_t created_time;
-        uint64_t last_modified_time;
-        uint32_t is_valid;
-        uint32_t padding;
-    };
+    // Domain record removed - domains now managed by DomainManager
 
     // UDR (User-Defined Resource) record on disk (Phase 3 - Stored Code Tables)
     struct UDRRecord
@@ -758,6 +973,132 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         uint32_t padding;
     };
 
+    // Synonym record on disk (Phase B - Schema Architecture)
+    struct SynonymRecord
+    {
+        ID synonym_id;
+        ID schema_id;
+        char synonym_name[512];
+        ID owner_id;
+        uint32_t target_path_oid;  // TOAST reference for target path
+        uint8_t target_type;       // ObjectType enum
+        uint8_t is_public;         // 1 if PUBLIC synonym
+        uint8_t reserved[6];       // Alignment
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Foreign server record on disk (Phase B - FDW)
+    struct ForeignServerRecord
+    {
+        ID server_id;
+        char server_name[512];
+        char server_type[128];
+        char host[512];
+        uint16_t port;
+        uint16_t reserved0;
+        uint32_t connection_options_oid; // TOAST reference for JSON options
+        ID owner_id;
+        uint8_t is_active;               // 1 if active
+        uint8_t reserved1[7];            // Alignment
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Foreign table record on disk (Phase B - FDW)
+    struct ForeignTableRecord
+    {
+        ID foreign_table_id;
+        ID schema_id;
+        char table_name[512];
+        ID foreign_server_id;
+        char remote_schema[512];
+        char remote_table[512];
+        ID owner_id;
+        uint32_t column_mapping_oid; // TOAST reference for column mapping JSON
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // User mapping record on disk (Phase B - FDW)
+    struct UserMappingRecord
+    {
+        ID mapping_id;
+        ID user_id;
+        ID foreign_server_id;
+        char remote_user[512];
+        uint32_t remote_credentials_oid; // TOAST reference for encrypted credentials
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Server registry record on disk (Phase B - Distributed MVCC)
+    struct ServerRegistryRecord
+    {
+        ID server_id;
+        char server_name[512];
+        char host[512];
+        uint16_t port;
+        uint8_t role;                 // ServerRole enum
+        uint8_t state;                // ServerState enum
+        uint32_t reserved0;
+        uint64_t last_heartbeat;
+        uint64_t last_xid;
+        uint64_t replication_lag_ms;
+        char cluster_id[256];
+        char server_version[128];
+        uint32_t metadata_oid;        // TOAST reference for JSON metadata
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // UDR engine record on disk (Phase B - UDR Plugin System)
+    struct UDREngineRecord
+    {
+        ID engine_id;
+        char engine_name[512];
+        uint8_t engine_type;          // UDREngineType enum
+        uint8_t is_active;
+        uint8_t is_default;
+        uint8_t reserved0;
+        char plugin_path[1024];
+        uint32_t config_oid;          // TOAST reference for JSON config
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // UDR module record on disk (Phase B - UDR Plugin System)
+    struct UDRModuleRecord
+    {
+        ID module_id;
+        char module_name[512];
+        ID engine_id;
+        char library_path[1024];
+        char checksum[128];
+        char entry_point[512];
+        uint32_t dependencies_oid;    // TOAST reference for dependency list
+        uint8_t is_loaded;
+        uint8_t is_validated;
+        uint8_t reserved0[6];
+        uint64_t loaded_count;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
     // Foreign key constraint record on disk (Phase D - FK Disk Persistence)
     struct ForeignKeyRecord
     {
@@ -774,6 +1115,44 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         uint8_t reserved[4];           // Alignment
         uint64_t created_time;
         uint32_t is_valid;             // 1 if valid, 0 if deleted
+        uint32_t padding;
+    };
+
+    // Dormant transaction record on disk (Track 3.2)
+    struct DormantTransactionRecord
+    {
+        ID dormant_id;                 // Reattach token (UUID v7)
+        ID attachment_id;
+        uint32_t proc_id;              // ProcArray slot
+        uint32_t reserved0;
+        uint64_t txn_id;               // MGA transaction ID
+        ID session_id;                 // Protocol session UUID
+        ID user_id;
+        ID session_user_id;
+        ID role_id;
+        uint8_t isolation_level;       // core::IsolationLevel enum value
+        uint8_t access_mode;           // DormantAccessMode
+        uint8_t wait_mode;             // DormantWaitMode
+        uint8_t autocommit_mode;       // 0/1
+        uint32_t lock_timeout_seconds;
+        ID current_schema_id;
+        uint32_t session_settings_oid; // TOAST reference
+        uint32_t last_statement_oid;   // TOAST reference
+        uint64_t last_statement_hash;
+        uint8_t last_statement_type;   // DormantStatementType
+        uint8_t last_statement_status; // DormantStatementStatus
+        uint8_t state;                 // DormantTransactionState
+        uint8_t reserved1;
+        uint64_t start_time;
+        uint64_t last_activity_time;
+        uint64_t dormant_since;
+        uint64_t lease_expires_at;
+        uint64_t last_statement_time;
+        int64_t last_rows_affected;
+        uint32_t last_error_code;
+        char last_sqlstate[6];         // 5-char SQLSTATE + null
+        ID server_instance_id;
+        uint32_t is_valid;
         uint32_t padding;
     };
 
@@ -1560,8 +1939,98 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
                     }
                 }
 
+                // Load constraints (after columns are available)
+                status = readConstraintRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
                 // Load indexes
                 status = readIndexRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Load sequences
+                status = readSequenceRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Load views
+                status = readViewRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Load procedures/functions
+                status = readProcedureRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                status = readProcedureParameterRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Load triggers (table + database)
+                status = readTriggerRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Phase B: Load synonyms
+                status = readSynonymRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Phase B: Load foreign servers
+                status = readForeignServerRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Phase B: Load foreign tables
+                status = readForeignTableRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Phase B: Load user mappings
+                status = readUserMappingRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Phase B: Load server registry
+                status = readServerRegistryRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Phase B: Load UDR engines
+                status = readUDREngineRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Phase B: Load UDR modules
+                status = readUDRModuleRecords(ctx);
                 if (status != Status::OK)
                 {
                     return status;
@@ -1635,10 +2104,13 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
                                               const ID &parent_schema_id,
                                               ErrorContext *ctx) -> Status
     {
-        // Check if schema already exists
-        // Uses case-insensitive comparison per Firebird SQL rules
-        for (const auto &[id, info] : schema_cache_)
+        // Check if schema already exists under the same parent
+        for (const auto& [id, info] : schema_cache_)
         {
+            if (info.parent_schema_id != parent_schema_id)
+            {
+                continue;
+            }
             if (IdentifierUtils::namesConflict(schema_name, false /*new_is_delimited*/,
                                                info.schema_name, info.name_is_delimited))
             {
@@ -1856,26 +2328,48 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
                                    ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        // Convert search name to lowercase for case-insensitive comparison
-        std::string search_lower = schema_name;
-        std::transform(search_lower.begin(), search_lower.end(), search_lower.begin(),
-                       [](unsigned char c) { return std::tolower(c); });
-        for (const auto &[id, schema_info] : schema_cache_)
+        auto components = splitSchemaPath(schema_name);
+        if (components.empty())
         {
-            // Convert schema name to lowercase for comparison
-            std::string name_lower = schema_info.schema_name;
-            std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(),
-                           [](unsigned char c) { return std::tolower(c); });
-            if (name_lower == search_lower)
-            {
-                info = schema_info;
-                return Status::OK;
-            }
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Schema name is empty");
+            return Status::INVALID_ARGUMENT;
         }
 
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                          ("Schema not found: " + schema_name).c_str());
-        return Status::INVALID_ARGUMENT;
+        std::unordered_map<std::pair<ID, std::string>, ID, PairHash<ID, std::string>> lookup;
+        lookup.reserve(schema_cache_.size());
+        for (const auto& [id, schema_info] : schema_cache_)
+        {
+            std::string normalized = normalizeResolverName(schema_info.schema_name,
+                                                           schema_info.name_is_delimited);
+            auto key = std::make_pair(schema_info.parent_schema_id, normalized);
+            lookup[key] = schema_info.schema_id;
+        }
+
+        ID current;
+        for (const auto& component : components)
+        {
+            std::string normalized = IdentifierUtils::toUpper(component);
+            auto key = std::make_pair(current, normalized);
+            auto it = lookup.find(key);
+            if (it == lookup.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  ("Schema not found: " + schema_name).c_str());
+                return Status::INVALID_ARGUMENT;
+            }
+            current = it->second;
+        }
+
+        auto it = schema_cache_.find(current);
+        if (it == schema_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              ("Schema not found: " + schema_name).c_str());
+            return Status::INVALID_ARGUMENT;
+        }
+
+        info = it->second;
+        return Status::OK;
     }
 
     auto CatalogManager::listSchemas(std::vector<SchemaInfo> &schemas, ErrorContext *ctx) -> Status
@@ -1893,6 +2387,1495 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         std::sort(schemas.begin(), schemas.end(), [](const SchemaInfo &a, const SchemaInfo &b)
                   { return a.schema_id < b.schema_id; });
 
+        return Status::OK;
+    }
+
+    auto CatalogManager::getSchemaPath(const ID& schema_id, std::string& path_out,
+                                       ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        path_out.clear();
+
+        if (isZeroUuidLocal(schema_id))
+        {
+            return Status::OK;
+        }
+
+        std::unordered_set<ID, IDHash> visited;
+        std::vector<ID> chain;
+        ID current = schema_id;
+
+        while (!isZeroUuidLocal(current))
+        {
+            if (!visited.insert(current).second)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Schema hierarchy cycle detected");
+                return Status::DATA_CORRUPTED;
+            }
+
+            auto it = schema_cache_.find(current);
+            if (it == schema_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found for path");
+                return Status::NOT_FOUND;
+            }
+
+            chain.push_back(current);
+            current = it->second.parent_schema_id;
+        }
+
+        std::string current_path;
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it)
+        {
+            auto info_it = schema_cache_.find(*it);
+            if (info_it == schema_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found for path");
+                return Status::NOT_FOUND;
+            }
+            if (current_path.empty())
+            {
+                current_path = info_it->second.schema_name;
+            }
+            else
+            {
+                current_path += ".";
+                current_path += info_it->second.schema_name;
+            }
+            info_it->second.full_path = current_path;
+        }
+
+        path_out = current_path;
+        return Status::OK;
+    }
+
+    auto CatalogManager::createSchemaPath(const std::string& path, SchemaType type,
+                                          ID& leaf_schema_id_out,
+                                          ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        leaf_schema_id_out = ID{};
+
+        auto components = splitSchemaPath(path);
+        if (components.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Schema path is empty");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ID current_parent;
+        for (const auto& component : components)
+        {
+            ID existing_id;
+            bool found = false;
+            for (const auto& [id, info] : schema_cache_)
+            {
+                if (info.parent_schema_id == current_parent &&
+                    IdentifierUtils::namesConflict(component, false /*new_is_delimited*/,
+                                                   info.schema_name, info.name_is_delimited))
+                {
+                    existing_id = id;
+                    found = true;
+                    break;
+                }
+            }
+
+            if (found)
+            {
+                current_parent = existing_id;
+                continue;
+            }
+
+            ID new_schema_id;
+            Status status = createSchemaInternal(component, "system", new_schema_id,
+                                                 current_parent, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto it = schema_cache_.find(new_schema_id);
+            if (it != schema_cache_.end())
+            {
+                it->second.schema_type = type;
+            }
+            current_parent = new_schema_id;
+        }
+
+        leaf_schema_id_out = current_parent;
+        return Status::OK;
+    }
+
+    auto CatalogManager::rebuildResolverCache(ErrorContext* ctx) -> Status
+    {
+        std::vector<SchemaInfo> schemas;
+        std::vector<TableInfo> tables;
+        std::unordered_map<ID, std::vector<ColumnInfo>, IDHash> columns_by_table;
+        std::vector<IndexInfo> indexes;
+        std::vector<TablespaceInfo> tablespaces;
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            schemas.reserve(schema_cache_.size());
+            for (const auto& [id, info] : schema_cache_)
+            {
+                schemas.push_back(info);
+            }
+            tables.reserve(table_cache_.size());
+            for (const auto& [id, info] : table_cache_)
+            {
+                tables.push_back(info);
+            }
+            columns_by_table = column_cache_;
+            indexes.reserve(index_cache_.size());
+            for (const auto& [id, info] : index_cache_)
+            {
+                indexes.push_back(info);
+            }
+            tablespaces.reserve(tablespace_cache_.size());
+            for (const auto& [id, info] : tablespace_cache_)
+            {
+                tablespaces.push_back(info);
+            }
+        }
+
+        struct SequenceEntry
+        {
+            ID sequence_id;
+            ID schema_id;
+            std::string name;
+            bool name_is_delimited;
+        };
+        std::vector<SequenceEntry> sequences;
+        {
+            std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+            sequences.reserve(sequence_cache_.size());
+            for (const auto& [seq_id, state] : sequence_cache_)
+            {
+                if (!state)
+                {
+                    continue;
+                }
+                sequences.push_back({seq_id, state->schema_id, state->name, false});
+            }
+        }
+
+        std::vector<ViewInfo> views;
+        {
+            std::lock_guard<std::mutex> lock(view_cache_mutex_);
+            views.reserve(view_cache_.size());
+            for (const auto& [id, info] : view_cache_)
+            {
+                views.push_back(info);
+            }
+        }
+
+        std::vector<TriggerInfo> triggers;
+        {
+            std::lock_guard<std::mutex> lock(trigger_mutex_);
+            triggers.reserve(trigger_cache_.size());
+            for (const auto& [id, info] : trigger_cache_)
+            {
+                triggers.push_back(info);
+            }
+        }
+
+        std::vector<ConstraintInfo> constraints;
+        {
+            std::lock_guard<std::mutex> lock(constraints_cache_mutex_);
+            constraints.reserve(constraints_cache_.size());
+            for (const auto& [id, info] : constraints_cache_)
+            {
+                constraints.push_back(info);
+            }
+        }
+
+        std::vector<FunctionInfo> functions;
+        std::vector<ProcedureInfo> procedures;
+        {
+            std::lock_guard<std::mutex> lock(psql_mutex_);
+            functions.reserve(functions_.size());
+            for (const auto& [name, info] : functions_)
+            {
+                functions.push_back(info);
+            }
+            procedures.reserve(procedures_.size());
+            for (const auto& [name, info] : procedures_)
+            {
+                procedures.push_back(info);
+            }
+        }
+
+        std::vector<SynonymInfo> synonyms;
+        {
+            std::lock_guard<std::mutex> lock(synonym_cache_mutex_);
+            synonyms.reserve(synonym_cache_.size());
+            for (const auto& [id, info] : synonym_cache_)
+            {
+                synonyms.push_back(info);
+            }
+        }
+
+        std::vector<ForeignTableInfo> foreign_tables;
+        {
+            std::lock_guard<std::mutex> lock(foreign_table_cache_mutex_);
+            foreign_tables.reserve(foreign_table_cache_.size());
+            for (const auto& [id, info] : foreign_table_cache_)
+            {
+                foreign_tables.push_back(info);
+            }
+        }
+
+        std::vector<PackageInfo> packages;
+        std::vector<UDRInfo> udrs;
+        std::vector<ExceptionInfo> exceptions;
+        for (const auto& schema : schemas)
+        {
+            std::vector<PackageInfo> schema_packages;
+            if (listPackages(schema.schema_id, schema_packages, ctx) != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Failed to list packages");
+                return Status::DATA_CORRUPTED;
+            }
+            packages.insert(packages.end(), schema_packages.begin(), schema_packages.end());
+
+            std::vector<UDRInfo> schema_udrs;
+            if (listUDRs(schema.schema_id, schema_udrs, ctx) != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Failed to list UDRs");
+                return Status::DATA_CORRUPTED;
+            }
+            udrs.insert(udrs.end(), schema_udrs.begin(), schema_udrs.end());
+
+            std::vector<ExceptionInfo> schema_exceptions;
+            if (listExceptions(schema.schema_id, schema_exceptions, ctx) != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Failed to list exceptions");
+                return Status::DATA_CORRUPTED;
+            }
+            exceptions.insert(exceptions.end(), schema_exceptions.begin(), schema_exceptions.end());
+        }
+
+        std::vector<DomainInfo> domains;
+        if (db_ && db_->domain_manager())
+        {
+            if (db_->domain_manager()->listDomains(ID{}, domains, ctx) != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Failed to list domains");
+                return Status::DATA_CORRUPTED;
+            }
+        }
+
+        std::vector<UserInfo> users;
+        if (listUsers(users, ctx) != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Failed to list users");
+            return Status::DATA_CORRUPTED;
+        }
+
+        std::vector<RoleInfo> roles;
+        if (listRoles(roles, ctx) != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Failed to list roles");
+            return Status::DATA_CORRUPTED;
+        }
+
+        std::vector<GroupInfo> groups;
+        if (listGroups(groups, ctx) != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Failed to list groups");
+            return Status::DATA_CORRUPTED;
+        }
+
+        std::unordered_map<ID, SchemaInfo, IDHash> schema_by_id;
+        schema_by_id.reserve(schemas.size());
+        for (const auto& schema : schemas)
+        {
+            schema_by_id.emplace(schema.schema_id, schema);
+        }
+
+        std::unordered_map<ID, std::string, IDHash> schema_paths;
+        schema_paths.reserve(schemas.size());
+        auto resolve_schema_path = [&](const ID& schema_id, std::string& path_out) -> Status {
+            if (isZeroUuidLocal(schema_id))
+            {
+                path_out.clear();
+                return Status::OK;
+            }
+            auto existing = schema_paths.find(schema_id);
+            if (existing != schema_paths.end())
+            {
+                path_out = existing->second;
+                return Status::OK;
+            }
+
+            std::vector<ID> chain;
+            ID current = schema_id;
+            while (!isZeroUuidLocal(current))
+            {
+                if (schema_paths.find(current) != schema_paths.end())
+                {
+                    break;
+                }
+                if (std::find(chain.begin(), chain.end(), current) != chain.end())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "Schema hierarchy cycle detected");
+                    return Status::DATA_CORRUPTED;
+                }
+                auto it = schema_by_id.find(current);
+                if (it == schema_by_id.end())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found for path");
+                    return Status::NOT_FOUND;
+                }
+                chain.push_back(current);
+                current = it->second.parent_schema_id;
+            }
+
+            std::string current_path;
+            if (!isZeroUuidLocal(current))
+            {
+                current_path = schema_paths[current];
+            }
+
+            for (auto it = chain.rbegin(); it != chain.rend(); ++it)
+            {
+                auto schema_it = schema_by_id.find(*it);
+                if (schema_it == schema_by_id.end())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found for path");
+                    return Status::NOT_FOUND;
+                }
+                if (current_path.empty())
+                {
+                    current_path = schema_it->second.schema_name;
+                }
+                else
+                {
+                    current_path += ".";
+                    current_path += schema_it->second.schema_name;
+                }
+                schema_paths[*it] = current_path;
+            }
+
+            path_out = schema_paths[schema_id];
+            return Status::OK;
+        };
+
+        std::unordered_map<std::pair<ID, std::string>, ID, PairHash<ID, std::string>>
+            schema_name_lookup;
+        std::unordered_map<ID, ID, IDHash> schema_parent_lookup;
+        schema_name_lookup.reserve(schemas.size());
+        schema_parent_lookup.reserve(schemas.size());
+        for (const auto& schema : schemas)
+        {
+            schema_parent_lookup[schema.schema_id] = schema.parent_schema_id;
+            std::string normalized = normalizeResolverName(schema.schema_name, schema.name_is_delimited);
+            auto key = std::make_pair(schema.parent_schema_id, normalized);
+            if (!schema_name_lookup.emplace(key, schema.schema_id).second)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                  "Duplicate schema name in parent scope");
+                return Status::DATA_CORRUPTED;
+            }
+        }
+
+        std::unordered_map<ID, ResolvedObject, IDHash> resolver_by_id;
+        std::map<ResolverKey, ID> resolver_by_name;
+
+        auto add_resolved = [&](const ResolvedObject& obj, const ID& scope_id,
+                                bool name_is_delimited) -> Status {
+            if (!resolver_by_id.emplace(obj.object_id, obj).second)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Duplicate object ID");
+                return Status::DATA_CORRUPTED;
+            }
+            ResolverKey key;
+            key.scope_id = scope_id;
+            key.object_type = obj.object_type;
+            key.normalized_name = normalizeResolverName(obj.object_name, name_is_delimited);
+            key.name_is_delimited = name_is_delimited;
+            if (!resolver_by_name.emplace(key, obj.object_id).second)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Duplicate object name in scope");
+                return Status::DATA_CORRUPTED;
+            }
+            return Status::OK;
+        };
+
+        auto make_full_path = [](const std::string& schema_path,
+                                 const std::string& name) -> std::string {
+            if (schema_path.empty())
+            {
+                return name;
+            }
+            return schema_path + "." + name;
+        };
+
+        auto make_table_scoped_path = [](const std::string& schema_path,
+                                         const std::string& table_name,
+                                         const std::string& name) -> std::string {
+            if (schema_path.empty())
+            {
+                return table_name + "." + name;
+            }
+            return schema_path + "." + table_name + "." + name;
+        };
+
+        for (const auto& schema : schemas)
+        {
+            std::string schema_path;
+            Status st = resolve_schema_path(schema.schema_id, schema_path);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            ResolvedObject obj;
+            obj.object_id = schema.schema_id;
+            obj.object_type = ObjectType::SCHEMA;
+            obj.schema_id = schema.schema_id;
+            obj.parent_object_id = schema.parent_schema_id;
+            obj.object_name = schema.schema_name;
+            obj.schema_path = schema_path;
+            obj.full_path = schema_path;
+            resolver_by_id.emplace(obj.object_id, obj);
+        }
+
+        std::unordered_map<ID, TableInfo, IDHash> table_by_id;
+        table_by_id.reserve(tables.size());
+        for (const auto& table : tables)
+        {
+            table_by_id.emplace(table.table_id, table);
+            std::string schema_path;
+            Status st = resolve_schema_path(table.schema_id, schema_path);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            ResolvedObject obj;
+            obj.object_id = table.table_id;
+            obj.object_type = ObjectType::TABLE;
+            obj.schema_id = table.schema_id;
+            obj.parent_object_id = ID{};
+            obj.object_name = table.table_name;
+            obj.schema_path = schema_path;
+            obj.full_path = make_full_path(schema_path, table.table_name);
+            st = add_resolved(obj, table.schema_id, table.name_is_delimited);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& view : views)
+        {
+            std::string schema_path;
+            Status st = resolve_schema_path(view.schema_id, schema_path);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            ResolvedObject obj;
+            obj.object_id = view.view_id;
+            obj.object_type = ObjectType::VIEW;
+            obj.schema_id = view.schema_id;
+            obj.parent_object_id = ID{};
+            obj.object_name = view.name;
+            obj.schema_path = schema_path;
+            obj.full_path = make_full_path(schema_path, view.name);
+            st = add_resolved(obj, view.schema_id, view.name_is_delimited);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& seq : sequences)
+        {
+            std::string schema_path;
+            Status st = resolve_schema_path(seq.schema_id, schema_path);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            ResolvedObject obj;
+            obj.object_id = seq.sequence_id;
+            obj.object_type = ObjectType::SEQUENCE;
+            obj.schema_id = seq.schema_id;
+            obj.parent_object_id = ID{};
+            obj.object_name = seq.name;
+            obj.schema_path = schema_path;
+            obj.full_path = make_full_path(schema_path, seq.name);
+            st = add_resolved(obj, seq.schema_id, seq.name_is_delimited);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& func : functions)
+        {
+            std::string schema_path;
+            Status st = resolve_schema_path(func.schema_id, schema_path);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            ResolvedObject obj;
+            obj.object_id = func.function_id;
+            obj.object_type = ObjectType::FUNCTION;
+            obj.schema_id = func.schema_id;
+            obj.parent_object_id = ID{};
+            obj.object_name = func.name;
+            obj.schema_path = schema_path;
+            obj.full_path = make_full_path(schema_path, func.name);
+            st = add_resolved(obj, func.schema_id, func.name_is_delimited);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& proc : procedures)
+        {
+            std::string schema_path;
+            Status st = resolve_schema_path(proc.schema_id, schema_path);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            ResolvedObject obj;
+            obj.object_id = proc.procedure_id;
+            obj.object_type = ObjectType::PROCEDURE;
+            obj.schema_id = proc.schema_id;
+            obj.parent_object_id = ID{};
+            obj.object_name = proc.name;
+            obj.schema_path = schema_path;
+            obj.full_path = make_full_path(schema_path, proc.name);
+            st = add_resolved(obj, proc.schema_id, proc.name_is_delimited);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& pkg : packages)
+        {
+            std::string schema_path;
+            Status st = resolve_schema_path(pkg.schema_id, schema_path);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            ResolvedObject obj;
+            obj.object_id = pkg.package_id;
+            obj.object_type = ObjectType::PACKAGE;
+            obj.schema_id = pkg.schema_id;
+            obj.parent_object_id = ID{};
+            obj.object_name = pkg.package_name;
+            obj.schema_path = schema_path;
+            obj.full_path = make_full_path(schema_path, pkg.package_name);
+            st = add_resolved(obj, pkg.schema_id, false);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& udr : udrs)
+        {
+            std::string schema_path;
+            Status st = resolve_schema_path(udr.schema_id, schema_path);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            ResolvedObject obj;
+            obj.object_id = udr.udr_id;
+            obj.object_type = ObjectType::UDR;
+            obj.schema_id = udr.schema_id;
+            obj.parent_object_id = ID{};
+            obj.object_name = udr.udr_name;
+            obj.schema_path = schema_path;
+            obj.full_path = make_full_path(schema_path, udr.udr_name);
+            st = add_resolved(obj, udr.schema_id, false);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& ex : exceptions)
+        {
+            std::string schema_path;
+            Status st = resolve_schema_path(ex.schema_id, schema_path);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            ResolvedObject obj;
+            obj.object_id = ex.exception_id;
+            obj.object_type = ObjectType::EXCEPTION;
+            obj.schema_id = ex.schema_id;
+            obj.parent_object_id = ID{};
+            obj.object_name = ex.name;
+            obj.schema_path = schema_path;
+            obj.full_path = make_full_path(schema_path, ex.name);
+            st = add_resolved(obj, ex.schema_id, false);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& syn : synonyms)
+        {
+            std::string schema_path;
+            Status st = resolve_schema_path(syn.schema_id, schema_path);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            ResolvedObject obj;
+            obj.object_id = syn.synonym_id;
+            obj.object_type = ObjectType::SYNONYM;
+            obj.schema_id = syn.schema_id;
+            obj.parent_object_id = ID{};
+            obj.object_name = syn.synonym_name;
+            obj.schema_path = schema_path;
+            obj.full_path = make_full_path(schema_path, syn.synonym_name);
+            st = add_resolved(obj, syn.schema_id, false);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& ft : foreign_tables)
+        {
+            std::string schema_path;
+            Status st = resolve_schema_path(ft.schema_id, schema_path);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            ResolvedObject obj;
+            obj.object_id = ft.foreign_table_id;
+            obj.object_type = ObjectType::FOREIGN_TABLE;
+            obj.schema_id = ft.schema_id;
+            obj.parent_object_id = ID{};
+            obj.object_name = ft.table_name;
+            obj.schema_path = schema_path;
+            obj.full_path = make_full_path(schema_path, ft.table_name);
+            st = add_resolved(obj, ft.schema_id, false);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& domain : domains)
+        {
+            ResolvedObject obj;
+            obj.object_id = domain.domain_id;
+            obj.object_type = ObjectType::DOMAIN;
+            obj.schema_id = ID{};
+            obj.parent_object_id = ID{};
+            obj.object_name = domain.domain_name;
+            obj.schema_path.clear();
+            obj.full_path = domain.domain_name;
+            obj.dialect_tag = domain.dialect_tag;
+            obj.compat_name = domain.compat_name;
+            Status st = add_resolved(obj, ID{}, false);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& user : users)
+        {
+            ResolvedObject obj;
+            obj.object_id = user.user_id;
+            obj.object_type = ObjectType::USER;
+            obj.schema_id = ID{};
+            obj.parent_object_id = ID{};
+            obj.object_name = user.username;
+            obj.schema_path.clear();
+            obj.full_path = user.username;
+            Status st = add_resolved(obj, ID{}, false);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& role : roles)
+        {
+            ResolvedObject obj;
+            obj.object_id = role.role_id;
+            obj.object_type = ObjectType::ROLE;
+            obj.schema_id = ID{};
+            obj.parent_object_id = ID{};
+            obj.object_name = role.role_name;
+            obj.schema_path.clear();
+            obj.full_path = role.role_name;
+            Status st = add_resolved(obj, ID{}, false);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& group : groups)
+        {
+            ResolvedObject obj;
+            obj.object_id = group.group_id;
+            obj.object_type = ObjectType::GROUP;
+            obj.schema_id = ID{};
+            obj.parent_object_id = ID{};
+            obj.object_name = group.group_name;
+            obj.schema_path.clear();
+            obj.full_path = group.group_name;
+            Status st = add_resolved(obj, ID{}, false);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& ts : tablespaces)
+        {
+            ResolvedObject obj;
+            obj.object_id = ts.tablespace_uuid;
+            obj.object_type = ObjectType::TABLESPACE;
+            obj.schema_id = ID{};
+            obj.parent_object_id = ID{};
+            obj.object_name = ts.tablespace_name;
+            obj.schema_path.clear();
+            obj.full_path = ts.tablespace_name;
+            Status st = add_resolved(obj, ID{}, false);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& idx : indexes)
+        {
+            auto table_it = table_by_id.find(idx.table_id);
+            if (table_it == table_by_id.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Index table not found");
+                return Status::DATA_CORRUPTED;
+            }
+            const auto& table = table_it->second;
+            std::string schema_path;
+            Status st = resolve_schema_path(table.schema_id, schema_path);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            ResolvedObject obj;
+            obj.object_id = idx.index_id;
+            obj.object_type = ObjectType::INDEX;
+            obj.schema_id = table.schema_id;
+            obj.parent_object_id = table.table_id;
+            obj.object_name = idx.index_name;
+            obj.schema_path = schema_path;
+            obj.full_path = make_table_scoped_path(schema_path, table.table_name, idx.index_name);
+            st = add_resolved(obj, table.table_id, idx.name_is_delimited);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& trig : triggers)
+        {
+            auto table_it = table_by_id.find(trig.table_id);
+            if (table_it == table_by_id.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Trigger table not found");
+                return Status::DATA_CORRUPTED;
+            }
+            const auto& table = table_it->second;
+            std::string schema_path;
+            Status st = resolve_schema_path(table.schema_id, schema_path);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            ResolvedObject obj;
+            obj.object_id = trig.trigger_id;
+            obj.object_type = ObjectType::TRIGGER;
+            obj.schema_id = table.schema_id;
+            obj.parent_object_id = table.table_id;
+            obj.object_name = trig.trigger_name;
+            obj.schema_path = schema_path;
+            obj.full_path = make_table_scoped_path(schema_path, table.table_name, trig.trigger_name);
+            st = add_resolved(obj, table.table_id, trig.name_is_delimited);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& con : constraints)
+        {
+            auto table_it = table_by_id.find(con.table_id);
+            if (table_it == table_by_id.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Constraint table not found");
+                return Status::DATA_CORRUPTED;
+            }
+            const auto& table = table_it->second;
+            std::string schema_path;
+            Status st = resolve_schema_path(table.schema_id, schema_path);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            ResolvedObject obj;
+            obj.object_id = con.constraint_id;
+            obj.object_type = ObjectType::CONSTRAINT;
+            obj.schema_id = table.schema_id;
+            obj.parent_object_id = table.table_id;
+            obj.object_name = con.constraint_name;
+            obj.schema_path = schema_path;
+            obj.full_path = make_table_scoped_path(schema_path, table.table_name, con.constraint_name);
+            st = add_resolved(obj, table.table_id, false);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        for (const auto& [table_id, columns] : columns_by_table)
+        {
+            auto table_it = table_by_id.find(table_id);
+            if (table_it == table_by_id.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Column table not found");
+                return Status::DATA_CORRUPTED;
+            }
+            const auto& table = table_it->second;
+            std::string schema_path;
+            Status st = resolve_schema_path(table.schema_id, schema_path);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            for (const auto& col : columns)
+            {
+                ResolvedObject obj;
+                obj.object_id = col.column_id;
+                obj.object_type = ObjectType::COLUMN;
+                obj.schema_id = table.schema_id;
+                obj.parent_object_id = table.table_id;
+                obj.object_name = col.column_name;
+                obj.schema_path = schema_path;
+                obj.full_path = make_table_scoped_path(schema_path, table.table_name, col.column_name);
+                st = add_resolved(obj, table.table_id, col.name_is_delimited);
+                if (st != Status::OK)
+                {
+                    return st;
+                }
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(resolver_cache_mutex_);
+            resolver_by_id_ = std::move(resolver_by_id);
+            resolver_by_name_ = std::move(resolver_by_name);
+            schema_name_lookup_ = std::move(schema_name_lookup);
+            schema_parent_lookup_ = std::move(schema_parent_lookup);
+        }
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::resolveObjectId(const ID& object_id, ResolvedObject& out,
+                                         ErrorContext* ctx) -> Status
+    {
+        Status st = rebuildResolverCache(ctx);
+        if (st != Status::OK)
+        {
+            return st;
+        }
+
+        std::lock_guard<std::mutex> lock(resolver_cache_mutex_);
+        auto it = resolver_by_id_.find(object_id);
+        if (it == resolver_by_id_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Object not found");
+            return Status::NOT_FOUND;
+        }
+        out = it->second;
+        return Status::OK;
+    }
+
+    auto CatalogManager::listResolvedObjects(const ResolveFilter& filter,
+                                             std::vector<ResolvedObject>& out,
+                                             ErrorContext* ctx) -> Status
+    {
+        Status st = rebuildResolverCache(ctx);
+        if (st != Status::OK)
+        {
+            return st;
+        }
+
+        std::lock_guard<std::mutex> lock(resolver_cache_mutex_);
+        out.clear();
+        out.reserve(resolver_by_id_.size());
+
+        for (const auto& [id, obj] : resolver_by_id_)
+        {
+            if (filter.object_type != ObjectType::UNKNOWN &&
+                obj.object_type != filter.object_type)
+            {
+                continue;
+            }
+            if (filter.filter_schema_id && obj.schema_id != filter.schema_id)
+            {
+                continue;
+            }
+            if (filter.filter_parent_object_id && obj.parent_object_id != filter.parent_object_id)
+            {
+                continue;
+            }
+            if (!filter.schema_path_prefix.empty())
+            {
+                if (obj.schema_path.rfind(filter.schema_path_prefix, 0) != 0)
+                {
+                    continue;
+                }
+            }
+            if (!filter.name_prefix.empty())
+            {
+                if (obj.object_name.rfind(filter.name_prefix, 0) != 0)
+                {
+                    continue;
+                }
+            }
+            out.push_back(obj);
+        }
+
+        std::sort(out.begin(), out.end(),
+                  [](const ResolvedObject& a, const ResolvedObject& b) {
+                      if (a.schema_path != b.schema_path)
+                      {
+                          return a.schema_path < b.schema_path;
+                      }
+                      if (a.object_name != b.object_name)
+                      {
+                          return a.object_name < b.object_name;
+                      }
+                      return a.object_id < b.object_id;
+                  });
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::resolveObjectPath(const ObjectPath& path, ObjectType expected_type,
+                                           const ResolveOptions& opts, ID& object_id_out,
+                                           ObjectType& type_out, ErrorContext* ctx) -> Status
+    {
+        object_id_out = ID{};
+        type_out = ObjectType::UNKNOWN;
+
+        Status st = rebuildResolverCache(ctx);
+        if (st != Status::OK)
+        {
+            return st;
+        }
+
+        std::lock_guard<std::mutex> lock(resolver_cache_mutex_);
+
+        ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+        ID current_schema_id = conn_ctx ? conn_ctx->getCurrentSchemaId() : ID{};
+        std::vector<std::string> search_path = conn_ctx ? conn_ctx->search_path()
+                                                        : std::vector<std::string>{"public"};
+        std::string dialect_tag = opts.dialect_tag;
+        if (dialect_tag.empty() && conn_ctx)
+        {
+            dialect_tag = conn_ctx->dialect_tag();
+        }
+        if (dialect_tag.empty())
+        {
+            dialect_tag = "scratchbird";
+        }
+
+        auto resolve_schema_path = [&](PathType type,
+                                       const std::vector<std::string>& components,
+                                       ID& schema_id_out) -> Status {
+            ID current;
+            switch (type)
+            {
+                case PathType::ABSOLUTE:
+                    current = ID{};
+                    break;
+                case PathType::CURRENT:
+                    current = current_schema_id;
+                    break;
+                case PathType::PARENT:
+                {
+                    auto it = schema_parent_lookup_.find(current_schema_id);
+                    if (it == schema_parent_lookup_.end())
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                                          "Current schema has no parent");
+                        return Status::NOT_FOUND;
+                    }
+                    current = it->second;
+                    break;
+                }
+                case PathType::UNQUALIFIED:
+                    current = current_schema_id;
+                    break;
+            }
+
+            for (const auto& component : components)
+            {
+                std::string normalized = IdentifierUtils::toUpper(component);
+                auto key = std::make_pair(current, normalized);
+                auto it = schema_name_lookup_.find(key);
+                if (it == schema_name_lookup_.end())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema path not found");
+                    return Status::NOT_FOUND;
+                }
+                current = it->second;
+            }
+
+            schema_id_out = current;
+            return Status::OK;
+        };
+
+        auto is_global_type = [](ObjectType type) {
+            switch (type)
+            {
+                case ObjectType::DOMAIN:
+                case ObjectType::ROLE:
+                case ObjectType::USER:
+                case ObjectType::GROUP:
+                case ObjectType::TABLESPACE:
+                case ObjectType::DATABASE:
+                    return true;
+                default:
+                    return false;
+            }
+        };
+
+        auto is_table_scoped = [](ObjectType type) {
+            switch (type)
+            {
+                case ObjectType::INDEX:
+                case ObjectType::TRIGGER:
+                case ObjectType::CONSTRAINT:
+                case ObjectType::COLUMN:
+                    return true;
+                default:
+                    return false;
+            }
+        };
+
+        auto lookup_by_name = [&](const ID& scope_id, ObjectType type,
+                                  const std::string& name,
+                                  bool name_is_delimited,
+                                  ID& id_out) -> bool {
+            ResolverKey key;
+            key.scope_id = scope_id;
+            key.object_type = type;
+            key.normalized_name = normalizeResolverName(name, name_is_delimited);
+            key.name_is_delimited = name_is_delimited;
+            auto it = resolver_by_name_.find(key);
+            if (it == resolver_by_name_.end())
+            {
+                return false;
+            }
+            id_out = it->second;
+            return true;
+        };
+
+        auto resolve_domain = [&](const std::string& name, ID& id_out) -> Status {
+            std::vector<ID> matches;
+            std::string normalized = IdentifierUtils::toUpper(name);
+            for (const auto& [id, obj] : resolver_by_id_)
+            {
+                if (obj.object_type != ObjectType::DOMAIN)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::toUpper(obj.object_name) != normalized)
+                {
+                    continue;
+                }
+                if (obj.dialect_tag == dialect_tag)
+                {
+                    matches.push_back(id);
+                }
+            }
+
+            if (!matches.empty())
+            {
+                if (matches.size() > 1 && !opts.allow_ambiguity)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::AMBIGUOUS_COLUMN,
+                                      "Ambiguous domain name");
+                    return Status::AMBIGUOUS_COLUMN;
+                }
+                id_out = matches.front();
+                return Status::OK;
+            }
+
+            std::vector<ID> compat_matches;
+            for (const auto& [id, obj] : resolver_by_id_)
+            {
+                if (obj.object_type != ObjectType::DOMAIN)
+                {
+                    continue;
+                }
+                if (obj.compat_name.empty())
+                {
+                    continue;
+                }
+                if (IdentifierUtils::toUpper(obj.compat_name) == normalized)
+                {
+                    compat_matches.push_back(id);
+                }
+            }
+
+            if (compat_matches.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+                return Status::NOT_FOUND;
+            }
+
+            if (compat_matches.size() > 1 && !opts.allow_ambiguity)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::AMBIGUOUS_COLUMN,
+                                  "Ambiguous domain name");
+                return Status::AMBIGUOUS_COLUMN;
+            }
+
+            id_out = compat_matches.front();
+            return Status::OK;
+        };
+
+        auto resolve_global = [&](const std::string& name, ObjectType type,
+                                  ID& id_out) -> Status {
+            if (type == ObjectType::DOMAIN)
+            {
+                return resolve_domain(name, id_out);
+            }
+            if (lookup_by_name(ID{}, type, name, false, id_out))
+            {
+                return Status::OK;
+            }
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Object not found");
+            return Status::NOT_FOUND;
+        };
+
+        auto resolve_schema_scoped = [&](const std::vector<std::string>& components,
+                                         PathType type, ObjectType type_filter,
+                                         ID& id_out, ObjectType& type_out_local) -> Status {
+            if (components.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Object name missing");
+                return Status::INVALID_ARGUMENT;
+            }
+            std::string object_name = components.back();
+            std::vector<std::string> schema_components;
+            if (components.size() > 1)
+            {
+                schema_components.assign(components.begin(), components.end() - 1);
+            }
+
+            auto search_in_schema = [&](const ID& schema_id, ID& found_id,
+                                        ObjectType& found_type,
+                                        int& matches) {
+                if (type_filter == ObjectType::UNKNOWN)
+                {
+                    const std::array<ObjectType, 10> types = {
+                        ObjectType::TABLE,
+                        ObjectType::VIEW,
+                        ObjectType::SEQUENCE,
+                        ObjectType::PROCEDURE,
+                        ObjectType::FUNCTION,
+                        ObjectType::PACKAGE,
+                        ObjectType::UDR,
+                        ObjectType::EXCEPTION,
+                        ObjectType::SYNONYM,
+                        ObjectType::FOREIGN_TABLE
+                    };
+                    for (auto t : types)
+                    {
+                        ID candidate;
+                        if (lookup_by_name(schema_id, t, object_name, false, candidate))
+                        {
+                            if (matches == 0)
+                            {
+                                found_id = candidate;
+                                found_type = t;
+                            }
+                            matches++;
+                        }
+                    }
+                }
+                else
+                {
+                    ID candidate;
+                    if (lookup_by_name(schema_id, type_filter, object_name, false, candidate))
+                    {
+                        if (matches == 0)
+                        {
+                            found_id = candidate;
+                            found_type = type_filter;
+                        }
+                        matches++;
+                    }
+                }
+            };
+
+            ID found_id;
+            ObjectType found_type = ObjectType::UNKNOWN;
+            int matches = 0;
+
+            if (type == PathType::UNQUALIFIED && schema_components.empty())
+            {
+                for (const auto& path_entry : search_path)
+                {
+                    auto entry_components = splitSchemaPath(path_entry);
+                    ID schema_id;
+                    Status res = resolve_schema_path(PathType::ABSOLUTE, entry_components, schema_id);
+                    if (res == Status::NOT_FOUND)
+                    {
+                        continue;
+                    }
+                    if (res != Status::OK)
+                    {
+                        return res;
+                    }
+                    search_in_schema(schema_id, found_id, found_type, matches);
+                    if (matches > 1 && !opts.allow_ambiguity)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::AMBIGUOUS_COLUMN,
+                                          "Ambiguous object name in search path");
+                        return Status::AMBIGUOUS_COLUMN;
+                    }
+                }
+
+                if (matches == 0 && !isZeroUuidLocal(current_schema_id))
+                {
+                    search_in_schema(current_schema_id, found_id, found_type, matches);
+                }
+            }
+            else
+            {
+                ID schema_id;
+                Status res = resolve_schema_path(type, schema_components, schema_id);
+                if (res != Status::OK)
+                {
+                    return res;
+                }
+                search_in_schema(schema_id, found_id, found_type, matches);
+            }
+
+            if (matches == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Object not found");
+                return Status::NOT_FOUND;
+            }
+            if (matches > 1 && !opts.allow_ambiguity)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::AMBIGUOUS_COLUMN,
+                                  "Ambiguous object name");
+                return Status::AMBIGUOUS_COLUMN;
+            }
+
+            id_out = found_id;
+            type_out_local = found_type;
+            return Status::OK;
+        };
+
+        auto resolve_table_scoped = [&](const std::vector<std::string>& components,
+                                        PathType type, ObjectType type_filter,
+                                        ID& id_out, ObjectType& type_out_local) -> Status {
+            if (components.size() < 2)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Table-scoped object requires table and name");
+                return Status::INVALID_ARGUMENT;
+            }
+            std::string object_name = components.back();
+            std::vector<std::string> table_components(components.begin(),
+                                                      components.end() - 1);
+
+            ID table_id;
+            ObjectType table_type = ObjectType::TABLE;
+            Status res = resolve_schema_scoped(table_components, type, ObjectType::TABLE,
+                                               table_id, table_type);
+            if (res != Status::OK)
+            {
+                return res;
+            }
+
+            auto search_in_table = [&](ObjectType t, ID& found_id, ObjectType& found_type,
+                                       int& matches) {
+                ID candidate;
+                if (lookup_by_name(table_id, t, object_name, false, candidate))
+                {
+                    if (matches == 0)
+                    {
+                        found_id = candidate;
+                        found_type = t;
+                    }
+                    matches++;
+                }
+            };
+
+            ID found_id;
+            ObjectType found_type = ObjectType::UNKNOWN;
+            int matches = 0;
+
+            if (type_filter == ObjectType::UNKNOWN)
+            {
+                const std::array<ObjectType, 4> types = {
+                    ObjectType::INDEX,
+                    ObjectType::TRIGGER,
+                    ObjectType::CONSTRAINT,
+                    ObjectType::COLUMN
+                };
+                for (auto t : types)
+                {
+                    search_in_table(t, found_id, found_type, matches);
+                }
+            }
+            else
+            {
+                search_in_table(type_filter, found_id, found_type, matches);
+            }
+
+            if (matches == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Object not found");
+                return Status::NOT_FOUND;
+            }
+            if (matches > 1 && !opts.allow_ambiguity)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::AMBIGUOUS_COLUMN,
+                                  "Ambiguous table-scoped object");
+                return Status::AMBIGUOUS_COLUMN;
+            }
+
+            id_out = found_id;
+            type_out_local = found_type;
+            return Status::OK;
+        };
+
+        std::vector<std::string> components = path.components;
+        if (components.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Object path is empty");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (expected_type != ObjectType::UNKNOWN)
+        {
+            if (is_global_type(expected_type))
+            {
+                ID id_out;
+                Status res = resolve_global(components.back(), expected_type, id_out);
+                if (res != Status::OK)
+                {
+                    return res;
+                }
+                object_id_out = id_out;
+                type_out = expected_type;
+                return Status::OK;
+            }
+
+            if (is_table_scoped(expected_type))
+            {
+                ID id_out;
+                ObjectType type_local;
+                Status res = resolve_table_scoped(components, path.type, expected_type,
+                                                  id_out, type_local);
+                if (res != Status::OK)
+                {
+                    return res;
+                }
+                object_id_out = id_out;
+                type_out = type_local;
+                return Status::OK;
+            }
+
+            ID id_out;
+            ObjectType type_local;
+            Status res = resolve_schema_scoped(components, path.type, expected_type,
+                                               id_out, type_local);
+            if (res != Status::OK)
+            {
+                return res;
+            }
+            object_id_out = id_out;
+            type_out = type_local;
+            return Status::OK;
+        }
+
+        std::vector<std::pair<ID, ObjectType>> matches;
+
+        if (components.size() >= 2)
+        {
+            ID id_out;
+            ObjectType type_local;
+            Status res = resolve_table_scoped(components, path.type, ObjectType::UNKNOWN,
+                                              id_out, type_local);
+            if (res == Status::OK)
+            {
+                matches.emplace_back(id_out, type_local);
+            }
+        }
+
+        {
+            ID id_out;
+            ObjectType type_local;
+            Status res = resolve_schema_scoped(components, path.type, ObjectType::UNKNOWN,
+                                               id_out, type_local);
+            if (res == Status::OK)
+            {
+                matches.emplace_back(id_out, type_local);
+            }
+        }
+
+        if (!components.empty())
+        {
+            for (ObjectType t : {ObjectType::DOMAIN, ObjectType::ROLE, ObjectType::USER,
+                                 ObjectType::GROUP, ObjectType::TABLESPACE})
+            {
+                ID id_out;
+                if (resolve_global(components.back(), t, id_out) == Status::OK)
+                {
+                    matches.emplace_back(id_out, t);
+                }
+            }
+        }
+
+        if (matches.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Object not found");
+            return Status::NOT_FOUND;
+        }
+        if (matches.size() > 1 && !opts.allow_ambiguity)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::AMBIGUOUS_COLUMN, "Ambiguous object name");
+            return Status::AMBIGUOUS_COLUMN;
+        }
+
+        object_id_out = matches.front().first;
+        type_out = matches.front().second;
         return Status::OK;
     }
 
@@ -2002,10 +3985,7 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
             }
         }
 
-        std::vector<DomainInfo> domains;
-        if (listDomains(schema_id, domains, ctx) == Status::OK) {
-            counts.domains = domains.size();
-        }
+        counts.domains = 0;
 
         std::vector<PackageInfo> packages;
         if (listPackages(schema_id, packages, ctx) == Status::OK) {
@@ -2237,7 +4217,7 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         std::unordered_set<ID, IDHash> sequence_ids;
         for (const auto& name : seq_names) {
             ID seq_id;
-            if (getSequenceIdByName(name, seq_id, ctx) == Status::OK) {
+            if (getSequenceIdByName(schema_id, name, seq_id, ctx) == Status::OK) {
                 sequence_ids.insert(seq_id);
                 continue;
             }
@@ -2556,6 +4536,14 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
                                  std::chrono::system_clock::now().time_since_epoch())
                                  .count();
 
+        // Plan 01 Task E: Set logical_index_id and shadow index fields
+        index.logical_index_id = generateLogicalIndexId(table_id, index_name);
+        index.state = static_cast<uint8_t>(IndexState::ACTIVE); // Default: immediately active
+        index.valid_from_xid = 0; // Available to all transactions
+        index.retired_xid = 0; // Not retired
+        index.build_started_time = index.created_time;
+        index.build_completed_time = index.created_time; // Immediately complete
+
         // Write index record
         status = writeIndexRecord(index, ctx);
         if (status != Status::OK)
@@ -2719,6 +4707,14 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         index.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
                                  std::chrono::system_clock::now().time_since_epoch())
                                  .count();
+
+        // Plan 01 Task E: Set logical_index_id and shadow index fields
+        index.logical_index_id = generateLogicalIndexId(table_id, index_name);
+        index.state = static_cast<uint8_t>(IndexState::ACTIVE); // Default: immediately active
+        index.valid_from_xid = 0; // Available to all transactions
+        index.retired_xid = 0; // Not retired
+        index.build_started_time = index.created_time;
+        index.build_completed_time = index.created_time; // Immediately complete
 
         // Task 17: Set expression/predicate data
         index.is_expression_index = !expression_data.empty();
@@ -2953,6 +4949,7 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         root->udr_engines_page = udr_engines_table_page_;
         root->udr_modules_page = udr_modules_table_page_;
         root->migration_history_page = migration_history_table_page_;
+        root->dormant_transactions_page = dormant_transactions_table_page_;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, true, ctx);
     }
@@ -3041,6 +5038,7 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         udr_engines_table_page_ = root->udr_engines_page;
         udr_modules_table_page_ = root->udr_modules_page;
         migration_history_table_page_ = root->migration_history_page;
+        dormant_transactions_table_page_ = root->dormant_transactions_page;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, false, ctx);
     }
@@ -3873,6 +5871,14 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         record.created_time = index.created_time;
         record.is_valid = 1;
 
+        // Plan 01 Task E: Shadow index rebuild + versioning fields
+        record.logical_index_id = index.logical_index_id;
+        record.state = index.state;
+        record.valid_from_xid = index.valid_from_xid;
+        record.retired_xid = index.retired_xid;
+        record.build_started_time = index.build_started_time;
+        record.build_completed_time = index.build_completed_time;
+
         return writeRecordToHeapPage(indexes_table_page_, record, ctx);
     }
 
@@ -3893,6 +5899,14 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
             info.column_ids.assign(record.column_ids, record.column_ids + record.column_count);
             info.index_params_oid = record.index_params_oid;
             info.created_time = record.created_time;
+
+            // Plan 01 Task E: Shadow index rebuild + versioning fields
+            info.logical_index_id = record.logical_index_id;
+            info.state = record.state;
+            info.valid_from_xid = record.valid_from_xid;
+            info.retired_xid = record.retired_xid;
+            info.build_started_time = record.build_started_time;
+            info.build_completed_time = record.build_completed_time;
         };
         auto key_extractor = [](const IndexInfo &info) { return info.index_id; };
         return readRecordsFromHeapPage<IndexRecord, IndexInfo, ID>(
@@ -5980,18 +7994,13 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         LOG_INFO(CATALOG, "Found %zu allocated pages in tablespace %u to examine",
                 candidate_pages.size(), source_ts_id);
 
-        // ===== STEP 3: Filter for heap pages =====
-        // NOTE: PageHeader doesn't currently have a table_id field, so we cannot
-        // directly filter pages by table. For now, we'll return all HEAP pages in
-        // the tablespace. This is a limitation that should be addressed by adding
-        // table_id to PageHeader or HeapPage metadata in the future.
-        //
-        // WORKAROUND: Since tables typically have their own tablespace in production
-        // use cases, returning all HEAP pages in the source tablespace is acceptable
-        // for the initial implementation.
+        // ===== STEP 3: Filter for heap pages by table_id =====
+        // Plan 01 Task B: Now uses table_id field in PageHeader (ON_DISK_FORMAT.md v1.4.0)
+        // This provides precise filtering - only pages belonging to the requested table are returned
 
         uint32_t pages_scanned = 0;
         uint32_t heap_pages_found = 0;
+        uint32_t table_matches = 0;
 
         for (GPID gpid : candidate_pages)
         {
@@ -6009,16 +8018,29 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
             const PageHeader *header = static_cast<const PageHeader*>(page_buffer);
 
             // Check if this is a heap page
-            // Use PAGE_TYPE_HEAP from ondisk.h enum
             bool is_heap_page = (header->page_type == PAGE_TYPE_HEAP);
+            bool table_id_matches = false;
+
+            if (is_heap_page)
+            {
+                heap_pages_found++;
+
+                // Check if table_id matches the requested table
+                table_id_matches = (memcmp(header->table_id, table_id.bytes.data(), sizeof(header->table_id)) == 0);
+
+                if (table_id_matches)
+                {
+                    table_matches++;
+                }
+            }
 
             // Unpin page (not modified)
             db_->buffer_pool()->unpinPageGlobal(gpid, false, ctx);
 
-            if (is_heap_page)
+            // Only add if it's a heap page AND table_id matches
+            if (is_heap_page && table_id_matches)
             {
                 pages_out.push_back(gpid);
-                heap_pages_found++;
             }
 
             pages_scanned++;
@@ -6026,16 +8048,13 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
             // Log progress every 1000 pages
             if (pages_scanned % 1000 == 0)
             {
-                LOG_DEBUG(CATALOG, "Enumeration progress: %u pages scanned, %u heap pages found",
-                         pages_scanned, heap_pages_found);
+                LOG_DEBUG(CATALOG, "Enumeration progress: %u pages scanned, %u heap pages found, %u table matches",
+                         pages_scanned, heap_pages_found, table_matches);
             }
         }
 
-        LOG_INFO(CATALOG, "Enumerated %zu heap pages for table '%s' (scanned %u allocated pages)",
-                pages_out.size(), table_info.table_name.c_str(), pages_scanned);
-
-        // FUTURE ENHANCEMENT: Add table_id to PageHeader to enable precise filtering
-        // For now, caller should be aware that this returns all HEAP pages in the tablespace
+        LOG_INFO(CATALOG, "Enumerated %zu pages for table '%s' (scanned %u allocated pages, %u heap pages, %u table matches)",
+                pages_out.size(), table_info.table_name.c_str(), pages_scanned, heap_pages_found, table_matches);
 
         return Status::OK;
     }
@@ -8431,6 +10450,13 @@ auto CatalogManager::createTrigger(const TriggerInfo &trigger, ErrorContext *ctx
         std::chrono::system_clock::now().time_since_epoch()).count();
     trigger_copy.enabled = true;
     
+    // Persist before updating caches so we can fail cleanly.
+    Status persist_status = writeTriggerRecord(trigger_copy, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
+
     // Store in cache
     trigger_cache_[trigger_copy.trigger_id] = trigger_copy;
     trigger_name_to_id_[trigger_copy.trigger_name] = trigger_copy.trigger_id;
@@ -8458,6 +10484,10 @@ auto CatalogManager::createTrigger(const TriggerInfo &trigger, ErrorContext *ctx
                 break;
             }
         }
+        auto predicate = [&trigger_copy](const TriggerRecord& rec) {
+            return rec.trigger_id == trigger_copy.trigger_id && rec.is_valid == 1;
+        };
+        deleteRecordFromHeapPage<TriggerRecord>(triggers_table_page_, predicate, ctx);
         LOG_ERROR(CATALOG, "Failed to create dependency for trigger");
         return status;
     }
@@ -8497,6 +10527,17 @@ auto CatalogManager::dropTrigger(const std::string &trigger_name, ErrorContext *
     
     ID trigger_id = it->second;
     const auto& trigger_info = trigger_cache_[trigger_id];
+
+    // Mark trigger record invalid on disk before cache eviction.
+    auto predicate = [&trigger_id](const TriggerRecord& rec) {
+        return rec.trigger_id == trigger_id && rec.is_valid == 1;
+    };
+    Status persist_status = deleteRecordFromHeapPage<TriggerRecord>(
+        triggers_table_page_, predicate, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
     
     // Remove from table_triggers index
     auto range = table_triggers_.equal_range(trigger_info.table_id);
@@ -8609,8 +10650,31 @@ auto CatalogManager::enableTrigger(const std::string &trigger_name, bool enable,
         return Status::NOT_FOUND;
     }
     
-    // Update enabled status
-    trigger_cache_[it->second].enabled = enable;
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+    ID trigger_id = it->second;
+
+    auto predicate = [&trigger_id](const TriggerRecord& rec) {
+        return rec.trigger_id == trigger_id && rec.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<TriggerRecord>(triggers_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return result.status;
+    }
+
+    TriggerRecord updated = result.record;
+    updated.enabled = enable ? 1 : 0;
+    updated.last_modified_time = now;
+
+    Status persist_status = updateRecordInHeapPage(triggers_table_page_, result.slot_index,
+                                                   updated, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
+
+    // Update enabled status in cache after persistence.
+    trigger_cache_[trigger_id].enabled = enable;
     
     LOG_INFO(CATALOG, "Trigger '%s' %s", trigger_name.c_str(),
              enable ? "enabled" : "disabled");
@@ -8647,6 +10711,12 @@ auto CatalogManager::createDatabaseTrigger(const DatabaseTriggerInfo &trigger, E
     trigger_copy.trigger_id = generateUuidV7();
     trigger_copy.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
+
+    Status persist_status = writeDatabaseTriggerRecord(trigger_copy, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
 
     // Store in cache
     db_trigger_cache_[trigger_copy.trigger_id] = trigger_copy;
@@ -8696,6 +10766,16 @@ auto CatalogManager::dropDatabaseTrigger(const std::string &trigger_name, ErrorC
 
     // Get trigger info for cleanup
     const auto& trigger_info = db_trigger_cache_[trigger_id];
+
+    auto predicate = [&trigger_id](const TriggerRecord& rec) {
+        return rec.trigger_id == trigger_id && rec.is_valid == 1;
+    };
+    Status persist_status = deleteRecordFromHeapPage<TriggerRecord>(
+        triggers_table_page_, predicate, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
 
     // Remove from event_triggers multimap
     auto range = event_triggers_.equal_range(trigger_info.event);
@@ -8821,8 +10901,31 @@ auto CatalogManager::enableDatabaseTrigger(const std::string &trigger_name, bool
         return Status::NOT_FOUND;
     }
 
-    // Update active status
-    db_trigger_cache_[it->second].active = enable;
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+    ID trigger_id = it->second;
+
+    auto predicate = [&trigger_id](const TriggerRecord& rec) {
+        return rec.trigger_id == trigger_id && rec.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<TriggerRecord>(triggers_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return result.status;
+    }
+
+    TriggerRecord updated = result.record;
+    updated.enabled = enable ? 1 : 0;
+    updated.last_modified_time = now;
+
+    Status persist_status = updateRecordInHeapPage(triggers_table_page_, result.slot_index,
+                                                   updated, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
+
+    // Update active status in cache after persistence.
+    db_trigger_cache_[trigger_id].active = enable;
 
     LOG_INFO(CATALOG, "Database trigger '%s' %s", trigger_name.c_str(),
              enable ? "activated" : "deactivated");
@@ -8838,6 +10941,9 @@ auto CatalogManager::registerFunction(const FunctionInfo &info, ErrorContext *ct
 
     // Check if function already exists
     auto it = functions_.find(info.name);
+    FunctionInfo updated = info;
+    FunctionInfo old_info{};
+    bool replacing = false;
     if (it != functions_.end())
     {
         if (!info.or_replace)
@@ -8847,21 +10953,60 @@ auto CatalogManager::registerFunction(const FunctionInfo &info, ErrorContext *ct
             return Status::CONSTRAINT_VIOLATION;
         }
 
-        // Update existing function
-        it->second = info;
+        replacing = true;
+        old_info = it->second;
+        updated.function_id = old_info.function_id;
+        updated.created_time = old_info.created_time;
+    }
+
+    Status persist_status;
+    if (replacing)
+    {
+        persist_status = updateFunctionRecord(updated, ctx);
+        if (persist_status != Status::OK)
+        {
+            return persist_status;
+        }
+
+        persist_status = deleteProcedureParameterRecords(updated.function_id, ctx);
+        if (persist_status != Status::OK)
+        {
+            updateFunctionRecord(old_info, ctx);
+            return persist_status;
+        }
+
+        persist_status = writeProcedureParameterRecords(updated.function_id,
+                                                        updated.parameters,
+                                                        ctx);
+        if (persist_status != Status::OK)
+        {
+            deleteProcedureParameterRecords(updated.function_id, ctx);
+            writeProcedureParameterRecords(old_info.function_id,
+                                           old_info.parameters,
+                                           ctx);
+            updateFunctionRecord(old_info, ctx);
+            return persist_status;
+        }
+
+        it->second = updated;
         LOG_INFO(CATALOG, "Function '%s' replaced", info.name.c_str());
     }
     else
     {
-        // Register new function
-        functions_[info.name] = info;
+        persist_status = writeFunctionRecord(updated, ctx);
+        if (persist_status != Status::OK)
+        {
+            return persist_status;
+        }
+
+        functions_[updated.name] = updated;
         LOG_INFO(CATALOG, "Function '%s' registered", info.name.c_str());
     }
 
     // Replace dependency set for this function using provided referenced objects (if any)
-    replaceDependencies(info.function_id,
+    replaceDependencies(updated.function_id,
                         ObjectType::FUNCTION,
-                        info.referenced_objects,
+                        updated.referenced_objects,
                         ctx);
 
     return Status::OK;
@@ -8873,6 +11018,9 @@ auto CatalogManager::registerProcedure(const ProcedureInfo &info, ErrorContext *
 
     // Check if procedure already exists
     auto it = procedures_.find(info.name);
+    ProcedureInfo updated = info;
+    ProcedureInfo old_info{};
+    bool replacing = false;
     if (it != procedures_.end())
     {
         if (!info.or_replace)
@@ -8882,21 +11030,60 @@ auto CatalogManager::registerProcedure(const ProcedureInfo &info, ErrorContext *
             return Status::CONSTRAINT_VIOLATION;
         }
 
-        // Update existing procedure
-        it->second = info;
+        replacing = true;
+        old_info = it->second;
+        updated.procedure_id = old_info.procedure_id;
+        updated.created_time = old_info.created_time;
+    }
+
+    Status persist_status;
+    if (replacing)
+    {
+        persist_status = updateProcedureRecord(updated, ctx);
+        if (persist_status != Status::OK)
+        {
+            return persist_status;
+        }
+
+        persist_status = deleteProcedureParameterRecords(updated.procedure_id, ctx);
+        if (persist_status != Status::OK)
+        {
+            updateProcedureRecord(old_info, ctx);
+            return persist_status;
+        }
+
+        persist_status = writeProcedureParameterRecords(updated.procedure_id,
+                                                        updated.parameters,
+                                                        ctx);
+        if (persist_status != Status::OK)
+        {
+            deleteProcedureParameterRecords(updated.procedure_id, ctx);
+            writeProcedureParameterRecords(old_info.procedure_id,
+                                           old_info.parameters,
+                                           ctx);
+            updateProcedureRecord(old_info, ctx);
+            return persist_status;
+        }
+
+        it->second = updated;
         LOG_INFO(CATALOG, "Procedure '%s' replaced", info.name.c_str());
     }
     else
     {
-        // Register new procedure
-        procedures_[info.name] = info;
+        persist_status = writeProcedureRecord(updated, ctx);
+        if (persist_status != Status::OK)
+        {
+            return persist_status;
+        }
+
+        procedures_[updated.name] = updated;
         LOG_INFO(CATALOG, "Procedure '%s' registered", info.name.c_str());
     }
 
     // Replace dependency set for this procedure using provided referenced objects (if any)
-    replaceDependencies(info.procedure_id,
+    replaceDependencies(updated.procedure_id,
                         ObjectType::PROCEDURE,
-                        info.referenced_objects,
+                        updated.referenced_objects,
                         ctx);
 
     return Status::OK;
@@ -8969,6 +11156,24 @@ auto CatalogManager::dropFunction(const std::string &name, bool if_exists,
         return Status::CONSTRAINT_VIOLATION;
     }
 
+    // Mark function record invalid on disk and remove parameter records.
+    auto predicate = [&func](const ProcedureRecord& rec) {
+        return rec.procedure_id == func.function_id && rec.is_valid == 1;
+    };
+    Status persist_status = deleteRecordFromHeapPage<ProcedureRecord>(
+        procedures_table_page_, predicate, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
+
+    persist_status = deleteProcedureParameterRecords(func.function_id, ctx);
+    if (persist_status != Status::OK)
+    {
+        updateFunctionRecord(func, ctx);
+        return persist_status;
+    }
+
     // Clear dependencies (what this function references)
     clearDependenciesFor(func.function_id, ctx);
 
@@ -9011,6 +11216,24 @@ auto CatalogManager::dropProcedure(const std::string &name, bool if_exists,
             name, ObjectType::PROCEDURE, dependents, ctx);
         SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
         return Status::CONSTRAINT_VIOLATION;
+    }
+
+    // Mark procedure record invalid on disk and remove parameter records.
+    auto predicate = [&proc](const ProcedureRecord& rec) {
+        return rec.procedure_id == proc.procedure_id && rec.is_valid == 1;
+    };
+    Status persist_status = deleteRecordFromHeapPage<ProcedureRecord>(
+        procedures_table_page_, predicate, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
+
+    persist_status = deleteProcedureParameterRecords(proc.procedure_id, ctx);
+    if (persist_status != Status::OK)
+    {
+        updateProcedureRecord(proc, ctx);
+        return persist_status;
     }
 
     // Clear dependencies (what this procedure references)
@@ -9310,6 +11533,234 @@ Status CatalogManager::dropIndex(const ID &index_id, ErrorContext *ctx)
 }
 
 // ============================================================================
+// Plan 01 Task E: Shadow Index Rebuild + Versioning
+// ============================================================================
+
+ID CatalogManager::generateLogicalIndexId(const ID &table_id, const std::string &index_name)
+{
+    // Generate stable logical index ID by hashing table_id + index_name
+    // This ensures the same logical ID across rebuilds
+
+    std::string combined = table_id.toString() + ":" + index_name;
+
+    // Use std::hash to generate a hash value
+    std::hash<std::string> hasher;
+    size_t hash_value = hasher(combined);
+
+    // Convert hash to ID (UUID format)
+    // Use the hash value to generate a deterministic UUID
+    ID logical_id;
+    std::memcpy(&logical_id, &hash_value, std::min(sizeof(hash_value), sizeof(ID)));
+
+    return logical_id;
+}
+
+Status CatalogManager::getVisibleIndexVersion(const ID &table_id, const std::string &index_name,
+                                                uint64_t txn_xid, IndexInfo &info_out,
+                                                ErrorContext *ctx)
+{
+    // Get the visible index version for a transaction XID
+    // Per Plan 01: version where state == ACTIVE, valid_from_xid <= txn_xid,
+    // and (retired_xid == 0 or txn_xid < retired_xid)
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    ID logical_id = generateLogicalIndexId(table_id, index_name);
+
+    // Find all index versions with matching logical_index_id
+    std::vector<IndexInfo> candidates;
+    for (const auto &[index_id, index_info] : index_cache_)
+    {
+        if (index_info.logical_index_id == logical_id &&
+            index_info.table_id == table_id)
+        {
+            candidates.push_back(index_info);
+        }
+    }
+
+    if (candidates.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "No index versions found");
+        return Status::NOT_FOUND;
+    }
+
+    // Find the visible version
+    for (const auto &candidate : candidates)
+    {
+        // Check visibility rules
+        // Both ACTIVE and RETIRED indexes can be visible depending on txn_xid
+        if ((candidate.state == static_cast<uint8_t>(IndexState::ACTIVE) ||
+             candidate.state == static_cast<uint8_t>(IndexState::RETIRED)) &&
+            candidate.valid_from_xid <= txn_xid &&
+            (candidate.retired_xid == 0 || txn_xid < candidate.retired_xid))
+        {
+            info_out = candidate;
+            return Status::OK;
+        }
+    }
+
+    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "No visible index version for transaction");
+    return Status::NOT_FOUND;
+}
+
+Status CatalogManager::createShadowIndex(const ID &existing_index_id, ID &shadow_index_id_out,
+                                          ErrorContext *ctx)
+{
+    // Create a shadow index for rebuild
+    // The shadow starts in BUILDING state and becomes visible only after promotion
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Get the existing index from cache
+    auto it = index_cache_.find(existing_index_id);
+    if (it == index_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Existing index not found");
+        return Status::NOT_FOUND;
+    }
+
+    IndexInfo existing_index = it->second;
+
+    // Create new shadow index with same properties but BUILDING state
+    IndexInfo shadow_index = existing_index;
+    shadow_index.index_id = generateUuidV7();
+    shadow_index.state = static_cast<uint8_t>(IndexState::BUILDING);
+    shadow_index.valid_from_xid = 0; // Not yet valid
+    shadow_index.retired_xid = 0;
+    shadow_index.build_started_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                                          std::chrono::system_clock::now().time_since_epoch())
+                                          .count();
+    shadow_index.build_completed_time = 0;
+    shadow_index.logical_index_id = existing_index.logical_index_id;
+
+    // Create the actual index structure
+    // TODO: This needs to call the appropriate index creation method based on index_type
+    // For now, just save the catalog entry
+
+    Status status = writeIndexRecord(shadow_index, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write shadow index record");
+        return status;
+    }
+
+    // Update cache
+    index_cache_[shadow_index.index_id] = shadow_index;
+
+    shadow_index_id_out = shadow_index.index_id;
+    return Status::OK;
+}
+
+Status CatalogManager::promoteShadowIndex(const ID &shadow_index_id, ErrorContext *ctx)
+{
+    // Promote shadow index to ACTIVE and retire old versions
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    // Get shadow index from cache
+    auto it = index_cache_.find(shadow_index_id);
+    if (it == index_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Shadow index not found");
+        return Status::NOT_FOUND;
+    }
+
+    IndexInfo shadow_index = it->second;
+
+    // Verify it's in BUILDING state
+    if (shadow_index.state != static_cast<uint8_t>(IndexState::BUILDING))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Index is not in BUILDING state");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Get current XID for versioning
+    uint64_t current_xid = db_->transaction_manager()->getCurrentXid();
+    Status status;
+
+    // Find and retire old active versions with same logical_index_id
+    for (auto &[index_id, index_info] : index_cache_)
+    {
+        if (index_info.logical_index_id == shadow_index.logical_index_id &&
+            index_info.index_id != shadow_index_id &&
+            index_info.state == static_cast<uint8_t>(IndexState::ACTIVE))
+        {
+            // Retire this version
+            index_info.state = static_cast<uint8_t>(IndexState::RETIRED);
+            index_info.retired_xid = current_xid;
+
+            // Persist the update
+            status = writeIndexRecord(index_info, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to retire old index version");
+                return status;
+            }
+        }
+    }
+
+    // Promote shadow to ACTIVE
+    shadow_index.state = static_cast<uint8_t>(IndexState::ACTIVE);
+    shadow_index.valid_from_xid = current_xid;
+    shadow_index.build_completed_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                                            std::chrono::system_clock::now().time_since_epoch())
+                                            .count();
+
+    status = writeIndexRecord(shadow_index, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to promote shadow index");
+        return status;
+    }
+
+    // Update cache
+    index_cache_[shadow_index_id] = shadow_index;
+
+    return Status::OK;
+}
+
+Status CatalogManager::gcRetiredIndexes(uint64_t *indexes_removed_out, ErrorContext *ctx)
+{
+    // Garbage collect retired index versions
+    // Safe to delete when retired_xid < OIT (Oldest Interesting Transaction)
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    uint64_t oit = db_->transaction_manager()->getOldestXid();
+    uint64_t removed_count = 0;
+
+    // Find retired indexes that are safe to remove
+    std::vector<ID> to_remove;
+    for (const auto &[index_id, index_info] : index_cache_)
+    {
+        if (index_info.state == static_cast<uint8_t>(IndexState::RETIRED) &&
+            index_info.retired_xid != 0 &&
+            index_info.retired_xid < oit)
+        {
+            to_remove.push_back(index_id);
+        }
+    }
+
+    // Drop each retired index
+    for (const ID &index_id : to_remove)
+    {
+        Status status = dropIndexInternal(index_id, ctx);
+        if (status == Status::OK)
+        {
+            removed_count++;
+        }
+        // Continue even if one fails
+    }
+
+    if (indexes_removed_out)
+    {
+        *indexes_removed_out = removed_count;
+    }
+
+    return Status::OK;
+}
+
+// ============================================================================
 // ALTER TABLE Operations (ALPHA Phase 1 - DDL Modifications)
 // ============================================================================
 
@@ -9474,7 +11925,7 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
         std::unordered_set<ID, IDHash> sequence_ids;
         for (const auto& name : seq_names) {
             ID seq_id;
-            if (getSequenceIdByName(name, seq_id, ctx) == Status::OK) {
+            if (getSequenceIdByName(table_it->second.schema_id, name, seq_id, ctx) == Status::OK) {
                 sequence_ids.insert(seq_id);
                 continue;
             }
@@ -9686,7 +12137,7 @@ Status CatalogManager::renameColumn(const ID &table_id, const std::string &old_n
     // RENAME COLUMN implementation (ALPHA Phase 1)
     // Updates column name in-place with MGA compliance
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
 
     // 1. Check if table exists in cache
     auto table_it = table_cache_.find(table_id);
@@ -9696,11 +12147,27 @@ Status CatalogManager::renameColumn(const ID &table_id, const std::string &old_n
         return Status::NOT_FOUND;
     }
 
-    // 2. Validate new name (basic check - non-empty)
-    if (new_name.empty() || new_name.length() > 127)
+    // 2. Validate new name
+    if (new_name.empty())
     {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid column name");
         return Status::INVALID_ARGUMENT;
+    }
+    Status validation = UTF8Utils::validateStorageCapacity(
+        new_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    if (IdentifierUtils::namesMatch(old_name, false /*search_delimited*/,
+                                    new_name, false /*stored_delimited*/))
+    {
+        return Status::OK;
     }
 
     // 3. Scan columns to find old name and check new name doesn't exist
@@ -9731,12 +12198,14 @@ Status CatalogManager::renameColumn(const ID &table_id, const std::string &old_n
 
                 if (record->table_id == table_id && record->is_valid == 1)
                 {
-                    if (std::strcmp(record->column_name, old_name.c_str()) == 0)
+                    if (IdentifierUtils::namesMatch(old_name, false /*search_delimited*/,
+                                                    record->column_name, false /*stored_delimited*/))
                     {
                         column_id = record->column_id;
                         found_old = true;
                     }
-                    if (std::strcmp(record->column_name, new_name.c_str()) == 0)
+                    if (IdentifierUtils::namesMatch(new_name, false /*search_delimited*/,
+                                                    record->column_name, false /*stored_delimited*/))
                     {
                         new_name_exists = true;
                     }
@@ -9792,7 +12261,9 @@ Status CatalogManager::renameColumn(const ID &table_id, const std::string &old_n
                 {
                     // Update column name in-place
                     std::memset(record->column_name, 0, sizeof(record->column_name));
-                    std::strncpy(record->column_name, new_name.c_str(),
+                    std::string truncated = UTF8Utils::truncateToBytes(
+                        new_name, sizeof(record->column_name));
+                    std::strncpy(record->column_name, truncated.c_str(),
                                  sizeof(record->column_name) - 1);
                     updated = true;
                     break;
@@ -9809,7 +12280,2126 @@ Status CatalogManager::renameColumn(const ID &table_id, const std::string &old_n
         return Status::NOT_FOUND;
     }
 
+    // 5. Update in-memory column cache
+    auto cache_it = column_cache_.find(table_id);
+    if (cache_it != column_cache_.end())
+    {
+        for (auto& col : cache_it->second)
+        {
+            if (col.column_id == column_id)
+            {
+                col.column_name = new_name;
+                break;
+            }
+        }
+    }
+
+    // 6. Update column-level permissions
+    if (column_permissions_table_page_ != 0)
+    {
+        BufferPool* bp_perm = db_->buffer_pool();
+        void* perm_page = nullptr;
+        Status perm_status = bp_perm->pinPage(column_permissions_table_page_, &perm_page, ctx);
+        if (perm_status == Status::OK)
+        {
+            HeapPage perm_heap(static_cast<uint8_t*>(perm_page), db_->page_size());
+            uint16_t item_count = perm_heap.getItemCount();
+            bool perm_updated = false;
+            auto* mutable_perm_data = static_cast<uint8_t*>(perm_page);
+
+            for (uint16_t i = 0; i < item_count; ++i)
+            {
+                const uint8_t* tuple_data = nullptr;
+                uint32_t tuple_size = 0;
+                if (perm_heap.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+                {
+                    if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnPermissionRecord))
+                    {
+                        const ptrdiff_t offset =
+                            tuple_data - static_cast<const uint8_t*>(perm_page);
+                        auto* record = reinterpret_cast<ColumnPermissionRecord*>(
+                            mutable_perm_data + offset + sizeof(TupleHeader));
+
+                        if (record->is_valid == 1 &&
+                            record->table_id == table_id &&
+                            IdentifierUtils::namesMatch(old_name, false /*search_delimited*/,
+                                                        record->column_name, false /*stored_delimited*/))
+                        {
+                            std::string truncated = UTF8Utils::truncateToBytes(
+                                new_name, sizeof(record->column_name));
+                            std::memset(record->column_name, 0, sizeof(record->column_name));
+                            std::strncpy(record->column_name, truncated.c_str(),
+                                         sizeof(record->column_name) - 1);
+                            perm_updated = true;
+                        }
+                    }
+                }
+            }
+
+            bp_perm->unpinPage(column_permissions_table_page_, perm_updated, ctx);
+        }
+    }
+
+    lock.unlock();
+
+    // 7. Update constraint column names
+    {
+        std::lock_guard<std::mutex> constraint_lock(constraints_cache_mutex_);
+        for (auto& [id, constraint] : constraints_cache_)
+        {
+            if (constraint.table_id != table_id)
+            {
+                continue;
+            }
+            for (auto& col_name : constraint.column_names)
+            {
+                if (IdentifierUtils::namesMatch(old_name, false /*search_delimited*/,
+                                                col_name, false /*stored_delimited*/))
+                {
+                    col_name = new_name;
+                }
+            }
+        }
+    }
+
+    // 8. Update foreign key column names
+    {
+        std::lock_guard<std::mutex> fk_lock(foreign_keys_cache_mutex_);
+        for (auto& [fk_id, fk_info] : foreign_keys_cache_)
+        {
+            bool changed = false;
+            if (fk_info.child_table_id == table_id)
+            {
+                for (auto& col_name : fk_info.child_columns)
+                {
+                    if (IdentifierUtils::namesMatch(old_name, false /*search_delimited*/,
+                                                    col_name, false /*stored_delimited*/))
+                    {
+                        col_name = new_name;
+                        changed = true;
+                    }
+                }
+            }
+            if (fk_info.parent_table_id == table_id)
+            {
+                for (auto& col_name : fk_info.parent_columns)
+                {
+                    if (IdentifierUtils::namesMatch(old_name, false /*search_delimited*/,
+                                                    col_name, false /*stored_delimited*/))
+                    {
+                        col_name = new_name;
+                        changed = true;
+                    }
+                }
+            }
+
+            if (!changed || foreign_keys_table_page_ == 0)
+            {
+                continue;
+            }
+
+            ForeignKeyRecord updated_rec{};
+            updated_rec.fk_id = fk_info.fk_id;
+            std::strncpy(updated_rec.fk_name, fk_info.fk_name.c_str(),
+                         sizeof(updated_rec.fk_name) - 1);
+            updated_rec.child_table_id = fk_info.child_table_id;
+            updated_rec.parent_table_id = fk_info.parent_table_id;
+            std::string child_cols_str;
+            for (size_t i = 0; i < fk_info.child_columns.size(); ++i)
+            {
+                if (i > 0) child_cols_str += ",";
+                child_cols_str += fk_info.child_columns[i];
+            }
+            std::strncpy(updated_rec.child_columns, child_cols_str.c_str(),
+                         sizeof(updated_rec.child_columns) - 1);
+            std::string parent_cols_str;
+            for (size_t i = 0; i < fk_info.parent_columns.size(); ++i)
+            {
+                if (i > 0) parent_cols_str += ",";
+                parent_cols_str += fk_info.parent_columns[i];
+            }
+            std::strncpy(updated_rec.parent_columns, parent_cols_str.c_str(),
+                         sizeof(updated_rec.parent_columns) - 1);
+            updated_rec.on_delete = static_cast<uint8_t>(fk_info.on_delete);
+            updated_rec.on_update = static_cast<uint8_t>(fk_info.on_update);
+            updated_rec.match_type = static_cast<uint8_t>(fk_info.match_type);
+            updated_rec.is_enabled = fk_info.is_enabled ? 1 : 0;
+            updated_rec.created_time = fk_info.created_time;
+            updated_rec.is_valid = 1;
+
+            auto predicate = [&fk_id](const ForeignKeyRecord& rec) {
+                return rec.fk_id == fk_id && rec.is_valid == 1;
+            };
+            updateRecordInHeapPage(foreign_keys_table_page_, predicate, updated_rec, ctx);
+        }
+    }
+
     return Status::OK;
+}
+
+Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
+                                    const std::string& new_name, ErrorContext* ctx)
+{
+    if (new_name.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "New name cannot be empty");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+
+    auto validate_identifier = [&](const std::string& name) -> Status {
+        return UTF8Utils::validateStorageCapacity(
+            name,
+            CatalogConstants::MAX_IDENTIFIER_CHARS,
+            CatalogConstants::MAX_IDENTIFIER_STORAGE,
+            ctx
+        );
+    };
+
+    switch (object_type)
+    {
+        case ObjectType::SCHEMA:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = schema_cache_.find(object_id);
+            if (it == schema_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found");
+                return Status::NOT_FOUND;
+            }
+
+            const ID parent_id = it->second.parent_schema_id;
+            for (const auto& [id, info] : schema_cache_)
+            {
+                if (id == object_id || info.parent_schema_id != parent_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
+                                                   info.schema_name, info.name_is_delimited))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Schema name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            SchemaInfo old_info = it->second;
+            SchemaInfo& schema = it->second;
+            schema.schema_name = new_name;
+            schema.last_modified_time = now;
+
+            SchemaRecord record{};
+            record.schema_id = schema.schema_id;
+            record.parent_schema_id = schema.parent_schema_id;
+            std::memcpy(record.schema_name, schema.schema_name.c_str(), schema.schema_name.size());
+            record.schema_name[schema.schema_name.size()] = '\0';
+            record.owner_id = schema.owner_id;
+            record.default_tablespace_id = schema.default_tablespace_id;
+            record.permissions = schema.permissions;
+            record.default_charset = schema.default_charset;
+            record.default_collation_id = schema.default_collation_id;
+            record.acl_oid = schema.acl_oid;
+            record.created_time = schema.created_time;
+            record.last_modified_time = schema.last_modified_time;
+            record.is_valid = 1;
+
+            auto predicate = [&object_id](const SchemaRecord& rec) {
+                return rec.schema_id == object_id && rec.is_valid == 1;
+            };
+            Status status = updateRecordInHeapPage(schemas_table_page_, predicate, record, ctx);
+            if (status != Status::OK)
+            {
+                it->second = old_info;
+                return status;
+            }
+
+            return Status::OK;
+        }
+
+        case ObjectType::TABLE:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::scoped_lock lock(mutex_, trigger_mutex_);
+            auto it = table_cache_.find(object_id);
+            if (it == table_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table not found");
+                return Status::NOT_FOUND;
+            }
+
+            const ID schema_id = it->second.schema_id;
+            for (const auto& [id, info] : table_cache_)
+            {
+                if (id == object_id || info.schema_id != schema_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
+                                                   info.table_name, info.name_is_delimited))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Table name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            TableInfo old_info = it->second;
+            TableInfo& table = it->second;
+            table.table_name = new_name;
+            table.last_modified_time = now;
+
+            for (auto& [trig_id, trig_info] : trigger_cache_)
+            {
+                if (trig_info.table_id == object_id)
+                {
+                    trig_info.table_name = new_name;
+                }
+            }
+
+            TableRecord record{};
+            record.table_id = table.table_id;
+            record.schema_id = table.schema_id;
+            std::memcpy(record.table_name, table.table_name.c_str(), table.table_name.size());
+            record.table_name[table.table_name.size()] = '\0';
+            record.owner_id = table.owner_id;
+            record.root_page = table.root_page;
+            record.column_count = table.column_count;
+            record.row_count = table.row_count;
+            record.table_type = static_cast<uint8_t>(table.table_type);
+            record.has_toast = table.has_toast ? 1 : 0;
+            record.rls_enabled = table.rls_enabled ? 1 : 0;
+            record.rls_forced = table.rls_forced ? 1 : 0;
+            record.tablespace_id = table.tablespace_id;
+            record.default_charset = table.default_charset;
+            record.default_collation_id = table.default_collation_id;
+            record.storage_params_oid = table.storage_params_oid;
+            record.created_time = table.created_time;
+            record.last_modified_time = table.last_modified_time;
+            record.is_valid = 1;
+
+            auto predicate = [&object_id](const TableRecord& rec) {
+                return rec.table_id == object_id && rec.is_valid == 1;
+            };
+            Status status = updateRecordInHeapPage(tables_table_page_, predicate, record, ctx);
+            if (status != Status::OK)
+            {
+                it->second = old_info;
+                for (auto& [trig_id, trig_info] : trigger_cache_)
+                {
+                    if (trig_info.table_id == object_id)
+                    {
+                        trig_info.table_name = old_info.table_name;
+                    }
+                }
+                return status;
+            }
+
+            return Status::OK;
+        }
+
+        case ObjectType::COLUMN:
+        {
+            ID table_id{};
+            std::string old_name;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                for (const auto& [tid, columns] : column_cache_)
+                {
+                    for (const auto& col : columns)
+                    {
+                        if (col.column_id == object_id)
+                        {
+                            table_id = tid;
+                            old_name = col.column_name;
+                            break;
+                        }
+                    }
+                    if (!old_name.empty())
+                    {
+                        break;
+                    }
+                }
+            }
+
+            if (old_name.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Column not found");
+                return Status::NOT_FOUND;
+            }
+
+            return renameColumn(table_id, old_name, new_name, ctx);
+        }
+
+        case ObjectType::INDEX:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = index_cache_.find(object_id);
+            if (it == index_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Index not found");
+                return Status::NOT_FOUND;
+            }
+
+            const ID table_id = it->second.table_id;
+            for (const auto& [id, info] : index_cache_)
+            {
+                if (id == object_id || info.table_id != table_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
+                                                   info.index_name, info.name_is_delimited))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Index name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            IndexInfo old_info = it->second;
+            IndexInfo& index = it->second;
+            index.index_name = new_name;
+            index.logical_index_id = generateLogicalIndexId(index.table_id, new_name);
+
+            IndexRecord record{};
+            record.index_id = index.index_id;
+            record.table_id = index.table_id;
+            std::memcpy(record.index_name, index.index_name.c_str(), index.index_name.size());
+            record.index_name[index.index_name.size()] = '\0';
+            record.owner_id = index.owner_id;
+            record.root_page = index.root_page;
+            record.index_type = static_cast<uint8_t>(index.index_type);
+            record.is_unique = static_cast<uint8_t>(index.is_unique);
+            record.column_count = static_cast<uint16_t>(index.column_ids.size());
+            for (size_t i = 0; i < index.column_ids.size(); ++i)
+            {
+                record.column_ids[i] = index.column_ids[i];
+            }
+            record.index_params_oid = index.index_params_oid;
+            record.created_time = index.created_time;
+            record.is_valid = 1;
+            record.logical_index_id = index.logical_index_id;
+            record.state = index.state;
+            record.valid_from_xid = index.valid_from_xid;
+            record.retired_xid = index.retired_xid;
+            record.build_started_time = index.build_started_time;
+            record.build_completed_time = index.build_completed_time;
+
+            auto predicate = [&object_id](const IndexRecord& rec) {
+                return rec.index_id == object_id && rec.is_valid == 1;
+            };
+            Status status = updateRecordInHeapPage(indexes_table_page_, predicate, record, ctx);
+            if (status != Status::OK)
+            {
+                it->second = old_info;
+                return status;
+            }
+
+            return Status::OK;
+        }
+
+        case ObjectType::CONSTRAINT:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::lock_guard<std::mutex> lock(constraints_cache_mutex_);
+            auto it = constraints_cache_.find(object_id);
+            if (it == constraints_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Constraint not found");
+                return Status::NOT_FOUND;
+            }
+
+            auto table_id = it->second.table_id;
+            auto key = std::make_pair(table_id, new_name);
+            auto name_it = constraint_name_lookup_.find(key);
+            if (name_it != constraint_name_lookup_.end() && name_it->second != object_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Constraint name already exists");
+                return Status::FILE_EXISTS;
+            }
+
+            auto old_key = std::make_pair(table_id, it->second.constraint_name);
+            constraint_name_lookup_.erase(old_key);
+            constraint_name_lookup_[key] = object_id;
+
+            it->second.constraint_name = new_name;
+            return Status::OK;
+        }
+
+        case ObjectType::VIEW:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::lock_guard<std::mutex> lock(view_cache_mutex_);
+            auto it = view_cache_.find(object_id);
+            if (it == view_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "View not found");
+                return Status::NOT_FOUND;
+            }
+
+            const ID schema_id = it->second.schema_id;
+            for (const auto& [id, info] : view_cache_)
+            {
+                if (id == object_id || info.schema_id != schema_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
+                                                   info.name, info.name_is_delimited))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "View name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            std::string old_name = it->second.name;
+            const ID schema_id = it->second.schema_id;
+            bool old_delimited = it->second.name_is_delimited;
+            ViewInfo old_info = it->second;
+            it->second.name = new_name;
+            it->second.last_modified_time = now;
+            view_name_to_id_.erase(makeViewNameKey(schema_id, old_name, old_delimited));
+            view_name_to_id_[makeViewNameKey(schema_id, new_name, old_delimited)] = object_id;
+
+            Status persist_status = updateViewRecord(it->second, ctx);
+            if (persist_status != Status::OK)
+            {
+                it->second = old_info;
+                view_name_to_id_.erase(makeViewNameKey(schema_id, new_name, old_delimited));
+                view_name_to_id_[makeViewNameKey(schema_id, old_name, old_delimited)] = object_id;
+                return persist_status;
+            }
+
+            return Status::OK;
+        }
+
+        case ObjectType::SEQUENCE:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::scoped_lock lock(sequence_cache_mutex_, sequence_name_mutex_);
+            auto it = sequence_cache_.find(object_id);
+            if (it == sequence_cache_.end() || !it->second)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
+                return Status::NOT_FOUND;
+            }
+
+            for (const auto& [seq_id, state] : sequence_cache_)
+            {
+                if (!state || seq_id == object_id)
+                {
+                    continue;
+                }
+                if (state->schema_id != it->second->schema_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
+                                                   state->name, state->name_is_delimited))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Sequence name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            std::string old_name = it->second->name;
+            ID schema_id = it->second->schema_id;
+            bool old_delimited = it->second->name_is_delimited;
+            it->second->name = new_name;
+            it->second->last_modified_time = now;
+            sequence_name_to_id_.erase(makeSequenceNameKey(schema_id, old_name, old_delimited));
+            sequence_name_to_id_[makeSequenceNameKey(schema_id, new_name, old_delimited)] = object_id;
+
+            SequenceRecord record{};
+            record.sequence_id = it->second->sequence_id;
+            record.schema_id = it->second->schema_id;
+            std::string truncated = UTF8Utils::truncateToBytes(it->second->name,
+                                                               sizeof(record.sequence_name));
+            std::memset(record.sequence_name, 0, sizeof(record.sequence_name));
+            std::strncpy(record.sequence_name, truncated.c_str(),
+                         sizeof(record.sequence_name) - 1);
+            record.owner_id = it->second->owner_id;
+            record.current_value = it->second->current_value.load();
+            record.increment_by = it->second->increment_by;
+            record.min_value = it->second->min_value;
+            record.max_value = it->second->max_value;
+            record.start_value = it->second->start_value;
+            record.cache_size = it->second->cache_size;
+            record.cycle = it->second->cycle ? 1 : 0;
+            record.name_is_delimited = it->second->name_is_delimited ? 1 : 0;
+            record.created_time = it->second->created_time;
+            record.last_modified_time = it->second->last_modified_time;
+            record.is_valid = 1;
+
+            auto predicate = [&object_id](const SequenceRecord& rec) {
+                return rec.sequence_id == object_id && rec.is_valid == 1;
+            };
+            Status persist_status = updateRecordInHeapPage(sequences_table_page_, predicate,
+                                                           record, ctx);
+            if (persist_status != Status::OK)
+            {
+                it->second->name = old_name;
+                it->second->name_is_delimited = old_delimited;
+                sequence_name_to_id_.erase(makeSequenceNameKey(schema_id, new_name, old_delimited));
+                sequence_name_to_id_[makeSequenceNameKey(schema_id, old_name, old_delimited)] =
+                    object_id;
+                return persist_status;
+            }
+            return Status::OK;
+        }
+
+        case ObjectType::TRIGGER:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::scoped_lock lock(trigger_mutex_, db_trigger_mutex_);
+
+            auto it = trigger_cache_.find(object_id);
+            if (it != trigger_cache_.end())
+            {
+                if (trigger_name_to_id_.count(new_name) > 0 &&
+                    trigger_name_to_id_[new_name] != object_id)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Trigger name already exists");
+                    return Status::FILE_EXISTS;
+                }
+                if (db_trigger_name_to_id_.count(new_name) > 0)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
+                                      "Trigger name already exists as a database trigger");
+                    return Status::FILE_EXISTS;
+                }
+
+                auto predicate = [&object_id](const TriggerRecord& rec) {
+                    return rec.trigger_id == object_id && rec.is_valid == 1;
+                };
+                auto result = findRecordInHeapPage<TriggerRecord>(triggers_table_page_, predicate, ctx);
+                if (result.status != Status::OK)
+                {
+                    return result.status;
+                }
+
+                TriggerRecord updated = result.record;
+                std::string truncated = UTF8Utils::truncateToBytes(new_name,
+                                                                   sizeof(updated.trigger_name));
+                std::memset(updated.trigger_name, 0, sizeof(updated.trigger_name));
+                std::strncpy(updated.trigger_name, truncated.c_str(),
+                             sizeof(updated.trigger_name) - 1);
+                updated.last_modified_time = now;
+
+                Status persist_status = updateRecordInHeapPage(triggers_table_page_,
+                                                               result.slot_index,
+                                                               updated, ctx);
+                if (persist_status != Status::OK)
+                {
+                    return persist_status;
+                }
+
+                std::string old_name = it->second.trigger_name;
+                it->second.trigger_name = new_name;
+                trigger_name_to_id_.erase(old_name);
+                trigger_name_to_id_[new_name] = object_id;
+                return Status::OK;
+            }
+
+            auto db_it = db_trigger_cache_.find(object_id);
+            if (db_it == db_trigger_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger not found");
+                return Status::NOT_FOUND;
+            }
+
+            if (db_trigger_name_to_id_.count(new_name) > 0 &&
+                db_trigger_name_to_id_[new_name] != object_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Trigger name already exists");
+                return Status::FILE_EXISTS;
+            }
+            if (trigger_name_to_id_.count(new_name) > 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
+                                  "Trigger name already exists as a table trigger");
+                return Status::FILE_EXISTS;
+            }
+
+            auto predicate = [&object_id](const TriggerRecord& rec) {
+                return rec.trigger_id == object_id && rec.is_valid == 1;
+            };
+            auto result = findRecordInHeapPage<TriggerRecord>(triggers_table_page_, predicate, ctx);
+            if (result.status != Status::OK)
+            {
+                return result.status;
+            }
+
+            TriggerRecord updated = result.record;
+            std::string truncated = UTF8Utils::truncateToBytes(new_name,
+                                                               sizeof(updated.trigger_name));
+            std::memset(updated.trigger_name, 0, sizeof(updated.trigger_name));
+            std::strncpy(updated.trigger_name, truncated.c_str(),
+                         sizeof(updated.trigger_name) - 1);
+            updated.last_modified_time = now;
+
+            Status persist_status = updateRecordInHeapPage(triggers_table_page_,
+                                                           result.slot_index,
+                                                           updated, ctx);
+            if (persist_status != Status::OK)
+            {
+                return persist_status;
+            }
+
+            std::string old_name = db_it->second.trigger_name;
+            db_it->second.trigger_name = new_name;
+            db_trigger_name_to_id_.erase(old_name);
+            db_trigger_name_to_id_[new_name] = object_id;
+            return Status::OK;
+        }
+
+        case ObjectType::PROCEDURE:
+        case ObjectType::FUNCTION:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::lock_guard<std::mutex> lock(psql_mutex_);
+            if (object_type == ObjectType::FUNCTION)
+            {
+                auto it = std::find_if(functions_.begin(), functions_.end(),
+                                       [&object_id](const auto& pair) {
+                                           return pair.second.function_id == object_id;
+                                       });
+                if (it == functions_.end())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Function not found");
+                    return Status::NOT_FOUND;
+                }
+
+                auto conflict = functions_.find(new_name);
+                if (conflict != functions_.end() &&
+                    conflict->second.function_id != object_id)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Function name already exists");
+                    return Status::FILE_EXISTS;
+                }
+
+                auto predicate = [&object_id](const ProcedureRecord& rec) {
+                    return rec.procedure_id == object_id && rec.is_valid == 1;
+                };
+                auto result = findRecordInHeapPage<ProcedureRecord>(procedures_table_page_,
+                                                                    predicate, ctx);
+                if (result.status != Status::OK)
+                {
+                    return result.status;
+                }
+
+                ProcedureRecord updated = result.record;
+                std::string truncated = UTF8Utils::truncateToBytes(new_name,
+                                                                   sizeof(updated.procedure_name));
+                std::memset(updated.procedure_name, 0, sizeof(updated.procedure_name));
+                std::strncpy(updated.procedure_name, truncated.c_str(),
+                             sizeof(updated.procedure_name) - 1);
+                updated.last_modified_time = now;
+
+                Status persist_status = updateRecordInHeapPage(procedures_table_page_,
+                                                               result.slot_index,
+                                                               updated, ctx);
+                if (persist_status != Status::OK)
+                {
+                    return persist_status;
+                }
+
+                FunctionInfo info = it->second;
+                functions_.erase(it);
+                info.name = new_name;
+                info.modified_time = now;
+                functions_[new_name] = info;
+                return Status::OK;
+            }
+
+            auto it = std::find_if(procedures_.begin(), procedures_.end(),
+                                   [&object_id](const auto& pair) {
+                                       return pair.second.procedure_id == object_id;
+                                   });
+            if (it == procedures_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Procedure not found");
+                return Status::NOT_FOUND;
+            }
+
+            auto conflict = procedures_.find(new_name);
+            if (conflict != procedures_.end() &&
+                conflict->second.procedure_id != object_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Procedure name already exists");
+                return Status::FILE_EXISTS;
+            }
+
+            auto predicate = [&object_id](const ProcedureRecord& rec) {
+                return rec.procedure_id == object_id && rec.is_valid == 1;
+            };
+            auto result = findRecordInHeapPage<ProcedureRecord>(procedures_table_page_,
+                                                                predicate, ctx);
+            if (result.status != Status::OK)
+            {
+                return result.status;
+            }
+
+            ProcedureRecord updated = result.record;
+            std::string truncated = UTF8Utils::truncateToBytes(new_name,
+                                                               sizeof(updated.procedure_name));
+            std::memset(updated.procedure_name, 0, sizeof(updated.procedure_name));
+            std::strncpy(updated.procedure_name, truncated.c_str(),
+                         sizeof(updated.procedure_name) - 1);
+            updated.last_modified_time = now;
+
+            Status persist_status = updateRecordInHeapPage(procedures_table_page_,
+                                                           result.slot_index,
+                                                           updated, ctx);
+            if (persist_status != Status::OK)
+            {
+                return persist_status;
+            }
+
+            ProcedureInfo info = it->second;
+            procedures_.erase(it);
+            info.name = new_name;
+            info.modified_time = now;
+            procedures_[new_name] = info;
+            return Status::OK;
+        }
+
+        case ObjectType::DOMAIN:
+        {
+            if (!db_ || !db_->domain_manager())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, "Domain manager unavailable");
+                return Status::NOT_IMPLEMENTED;
+            }
+            return db_->domain_manager()->renameDomain(object_id, new_name, ctx);
+        }
+
+        case ObjectType::PACKAGE:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto predicate = [&object_id](const PackageRecord& rec) {
+                return rec.package_id == object_id && rec.is_valid == 1;
+            };
+            auto result = findRecordInHeapPage<PackageRecord>(packages_table_page_, predicate, ctx);
+            if (result.status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Package not found");
+                return Status::NOT_FOUND;
+            }
+
+            auto conflict_pred = [&](const PackageRecord& rec) {
+                return rec.is_valid == 1 &&
+                       rec.schema_id == result.record.schema_id &&
+                       std::strcmp(rec.package_name, new_name.c_str()) == 0;
+            };
+            auto conflict = findRecordInHeapPage<PackageRecord>(packages_table_page_, conflict_pred, ctx);
+            if (conflict.status == Status::OK && conflict.record.package_id != object_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Package name already exists");
+                return Status::FILE_EXISTS;
+            }
+
+            PackageRecord updated = result.record;
+            std::string truncated = UTF8Utils::truncateToBytes(new_name, sizeof(updated.package_name));
+            std::memset(updated.package_name, 0, sizeof(updated.package_name));
+            std::strncpy(updated.package_name, truncated.c_str(), sizeof(updated.package_name) - 1);
+            updated.last_modified_time = now;
+
+            Status status = updateRecordInHeapPage(packages_table_page_, predicate, updated, ctx);
+            return status;
+        }
+
+        case ObjectType::UDR:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto predicate = [&object_id](const UDRRecord& rec) {
+                return rec.udr_id == object_id && rec.is_valid == 1;
+            };
+            auto result = findRecordInHeapPage<UDRRecord>(udr_table_page_, predicate, ctx);
+            if (result.status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR not found");
+                return Status::NOT_FOUND;
+            }
+
+            auto conflict_pred = [&](const UDRRecord& rec) {
+                return rec.is_valid == 1 &&
+                       rec.schema_id == result.record.schema_id &&
+                       std::strcmp(rec.udr_name, new_name.c_str()) == 0;
+            };
+            auto conflict = findRecordInHeapPage<UDRRecord>(udr_table_page_, conflict_pred, ctx);
+            if (conflict.status == Status::OK && conflict.record.udr_id != object_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "UDR name already exists");
+                return Status::FILE_EXISTS;
+            }
+
+            UDRRecord updated = result.record;
+            std::string truncated = UTF8Utils::truncateToBytes(new_name, sizeof(updated.udr_name));
+            std::memset(updated.udr_name, 0, sizeof(updated.udr_name));
+            std::strncpy(updated.udr_name, truncated.c_str(), sizeof(updated.udr_name) - 1);
+            updated.last_modified_time = now;
+
+            Status status = updateRecordInHeapPage(udr_table_page_, predicate, updated, ctx);
+            return status;
+        }
+
+        case ObjectType::EXCEPTION:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = exception_cache_.find(object_id);
+            if (it == exception_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Exception not found");
+                return Status::NOT_FOUND;
+            }
+
+            const ID schema_id = it->second.schema_id;
+            for (const auto& [id, info] : exception_cache_)
+            {
+                if (id == object_id || info.schema_id != schema_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
+                                                   info.name, false /*existing_is_delimited*/))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Exception name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            ExceptionInfo old_info = it->second;
+
+            auto predicate = [&object_id](const ExceptionRecord& rec) {
+                return rec.exception_id == object_id && rec.is_valid == 1;
+            };
+            auto result = findRecordInHeapPage<ExceptionRecord>(exceptions_table_page_, predicate, ctx);
+            if (result.status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Exception not found");
+                return Status::NOT_FOUND;
+            }
+
+            it->second.name = new_name;
+            it->second.last_modified_time = now;
+
+            ExceptionRecord updated = result.record;
+            updated.schema_id = it->second.schema_id;
+            std::string truncated = UTF8Utils::truncateToBytes(new_name, sizeof(updated.name));
+            std::memset(updated.name, 0, sizeof(updated.name));
+            std::strncpy(updated.name, truncated.c_str(), sizeof(updated.name) - 1);
+            updated.last_modified_time = it->second.last_modified_time;
+            updated.is_valid = 1;
+
+            Status status = updateRecordInHeapPage(exceptions_table_page_, predicate, updated, ctx);
+            if (status != Status::OK)
+            {
+                it->second = old_info;
+            }
+            return status;
+        }
+
+        case ObjectType::ROLE:
+        {
+            return updateRole(object_id, new_name, std::nullopt, std::nullopt,
+                              std::nullopt, ctx);
+        }
+
+        case ObjectType::USER:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto predicate = [&object_id](const UserRecord& rec) {
+                return rec.user_id == object_id && rec.is_valid == 1;
+            };
+            auto result = findRecordInHeapPage<UserRecord>(users_table_page_, predicate, ctx);
+            if (result.status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "User not found");
+                return Status::NOT_FOUND;
+            }
+
+            auto conflict_pred = [&](const UserRecord& rec) {
+                return rec.is_valid == 1 &&
+                       IdentifierUtils::namesMatch(new_name, false /*search_delimited*/,
+                                                   rec.username, false /*stored_delimited*/);
+            };
+            auto conflict = findRecordInHeapPage<UserRecord>(users_table_page_, conflict_pred, ctx);
+            if (conflict.status == Status::OK && conflict.record.user_id != object_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "User name already exists");
+                return Status::FILE_EXISTS;
+            }
+
+            UserRecord updated = result.record;
+            std::string truncated = UTF8Utils::truncateToBytes(new_name, sizeof(updated.username));
+            std::memset(updated.username, 0, sizeof(updated.username));
+            std::strncpy(updated.username, truncated.c_str(), sizeof(updated.username) - 1);
+
+            Status status = updateRecordInHeapPage(users_table_page_, predicate, updated, ctx);
+            return status;
+        }
+
+        case ObjectType::GROUP:
+        {
+            return updateGroup(object_id, new_name, std::nullopt, std::nullopt,
+                               std::nullopt, ctx);
+        }
+
+        case ObjectType::TABLESPACE:
+        {
+            std::string old_name;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                for (const auto& [id, info] : tablespace_cache_)
+                {
+                    if (info.tablespace_uuid == object_id)
+                    {
+                        old_name = info.tablespace_name;
+                        break;
+                    }
+                }
+            }
+
+            if (old_name.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Tablespace not found");
+                return Status::NOT_FOUND;
+            }
+
+            return renameTablespace(old_name, new_name, ctx);
+        }
+
+        case ObjectType::SYNONYM:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::lock_guard<std::mutex> lock(synonym_cache_mutex_);
+            auto it = synonym_cache_.find(object_id);
+            if (it == synonym_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Synonym not found");
+                return Status::NOT_FOUND;
+            }
+
+            const ID schema_id = it->second.schema_id;
+            for (const auto& [id, info] : synonym_cache_)
+            {
+                if (id == object_id || info.schema_id != schema_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
+                                                   info.synonym_name, false /*existing_is_delimited*/))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Synonym name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            SynonymInfo old_info = it->second;
+            auto old_key = makeSynonymNameKey(schema_id, old_info.synonym_name);
+
+            it->second.synonym_name = new_name;
+            it->second.last_modified_time = now;
+            synonym_name_lookup_.erase(old_key);
+            synonym_name_lookup_[makeSynonymNameKey(schema_id, new_name)] = object_id;
+
+            Status persist_status = updateSynonymRecord(it->second, ctx);
+            if (persist_status != Status::OK)
+            {
+                synonym_name_lookup_.erase(makeSynonymNameKey(schema_id, new_name));
+                synonym_name_lookup_[old_key] = old_info.synonym_id;
+                it->second = old_info;
+            }
+            return persist_status;
+        }
+
+        case ObjectType::FOREIGN_TABLE:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::lock_guard<std::mutex> lock(foreign_table_cache_mutex_);
+            auto it = foreign_table_cache_.find(object_id);
+            if (it == foreign_table_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Foreign table not found");
+                return Status::NOT_FOUND;
+            }
+
+            const ID schema_id = it->second.schema_id;
+            for (const auto& [id, info] : foreign_table_cache_)
+            {
+                if (id == object_id || info.schema_id != schema_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
+                                                   info.table_name, false /*existing_is_delimited*/))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Foreign table name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            ForeignTableInfo old_info = it->second;
+            auto old_key = makeForeignTableNameKey(schema_id, old_info.table_name);
+
+            it->second.table_name = new_name;
+            it->second.last_modified_time = now;
+            foreign_table_name_lookup_.erase(old_key);
+            foreign_table_name_lookup_[makeForeignTableNameKey(schema_id, new_name)] = object_id;
+
+            Status persist_status = updateForeignTableRecord(it->second, ctx);
+            if (persist_status != Status::OK)
+            {
+                foreign_table_name_lookup_.erase(makeForeignTableNameKey(schema_id, new_name));
+                foreign_table_name_lookup_[old_key] = old_info.foreign_table_id;
+                it->second = old_info;
+            }
+            return persist_status;
+        }
+
+        case ObjectType::FOREIGN_SERVER:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::lock_guard<std::mutex> lock(foreign_server_cache_mutex_);
+            auto it = foreign_server_cache_.find(object_id);
+            if (it == foreign_server_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Foreign server not found");
+                return Status::NOT_FOUND;
+            }
+
+            auto new_key = makeForeignServerNameKey(new_name);
+            auto name_it = foreign_server_name_to_id_.find(new_key);
+            if (name_it != foreign_server_name_to_id_.end() &&
+                name_it->second != object_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Foreign server name already exists");
+                return Status::FILE_EXISTS;
+            }
+
+            ForeignServerInfo old_info = it->second;
+            auto old_key = makeForeignServerNameKey(old_info.server_name);
+            it->second.server_name = new_name;
+            it->second.last_modified_time = now;
+            foreign_server_name_to_id_.erase(old_key);
+            foreign_server_name_to_id_[new_key] = object_id;
+
+            Status persist_status = updateForeignServerRecord(it->second, ctx);
+            if (persist_status != Status::OK)
+            {
+                foreign_server_name_to_id_.erase(new_key);
+                foreign_server_name_to_id_[old_key] = old_info.server_id;
+                it->second = old_info;
+            }
+            return persist_status;
+        }
+
+        case ObjectType::SERVER_REGISTRY:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::lock_guard<std::mutex> lock(server_registry_cache_mutex_);
+            auto it = server_registry_cache_.find(object_id);
+            if (it == server_registry_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Server registry entry not found");
+                return Status::NOT_FOUND;
+            }
+
+            auto new_key = makeServerRegistryNameKey(new_name);
+            auto name_it = server_registry_name_to_id_.find(new_key);
+            if (name_it != server_registry_name_to_id_.end() &&
+                name_it->second != object_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Server name already exists");
+                return Status::FILE_EXISTS;
+            }
+
+            ServerRegistryInfo old_info = it->second;
+            auto old_key = makeServerRegistryNameKey(old_info.server_name);
+            it->second.server_name = new_name;
+            it->second.last_modified_time = now;
+            server_registry_name_to_id_.erase(old_key);
+            server_registry_name_to_id_[new_key] = object_id;
+
+            Status persist_status = updateServerRegistryRecord(it->second, ctx);
+            if (persist_status != Status::OK)
+            {
+                server_registry_name_to_id_.erase(new_key);
+                server_registry_name_to_id_[old_key] = old_info.server_id;
+                it->second = old_info;
+            }
+            return persist_status;
+        }
+
+        case ObjectType::UDR_ENGINE:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::lock_guard<std::mutex> lock(udr_engine_cache_mutex_);
+            auto it = udr_engine_cache_.find(object_id);
+            if (it == udr_engine_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR engine not found");
+                return Status::NOT_FOUND;
+            }
+
+            auto new_key = makeUDREngineNameKey(new_name);
+            auto name_it = udr_engine_name_to_id_.find(new_key);
+            if (name_it != udr_engine_name_to_id_.end() &&
+                name_it->second != object_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "UDR engine name already exists");
+                return Status::FILE_EXISTS;
+            }
+
+            UDREngineInfo old_info = it->second;
+            auto old_key = makeUDREngineNameKey(old_info.engine_name);
+            it->second.engine_name = new_name;
+            it->second.last_modified_time = now;
+            udr_engine_name_to_id_.erase(old_key);
+            udr_engine_name_to_id_[new_key] = object_id;
+
+            Status persist_status = updateUDREngineRecord(it->second, ctx);
+            if (persist_status != Status::OK)
+            {
+                udr_engine_name_to_id_.erase(new_key);
+                udr_engine_name_to_id_[old_key] = old_info.engine_id;
+                it->second = old_info;
+            }
+            return persist_status;
+        }
+
+        case ObjectType::UDR_MODULE:
+        {
+            Status validation = validate_identifier(new_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            std::lock_guard<std::mutex> lock(udr_module_cache_mutex_);
+            auto it = udr_module_cache_.find(object_id);
+            if (it == udr_module_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR module not found");
+                return Status::NOT_FOUND;
+            }
+
+            auto new_key = makeUDRModuleNameKey(new_name);
+            auto name_it = udr_module_name_to_id_.find(new_key);
+            if (name_it != udr_module_name_to_id_.end() &&
+                name_it->second != object_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "UDR module name already exists");
+                return Status::FILE_EXISTS;
+            }
+
+            UDRModuleInfo old_info = it->second;
+            auto old_key = makeUDRModuleNameKey(old_info.module_name);
+            it->second.module_name = new_name;
+            it->second.last_modified_time = now;
+            udr_module_name_to_id_.erase(old_key);
+            udr_module_name_to_id_[new_key] = object_id;
+
+            Status persist_status = updateUDRModuleRecord(it->second, ctx);
+            if (persist_status != Status::OK)
+            {
+                udr_module_name_to_id_.erase(new_key);
+                udr_module_name_to_id_[old_key] = old_info.module_id;
+                it->second = old_info;
+            }
+            return persist_status;
+        }
+
+        default:
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Rename not supported for object type");
+            return Status::INVALID_ARGUMENT;
+    }
+}
+
+Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
+                                  const ID& target_schema_id,
+                                  const std::optional<std::string>& new_name,
+                                  ErrorContext* ctx)
+{
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+
+    auto validate_identifier = [&](const std::string& name) -> Status {
+        return UTF8Utils::validateStorageCapacity(
+            name,
+            CatalogConstants::MAX_IDENTIFIER_CHARS,
+            CatalogConstants::MAX_IDENTIFIER_STORAGE,
+            ctx
+        );
+    };
+
+    switch (object_type)
+    {
+        case ObjectType::SCHEMA:
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = schema_cache_.find(object_id);
+            if (it == schema_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found");
+                return Status::NOT_FOUND;
+            }
+
+            if (!isZeroUuidLocal(target_schema_id) &&
+                schema_cache_.find(target_schema_id) == schema_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Target schema not found");
+                return Status::NOT_FOUND;
+            }
+
+            ID current = target_schema_id;
+            while (!isZeroUuidLocal(current))
+            {
+                if (current == object_id)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Cannot move schema into its descendant");
+                    return Status::INVALID_ARGUMENT;
+                }
+                auto parent_it = schema_cache_.find(current);
+                if (parent_it == schema_cache_.end())
+                {
+                    break;
+                }
+                current = parent_it->second.parent_schema_id;
+            }
+
+            std::string desired_name = new_name.has_value() ? new_name.value()
+                                                            : it->second.schema_name;
+            Status validation = validate_identifier(desired_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            for (const auto& [id, info] : schema_cache_)
+            {
+                if (id == object_id || info.parent_schema_id != target_schema_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesConflict(desired_name, false /*new_is_delimited*/,
+                                                   info.schema_name, info.name_is_delimited))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Schema name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            SchemaInfo old_info = it->second;
+            SchemaInfo& schema = it->second;
+            schema.schema_name = desired_name;
+            schema.parent_schema_id = target_schema_id;
+            schema.last_modified_time = now;
+
+            SchemaRecord record{};
+            record.schema_id = schema.schema_id;
+            record.parent_schema_id = schema.parent_schema_id;
+            std::memcpy(record.schema_name, schema.schema_name.c_str(), schema.schema_name.size());
+            record.schema_name[schema.schema_name.size()] = '\0';
+            record.owner_id = schema.owner_id;
+            record.default_tablespace_id = schema.default_tablespace_id;
+            record.permissions = schema.permissions;
+            record.default_charset = schema.default_charset;
+            record.default_collation_id = schema.default_collation_id;
+            record.acl_oid = schema.acl_oid;
+            record.created_time = schema.created_time;
+            record.last_modified_time = schema.last_modified_time;
+            record.is_valid = 1;
+
+            auto predicate = [&object_id](const SchemaRecord& rec) {
+                return rec.schema_id == object_id && rec.is_valid == 1;
+            };
+            Status status = updateRecordInHeapPage(schemas_table_page_, predicate, record, ctx);
+            if (status != Status::OK)
+            {
+                it->second = old_info;
+                return status;
+            }
+
+            return Status::OK;
+        }
+
+        case ObjectType::TABLE:
+        {
+            std::scoped_lock lock(mutex_, trigger_mutex_);
+            auto it = table_cache_.find(object_id);
+            if (it == table_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table not found");
+                return Status::NOT_FOUND;
+            }
+
+            if (schema_cache_.find(target_schema_id) == schema_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Target schema not found");
+                return Status::NOT_FOUND;
+            }
+
+            std::string desired_name = new_name.has_value() ? new_name.value()
+                                                            : it->second.table_name;
+            Status validation = validate_identifier(desired_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            for (const auto& [id, info] : table_cache_)
+            {
+                if (id == object_id || info.schema_id != target_schema_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesConflict(desired_name, false /*new_is_delimited*/,
+                                                   info.table_name, info.name_is_delimited))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Table name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            TableInfo old_info = it->second;
+            TableInfo& table = it->second;
+            table.schema_id = target_schema_id;
+            table.table_name = desired_name;
+            table.last_modified_time = now;
+
+            for (auto& [trig_id, trig_info] : trigger_cache_)
+            {
+                if (trig_info.table_id == object_id)
+                {
+                    trig_info.table_name = desired_name;
+                }
+            }
+
+            TableRecord record{};
+            record.table_id = table.table_id;
+            record.schema_id = table.schema_id;
+            std::memcpy(record.table_name, table.table_name.c_str(), table.table_name.size());
+            record.table_name[table.table_name.size()] = '\0';
+            record.owner_id = table.owner_id;
+            record.root_page = table.root_page;
+            record.column_count = table.column_count;
+            record.row_count = table.row_count;
+            record.table_type = static_cast<uint8_t>(table.table_type);
+            record.has_toast = table.has_toast ? 1 : 0;
+            record.rls_enabled = table.rls_enabled ? 1 : 0;
+            record.rls_forced = table.rls_forced ? 1 : 0;
+            record.tablespace_id = table.tablespace_id;
+            record.default_charset = table.default_charset;
+            record.default_collation_id = table.default_collation_id;
+            record.storage_params_oid = table.storage_params_oid;
+            record.created_time = table.created_time;
+            record.last_modified_time = table.last_modified_time;
+            record.is_valid = 1;
+
+            auto predicate = [&object_id](const TableRecord& rec) {
+                return rec.table_id == object_id && rec.is_valid == 1;
+            };
+            Status status = updateRecordInHeapPage(tables_table_page_, predicate, record, ctx);
+            if (status != Status::OK)
+            {
+                it->second = old_info;
+                for (auto& [trig_id, trig_info] : trigger_cache_)
+                {
+                    if (trig_info.table_id == object_id)
+                    {
+                        trig_info.table_name = old_info.table_name;
+                    }
+                }
+                return status;
+            }
+
+            return Status::OK;
+        }
+
+        case ObjectType::VIEW:
+        {
+            std::scoped_lock lock(mutex_, view_cache_mutex_);
+            if (isZeroUuidLocal(target_schema_id) ||
+                schema_cache_.find(target_schema_id) == schema_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Target schema not found");
+                return Status::NOT_FOUND;
+            }
+            auto it = view_cache_.find(object_id);
+            if (it == view_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "View not found");
+                return Status::NOT_FOUND;
+            }
+
+            std::string desired_name = new_name.has_value() ? new_name.value()
+                                                            : it->second.name;
+            Status validation = validate_identifier(desired_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            for (const auto& [id, info] : view_cache_)
+            {
+                if (id == object_id || info.schema_id != target_schema_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesConflict(desired_name, false /*new_is_delimited*/,
+                                                   info.name, info.name_is_delimited))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "View name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            std::string old_name = it->second.name;
+            ID old_schema_id = it->second.schema_id;
+            bool old_delimited = it->second.name_is_delimited;
+            ViewInfo old_info = it->second;
+            it->second.name = desired_name;
+            it->second.schema_id = target_schema_id;
+            it->second.last_modified_time = now;
+            view_name_to_id_.erase(makeViewNameKey(old_schema_id, old_name, old_delimited));
+            view_name_to_id_[makeViewNameKey(target_schema_id, desired_name,
+                                             old_delimited)] = object_id;
+
+            Status persist_status = updateViewRecord(it->second, ctx);
+            if (persist_status != Status::OK)
+            {
+                it->second = old_info;
+                view_name_to_id_.erase(makeViewNameKey(target_schema_id, desired_name,
+                                                       old_delimited));
+                view_name_to_id_[makeViewNameKey(old_schema_id, old_name, old_delimited)] =
+                    object_id;
+                return persist_status;
+            }
+
+            return Status::OK;
+        }
+
+        case ObjectType::SEQUENCE:
+        {
+            std::scoped_lock lock(mutex_, sequence_cache_mutex_, sequence_name_mutex_);
+            if (isZeroUuidLocal(target_schema_id) ||
+                schema_cache_.find(target_schema_id) == schema_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Target schema not found");
+                return Status::NOT_FOUND;
+            }
+            auto it = sequence_cache_.find(object_id);
+            if (it == sequence_cache_.end() || !it->second)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
+                return Status::NOT_FOUND;
+            }
+
+            std::string desired_name = new_name.has_value() ? new_name.value()
+                                                            : it->second->name;
+            Status validation = validate_identifier(desired_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            for (const auto& [seq_id, state] : sequence_cache_)
+            {
+                if (!state || seq_id == object_id)
+                {
+                    continue;
+                }
+                if (state->schema_id != target_schema_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesConflict(desired_name, false /*new_is_delimited*/,
+                                                   state->name, state->name_is_delimited))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Sequence name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            std::string old_name = it->second->name;
+            ID old_schema_id = it->second->schema_id;
+            bool old_delimited = it->second->name_is_delimited;
+            it->second->schema_id = target_schema_id;
+            it->second->name = desired_name;
+            it->second->last_modified_time = now;
+            sequence_name_to_id_.erase(makeSequenceNameKey(old_schema_id, old_name, old_delimited));
+            sequence_name_to_id_[makeSequenceNameKey(target_schema_id, desired_name,
+                                                     old_delimited)] = object_id;
+
+            SequenceRecord record{};
+            record.sequence_id = it->second->sequence_id;
+            record.schema_id = it->second->schema_id;
+            std::string truncated = UTF8Utils::truncateToBytes(it->second->name,
+                                                               sizeof(record.sequence_name));
+            std::memset(record.sequence_name, 0, sizeof(record.sequence_name));
+            std::strncpy(record.sequence_name, truncated.c_str(),
+                         sizeof(record.sequence_name) - 1);
+            record.owner_id = it->second->owner_id;
+            record.current_value = it->second->current_value.load();
+            record.increment_by = it->second->increment_by;
+            record.min_value = it->second->min_value;
+            record.max_value = it->second->max_value;
+            record.start_value = it->second->start_value;
+            record.cache_size = it->second->cache_size;
+            record.cycle = it->second->cycle ? 1 : 0;
+            record.name_is_delimited = it->second->name_is_delimited ? 1 : 0;
+            record.created_time = it->second->created_time;
+            record.last_modified_time = it->second->last_modified_time;
+            record.is_valid = 1;
+
+            auto predicate = [&object_id](const SequenceRecord& rec) {
+                return rec.sequence_id == object_id && rec.is_valid == 1;
+            };
+            Status persist_status = updateRecordInHeapPage(sequences_table_page_, predicate,
+                                                           record, ctx);
+            if (persist_status != Status::OK)
+            {
+                it->second->schema_id = old_schema_id;
+                it->second->name = old_name;
+                sequence_name_to_id_.erase(makeSequenceNameKey(target_schema_id, desired_name,
+                                                               old_delimited));
+                sequence_name_to_id_[makeSequenceNameKey(old_schema_id, old_name, old_delimited)] =
+                    object_id;
+                return persist_status;
+            }
+            return Status::OK;
+        }
+
+        case ObjectType::FUNCTION:
+        case ObjectType::PROCEDURE:
+        {
+            std::scoped_lock lock(mutex_, psql_mutex_);
+            if (isZeroUuidLocal(target_schema_id) ||
+                schema_cache_.find(target_schema_id) == schema_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Target schema not found");
+                return Status::NOT_FOUND;
+            }
+            if (object_type == ObjectType::FUNCTION)
+            {
+                auto it = std::find_if(functions_.begin(), functions_.end(),
+                                       [&object_id](const auto& pair) {
+                                           return pair.second.function_id == object_id;
+                                       });
+                if (it == functions_.end())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Function not found");
+                    return Status::NOT_FOUND;
+                }
+
+                std::string desired_name = new_name.has_value() ? new_name.value()
+                                                                : it->second.name;
+                Status validation = validate_identifier(desired_name);
+                if (validation != Status::OK)
+                {
+                    return validation;
+                }
+
+                auto conflict = functions_.find(desired_name);
+                if (conflict != functions_.end() &&
+                    conflict->second.function_id != object_id)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Function name already exists");
+                    return Status::FILE_EXISTS;
+                }
+
+                auto predicate = [&object_id](const ProcedureRecord& rec) {
+                    return rec.procedure_id == object_id && rec.is_valid == 1;
+                };
+                auto result = findRecordInHeapPage<ProcedureRecord>(procedures_table_page_,
+                                                                    predicate, ctx);
+                if (result.status != Status::OK)
+                {
+                    return result.status;
+                }
+
+                ProcedureRecord updated = result.record;
+                updated.schema_id = target_schema_id;
+                std::string truncated = UTF8Utils::truncateToBytes(desired_name,
+                                                                   sizeof(updated.procedure_name));
+                std::memset(updated.procedure_name, 0, sizeof(updated.procedure_name));
+                std::strncpy(updated.procedure_name, truncated.c_str(),
+                             sizeof(updated.procedure_name) - 1);
+                updated.last_modified_time = now;
+
+                Status persist_status = updateRecordInHeapPage(procedures_table_page_,
+                                                               result.slot_index,
+                                                               updated, ctx);
+                if (persist_status != Status::OK)
+                {
+                    return persist_status;
+                }
+
+                FunctionInfo info = it->second;
+                functions_.erase(it);
+                info.name = desired_name;
+                info.schema_id = target_schema_id;
+                info.modified_time = now;
+                functions_[desired_name] = info;
+                return Status::OK;
+            }
+
+            auto it = std::find_if(procedures_.begin(), procedures_.end(),
+                                   [&object_id](const auto& pair) {
+                                       return pair.second.procedure_id == object_id;
+                                   });
+            if (it == procedures_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Procedure not found");
+                return Status::NOT_FOUND;
+            }
+
+            std::string desired_name = new_name.has_value() ? new_name.value()
+                                                            : it->second.name;
+            Status validation = validate_identifier(desired_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            auto conflict = procedures_.find(desired_name);
+            if (conflict != procedures_.end() &&
+                conflict->second.procedure_id != object_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Procedure name already exists");
+                return Status::FILE_EXISTS;
+            }
+
+            auto predicate = [&object_id](const ProcedureRecord& rec) {
+                return rec.procedure_id == object_id && rec.is_valid == 1;
+            };
+            auto result = findRecordInHeapPage<ProcedureRecord>(procedures_table_page_,
+                                                                predicate, ctx);
+            if (result.status != Status::OK)
+            {
+                return result.status;
+            }
+
+            ProcedureRecord updated = result.record;
+            updated.schema_id = target_schema_id;
+            std::string truncated = UTF8Utils::truncateToBytes(desired_name,
+                                                               sizeof(updated.procedure_name));
+            std::memset(updated.procedure_name, 0, sizeof(updated.procedure_name));
+            std::strncpy(updated.procedure_name, truncated.c_str(),
+                         sizeof(updated.procedure_name) - 1);
+            updated.last_modified_time = now;
+
+            Status persist_status = updateRecordInHeapPage(procedures_table_page_,
+                                                           result.slot_index,
+                                                           updated, ctx);
+            if (persist_status != Status::OK)
+            {
+                return persist_status;
+            }
+
+            ProcedureInfo info = it->second;
+            procedures_.erase(it);
+            info.name = desired_name;
+            info.schema_id = target_schema_id;
+            info.modified_time = now;
+            procedures_[desired_name] = info;
+            return Status::OK;
+        }
+
+        case ObjectType::PACKAGE:
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (isZeroUuidLocal(target_schema_id) ||
+                schema_cache_.find(target_schema_id) == schema_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Target schema not found");
+                return Status::NOT_FOUND;
+            }
+            auto predicate = [&object_id](const PackageRecord& rec) {
+                return rec.package_id == object_id && rec.is_valid == 1;
+            };
+            auto result = findRecordInHeapPage<PackageRecord>(packages_table_page_, predicate, ctx);
+            if (result.status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Package not found");
+                return Status::NOT_FOUND;
+            }
+
+            std::string desired_name = new_name.has_value() ? new_name.value()
+                                                            : std::string(result.record.package_name);
+            Status validation = validate_identifier(desired_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            auto conflict_pred = [&](const PackageRecord& rec) {
+                return rec.is_valid == 1 &&
+                       rec.schema_id == target_schema_id &&
+                       std::strcmp(rec.package_name, desired_name.c_str()) == 0;
+            };
+            auto conflict = findRecordInHeapPage<PackageRecord>(packages_table_page_, conflict_pred, ctx);
+            if (conflict.status == Status::OK && conflict.record.package_id != object_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Package name already exists");
+                return Status::FILE_EXISTS;
+            }
+
+            PackageRecord updated = result.record;
+            updated.schema_id = target_schema_id;
+            std::string truncated = UTF8Utils::truncateToBytes(desired_name, sizeof(updated.package_name));
+            std::memset(updated.package_name, 0, sizeof(updated.package_name));
+            std::strncpy(updated.package_name, truncated.c_str(), sizeof(updated.package_name) - 1);
+            updated.last_modified_time = now;
+
+            Status status = updateRecordInHeapPage(packages_table_page_, predicate, updated, ctx);
+            return status;
+        }
+
+        case ObjectType::UDR:
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (isZeroUuidLocal(target_schema_id) ||
+                schema_cache_.find(target_schema_id) == schema_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Target schema not found");
+                return Status::NOT_FOUND;
+            }
+            auto predicate = [&object_id](const UDRRecord& rec) {
+                return rec.udr_id == object_id && rec.is_valid == 1;
+            };
+            auto result = findRecordInHeapPage<UDRRecord>(udr_table_page_, predicate, ctx);
+            if (result.status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR not found");
+                return Status::NOT_FOUND;
+            }
+
+            std::string desired_name = new_name.has_value() ? new_name.value()
+                                                            : std::string(result.record.udr_name);
+            Status validation = validate_identifier(desired_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            auto conflict_pred = [&](const UDRRecord& rec) {
+                return rec.is_valid == 1 &&
+                       rec.schema_id == target_schema_id &&
+                       std::strcmp(rec.udr_name, desired_name.c_str()) == 0;
+            };
+            auto conflict = findRecordInHeapPage<UDRRecord>(udr_table_page_, conflict_pred, ctx);
+            if (conflict.status == Status::OK && conflict.record.udr_id != object_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "UDR name already exists");
+                return Status::FILE_EXISTS;
+            }
+
+            UDRRecord updated = result.record;
+            updated.schema_id = target_schema_id;
+            std::string truncated = UTF8Utils::truncateToBytes(desired_name, sizeof(updated.udr_name));
+            std::memset(updated.udr_name, 0, sizeof(updated.udr_name));
+            std::strncpy(updated.udr_name, truncated.c_str(), sizeof(updated.udr_name) - 1);
+            updated.last_modified_time = now;
+
+            Status status = updateRecordInHeapPage(udr_table_page_, predicate, updated, ctx);
+            return status;
+        }
+
+        case ObjectType::EXCEPTION:
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (isZeroUuidLocal(target_schema_id) ||
+                schema_cache_.find(target_schema_id) == schema_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Target schema not found");
+                return Status::NOT_FOUND;
+            }
+            auto it = exception_cache_.find(object_id);
+            if (it == exception_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Exception not found");
+                return Status::NOT_FOUND;
+            }
+
+            std::string desired_name = new_name.has_value() ? new_name.value()
+                                                            : it->second.name;
+            Status validation = validate_identifier(desired_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            for (const auto& [id, info] : exception_cache_)
+            {
+                if (id == object_id || info.schema_id != target_schema_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesConflict(desired_name, false /*new_is_delimited*/,
+                                                   info.name, false /*existing_is_delimited*/))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Exception name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            ExceptionInfo old_info = it->second;
+
+            auto predicate = [&object_id](const ExceptionRecord& rec) {
+                return rec.exception_id == object_id && rec.is_valid == 1;
+            };
+            auto result = findRecordInHeapPage<ExceptionRecord>(exceptions_table_page_, predicate, ctx);
+            if (result.status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Exception not found");
+                return Status::NOT_FOUND;
+            }
+
+            it->second.schema_id = target_schema_id;
+            it->second.name = desired_name;
+            it->second.last_modified_time = now;
+
+            ExceptionRecord updated = result.record;
+            updated.schema_id = it->second.schema_id;
+            std::string truncated = UTF8Utils::truncateToBytes(desired_name, sizeof(updated.name));
+            std::memset(updated.name, 0, sizeof(updated.name));
+            std::strncpy(updated.name, truncated.c_str(), sizeof(updated.name) - 1);
+            updated.last_modified_time = it->second.last_modified_time;
+            updated.is_valid = 1;
+
+            Status status = updateRecordInHeapPage(exceptions_table_page_, predicate, updated, ctx);
+            if (status != Status::OK)
+            {
+                it->second = old_info;
+            }
+            return status;
+        }
+
+        case ObjectType::SYNONYM:
+        {
+            std::scoped_lock lock(mutex_, synonym_cache_mutex_);
+            if (isZeroUuidLocal(target_schema_id) ||
+                schema_cache_.find(target_schema_id) == schema_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Target schema not found");
+                return Status::NOT_FOUND;
+            }
+            auto it = synonym_cache_.find(object_id);
+            if (it == synonym_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Synonym not found");
+                return Status::NOT_FOUND;
+            }
+
+            std::string desired_name = new_name.has_value() ? new_name.value()
+                                                            : it->second.synonym_name;
+            Status validation = validate_identifier(desired_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            for (const auto& [id, info] : synonym_cache_)
+            {
+                if (id == object_id || info.schema_id != target_schema_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesConflict(desired_name, false /*new_is_delimited*/,
+                                                   info.synonym_name, false /*existing_is_delimited*/))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Synonym name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            SynonymInfo old_info = it->second;
+            auto old_key = makeSynonymNameKey(old_info.schema_id, old_info.synonym_name);
+
+            it->second.schema_id = target_schema_id;
+            it->second.synonym_name = desired_name;
+            it->second.last_modified_time = now;
+            synonym_name_lookup_.erase(old_key);
+            synonym_name_lookup_[makeSynonymNameKey(target_schema_id, desired_name)] = object_id;
+
+            Status persist_status = updateSynonymRecord(it->second, ctx);
+            if (persist_status != Status::OK)
+            {
+                synonym_name_lookup_.erase(makeSynonymNameKey(target_schema_id, desired_name));
+                synonym_name_lookup_[old_key] = old_info.synonym_id;
+                it->second = old_info;
+            }
+            return persist_status;
+        }
+
+        case ObjectType::FOREIGN_TABLE:
+        {
+            std::scoped_lock lock(mutex_, foreign_table_cache_mutex_);
+            if (isZeroUuidLocal(target_schema_id) ||
+                schema_cache_.find(target_schema_id) == schema_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Target schema not found");
+                return Status::NOT_FOUND;
+            }
+            auto it = foreign_table_cache_.find(object_id);
+            if (it == foreign_table_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Foreign table not found");
+                return Status::NOT_FOUND;
+            }
+
+            std::string desired_name = new_name.has_value() ? new_name.value()
+                                                            : it->second.table_name;
+            Status validation = validate_identifier(desired_name);
+            if (validation != Status::OK)
+            {
+                return validation;
+            }
+
+            for (const auto& [id, info] : foreign_table_cache_)
+            {
+                if (id == object_id || info.schema_id != target_schema_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesConflict(desired_name, false /*new_is_delimited*/,
+                                                   info.table_name, false /*existing_is_delimited*/))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Foreign table name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            ForeignTableInfo old_info = it->second;
+            auto old_key = makeForeignTableNameKey(old_info.schema_id, old_info.table_name);
+
+            it->second.schema_id = target_schema_id;
+            it->second.table_name = desired_name;
+            it->second.last_modified_time = now;
+            foreign_table_name_lookup_.erase(old_key);
+            foreign_table_name_lookup_[makeForeignTableNameKey(target_schema_id, desired_name)] = object_id;
+
+            Status persist_status = updateForeignTableRecord(it->second, ctx);
+            if (persist_status != Status::OK)
+            {
+                foreign_table_name_lookup_.erase(makeForeignTableNameKey(target_schema_id, desired_name));
+                foreign_table_name_lookup_[old_key] = old_info.foreign_table_id;
+                it->second = old_info;
+            }
+            return persist_status;
+        }
+
+        case ObjectType::COLUMN:
+        case ObjectType::INDEX:
+        case ObjectType::CONSTRAINT:
+        case ObjectType::TRIGGER:
+        case ObjectType::DOMAIN:
+        case ObjectType::ROLE:
+        case ObjectType::USER:
+        case ObjectType::GROUP:
+        case ObjectType::TABLESPACE:
+        case ObjectType::DATABASE:
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Move not supported for this object type");
+            return Status::INVALID_ARGUMENT;
+
+        default:
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Move not supported for object type");
+            return Status::INVALID_ARGUMENT;
+    }
 }
 
 Status CatalogManager::alterColumnType(const ID &table_id, const std::string &column_name,
@@ -10188,11 +14778,13 @@ auto CatalogManager::createSequence(const ID& schema_id, const std::string& name
         return Status::INVALID_ARGUMENT;
     }
 
-    // Check if sequence already exists using case-insensitive comparison
-    // Note: SequenceState doesn't have name_is_delimited field, so all sequences
-    // are treated as unquoted (case-insensitive) for now
+    // Check if sequence already exists in the same schema (case-insensitive for now)
     for (const auto& [id, state] : sequence_cache_)
     {
+        if (state->schema_id != schema_id)
+        {
+            continue;
+        }
         if (IdentifierUtils::namesConflict(name, false /*new_is_delimited*/,
                                            state->name, false /*existing_is_delimited*/))
         {
@@ -10210,11 +14802,17 @@ auto CatalogManager::createSequence(const ID& schema_id, const std::string& name
     state->sequence_id = sequence_id;
     state->schema_id = schema_id;  // WP-2 CAT-M1: Track schema for cascade drop
     state->name = name;  // Store name for cleanup
+    state->name_is_delimited = false;
+    state->owner_id = resolveOwnerUUID("system");  // Phase 6 TODO: use session owner
     state->current_value.store(start_value);
     state->increment_by = increment_by;
     state->min_value = min_value;
     state->max_value = max_value;
+    state->start_value = start_value;
+    state->cache_size = cache_size;
     state->cycle = cycle;
+    state->created_time = std::chrono::system_clock::now().time_since_epoch().count();
+    state->last_modified_time = state->created_time;
 
     // Add to cache
     sequence_cache_[sequence_id] = state;
@@ -10222,7 +14820,18 @@ auto CatalogManager::createSequence(const ID& schema_id, const std::string& name
     // Add name-to-ID mapping
     {
         std::lock_guard<std::mutex> name_lock(sequence_name_mutex_);
-        sequence_name_to_id_[name] = sequence_id;
+        sequence_name_to_id_[makeSequenceNameKey(schema_id, name, state->name_is_delimited)] =
+            sequence_id;
+    }
+
+    // Persist to disk
+    Status persist_status = writeSequenceRecord(*state, ctx);
+    if (persist_status != Status::OK)
+    {
+        sequence_cache_.erase(sequence_id);
+        std::lock_guard<std::mutex> name_lock(sequence_name_mutex_);
+        sequence_name_to_id_.erase(makeSequenceNameKey(schema_id, name, state->name_is_delimited));
+        return persist_status;
     }
 
     LOG_INFO(CATALOG, "Created sequence '%s' with ID %s", name.c_str(), "<sequence_id>");
@@ -10276,6 +14885,12 @@ auto CatalogManager::alterSequence(const ID& sequence_id, const std::optional<in
         LOG_DEBUG(CATALOG, "  Updated cycle to %s", *cycle ? "true" : "false");
     }
 
+    if (cache_size.has_value())
+    {
+        state->cache_size = *cache_size;
+        LOG_DEBUG(CATALOG, "  Updated cache_size to %ld", *cache_size);
+    }
+
     // Validate min < max after updates
     if (state->min_value >= state->max_value) {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
@@ -10294,6 +14909,36 @@ auto CatalogManager::alterSequence(const ID& sequence_id, const std::optional<in
         LOG_INFO(CATALOG, "  Restarted sequence at %ld", *restart);
     }
 
+    state->last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+    SequenceRecord record{};
+    record.sequence_id = state->sequence_id;
+    record.schema_id = state->schema_id;
+    std::string truncated = UTF8Utils::truncateToBytes(state->name, sizeof(record.sequence_name));
+    std::memset(record.sequence_name, 0, sizeof(record.sequence_name));
+    std::strncpy(record.sequence_name, truncated.c_str(), sizeof(record.sequence_name) - 1);
+    record.owner_id = state->owner_id;
+    record.current_value = state->current_value.load();
+    record.increment_by = state->increment_by;
+    record.min_value = state->min_value;
+    record.max_value = state->max_value;
+    record.start_value = state->start_value;
+    record.cache_size = state->cache_size;
+    record.cycle = state->cycle ? 1 : 0;
+    record.name_is_delimited = state->name_is_delimited ? 1 : 0;
+    record.created_time = state->created_time;
+    record.last_modified_time = state->last_modified_time;
+    record.is_valid = 1;
+
+    auto predicate = [&sequence_id](const SequenceRecord& rec) {
+        return rec.sequence_id == sequence_id && rec.is_valid == 1;
+    };
+    Status persist_status = updateRecordInHeapPage(sequences_table_page_, predicate, record, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
+
     return Status::OK;
 }
 
@@ -10301,6 +14946,8 @@ auto CatalogManager::dropSequence(const ID& sequence_id, bool cascade, ErrorCont
 {
     (void)cascade;  // RESTRICT-only policy
     std::string seq_name;
+    ID seq_schema_id{};
+    bool seq_name_is_delimited = false;
     {
         std::lock_guard<std::mutex> cache_lock(sequence_cache_mutex_);
         auto it = sequence_cache_.find(sequence_id);
@@ -10309,6 +14956,8 @@ auto CatalogManager::dropSequence(const ID& sequence_id, bool cascade, ErrorCont
             return Status::NOT_FOUND;
         }
         seq_name = it->second->name;
+        seq_schema_id = it->second->schema_id;
+        seq_name_is_delimited = it->second->name_is_delimited;
     }
 
     std::vector<DependencyInfo> deps;
@@ -10335,6 +14984,17 @@ auto CatalogManager::dropSequence(const ID& sequence_id, bool cascade, ErrorCont
         return Status::CONSTRAINT_VIOLATION;
     }
 
+    // Mark record invalid on disk (MGA delete) before evicting caches.
+    auto predicate = [&sequence_id](const SequenceRecord& rec) {
+        return rec.sequence_id == sequence_id && rec.is_valid == 1;
+    };
+    Status persist_status = deleteRecordFromHeapPage<SequenceRecord>(
+        sequences_table_page_, predicate, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
+
     {
         std::lock_guard<std::mutex> cache_lock(sequence_cache_mutex_);
         auto it = sequence_cache_.find(sequence_id);
@@ -10347,7 +15007,8 @@ auto CatalogManager::dropSequence(const ID& sequence_id, bool cascade, ErrorCont
 
     {
         std::lock_guard<std::mutex> name_lock(sequence_name_mutex_);
-        sequence_name_to_id_.erase(seq_name);
+        sequence_name_to_id_.erase(makeSequenceNameKey(seq_schema_id, seq_name,
+                                                       seq_name_is_delimited));
     }
 
     status = clearDependenciesFor(sequence_id, ctx);
@@ -10367,7 +15028,7 @@ auto CatalogManager::getSequence(const ID& schema_id, const std::string& name,
 
     // Look up sequence ID by name
     ID sequence_id;
-    Status status = getSequenceIdByName(name, sequence_id, ctx);
+    Status status = getSequenceIdByName(schema_id, name, sequence_id, ctx);
     if (status != Status::OK) {
         return status;
     }
@@ -10386,20 +15047,26 @@ auto CatalogManager::getSequence(const ID& schema_id, const std::string& name,
     // Lock config mutex for consistent reads
     std::lock_guard<std::mutex> config_lock(state->config_mutex);
 
+    if (!isZeroUuidLocal(schema_id) && state->schema_id != schema_id)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found in schema");
+        return Status::NOT_FOUND;
+    }
+
     // Populate SequenceInfo from SequenceState
     info_out.sequence_id = state->sequence_id;
-    info_out.schema_id = schema_id;  // Use provided schema_id
+    info_out.schema_id = state->schema_id;
     info_out.name = state->name;
-    info_out.owner_id = ID();  // TODO: Track owner when implementing user ownership
+    info_out.owner_id = state->owner_id;
     info_out.current_value = state->current_value.load();
     info_out.increment_by = state->increment_by;
     info_out.min_value = state->min_value;
     info_out.max_value = state->max_value;
-    info_out.start_value = state->min_value;  // Default: use min_value as start
-    info_out.cache_size = 1;  // Default: no caching
+    info_out.start_value = state->start_value;
+    info_out.cache_size = state->cache_size;
     info_out.cycle = state->cycle;
-    info_out.created_time = 0;  // TODO: Track creation time when implementing persistence
-    info_out.last_modified_time = 0;  // TODO: Track modification time
+    info_out.created_time = state->created_time;
+    info_out.last_modified_time = state->last_modified_time;
 
     LOG_DEBUG(CATALOG, "Retrieved sequence '%s' with ID %s", name.c_str(), "<sequence_id>");
 
@@ -10424,6 +15091,7 @@ auto CatalogManager::sequenceNextVal(const ID& sequence_id, int64_t& value_out,
     std::lock_guard<std::mutex> config_lock(state->config_mutex);
 
     // Atomically increment and get new value
+    int64_t original_value = state->current_value.load();
     int64_t new_value = state->current_value.fetch_add(state->increment_by) + state->increment_by;
 
     // Check if we exceeded max_value
@@ -10458,6 +15126,36 @@ auto CatalogManager::sequenceNextVal(const ID& sequence_id, int64_t& value_out,
 
     value_out = new_value;
 
+    // Persist current_value so sequences survive restart
+    SequenceRecord record{};
+    record.sequence_id = state->sequence_id;
+    record.schema_id = state->schema_id;
+    std::string truncated = UTF8Utils::truncateToBytes(state->name, sizeof(record.sequence_name));
+    std::memset(record.sequence_name, 0, sizeof(record.sequence_name));
+    std::strncpy(record.sequence_name, truncated.c_str(), sizeof(record.sequence_name) - 1);
+    record.owner_id = state->owner_id;
+    record.current_value = state->current_value.load();
+    record.increment_by = state->increment_by;
+    record.min_value = state->min_value;
+    record.max_value = state->max_value;
+    record.start_value = state->start_value;
+    record.cache_size = state->cache_size;
+    record.cycle = state->cycle ? 1 : 0;
+    record.name_is_delimited = state->name_is_delimited ? 1 : 0;
+    record.created_time = state->created_time;
+    record.last_modified_time = state->last_modified_time;
+    record.is_valid = 1;
+
+    auto predicate = [&sequence_id](const SequenceRecord& rec) {
+        return rec.sequence_id == sequence_id && rec.is_valid == 1;
+    };
+    Status persist_status = updateRecordInHeapPage(sequences_table_page_, predicate, record, ctx);
+    if (persist_status != Status::OK)
+    {
+        state->current_value.store(original_value);
+        return persist_status;
+    }
+
     LOG_DEBUG(CATALOG, "NEXTVAL returned %ld", new_value);
 
     return Status::OK;
@@ -10487,6 +15185,8 @@ auto CatalogManager::sequenceSetVal(const ID& sequence_id, int64_t value, bool i
         return Status::INVALID_ARGUMENT;
     }
 
+    int64_t original_value = state->current_value.load();
+
     // Set value
     // If is_called=true, next NEXTVAL will increment from this value
     // If is_called=false, next NEXTVAL will return this value (so set to value - increment)
@@ -10496,21 +15196,58 @@ auto CatalogManager::sequenceSetVal(const ID& sequence_id, int64_t value, bool i
         state->current_value.store(value - state->increment_by);
     }
 
+    SequenceRecord record{};
+    record.sequence_id = state->sequence_id;
+    record.schema_id = state->schema_id;
+    std::string truncated = UTF8Utils::truncateToBytes(state->name, sizeof(record.sequence_name));
+    std::memset(record.sequence_name, 0, sizeof(record.sequence_name));
+    std::strncpy(record.sequence_name, truncated.c_str(), sizeof(record.sequence_name) - 1);
+    record.owner_id = state->owner_id;
+    record.current_value = state->current_value.load();
+    record.increment_by = state->increment_by;
+    record.min_value = state->min_value;
+    record.max_value = state->max_value;
+    record.start_value = state->start_value;
+    record.cache_size = state->cache_size;
+    record.cycle = state->cycle ? 1 : 0;
+    record.name_is_delimited = state->name_is_delimited ? 1 : 0;
+    record.created_time = state->created_time;
+    record.last_modified_time = state->last_modified_time;
+    record.is_valid = 1;
+
+    auto predicate = [&sequence_id](const SequenceRecord& rec) {
+        return rec.sequence_id == sequence_id && rec.is_valid == 1;
+    };
+    Status persist_status = updateRecordInHeapPage(sequences_table_page_, predicate, record, ctx);
+    if (persist_status != Status::OK)
+    {
+        state->current_value.store(original_value);
+        return persist_status;
+    }
+
     LOG_INFO(CATALOG, "SETVAL set sequence to %ld (is_called=%s)",
              value, is_called ? "true" : "false");
 
     return Status::OK;
 }
 
-auto CatalogManager::getSequenceIdByName(const std::string& name, ID& id_out, ErrorContext* ctx) -> Status
+auto CatalogManager::getSequenceIdByName(const ID& schema_id, const std::string& name,
+                                         ID& id_out, ErrorContext* ctx) -> Status
 {
     std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
 
-    // Use case-insensitive comparison per Firebird SQL rules
     for (const auto& [seq_id, state] : sequence_cache_)
     {
-        if (state && IdentifierUtils::namesMatch(name, false /*search_delimited*/,
-                                                  state->name, false /*stored_delimited*/))
+        if (!state)
+        {
+            continue;
+        }
+        if (!isZeroUuidLocal(schema_id) && state->schema_id != schema_id)
+        {
+            continue;
+        }
+        if (IdentifierUtils::namesMatch(name, false /*search_delimited*/,
+                                        state->name, state->name_is_delimited))
         {
             id_out = seq_id;
             return Status::OK;
@@ -10520,6 +15257,12 @@ auto CatalogManager::getSequenceIdByName(const std::string& name, ID& id_out, Er
     std::string msg = "Sequence not found: " + name;
     SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, msg.c_str());
     return Status::NOT_FOUND;
+}
+
+auto CatalogManager::getSequenceIdByName(const std::string& name, ID& id_out,
+                                         ErrorContext* ctx) -> Status
+{
+    return getSequenceIdByName(ID{}, name, id_out, ctx);
 }
 
 // WP-2 CAT-M1: List sequences by schema for CASCADE support
@@ -10558,6 +15301,10 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
     bool view_exists = false;
     for (const auto& [id, view_info] : view_cache_)
     {
+        if (view_info.schema_id != schema_id)
+        {
+            continue;
+        }
         if (IdentifierUtils::namesConflict(name, false /*new_is_delimited*/,
                                            view_info.name, view_info.name_is_delimited))
         {
@@ -10578,6 +15325,7 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
 
         // Update existing view (OR REPLACE)
         ViewInfo& view = view_cache_[existing_view_id];
+        ViewInfo old_view = view;
         view.definition = definition;
         view.check_option = check_option;
         view.materialized = materialized;  // ALPHA Phase 1 - Materialized Views
@@ -10588,6 +15336,13 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
         if (materialized) {
             view.materialized_table_id = materialized_table_id;
             view.last_refresh_time = std::chrono::system_clock::now().time_since_epoch().count();
+        }
+
+        Status persist_status = updateViewRecord(view, ctx);
+        if (persist_status != Status::OK)
+        {
+            view = old_view;
+            return persist_status;
         }
 
         LOG_INFO(CATALOG, "Replaced %sview '%s'", materialized ? "materialized " : "", name.c_str());
@@ -10617,7 +15372,15 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
     }
 
     view_cache_[view.view_id] = view;
-    view_name_to_id_[name] = view.view_id;
+    view_name_to_id_[makeViewNameKey(schema_id, name, view.name_is_delimited)] = view.view_id;
+
+    Status persist_status = writeViewRecord(view, ctx);
+    if (persist_status != Status::OK)
+    {
+        view_cache_.erase(view.view_id);
+        view_name_to_id_.erase(makeViewNameKey(schema_id, name, view.name_is_delimited));
+        return persist_status;
+    }
 
     LOG_INFO(CATALOG, "Created %sview '%s'", materialized ? "materialized " : "", name.c_str());
     return Status::OK;
@@ -10684,11 +15447,22 @@ auto CatalogManager::dropView(const ID& view_id, bool cascade, ErrorContext* ctx
     // 7. Clear dependencies
     clearDependenciesFor(view_id, ctx);
 
-    // 8. Remove from cache
+    // 8. Mark view record invalid on disk
+    auto predicate = [&view_id](const ViewRecord& rec) {
+        return rec.view_id == view_id && rec.is_valid == 1;
+    };
+    status = deleteRecordFromHeapPage<ViewRecord>(views_table_page_, predicate, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    // 9. Remove from cache
     {
         std::lock_guard<std::mutex> lock(view_cache_mutex_);
         view_cache_.erase(view_id);
-        view_name_to_id_.erase(view_name);
+        view_name_to_id_.erase(makeViewNameKey(view_info.schema_id, view_name,
+                                               view_info.name_is_delimited));
     }
 
     LOG_INFO(CATALOG, "Dropped view '%s'", view_name.c_str());
@@ -10730,7 +15504,15 @@ auto CatalogManager::refreshMaterializedView(const ID& view_id, bool concurrentl
     }
 
     // Update last refresh time
+    uint64_t old_refresh_time = view.last_refresh_time;
     view.last_refresh_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+    Status persist_status = updateViewRecord(view, ctx);
+    if (persist_status != Status::OK)
+    {
+        view.last_refresh_time = old_refresh_time;
+        return persist_status;
+    }
 
     LOG_INFO(CATALOG, "Refreshed materialized view '%s' %s",
              view.name.c_str(), concurrently ? "(CONCURRENTLY)" : "");
@@ -10817,7 +15599,16 @@ auto CatalogManager::setMVRefreshStrategy(const ID& view_id, MVRefreshStrategy s
         return Status::INVALID_ARGUMENT;
     }
 
+    MVRefreshStrategy old_strategy = view.refresh_strategy;
     view.refresh_strategy = strategy;
+
+    Status persist_status = updateViewRecord(view, ctx);
+    if (persist_status != Status::OK)
+    {
+        view.refresh_strategy = old_strategy;
+        return persist_status;
+    }
+
     LOG_INFO(CATALOG, "Set refresh strategy for MV '%s'", view.name.c_str());
 
     return Status::OK;
@@ -10843,7 +15634,16 @@ auto CatalogManager::setMVRefreshOnCommit(const ID& view_id, bool refresh_on_com
         return Status::INVALID_ARGUMENT;
     }
 
+    bool old_refresh_on_commit = view.refresh_on_commit;
     view.refresh_on_commit = refresh_on_commit;
+
+    Status persist_status = updateViewRecord(view, ctx);
+    if (persist_status != Status::OK)
+    {
+        view.refresh_on_commit = old_refresh_on_commit;
+        return persist_status;
+    }
+
     LOG_INFO(CATALOG, "Set refresh-on-commit=%s for MV '%s'",
              refresh_on_commit ? "true" : "false", view.name.c_str());
 
@@ -10927,16 +15727,35 @@ auto CatalogManager::getView(const ID& schema_id, const std::string& name,
 {
     std::lock_guard<std::mutex> lock(view_cache_mutex_);
 
-    auto it = view_name_to_id_.find(name);
-    if (it == view_name_to_id_.end())
+    if (!isZeroUuidLocal(schema_id))
     {
-        std::string msg = "View not found: " + name;
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, msg.c_str());
-        return Status::NOT_FOUND;
+        auto key = makeViewNameKey(schema_id, name, false /*search_delimited*/);
+        auto it = view_name_to_id_.find(key);
+        if (it != view_name_to_id_.end())
+        {
+            info_out = view_cache_[it->second];
+            return Status::OK;
+        }
     }
 
-    info_out = view_cache_[it->second];
-    return Status::OK;
+    // Fallback scan handles legacy entries and mixed delimiter cases.
+    for (const auto& [view_id, view_info] : view_cache_)
+    {
+        if (!isZeroUuidLocal(schema_id) && view_info.schema_id != schema_id)
+        {
+            continue;
+        }
+        if (IdentifierUtils::namesMatch(name, false /*search_delimited*/,
+                                        view_info.name, view_info.name_is_delimited))
+        {
+            info_out = view_info;
+            return Status::OK;
+        }
+    }
+
+    std::string msg = "View not found: " + name;
+    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, msg.c_str());
+    return Status::NOT_FOUND;
 }
 
 auto CatalogManager::listViewsForSchema(const ID& schema_id, std::vector<ViewInfo>& views_out,
@@ -10964,22 +15783,33 @@ auto CatalogManager::getViewIdByName(const std::string& name, ID& id_out,
 {
     std::lock_guard<std::mutex> lock(view_cache_mutex_);
 
-    auto it = view_name_to_id_.find(name);
-    if (it == view_name_to_id_.end())
+    for (const auto& [view_id, view_info] : view_cache_)
     {
-        std::string msg = "View not found: " + name;
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, msg.c_str());
-        return Status::NOT_FOUND;
+        if (IdentifierUtils::namesMatch(name, false /*search_delimited*/,
+                                        view_info.name, view_info.name_is_delimited))
+        {
+            id_out = view_id;
+            return Status::OK;
+        }
     }
 
-    id_out = it->second;
-    return Status::OK;
+    std::string msg = "View not found: " + name;
+    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, msg.c_str());
+    return Status::NOT_FOUND;
 }
 
 auto CatalogManager::isView(const std::string& name) -> bool
 {
     std::lock_guard<std::mutex> lock(view_cache_mutex_);
-    return view_name_to_id_.find(name) != view_name_to_id_.end();
+    for (const auto& [view_id, view_info] : view_cache_)
+    {
+        if (IdentifierUtils::namesMatch(name, false /*search_delimited*/,
+                                        view_info.name, view_info.name_is_delimited))
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 // OPT-5: Get view by ID (for optimizer MV rewriting)
@@ -11016,6 +15846,1305 @@ auto CatalogManager::getAllMaterializedViews(std::vector<ViewInfo>& views_out,
         }
     }
 
+    return Status::OK;
+}
+
+// ============================================================================
+// Phase B: Synonym Operations (Schema Architecture)
+// ============================================================================
+
+auto CatalogManager::createSynonym(const ID& schema_id, const std::string& synonym_name,
+                                   const std::string& target_path, ObjectType target_type,
+                                   bool is_public, ID& synonym_id_out,
+                                   ErrorContext* ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        synonym_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    if (target_type == ObjectType::UNKNOWN)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Synonym target type required");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+
+    std::scoped_lock lock(mutex_, synonym_cache_mutex_);
+    if (!isZeroUuidLocal(schema_id) && schema_cache_.find(schema_id) == schema_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found");
+        return Status::NOT_FOUND;
+    }
+
+    for (const auto& [id, info] : synonym_cache_)
+    {
+        if (info.schema_id != schema_id)
+        {
+            continue;
+        }
+        if (IdentifierUtils::namesConflict(synonym_name, false /*new_is_delimited*/,
+                                           info.synonym_name, false /*existing_is_delimited*/))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Synonym name already exists");
+            return Status::FILE_EXISTS;
+        }
+    }
+
+    SynonymInfo synonym{};
+    synonym.synonym_id = generateUuidV7();
+    synonym.schema_id = schema_id;
+    synonym.synonym_name = synonym_name;
+    synonym.target_path = target_path;
+    synonym.target_type = target_type;
+    synonym.owner_id = resolveOwnerUUID("system");
+    synonym.is_public = is_public;
+    synonym.created_time = now;
+    synonym.last_modified_time = now;
+
+    synonym_cache_[synonym.synonym_id] = synonym;
+    synonym_name_lookup_[makeSynonymNameKey(schema_id, synonym_name)] = synonym.synonym_id;
+    if (is_public)
+    {
+        public_synonyms_.push_back(synonym.synonym_id);
+    }
+
+    Status persist_status = writeSynonymRecord(synonym, ctx);
+    if (persist_status != Status::OK)
+    {
+        synonym_cache_.erase(synonym.synonym_id);
+        synonym_name_lookup_.erase(makeSynonymNameKey(schema_id, synonym_name));
+        if (is_public)
+        {
+            public_synonyms_.erase(std::remove(public_synonyms_.begin(),
+                                               public_synonyms_.end(),
+                                               synonym.synonym_id),
+                                   public_synonyms_.end());
+        }
+        return persist_status;
+    }
+
+    synonym_id_out = synonym.synonym_id;
+    return Status::OK;
+}
+
+auto CatalogManager::getSynonym(const ID& synonym_id, SynonymInfo& synonym_out,
+                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(synonym_cache_mutex_);
+    auto it = synonym_cache_.find(synonym_id);
+    if (it == synonym_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Synonym not found");
+        return Status::NOT_FOUND;
+    }
+
+    synonym_out = it->second;
+    return Status::OK;
+}
+
+auto CatalogManager::getSynonymByName(const ID& schema_id, const std::string& synonym_name,
+                                      SynonymInfo& synonym_out,
+                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(synonym_cache_mutex_);
+
+    if (!isZeroUuidLocal(schema_id))
+    {
+        auto key = makeSynonymNameKey(schema_id, synonym_name);
+        auto it = synonym_name_lookup_.find(key);
+        if (it != synonym_name_lookup_.end())
+        {
+            synonym_out = synonym_cache_[it->second];
+            return Status::OK;
+        }
+    }
+
+    SynonymInfo match{};
+    bool found = false;
+    for (const auto& [id, info] : synonym_cache_)
+    {
+        if (!isZeroUuidLocal(schema_id) && info.schema_id != schema_id)
+        {
+            continue;
+        }
+        if (IdentifierUtils::namesMatch(synonym_name, false /*search_delimited*/,
+                                        info.synonym_name, false /*stored_delimited*/))
+        {
+            if (found)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::AMBIGUOUS_COLUMN, "Ambiguous synonym name");
+                return Status::AMBIGUOUS_COLUMN;
+            }
+            match = info;
+            found = true;
+        }
+    }
+
+    if (!found)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Synonym not found");
+        return Status::NOT_FOUND;
+    }
+
+    synonym_out = match;
+    return Status::OK;
+}
+
+auto CatalogManager::dropSynonym(const ID& synonym_id, ErrorContext* ctx) -> Status
+{
+    SynonymInfo info;
+    {
+        std::lock_guard<std::mutex> lock(synonym_cache_mutex_);
+        auto it = synonym_cache_.find(synonym_id);
+        if (it == synonym_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Synonym not found");
+            return Status::NOT_FOUND;
+        }
+        info = it->second;
+    }
+
+    auto predicate = [&synonym_id](const SynonymRecord& rec) {
+        return rec.synonym_id == synonym_id && rec.is_valid == 1;
+    };
+    Status persist_status = deleteRecordFromHeapPage<SynonymRecord>(
+        synonyms_table_page_, predicate, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
+
+    std::lock_guard<std::mutex> lock(synonym_cache_mutex_);
+    synonym_cache_.erase(synonym_id);
+    synonym_name_lookup_.erase(makeSynonymNameKey(info.schema_id, info.synonym_name));
+    if (info.is_public)
+    {
+        public_synonyms_.erase(std::remove(public_synonyms_.begin(),
+                                           public_synonyms_.end(),
+                                           synonym_id),
+                               public_synonyms_.end());
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listSynonyms(const ID& schema_id, std::vector<SynonymInfo>& synonyms_out,
+                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(synonym_cache_mutex_);
+    synonyms_out.clear();
+    for (const auto& [id, info] : synonym_cache_)
+    {
+        if (info.schema_id == schema_id)
+        {
+            synonyms_out.push_back(info);
+        }
+    }
+
+    (void)ctx;
+    return Status::OK;
+}
+
+auto CatalogManager::listPublicSynonyms(std::vector<SynonymInfo>& synonyms_out,
+                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(synonym_cache_mutex_);
+    synonyms_out.clear();
+    for (const auto& synonym_id : public_synonyms_)
+    {
+        auto it = synonym_cache_.find(synonym_id);
+        if (it != synonym_cache_.end())
+        {
+            synonyms_out.push_back(it->second);
+        }
+    }
+
+    (void)ctx;
+    return Status::OK;
+}
+
+// ============================================================================
+// Phase B: Foreign Table Operations (FDW)
+// ============================================================================
+
+auto CatalogManager::createForeignTable(const ID& schema_id, const std::string& table_name,
+                                        const ID& foreign_server_id, const std::string& remote_schema,
+                                        const std::string& remote_table, const std::string& column_mapping,
+                                        ID& table_id_out, ErrorContext* ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        table_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    if (isZeroUuidLocal(foreign_server_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Foreign server ID required");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+
+    std::scoped_lock lock(mutex_, foreign_table_cache_mutex_, foreign_server_cache_mutex_);
+    if (!isZeroUuidLocal(schema_id) && schema_cache_.find(schema_id) == schema_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found");
+        return Status::NOT_FOUND;
+    }
+
+    if (!foreign_server_cache_.empty() &&
+        foreign_server_cache_.find(foreign_server_id) == foreign_server_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Foreign server not found");
+        return Status::NOT_FOUND;
+    }
+
+    for (const auto& [id, info] : foreign_table_cache_)
+    {
+        if (info.schema_id != schema_id)
+        {
+            continue;
+        }
+        if (IdentifierUtils::namesConflict(table_name, false /*new_is_delimited*/,
+                                           info.table_name, false /*existing_is_delimited*/))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Foreign table name already exists");
+            return Status::FILE_EXISTS;
+        }
+    }
+
+    ForeignTableInfo table{};
+    table.foreign_table_id = generateUuidV7();
+    table.schema_id = schema_id;
+    table.table_name = table_name;
+    table.foreign_server_id = foreign_server_id;
+    table.remote_schema = remote_schema;
+    table.remote_table = remote_table;
+    table.column_mapping = column_mapping;
+    table.owner_id = resolveOwnerUUID("system");
+    table.created_time = now;
+    table.last_modified_time = now;
+
+    foreign_table_cache_[table.foreign_table_id] = table;
+    foreign_table_name_lookup_[makeForeignTableNameKey(schema_id, table_name)] =
+        table.foreign_table_id;
+
+    Status persist_status = writeForeignTableRecord(table, ctx);
+    if (persist_status != Status::OK)
+    {
+        foreign_table_cache_.erase(table.foreign_table_id);
+        foreign_table_name_lookup_.erase(makeForeignTableNameKey(schema_id, table_name));
+        return persist_status;
+    }
+
+    table_id_out = table.foreign_table_id;
+    return Status::OK;
+}
+
+auto CatalogManager::getForeignTable(const ID& foreign_table_id, ForeignTableInfo& table_out,
+                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(foreign_table_cache_mutex_);
+    auto it = foreign_table_cache_.find(foreign_table_id);
+    if (it == foreign_table_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Foreign table not found");
+        return Status::NOT_FOUND;
+    }
+
+    table_out = it->second;
+    return Status::OK;
+}
+
+auto CatalogManager::dropForeignTable(const ID& foreign_table_id, ErrorContext* ctx) -> Status
+{
+    ForeignTableInfo info;
+    {
+        std::lock_guard<std::mutex> lock(foreign_table_cache_mutex_);
+        auto it = foreign_table_cache_.find(foreign_table_id);
+        if (it == foreign_table_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Foreign table not found");
+            return Status::NOT_FOUND;
+        }
+        info = it->second;
+    }
+
+    auto predicate = [&foreign_table_id](const ForeignTableRecord& rec) {
+        return rec.foreign_table_id == foreign_table_id && rec.is_valid == 1;
+    };
+    Status persist_status = deleteRecordFromHeapPage<ForeignTableRecord>(
+        foreign_tables_table_page_, predicate, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
+
+    std::lock_guard<std::mutex> lock(foreign_table_cache_mutex_);
+    foreign_table_cache_.erase(foreign_table_id);
+    foreign_table_name_lookup_.erase(
+        makeForeignTableNameKey(info.schema_id, info.table_name));
+    return Status::OK;
+}
+
+auto CatalogManager::listForeignTables(const ID& schema_id,
+                                       std::vector<ForeignTableInfo>& tables_out,
+                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(foreign_table_cache_mutex_);
+    tables_out.clear();
+    for (const auto& [id, info] : foreign_table_cache_)
+    {
+        if (info.schema_id == schema_id)
+        {
+            tables_out.push_back(info);
+        }
+    }
+
+    (void)ctx;
+    return Status::OK;
+}
+
+// ============================================================================
+// Phase B: Foreign Server Operations (FDW)
+// ============================================================================
+
+auto CatalogManager::createForeignServer(const std::string& server_name,
+                                         const std::string& server_type,
+                                         const std::string& host, uint16_t port,
+                                         const std::string& connection_options,
+                                         ID& server_id_out,
+                                         ErrorContext* ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        server_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+
+    std::lock_guard<std::mutex> lock(foreign_server_cache_mutex_);
+    auto key = makeForeignServerNameKey(server_name);
+    if (foreign_server_name_to_id_.find(key) != foreign_server_name_to_id_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Foreign server already exists");
+        return Status::FILE_EXISTS;
+    }
+
+    ForeignServerInfo server{};
+    server.server_id = generateUuidV7();
+    server.server_name = server_name;
+    server.server_type = server_type;
+    server.host = host;
+    server.port = port;
+    server.connection_options = connection_options;
+    server.owner_id = resolveOwnerUUID("system");
+    server.is_active = true;
+    server.created_time = now;
+    server.last_modified_time = now;
+
+    foreign_server_cache_[server.server_id] = server;
+    foreign_server_name_to_id_[key] = server.server_id;
+
+    Status persist_status = writeForeignServerRecord(server, ctx);
+    if (persist_status != Status::OK)
+    {
+        foreign_server_cache_.erase(server.server_id);
+        foreign_server_name_to_id_.erase(key);
+        return persist_status;
+    }
+
+    server_id_out = server.server_id;
+    return Status::OK;
+}
+
+auto CatalogManager::getForeignServer(const ID& server_id, ForeignServerInfo& server_out,
+                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(foreign_server_cache_mutex_);
+    auto it = foreign_server_cache_.find(server_id);
+    if (it == foreign_server_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Foreign server not found");
+        return Status::NOT_FOUND;
+    }
+
+    server_out = it->second;
+    return Status::OK;
+}
+
+auto CatalogManager::getForeignServerByName(const std::string& server_name,
+                                            ForeignServerInfo& server_out,
+                                            ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(foreign_server_cache_mutex_);
+    auto key = makeForeignServerNameKey(server_name);
+    auto it = foreign_server_name_to_id_.find(key);
+    if (it == foreign_server_name_to_id_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Foreign server not found");
+        return Status::NOT_FOUND;
+    }
+
+    server_out = foreign_server_cache_[it->second];
+    return Status::OK;
+}
+
+auto CatalogManager::updateForeignServer(const ID& server_id,
+                                         const std::string& connection_options,
+                                         bool is_active,
+                                         ErrorContext* ctx) -> Status
+{
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+    std::lock_guard<std::mutex> lock(foreign_server_cache_mutex_);
+    auto it = foreign_server_cache_.find(server_id);
+    if (it == foreign_server_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Foreign server not found");
+        return Status::NOT_FOUND;
+    }
+
+    ForeignServerInfo old_info = it->second;
+    it->second.connection_options = connection_options;
+    it->second.is_active = is_active;
+    it->second.last_modified_time = now;
+
+    Status persist_status = updateForeignServerRecord(it->second, ctx);
+    if (persist_status != Status::OK)
+    {
+        it->second = old_info;
+    }
+
+    return persist_status;
+}
+
+auto CatalogManager::dropForeignServer(const ID& server_id, bool cascade,
+                                       ErrorContext* ctx) -> Status
+{
+    ForeignServerInfo info;
+    std::vector<ID> foreign_tables;
+    std::vector<ID> user_mappings;
+
+    {
+        std::scoped_lock lock(foreign_server_cache_mutex_,
+                              foreign_table_cache_mutex_,
+                              user_mapping_cache_mutex_);
+        auto it = foreign_server_cache_.find(server_id);
+        if (it == foreign_server_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Foreign server not found");
+            return Status::NOT_FOUND;
+        }
+        info = it->second;
+
+        for (const auto& [table_id, table_info] : foreign_table_cache_)
+        {
+            if (table_info.foreign_server_id == server_id)
+            {
+                foreign_tables.push_back(table_id);
+            }
+        }
+
+        for (const auto& [mapping_id, mapping_info] : user_mapping_cache_)
+        {
+            if (mapping_info.foreign_server_id == server_id)
+            {
+                user_mappings.push_back(mapping_id);
+            }
+        }
+
+        if (!cascade && (!foreign_tables.empty() || !user_mappings.empty()))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                              "Foreign server has dependent objects; use CASCADE");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+    }
+
+    if (cascade)
+    {
+        for (const auto& table_id : foreign_tables)
+        {
+            Status status = dropForeignTable(table_id, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
+        for (const auto& mapping_id : user_mappings)
+        {
+            Status status = dropUserMapping(mapping_id, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+    }
+
+    auto predicate = [&server_id](const ForeignServerRecord& rec) {
+        return rec.server_id == server_id && rec.is_valid == 1;
+    };
+    Status persist_status = deleteRecordFromHeapPage<ForeignServerRecord>(
+        foreign_servers_table_page_, predicate, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
+
+    std::lock_guard<std::mutex> lock(foreign_server_cache_mutex_);
+    foreign_server_cache_.erase(server_id);
+    foreign_server_name_to_id_.erase(makeForeignServerNameKey(info.server_name));
+    return Status::OK;
+}
+
+auto CatalogManager::listForeignServers(std::vector<ForeignServerInfo>& servers_out,
+                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(foreign_server_cache_mutex_);
+    servers_out.clear();
+    for (const auto& [id, info] : foreign_server_cache_)
+    {
+        servers_out.push_back(info);
+    }
+
+    (void)ctx;
+    return Status::OK;
+}
+
+// ============================================================================
+// Phase B: User Mapping Operations (FDW)
+// ============================================================================
+
+auto CatalogManager::createUserMapping(const ID& user_id, const ID& foreign_server_id,
+                                       const std::string& remote_user,
+                                       const std::string& remote_credentials,
+                                       ID& mapping_id_out, ErrorContext* ctx) -> Status
+{
+    if (isZeroUuidLocal(user_id) || isZeroUuidLocal(foreign_server_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "User and foreign server IDs required");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+
+    std::scoped_lock lock(user_mapping_cache_mutex_, foreign_server_cache_mutex_);
+    auto key = std::make_pair(user_id, foreign_server_id);
+    if (user_mapping_lookup_.find(key) != user_mapping_lookup_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "User mapping already exists");
+        return Status::FILE_EXISTS;
+    }
+
+    if (!foreign_server_cache_.empty() &&
+        foreign_server_cache_.find(foreign_server_id) == foreign_server_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Foreign server not found");
+        return Status::NOT_FOUND;
+    }
+
+    UserMappingInfo mapping{};
+    mapping.mapping_id = generateUuidV7();
+    mapping.user_id = user_id;
+    mapping.foreign_server_id = foreign_server_id;
+    mapping.remote_user = remote_user;
+    mapping.remote_credentials = remote_credentials;
+    mapping.created_time = now;
+    mapping.last_modified_time = now;
+
+    user_mapping_cache_[mapping.mapping_id] = mapping;
+    user_mapping_lookup_[key] = mapping.mapping_id;
+
+    Status persist_status = writeUserMappingRecord(mapping, ctx);
+    if (persist_status != Status::OK)
+    {
+        user_mapping_cache_.erase(mapping.mapping_id);
+        user_mapping_lookup_.erase(key);
+        return persist_status;
+    }
+
+    mapping_id_out = mapping.mapping_id;
+    return Status::OK;
+}
+
+auto CatalogManager::getUserMapping(const ID& user_id, const ID& foreign_server_id,
+                                    UserMappingInfo& mapping_out,
+                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(user_mapping_cache_mutex_);
+    auto key = std::make_pair(user_id, foreign_server_id);
+    auto it = user_mapping_lookup_.find(key);
+    if (it == user_mapping_lookup_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "User mapping not found");
+        return Status::NOT_FOUND;
+    }
+
+    mapping_out = user_mapping_cache_[it->second];
+    return Status::OK;
+}
+
+auto CatalogManager::dropUserMapping(const ID& mapping_id, ErrorContext* ctx) -> Status
+{
+    UserMappingInfo info;
+    {
+        std::lock_guard<std::mutex> lock(user_mapping_cache_mutex_);
+        auto it = user_mapping_cache_.find(mapping_id);
+        if (it == user_mapping_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "User mapping not found");
+            return Status::NOT_FOUND;
+        }
+        info = it->second;
+    }
+
+    auto predicate = [&mapping_id](const UserMappingRecord& rec) {
+        return rec.mapping_id == mapping_id && rec.is_valid == 1;
+    };
+    Status persist_status = deleteRecordFromHeapPage<UserMappingRecord>(
+        user_mappings_table_page_, predicate, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
+
+    std::lock_guard<std::mutex> lock(user_mapping_cache_mutex_);
+    user_mapping_cache_.erase(mapping_id);
+    user_mapping_lookup_.erase(std::make_pair(info.user_id, info.foreign_server_id));
+    return Status::OK;
+}
+
+// ============================================================================
+// Phase B: Server Registry Operations (Distributed MVCC)
+// ============================================================================
+
+auto CatalogManager::registerServer(const std::string& server_name, const std::string& host,
+                                    uint16_t port, ServerRole role,
+                                    const std::string& cluster_id,
+                                    ID& server_id_out,
+                                    ErrorContext* ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        server_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+    std::lock_guard<std::mutex> lock(server_registry_cache_mutex_);
+
+    auto key = makeServerRegistryNameKey(server_name);
+    if (server_registry_name_to_id_.find(key) != server_registry_name_to_id_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Server already registered");
+        return Status::FILE_EXISTS;
+    }
+
+    ServerRegistryInfo info{};
+    info.server_id = generateUuidV7();
+    info.server_name = server_name;
+    info.host = host;
+    info.port = port;
+    info.role = role;
+    info.state = ServerState::ONLINE;
+    info.last_heartbeat = now;
+    info.last_xid = 0;
+    info.replication_lag_ms = 0;
+    info.cluster_id = cluster_id;
+    info.server_version = "";
+    info.metadata = "";
+    info.created_time = now;
+    info.last_modified_time = now;
+
+    server_registry_cache_[info.server_id] = info;
+    server_registry_name_to_id_[key] = info.server_id;
+
+    Status persist_status = writeServerRegistryRecord(info, ctx);
+    if (persist_status != Status::OK)
+    {
+        server_registry_cache_.erase(info.server_id);
+        server_registry_name_to_id_.erase(key);
+        return persist_status;
+    }
+
+    server_id_out = info.server_id;
+    return Status::OK;
+}
+
+auto CatalogManager::getRegisteredServer(const ID& server_id, ServerRegistryInfo& server_out,
+                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(server_registry_cache_mutex_);
+    auto it = server_registry_cache_.find(server_id);
+    if (it == server_registry_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Server not found");
+        return Status::NOT_FOUND;
+    }
+
+    server_out = it->second;
+    return Status::OK;
+}
+
+auto CatalogManager::getRegisteredServerByName(const std::string& server_name,
+                                               ServerRegistryInfo& server_out,
+                                               ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(server_registry_cache_mutex_);
+    auto key = makeServerRegistryNameKey(server_name);
+    auto it = server_registry_name_to_id_.find(key);
+    if (it == server_registry_name_to_id_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Server not found");
+        return Status::NOT_FOUND;
+    }
+
+    server_out = server_registry_cache_[it->second];
+    return Status::OK;
+}
+
+auto CatalogManager::updateServerState(const ID& server_id, ServerState state,
+                                       ErrorContext* ctx) -> Status
+{
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+    std::lock_guard<std::mutex> lock(server_registry_cache_mutex_);
+    auto it = server_registry_cache_.find(server_id);
+    if (it == server_registry_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Server not found");
+        return Status::NOT_FOUND;
+    }
+
+    ServerRegistryInfo old_info = it->second;
+    it->second.state = state;
+    it->second.last_modified_time = now;
+
+    Status persist_status = updateServerRegistryRecord(it->second, ctx);
+    if (persist_status != Status::OK)
+    {
+        it->second = old_info;
+    }
+    return persist_status;
+}
+
+auto CatalogManager::updateServerHeartbeat(const ID& server_id, uint64_t last_xid,
+                                           ErrorContext* ctx) -> Status
+{
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+    std::lock_guard<std::mutex> lock(server_registry_cache_mutex_);
+    auto it = server_registry_cache_.find(server_id);
+    if (it == server_registry_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Server not found");
+        return Status::NOT_FOUND;
+    }
+
+    ServerRegistryInfo old_info = it->second;
+    it->second.last_heartbeat = now;
+    it->second.last_xid = last_xid;
+    it->second.last_modified_time = now;
+
+    Status persist_status = updateServerRegistryRecord(it->second, ctx);
+    if (persist_status != Status::OK)
+    {
+        it->second = old_info;
+    }
+    return persist_status;
+}
+
+auto CatalogManager::deregisterServer(const ID& server_id, ErrorContext* ctx) -> Status
+{
+    ServerRegistryInfo info;
+    {
+        std::lock_guard<std::mutex> lock(server_registry_cache_mutex_);
+        auto it = server_registry_cache_.find(server_id);
+        if (it == server_registry_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Server not found");
+            return Status::NOT_FOUND;
+        }
+        info = it->second;
+    }
+
+    auto predicate = [&server_id](const ServerRegistryRecord& rec) {
+        return rec.server_id == server_id && rec.is_valid == 1;
+    };
+    Status persist_status = deleteRecordFromHeapPage<ServerRegistryRecord>(
+        server_registry_table_page_, predicate, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
+
+    std::lock_guard<std::mutex> lock(server_registry_cache_mutex_);
+    server_registry_cache_.erase(server_id);
+    server_registry_name_to_id_.erase(makeServerRegistryNameKey(info.server_name));
+    return Status::OK;
+}
+
+auto CatalogManager::listRegisteredServers(const std::string& cluster_id,
+                                           std::vector<ServerRegistryInfo>& servers_out,
+                                           ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(server_registry_cache_mutex_);
+    servers_out.clear();
+    for (const auto& [id, info] : server_registry_cache_)
+    {
+        if (cluster_id.empty() || info.cluster_id == cluster_id)
+        {
+            servers_out.push_back(info);
+        }
+    }
+
+    (void)ctx;
+    return Status::OK;
+}
+
+auto CatalogManager::listServersWithState(ServerState state,
+                                          std::vector<ServerRegistryInfo>& servers_out,
+                                          ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(server_registry_cache_mutex_);
+    servers_out.clear();
+    for (const auto& [id, info] : server_registry_cache_)
+    {
+        if (info.state == state)
+        {
+            servers_out.push_back(info);
+        }
+    }
+
+    (void)ctx;
+    return Status::OK;
+}
+
+auto CatalogManager::getPrimaryServer(const std::string& cluster_id,
+                                      ServerRegistryInfo& server_out,
+                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(server_registry_cache_mutex_);
+    for (const auto& [id, info] : server_registry_cache_)
+    {
+        if (info.cluster_id == cluster_id &&
+            info.role == ServerRole::PRIMARY &&
+            info.state == ServerState::ONLINE)
+        {
+            server_out = info;
+            return Status::OK;
+        }
+    }
+
+    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Primary server not found");
+    return Status::NOT_FOUND;
+}
+
+// ============================================================================
+// Phase B: UDR Engine Operations
+// ============================================================================
+
+auto CatalogManager::registerUDREngine(const std::string& engine_name,
+                                       UDREngineType engine_type,
+                                       const std::string& plugin_path,
+                                       const std::string& config,
+                                       ID& engine_id_out,
+                                       ErrorContext* ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        engine_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+    std::lock_guard<std::mutex> lock(udr_engine_cache_mutex_);
+    auto key = makeUDREngineNameKey(engine_name);
+    if (udr_engine_name_to_id_.find(key) != udr_engine_name_to_id_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "UDR engine already exists");
+        return Status::FILE_EXISTS;
+    }
+
+    UDREngineInfo info{};
+    info.engine_id = generateUuidV7();
+    info.engine_name = engine_name;
+    info.engine_type = engine_type;
+    info.plugin_path = plugin_path;
+    info.config = config;
+    info.is_active = true;
+    info.is_default = false;
+    info.created_time = now;
+    info.last_modified_time = now;
+
+    udr_engine_cache_[info.engine_id] = info;
+    udr_engine_name_to_id_[key] = info.engine_id;
+
+    Status persist_status = writeUDREngineRecord(info, ctx);
+    if (persist_status != Status::OK)
+    {
+        udr_engine_cache_.erase(info.engine_id);
+        udr_engine_name_to_id_.erase(key);
+        return persist_status;
+    }
+
+    engine_id_out = info.engine_id;
+    return Status::OK;
+}
+
+auto CatalogManager::getUDREngine(const ID& engine_id, UDREngineInfo& engine_out,
+                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(udr_engine_cache_mutex_);
+    auto it = udr_engine_cache_.find(engine_id);
+    if (it == udr_engine_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR engine not found");
+        return Status::NOT_FOUND;
+    }
+
+    engine_out = it->second;
+    return Status::OK;
+}
+
+auto CatalogManager::getUDREngineByName(const std::string& engine_name,
+                                        UDREngineInfo& engine_out,
+                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(udr_engine_cache_mutex_);
+    auto key = makeUDREngineNameKey(engine_name);
+    auto it = udr_engine_name_to_id_.find(key);
+    if (it == udr_engine_name_to_id_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR engine not found");
+        return Status::NOT_FOUND;
+    }
+
+    engine_out = udr_engine_cache_[it->second];
+    return Status::OK;
+}
+
+auto CatalogManager::updateUDREngine(const ID& engine_id, const std::string& config,
+                                     bool is_active, ErrorContext* ctx) -> Status
+{
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+    std::lock_guard<std::mutex> lock(udr_engine_cache_mutex_);
+    auto it = udr_engine_cache_.find(engine_id);
+    if (it == udr_engine_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR engine not found");
+        return Status::NOT_FOUND;
+    }
+
+    UDREngineInfo old_info = it->second;
+    it->second.config = config;
+    it->second.is_active = is_active;
+    it->second.last_modified_time = now;
+
+    Status persist_status = updateUDREngineRecord(it->second, ctx);
+    if (persist_status != Status::OK)
+    {
+        it->second = old_info;
+    }
+    return persist_status;
+}
+
+auto CatalogManager::dropUDREngine(const ID& engine_id, ErrorContext* ctx) -> Status
+{
+    {
+        std::lock_guard<std::mutex> lock(udr_module_cache_mutex_);
+        for (const auto& [id, module] : udr_module_cache_)
+        {
+            if (module.engine_id == engine_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                                  "UDR engine has dependent modules");
+                return Status::CONSTRAINT_VIOLATION;
+            }
+        }
+    }
+
+    UDREngineInfo info;
+    {
+        std::lock_guard<std::mutex> lock(udr_engine_cache_mutex_);
+        auto it = udr_engine_cache_.find(engine_id);
+        if (it == udr_engine_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR engine not found");
+            return Status::NOT_FOUND;
+        }
+        info = it->second;
+    }
+
+    auto predicate = [&engine_id](const UDREngineRecord& rec) {
+        return rec.engine_id == engine_id && rec.is_valid == 1;
+    };
+    Status persist_status = deleteRecordFromHeapPage<UDREngineRecord>(
+        udr_engines_table_page_, predicate, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
+
+    std::lock_guard<std::mutex> lock(udr_engine_cache_mutex_);
+    udr_engine_cache_.erase(engine_id);
+    udr_engine_name_to_id_.erase(makeUDREngineNameKey(info.engine_name));
+    return Status::OK;
+}
+
+auto CatalogManager::listUDREngines(std::vector<UDREngineInfo>& engines_out,
+                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(udr_engine_cache_mutex_);
+    engines_out.clear();
+    for (const auto& [id, info] : udr_engine_cache_)
+    {
+        engines_out.push_back(info);
+    }
+
+    (void)ctx;
+    return Status::OK;
+}
+
+auto CatalogManager::getDefaultUDREngine(UDREngineType type, UDREngineInfo& engine_out,
+                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(udr_engine_cache_mutex_);
+    for (const auto& [id, info] : udr_engine_cache_)
+    {
+        if (info.engine_type == type && info.is_default)
+        {
+            engine_out = info;
+            return Status::OK;
+        }
+    }
+
+    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Default UDR engine not found");
+    return Status::NOT_FOUND;
+}
+
+// ============================================================================
+// Phase B: UDR Module Operations
+// ============================================================================
+
+auto CatalogManager::registerUDRModule(const std::string& module_name, const ID& engine_id,
+                                       const std::string& library_path,
+                                       const std::string& entry_point,
+                                       ID& module_id_out,
+                                       ErrorContext* ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        module_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+    std::scoped_lock lock(udr_module_cache_mutex_, udr_engine_cache_mutex_);
+
+    if (udr_engine_cache_.find(engine_id) == udr_engine_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR engine not found");
+        return Status::NOT_FOUND;
+    }
+
+    auto key = makeUDRModuleNameKey(module_name);
+    if (udr_module_name_to_id_.find(key) != udr_module_name_to_id_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "UDR module already exists");
+        return Status::FILE_EXISTS;
+    }
+
+    UDRModuleInfo info{};
+    info.module_id = generateUuidV7();
+    info.module_name = module_name;
+    info.engine_id = engine_id;
+    info.library_path = library_path;
+    info.entry_point = entry_point;
+    info.checksum = "";
+    info.dependencies = "";
+    info.is_loaded = false;
+    info.is_validated = false;
+    info.loaded_count = 0;
+    info.created_time = now;
+    info.last_modified_time = now;
+
+    udr_module_cache_[info.module_id] = info;
+    udr_module_name_to_id_[key] = info.module_id;
+
+    Status persist_status = writeUDRModuleRecord(info, ctx);
+    if (persist_status != Status::OK)
+    {
+        udr_module_cache_.erase(info.module_id);
+        udr_module_name_to_id_.erase(key);
+        return persist_status;
+    }
+
+    module_id_out = info.module_id;
+    return Status::OK;
+}
+
+auto CatalogManager::getUDRModule(const ID& module_id, UDRModuleInfo& module_out,
+                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(udr_module_cache_mutex_);
+    auto it = udr_module_cache_.find(module_id);
+    if (it == udr_module_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR module not found");
+        return Status::NOT_FOUND;
+    }
+
+    module_out = it->second;
+    return Status::OK;
+}
+
+auto CatalogManager::getUDRModuleByName(const std::string& module_name,
+                                        UDRModuleInfo& module_out,
+                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(udr_module_cache_mutex_);
+    auto key = makeUDRModuleNameKey(module_name);
+    auto it = udr_module_name_to_id_.find(key);
+    if (it == udr_module_name_to_id_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR module not found");
+        return Status::NOT_FOUND;
+    }
+
+    module_out = udr_module_cache_[it->second];
+    return Status::OK;
+}
+
+auto CatalogManager::validateUDRModule(const ID& module_id, ErrorContext* ctx) -> Status
+{
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+    std::lock_guard<std::mutex> lock(udr_module_cache_mutex_);
+    auto it = udr_module_cache_.find(module_id);
+    if (it == udr_module_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR module not found");
+        return Status::NOT_FOUND;
+    }
+
+    UDRModuleInfo old_info = it->second;
+    it->second.is_validated = true;
+    it->second.last_modified_time = now;
+
+    Status persist_status = updateUDRModuleRecord(it->second, ctx);
+    if (persist_status != Status::OK)
+    {
+        it->second = old_info;
+    }
+    return persist_status;
+}
+
+auto CatalogManager::setUDRModuleLoaded(const ID& module_id, bool is_loaded,
+                                        ErrorContext* ctx) -> Status
+{
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+    std::lock_guard<std::mutex> lock(udr_module_cache_mutex_);
+    auto it = udr_module_cache_.find(module_id);
+    if (it == udr_module_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR module not found");
+        return Status::NOT_FOUND;
+    }
+
+    UDRModuleInfo old_info = it->second;
+    it->second.is_loaded = is_loaded;
+    if (is_loaded)
+    {
+        it->second.loaded_count += 1;
+    }
+    it->second.last_modified_time = now;
+
+    Status persist_status = updateUDRModuleRecord(it->second, ctx);
+    if (persist_status != Status::OK)
+    {
+        it->second = old_info;
+    }
+    return persist_status;
+}
+
+auto CatalogManager::dropUDRModule(const ID& module_id, ErrorContext* ctx) -> Status
+{
+    UDRModuleInfo info;
+    {
+        std::lock_guard<std::mutex> lock(udr_module_cache_mutex_);
+        auto it = udr_module_cache_.find(module_id);
+        if (it == udr_module_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "UDR module not found");
+            return Status::NOT_FOUND;
+        }
+        info = it->second;
+    }
+
+    auto predicate = [&module_id](const UDRModuleRecord& rec) {
+        return rec.module_id == module_id && rec.is_valid == 1;
+    };
+    Status persist_status = deleteRecordFromHeapPage<UDRModuleRecord>(
+        udr_modules_table_page_, predicate, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
+
+    std::lock_guard<std::mutex> lock(udr_module_cache_mutex_);
+    udr_module_cache_.erase(module_id);
+    udr_module_name_to_id_.erase(makeUDRModuleNameKey(info.module_name));
+    return Status::OK;
+}
+
+auto CatalogManager::listUDRModules(const ID& engine_id,
+                                    std::vector<UDRModuleInfo>& modules_out,
+                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(udr_module_cache_mutex_);
+    modules_out.clear();
+    for (const auto& [id, info] : udr_module_cache_)
+    {
+        if (engine_id == ID{} || info.engine_id == engine_id)
+        {
+            modules_out.push_back(info);
+        }
+    }
+
+    (void)ctx;
     return Status::OK;
 }
 
@@ -11165,6 +17294,22 @@ auto CatalogManager::getDependents(const ID& object_id,
         }
     }
 
+    return Status::OK;
+}
+
+auto CatalogManager::listDependencies(std::vector<DependencyInfo>& dependencies_out,
+                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(dependency_cache_mutex_);
+
+    dependencies_out.clear();
+    dependencies_out.reserve(dependency_cache_.size());
+    for (const auto& [dep_id, dep_info] : dependency_cache_)
+    {
+        dependencies_out.push_back(dep_info);
+    }
+
+    (void)ctx;
     return Status::OK;
 }
 
@@ -11533,6 +17678,12 @@ auto CatalogManager::getObjectName(const ID& object_id, ObjectType type,
             return it != view_cache_.end() ? it->second.name : "<unknown>";
         }
 
+        case ObjectType::SYNONYM: {
+            std::lock_guard<std::mutex> lock(synonym_cache_mutex_);
+            auto it = synonym_cache_.find(object_id);
+            return it != synonym_cache_.end() ? it->second.synonym_name : "<unknown>";
+        }
+
         case ObjectType::INDEX: {
             std::lock_guard<std::mutex> lock(mutex_);
             auto it = index_cache_.find(object_id);
@@ -11543,6 +17694,36 @@ auto CatalogManager::getObjectName(const ID& object_id, ObjectType type,
             std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
             auto it = sequence_cache_.find(object_id);
             return it != sequence_cache_.end() ? it->second->name : "<unknown>";
+        }
+
+        case ObjectType::FOREIGN_TABLE: {
+            std::lock_guard<std::mutex> lock(foreign_table_cache_mutex_);
+            auto it = foreign_table_cache_.find(object_id);
+            return it != foreign_table_cache_.end() ? it->second.table_name : "<unknown>";
+        }
+
+        case ObjectType::FOREIGN_SERVER: {
+            std::lock_guard<std::mutex> lock(foreign_server_cache_mutex_);
+            auto it = foreign_server_cache_.find(object_id);
+            return it != foreign_server_cache_.end() ? it->second.server_name : "<unknown>";
+        }
+
+        case ObjectType::SERVER_REGISTRY: {
+            std::lock_guard<std::mutex> lock(server_registry_cache_mutex_);
+            auto it = server_registry_cache_.find(object_id);
+            return it != server_registry_cache_.end() ? it->second.server_name : "<unknown>";
+        }
+
+        case ObjectType::UDR_ENGINE: {
+            std::lock_guard<std::mutex> lock(udr_engine_cache_mutex_);
+            auto it = udr_engine_cache_.find(object_id);
+            return it != udr_engine_cache_.end() ? it->second.engine_name : "<unknown>";
+        }
+
+        case ObjectType::UDR_MODULE: {
+            std::lock_guard<std::mutex> lock(udr_module_cache_mutex_);
+            auto it = udr_module_cache_.find(object_id);
+            return it != udr_module_cache_.end() ? it->second.module_name : "<unknown>";
         }
 
         case ObjectType::FUNCTION: {
@@ -11575,7 +17756,7 @@ auto CatalogManager::getObjectName(const ID& object_id, ObjectType type,
 
         case ObjectType::DOMAIN: {
             DomainInfo info;
-            if (getDomain(object_id, info, ctx) == Status::OK) {
+            if (db_->domain_manager()->getDomain(object_id, info, ctx) == Status::OK) {
                 return info.domain_name;
             }
             return "<unknown>";
@@ -11828,6 +18009,22 @@ auto CatalogManager::getComment(const ID& object_id, std::string& comment_out,
     return Status::OK;
 }
 
+auto CatalogManager::listComments(std::vector<CommentInfo>& comments_out,
+                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(comment_cache_mutex_);
+
+    comments_out.clear();
+    comments_out.reserve(comment_cache_.size());
+    for (const auto& [object_id, comment] : comment_cache_)
+    {
+        comments_out.push_back(comment);
+    }
+
+    (void)ctx;
+    return Status::OK;
+}
+
 auto CatalogManager::deleteComment(const ID& object_id, ErrorContext* ctx) -> Status
 {
     std::lock_guard<std::mutex> lock(comment_cache_mutex_);
@@ -11970,6 +18167,2284 @@ auto CatalogManager::readCommentRecords(ErrorContext *ctx) -> Status
 
     return readRecordsFromHeapPage<CommentRecord, CommentInfo, ID>(
         comments_table_page_, comment_cache_, converter, key_extractor, ctx);
+}
+
+// ============================================================================
+// Object persistence: sequences/views/triggers/procedures
+// ============================================================================
+
+auto CatalogManager::writeSequenceRecord(const SequenceState &state, ErrorContext *ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        state.name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    SequenceRecord record{};
+    record.sequence_id = state.sequence_id;
+    record.schema_id = state.schema_id;
+    std::memset(record.sequence_name, 0, sizeof(record.sequence_name));
+    std::string truncated = UTF8Utils::truncateToBytes(state.name, sizeof(record.sequence_name));
+    std::strncpy(record.sequence_name, truncated.c_str(), sizeof(record.sequence_name) - 1);
+    record.owner_id = state.owner_id;
+    record.current_value = state.current_value.load();
+    record.increment_by = state.increment_by;
+    record.min_value = state.min_value;
+    record.max_value = state.max_value;
+    record.start_value = state.start_value;
+    record.cache_size = state.cache_size;
+    record.cycle = state.cycle ? 1 : 0;
+    record.name_is_delimited = state.name_is_delimited ? 1 : 0;
+    record.created_time = state.created_time;
+    record.last_modified_time = state.last_modified_time;
+    record.is_valid = 1;
+
+    return writeRecordToHeapPage(sequences_table_page_, record, ctx);
+}
+
+auto CatalogManager::readSequenceRecords(ErrorContext *ctx) -> Status
+{
+    if (sequences_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    std::vector<SequenceInfo> sequences;
+    auto filter = [](const SequenceRecord &record) { return record.is_valid == 1; };
+    auto converter = [](const SequenceRecord &record, SequenceInfo &info)
+    {
+        const_cast<char&>(record.sequence_name[511]) = '\0';
+        info.sequence_id = record.sequence_id;
+        info.schema_id = record.schema_id;
+        info.name = record.sequence_name;
+        info.name_is_delimited = record.name_is_delimited != 0;
+        info.owner_id = record.owner_id;
+        info.current_value = record.current_value;
+        info.increment_by = record.increment_by;
+        info.min_value = record.min_value;
+        info.max_value = record.max_value;
+        info.start_value = record.start_value;
+        info.cache_size = record.cache_size;
+        info.cycle = record.cycle != 0;
+        info.created_time = record.created_time;
+        info.last_modified_time = record.last_modified_time;
+    };
+
+    Status status = readRecordsToVector<SequenceRecord, SequenceInfo>(
+        sequences_table_page_, sequences, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::scoped_lock lock(sequence_cache_mutex_, sequence_name_mutex_);
+    for (const auto &info : sequences)
+    {
+        auto state = std::make_shared<SequenceState>();
+        state->sequence_id = info.sequence_id;
+        state->schema_id = info.schema_id;
+        state->name = info.name;
+        state->name_is_delimited = info.name_is_delimited;
+        state->owner_id = info.owner_id;
+        state->current_value.store(info.current_value);
+        state->increment_by = info.increment_by;
+        state->min_value = info.min_value;
+        state->max_value = info.max_value;
+        state->start_value = info.start_value;
+        state->cache_size = info.cache_size;
+        state->cycle = info.cycle;
+        state->created_time = info.created_time;
+        state->last_modified_time = info.last_modified_time;
+
+        sequence_cache_[info.sequence_id] = state;
+        sequence_name_to_id_[makeSequenceNameKey(info.schema_id, info.name,
+                                                 info.name_is_delimited)] = info.sequence_id;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::writeViewRecord(const ViewInfo &view, ErrorContext *ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        view.name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    ViewRecord record{};
+    record.view_id = view.view_id;
+    record.schema_id = view.schema_id;
+    std::string truncated = UTF8Utils::truncateToBytes(view.name, sizeof(record.view_name));
+    std::memset(record.view_name, 0, sizeof(record.view_name));
+    std::strncpy(record.view_name, truncated.c_str(), sizeof(record.view_name) - 1);
+    record.owner_id = view.owner_id;
+    record.materialized_table_id = view.materialized_table_id;
+    record.change_log_table_id = view.change_log_table_id;
+    record.name_is_delimited = view.name_is_delimited ? 1 : 0;
+    record.check_option = view.check_option ? 1 : 0;
+    record.is_materialized = view.materialized ? 1 : 0;
+    record.refresh_strategy = static_cast<uint8_t>(view.refresh_strategy);
+    record.refresh_on_commit = view.refresh_on_commit ? 1 : 0;
+    record.supports_concurrent = view.supports_concurrent ? 1 : 0;
+    record.created_time = view.created_time;
+    record.last_modified_time = view.last_modified_time;
+    record.last_refreshed = view.last_refresh_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!view.definition.empty())
+    {
+        Status st = storeStringInToast(view.definition, xmin, record.definition_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+    if (!view.column_names.empty())
+    {
+        std::string encoded = encodeStringList(view.column_names);
+        Status st = storeStringInToast(encoded, xmin, record.columns_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+    if (!view.base_table_ids.empty())
+    {
+        std::string encoded = encodeIdList(view.base_table_ids);
+        Status st = storeStringInToast(encoded, xmin, record.base_table_ids_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    return writeRecordToHeapPage(views_table_page_, record, ctx);
+}
+
+auto CatalogManager::updateViewRecord(const ViewInfo &view, ErrorContext *ctx) -> Status
+{
+    ViewRecord record{};
+    record.view_id = view.view_id;
+    record.schema_id = view.schema_id;
+    std::string truncated = UTF8Utils::truncateToBytes(view.name, sizeof(record.view_name));
+    std::memset(record.view_name, 0, sizeof(record.view_name));
+    std::strncpy(record.view_name, truncated.c_str(), sizeof(record.view_name) - 1);
+    record.owner_id = view.owner_id;
+    record.materialized_table_id = view.materialized_table_id;
+    record.change_log_table_id = view.change_log_table_id;
+    record.name_is_delimited = view.name_is_delimited ? 1 : 0;
+    record.check_option = view.check_option ? 1 : 0;
+    record.is_materialized = view.materialized ? 1 : 0;
+    record.refresh_strategy = static_cast<uint8_t>(view.refresh_strategy);
+    record.refresh_on_commit = view.refresh_on_commit ? 1 : 0;
+    record.supports_concurrent = view.supports_concurrent ? 1 : 0;
+    record.created_time = view.created_time;
+    record.last_modified_time = view.last_modified_time;
+    record.last_refreshed = view.last_refresh_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!view.definition.empty())
+    {
+        Status st = storeStringInToast(view.definition, xmin, record.definition_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+    if (!view.column_names.empty())
+    {
+        std::string encoded = encodeStringList(view.column_names);
+        Status st = storeStringInToast(encoded, xmin, record.columns_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+    if (!view.base_table_ids.empty())
+    {
+        std::string encoded = encodeIdList(view.base_table_ids);
+        Status st = storeStringInToast(encoded, xmin, record.base_table_ids_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    auto predicate = [&view](const ViewRecord &rec) {
+        return rec.view_id == view.view_id && rec.is_valid == 1;
+    };
+    return updateRecordInHeapPage(views_table_page_, predicate, record, ctx);
+}
+
+auto CatalogManager::readViewRecords(ErrorContext *ctx) -> Status
+{
+    if (views_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+    std::vector<ViewInfo> views;
+    auto filter = [](const ViewRecord &record) { return record.is_valid == 1; };
+    auto converter = [this, xmin, ctx](const ViewRecord &record, ViewInfo &info)
+    {
+        const_cast<char&>(record.view_name[511]) = '\0';
+        info.view_id = record.view_id;
+        info.schema_id = record.schema_id;
+        info.name = record.view_name;
+        info.name_is_delimited = record.name_is_delimited != 0;
+        info.owner_id = record.owner_id;
+        info.definition.clear();
+        if (record.definition_oid != 0)
+        {
+            loadStringFromToast(record.definition_oid, xmin, info.definition, ctx);
+        }
+        info.check_option = record.check_option != 0;
+        info.column_names.clear();
+        if (record.columns_oid != 0)
+        {
+            std::string encoded;
+            loadStringFromToast(record.columns_oid, xmin, encoded, ctx);
+            decodeStringList(encoded, info.column_names);
+        }
+        info.created_time = record.created_time;
+        info.last_modified_time = record.last_modified_time;
+        info.materialized = record.is_materialized != 0;
+        info.materialized_table_id = record.materialized_table_id;
+        info.last_refresh_time = record.last_refreshed;
+        info.refresh_strategy = static_cast<MVRefreshStrategy>(record.refresh_strategy);
+        info.refresh_on_commit = record.refresh_on_commit != 0;
+        info.base_table_ids.clear();
+        if (record.base_table_ids_oid != 0)
+        {
+            std::string encoded;
+            loadStringFromToast(record.base_table_ids_oid, xmin, encoded, ctx);
+            decodeIdList(encoded, info.base_table_ids);
+        }
+        info.change_log_table_id = record.change_log_table_id;
+        info.supports_concurrent = record.supports_concurrent != 0;
+    };
+
+    Status status = readRecordsToVector<ViewRecord, ViewInfo>(
+        views_table_page_, views, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::lock_guard<std::mutex> lock(view_cache_mutex_);
+    for (const auto &view : views)
+    {
+        view_cache_[view.view_id] = view;
+        view_name_to_id_[makeViewNameKey(view.schema_id, view.name,
+                                         view.name_is_delimited)] = view.view_id;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::writeTriggerRecord(const TriggerInfo &trigger, ErrorContext *ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        trigger.trigger_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    TriggerRecord record{};
+    record.trigger_id = trigger.trigger_id;
+    record.table_id = trigger.table_id;
+    std::string truncated = UTF8Utils::truncateToBytes(trigger.trigger_name,
+                                                       sizeof(record.trigger_name));
+    std::memset(record.trigger_name, 0, sizeof(record.trigger_name));
+    std::strncpy(record.trigger_name, truncated.c_str(), sizeof(record.trigger_name) - 1);
+    record.owner_id = resolveOwnerUUID("system");
+    record.scope = 0;
+    record.name_is_delimited = trigger.name_is_delimited ? 1 : 0;
+    record.trigger_timing = static_cast<uint8_t>(trigger.timing);
+    record.trigger_event = static_cast<uint8_t>(trigger.event);
+    record.granularity = static_cast<uint8_t>(trigger.granularity);
+    record.enabled = trigger.enabled ? 1 : 0;
+    record.position = 0;
+    record.created_time = trigger.created_time;
+    record.last_modified_time = trigger.created_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!trigger.when_expression.empty())
+    {
+        Status st = storeStringInToast(trigger.when_expression, xmin,
+                                       record.condition_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+    if (!trigger.procedure_name.empty())
+    {
+        Status st = storeStringInToast(trigger.procedure_name, xmin,
+                                       record.action_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+    if (!trigger.old_table_alias.empty())
+    {
+        Status st = storeStringInToast(trigger.old_table_alias, xmin,
+                                       record.old_alias_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+    if (!trigger.new_table_alias.empty())
+    {
+        Status st = storeStringInToast(trigger.new_table_alias, xmin,
+                                       record.new_alias_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    return writeRecordToHeapPage(triggers_table_page_, record, ctx);
+}
+
+auto CatalogManager::writeDatabaseTriggerRecord(const DatabaseTriggerInfo &trigger, ErrorContext *ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        trigger.trigger_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    TriggerRecord record{};
+    record.trigger_id = trigger.trigger_id;
+    record.table_id = ID{};
+    std::string truncated = UTF8Utils::truncateToBytes(trigger.trigger_name,
+                                                       sizeof(record.trigger_name));
+    std::memset(record.trigger_name, 0, sizeof(record.trigger_name));
+    std::strncpy(record.trigger_name, truncated.c_str(), sizeof(record.trigger_name) - 1);
+    record.owner_id = trigger.owner_id;
+    record.scope = 1;
+    record.name_is_delimited = 0;
+    record.trigger_timing = 0;
+    record.trigger_event = static_cast<uint8_t>(trigger.event);
+    record.granularity = 0;
+    record.enabled = trigger.active ? 1 : 0;
+    record.position = trigger.position;
+    record.created_time = trigger.created_time;
+    record.last_modified_time = trigger.created_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!trigger.procedure_name.empty())
+    {
+        Status st = storeStringInToast(trigger.procedure_name, xmin,
+                                       record.action_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    return writeRecordToHeapPage(triggers_table_page_, record, ctx);
+}
+
+auto CatalogManager::readTriggerRecords(ErrorContext *ctx) -> Status
+{
+    if (triggers_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+    std::vector<TriggerRecord> records;
+    auto filter = [](const TriggerRecord &record) { return record.is_valid == 1; };
+    auto converter = [](const TriggerRecord &record, TriggerRecord &out) { out = record; };
+    Status status = readRecordsToVector<TriggerRecord, TriggerRecord>(
+        triggers_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::scoped_lock lock(trigger_mutex_, db_trigger_mutex_);
+    for (const auto &record : records)
+    {
+        const_cast<char&>(record.trigger_name[511]) = '\0';
+        if (record.scope == 1 || isZeroUuidLocal(record.table_id))
+        {
+            DatabaseTriggerInfo info{};
+            info.trigger_id = record.trigger_id;
+            info.trigger_name = record.trigger_name;
+            info.event = static_cast<DatabaseTriggerEvent>(record.trigger_event);
+            info.active = record.enabled != 0;
+            info.position = record.position;
+            info.created_time = record.created_time;
+            info.owner_id = record.owner_id;
+            if (record.action_oid != 0)
+            {
+                loadStringFromToast(record.action_oid, xmin, info.procedure_name, ctx);
+            }
+            db_trigger_cache_[info.trigger_id] = info;
+            db_trigger_name_to_id_[info.trigger_name] = info.trigger_id;
+            event_triggers_.insert({info.event, info.trigger_id});
+            continue;
+        }
+
+        auto table_it = table_cache_.find(record.table_id);
+        if (table_it == table_cache_.end())
+        {
+            LOG_WARNING(CATALOG, "Trigger '%s' references missing table; skipping",
+                        record.trigger_name);
+            continue;
+        }
+
+        TriggerInfo info{};
+        info.trigger_id = record.trigger_id;
+        info.trigger_name = record.trigger_name;
+        info.name_is_delimited = record.name_is_delimited != 0;
+        info.table_id = record.table_id;
+        info.table_name = table_it->second.table_name;
+        info.timing = static_cast<TriggerTiming>(record.trigger_timing);
+        info.event = static_cast<TriggerEvent>(record.trigger_event);
+        info.granularity = static_cast<TriggerGranularity>(record.granularity);
+        info.enabled = record.enabled != 0;
+        info.created_time = record.created_time;
+        if (record.condition_oid != 0)
+        {
+            loadStringFromToast(record.condition_oid, xmin, info.when_expression, ctx);
+        }
+        if (record.action_oid != 0)
+        {
+            loadStringFromToast(record.action_oid, xmin, info.procedure_name, ctx);
+        }
+        if (record.old_alias_oid != 0)
+        {
+            loadStringFromToast(record.old_alias_oid, xmin, info.old_table_alias, ctx);
+        }
+        if (record.new_alias_oid != 0)
+        {
+            loadStringFromToast(record.new_alias_oid, xmin, info.new_table_alias, ctx);
+        }
+
+        trigger_cache_[info.trigger_id] = info;
+        trigger_name_to_id_[info.trigger_name] = info.trigger_id;
+        table_triggers_.insert({info.table_id, info.trigger_id});
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::writeProcedureRecord(const ProcedureInfo &info, ErrorContext *ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        info.name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    ProcedureRecord record{};
+    record.procedure_id = info.procedure_id;
+    record.schema_id = info.schema_id;
+    std::string truncated = UTF8Utils::truncateToBytes(info.name, sizeof(record.procedure_name));
+    std::memset(record.procedure_name, 0, sizeof(record.procedure_name));
+    std::strncpy(record.procedure_name, truncated.c_str(), sizeof(record.procedure_name) - 1);
+    record.owner_id = info.owner_id;
+    record.procedure_type = static_cast<uint8_t>(ProcedureType::PROCEDURE);
+    record.is_selectable = 0;
+    record.language = static_cast<uint8_t>(ProcedureLanguage::PSQL);
+    record.sql_security = static_cast<uint8_t>(info.sql_security);
+    record.name_is_delimited = info.name_is_delimited ? 1 : 0;
+    record.body_redacted = info.source_text.empty() ? 1 : 0;
+    record.deterministic = 0;
+    record.parameter_count = static_cast<uint32_t>(info.parameters.size());
+    record.created_time = info.created_time;
+    record.last_modified_time = info.modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!info.source_text.empty())
+    {
+        Status st = storeStringInToast(info.source_text, xmin, record.body_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+    if (!info.bytecode.empty())
+    {
+        std::string bytecode(reinterpret_cast<const char*>(info.bytecode.data()),
+                             info.bytecode.size());
+        Status st = storeStringInToast(bytecode, xmin, record.bytecode_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    Status status = writeRecordToHeapPage(procedures_table_page_, record, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    Status param_status = writeProcedureParameterRecords(info.procedure_id,
+                                                         info.parameters,
+                                                         ctx);
+    if (param_status != Status::OK)
+    {
+        return param_status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::updateProcedureRecord(const ProcedureInfo &info, ErrorContext *ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        info.name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    ProcedureRecord record{};
+    record.procedure_id = info.procedure_id;
+    record.schema_id = info.schema_id;
+    std::string truncated = UTF8Utils::truncateToBytes(info.name, sizeof(record.procedure_name));
+    std::memset(record.procedure_name, 0, sizeof(record.procedure_name));
+    std::strncpy(record.procedure_name, truncated.c_str(), sizeof(record.procedure_name) - 1);
+    record.owner_id = info.owner_id;
+    record.procedure_type = static_cast<uint8_t>(ProcedureType::PROCEDURE);
+    record.is_selectable = 0;
+    record.language = static_cast<uint8_t>(ProcedureLanguage::PSQL);
+    record.sql_security = static_cast<uint8_t>(info.sql_security);
+    record.name_is_delimited = info.name_is_delimited ? 1 : 0;
+    record.body_redacted = info.source_text.empty() ? 1 : 0;
+    record.deterministic = 0;
+    record.parameter_count = static_cast<uint32_t>(info.parameters.size());
+    record.created_time = info.created_time;
+    record.last_modified_time = info.modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!info.source_text.empty())
+    {
+        Status st = storeStringInToast(info.source_text, xmin, record.body_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+    if (!info.bytecode.empty())
+    {
+        std::string bytecode(reinterpret_cast<const char*>(info.bytecode.data()),
+                             info.bytecode.size());
+        Status st = storeStringInToast(bytecode, xmin, record.bytecode_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    auto predicate = [&info](const ProcedureRecord &rec) {
+        return rec.procedure_id == info.procedure_id && rec.is_valid == 1;
+    };
+    return updateRecordInHeapPage(procedures_table_page_, predicate, record, ctx);
+}
+
+auto CatalogManager::writeFunctionRecord(const FunctionInfo &info, ErrorContext *ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        info.name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    ProcedureRecord record{};
+    record.procedure_id = info.function_id;
+    record.schema_id = info.schema_id;
+    std::string truncated = UTF8Utils::truncateToBytes(info.name, sizeof(record.procedure_name));
+    std::memset(record.procedure_name, 0, sizeof(record.procedure_name));
+    std::strncpy(record.procedure_name, truncated.c_str(), sizeof(record.procedure_name) - 1);
+    record.owner_id = info.owner_id;
+    record.procedure_type = static_cast<uint8_t>(ProcedureType::FUNCTION);
+    record.is_selectable = 0;
+    record.language = static_cast<uint8_t>(ProcedureLanguage::PSQL);
+    record.sql_security = static_cast<uint8_t>(info.sql_security);
+    record.name_is_delimited = info.name_is_delimited ? 1 : 0;
+    record.body_redacted = info.source_text.empty() ? 1 : 0;
+    record.deterministic = info.deterministic ? 1 : 0;
+    record.parameter_count = static_cast<uint32_t>(info.parameters.size());
+    record.created_time = info.created_time;
+    record.last_modified_time = info.modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    std::string type_blob = encodeTypeDescriptor(info.return_type,
+                                                 info.return_type_precision,
+                                                 info.return_type_scale);
+    Status st = storeStringInToast(type_blob, xmin, record.return_type_oid, ctx);
+    if (st != Status::OK) return st;
+
+    if (!info.source_text.empty())
+    {
+        st = storeStringInToast(info.source_text, xmin, record.body_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+    if (!info.bytecode.empty())
+    {
+        std::string bytecode(reinterpret_cast<const char*>(info.bytecode.data()),
+                             info.bytecode.size());
+        st = storeStringInToast(bytecode, xmin, record.bytecode_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    Status status = writeRecordToHeapPage(procedures_table_page_, record, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    Status param_status = writeProcedureParameterRecords(info.function_id,
+                                                         info.parameters,
+                                                         ctx);
+    if (param_status != Status::OK)
+    {
+        return param_status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::updateFunctionRecord(const FunctionInfo &info, ErrorContext *ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        info.name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    ProcedureRecord record{};
+    record.procedure_id = info.function_id;
+    record.schema_id = info.schema_id;
+    std::string truncated = UTF8Utils::truncateToBytes(info.name, sizeof(record.procedure_name));
+    std::memset(record.procedure_name, 0, sizeof(record.procedure_name));
+    std::strncpy(record.procedure_name, truncated.c_str(), sizeof(record.procedure_name) - 1);
+    record.owner_id = info.owner_id;
+    record.procedure_type = static_cast<uint8_t>(ProcedureType::FUNCTION);
+    record.is_selectable = 0;
+    record.language = static_cast<uint8_t>(ProcedureLanguage::PSQL);
+    record.sql_security = static_cast<uint8_t>(info.sql_security);
+    record.name_is_delimited = info.name_is_delimited ? 1 : 0;
+    record.body_redacted = info.source_text.empty() ? 1 : 0;
+    record.deterministic = info.deterministic ? 1 : 0;
+    record.parameter_count = static_cast<uint32_t>(info.parameters.size());
+    record.created_time = info.created_time;
+    record.last_modified_time = info.modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    std::string type_blob = encodeTypeDescriptor(info.return_type,
+                                                 info.return_type_precision,
+                                                 info.return_type_scale);
+    Status st = storeStringInToast(type_blob, xmin, record.return_type_oid, ctx);
+    if (st != Status::OK) return st;
+
+    if (!info.source_text.empty())
+    {
+        st = storeStringInToast(info.source_text, xmin, record.body_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+    if (!info.bytecode.empty())
+    {
+        std::string bytecode(reinterpret_cast<const char*>(info.bytecode.data()),
+                             info.bytecode.size());
+        st = storeStringInToast(bytecode, xmin, record.bytecode_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    auto predicate = [&info](const ProcedureRecord &rec) {
+        return rec.procedure_id == info.function_id && rec.is_valid == 1;
+    };
+    return updateRecordInHeapPage(procedures_table_page_, predicate, record, ctx);
+}
+
+auto CatalogManager::writeProcedureParameterRecords(const ID &procedure_id,
+                                                    const std::vector<ParameterInfo> &params,
+                                                    ErrorContext *ctx) -> Status
+{
+    if (procedure_params_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+    for (size_t i = 0; i < params.size(); ++i)
+    {
+        const auto &param = params[i];
+        ProcedureParameterRecord param_record{};
+        param_record.parameter_id = generateUuidV7();
+        param_record.procedure_id = procedure_id;
+        std::string param_name = UTF8Utils::truncateToBytes(param.name,
+                                                            sizeof(param_record.parameter_name));
+        std::memset(param_record.parameter_name, 0, sizeof(param_record.parameter_name));
+        std::strncpy(param_record.parameter_name, param_name.c_str(),
+                     sizeof(param_record.parameter_name) - 1);
+        param_record.parameter_position = static_cast<uint16_t>(i + 1);
+        param_record.parameter_mode = static_cast<uint8_t>(param.mode);
+        param_record.is_valid = 1;
+
+        std::string type_blob = encodeTypeDescriptor(param.type, param.type_precision,
+                                                     param.type_scale);
+        Status st = storeStringInToast(type_blob, xmin, param_record.data_type_oid, ctx);
+        if (st != Status::OK)
+        {
+            return st;
+        }
+
+        if (param.has_default)
+        {
+            st = storeStringInToast(param.default_value, xmin,
+                                    param_record.default_value_oid, ctx);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+
+        st = writeRecordToHeapPage(procedure_params_table_page_, param_record, ctx);
+        if (st != Status::OK)
+        {
+            return st;
+        }
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::deleteProcedureParameterRecords(const ID &procedure_id,
+                                                     ErrorContext *ctx) -> Status
+{
+    if (procedure_params_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    // Mark all parameter records invalid in-place (MGA semantics).
+    BufferPool *bp = db_->buffer_pool();
+    uint32_t current_page_id = procedure_params_table_page_;
+    bool found_any = false;
+
+    while (current_page_id != 0)
+    {
+        void *page_buffer = nullptr;
+        Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        bool page_dirty = false;
+
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            auto *record = reinterpret_cast<ProcedureParameterRecord *>(
+                reinterpret_cast<uint8_t *>(page_buffer) + offset);
+            if (record->is_valid == 1 && record->procedure_id == procedure_id)
+            {
+                record->is_valid = 0;
+                page_dirty = true;
+                found_any = true;
+            }
+            offset += sizeof(ProcedureParameterRecord);
+        }
+
+        if (page_dirty)
+        {
+            heap->header.generation++;
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, page_dirty, ctx);
+        current_page_id = next_page;
+    }
+
+    return found_any ? Status::OK : Status::OK;
+}
+
+auto CatalogManager::readProcedureRecords(ErrorContext *ctx) -> Status
+{
+    if (procedures_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+    std::vector<ProcedureRecord> records;
+    auto filter = [](const ProcedureRecord &record) { return record.is_valid == 1; };
+    auto converter = [](const ProcedureRecord &record, ProcedureRecord &out) { out = record; };
+    Status status = readRecordsToVector<ProcedureRecord, ProcedureRecord>(
+        procedures_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::lock_guard<std::mutex> lock(psql_mutex_);
+    for (const auto &record : records)
+    {
+        const_cast<char&>(record.procedure_name[511]) = '\0';
+        TypeDescriptorBlob return_type_blob{};
+        std::string return_blob;
+        if (record.return_type_oid != 0)
+        {
+            loadStringFromToast(record.return_type_oid, xmin, return_blob, ctx);
+            decodeTypeDescriptor(return_blob, return_type_blob);
+        }
+
+        std::string body;
+        if (record.body_oid != 0)
+        {
+            loadStringFromToast(record.body_oid, xmin, body, ctx);
+        }
+
+        std::string bytecode_blob;
+        if (record.bytecode_oid != 0)
+        {
+            loadStringFromToast(record.bytecode_oid, xmin, bytecode_blob, ctx);
+        }
+
+        if (record.procedure_type == static_cast<uint8_t>(ProcedureType::FUNCTION))
+        {
+            FunctionInfo info{};
+            info.function_id = record.procedure_id;
+            info.schema_id = record.schema_id;
+            info.name = record.procedure_name;
+            info.name_is_delimited = record.name_is_delimited != 0;
+            info.owner_id = record.owner_id;
+            info.return_type = return_type_blob.type;
+            info.return_type_precision = return_type_blob.precision;
+            info.return_type_scale = return_type_blob.scale;
+            info.or_replace = false;
+            info.deterministic = record.deterministic != 0;
+            info.sql_security = static_cast<FunctionInfo::SqlSecurity>(record.sql_security);
+            info.source_text = body;
+            info.created_time = record.created_time;
+            info.modified_time = record.last_modified_time;
+            if (!bytecode_blob.empty())
+            {
+                info.bytecode.assign(bytecode_blob.begin(), bytecode_blob.end());
+            }
+            functions_[info.name] = info;
+        }
+        else
+        {
+            ProcedureInfo info{};
+            info.procedure_id = record.procedure_id;
+            info.schema_id = record.schema_id;
+            info.name = record.procedure_name;
+            info.name_is_delimited = record.name_is_delimited != 0;
+            info.owner_id = record.owner_id;
+            info.or_replace = false;
+            info.sql_security = static_cast<ProcedureInfo::SqlSecurity>(record.sql_security);
+            info.source_text = body;
+            info.created_time = record.created_time;
+            info.modified_time = record.last_modified_time;
+            if (!bytecode_blob.empty())
+            {
+                info.bytecode.assign(bytecode_blob.begin(), bytecode_blob.end());
+            }
+            procedures_[info.name] = info;
+        }
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::readProcedureParameterRecords(ErrorContext *ctx) -> Status
+{
+    if (procedure_params_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+    std::vector<ProcedureParameterRecord> records;
+    auto filter = [](const ProcedureParameterRecord &record) { return record.is_valid == 1; };
+    auto converter = [](const ProcedureParameterRecord &record, ProcedureParameterRecord &out) { out = record; };
+    Status status = readRecordsToVector<ProcedureParameterRecord, ProcedureParameterRecord>(
+        procedure_params_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::unordered_map<ID, std::vector<std::pair<uint16_t, ParameterInfo>>, IDHash> params_by_proc;
+    params_by_proc.reserve(records.size());
+
+    for (const auto &record : records)
+    {
+        const_cast<char&>(record.parameter_name[511]) = '\0';
+        ParameterInfo param{};
+        param.name = record.parameter_name;
+        param.mode = static_cast<ParameterMode>(record.parameter_mode);
+        param.has_default = record.default_value_oid != 0;
+
+        std::string type_blob;
+        if (record.data_type_oid != 0)
+        {
+            loadStringFromToast(record.data_type_oid, xmin, type_blob, ctx);
+            TypeDescriptorBlob type_desc{};
+            if (decodeTypeDescriptor(type_blob, type_desc))
+            {
+                param.type = type_desc.type;
+                param.type_precision = type_desc.precision;
+                param.type_scale = type_desc.scale;
+            }
+        }
+
+        if (record.default_value_oid != 0)
+        {
+            loadStringFromToast(record.default_value_oid, xmin, param.default_value, ctx);
+        }
+
+        params_by_proc[record.procedure_id].push_back({record.parameter_position, param});
+    }
+
+    std::lock_guard<std::mutex> lock(psql_mutex_);
+    for (auto &entry : params_by_proc)
+    {
+        auto &vec = entry.second;
+        std::sort(vec.begin(), vec.end(),
+                  [](const auto &a, const auto &b) { return a.first < b.first; });
+
+        for (auto &item : vec)
+        {
+            auto func_it = std::find_if(functions_.begin(), functions_.end(),
+                                        [&entry](const auto &pair) {
+                                            return pair.second.function_id == entry.first;
+                                        });
+            if (func_it != functions_.end())
+            {
+                func_it->second.parameters.push_back(item.second);
+                continue;
+            }
+
+            auto proc_it = std::find_if(procedures_.begin(), procedures_.end(),
+                                        [&entry](const auto &pair) {
+                                            return pair.second.procedure_id == entry.first;
+                                        });
+            if (proc_it != procedures_.end())
+            {
+                proc_it->second.parameters.push_back(item.second);
+            }
+        }
+    }
+
+    return Status::OK;
+}
+
+// ============================================================================
+// P1-9: Constraint Persistence
+// ============================================================================
+
+auto CatalogManager::writeConstraintRecord(const ConstraintInfo &constraint,
+                                           ErrorContext *ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        constraint.constraint_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    if (constraint.column_names.size() > 16 || constraint.referenced_columns.size() > 16)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Constraint exceeds max column count (16)");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    ConstraintRecord record{};
+    record.constraint_id = constraint.constraint_id;
+    record.table_id = constraint.table_id;
+    std::string truncated = UTF8Utils::truncateToBytes(constraint.constraint_name,
+                                                       sizeof(record.constraint_name));
+    std::memset(record.constraint_name, 0, sizeof(record.constraint_name));
+    std::strncpy(record.constraint_name, truncated.c_str(), sizeof(record.constraint_name) - 1);
+    record.owner_id = constraint.owner_id;
+    record.constraint_type = static_cast<uint8_t>(constraint.constraint_type);
+    record.is_deferrable = constraint.is_deferrable ? 1 : 0;
+    record.initially_deferred = constraint.initially_deferred ? 1 : 0;
+    record.is_enabled = constraint.is_enabled ? 1 : 0;
+    record.is_validated = constraint.is_validated ? 1 : 0;
+    record.is_system_generated = constraint.is_system_generated ? 1 : 0;
+    record.on_delete = static_cast<uint8_t>(constraint.on_delete);
+    record.on_update = static_cast<uint8_t>(constraint.on_update);
+    record.match_type = static_cast<uint8_t>(constraint.match_type);
+    record.column_count = static_cast<uint16_t>(constraint.column_names.size());
+    record.referenced_table_id = constraint.referenced_table_id;
+    record.referenced_column_count = static_cast<uint16_t>(constraint.referenced_columns.size());
+    record.created_time = constraint.created_time;
+    record.validated_time = constraint.validated_time;
+    record.is_valid = 1;
+
+    // NOTE: Caller must hold mutex_ before calling getColumnInternal().
+    for (size_t i = 0; i < constraint.column_names.size(); ++i)
+    {
+        ColumnInfo col_info;
+        Status status = getColumnInternal(constraint.table_id, constraint.column_names[i],
+                                          col_info, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        record.column_ids[i] = col_info.column_id;
+    }
+
+    if (!isZeroUuidLocal(constraint.referenced_table_id))
+    {
+        for (size_t i = 0; i < constraint.referenced_columns.size(); ++i)
+        {
+            ColumnInfo col_info;
+            Status status = getColumnInternal(constraint.referenced_table_id,
+                                              constraint.referenced_columns[i], col_info, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            record.referenced_column_ids[i] = col_info.column_id;
+        }
+    }
+    else if (!constraint.referenced_columns.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "Referenced table required when referenced columns are provided");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint64_t xmin = 0;
+    if (!constraint.check_expression.empty())
+    {
+        Status st = storeStringInToast(constraint.check_expression, xmin,
+                                       record.check_expr_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+    else if (constraint.check_expr_oid != 0)
+    {
+        record.check_expr_oid = constraint.check_expr_oid;
+    }
+
+    if (!constraint.exclusion_operator.empty())
+    {
+        Status st = storeStringInToast(constraint.exclusion_operator, xmin,
+                                       record.exclusion_operator_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    if (!constraint.index_method.empty())
+    {
+        Status st = storeStringInToast(constraint.index_method, xmin,
+                                       record.index_method_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    return writeRecordToHeapPage(constraints_table_page_, record, ctx);
+}
+
+auto CatalogManager::updateConstraintRecord(const ConstraintInfo &constraint,
+                                            ErrorContext *ctx) -> Status
+{
+    if (constraint.column_names.size() > 16 || constraint.referenced_columns.size() > 16)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Constraint exceeds max column count (16)");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    ConstraintRecord record{};
+    record.constraint_id = constraint.constraint_id;
+    record.table_id = constraint.table_id;
+    std::string truncated = UTF8Utils::truncateToBytes(constraint.constraint_name,
+                                                       sizeof(record.constraint_name));
+    std::memset(record.constraint_name, 0, sizeof(record.constraint_name));
+    std::strncpy(record.constraint_name, truncated.c_str(), sizeof(record.constraint_name) - 1);
+    record.owner_id = constraint.owner_id;
+    record.constraint_type = static_cast<uint8_t>(constraint.constraint_type);
+    record.is_deferrable = constraint.is_deferrable ? 1 : 0;
+    record.initially_deferred = constraint.initially_deferred ? 1 : 0;
+    record.is_enabled = constraint.is_enabled ? 1 : 0;
+    record.is_validated = constraint.is_validated ? 1 : 0;
+    record.is_system_generated = constraint.is_system_generated ? 1 : 0;
+    record.on_delete = static_cast<uint8_t>(constraint.on_delete);
+    record.on_update = static_cast<uint8_t>(constraint.on_update);
+    record.match_type = static_cast<uint8_t>(constraint.match_type);
+    record.column_count = static_cast<uint16_t>(constraint.column_names.size());
+    record.referenced_table_id = constraint.referenced_table_id;
+    record.referenced_column_count = static_cast<uint16_t>(constraint.referenced_columns.size());
+    record.created_time = constraint.created_time;
+    record.validated_time = constraint.validated_time;
+    record.is_valid = 1;
+
+    // NOTE: Caller must hold mutex_ before calling getColumnInternal().
+    for (size_t i = 0; i < constraint.column_names.size(); ++i)
+    {
+        ColumnInfo col_info;
+        Status status = getColumnInternal(constraint.table_id, constraint.column_names[i],
+                                          col_info, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        record.column_ids[i] = col_info.column_id;
+    }
+
+    if (!isZeroUuidLocal(constraint.referenced_table_id))
+    {
+        for (size_t i = 0; i < constraint.referenced_columns.size(); ++i)
+        {
+            ColumnInfo col_info;
+            Status status = getColumnInternal(constraint.referenced_table_id,
+                                              constraint.referenced_columns[i], col_info, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            record.referenced_column_ids[i] = col_info.column_id;
+        }
+    }
+    else if (!constraint.referenced_columns.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "Referenced table required when referenced columns are provided");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint64_t xmin = 0;
+    if (!constraint.check_expression.empty())
+    {
+        Status st = storeStringInToast(constraint.check_expression, xmin,
+                                       record.check_expr_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+    else if (constraint.check_expr_oid != 0)
+    {
+        record.check_expr_oid = constraint.check_expr_oid;
+    }
+
+    if (!constraint.exclusion_operator.empty())
+    {
+        Status st = storeStringInToast(constraint.exclusion_operator, xmin,
+                                       record.exclusion_operator_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    if (!constraint.index_method.empty())
+    {
+        Status st = storeStringInToast(constraint.index_method, xmin,
+                                       record.index_method_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    auto predicate = [&constraint](const ConstraintRecord &rec) {
+        return rec.constraint_id == constraint.constraint_id && rec.is_valid == 1;
+    };
+    return updateRecordInHeapPage(constraints_table_page_, predicate, record, ctx);
+}
+
+auto CatalogManager::deleteConstraintRecord(const ID &constraint_id, ErrorContext *ctx) -> Status
+{
+    auto predicate = [&constraint_id](const ConstraintRecord &rec) {
+        return rec.constraint_id == constraint_id && rec.is_valid == 1;
+    };
+    return deleteRecordFromHeapPage<ConstraintRecord>(constraints_table_page_, predicate, ctx);
+}
+
+auto CatalogManager::readConstraintRecords(ErrorContext *ctx) -> Status
+{
+    if (constraints_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+    Status resolve_status = Status::OK;
+    std::vector<ConstraintInfo> constraints;
+    auto filter = [](const ConstraintRecord &record) { return record.is_valid == 1; };
+    auto converter = [this, xmin, ctx, &resolve_status](const ConstraintRecord &record,
+                                                        ConstraintInfo &info)
+    {
+        if (resolve_status != Status::OK)
+        {
+            return;
+        }
+
+        const_cast<char&>(record.constraint_name[511]) = '\0';
+        info.constraint_id = record.constraint_id;
+        info.table_id = record.table_id;
+        info.constraint_name = record.constraint_name;
+        info.owner_id = record.owner_id;
+        info.constraint_type = static_cast<ConstraintType>(record.constraint_type);
+        info.is_deferrable = record.is_deferrable != 0;
+        info.initially_deferred = record.initially_deferred != 0;
+        info.is_enabled = record.is_enabled != 0;
+        info.is_validated = record.is_validated != 0;
+        info.is_system_generated = record.is_system_generated != 0;
+        info.on_delete = static_cast<FKAction>(record.on_delete);
+        info.on_update = static_cast<FKAction>(record.on_update);
+        info.match_type = static_cast<FKMatchType>(record.match_type);
+        info.referenced_table_id = record.referenced_table_id;
+        info.created_time = record.created_time;
+        info.validated_time = record.validated_time;
+        info.column_names.clear();
+        info.referenced_columns.clear();
+        info.check_expr_oid = record.check_expr_oid;
+
+        auto resolve_column = [this](const ID &table_id, const ID &column_id,
+                                     std::string &name_out) -> bool
+        {
+            auto it = column_cache_.find(table_id);
+            if (it == column_cache_.end())
+            {
+                return false;
+            }
+            for (const auto &col : it->second)
+            {
+                if (col.column_id == column_id)
+                {
+                    name_out = col.column_name;
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        for (uint16_t i = 0; i < record.column_count; ++i)
+        {
+            std::string col_name;
+            if (!resolve_column(record.table_id, record.column_ids[i], col_name))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                                  "Constraint column ID not found for table");
+                resolve_status = Status::NOT_FOUND;
+                return;
+            }
+            info.column_names.push_back(col_name);
+        }
+
+        if (!isZeroUuidLocal(record.referenced_table_id))
+        {
+            for (uint16_t i = 0; i < record.referenced_column_count; ++i)
+            {
+                std::string col_name;
+                if (!resolve_column(record.referenced_table_id,
+                                    record.referenced_column_ids[i], col_name))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                                      "Referenced constraint column ID not found");
+                    resolve_status = Status::NOT_FOUND;
+                    return;
+                }
+                info.referenced_columns.push_back(col_name);
+            }
+        }
+
+        if (record.check_expr_oid != 0)
+        {
+            loadStringFromToast(record.check_expr_oid, xmin, info.check_expression, ctx);
+        }
+        if (record.exclusion_operator_oid != 0)
+        {
+            loadStringFromToast(record.exclusion_operator_oid, xmin,
+                                info.exclusion_operator, ctx);
+        }
+        if (record.index_method_oid != 0)
+        {
+            loadStringFromToast(record.index_method_oid, xmin, info.index_method, ctx);
+        }
+    };
+
+    Status status = readRecordsToVector<ConstraintRecord, ConstraintInfo>(
+        constraints_table_page_, constraints, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (resolve_status != Status::OK)
+    {
+        return resolve_status;
+    }
+
+    std::lock_guard<std::mutex> lock(constraints_cache_mutex_);
+    for (const auto &info : constraints)
+    {
+        constraints_cache_[info.constraint_id] = info;
+        table_constraints_.insert({info.table_id, info.constraint_id});
+        constraint_name_lookup_[std::make_pair(info.table_id, info.constraint_name)] =
+            info.constraint_id;
+    }
+
+    return Status::OK;
+}
+
+// ============================================================================
+// Phase B: Synonym + Foreign Table Persistence
+// ============================================================================
+
+auto CatalogManager::writeSynonymRecord(const SynonymInfo &synonym, ErrorContext *ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        synonym.synonym_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    SynonymRecord record{};
+    record.synonym_id = synonym.synonym_id;
+    record.schema_id = synonym.schema_id;
+    std::string truncated = UTF8Utils::truncateToBytes(synonym.synonym_name,
+                                                       sizeof(record.synonym_name));
+    std::memset(record.synonym_name, 0, sizeof(record.synonym_name));
+    std::strncpy(record.synonym_name, truncated.c_str(), sizeof(record.synonym_name) - 1);
+    record.owner_id = synonym.owner_id;
+    record.target_type = static_cast<uint8_t>(synonym.target_type);
+    record.is_public = synonym.is_public ? 1 : 0;
+    record.created_time = synonym.created_time;
+    record.last_modified_time = synonym.last_modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!synonym.target_path.empty())
+    {
+        Status st = storeStringInToast(synonym.target_path, xmin, record.target_path_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    return writeRecordToHeapPage(synonyms_table_page_, record, ctx);
+}
+
+auto CatalogManager::updateSynonymRecord(const SynonymInfo &synonym, ErrorContext *ctx) -> Status
+{
+    SynonymRecord record{};
+    record.synonym_id = synonym.synonym_id;
+    record.schema_id = synonym.schema_id;
+    std::string truncated = UTF8Utils::truncateToBytes(synonym.synonym_name,
+                                                       sizeof(record.synonym_name));
+    std::memset(record.synonym_name, 0, sizeof(record.synonym_name));
+    std::strncpy(record.synonym_name, truncated.c_str(), sizeof(record.synonym_name) - 1);
+    record.owner_id = synonym.owner_id;
+    record.target_type = static_cast<uint8_t>(synonym.target_type);
+    record.is_public = synonym.is_public ? 1 : 0;
+    record.created_time = synonym.created_time;
+    record.last_modified_time = synonym.last_modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!synonym.target_path.empty())
+    {
+        Status st = storeStringInToast(synonym.target_path, xmin, record.target_path_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    auto predicate = [&synonym](const SynonymRecord &rec) {
+        return rec.synonym_id == synonym.synonym_id && rec.is_valid == 1;
+    };
+    return updateRecordInHeapPage(synonyms_table_page_, predicate, record, ctx);
+}
+
+auto CatalogManager::readSynonymRecords(ErrorContext *ctx) -> Status
+{
+    if (synonyms_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+    std::vector<SynonymInfo> synonyms;
+    auto filter = [](const SynonymRecord &record) { return record.is_valid == 1; };
+    auto converter = [this, xmin, ctx](const SynonymRecord &record, SynonymInfo &info)
+    {
+        const_cast<char&>(record.synonym_name[511]) = '\0';
+        info.synonym_id = record.synonym_id;
+        info.schema_id = record.schema_id;
+        info.synonym_name = record.synonym_name;
+        info.owner_id = record.owner_id;
+        info.target_type = static_cast<ObjectType>(record.target_type);
+        info.is_public = record.is_public != 0;
+        info.target_path.clear();
+        if (record.target_path_oid != 0)
+        {
+            loadStringFromToast(record.target_path_oid, xmin, info.target_path, ctx);
+        }
+        info.created_time = record.created_time;
+        info.last_modified_time = record.last_modified_time;
+    };
+
+    Status status = readRecordsToVector<SynonymRecord, SynonymInfo>(
+        synonyms_table_page_, synonyms, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::lock_guard<std::mutex> lock(synonym_cache_mutex_);
+    for (const auto &info : synonyms)
+    {
+        synonym_cache_[info.synonym_id] = info;
+        synonym_name_lookup_[makeSynonymNameKey(info.schema_id, info.synonym_name)] = info.synonym_id;
+        if (info.is_public)
+        {
+            public_synonyms_.push_back(info.synonym_id);
+        }
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::writeForeignTableRecord(const ForeignTableInfo &table, ErrorContext *ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        table.table_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    if (!table.remote_schema.empty())
+    {
+        validation = UTF8Utils::validateStorageCapacity(
+            table.remote_schema,
+            CatalogConstants::MAX_IDENTIFIER_CHARS,
+            CatalogConstants::MAX_IDENTIFIER_STORAGE,
+            ctx
+        );
+        if (validation != Status::OK)
+        {
+            return validation;
+        }
+    }
+
+    if (!table.remote_table.empty())
+    {
+        validation = UTF8Utils::validateStorageCapacity(
+            table.remote_table,
+            CatalogConstants::MAX_IDENTIFIER_CHARS,
+            CatalogConstants::MAX_IDENTIFIER_STORAGE,
+            ctx
+        );
+        if (validation != Status::OK)
+        {
+            return validation;
+        }
+    }
+
+    ForeignTableRecord record{};
+    record.foreign_table_id = table.foreign_table_id;
+    record.schema_id = table.schema_id;
+    std::string truncated = UTF8Utils::truncateToBytes(table.table_name,
+                                                       sizeof(record.table_name));
+    std::memset(record.table_name, 0, sizeof(record.table_name));
+    std::strncpy(record.table_name, truncated.c_str(), sizeof(record.table_name) - 1);
+    record.foreign_server_id = table.foreign_server_id;
+    std::string remote_schema_trunc = UTF8Utils::truncateToBytes(
+        table.remote_schema, sizeof(record.remote_schema));
+    std::memset(record.remote_schema, 0, sizeof(record.remote_schema));
+    std::strncpy(record.remote_schema, remote_schema_trunc.c_str(),
+                 sizeof(record.remote_schema) - 1);
+    std::string remote_table_trunc = UTF8Utils::truncateToBytes(
+        table.remote_table, sizeof(record.remote_table));
+    std::memset(record.remote_table, 0, sizeof(record.remote_table));
+    std::strncpy(record.remote_table, remote_table_trunc.c_str(),
+                 sizeof(record.remote_table) - 1);
+    record.owner_id = table.owner_id;
+    record.created_time = table.created_time;
+    record.last_modified_time = table.last_modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!table.column_mapping.empty())
+    {
+        Status st = storeStringInToast(table.column_mapping, xmin,
+                                       record.column_mapping_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    return writeRecordToHeapPage(foreign_tables_table_page_, record, ctx);
+}
+
+auto CatalogManager::updateForeignTableRecord(const ForeignTableInfo &table, ErrorContext *ctx) -> Status
+{
+    ForeignTableRecord record{};
+    record.foreign_table_id = table.foreign_table_id;
+    record.schema_id = table.schema_id;
+    std::string truncated = UTF8Utils::truncateToBytes(table.table_name,
+                                                       sizeof(record.table_name));
+    std::memset(record.table_name, 0, sizeof(record.table_name));
+    std::strncpy(record.table_name, truncated.c_str(), sizeof(record.table_name) - 1);
+    record.foreign_server_id = table.foreign_server_id;
+    std::string remote_schema_trunc = UTF8Utils::truncateToBytes(
+        table.remote_schema, sizeof(record.remote_schema));
+    std::memset(record.remote_schema, 0, sizeof(record.remote_schema));
+    std::strncpy(record.remote_schema, remote_schema_trunc.c_str(),
+                 sizeof(record.remote_schema) - 1);
+    std::string remote_table_trunc = UTF8Utils::truncateToBytes(
+        table.remote_table, sizeof(record.remote_table));
+    std::memset(record.remote_table, 0, sizeof(record.remote_table));
+    std::strncpy(record.remote_table, remote_table_trunc.c_str(),
+                 sizeof(record.remote_table) - 1);
+    record.owner_id = table.owner_id;
+    record.created_time = table.created_time;
+    record.last_modified_time = table.last_modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!table.column_mapping.empty())
+    {
+        Status st = storeStringInToast(table.column_mapping, xmin,
+                                       record.column_mapping_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    auto predicate = [&table](const ForeignTableRecord &rec) {
+        return rec.foreign_table_id == table.foreign_table_id && rec.is_valid == 1;
+    };
+    return updateRecordInHeapPage(foreign_tables_table_page_, predicate, record, ctx);
+}
+
+auto CatalogManager::readForeignTableRecords(ErrorContext *ctx) -> Status
+{
+    if (foreign_tables_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+    std::vector<ForeignTableInfo> tables;
+    auto filter = [](const ForeignTableRecord &record) { return record.is_valid == 1; };
+    auto converter = [this, xmin, ctx](const ForeignTableRecord &record, ForeignTableInfo &info)
+    {
+        const_cast<char&>(record.table_name[511]) = '\0';
+        const_cast<char&>(record.remote_schema[511]) = '\0';
+        const_cast<char&>(record.remote_table[511]) = '\0';
+        info.foreign_table_id = record.foreign_table_id;
+        info.schema_id = record.schema_id;
+        info.table_name = record.table_name;
+        info.foreign_server_id = record.foreign_server_id;
+        info.remote_schema = record.remote_schema;
+        info.remote_table = record.remote_table;
+        info.owner_id = record.owner_id;
+        info.column_mapping.clear();
+        if (record.column_mapping_oid != 0)
+        {
+            loadStringFromToast(record.column_mapping_oid, xmin, info.column_mapping, ctx);
+        }
+        info.created_time = record.created_time;
+        info.last_modified_time = record.last_modified_time;
+    };
+
+    Status status = readRecordsToVector<ForeignTableRecord, ForeignTableInfo>(
+        foreign_tables_table_page_, tables, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::lock_guard<std::mutex> lock(foreign_table_cache_mutex_);
+    for (const auto &info : tables)
+    {
+        foreign_table_cache_[info.foreign_table_id] = info;
+        foreign_table_name_lookup_[makeForeignTableNameKey(info.schema_id, info.table_name)] =
+            info.foreign_table_id;
+    }
+
+    return Status::OK;
+}
+
+// ============================================================================
+// Phase B: Foreign Server/User Mapping/Server Registry/UDR Persistence
+// ============================================================================
+
+auto CatalogManager::writeForeignServerRecord(const ForeignServerInfo &server,
+                                              ErrorContext *ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        server.server_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    if (!server.server_type.empty())
+    {
+        validation = UTF8Utils::validateStorageCapacity(
+            server.server_type,
+            CatalogConstants::MAX_IDENTIFIER_CHARS,
+            CatalogConstants::MAX_IDENTIFIER_STORAGE,
+            ctx
+        );
+        if (validation != Status::OK)
+        {
+            return validation;
+        }
+    }
+
+    ForeignServerRecord record{};
+    record.server_id = server.server_id;
+    std::string truncated = UTF8Utils::truncateToBytes(server.server_name,
+                                                       sizeof(record.server_name));
+    std::memset(record.server_name, 0, sizeof(record.server_name));
+    std::strncpy(record.server_name, truncated.c_str(), sizeof(record.server_name) - 1);
+    std::string type_trunc = UTF8Utils::truncateToBytes(server.server_type,
+                                                        sizeof(record.server_type));
+    std::memset(record.server_type, 0, sizeof(record.server_type));
+    std::strncpy(record.server_type, type_trunc.c_str(), sizeof(record.server_type) - 1);
+    std::string host_trunc = UTF8Utils::truncateToBytes(server.host, sizeof(record.host));
+    std::memset(record.host, 0, sizeof(record.host));
+    std::strncpy(record.host, host_trunc.c_str(), sizeof(record.host) - 1);
+    record.port = server.port;
+    record.owner_id = server.owner_id;
+    record.is_active = server.is_active ? 1 : 0;
+    record.created_time = server.created_time;
+    record.last_modified_time = server.last_modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!server.connection_options.empty())
+    {
+        Status st = storeStringInToast(server.connection_options, xmin,
+                                       record.connection_options_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    return writeRecordToHeapPage(foreign_servers_table_page_, record, ctx);
+}
+
+auto CatalogManager::updateForeignServerRecord(const ForeignServerInfo &server,
+                                               ErrorContext *ctx) -> Status
+{
+    ForeignServerRecord record{};
+    record.server_id = server.server_id;
+    std::string truncated = UTF8Utils::truncateToBytes(server.server_name,
+                                                       sizeof(record.server_name));
+    std::memset(record.server_name, 0, sizeof(record.server_name));
+    std::strncpy(record.server_name, truncated.c_str(), sizeof(record.server_name) - 1);
+    std::string type_trunc = UTF8Utils::truncateToBytes(server.server_type,
+                                                        sizeof(record.server_type));
+    std::memset(record.server_type, 0, sizeof(record.server_type));
+    std::strncpy(record.server_type, type_trunc.c_str(), sizeof(record.server_type) - 1);
+    std::string host_trunc = UTF8Utils::truncateToBytes(server.host, sizeof(record.host));
+    std::memset(record.host, 0, sizeof(record.host));
+    std::strncpy(record.host, host_trunc.c_str(), sizeof(record.host) - 1);
+    record.port = server.port;
+    record.owner_id = server.owner_id;
+    record.is_active = server.is_active ? 1 : 0;
+    record.created_time = server.created_time;
+    record.last_modified_time = server.last_modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!server.connection_options.empty())
+    {
+        Status st = storeStringInToast(server.connection_options, xmin,
+                                       record.connection_options_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    auto predicate = [&server](const ForeignServerRecord &rec) {
+        return rec.server_id == server.server_id && rec.is_valid == 1;
+    };
+    return updateRecordInHeapPage(foreign_servers_table_page_, predicate, record, ctx);
+}
+
+auto CatalogManager::readForeignServerRecords(ErrorContext *ctx) -> Status
+{
+    if (foreign_servers_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+    std::vector<ForeignServerInfo> servers;
+    auto filter = [](const ForeignServerRecord &record) { return record.is_valid == 1; };
+    auto converter = [this, xmin, ctx](const ForeignServerRecord &record,
+                                       ForeignServerInfo &info)
+    {
+        const_cast<char&>(record.server_name[511]) = '\0';
+        const_cast<char&>(record.server_type[127]) = '\0';
+        const_cast<char&>(record.host[511]) = '\0';
+        info.server_id = record.server_id;
+        info.server_name = record.server_name;
+        info.server_type = record.server_type;
+        info.host = record.host;
+        info.port = record.port;
+        info.owner_id = record.owner_id;
+        info.is_active = record.is_active != 0;
+        info.created_time = record.created_time;
+        info.last_modified_time = record.last_modified_time;
+        info.connection_options.clear();
+        if (record.connection_options_oid != 0)
+        {
+            loadStringFromToast(record.connection_options_oid, xmin,
+                                info.connection_options, ctx);
+        }
+    };
+
+    Status status = readRecordsToVector<ForeignServerRecord, ForeignServerInfo>(
+        foreign_servers_table_page_, servers, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::lock_guard<std::mutex> lock(foreign_server_cache_mutex_);
+    for (const auto &info : servers)
+    {
+        foreign_server_cache_[info.server_id] = info;
+        foreign_server_name_to_id_[makeForeignServerNameKey(info.server_name)] = info.server_id;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::writeUserMappingRecord(const UserMappingInfo &mapping,
+                                            ErrorContext *ctx) -> Status
+{
+    UserMappingRecord record{};
+    record.mapping_id = mapping.mapping_id;
+    record.user_id = mapping.user_id;
+    record.foreign_server_id = mapping.foreign_server_id;
+    std::string truncated = UTF8Utils::truncateToBytes(mapping.remote_user,
+                                                       sizeof(record.remote_user));
+    std::memset(record.remote_user, 0, sizeof(record.remote_user));
+    std::strncpy(record.remote_user, truncated.c_str(), sizeof(record.remote_user) - 1);
+    record.created_time = mapping.created_time;
+    record.last_modified_time = mapping.last_modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!mapping.remote_credentials.empty())
+    {
+        Status st = storeStringInToast(mapping.remote_credentials, xmin,
+                                       record.remote_credentials_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    return writeRecordToHeapPage(user_mappings_table_page_, record, ctx);
+}
+
+auto CatalogManager::updateUserMappingRecord(const UserMappingInfo &mapping,
+                                             ErrorContext *ctx) -> Status
+{
+    UserMappingRecord record{};
+    record.mapping_id = mapping.mapping_id;
+    record.user_id = mapping.user_id;
+    record.foreign_server_id = mapping.foreign_server_id;
+    std::string truncated = UTF8Utils::truncateToBytes(mapping.remote_user,
+                                                       sizeof(record.remote_user));
+    std::memset(record.remote_user, 0, sizeof(record.remote_user));
+    std::strncpy(record.remote_user, truncated.c_str(), sizeof(record.remote_user) - 1);
+    record.created_time = mapping.created_time;
+    record.last_modified_time = mapping.last_modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!mapping.remote_credentials.empty())
+    {
+        Status st = storeStringInToast(mapping.remote_credentials, xmin,
+                                       record.remote_credentials_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    auto predicate = [&mapping](const UserMappingRecord &rec) {
+        return rec.mapping_id == mapping.mapping_id && rec.is_valid == 1;
+    };
+    return updateRecordInHeapPage(user_mappings_table_page_, predicate, record, ctx);
+}
+
+auto CatalogManager::readUserMappingRecords(ErrorContext *ctx) -> Status
+{
+    if (user_mappings_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+    std::vector<UserMappingInfo> mappings;
+    auto filter = [](const UserMappingRecord &record) { return record.is_valid == 1; };
+    auto converter = [this, xmin, ctx](const UserMappingRecord &record,
+                                       UserMappingInfo &info)
+    {
+        const_cast<char&>(record.remote_user[511]) = '\0';
+        info.mapping_id = record.mapping_id;
+        info.user_id = record.user_id;
+        info.foreign_server_id = record.foreign_server_id;
+        info.remote_user = record.remote_user;
+        info.remote_credentials.clear();
+        if (record.remote_credentials_oid != 0)
+        {
+            loadStringFromToast(record.remote_credentials_oid, xmin,
+                                info.remote_credentials, ctx);
+        }
+        info.created_time = record.created_time;
+        info.last_modified_time = record.last_modified_time;
+    };
+
+    Status status = readRecordsToVector<UserMappingRecord, UserMappingInfo>(
+        user_mappings_table_page_, mappings, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::lock_guard<std::mutex> lock(user_mapping_cache_mutex_);
+    for (const auto &info : mappings)
+    {
+        user_mapping_cache_[info.mapping_id] = info;
+        user_mapping_lookup_[std::make_pair(info.user_id, info.foreign_server_id)] =
+            info.mapping_id;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::writeServerRegistryRecord(const ServerRegistryInfo &server,
+                                               ErrorContext *ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        server.server_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    ServerRegistryRecord record{};
+    record.server_id = server.server_id;
+    std::string truncated = UTF8Utils::truncateToBytes(server.server_name,
+                                                       sizeof(record.server_name));
+    std::memset(record.server_name, 0, sizeof(record.server_name));
+    std::strncpy(record.server_name, truncated.c_str(), sizeof(record.server_name) - 1);
+    std::string host_trunc = UTF8Utils::truncateToBytes(server.host, sizeof(record.host));
+    std::memset(record.host, 0, sizeof(record.host));
+    std::strncpy(record.host, host_trunc.c_str(), sizeof(record.host) - 1);
+    record.port = server.port;
+    record.role = static_cast<uint8_t>(server.role);
+    record.state = static_cast<uint8_t>(server.state);
+    record.last_heartbeat = server.last_heartbeat;
+    record.last_xid = server.last_xid;
+    record.replication_lag_ms = server.replication_lag_ms;
+    std::string cluster_trunc = UTF8Utils::truncateToBytes(server.cluster_id,
+                                                           sizeof(record.cluster_id));
+    std::memset(record.cluster_id, 0, sizeof(record.cluster_id));
+    std::strncpy(record.cluster_id, cluster_trunc.c_str(),
+                 sizeof(record.cluster_id) - 1);
+    std::string version_trunc = UTF8Utils::truncateToBytes(server.server_version,
+                                                           sizeof(record.server_version));
+    std::memset(record.server_version, 0, sizeof(record.server_version));
+    std::strncpy(record.server_version, version_trunc.c_str(),
+                 sizeof(record.server_version) - 1);
+    record.created_time = server.created_time;
+    record.last_modified_time = server.last_modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!server.metadata.empty())
+    {
+        Status st = storeStringInToast(server.metadata, xmin, record.metadata_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    return writeRecordToHeapPage(server_registry_table_page_, record, ctx);
+}
+
+auto CatalogManager::updateServerRegistryRecord(const ServerRegistryInfo &server,
+                                                ErrorContext *ctx) -> Status
+{
+    ServerRegistryRecord record{};
+    record.server_id = server.server_id;
+    std::string truncated = UTF8Utils::truncateToBytes(server.server_name,
+                                                       sizeof(record.server_name));
+    std::memset(record.server_name, 0, sizeof(record.server_name));
+    std::strncpy(record.server_name, truncated.c_str(), sizeof(record.server_name) - 1);
+    std::string host_trunc = UTF8Utils::truncateToBytes(server.host, sizeof(record.host));
+    std::memset(record.host, 0, sizeof(record.host));
+    std::strncpy(record.host, host_trunc.c_str(), sizeof(record.host) - 1);
+    record.port = server.port;
+    record.role = static_cast<uint8_t>(server.role);
+    record.state = static_cast<uint8_t>(server.state);
+    record.last_heartbeat = server.last_heartbeat;
+    record.last_xid = server.last_xid;
+    record.replication_lag_ms = server.replication_lag_ms;
+    std::string cluster_trunc = UTF8Utils::truncateToBytes(server.cluster_id,
+                                                           sizeof(record.cluster_id));
+    std::memset(record.cluster_id, 0, sizeof(record.cluster_id));
+    std::strncpy(record.cluster_id, cluster_trunc.c_str(),
+                 sizeof(record.cluster_id) - 1);
+    std::string version_trunc = UTF8Utils::truncateToBytes(server.server_version,
+                                                           sizeof(record.server_version));
+    std::memset(record.server_version, 0, sizeof(record.server_version));
+    std::strncpy(record.server_version, version_trunc.c_str(),
+                 sizeof(record.server_version) - 1);
+    record.created_time = server.created_time;
+    record.last_modified_time = server.last_modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!server.metadata.empty())
+    {
+        Status st = storeStringInToast(server.metadata, xmin, record.metadata_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    auto predicate = [&server](const ServerRegistryRecord &rec) {
+        return rec.server_id == server.server_id && rec.is_valid == 1;
+    };
+    return updateRecordInHeapPage(server_registry_table_page_, predicate, record, ctx);
+}
+
+auto CatalogManager::readServerRegistryRecords(ErrorContext *ctx) -> Status
+{
+    if (server_registry_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+    std::vector<ServerRegistryInfo> servers;
+    auto filter = [](const ServerRegistryRecord &record) { return record.is_valid == 1; };
+    auto converter = [this, xmin, ctx](const ServerRegistryRecord &record,
+                                       ServerRegistryInfo &info)
+    {
+        const_cast<char&>(record.server_name[511]) = '\0';
+        const_cast<char&>(record.host[511]) = '\0';
+        const_cast<char&>(record.cluster_id[255]) = '\0';
+        const_cast<char&>(record.server_version[127]) = '\0';
+        info.server_id = record.server_id;
+        info.server_name = record.server_name;
+        info.host = record.host;
+        info.port = record.port;
+        info.role = static_cast<ServerRole>(record.role);
+        info.state = static_cast<ServerState>(record.state);
+        info.last_heartbeat = record.last_heartbeat;
+        info.last_xid = record.last_xid;
+        info.replication_lag_ms = record.replication_lag_ms;
+        info.cluster_id = record.cluster_id;
+        info.server_version = record.server_version;
+        info.metadata.clear();
+        if (record.metadata_oid != 0)
+        {
+            loadStringFromToast(record.metadata_oid, xmin, info.metadata, ctx);
+        }
+        info.created_time = record.created_time;
+        info.last_modified_time = record.last_modified_time;
+    };
+
+    Status status = readRecordsToVector<ServerRegistryRecord, ServerRegistryInfo>(
+        server_registry_table_page_, servers, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::lock_guard<std::mutex> lock(server_registry_cache_mutex_);
+    for (const auto &info : servers)
+    {
+        server_registry_cache_[info.server_id] = info;
+        server_registry_name_to_id_[makeServerRegistryNameKey(info.server_name)] = info.server_id;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::writeUDREngineRecord(const UDREngineInfo &engine,
+                                          ErrorContext *ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        engine.engine_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    UDREngineRecord record{};
+    record.engine_id = engine.engine_id;
+    std::string truncated = UTF8Utils::truncateToBytes(engine.engine_name,
+                                                       sizeof(record.engine_name));
+    std::memset(record.engine_name, 0, sizeof(record.engine_name));
+    std::strncpy(record.engine_name, truncated.c_str(), sizeof(record.engine_name) - 1);
+    record.engine_type = static_cast<uint8_t>(engine.engine_type);
+    record.is_active = engine.is_active ? 1 : 0;
+    record.is_default = engine.is_default ? 1 : 0;
+    std::string path_trunc = UTF8Utils::truncateToBytes(engine.plugin_path,
+                                                        sizeof(record.plugin_path));
+    std::memset(record.plugin_path, 0, sizeof(record.plugin_path));
+    std::strncpy(record.plugin_path, path_trunc.c_str(),
+                 sizeof(record.plugin_path) - 1);
+    record.created_time = engine.created_time;
+    record.last_modified_time = engine.last_modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!engine.config.empty())
+    {
+        Status st = storeStringInToast(engine.config, xmin, record.config_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    return writeRecordToHeapPage(udr_engines_table_page_, record, ctx);
+}
+
+auto CatalogManager::updateUDREngineRecord(const UDREngineInfo &engine,
+                                           ErrorContext *ctx) -> Status
+{
+    UDREngineRecord record{};
+    record.engine_id = engine.engine_id;
+    std::string truncated = UTF8Utils::truncateToBytes(engine.engine_name,
+                                                       sizeof(record.engine_name));
+    std::memset(record.engine_name, 0, sizeof(record.engine_name));
+    std::strncpy(record.engine_name, truncated.c_str(), sizeof(record.engine_name) - 1);
+    record.engine_type = static_cast<uint8_t>(engine.engine_type);
+    record.is_active = engine.is_active ? 1 : 0;
+    record.is_default = engine.is_default ? 1 : 0;
+    std::string path_trunc = UTF8Utils::truncateToBytes(engine.plugin_path,
+                                                        sizeof(record.plugin_path));
+    std::memset(record.plugin_path, 0, sizeof(record.plugin_path));
+    std::strncpy(record.plugin_path, path_trunc.c_str(),
+                 sizeof(record.plugin_path) - 1);
+    record.created_time = engine.created_time;
+    record.last_modified_time = engine.last_modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!engine.config.empty())
+    {
+        Status st = storeStringInToast(engine.config, xmin, record.config_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    auto predicate = [&engine](const UDREngineRecord &rec) {
+        return rec.engine_id == engine.engine_id && rec.is_valid == 1;
+    };
+    return updateRecordInHeapPage(udr_engines_table_page_, predicate, record, ctx);
+}
+
+auto CatalogManager::readUDREngineRecords(ErrorContext *ctx) -> Status
+{
+    if (udr_engines_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+    std::vector<UDREngineInfo> engines;
+    auto filter = [](const UDREngineRecord &record) { return record.is_valid == 1; };
+    auto converter = [this, xmin, ctx](const UDREngineRecord &record, UDREngineInfo &info)
+    {
+        const_cast<char&>(record.engine_name[511]) = '\0';
+        const_cast<char&>(record.plugin_path[1023]) = '\0';
+        info.engine_id = record.engine_id;
+        info.engine_name = record.engine_name;
+        info.engine_type = static_cast<UDREngineType>(record.engine_type);
+        info.plugin_path = record.plugin_path;
+        info.is_active = record.is_active != 0;
+        info.is_default = record.is_default != 0;
+        info.config.clear();
+        if (record.config_oid != 0)
+        {
+            loadStringFromToast(record.config_oid, xmin, info.config, ctx);
+        }
+        info.created_time = record.created_time;
+        info.last_modified_time = record.last_modified_time;
+    };
+
+    Status status = readRecordsToVector<UDREngineRecord, UDREngineInfo>(
+        udr_engines_table_page_, engines, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::lock_guard<std::mutex> lock(udr_engine_cache_mutex_);
+    for (const auto &info : engines)
+    {
+        udr_engine_cache_[info.engine_id] = info;
+        udr_engine_name_to_id_[makeUDREngineNameKey(info.engine_name)] = info.engine_id;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::writeUDRModuleRecord(const UDRModuleInfo &module,
+                                          ErrorContext *ctx) -> Status
+{
+    Status validation = UTF8Utils::validateStorageCapacity(
+        module.module_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_STORAGE,
+        ctx
+    );
+    if (validation != Status::OK)
+    {
+        return validation;
+    }
+
+    UDRModuleRecord record{};
+    record.module_id = module.module_id;
+    std::string truncated = UTF8Utils::truncateToBytes(module.module_name,
+                                                       sizeof(record.module_name));
+    std::memset(record.module_name, 0, sizeof(record.module_name));
+    std::strncpy(record.module_name, truncated.c_str(), sizeof(record.module_name) - 1);
+    record.engine_id = module.engine_id;
+    std::string path_trunc = UTF8Utils::truncateToBytes(module.library_path,
+                                                        sizeof(record.library_path));
+    std::memset(record.library_path, 0, sizeof(record.library_path));
+    std::strncpy(record.library_path, path_trunc.c_str(),
+                 sizeof(record.library_path) - 1);
+    std::string checksum_trunc = UTF8Utils::truncateToBytes(module.checksum,
+                                                            sizeof(record.checksum));
+    std::memset(record.checksum, 0, sizeof(record.checksum));
+    std::strncpy(record.checksum, checksum_trunc.c_str(), sizeof(record.checksum) - 1);
+    std::string entry_trunc = UTF8Utils::truncateToBytes(module.entry_point,
+                                                         sizeof(record.entry_point));
+    std::memset(record.entry_point, 0, sizeof(record.entry_point));
+    std::strncpy(record.entry_point, entry_trunc.c_str(),
+                 sizeof(record.entry_point) - 1);
+    record.is_loaded = module.is_loaded ? 1 : 0;
+    record.is_validated = module.is_validated ? 1 : 0;
+    record.loaded_count = module.loaded_count;
+    record.created_time = module.created_time;
+    record.last_modified_time = module.last_modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!module.dependencies.empty())
+    {
+        Status st = storeStringInToast(module.dependencies, xmin,
+                                       record.dependencies_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    return writeRecordToHeapPage(udr_modules_table_page_, record, ctx);
+}
+
+auto CatalogManager::updateUDRModuleRecord(const UDRModuleInfo &module,
+                                           ErrorContext *ctx) -> Status
+{
+    UDRModuleRecord record{};
+    record.module_id = module.module_id;
+    std::string truncated = UTF8Utils::truncateToBytes(module.module_name,
+                                                       sizeof(record.module_name));
+    std::memset(record.module_name, 0, sizeof(record.module_name));
+    std::strncpy(record.module_name, truncated.c_str(), sizeof(record.module_name) - 1);
+    record.engine_id = module.engine_id;
+    std::string path_trunc = UTF8Utils::truncateToBytes(module.library_path,
+                                                        sizeof(record.library_path));
+    std::memset(record.library_path, 0, sizeof(record.library_path));
+    std::strncpy(record.library_path, path_trunc.c_str(),
+                 sizeof(record.library_path) - 1);
+    std::string checksum_trunc = UTF8Utils::truncateToBytes(module.checksum,
+                                                            sizeof(record.checksum));
+    std::memset(record.checksum, 0, sizeof(record.checksum));
+    std::strncpy(record.checksum, checksum_trunc.c_str(), sizeof(record.checksum) - 1);
+    std::string entry_trunc = UTF8Utils::truncateToBytes(module.entry_point,
+                                                         sizeof(record.entry_point));
+    std::memset(record.entry_point, 0, sizeof(record.entry_point));
+    std::strncpy(record.entry_point, entry_trunc.c_str(),
+                 sizeof(record.entry_point) - 1);
+    record.is_loaded = module.is_loaded ? 1 : 0;
+    record.is_validated = module.is_validated ? 1 : 0;
+    record.loaded_count = module.loaded_count;
+    record.created_time = module.created_time;
+    record.last_modified_time = module.last_modified_time;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    if (!module.dependencies.empty())
+    {
+        Status st = storeStringInToast(module.dependencies, xmin,
+                                       record.dependencies_oid, ctx);
+        if (st != Status::OK) return st;
+    }
+
+    auto predicate = [&module](const UDRModuleRecord &rec) {
+        return rec.module_id == module.module_id && rec.is_valid == 1;
+    };
+    return updateRecordInHeapPage(udr_modules_table_page_, predicate, record, ctx);
+}
+
+auto CatalogManager::readUDRModuleRecords(ErrorContext *ctx) -> Status
+{
+    if (udr_modules_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+    std::vector<UDRModuleInfo> modules;
+    auto filter = [](const UDRModuleRecord &record) { return record.is_valid == 1; };
+    auto converter = [this, xmin, ctx](const UDRModuleRecord &record, UDRModuleInfo &info)
+    {
+        const_cast<char&>(record.module_name[511]) = '\0';
+        const_cast<char&>(record.library_path[1023]) = '\0';
+        const_cast<char&>(record.checksum[127]) = '\0';
+        const_cast<char&>(record.entry_point[511]) = '\0';
+        info.module_id = record.module_id;
+        info.module_name = record.module_name;
+        info.engine_id = record.engine_id;
+        info.library_path = record.library_path;
+        info.checksum = record.checksum;
+        info.entry_point = record.entry_point;
+        info.is_loaded = record.is_loaded != 0;
+        info.is_validated = record.is_validated != 0;
+        info.loaded_count = record.loaded_count;
+        info.dependencies.clear();
+        if (record.dependencies_oid != 0)
+        {
+            loadStringFromToast(record.dependencies_oid, xmin, info.dependencies, ctx);
+        }
+        info.created_time = record.created_time;
+        info.last_modified_time = record.last_modified_time;
+    };
+
+    Status status = readRecordsToVector<UDRModuleRecord, UDRModuleInfo>(
+        udr_modules_table_page_, modules, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::lock_guard<std::mutex> lock(udr_module_cache_mutex_);
+    for (const auto &info : modules)
+    {
+        udr_module_cache_[info.module_id] = info;
+        udr_module_name_to_id_[makeUDRModuleNameKey(info.module_name)] = info.module_id;
+    }
+
+    return Status::OK;
 }
 
 // ============================================================================
@@ -13987,6 +22462,444 @@ auto CatalogManager::getSessionTimeoutConfig(SessionTimeoutConfig& config_out,
     return Status::OK;
 }
 
+// ============================================================================
+// Dormant transaction persistence (Track 3.2)
+// ============================================================================
+
+auto CatalogManager::createDormantTransaction(DormantTransactionInfo& info,
+                                              ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (isZeroUuidLocal(info.dormant_id))
+    {
+        info.dormant_id = generateUuidV7();
+    }
+
+    if (dormant_transactions_table_page_ == 0)
+    {
+        PageManager *pm = db_->page_manager();
+        if (pm == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "PageManager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        Status status = pm->allocatePage(dormant_transactions_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to allocate dormant transactions table page");
+            return status;
+        }
+
+        BufferPool *bp = db_->buffer_pool();
+        void *page_buffer;
+        status = bp->pinPage(dormant_transactions_table_page_, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        memset(page_buffer, 0, db_->page_size());
+        auto *heap = static_cast<CatalogHeapPage *>(page_buffer);
+        heap->header.magic = K_MAGIC_SBRD;
+        heap->header.version = 1;
+        heap->header.page_type = PAGE_TYPE_HEAP;
+        heap->header.page_size = db_->page_size();
+        heap->header.page_id = dormant_transactions_table_page_;
+        heap->header.flags = 0;
+        memcpy(heap->header.database_uuid, db_->uuid().bytes.data(), 16);
+        heap->header.generation = 1;
+        heap->record_count = 0;
+        heap->free_offset = sizeof(CatalogHeapPage);
+        heap->next_page = 0;
+        heap->reserved = 0;
+        heap->header.free_space = db_->page_size() - sizeof(CatalogHeapPage);
+        heap->header.item_count = 0;
+        heap->header.free_offset = sizeof(CatalogHeapPage);
+
+        status = bp->unpinPage(dormant_transactions_table_page_, true, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto predicate = [&info](const DormantTransactionRecord& rec) {
+        return rec.is_valid && rec.dormant_id == info.dormant_id;
+    };
+    auto existing = findRecordInHeapPage<DormantTransactionRecord>(
+        dormant_transactions_table_page_, predicate, ctx);
+    if (existing.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Dormant transaction already exists");
+        return Status::FILE_EXISTS;
+    }
+    if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    DormantTransactionRecord record;
+    memset(&record, 0, sizeof(record));
+    record.dormant_id = info.dormant_id;
+    record.attachment_id = info.attachment_id;
+    record.proc_id = info.proc_id;
+    record.txn_id = info.txn_id;
+    record.session_id = info.session_id;
+    record.user_id = info.user_id;
+    record.session_user_id = info.session_user_id;
+    record.role_id = info.role_id;
+    record.isolation_level = info.isolation_level;
+    record.access_mode = static_cast<uint8_t>(info.access_mode);
+    record.wait_mode = static_cast<uint8_t>(info.wait_mode);
+    record.autocommit_mode = info.autocommit_mode ? 1 : 0;
+    record.lock_timeout_seconds = info.lock_timeout_seconds;
+    record.current_schema_id = info.current_schema_id;
+
+    uint64_t xmin = 0;
+    Status toast_status = storeStringInToast(info.session_settings, xmin,
+                                            record.session_settings_oid, ctx);
+    if (toast_status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, toast_status, "Failed to store session settings in TOAST");
+        return toast_status;
+    }
+
+    toast_status = storeStringInToast(info.last_statement_text, xmin,
+                                      record.last_statement_oid, ctx);
+    if (toast_status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, toast_status, "Failed to store last statement in TOAST");
+        return toast_status;
+    }
+
+    record.last_statement_hash = info.last_statement_hash;
+    record.last_statement_type = static_cast<uint8_t>(info.last_statement_type);
+    record.last_statement_status = static_cast<uint8_t>(info.last_statement_status);
+    record.state = static_cast<uint8_t>(info.state);
+    record.start_time = info.start_time;
+    record.last_activity_time = info.last_activity_time;
+    record.dormant_since = info.dormant_since;
+    record.lease_expires_at = info.lease_expires_at;
+    record.last_statement_time = info.last_statement_time;
+    record.last_rows_affected = info.last_rows_affected;
+    record.last_error_code = info.last_error_code;
+    memset(record.last_sqlstate, 0, sizeof(record.last_sqlstate));
+    if (!info.last_sqlstate.empty())
+    {
+        std::string truncated = info.last_sqlstate.substr(0, 5);
+        memcpy(record.last_sqlstate, truncated.c_str(), truncated.size());
+    }
+    record.server_instance_id = info.server_instance_id;
+    record.is_valid = info.is_valid ? 1 : 0;
+
+    Status status = writeRecordToHeapPage(dormant_transactions_table_page_, record, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write dormant transaction record");
+        return status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getDormantTransaction(const ID& dormant_id, DormantTransactionInfo& info_out,
+                                           ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (dormant_transactions_table_page_ == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Dormant transaction table not initialized");
+        return Status::NOT_FOUND;
+    }
+
+    auto predicate = [&dormant_id](const DormantTransactionRecord& rec) {
+        return rec.is_valid && rec.dormant_id == dormant_id;
+    };
+    auto result = findRecordInHeapPage<DormantTransactionRecord>(
+        dormant_transactions_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "Dormant transaction not found");
+        return result.status;
+    }
+
+    const DormantTransactionRecord& rec = result.record;
+    info_out.dormant_id = rec.dormant_id;
+    info_out.attachment_id = rec.attachment_id;
+    info_out.proc_id = rec.proc_id;
+    info_out.txn_id = rec.txn_id;
+    info_out.session_id = rec.session_id;
+    info_out.user_id = rec.user_id;
+    info_out.session_user_id = rec.session_user_id;
+    info_out.role_id = rec.role_id;
+    info_out.isolation_level = rec.isolation_level;
+    info_out.access_mode = static_cast<DormantAccessMode>(rec.access_mode);
+    info_out.wait_mode = static_cast<DormantWaitMode>(rec.wait_mode);
+    info_out.autocommit_mode = rec.autocommit_mode != 0;
+    info_out.lock_timeout_seconds = rec.lock_timeout_seconds;
+    info_out.current_schema_id = rec.current_schema_id;
+
+    uint64_t xmin = 0;
+    info_out.session_settings.clear();
+    info_out.last_statement_text.clear();
+    if (rec.session_settings_oid != 0)
+    {
+        loadStringFromToast(rec.session_settings_oid, xmin, info_out.session_settings, ctx);
+    }
+    if (rec.last_statement_oid != 0)
+    {
+        loadStringFromToast(rec.last_statement_oid, xmin, info_out.last_statement_text, ctx);
+    }
+
+    info_out.last_statement_hash = rec.last_statement_hash;
+    info_out.last_statement_type = static_cast<DormantStatementType>(rec.last_statement_type);
+    info_out.last_statement_status = static_cast<DormantStatementStatus>(rec.last_statement_status);
+    info_out.state = static_cast<DormantTransactionState>(rec.state);
+    info_out.start_time = rec.start_time;
+    info_out.last_activity_time = rec.last_activity_time;
+    info_out.dormant_since = rec.dormant_since;
+    info_out.lease_expires_at = rec.lease_expires_at;
+    info_out.last_statement_time = rec.last_statement_time;
+    info_out.last_rows_affected = rec.last_rows_affected;
+    info_out.last_error_code = rec.last_error_code;
+    info_out.last_sqlstate.assign(
+        rec.last_sqlstate, strnlen(rec.last_sqlstate, sizeof(rec.last_sqlstate)));
+    info_out.server_instance_id = rec.server_instance_id;
+    info_out.is_valid = rec.is_valid != 0;
+
+    return Status::OK;
+}
+
+auto CatalogManager::updateDormantTransaction(const DormantTransactionInfo& info,
+                                              ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (dormant_transactions_table_page_ == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Dormant transaction table not initialized");
+        return Status::NOT_FOUND;
+    }
+
+    if (isZeroUuidLocal(info.dormant_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Dormant transaction ID is required");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    DormantTransactionRecord updated;
+    memset(&updated, 0, sizeof(updated));
+    updated.dormant_id = info.dormant_id;
+    updated.attachment_id = info.attachment_id;
+    updated.proc_id = info.proc_id;
+    updated.txn_id = info.txn_id;
+    updated.session_id = info.session_id;
+    updated.user_id = info.user_id;
+    updated.session_user_id = info.session_user_id;
+    updated.role_id = info.role_id;
+    updated.isolation_level = info.isolation_level;
+    updated.access_mode = static_cast<uint8_t>(info.access_mode);
+    updated.wait_mode = static_cast<uint8_t>(info.wait_mode);
+    updated.autocommit_mode = info.autocommit_mode ? 1 : 0;
+    updated.lock_timeout_seconds = info.lock_timeout_seconds;
+    updated.current_schema_id = info.current_schema_id;
+
+    uint64_t xmin = 0;
+    Status toast_status = storeStringInToast(info.session_settings, xmin,
+                                            updated.session_settings_oid, ctx);
+    if (toast_status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, toast_status, "Failed to store session settings in TOAST");
+        return toast_status;
+    }
+
+    toast_status = storeStringInToast(info.last_statement_text, xmin,
+                                      updated.last_statement_oid, ctx);
+    if (toast_status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, toast_status, "Failed to store last statement in TOAST");
+        return toast_status;
+    }
+
+    updated.last_statement_hash = info.last_statement_hash;
+    updated.last_statement_type = static_cast<uint8_t>(info.last_statement_type);
+    updated.last_statement_status = static_cast<uint8_t>(info.last_statement_status);
+    updated.state = static_cast<uint8_t>(info.state);
+    updated.start_time = info.start_time;
+    updated.last_activity_time = info.last_activity_time;
+    updated.dormant_since = info.dormant_since;
+    updated.lease_expires_at = info.lease_expires_at;
+    updated.last_statement_time = info.last_statement_time;
+    updated.last_rows_affected = info.last_rows_affected;
+    updated.last_error_code = info.last_error_code;
+    memset(updated.last_sqlstate, 0, sizeof(updated.last_sqlstate));
+    if (!info.last_sqlstate.empty())
+    {
+        std::string truncated = info.last_sqlstate.substr(0, 5);
+        memcpy(updated.last_sqlstate, truncated.c_str(), truncated.size());
+    }
+    updated.server_instance_id = info.server_instance_id;
+    updated.is_valid = info.is_valid ? 1 : 0;
+
+    BufferPool *bp = db_->buffer_pool();
+    uint32_t current_page_id = dormant_transactions_table_page_;
+    while (current_page_id != 0)
+    {
+        void *page_buffer;
+        Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            auto *record = reinterpret_cast<DormantTransactionRecord *>(
+                reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+            if (record->is_valid && record->dormant_id == info.dormant_id)
+            {
+                memcpy(record, &updated, sizeof(DormantTransactionRecord));
+                heap->header.generation++;
+                return bp->unpinPage(current_page_id, true, ctx);
+            }
+
+            offset += sizeof(DormantTransactionRecord);
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, false, ctx);
+        current_page_id = next_page;
+    }
+
+    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Dormant transaction not found");
+    return Status::NOT_FOUND;
+}
+
+auto CatalogManager::deleteDormantTransaction(const ID& dormant_id,
+                                              ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (dormant_transactions_table_page_ == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Dormant transaction table not initialized");
+        return Status::NOT_FOUND;
+    }
+
+    BufferPool *bp = db_->buffer_pool();
+    uint32_t current_page_id = dormant_transactions_table_page_;
+    while (current_page_id != 0)
+    {
+        void *page_buffer;
+        Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            auto *record = reinterpret_cast<DormantTransactionRecord *>(
+                reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+            if (record->is_valid && record->dormant_id == dormant_id)
+            {
+                record->is_valid = 0;
+                heap->header.generation++;
+                return bp->unpinPage(current_page_id, true, ctx);
+            }
+
+            offset += sizeof(DormantTransactionRecord);
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, false, ctx);
+        current_page_id = next_page;
+    }
+
+    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Dormant transaction not found");
+    return Status::NOT_FOUND;
+}
+
+auto CatalogManager::listDormantTransactions(std::vector<DormantTransactionInfo>& dormants_out,
+                                             ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    dormants_out.clear();
+
+    if (dormant_transactions_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+    auto filter = [](const DormantTransactionRecord& rec) { return rec.is_valid; };
+    auto converter = [this, xmin, ctx](const DormantTransactionRecord& rec,
+                                       DormantTransactionInfo& info) {
+        info.dormant_id = rec.dormant_id;
+        info.attachment_id = rec.attachment_id;
+        info.proc_id = rec.proc_id;
+        info.txn_id = rec.txn_id;
+        info.session_id = rec.session_id;
+        info.user_id = rec.user_id;
+        info.session_user_id = rec.session_user_id;
+        info.role_id = rec.role_id;
+        info.isolation_level = rec.isolation_level;
+        info.access_mode = static_cast<DormantAccessMode>(rec.access_mode);
+        info.wait_mode = static_cast<DormantWaitMode>(rec.wait_mode);
+        info.autocommit_mode = rec.autocommit_mode != 0;
+        info.lock_timeout_seconds = rec.lock_timeout_seconds;
+        info.current_schema_id = rec.current_schema_id;
+
+        info.session_settings.clear();
+        info.last_statement_text.clear();
+        if (rec.session_settings_oid != 0)
+        {
+            loadStringFromToast(rec.session_settings_oid, xmin, info.session_settings, ctx);
+        }
+        if (rec.last_statement_oid != 0)
+        {
+            loadStringFromToast(rec.last_statement_oid, xmin, info.last_statement_text, ctx);
+        }
+
+        info.last_statement_hash = rec.last_statement_hash;
+        info.last_statement_type = static_cast<DormantStatementType>(rec.last_statement_type);
+        info.last_statement_status = static_cast<DormantStatementStatus>(rec.last_statement_status);
+        info.state = static_cast<DormantTransactionState>(rec.state);
+        info.start_time = rec.start_time;
+        info.last_activity_time = rec.last_activity_time;
+        info.dormant_since = rec.dormant_since;
+        info.lease_expires_at = rec.lease_expires_at;
+        info.last_statement_time = rec.last_statement_time;
+        info.last_rows_affected = rec.last_rows_affected;
+        info.last_error_code = rec.last_error_code;
+        info.last_sqlstate.assign(
+            rec.last_sqlstate, strnlen(rec.last_sqlstate, sizeof(rec.last_sqlstate)));
+        info.server_instance_id = rec.server_instance_id;
+        info.is_valid = rec.is_valid != 0;
+    };
+
+    return readRecordsToVector<DormantTransactionRecord, DormantTransactionInfo>(
+        dormant_transactions_table_page_, dormants_out, filter, converter, ctx);
+}
+
 // Compute transitive closure of roles
 
 auto CatalogManager::getEffectiveRoles(const ID& user_id, std::vector<ID>& roles_out,
@@ -14410,6 +23323,33 @@ auto CatalogManager::getUserPermissions(const ID& user_id, std::vector<Permissio
         return rec.is_valid &&
                rec.grantee_id == user_id &&
                rec.grantee_type == static_cast<uint8_t>(GranteeType::USER);
+    };
+
+    auto converter = [](const PermissionRecord& rec, PermissionInfo& info) {
+        info.permission_id = rec.permission_id;
+        info.object_id = rec.object_id;
+        info.object_type = static_cast<PermissionObjectType>(rec.object_type);
+        info.grantee_id = rec.grantee_id;
+        info.grantee_type = static_cast<GranteeType>(rec.grantee_type);
+        info.privileges = rec.privileges;
+        info.grant_option = rec.grant_option != 0;
+        info.grantor_id = rec.grantor_id;
+        info.created_time = rec.created_time;
+    };
+
+    return readRecordsToVector<PermissionRecord, PermissionInfo>(
+        permissions_table_page_, permissions_out, filter, converter, ctx);
+}
+
+auto CatalogManager::listPermissions(std::vector<PermissionInfo>& permissions_out,
+                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    permissions_out.clear();
+
+    auto filter = [](const PermissionRecord& rec) {
+        return rec.is_valid != 0;
     };
 
     auto converter = [](const PermissionRecord& rec, PermissionInfo& info) {
@@ -15821,367 +24761,8 @@ auto CatalogManager::setForeignKeyEnabled(const ID& fk_id, bool enabled,
 }
 
 // ============================================================================
-// Domain CRUD Operations (Phase A - Catalog Cleanup)
+// Domain dependency checking (Domain CRUD now in DomainManager)
 // ============================================================================
-
-auto CatalogManager::createDomain(const ID& schema_id, const std::string& domain_name,
-                                  const std::string& base_type, const std::string& check_expr,
-                                  bool not_null, ID& domain_id_out,
-                                  ErrorContext* ctx) -> Status
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    // Validate schema exists
-    if (schema_cache_.find(schema_id) == schema_cache_.end())
-    {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found");
-        return Status::NOT_FOUND;
-    }
-
-    // Validate domain name
-    Status status = UTF8Utils::validateStorageCapacity(domain_name,
-        CatalogConstants::MAX_IDENTIFIER_CHARS,
-        CatalogConstants::MAX_IDENTIFIER_BYTES);
-    if (status != Status::OK)
-    {
-        SET_ERROR_CONTEXT(ctx, status, "Domain name too long or invalid UTF-8");
-        return status;
-    }
-
-    // Check if domain already exists in schema
-    DomainInfo existing;
-    mutex_.unlock();
-    status = getDomainByName(schema_id, domain_name, existing, ctx);
-    mutex_.lock();
-    if (status == Status::OK)
-    {
-        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Domain already exists");
-        return Status::FILE_EXISTS;
-    }
-
-    // Generate new domain ID
-    domain_id_out = generateUuidV7();
-
-    // Create domain record
-    DomainRecord domain_rec;
-    memset(&domain_rec, 0, sizeof(DomainRecord));
-    domain_rec.domain_id = domain_id_out;
-    domain_rec.schema_id = schema_id;
-
-    std::string truncated = UTF8Utils::truncateToBytes(domain_name, sizeof(domain_rec.domain_name));
-    strncpy(domain_rec.domain_name, truncated.c_str(), sizeof(domain_rec.domain_name) - 1);
-
-    domain_rec.owner_id = SecurityConstants::makeSystemUserID();  // TODO: Get current user
-    domain_rec.not_null = not_null ? 1 : 0;
-    domain_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
-    domain_rec.last_modified_time = domain_rec.created_time;
-    domain_rec.is_valid = 1;
-
-    // Store base_type and check_expr in TOAST if provided
-    uint64_t xmin = 0;  // TODO: Get current transaction ID
-    if (!base_type.empty())
-    {
-        status = storeStringInToast(base_type, xmin, domain_rec.base_type_oid, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
-    }
-    if (!check_expr.empty())
-    {
-        status = storeStringInToast(check_expr, xmin, domain_rec.check_expr_oid, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
-    }
-
-    // Write to disk
-    status = writeRecordToHeapPage(domains_table_page_, domain_rec, ctx);
-    if (status != Status::OK)
-    {
-        SET_ERROR_CONTEXT(ctx, status, "Failed to write domain record to disk");
-        return status;
-    }
-
-    return Status::OK;
-}
-
-auto CatalogManager::getDomain(const ID& domain_id, DomainInfo& info_out,
-                               ErrorContext* ctx) -> Status
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    auto predicate = [&domain_id](const DomainRecord& rec) {
-        return rec.domain_id == domain_id && rec.is_valid == 1;
-    };
-
-    auto result = findRecordInHeapPage<DomainRecord>(domains_table_page_, predicate, ctx);
-    if (result.status != Status::OK)
-    {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
-        return Status::NOT_FOUND;
-    }
-
-    // Convert to DomainInfo
-    info_out.domain_id = result.record.domain_id;
-    info_out.schema_id = result.record.schema_id;
-    info_out.domain_name = std::string(result.record.domain_name);
-    info_out.owner_id = result.record.owner_id;
-    info_out.not_null = result.record.not_null != 0;
-    info_out.created_time = result.record.created_time;
-    info_out.last_modified_time = result.record.last_modified_time;
-
-    // Load base_type and check_expr from TOAST
-    uint64_t xmin = 0;  // TOAST read uses xmin for visibility
-    if (result.record.base_type_oid != 0)
-    {
-        loadStringFromToast(result.record.base_type_oid, xmin, info_out.base_type, ctx);
-    }
-    if (result.record.check_expr_oid != 0)
-    {
-        loadStringFromToast(result.record.check_expr_oid, xmin, info_out.check_expr, ctx);
-    }
-
-    return Status::OK;
-}
-
-auto CatalogManager::getDomainByName(const ID& schema_id, const std::string& domain_name,
-                                     DomainInfo& info_out, ErrorContext* ctx) -> Status
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    auto predicate = [&schema_id, &domain_name](const DomainRecord& rec) {
-        return rec.schema_id == schema_id &&
-               strcmp(rec.domain_name, domain_name.c_str()) == 0 &&
-               rec.is_valid == 1;
-    };
-
-    auto result = findRecordInHeapPage<DomainRecord>(domains_table_page_, predicate, ctx);
-    if (result.status != Status::OK)
-    {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
-        return Status::NOT_FOUND;
-    }
-
-    // Convert to DomainInfo
-    info_out.domain_id = result.record.domain_id;
-    info_out.schema_id = result.record.schema_id;
-    info_out.domain_name = std::string(result.record.domain_name);
-    info_out.owner_id = result.record.owner_id;
-    info_out.not_null = result.record.not_null != 0;
-    info_out.created_time = result.record.created_time;
-    info_out.last_modified_time = result.record.last_modified_time;
-
-    // Load base_type and check_expr from TOAST
-    uint64_t xmin = 0;  // TOAST read uses xmin for visibility
-    if (result.record.base_type_oid != 0)
-    {
-        loadStringFromToast(result.record.base_type_oid, xmin, info_out.base_type, ctx);
-    }
-    if (result.record.check_expr_oid != 0)
-    {
-        loadStringFromToast(result.record.check_expr_oid, xmin, info_out.check_expr, ctx);
-    }
-
-    return Status::OK;
-}
-
-auto CatalogManager::updateDomain(const ID& domain_id,
-                                  const std::optional<std::string>& new_check_expr,
-                                  const std::optional<bool>& new_not_null,
-                                  ErrorContext* ctx) -> Status
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    // Find existing domain
-    DomainInfo existing;
-    Status status = getDomain(domain_id, existing, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
-
-    // Update domain record on disk
-    BufferPool *bp = db_->buffer_pool();
-    void *page_data;
-    status = bp->pinPage(domains_table_page_, &page_data, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
-
-    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
-    uint16_t item_count = heap_page.getItemCount();
-    bool found = false;
-
-    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
-
-    for (uint16_t i = 0; i < item_count; ++i)
-    {
-        const uint8_t *tuple_data;
-        uint32_t tuple_size;
-
-        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
-        {
-            if (tuple_size >= sizeof(TupleHeader) + sizeof(DomainRecord))
-            {
-                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
-                uint8_t *mutable_tuple_data = mutable_page_data + offset;
-
-                auto *record =
-                    reinterpret_cast<DomainRecord *>(mutable_tuple_data + sizeof(TupleHeader));
-
-                if (record->domain_id == domain_id && record->is_valid == 1)
-                {
-                    // Apply updates
-                    if (new_not_null.has_value())
-                    {
-                        record->not_null = new_not_null.value() ? 1 : 0;
-                    }
-                    if (new_check_expr.has_value())
-                    {
-                        // Update TOAST reference for check expression
-                        uint64_t xmin = 0;  // TODO: Get current transaction ID
-                        storeStringInToast(new_check_expr.value(), xmin, record->check_expr_oid, ctx);
-                    }
-                    record->last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
-                    found = true;
-                    break;
-                }
-            }
-        }
-    }
-
-    bp->unpinPage(domains_table_page_, found, ctx);
-
-    if (!found)
-    {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found on disk");
-        return Status::NOT_FOUND;
-    }
-
-    return Status::OK;
-}
-
-auto CatalogManager::dropDomain(const ID& domain_id, bool cascade, ErrorContext* ctx) -> Status
-{
-    (void)cascade;  // RESTRICT-only policy
-    // Find existing domain
-    DomainInfo existing;
-    Status status = getDomain(domain_id, existing, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
-
-    // Check dependency graph before taking the main mutex to avoid lock ordering issues.
-    std::vector<DependencyInfo> deps;
-    status = getDependents(domain_id, deps, ctx);
-    if (status != Status::OK) {
-        return status;
-    }
-
-    if (!deps.empty())
-    {
-        std::string error_msg = buildDependencyErrorMessage(
-            existing.domain_name, ObjectType::DOMAIN, deps, ctx);
-        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
-        return Status::CONSTRAINT_VIOLATION;
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    // Soft delete the domain record (mark is_valid = 0)
-    BufferPool *bp = db_->buffer_pool();
-    void *page_data;
-    status = bp->pinPage(domains_table_page_, &page_data, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
-
-    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
-    uint16_t item_count = heap_page.getItemCount();
-    bool found = false;
-
-    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
-
-    for (uint16_t i = 0; i < item_count; ++i)
-    {
-        const uint8_t *tuple_data;
-        uint32_t tuple_size;
-
-        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
-        {
-            if (tuple_size >= sizeof(TupleHeader) + sizeof(DomainRecord))
-            {
-                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
-                uint8_t *mutable_tuple_data = mutable_page_data + offset;
-
-                auto *record =
-                    reinterpret_cast<DomainRecord *>(mutable_tuple_data + sizeof(TupleHeader));
-
-                if (record->domain_id == domain_id && record->is_valid == 1)
-                {
-                    record->is_valid = 0;
-                    found = true;
-                    break;
-                }
-            }
-        }
-    }
-
-    bp->unpinPage(domains_table_page_, found, ctx);
-
-    if (!found)
-    {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found on disk");
-        return Status::NOT_FOUND;
-    }
-
-    status = clearDependenciesFor(domain_id, ctx);
-    if (status != Status::OK) {
-        LOG_ERROR(CATALOG, "Failed to clear dependencies for domain");
-    }
-
-    return Status::OK;
-}
-
-auto CatalogManager::listDomains(const ID& schema_id, std::vector<DomainInfo>& domains_out,
-                                 ErrorContext* ctx) -> Status
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    domains_out.clear();
-
-    auto filter = [&schema_id](const DomainRecord& rec) {
-        return rec.schema_id == schema_id && rec.is_valid == 1;
-    };
-    auto converter = [this, ctx](const DomainRecord& rec, DomainInfo& info) {
-        info.domain_id = rec.domain_id;
-        info.schema_id = rec.schema_id;
-        info.domain_name = std::string(rec.domain_name);
-        info.owner_id = rec.owner_id;
-        info.not_null = rec.not_null != 0;
-        info.created_time = rec.created_time;
-        info.last_modified_time = rec.last_modified_time;
-
-        // Load base_type and check_expr from TOAST
-        uint64_t xmin = 0;  // TOAST read uses xmin for visibility
-        if (rec.base_type_oid != 0)
-        {
-            loadStringFromToast(rec.base_type_oid, xmin, info.base_type, ctx);
-        }
-        if (rec.check_expr_oid != 0)
-        {
-            loadStringFromToast(rec.check_expr_oid, xmin, info.check_expr, ctx);
-        }
-    };
-
-    return readRecordsToVector<DomainRecord, DomainInfo>(domains_table_page_, domains_out,
-                                                          filter, converter, ctx);
-}
 
 // WP-2 CAT-M7: Find columns using a specific domain for DROP DOMAIN dependency check
 auto CatalogManager::findColumnsByDomain(const ID& domain_id,
@@ -16224,6 +24805,13 @@ auto CatalogManager::findColumnsByDomain(const ID& domain_id,
     }
 
     return Status::OK;
+}
+
+// Domain lookup wrapper - delegates to DomainManager
+auto CatalogManager::getDomainByName(const ID& schema_id, const std::string& domain_name,
+                                     DomainInfo& info_out, ErrorContext* ctx) -> Status
+{
+    return db_->domain_manager()->getDomain(schema_id, domain_name, info_out, ctx);
 }
 
 // ============================================================================
@@ -17032,23 +25620,39 @@ Status CatalogManager::lookupObject(const ID& schema_id, const std::string& name
                                     ObjectLookup& out, ErrorContext* ctx)
 {
     // Try function
-    FunctionInfo fn;
-    if (getFunction(name, fn, ctx) == Status::OK) {
-        out.object_id = fn.function_id;
-        out.type = ObjectType::FUNCTION;
-        out.schema_id = schema_id; // functions are global in current impl
-        out.name = name;
-        return Status::OK;
+    {
+        std::lock_guard<std::mutex> lock(psql_mutex_);
+        for (const auto& [func_name, fn] : functions_) {
+            if (fn.schema_id != schema_id) {
+                continue;
+            }
+            if (IdentifierUtils::namesMatch(name, false /*search_delimited*/,
+                                            fn.name, fn.name_is_delimited)) {
+                out.object_id = fn.function_id;
+                out.type = ObjectType::FUNCTION;
+                out.schema_id = fn.schema_id;
+                out.name = fn.name;
+                return Status::OK;
+            }
+        }
     }
 
     // Procedure
-    ProcedureInfo pr;
-    if (getProcedure(name, pr, ctx) == Status::OK) {
-        out.object_id = pr.procedure_id;
-        out.type = ObjectType::PROCEDURE;
-        out.schema_id = schema_id;
-        out.name = name;
-        return Status::OK;
+    {
+        std::lock_guard<std::mutex> lock(psql_mutex_);
+        for (const auto& [proc_name, pr] : procedures_) {
+            if (pr.schema_id != schema_id) {
+                continue;
+            }
+            if (IdentifierUtils::namesMatch(name, false /*search_delimited*/,
+                                            pr.name, pr.name_is_delimited)) {
+                out.object_id = pr.procedure_id;
+                out.type = ObjectType::PROCEDURE;
+                out.schema_id = pr.schema_id;
+                out.name = pr.name;
+                return Status::OK;
+            }
+        }
     }
 
     // Package
@@ -17083,7 +25687,7 @@ Status CatalogManager::lookupObject(const ID& schema_id, const std::string& name
 
     // Sequence
     ID seq_id;
-    if (getSequenceIdByName(name, seq_id, ctx) == Status::OK) {
+    if (getSequenceIdByName(schema_id, name, seq_id, ctx) == Status::OK) {
         out.object_id = seq_id;
         out.type = ObjectType::SEQUENCE;
         out.schema_id = schema_id;
