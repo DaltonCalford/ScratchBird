@@ -1,0 +1,1923 @@
+{
+  "database": "postgresql",
+  "generated": "2025-12-29T17:20:57.086682",
+  "version": "1.0",
+  "categories": {
+    "core": {
+      "path": "core",
+      "test_count": 238,
+      "tests": [
+        "advisory_lock",
+        "aggregates",
+        "alter_generic",
+        "alter_operator",
+        "alter_table",
+        "amutils",
+        "arrays",
+        "async",
+        "bit",
+        "bitmapops",
+        "boolean",
+        "box",
+        "brin",
+        "brin_bloom",
+        "brin_multi",
+        "btree_index",
+        "case",
+        "char",
+        "circle",
+        "cluster",
+        "collate.icu.utf8",
+        "collate.linux.utf8",
+        "collate",
+        "collate.utf8",
+        "collate.windows.win1252",
+        "combocid",
+        "comments",
+        "compression",
+        "compression_lz4",
+        "constraints",
+        "conversion",
+        "copy",
+        "copy2",
+        "copydml",
+        "copyencoding",
+        "copyselect",
+        "create_aggregate",
+        "create_am",
+        "create_cast",
+        "create_function_c",
+        "create_function_sql",
+        "create_index",
+        "create_index_spgist",
+        "create_misc",
+        "create_operator",
+        "create_procedure",
+        "create_role",
+        "create_schema",
+        "create_table",
+        "create_table_like",
+        "create_type",
+        "create_view",
+        "database",
+        "date",
+        "dbsize",
+        "delete",
+        "dependency",
+        "domain",
+        "drop_if_exists",
+        "drop_operator",
+        "eager_aggregate",
+        "enum",
+        "equivclass",
+        "errors",
+        "event_trigger",
+        "event_trigger_login",
+        "explain",
+        "expressions",
+        "fast_default",
+        "float4",
+        "float8",
+        "foreign_data",
+        "foreign_key",
+        "functional_deps",
+        "generated_stored",
+        "generated_virtual",
+        "geometry",
+        "gin",
+        "gist",
+        "groupingsets",
+        "guc",
+        "hash_func",
+        "hash_index",
+        "hash_part",
+        "horology",
+        "identity",
+        "incremental_sort",
+        "index_including",
+        "index_including_gist",
+        "indexing",
+        "indirect_toast",
+        "inet",
+        "infinite_recurse",
+        "inherit",
+        "init_privs",
+        "insert",
+        "insert_conflict",
+        "int2",
+        "int4",
+        "int8",
+        "interval",
+        "join",
+        "join_hash",
+        "json",
+        "json_encoding",
+        "jsonb",
+        "jsonb_jsonpath",
+        "jsonpath",
+        "jsonpath_encoding",
+        "largeobject",
+        "limit",
+        "line",
+        "lock",
+        "lseg",
+        "macaddr",
+        "macaddr8",
+        "maintain_every",
+        "matview",
+        "md5",
+        "memoize",
+        "merge",
+        "misc",
+        "misc_functions",
+        "misc_sanity",
+        "money",
+        "multirangetypes",
+        "mvcc",
+        "name",
+        "namespace",
+        "nls",
+        "numa",
+        "numeric",
+        "numeric_big",
+        "numerology",
+        "object_address",
+        "oid",
+        "oidjoins",
+        "opr_sanity",
+        "partition_aggregate",
+        "partition_info",
+        "partition_join",
+        "partition_merge",
+        "partition_prune",
+        "partition_split",
+        "password",
+        "path",
+        "pg_dependencies",
+        "pg_lsn",
+        "pg_ndistinct",
+        "plancache",
+        "plpgsql",
+        "point",
+        "polygon",
+        "polymorphism",
+        "portals",
+        "portals_p2",
+        "predicate",
+        "prepare",
+        "prepared_xacts",
+        "privileges",
+        "psql",
+        "psql_crosstab",
+        "psql_pipeline",
+        "publication",
+        "random",
+        "rangefuncs",
+        "rangetypes",
+        "regex",
+        "regproc",
+        "reindex_catalog",
+        "reloptions",
+        "replica_identity",
+        "returning",
+        "roleattributes",
+        "rowsecurity",
+        "rowtypes",
+        "rules",
+        "sanity_check",
+        "security_label",
+        "select",
+        "select_distinct",
+        "select_distinct_on",
+        "select_having",
+        "select_implicit",
+        "select_into",
+        "select_parallel",
+        "select_views",
+        "sequence",
+        "spgist",
+        "sqljson",
+        "sqljson_jsontable",
+        "sqljson_queryfuncs",
+        "stats",
+        "stats_ext",
+        "stats_import",
+        "stats_rewrite",
+        "strings",
+        "subscription",
+        "subselect",
+        "sysviews",
+        "tablesample",
+        "tablespace",
+        "temp",
+        "test_setup",
+        "text",
+        "tid",
+        "tidrangescan",
+        "tidscan",
+        "time",
+        "timestamp",
+        "timestamptz",
+        "timetz",
+        "transactions",
+        "triggers",
+        "truncate",
+        "tsdicts",
+        "tsearch",
+        "tsrf",
+        "tstypes",
+        "tuplesort",
+        "txid",
+        "type_sanity",
+        "typed_table",
+        "unicode",
+        "union",
+        "updatable_views",
+        "update",
+        "uuid",
+        "vacuum",
+        "vacuum_parallel",
+        "varchar",
+        "window",
+        "with",
+        "without_overlaps",
+        "write_parallel",
+        "xid",
+        "xml",
+        "xmlmap"
+      ]
+    }
+  },
+  "tests": [
+    {
+      "name": "advisory_lock",
+      "file": "core/advisory_lock.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/advisory_lock.sql",
+      "original_file": "advisory_lock.sql"
+    },
+    {
+      "name": "aggregates",
+      "file": "core/aggregates.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/aggregates.sql",
+      "original_file": "aggregates.sql"
+    },
+    {
+      "name": "alter_generic",
+      "file": "core/alter_generic.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/alter_generic.sql",
+      "original_file": "alter_generic.sql"
+    },
+    {
+      "name": "alter_operator",
+      "file": "core/alter_operator.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/alter_operator.sql",
+      "original_file": "alter_operator.sql"
+    },
+    {
+      "name": "alter_table",
+      "file": "core/alter_table.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/alter_table.sql",
+      "original_file": "alter_table.sql"
+    },
+    {
+      "name": "amutils",
+      "file": "core/amutils.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/amutils.sql",
+      "original_file": "amutils.sql"
+    },
+    {
+      "name": "arrays",
+      "file": "core/arrays.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/arrays.sql",
+      "original_file": "arrays.sql"
+    },
+    {
+      "name": "async",
+      "file": "core/async.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/async.sql",
+      "original_file": "async.sql"
+    },
+    {
+      "name": "bit",
+      "file": "core/bit.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/bit.sql",
+      "original_file": "bit.sql"
+    },
+    {
+      "name": "bitmapops",
+      "file": "core/bitmapops.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/bitmapops.sql",
+      "original_file": "bitmapops.sql"
+    },
+    {
+      "name": "boolean",
+      "file": "core/boolean.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/boolean.sql",
+      "original_file": "boolean.sql"
+    },
+    {
+      "name": "box",
+      "file": "core/box.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/box.sql",
+      "original_file": "box.sql"
+    },
+    {
+      "name": "brin",
+      "file": "core/brin.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/brin.sql",
+      "original_file": "brin.sql"
+    },
+    {
+      "name": "brin_bloom",
+      "file": "core/brin_bloom.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/brin_bloom.sql",
+      "original_file": "brin_bloom.sql"
+    },
+    {
+      "name": "brin_multi",
+      "file": "core/brin_multi.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/brin_multi.sql",
+      "original_file": "brin_multi.sql"
+    },
+    {
+      "name": "btree_index",
+      "file": "core/btree_index.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/btree_index.sql",
+      "original_file": "btree_index.sql"
+    },
+    {
+      "name": "case",
+      "file": "core/case.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/case.sql",
+      "original_file": "case.sql"
+    },
+    {
+      "name": "char",
+      "file": "core/char.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/char.sql",
+      "original_file": "char.sql"
+    },
+    {
+      "name": "circle",
+      "file": "core/circle.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/circle.sql",
+      "original_file": "circle.sql"
+    },
+    {
+      "name": "cluster",
+      "file": "core/cluster.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/cluster.sql",
+      "original_file": "cluster.sql"
+    },
+    {
+      "name": "collate.icu.utf8",
+      "file": "core/collate.icu.utf8.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/collate.icu.utf8.sql",
+      "original_file": "collate.icu.utf8.sql"
+    },
+    {
+      "name": "collate.linux.utf8",
+      "file": "core/collate.linux.utf8.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/collate.linux.utf8.sql",
+      "original_file": "collate.linux.utf8.sql"
+    },
+    {
+      "name": "collate",
+      "file": "core/collate.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/collate.sql",
+      "original_file": "collate.sql"
+    },
+    {
+      "name": "collate.utf8",
+      "file": "core/collate.utf8.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/collate.utf8.sql",
+      "original_file": "collate.utf8.sql"
+    },
+    {
+      "name": "collate.windows.win1252",
+      "file": "core/collate.windows.win1252.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/collate.windows.win1252.sql",
+      "original_file": "collate.windows.win1252.sql"
+    },
+    {
+      "name": "combocid",
+      "file": "core/combocid.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/combocid.sql",
+      "original_file": "combocid.sql"
+    },
+    {
+      "name": "comments",
+      "file": "core/comments.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/comments.sql",
+      "original_file": "comments.sql"
+    },
+    {
+      "name": "compression",
+      "file": "core/compression.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/compression.sql",
+      "original_file": "compression.sql"
+    },
+    {
+      "name": "compression_lz4",
+      "file": "core/compression_lz4.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/compression_lz4.sql",
+      "original_file": "compression_lz4.sql"
+    },
+    {
+      "name": "constraints",
+      "file": "core/constraints.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/constraints.sql",
+      "original_file": "constraints.sql"
+    },
+    {
+      "name": "conversion",
+      "file": "core/conversion.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/conversion.sql",
+      "original_file": "conversion.sql"
+    },
+    {
+      "name": "copy",
+      "file": "core/copy.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/copy.sql",
+      "original_file": "copy.sql"
+    },
+    {
+      "name": "copy2",
+      "file": "core/copy2.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/copy2.sql",
+      "original_file": "copy2.sql"
+    },
+    {
+      "name": "copydml",
+      "file": "core/copydml.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/copydml.sql",
+      "original_file": "copydml.sql"
+    },
+    {
+      "name": "copyencoding",
+      "file": "core/copyencoding.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/copyencoding.sql",
+      "original_file": "copyencoding.sql"
+    },
+    {
+      "name": "copyselect",
+      "file": "core/copyselect.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/copyselect.sql",
+      "original_file": "copyselect.sql"
+    },
+    {
+      "name": "create_aggregate",
+      "file": "core/create_aggregate.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/create_aggregate.sql",
+      "original_file": "create_aggregate.sql"
+    },
+    {
+      "name": "create_am",
+      "file": "core/create_am.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/create_am.sql",
+      "original_file": "create_am.sql"
+    },
+    {
+      "name": "create_cast",
+      "file": "core/create_cast.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/create_cast.sql",
+      "original_file": "create_cast.sql"
+    },
+    {
+      "name": "create_function_c",
+      "file": "core/create_function_c.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/create_function_c.sql",
+      "original_file": "create_function_c.sql"
+    },
+    {
+      "name": "create_function_sql",
+      "file": "core/create_function_sql.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/create_function_sql.sql",
+      "original_file": "create_function_sql.sql"
+    },
+    {
+      "name": "create_index",
+      "file": "core/create_index.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/create_index.sql",
+      "original_file": "create_index.sql"
+    },
+    {
+      "name": "create_index_spgist",
+      "file": "core/create_index_spgist.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/create_index_spgist.sql",
+      "original_file": "create_index_spgist.sql"
+    },
+    {
+      "name": "create_misc",
+      "file": "core/create_misc.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/create_misc.sql",
+      "original_file": "create_misc.sql"
+    },
+    {
+      "name": "create_operator",
+      "file": "core/create_operator.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/create_operator.sql",
+      "original_file": "create_operator.sql"
+    },
+    {
+      "name": "create_procedure",
+      "file": "core/create_procedure.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/create_procedure.sql",
+      "original_file": "create_procedure.sql"
+    },
+    {
+      "name": "create_role",
+      "file": "core/create_role.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/create_role.sql",
+      "original_file": "create_role.sql"
+    },
+    {
+      "name": "create_schema",
+      "file": "core/create_schema.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/create_schema.sql",
+      "original_file": "create_schema.sql"
+    },
+    {
+      "name": "create_table",
+      "file": "core/create_table.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/create_table.sql",
+      "original_file": "create_table.sql"
+    },
+    {
+      "name": "create_table_like",
+      "file": "core/create_table_like.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/create_table_like.sql",
+      "original_file": "create_table_like.sql"
+    },
+    {
+      "name": "create_type",
+      "file": "core/create_type.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/create_type.sql",
+      "original_file": "create_type.sql"
+    },
+    {
+      "name": "create_view",
+      "file": "core/create_view.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/create_view.sql",
+      "original_file": "create_view.sql"
+    },
+    {
+      "name": "database",
+      "file": "core/database.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/database.sql",
+      "original_file": "database.sql"
+    },
+    {
+      "name": "date",
+      "file": "core/date.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/date.sql",
+      "original_file": "date.sql"
+    },
+    {
+      "name": "dbsize",
+      "file": "core/dbsize.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/dbsize.sql",
+      "original_file": "dbsize.sql"
+    },
+    {
+      "name": "delete",
+      "file": "core/delete.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/delete.sql",
+      "original_file": "delete.sql"
+    },
+    {
+      "name": "dependency",
+      "file": "core/dependency.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/dependency.sql",
+      "original_file": "dependency.sql"
+    },
+    {
+      "name": "domain",
+      "file": "core/domain.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/domain.sql",
+      "original_file": "domain.sql"
+    },
+    {
+      "name": "drop_if_exists",
+      "file": "core/drop_if_exists.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/drop_if_exists.sql",
+      "original_file": "drop_if_exists.sql"
+    },
+    {
+      "name": "drop_operator",
+      "file": "core/drop_operator.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/drop_operator.sql",
+      "original_file": "drop_operator.sql"
+    },
+    {
+      "name": "eager_aggregate",
+      "file": "core/eager_aggregate.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/eager_aggregate.sql",
+      "original_file": "eager_aggregate.sql"
+    },
+    {
+      "name": "enum",
+      "file": "core/enum.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/enum.sql",
+      "original_file": "enum.sql"
+    },
+    {
+      "name": "equivclass",
+      "file": "core/equivclass.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/equivclass.sql",
+      "original_file": "equivclass.sql"
+    },
+    {
+      "name": "errors",
+      "file": "core/errors.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/errors.sql",
+      "original_file": "errors.sql"
+    },
+    {
+      "name": "event_trigger",
+      "file": "core/event_trigger.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/event_trigger.sql",
+      "original_file": "event_trigger.sql"
+    },
+    {
+      "name": "event_trigger_login",
+      "file": "core/event_trigger_login.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/event_trigger_login.sql",
+      "original_file": "event_trigger_login.sql"
+    },
+    {
+      "name": "explain",
+      "file": "core/explain.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/explain.sql",
+      "original_file": "explain.sql"
+    },
+    {
+      "name": "expressions",
+      "file": "core/expressions.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/expressions.sql",
+      "original_file": "expressions.sql"
+    },
+    {
+      "name": "fast_default",
+      "file": "core/fast_default.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/fast_default.sql",
+      "original_file": "fast_default.sql"
+    },
+    {
+      "name": "float4",
+      "file": "core/float4.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/float4.sql",
+      "original_file": "float4.sql"
+    },
+    {
+      "name": "float8",
+      "file": "core/float8.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/float8.sql",
+      "original_file": "float8.sql"
+    },
+    {
+      "name": "foreign_data",
+      "file": "core/foreign_data.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/foreign_data.sql",
+      "original_file": "foreign_data.sql"
+    },
+    {
+      "name": "foreign_key",
+      "file": "core/foreign_key.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/foreign_key.sql",
+      "original_file": "foreign_key.sql"
+    },
+    {
+      "name": "functional_deps",
+      "file": "core/functional_deps.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/functional_deps.sql",
+      "original_file": "functional_deps.sql"
+    },
+    {
+      "name": "generated_stored",
+      "file": "core/generated_stored.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/generated_stored.sql",
+      "original_file": "generated_stored.sql"
+    },
+    {
+      "name": "generated_virtual",
+      "file": "core/generated_virtual.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/generated_virtual.sql",
+      "original_file": "generated_virtual.sql"
+    },
+    {
+      "name": "geometry",
+      "file": "core/geometry.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/geometry.sql",
+      "original_file": "geometry.sql"
+    },
+    {
+      "name": "gin",
+      "file": "core/gin.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/gin.sql",
+      "original_file": "gin.sql"
+    },
+    {
+      "name": "gist",
+      "file": "core/gist.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/gist.sql",
+      "original_file": "gist.sql"
+    },
+    {
+      "name": "groupingsets",
+      "file": "core/groupingsets.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/groupingsets.sql",
+      "original_file": "groupingsets.sql"
+    },
+    {
+      "name": "guc",
+      "file": "core/guc.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/guc.sql",
+      "original_file": "guc.sql"
+    },
+    {
+      "name": "hash_func",
+      "file": "core/hash_func.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/hash_func.sql",
+      "original_file": "hash_func.sql"
+    },
+    {
+      "name": "hash_index",
+      "file": "core/hash_index.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/hash_index.sql",
+      "original_file": "hash_index.sql"
+    },
+    {
+      "name": "hash_part",
+      "file": "core/hash_part.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/hash_part.sql",
+      "original_file": "hash_part.sql"
+    },
+    {
+      "name": "horology",
+      "file": "core/horology.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/horology.sql",
+      "original_file": "horology.sql"
+    },
+    {
+      "name": "identity",
+      "file": "core/identity.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/identity.sql",
+      "original_file": "identity.sql"
+    },
+    {
+      "name": "incremental_sort",
+      "file": "core/incremental_sort.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/incremental_sort.sql",
+      "original_file": "incremental_sort.sql"
+    },
+    {
+      "name": "index_including",
+      "file": "core/index_including.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/index_including.sql",
+      "original_file": "index_including.sql"
+    },
+    {
+      "name": "index_including_gist",
+      "file": "core/index_including_gist.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/index_including_gist.sql",
+      "original_file": "index_including_gist.sql"
+    },
+    {
+      "name": "indexing",
+      "file": "core/indexing.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/indexing.sql",
+      "original_file": "indexing.sql"
+    },
+    {
+      "name": "indirect_toast",
+      "file": "core/indirect_toast.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/indirect_toast.sql",
+      "original_file": "indirect_toast.sql"
+    },
+    {
+      "name": "inet",
+      "file": "core/inet.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/inet.sql",
+      "original_file": "inet.sql"
+    },
+    {
+      "name": "infinite_recurse",
+      "file": "core/infinite_recurse.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/infinite_recurse.sql",
+      "original_file": "infinite_recurse.sql"
+    },
+    {
+      "name": "inherit",
+      "file": "core/inherit.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/inherit.sql",
+      "original_file": "inherit.sql"
+    },
+    {
+      "name": "init_privs",
+      "file": "core/init_privs.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/init_privs.sql",
+      "original_file": "init_privs.sql"
+    },
+    {
+      "name": "insert",
+      "file": "core/insert.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/insert.sql",
+      "original_file": "insert.sql"
+    },
+    {
+      "name": "insert_conflict",
+      "file": "core/insert_conflict.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/insert_conflict.sql",
+      "original_file": "insert_conflict.sql"
+    },
+    {
+      "name": "int2",
+      "file": "core/int2.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/int2.sql",
+      "original_file": "int2.sql"
+    },
+    {
+      "name": "int4",
+      "file": "core/int4.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/int4.sql",
+      "original_file": "int4.sql"
+    },
+    {
+      "name": "int8",
+      "file": "core/int8.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/int8.sql",
+      "original_file": "int8.sql"
+    },
+    {
+      "name": "interval",
+      "file": "core/interval.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/interval.sql",
+      "original_file": "interval.sql"
+    },
+    {
+      "name": "join",
+      "file": "core/join.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/join.sql",
+      "original_file": "join.sql"
+    },
+    {
+      "name": "join_hash",
+      "file": "core/join_hash.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/join_hash.sql",
+      "original_file": "join_hash.sql"
+    },
+    {
+      "name": "json",
+      "file": "core/json.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/json.sql",
+      "original_file": "json.sql"
+    },
+    {
+      "name": "json_encoding",
+      "file": "core/json_encoding.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/json_encoding.sql",
+      "original_file": "json_encoding.sql"
+    },
+    {
+      "name": "jsonb",
+      "file": "core/jsonb.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/jsonb.sql",
+      "original_file": "jsonb.sql"
+    },
+    {
+      "name": "jsonb_jsonpath",
+      "file": "core/jsonb_jsonpath.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/jsonb_jsonpath.sql",
+      "original_file": "jsonb_jsonpath.sql"
+    },
+    {
+      "name": "jsonpath",
+      "file": "core/jsonpath.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/jsonpath.sql",
+      "original_file": "jsonpath.sql"
+    },
+    {
+      "name": "jsonpath_encoding",
+      "file": "core/jsonpath_encoding.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/jsonpath_encoding.sql",
+      "original_file": "jsonpath_encoding.sql"
+    },
+    {
+      "name": "largeobject",
+      "file": "core/largeobject.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/largeobject.sql",
+      "original_file": "largeobject.sql"
+    },
+    {
+      "name": "limit",
+      "file": "core/limit.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/limit.sql",
+      "original_file": "limit.sql"
+    },
+    {
+      "name": "line",
+      "file": "core/line.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/line.sql",
+      "original_file": "line.sql"
+    },
+    {
+      "name": "lock",
+      "file": "core/lock.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/lock.sql",
+      "original_file": "lock.sql"
+    },
+    {
+      "name": "lseg",
+      "file": "core/lseg.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/lseg.sql",
+      "original_file": "lseg.sql"
+    },
+    {
+      "name": "macaddr",
+      "file": "core/macaddr.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/macaddr.sql",
+      "original_file": "macaddr.sql"
+    },
+    {
+      "name": "macaddr8",
+      "file": "core/macaddr8.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/macaddr8.sql",
+      "original_file": "macaddr8.sql"
+    },
+    {
+      "name": "maintain_every",
+      "file": "core/maintain_every.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/maintain_every.sql",
+      "original_file": "maintain_every.sql"
+    },
+    {
+      "name": "matview",
+      "file": "core/matview.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/matview.sql",
+      "original_file": "matview.sql"
+    },
+    {
+      "name": "md5",
+      "file": "core/md5.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/md5.sql",
+      "original_file": "md5.sql"
+    },
+    {
+      "name": "memoize",
+      "file": "core/memoize.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/memoize.sql",
+      "original_file": "memoize.sql"
+    },
+    {
+      "name": "merge",
+      "file": "core/merge.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/merge.sql",
+      "original_file": "merge.sql"
+    },
+    {
+      "name": "misc",
+      "file": "core/misc.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/misc.sql",
+      "original_file": "misc.sql"
+    },
+    {
+      "name": "misc_functions",
+      "file": "core/misc_functions.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/misc_functions.sql",
+      "original_file": "misc_functions.sql"
+    },
+    {
+      "name": "misc_sanity",
+      "file": "core/misc_sanity.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/misc_sanity.sql",
+      "original_file": "misc_sanity.sql"
+    },
+    {
+      "name": "money",
+      "file": "core/money.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/money.sql",
+      "original_file": "money.sql"
+    },
+    {
+      "name": "multirangetypes",
+      "file": "core/multirangetypes.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/multirangetypes.sql",
+      "original_file": "multirangetypes.sql"
+    },
+    {
+      "name": "mvcc",
+      "file": "core/mvcc.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/mvcc.sql",
+      "original_file": "mvcc.sql"
+    },
+    {
+      "name": "name",
+      "file": "core/name.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/name.sql",
+      "original_file": "name.sql"
+    },
+    {
+      "name": "namespace",
+      "file": "core/namespace.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/namespace.sql",
+      "original_file": "namespace.sql"
+    },
+    {
+      "name": "nls",
+      "file": "core/nls.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/nls.sql",
+      "original_file": "nls.sql"
+    },
+    {
+      "name": "numa",
+      "file": "core/numa.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/numa.sql",
+      "original_file": "numa.sql"
+    },
+    {
+      "name": "numeric",
+      "file": "core/numeric.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/numeric.sql",
+      "original_file": "numeric.sql"
+    },
+    {
+      "name": "numeric_big",
+      "file": "core/numeric_big.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/numeric_big.sql",
+      "original_file": "numeric_big.sql"
+    },
+    {
+      "name": "numerology",
+      "file": "core/numerology.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/numerology.sql",
+      "original_file": "numerology.sql"
+    },
+    {
+      "name": "object_address",
+      "file": "core/object_address.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/object_address.sql",
+      "original_file": "object_address.sql"
+    },
+    {
+      "name": "oid",
+      "file": "core/oid.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/oid.sql",
+      "original_file": "oid.sql"
+    },
+    {
+      "name": "oidjoins",
+      "file": "core/oidjoins.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/oidjoins.sql",
+      "original_file": "oidjoins.sql"
+    },
+    {
+      "name": "opr_sanity",
+      "file": "core/opr_sanity.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/opr_sanity.sql",
+      "original_file": "opr_sanity.sql"
+    },
+    {
+      "name": "partition_aggregate",
+      "file": "core/partition_aggregate.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/partition_aggregate.sql",
+      "original_file": "partition_aggregate.sql"
+    },
+    {
+      "name": "partition_info",
+      "file": "core/partition_info.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/partition_info.sql",
+      "original_file": "partition_info.sql"
+    },
+    {
+      "name": "partition_join",
+      "file": "core/partition_join.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/partition_join.sql",
+      "original_file": "partition_join.sql"
+    },
+    {
+      "name": "partition_merge",
+      "file": "core/partition_merge.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/partition_merge.sql",
+      "original_file": "partition_merge.sql"
+    },
+    {
+      "name": "partition_prune",
+      "file": "core/partition_prune.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/partition_prune.sql",
+      "original_file": "partition_prune.sql"
+    },
+    {
+      "name": "partition_split",
+      "file": "core/partition_split.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/partition_split.sql",
+      "original_file": "partition_split.sql"
+    },
+    {
+      "name": "password",
+      "file": "core/password.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/password.sql",
+      "original_file": "password.sql"
+    },
+    {
+      "name": "path",
+      "file": "core/path.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/path.sql",
+      "original_file": "path.sql"
+    },
+    {
+      "name": "pg_dependencies",
+      "file": "core/pg_dependencies.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/pg_dependencies.sql",
+      "original_file": "pg_dependencies.sql"
+    },
+    {
+      "name": "pg_lsn",
+      "file": "core/pg_lsn.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/pg_lsn.sql",
+      "original_file": "pg_lsn.sql"
+    },
+    {
+      "name": "pg_ndistinct",
+      "file": "core/pg_ndistinct.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/pg_ndistinct.sql",
+      "original_file": "pg_ndistinct.sql"
+    },
+    {
+      "name": "plancache",
+      "file": "core/plancache.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/plancache.sql",
+      "original_file": "plancache.sql"
+    },
+    {
+      "name": "plpgsql",
+      "file": "core/plpgsql.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/plpgsql.sql",
+      "original_file": "plpgsql.sql"
+    },
+    {
+      "name": "point",
+      "file": "core/point.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/point.sql",
+      "original_file": "point.sql"
+    },
+    {
+      "name": "polygon",
+      "file": "core/polygon.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/polygon.sql",
+      "original_file": "polygon.sql"
+    },
+    {
+      "name": "polymorphism",
+      "file": "core/polymorphism.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/polymorphism.sql",
+      "original_file": "polymorphism.sql"
+    },
+    {
+      "name": "portals",
+      "file": "core/portals.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/portals.sql",
+      "original_file": "portals.sql"
+    },
+    {
+      "name": "portals_p2",
+      "file": "core/portals_p2.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/portals_p2.sql",
+      "original_file": "portals_p2.sql"
+    },
+    {
+      "name": "predicate",
+      "file": "core/predicate.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/predicate.sql",
+      "original_file": "predicate.sql"
+    },
+    {
+      "name": "prepare",
+      "file": "core/prepare.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/prepare.sql",
+      "original_file": "prepare.sql"
+    },
+    {
+      "name": "prepared_xacts",
+      "file": "core/prepared_xacts.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/prepared_xacts.sql",
+      "original_file": "prepared_xacts.sql"
+    },
+    {
+      "name": "privileges",
+      "file": "core/privileges.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/privileges.sql",
+      "original_file": "privileges.sql"
+    },
+    {
+      "name": "psql",
+      "file": "core/psql.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/psql.sql",
+      "original_file": "psql.sql"
+    },
+    {
+      "name": "psql_crosstab",
+      "file": "core/psql_crosstab.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/psql_crosstab.sql",
+      "original_file": "psql_crosstab.sql"
+    },
+    {
+      "name": "psql_pipeline",
+      "file": "core/psql_pipeline.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/psql_pipeline.sql",
+      "original_file": "psql_pipeline.sql"
+    },
+    {
+      "name": "publication",
+      "file": "core/publication.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/publication.sql",
+      "original_file": "publication.sql"
+    },
+    {
+      "name": "random",
+      "file": "core/random.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/random.sql",
+      "original_file": "random.sql"
+    },
+    {
+      "name": "rangefuncs",
+      "file": "core/rangefuncs.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/rangefuncs.sql",
+      "original_file": "rangefuncs.sql"
+    },
+    {
+      "name": "rangetypes",
+      "file": "core/rangetypes.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/rangetypes.sql",
+      "original_file": "rangetypes.sql"
+    },
+    {
+      "name": "regex",
+      "file": "core/regex.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/regex.sql",
+      "original_file": "regex.sql"
+    },
+    {
+      "name": "regproc",
+      "file": "core/regproc.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/regproc.sql",
+      "original_file": "regproc.sql"
+    },
+    {
+      "name": "reindex_catalog",
+      "file": "core/reindex_catalog.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/reindex_catalog.sql",
+      "original_file": "reindex_catalog.sql"
+    },
+    {
+      "name": "reloptions",
+      "file": "core/reloptions.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/reloptions.sql",
+      "original_file": "reloptions.sql"
+    },
+    {
+      "name": "replica_identity",
+      "file": "core/replica_identity.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/replica_identity.sql",
+      "original_file": "replica_identity.sql"
+    },
+    {
+      "name": "returning",
+      "file": "core/returning.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/returning.sql",
+      "original_file": "returning.sql"
+    },
+    {
+      "name": "roleattributes",
+      "file": "core/roleattributes.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/roleattributes.sql",
+      "original_file": "roleattributes.sql"
+    },
+    {
+      "name": "rowsecurity",
+      "file": "core/rowsecurity.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/rowsecurity.sql",
+      "original_file": "rowsecurity.sql"
+    },
+    {
+      "name": "rowtypes",
+      "file": "core/rowtypes.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/rowtypes.sql",
+      "original_file": "rowtypes.sql"
+    },
+    {
+      "name": "rules",
+      "file": "core/rules.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/rules.sql",
+      "original_file": "rules.sql"
+    },
+    {
+      "name": "sanity_check",
+      "file": "core/sanity_check.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/sanity_check.sql",
+      "original_file": "sanity_check.sql"
+    },
+    {
+      "name": "security_label",
+      "file": "core/security_label.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/security_label.sql",
+      "original_file": "security_label.sql"
+    },
+    {
+      "name": "select",
+      "file": "core/select.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/select.sql",
+      "original_file": "select.sql"
+    },
+    {
+      "name": "select_distinct",
+      "file": "core/select_distinct.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/select_distinct.sql",
+      "original_file": "select_distinct.sql"
+    },
+    {
+      "name": "select_distinct_on",
+      "file": "core/select_distinct_on.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/select_distinct_on.sql",
+      "original_file": "select_distinct_on.sql"
+    },
+    {
+      "name": "select_having",
+      "file": "core/select_having.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/select_having.sql",
+      "original_file": "select_having.sql"
+    },
+    {
+      "name": "select_implicit",
+      "file": "core/select_implicit.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/select_implicit.sql",
+      "original_file": "select_implicit.sql"
+    },
+    {
+      "name": "select_into",
+      "file": "core/select_into.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/select_into.sql",
+      "original_file": "select_into.sql"
+    },
+    {
+      "name": "select_parallel",
+      "file": "core/select_parallel.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/select_parallel.sql",
+      "original_file": "select_parallel.sql"
+    },
+    {
+      "name": "select_views",
+      "file": "core/select_views.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/select_views.sql",
+      "original_file": "select_views.sql"
+    },
+    {
+      "name": "sequence",
+      "file": "core/sequence.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/sequence.sql",
+      "original_file": "sequence.sql"
+    },
+    {
+      "name": "spgist",
+      "file": "core/spgist.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/spgist.sql",
+      "original_file": "spgist.sql"
+    },
+    {
+      "name": "sqljson",
+      "file": "core/sqljson.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/sqljson.sql",
+      "original_file": "sqljson.sql"
+    },
+    {
+      "name": "sqljson_jsontable",
+      "file": "core/sqljson_jsontable.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/sqljson_jsontable.sql",
+      "original_file": "sqljson_jsontable.sql"
+    },
+    {
+      "name": "sqljson_queryfuncs",
+      "file": "core/sqljson_queryfuncs.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/sqljson_queryfuncs.sql",
+      "original_file": "sqljson_queryfuncs.sql"
+    },
+    {
+      "name": "stats",
+      "file": "core/stats.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/stats.sql",
+      "original_file": "stats.sql"
+    },
+    {
+      "name": "stats_ext",
+      "file": "core/stats_ext.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/stats_ext.sql",
+      "original_file": "stats_ext.sql"
+    },
+    {
+      "name": "stats_import",
+      "file": "core/stats_import.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/stats_import.sql",
+      "original_file": "stats_import.sql"
+    },
+    {
+      "name": "stats_rewrite",
+      "file": "core/stats_rewrite.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/stats_rewrite.sql",
+      "original_file": "stats_rewrite.sql"
+    },
+    {
+      "name": "strings",
+      "file": "core/strings.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/strings.sql",
+      "original_file": "strings.sql"
+    },
+    {
+      "name": "subscription",
+      "file": "core/subscription.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/subscription.sql",
+      "original_file": "subscription.sql"
+    },
+    {
+      "name": "subselect",
+      "file": "core/subselect.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/subselect.sql",
+      "original_file": "subselect.sql"
+    },
+    {
+      "name": "sysviews",
+      "file": "core/sysviews.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/sysviews.sql",
+      "original_file": "sysviews.sql"
+    },
+    {
+      "name": "tablesample",
+      "file": "core/tablesample.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/tablesample.sql",
+      "original_file": "tablesample.sql"
+    },
+    {
+      "name": "tablespace",
+      "file": "core/tablespace.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/tablespace.sql",
+      "original_file": "tablespace.sql"
+    },
+    {
+      "name": "temp",
+      "file": "core/temp.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/temp.sql",
+      "original_file": "temp.sql"
+    },
+    {
+      "name": "test_setup",
+      "file": "core/test_setup.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/test_setup.sql",
+      "original_file": "test_setup.sql"
+    },
+    {
+      "name": "text",
+      "file": "core/text.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/text.sql",
+      "original_file": "text.sql"
+    },
+    {
+      "name": "tid",
+      "file": "core/tid.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/tid.sql",
+      "original_file": "tid.sql"
+    },
+    {
+      "name": "tidrangescan",
+      "file": "core/tidrangescan.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/tidrangescan.sql",
+      "original_file": "tidrangescan.sql"
+    },
+    {
+      "name": "tidscan",
+      "file": "core/tidscan.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/tidscan.sql",
+      "original_file": "tidscan.sql"
+    },
+    {
+      "name": "time",
+      "file": "core/time.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/time.sql",
+      "original_file": "time.sql"
+    },
+    {
+      "name": "timestamp",
+      "file": "core/timestamp.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/timestamp.sql",
+      "original_file": "timestamp.sql"
+    },
+    {
+      "name": "timestamptz",
+      "file": "core/timestamptz.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/timestamptz.sql",
+      "original_file": "timestamptz.sql"
+    },
+    {
+      "name": "timetz",
+      "file": "core/timetz.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/timetz.sql",
+      "original_file": "timetz.sql"
+    },
+    {
+      "name": "transactions",
+      "file": "core/transactions.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/transactions.sql",
+      "original_file": "transactions.sql"
+    },
+    {
+      "name": "triggers",
+      "file": "core/triggers.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/triggers.sql",
+      "original_file": "triggers.sql"
+    },
+    {
+      "name": "truncate",
+      "file": "core/truncate.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/truncate.sql",
+      "original_file": "truncate.sql"
+    },
+    {
+      "name": "tsdicts",
+      "file": "core/tsdicts.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/tsdicts.sql",
+      "original_file": "tsdicts.sql"
+    },
+    {
+      "name": "tsearch",
+      "file": "core/tsearch.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/tsearch.sql",
+      "original_file": "tsearch.sql"
+    },
+    {
+      "name": "tsrf",
+      "file": "core/tsrf.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/tsrf.sql",
+      "original_file": "tsrf.sql"
+    },
+    {
+      "name": "tstypes",
+      "file": "core/tstypes.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/tstypes.sql",
+      "original_file": "tstypes.sql"
+    },
+    {
+      "name": "tuplesort",
+      "file": "core/tuplesort.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/tuplesort.sql",
+      "original_file": "tuplesort.sql"
+    },
+    {
+      "name": "txid",
+      "file": "core/txid.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/txid.sql",
+      "original_file": "txid.sql"
+    },
+    {
+      "name": "type_sanity",
+      "file": "core/type_sanity.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/type_sanity.sql",
+      "original_file": "type_sanity.sql"
+    },
+    {
+      "name": "typed_table",
+      "file": "core/typed_table.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/typed_table.sql",
+      "original_file": "typed_table.sql"
+    },
+    {
+      "name": "unicode",
+      "file": "core/unicode.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/unicode.sql",
+      "original_file": "unicode.sql"
+    },
+    {
+      "name": "union",
+      "file": "core/union.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/union.sql",
+      "original_file": "union.sql"
+    },
+    {
+      "name": "updatable_views",
+      "file": "core/updatable_views.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/updatable_views.sql",
+      "original_file": "updatable_views.sql"
+    },
+    {
+      "name": "update",
+      "file": "core/update.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/update.sql",
+      "original_file": "update.sql"
+    },
+    {
+      "name": "uuid",
+      "file": "core/uuid.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/uuid.sql",
+      "original_file": "uuid.sql"
+    },
+    {
+      "name": "vacuum",
+      "file": "core/vacuum.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/vacuum.sql",
+      "original_file": "vacuum.sql"
+    },
+    {
+      "name": "vacuum_parallel",
+      "file": "core/vacuum_parallel.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/vacuum_parallel.sql",
+      "original_file": "vacuum_parallel.sql"
+    },
+    {
+      "name": "varchar",
+      "file": "core/varchar.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/varchar.sql",
+      "original_file": "varchar.sql"
+    },
+    {
+      "name": "window",
+      "file": "core/window.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/window.sql",
+      "original_file": "window.sql"
+    },
+    {
+      "name": "with",
+      "file": "core/with.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/with.sql",
+      "original_file": "with.sql"
+    },
+    {
+      "name": "without_overlaps",
+      "file": "core/without_overlaps.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/without_overlaps.sql",
+      "original_file": "without_overlaps.sql"
+    },
+    {
+      "name": "write_parallel",
+      "file": "core/write_parallel.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/write_parallel.sql",
+      "original_file": "write_parallel.sql"
+    },
+    {
+      "name": "xid",
+      "file": "core/xid.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/xid.sql",
+      "original_file": "xid.sql"
+    },
+    {
+      "name": "xml",
+      "file": "core/xml.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/xml.sql",
+      "original_file": "xml.sql"
+    },
+    {
+      "name": "xmlmap",
+      "file": "core/xmlmap.sql",
+      "category": "core",
+      "path": "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/core/xmlmap.sql",
+      "original_file": "xmlmap.sql"
+    }
+  ],
+  "statistics": {
+    "total_tests": 238,
+    "total_categories": 1
+  }
+}

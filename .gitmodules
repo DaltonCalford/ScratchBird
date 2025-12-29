@@ -1,3 +1,9 @@
 [submodule "tests/compatibility/firebird/repos/fbt-repository"]
 	path = tests/compatibility/firebird/repos/fbt-repository
 	url = https://github.com/FirebirdSQL/fbt-repository.git
+[submodule "tests/compatibility/mysql/repos/mysql-server"]
+	path = tests/compatibility/mysql/repos/mysql-server
+	url = https://github.com/mysql/mysql-server.git
+[submodule "tests/compatibility/postgresql/repos/postgres"]
+	path = tests/compatibility/postgresql/repos/postgres
+	url = https://github.com/postgres/postgres.git

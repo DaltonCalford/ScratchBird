@@ -1,0 +1,107 @@
+# Firebird Compatibility Tests
+
+This directory contains converted Firebird compatibility tests from the official [fbt-repository](https://github.com/FirebirdSQL/fbt-repository).
+
+## Statistics
+
+- **Total Tests:** 2,826 SQL test files
+- **Categories:** 39 test categories
+- **Original Format:** .fbt (Python-based test files)
+- **Source Repository:** FirebirdSQL/fbt-repository
+
+## Directory Structure
+
+```
+firebird/
+├── repos/
+│   └── fbt-repository/          # Git submodule with original .fbt tests
+├── converted/                    # Converted SQL test files
+│   ├── bugs/                    # Bug regression tests
+│   ├── functional/              # Functional tests organized by feature
+│   │   ├── arno/               # Arno Brinkman's tests
+│   │   ├── basic/              # Basic SQL functionality
+│   │   ├── datatypes/          # Data type tests
+│   │   ├── dml/                # DML tests (SELECT, INSERT, UPDATE, DELETE)
+│   │   ├── domain/             # Domain tests
+│   │   ├── index/              # Index tests
+│   │   ├── procedure/          # Stored procedure tests
+│   │   └── [other features]/
+│   └── [other categories]/
+├── expected/                     # Expected output files
+├── scripts/
+│   └── convert_fbt_to_sql.py   # Conversion script
+└── config/
+    └── test_manifest.json       # Test catalog
+
+## Test Categories
+
+The converted tests are organized into 39 categories including:
+
+- **bugs/** - Bug regression tests (CORE-xxxx trackers)
+- **functional/basic/** - Basic SQL functionality
+- **functional/datatypes/** - Data type tests
+- **functional/dml/** - DML operations
+- **functional/domain/** - Domain DDL and usage
+- **functional/index/** - Index creation and usage
+- **functional/procedure/** - Stored procedures
+- **functional/trigger/** - Triggers
+- **functional/view/** - Views
+- And many more...
+
+## Running Tests
+
+**Prerequisites:** The `sb_fb_isql` client must be built first (see [Plan 06](/docs/planning/PLAN_06_DEDICATED_ISQL_CLIENTS.md)).
+
+Once `sb_fb_isql` is available:
+
+```bash
+# Run a single test
+sb_fb_isql -user SYSDBA -password masterkey \
+  /remote/emulated/firebird/localhost/testdb.fdb \
+  -input converted/bugs/core_0001_v3_0.sql \
+  -output results/core_0001.out
+
+# Run all tests in a category
+for test in converted/functional/basic/*.sql; do
+  sb_fb_isql -user SYSDBA -password masterkey \
+    /remote/emulated/firebird/localhost/testdb.fdb \
+    -input "$test" \
+    -output "results/$(basename $test .sql).out"
+done
+```
+
+## Test Format
+
+Each converted SQL file contains:
+- Metadata header with test ID, title, and description
+- Optional init script (DDL to set up test environment)
+- Test script (the actual SQL to execute)
+
+Expected output files (when available) are in the `expected/` directory.
+
+## Conversion Notes
+
+- Original .fbt files are Python dictionaries containing test definitions
+- Some .fbt files contain multiple test variants for different Firebird versions
+- Each variant is converted to a separate SQL file (e.g., `test_v2_5.sql`, `test_v3_0.sql`)
+- 21 .fbt files failed conversion (malformed or unsupported format) - see conversion report
+
+## Test Manifest
+
+The `config/test_manifest.json` file contains:
+- Complete test inventory with metadata
+- Category organization
+- Test statistics
+- File paths and test IDs
+
+## Sources
+
+- **Firebird Test Repository:** https://github.com/FirebirdSQL/fbt-repository
+- **Firebird QA Tools:** https://github.com/FirebirdSQL/firebird-qa
+- **Conversion Script:** `scripts/convert_fbt_to_sql.py`
+
+## Related Documentation
+
+- [Plan 06: Dedicated ISQL Clients](/docs/planning/PLAN_06_DEDICATED_ISQL_CLIENTS.md)
+- [Plan 06: Test Automation Design](/docs/planning/PLAN_06_TEST_AUTOMATION_DESIGN.md)
+- [SQL Compatibility Test Repositories](/docs/findings/SQL_COMPATIBILITY_TEST_REPOSITORIES.md)

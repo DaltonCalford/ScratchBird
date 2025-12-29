@@ -102,3 +102,7 @@ venv/
 /*.wip
 /ANALYSIS_*.md
 /AUDIT_*.md
+
+# Compatibility test converted files (regenerable from scripts)
+/tests/compatibility/*/converted/
+/tests/compatibility/*/expected/
