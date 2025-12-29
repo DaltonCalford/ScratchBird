@@ -6,6 +6,12 @@ Design Goal: < 50 Reserved Words.
 
 Key Feature: Recursive Schema Navigation (Filesystem Metaphor).
 
+Parser Model:
+- ScratchBird V2 is the primary/core parser and supports ALL engine functionality.
+- Emulated parsers (Firebird, PostgreSQL, MySQL) are separate front-ends that only implement the
+  subset supported by their native engines.
+- The engine executes only SBLR; parsers emit SBLR and remain isolated.
+
 ---
 
 ## Related Specifications

@@ -33,6 +33,11 @@
 The V2 parser serves as documentation for how to generate correct SBLR bytecode.
 Copy the patterns, not the code.
 
+**Clarification:**
+- ScratchBird V2 is the primary/core parser and supports ALL engine functionality.
+- Emulated parsers are separate and must only implement the subset supported by their native engines.
+- The engine executes only SBLR; parsers are isolated front-ends that generate it.
+
 ### Rule 2: No V1 Parser Usage
 **The V1 parser is deprecated and being removed.**
 

@@ -1,0 +1,3 @@
+[submodule "tests/compatibility/firebird/repos/fbt-repository"]
+	path = tests/compatibility/firebird/repos/fbt-repository
+	url = https://github.com/FirebirdSQL/fbt-repository.git
