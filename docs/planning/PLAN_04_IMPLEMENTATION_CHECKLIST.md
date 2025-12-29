@@ -16,6 +16,7 @@ Plan 04 implementation is **BLOCKED** by missing Schema/Database DDL infrastruct
 - ❌ CREATE/DROP DATABASE opcodes do not exist
 - ❌ PostgreSQL/MySQL/Firebird parsers have broken/missing schema DDL
 - ❌ No executor handlers for schema/database operations
+- ❌ Emulation schema path normalization is unresolved (emulation.* vs remote.emulated.* and dot vs slash paths)
 
 **Impact:**
 - Domains are schema-scoped; cannot test without working schema creation
@@ -23,7 +24,7 @@ Plan 04 implementation is **BLOCKED** by missing Schema/Database DDL infrastruct
 - PostgreSQL parser generates corrupt SBLR bytecode
 
 **Resolution Required:**
-- Plan 02B (Schema/Database DDL) must be completed first, OR
+- Plan 02B (Schema/Database DDL) must be completed first (see `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`), OR
 - Minimal schema opcodes must be implemented in Plan 04 scope
 
 **See:** `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md` for full analysis

@@ -125,6 +125,25 @@
 
 ---
 
+### 🔴 BLOCKER #2: Emulation Schema Path Normalization
+
+**Status:** BLOCKING - Must resolve before any emulation DDL work
+**Severity:** CRITICAL
+**Discovered:** 2025-12-28 (audit)
+
+**Problem:**
+- Plans and adapters assume `remote.emulated.<dialect>.<server>.<db>`
+- Catalog defaults include `emulation.<dialect>` under root
+- MySQL parser/compiler uses slash paths (`/remote/emulated/mysql/...`)
+- Catalog schema lookup splits by dot path, so dotted names created as a single schema are not discoverable
+
+**Resolution Required:**
+- Decide canonical emulation path format in Plan 02B and update adapters, parsers, and catalog usage.
+
+**Detailed Analysis:** `docs/audit/AUDIT_SCHEMA_DATABASE_DDL_GAP.md`
+
+---
+
 ## Prerequisites Status
 
 ### Plan 03B: Domain Infrastructure (138-192 hours)
@@ -142,7 +161,7 @@
 
 ### Plan 02B: Schema/Database DDL (60-80 hours)
 
-**Status:** UNKNOWN - Assigned to other AI
+**Status:** DRAFT - See `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`
 **Critical For:** Plan 04 testing capability
 
 **Key Components Needed:**
@@ -154,7 +173,7 @@
 - MySQL parser implementation
 - Firebird parser implementation
 
-**Waiting For:** Other AI team completion
+**Waiting For:** Plan 02B execution and path decision
 
 ---
 

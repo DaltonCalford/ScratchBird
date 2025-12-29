@@ -8,6 +8,11 @@ Key Feature: Recursive Schema Navigation (Filesystem Metaphor).
 
 ---
 
+## Related Specifications
+- `docs/specifications/SCHEMA_PATH_RESOLUTION.md`
+
+---
+
 ## 1. Lexical Specification
 
 ### 1.1 The Gatekeepers (Strictly Reserved)

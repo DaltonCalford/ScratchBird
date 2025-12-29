@@ -8,6 +8,11 @@
 
 ---
 
+## References
+- `docs/specifications/SCHEMA_PATH_RESOLUTION.md`
+
+---
+
 ## ABSOLUTE RULES (DO NOT VIOLATE)
 
 ### Rule 1: Parser Independence
@@ -141,6 +146,9 @@ src/parser/postgresql/
 ### Schema-Based Emulation
 
 Emulated databases are implemented as **schemas within ScratchBird**, not separate physical databases.
+
+See `docs/specifications/SCHEMA_PATH_RESOLUTION.md` for authoritative path resolution rules
+and relative/absolute semantics.
 
 ```
 ScratchBird Database (single .sbdb file)

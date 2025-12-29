@@ -17,6 +17,7 @@ P0 (Alpha requirement).
 
 ## Decisions / Constraints (Resolved)
 - Emulated databases live under schema path `remote.emulated.firebird.<server>.<db>` (full path `/remote/emulated/firebird/<server>/<db>`).
+  - Audit note (2025-12-28): catalog defaults and parsers use other path formats; the canonical path decision is pending in `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`.
 - RDB$, MON$, SEC$ catalogs must be cluster-safe and scoped to the emulated DB.
 - Firebird SHOW commands remain **client-side** (isql); server rejects SHOW statements.
 - Auth methods required in Alpha: SRP and legacy.

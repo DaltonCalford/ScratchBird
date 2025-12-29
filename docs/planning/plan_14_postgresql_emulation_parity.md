@@ -19,6 +19,7 @@ P0 (Alpha requirement).
 
 ## Decisions / Constraints (Resolved)
 - Emulated databases live under schema path `remote.emulated.postgresql.<server>.<db>` (full path `/remote/emulated/postgresql/<server>/<db>`).
+  - Audit note (2025-12-28): catalog defaults and parsers use other path formats; the canonical path decision is pending in `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`.
 - On emulated DB creation/connection, create pg_catalog and information_schema views scoped to that DB only.
 - Views must **appear as tables** where PostgreSQL expects tables (pg_class.relkind etc must reflect base tables).
 - Auth methods required in Alpha: MD5 and SCRAM-SHA-256.

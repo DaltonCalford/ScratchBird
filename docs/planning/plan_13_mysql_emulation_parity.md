@@ -19,6 +19,7 @@ P0 (Alpha requirement).
 
 ## Decisions / Constraints (Resolved)
 - Emulated databases live under schema path `remote.emulated.mysql.<server>.<db>` (full path `/remote/emulated/mysql/<server>/<db>`). The server name is part of the path to avoid collisions.
+  - Audit note (2025-12-28): catalog defaults and parsers use other path formats; the canonical path decision is pending in `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`.
 - On emulated database creation/connection, create catalog views scoped to that database only (no cross-database leakage).
 - Catalog objects implemented as views must **appear as tables** where MySQL expects tables (use metadata overrides in the emulated catalogs).
 - MySQL user identity is `(user, host)` (host-specific user records). Host-specific auth precedence and wildcard matching must be honored.

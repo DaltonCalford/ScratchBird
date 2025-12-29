@@ -1096,6 +1096,8 @@ uint32_t toast_threshold(uint32_t page_size) {
 3. Add relative/absolute path parsing
 4. Update all schema lookups
 
+Reference: `docs/specifications/SCHEMA_PATH_RESOLUTION.md`
+
 **Estimated Effort**: 20-30 hours
 
 **Dependencies**: Phase 1 complete

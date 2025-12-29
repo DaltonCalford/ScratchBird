@@ -1841,6 +1841,8 @@ namespace scratchbird
                 return core::Status::INTERNAL_ERROR;
             }
 
+            // Resolution rules (current/search path, relative vs absolute) are defined in
+            // docs/specifications/SCHEMA_PATH_RESOLUTION.md and should be normalized by the parser.
             std::string root_path;
             bool enforce_root = false;
             if (conn_ctx_)
@@ -1984,6 +1986,7 @@ namespace scratchbird
             std::string schema_path;
             if (qualified_name.find('/') != std::string::npos)
             {
+                // Normalize slash-delimited schema paths to dot-delimited paths.
                 std::vector<std::string> components;
                 size_t start = 0;
                 while (start < qualified_name.size())

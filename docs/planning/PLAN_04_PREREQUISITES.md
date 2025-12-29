@@ -36,6 +36,11 @@ Domains are **schema-scoped**, but the SBLR opcodes for CREATE/DROP SCHEMA and C
 - ❌ Firebird has no CREATE DATABASE implementation
 - ❌ No executor handlers for schema/database DDL
 
+**Audit update (2025-12-28):**
+- CatalogManager already provides `createSchema`, `createSchemaPath`, and `dropSchema` (restrict-only), plus emulation type/server/database records, but there is no SBLR path to invoke them.
+- Emulation schema path conventions are inconsistent (emulation.* vs remote.emulated.* and dot vs slash paths).
+- `EmulationViewGenerator` APIs do not match CatalogManager and are currently unused.
+
 ### Impact on Plan 04
 
 1. **Cannot test domains** - Domains are schema-scoped; need working schema creation
@@ -47,6 +52,7 @@ Domains are **schema-scoped**, but the SBLR opcodes for CREATE/DROP SCHEMA and C
 **Plan 04 now depends on:**
 - ✅ Plan 03B (WITH block infrastructure) - 138-192 hours
 - ⚠️ **Plan 02B (Schema/Database DDL)** - 60-80 hours **[NEW BLOCKER]**
+  - See `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`
 
 **Total prerequisite work:** 198-272 hours before Plan 04 can proceed
 

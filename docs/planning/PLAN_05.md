@@ -380,7 +380,7 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
    - Permission tables for privilege catalog functions
    - Procedure tables if SQLProcedures needed
 
-3. **Schema/Database DDL** ⚠️ BLOCKED (Plan 02B)
+3. **Schema/Database DDL** ⚠️ BLOCKED (Plan 02B - see `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`)
    - If catalog functions need to query schema metadata
    - May be able to work around with existing catalog
 
@@ -684,7 +684,7 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 - SQL:2023 Standard (for type mappings)
 
 ### Existing ScratchBird Plans
-- Plan 02B: Schema/Database DDL (dependency for catalog functions)
+- Plan 02B: Schema/Database DDL (dependency for catalog functions). See `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`.
 - Plan 03: Authentication/Authorization (used by wire protocol)
 - Plan 04: Domain DDL (affects type system)
 
