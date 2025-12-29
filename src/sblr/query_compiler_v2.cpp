@@ -299,17 +299,76 @@ void QueryCompilerV2::collectDependencies(ResolvedStatement* stmt,
             return;
         }
         std::string seq_name = toString(pool, lit->string_value);
-        core::ID seq_id;
         core::ErrorContext ctx;
-        if (catalog_->getSequenceIdByName(seq_name, seq_id, &ctx) == core::Status::OK) {
-            add(seq_id, core::CatalogManager::ObjectType::SEQUENCE);
+
+        auto parseQualifiedName = [](const std::string& name,
+                                     std::string& schema_path_out,
+                                     std::string& object_name_out) {
+            schema_path_out.clear();
+            object_name_out.clear();
+
+            if (name.find('/') != std::string::npos) {
+                std::vector<std::string> components;
+                size_t start = 0;
+                while (start < name.size()) {
+                    while (start < name.size() && name[start] == '/') {
+                        ++start;
+                    }
+                    if (start >= name.size()) {
+                        break;
+                    }
+                    size_t end = name.find('/', start);
+                    if (end == std::string::npos) {
+                        end = name.size();
+                    }
+                    components.emplace_back(name.substr(start, end - start));
+                    start = end + 1;
+                }
+                if (!components.empty()) {
+                    object_name_out = components.back();
+                    components.pop_back();
+                }
+                if (!components.empty()) {
+                    schema_path_out = components.front();
+                    for (size_t i = 1; i < components.size(); ++i) {
+                        schema_path_out.push_back('.');
+                        schema_path_out.append(components[i]);
+                    }
+                }
+                return;
+            }
+
+            size_t dot_pos = name.rfind('.');
+            if (dot_pos != std::string::npos) {
+                schema_path_out = name.substr(0, dot_pos);
+                object_name_out = name.substr(dot_pos + 1);
+            } else {
+                object_name_out = name;
+            }
+        };
+
+        std::string schema_path;
+        std::string seq_base;
+        parseQualifiedName(seq_name, schema_path, seq_base);
+        if (seq_base.empty()) {
             return;
         }
-        // Try schema-qualified with default schema
+
+        if (!schema_path.empty()) {
+            core::CatalogManager::SchemaInfo schema_info;
+            if (catalog_->getSchema(schema_path, schema_info, &ctx) == core::Status::OK) {
+                core::ID seq_id;
+                if (catalog_->getSequenceIdByName(schema_info.schema_id, seq_base, seq_id, &ctx) == core::Status::OK) {
+                    add(seq_id, core::CatalogManager::ObjectType::SEQUENCE);
+                }
+            }
+            return;
+        }
+
         if (!isZeroUuid(default_schema_)) {
-            core::CatalogManager::SequenceInfo sinfo;
-            if (catalog_->getSequence(default_schema_, seq_name, sinfo, &ctx) == core::Status::OK) {
-                add(sinfo.sequence_id, core::CatalogManager::ObjectType::SEQUENCE);
+            core::ID seq_id;
+            if (catalog_->getSequenceIdByName(default_schema_, seq_base, seq_id, &ctx) == core::Status::OK) {
+                add(seq_id, core::CatalogManager::ObjectType::SEQUENCE);
             }
         }
     };

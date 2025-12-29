@@ -234,6 +234,7 @@ private:
     bool matchKeyword(TokenType kw);
     Token consume(TokenType type, const std::string& message);
     Token consumeKeyword(TokenType kw, const std::string& message);
+    bool matchIdentifierKeyword(const char* keyword);
 
     // Error handling
     void error(const std::string& message);
@@ -263,6 +264,7 @@ private:
     void parseSetStmt();
     void parseShowStmt();
     void parseBeginStmt();
+    void parsePrepareStmt();
     void parseCommitStmt();
     void parseRollbackStmt();
     void parseSavepointStmt();

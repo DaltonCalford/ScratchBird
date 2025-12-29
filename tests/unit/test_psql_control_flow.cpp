@@ -78,6 +78,18 @@ protected:
         }
     }
 
+    void writeExtOpcode(std::vector<uint8_t>& bytecode, uint16_t op)
+    {
+        bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+        bytecode.push_back(static_cast<uint8_t>(op & 0xFF));
+        bytecode.push_back(static_cast<uint8_t>((op >> 8) & 0xFF));
+    }
+
+    void writeExtOpcode(std::vector<uint8_t>& bytecode, ExtendedOpcode op)
+    {
+        writeExtOpcode(bytecode, static_cast<uint16_t>(op));
+    }
+
     // Helper: Generate bytecode for variable declaration
     // Note: Simplified - real implementation would use DECLARE opcode
     void generateDeclareVariable(std::vector<uint8_t>& bytecode,
@@ -89,24 +101,21 @@ protected:
         bytecode.push_back(static_cast<uint8_t>(Opcode::LITERAL_INT64));
         writeInt64(bytecode, value);
 
-        bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-        bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_VAR_STORE));
+        writeExtOpcode(bytecode, ExtendedOpcode::EXT_VAR_STORE);
         writeString(bytecode, name);
     }
 
     // Helper: Generate bytecode for variable load
     void generateVarLoad(std::vector<uint8_t>& bytecode, const std::string& name)
     {
-        bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-        bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_VAR_LOAD));
+        writeExtOpcode(bytecode, ExtendedOpcode::EXT_VAR_LOAD);
         writeString(bytecode, name);
     }
 
     // Helper: Generate bytecode for variable store
     void generateVarStore(std::vector<uint8_t>& bytecode, const std::string& name)
     {
-        bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-        bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_VAR_STORE));
+        writeExtOpcode(bytecode, ExtendedOpcode::EXT_VAR_STORE);
         writeString(bytecode, name);
     }
 
@@ -156,8 +165,7 @@ TEST_F(PSQLControlFlowTest, IfStatementTrueCondition)
     writeInt64(bytecode, 1);  // true
 
     // IF statement
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_IF));
+    writeExtOpcode(bytecode, ExtendedOpcode::EXT_IF);
 
     // False branch offset (jump to ELSE/END IF)
     size_t false_offset_pos = bytecode.size();
@@ -195,8 +203,7 @@ TEST_F(PSQLControlFlowTest, IfStatementFalseCondition)
     writeInt64(bytecode, 0);  // false
 
     // IF statement
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_IF));
+    writeExtOpcode(bytecode, ExtendedOpcode::EXT_IF);
 
     // False branch offset
     size_t false_offset_pos = bytecode.size();
@@ -234,8 +241,7 @@ TEST_F(PSQLControlFlowTest, LoopWithExit)
 
     // LOOP
     size_t loop_start = bytecode.size();
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_LOOP));
+    writeExtOpcode(bytecode, ExtendedOpcode::EXT_LOOP);
 
     // Loop end offset (placeholder)
     size_t loop_end_offset_pos = bytecode.size();
@@ -258,15 +264,13 @@ TEST_F(PSQLControlFlowTest, LoopWithExit)
     bytecode.push_back(static_cast<uint8_t>(Opcode::EXPR_GE));
 
     // EXIT WHEN condition
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_EXIT));
+    writeExtOpcode(bytecode, ExtendedOpcode::EXT_EXIT);
     writeString(bytecode, "");  // No label
     bytecode.push_back(1);  // has_when = true
     // Condition already on stack
 
     // END LOOP marker
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bytecode.push_back(0xFE);  // END LOOP marker
+    writeExtOpcode(bytecode, static_cast<uint16_t>(0x00FE));  // END LOOP marker
 
     // Update loop end offset
     size_t loop_end = bytecode.size();
@@ -296,8 +300,7 @@ TEST_F(PSQLControlFlowTest, ReturnWithValue)
     bytecode.push_back(static_cast<uint8_t>(Opcode::LITERAL_INT64));
     writeInt64(bytecode, 42);
 
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_RETURN));
+    writeExtOpcode(bytecode, ExtendedOpcode::EXT_RETURN);
     bytecode.push_back(1);  // has_value = true
 
     // Code after RETURN (should not execute)
@@ -321,8 +324,7 @@ TEST_F(PSQLControlFlowTest, ReturnWithoutValue)
     std::vector<uint8_t> bytecode;
 
     // RETURN (no value)
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_RETURN));
+    writeExtOpcode(bytecode, ExtendedOpcode::EXT_RETURN);
     bytecode.push_back(0);  // has_value = false
 
     // Code after RETURN (should not execute)
@@ -349,8 +351,7 @@ TEST_F(PSQLControlFlowTest, WhileLoop)
 
     // WHILE counter < 3
     size_t while_start = bytecode.size();
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_WHILE));
+    writeExtOpcode(bytecode, ExtendedOpcode::EXT_WHILE);
 
     // Loop end offset (placeholder)
     size_t loop_end_offset_pos = bytecode.size();
@@ -397,8 +398,7 @@ TEST_F(PSQLControlFlowTest, JumpOperations)
     std::vector<uint8_t> bytecode;
 
     // Unconditional jump over next instruction
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_JUMP));
+    writeExtOpcode(bytecode, ExtendedOpcode::EXT_JUMP);
     size_t jump_target_pos = bytecode.size();
     writeInt32(bytecode, 0);  // Placeholder
 
@@ -438,8 +438,7 @@ TEST_F(PSQLControlFlowTest, NestedLoopsLabeledExit)
     generateDeclareVariable(bytecode, "inner", 0);
 
     // Outer LOOP <<outer_loop>>
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_LOOP));
+    writeExtOpcode(bytecode, ExtendedOpcode::EXT_LOOP);
     size_t outer_loop_end_pos = bytecode.size();
     writeInt32(bytecode, 0);
     writeString(bytecode, "outer_loop");
@@ -452,8 +451,7 @@ TEST_F(PSQLControlFlowTest, NestedLoopsLabeledExit)
     generateVarStore(bytecode, "outer");
 
     // Inner LOOP
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_LOOP));
+    writeExtOpcode(bytecode, ExtendedOpcode::EXT_LOOP);
     size_t inner_loop_end_pos = bytecode.size();
     writeInt32(bytecode, 0);
     writeString(bytecode, "");
@@ -471,15 +469,13 @@ TEST_F(PSQLControlFlowTest, NestedLoopsLabeledExit)
     writeInt64(bytecode, 2);
     bytecode.push_back(static_cast<uint8_t>(Opcode::EXPR_GE));
 
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_EXIT));
+    writeExtOpcode(bytecode, ExtendedOpcode::EXT_EXIT);
     writeString(bytecode, "outer_loop");
     bytecode.push_back(1);  // has_when
 
     // END inner loop
     size_t inner_loop_end = bytecode.size();
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bytecode.push_back(0xFE);
+    writeExtOpcode(bytecode, static_cast<uint16_t>(0x00FE));
 
     uint32_t inner_offset = static_cast<uint32_t>(inner_loop_end);
     bytecode[inner_loop_end_pos] = inner_offset & 0xFF;
@@ -489,8 +485,7 @@ TEST_F(PSQLControlFlowTest, NestedLoopsLabeledExit)
 
     // END outer loop
     size_t outer_loop_end = bytecode.size();
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bytecode.push_back(0xFE);
+    writeExtOpcode(bytecode, static_cast<uint16_t>(0x00FE));
 
     uint32_t outer_offset = static_cast<uint32_t>(outer_loop_end);
     bytecode[outer_loop_end_pos] = outer_offset & 0xFF;
@@ -508,4 +503,3 @@ TEST_F(PSQLControlFlowTest, NestedLoopsLabeledExit)
         // outer should be 2, inner should have incremented multiple times
     });
 }
-

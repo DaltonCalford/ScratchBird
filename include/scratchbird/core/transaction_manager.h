@@ -3,10 +3,12 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/config.h"
+#include "scratchbird/core/uuidv7.h"
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 #include <vector>
 #include <list>
@@ -135,6 +137,21 @@ namespace scratchbird::core
         //          then uses group_commit_mutex_ for group commit coordination.
         auto rollbackTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx = nullptr)
             -> Status;
+
+        // Prepare a transaction for 2PC (limbo state)
+        // LOCKING: Thread-safe. Acquires mutex_ for pre-prepare work, releases before I/O.
+        auto prepareTransaction(uint32_t proc_id, uint64_t xid, const std::string& gid,
+                                const ID& owner_id, ErrorContext *ctx = nullptr) -> Status;
+
+        // Commit a prepared (2PC) transaction
+        // LOCKING: Thread-safe. Acquires mutex_ for state updates, releases before I/O.
+        auto commitPreparedTransaction(const std::string& gid,
+                                       ErrorContext *ctx = nullptr) -> Status;
+
+        // Roll back a prepared (2PC) transaction
+        // LOCKING: Thread-safe. Acquires mutex_ for state updates, releases before I/O.
+        auto rollbackPreparedTransaction(const std::string& gid,
+                                         ErrorContext *ctx = nullptr) -> Status;
 
         // ===========================================================================================
         // TRANSACTION STATE QUERIES
@@ -337,6 +354,9 @@ namespace scratchbird::core
             cache_lru_list_; // LRU list: front = most recent, back = least recent
         mutable std::unordered_map<uint64_t, std::list<uint64_t>::iterator>
             cache_lru_map_;        // XID -> position in LRU list
+
+        // Prepared transaction XIDs (2PC limbo); used to keep OAT pinned.
+        std::unordered_set<uint64_t> prepared_xids_;
 
         // TIP page location cache (Issue 3.1 optimization)
         // Maps XID -> TIP page ID to avoid scanning entire chain

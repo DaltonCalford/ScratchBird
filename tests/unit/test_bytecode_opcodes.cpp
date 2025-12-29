@@ -25,20 +25,20 @@ TEST(BytecodeOpcodesTest, AllIndexOpcodesAreDefined)
     EXPECT_EQ(static_cast<uint8_t>(Opcode::DROP_INDEX), 0x20);
 
     // Verify extended index operation opcodes exist
-    EXPECT_EQ(static_cast<uint8_t>(Opcode::EXT_INDEX_INSERT), 0x0A);
-    EXPECT_EQ(static_cast<uint8_t>(Opcode::EXT_INDEX_SEARCH), 0x0B);
-    EXPECT_EQ(static_cast<uint8_t>(Opcode::EXT_INDEX_SCAN), 0x0C);
-    EXPECT_EQ(static_cast<uint8_t>(Opcode::EXT_INDEX_DELETE), 0x0D);
-    EXPECT_EQ(static_cast<uint8_t>(Opcode::EXT_INDEX_TYPE), 0x0E);
-    EXPECT_EQ(static_cast<uint8_t>(Opcode::EXT_INDEX_UPDATE), 0x1C);
+    EXPECT_EQ(static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_INSERT), 0x0A);
+    EXPECT_EQ(static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_SEARCH), 0x0B);
+    EXPECT_EQ(static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_SCAN), 0x0C);
+    EXPECT_EQ(static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_DELETE), 0x0D);
+    EXPECT_EQ(static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_TYPE), 0x0E);
+    EXPECT_EQ(static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_UPDATE), 0x1C);
 
     // Verify specialized index opcodes exist
-    EXPECT_EQ(static_cast<uint8_t>(Opcode::EXT_GIN_INSERT), 0x28);
-    EXPECT_EQ(static_cast<uint8_t>(Opcode::EXT_GIN_SEARCH), 0x29);
-    EXPECT_EQ(static_cast<uint8_t>(Opcode::EXT_HNSW_INSERT), 0x2A);
-    EXPECT_EQ(static_cast<uint8_t>(Opcode::EXT_HNSW_SEARCH), 0x2B);
-    EXPECT_EQ(static_cast<uint8_t>(Opcode::EXT_COLUMNSTORE_INSERT), 0x2C);
-    EXPECT_EQ(static_cast<uint8_t>(Opcode::EXT_COLUMNSTORE_SCAN), 0x2D);
+    EXPECT_EQ(static_cast<uint16_t>(ExtendedOpcode::EXT_GIN_INSERT), 0x28);
+    EXPECT_EQ(static_cast<uint16_t>(ExtendedOpcode::EXT_GIN_SEARCH), 0x29);
+    EXPECT_EQ(static_cast<uint16_t>(ExtendedOpcode::EXT_HNSW_INSERT), 0x2A);
+    EXPECT_EQ(static_cast<uint16_t>(ExtendedOpcode::EXT_HNSW_SEARCH), 0x2B);
+    EXPECT_EQ(static_cast<uint16_t>(ExtendedOpcode::EXT_COLUMNSTORE_INSERT), 0x2C);
+    EXPECT_EQ(static_cast<uint16_t>(ExtendedOpcode::EXT_COLUMNSTORE_SCAN), 0x2D);
 }
 
 /**
@@ -69,7 +69,9 @@ TEST(BytecodeOpcodesTest, EncodeIndexInsert)
 
     // Extended opcode prefix
     bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE)); // 0xFF
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_INDEX_INSERT)); // 0x0A
+    uint8_t ext_op_bytes[2];
+    writeInt16(ext_op_bytes, static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_INSERT));
+    bytecode.insert(bytecode.end(), ext_op_bytes, ext_op_bytes + 2);
 
     // table_id = 10 (0x0A)
     uint32_t table_id = 10;
@@ -103,30 +105,30 @@ TEST(BytecodeOpcodesTest, EncodeIndexInsert)
     bytecode.insert(bytecode.end(), key_len_bytes, key_len_bytes + 4);
     bytecode.insert(bytecode.end(), key_data, key_data + key_len);
 
-    // Verify total size: 2 + 4 + 4 + 8 + 8 + 4 + 3 = 33 bytes
-    EXPECT_EQ(bytecode.size(), 33);
+    // Verify total size: 3 + 4 + 4 + 8 + 8 + 4 + 3 = 34 bytes
+    EXPECT_EQ(bytecode.size(), 34);
 
     // Verify header
     EXPECT_EQ(bytecode[0], 0xFF);
-    EXPECT_EQ(bytecode[1], 0x0A);
+    EXPECT_EQ(readInt16(&bytecode[1]), 0x0A);
 
     // Verify table_id decoding
-    EXPECT_EQ(readInt32(&bytecode[2]), table_id);
+    EXPECT_EQ(readInt32(&bytecode[3]), table_id);
 
     // Verify index_id decoding
-    EXPECT_EQ(readInt32(&bytecode[6]), index_id);
+    EXPECT_EQ(readInt32(&bytecode[7]), index_id);
 
     // Verify tid decoding
-    EXPECT_EQ(readInt64(&bytecode[10]), tid);
+    EXPECT_EQ(readInt64(&bytecode[11]), tid);
 
     // Verify xmin decoding
-    EXPECT_EQ(readInt64(&bytecode[18]), xmin);
+    EXPECT_EQ(readInt64(&bytecode[19]), xmin);
 
     // Verify key_len decoding
-    EXPECT_EQ(readInt32(&bytecode[26]), key_len);
+    EXPECT_EQ(readInt32(&bytecode[27]), key_len);
 
     // Verify key_data
-    EXPECT_EQ(std::string(reinterpret_cast<const char*>(&bytecode[30]), 3), "foo");
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(&bytecode[31]), 3), "foo");
 }
 
 /**
@@ -138,7 +140,9 @@ TEST(BytecodeOpcodesTest, EncodeIndexSearch)
     std::vector<uint8_t> bytecode;
 
     bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE)); // 0xFF
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_INDEX_SEARCH)); // 0x0B
+    uint8_t ext_op_bytes[2];
+    writeInt16(ext_op_bytes, static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_SEARCH));
+    bytecode.insert(bytecode.end(), ext_op_bytes, ext_op_bytes + 2);
 
     uint32_t table_id = 10;
     uint8_t table_id_bytes[4];
@@ -162,15 +166,15 @@ TEST(BytecodeOpcodesTest, EncodeIndexSearch)
     bytecode.insert(bytecode.end(), key_len_bytes, key_len_bytes + 4);
     bytecode.insert(bytecode.end(), key_data, key_data + key_len);
 
-    // Verify size: 2 + 4 + 4 + 8 + 4 + 3 = 25 bytes
-    EXPECT_EQ(bytecode.size(), 25);
+    // Verify size: 3 + 4 + 4 + 8 + 4 + 3 = 26 bytes
+    EXPECT_EQ(bytecode.size(), 26);
 
     // Verify header
     EXPECT_EQ(bytecode[0], 0xFF);
-    EXPECT_EQ(bytecode[1], 0x0B);
+    EXPECT_EQ(readInt16(&bytecode[1]), 0x0B);
 
     // Verify current_xid
-    EXPECT_EQ(readInt64(&bytecode[10]), current_xid);
+    EXPECT_EQ(readInt64(&bytecode[11]), current_xid);
 }
 
 /**
@@ -182,7 +186,9 @@ TEST(BytecodeOpcodesTest, EncodeIndexScan)
     std::vector<uint8_t> bytecode;
 
     bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE)); // 0xFF
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_INDEX_SCAN)); // 0x0C
+    uint8_t ext_op_bytes[2];
+    writeInt16(ext_op_bytes, static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_SCAN));
+    bytecode.insert(bytecode.end(), ext_op_bytes, ext_op_bytes + 2);
 
     uint32_t table_id = 10;
     uint8_t table_id_bytes[4];
@@ -215,24 +221,24 @@ TEST(BytecodeOpcodesTest, EncodeIndexScan)
     bytecode.insert(bytecode.end(), end_key_len_bytes, end_key_len_bytes + 4);
     bytecode.insert(bytecode.end(), end_key, end_key + end_key_len);
 
-    // Verify size: 2 + 4 + 4 + 8 + 4 + 1 + 4 + 1 = 28 bytes
-    EXPECT_EQ(bytecode.size(), 28);
+    // Verify size: 3 + 4 + 4 + 8 + 4 + 1 + 4 + 1 = 29 bytes
+    EXPECT_EQ(bytecode.size(), 29);
 
     // Verify header
     EXPECT_EQ(bytecode[0], 0xFF);
-    EXPECT_EQ(bytecode[1], 0x0C);
+    EXPECT_EQ(readInt16(&bytecode[1]), 0x0C);
 
     // Verify start_key_len
-    EXPECT_EQ(readInt32(&bytecode[18]), start_key_len);
+    EXPECT_EQ(readInt32(&bytecode[19]), start_key_len);
 
     // Verify start_key
-    EXPECT_EQ(bytecode[22], 'a');
+    EXPECT_EQ(bytecode[23], 'a');
 
     // Verify end_key_len
-    EXPECT_EQ(readInt32(&bytecode[23]), end_key_len);
+    EXPECT_EQ(readInt32(&bytecode[24]), end_key_len);
 
     // Verify end_key
-    EXPECT_EQ(bytecode[27], 'z');
+    EXPECT_EQ(bytecode[28], 'z');
 }
 
 /**
@@ -244,7 +250,9 @@ TEST(BytecodeOpcodesTest, EncodeIndexUpdate)
     std::vector<uint8_t> bytecode;
 
     bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE)); // 0xFF
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_INDEX_UPDATE)); // 0x1C
+    uint8_t ext_op_bytes[2];
+    writeInt16(ext_op_bytes, static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_UPDATE));
+    bytecode.insert(bytecode.end(), ext_op_bytes, ext_op_bytes + 2);
 
     uint32_t table_id = 10;
     uint8_t table_id_bytes[4];
@@ -282,18 +290,18 @@ TEST(BytecodeOpcodesTest, EncodeIndexUpdate)
     bytecode.insert(bytecode.end(), new_key_len_bytes, new_key_len_bytes + 4);
     bytecode.insert(bytecode.end(), new_key, new_key + new_key_len);
 
-    // Verify size: 2 + 4 + 4 + 8 + 8 + 4 + 3 + 4 + 3 = 40 bytes
-    EXPECT_EQ(bytecode.size(), 40);
+    // Verify size: 3 + 4 + 4 + 8 + 8 + 4 + 3 + 4 + 3 = 41 bytes
+    EXPECT_EQ(bytecode.size(), 41);
 
     // Verify header
     EXPECT_EQ(bytecode[0], 0xFF);
-    EXPECT_EQ(bytecode[1], 0x1C);
+    EXPECT_EQ(readInt16(&bytecode[1]), 0x1C);
 
     // Verify old_key
-    EXPECT_EQ(std::string(reinterpret_cast<const char*>(&bytecode[30]), 3), "old");
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(&bytecode[31]), 3), "old");
 
     // Verify new_key
-    EXPECT_EQ(std::string(reinterpret_cast<const char*>(&bytecode[37]), 3), "new");
+    EXPECT_EQ(std::string(reinterpret_cast<const char*>(&bytecode[38]), 3), "new");
 }
 
 /**
@@ -305,7 +313,9 @@ TEST(BytecodeOpcodesTest, EncodeIndexDelete)
     std::vector<uint8_t> bytecode;
 
     bytecode.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE)); // 0xFF
-    bytecode.push_back(static_cast<uint8_t>(Opcode::EXT_INDEX_DELETE)); // 0x0D
+    uint8_t ext_op_bytes[2];
+    writeInt16(ext_op_bytes, static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_DELETE));
+    bytecode.insert(bytecode.end(), ext_op_bytes, ext_op_bytes + 2);
 
     uint32_t table_id = 10;
     uint8_t table_id_bytes[4];
@@ -335,15 +345,15 @@ TEST(BytecodeOpcodesTest, EncodeIndexDelete)
     bytecode.insert(bytecode.end(), key_len_bytes, key_len_bytes + 4);
     bytecode.insert(bytecode.end(), key_data, key_data + key_len);
 
-    // Verify size: 2 + 4 + 4 + 8 + 8 + 4 + 3 = 33 bytes
-    EXPECT_EQ(bytecode.size(), 33);
+    // Verify size: 3 + 4 + 4 + 8 + 8 + 4 + 3 = 34 bytes
+    EXPECT_EQ(bytecode.size(), 34);
 
     // Verify header
     EXPECT_EQ(bytecode[0], 0xFF);
-    EXPECT_EQ(bytecode[1], 0x0D);
+    EXPECT_EQ(readInt16(&bytecode[1]), 0x0D);
 
     // Verify xmax (MGA logical deletion marker)
-    EXPECT_EQ(readInt64(&bytecode[18]), xmax);
+    EXPECT_EQ(readInt64(&bytecode[19]), xmax);
 }
 
 /**
@@ -395,7 +405,7 @@ TEST(BytecodeOpcodesTest, HelperFunctionsCorrectness)
  */
 TEST(BytecodeOpcodesTest, SBLRVersionIsDefined)
 {
-    EXPECT_EQ(SBLR_VERSION, 1);
+    EXPECT_EQ(SBLR_VERSION, 2);
 }
 
 /**

@@ -10,7 +10,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(googletest)
 
 # Test sources (exclude deprecated tests)
-file(GLOB_RECURSE TEST_SOURCES
+file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
     "unit/*.cpp"
     "unit/types/*.cpp"
     "unit/domains/*.cpp"
@@ -1394,3 +1394,147 @@ gtest_discover_tests(test_postgresql_parser
 #     LABELS "benchmark;parser;v2;performance"
 #     TIMEOUT 120
 # )
+
+# Plan 01 Task B: Heap Page Ownership Tests
+add_executable(test_heap_page_ownership
+    integration/test_heap_page_ownership.cpp
+)
+
+target_link_libraries(test_heap_page_ownership
+    PRIVATE
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+
+add_test(NAME HeapPageOwnership COMMAND test_heap_page_ownership)
+set_tests_properties(HeapPageOwnership PROPERTIES
+    LABELS "integration;storage;plan01"
+    TIMEOUT 60
+)
+
+# Plan 01 Task C: Columnstore Persistence Tests
+add_executable(test_columnstore_persistence
+    integration/test_columnstore_persistence.cpp
+)
+
+target_link_libraries(test_columnstore_persistence
+    PRIVATE
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+
+add_test(NAME ColumnstorePersistence COMMAND test_columnstore_persistence)
+set_tests_properties(ColumnstorePersistence PROPERTIES
+    LABELS "integration;storage;columnstore;plan01"
+    TIMEOUT 60
+)
+
+# Plan 01 Task D.1: HNSW GC Tests
+add_executable(test_hnsw_gc
+    integration/test_hnsw_gc.cpp
+)
+
+target_link_libraries(test_hnsw_gc
+    PRIVATE
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+
+add_test(NAME HnswGC COMMAND test_hnsw_gc)
+set_tests_properties(HnswGC PROPERTIES
+    LABELS "integration;index;hnsw;gc;plan01"
+    TIMEOUT 60
+)
+
+# Plan 01 Task D.2: FullText GC Tests
+add_executable(test_fulltext_gc
+    integration/test_fulltext_gc.cpp
+)
+
+target_link_libraries(test_fulltext_gc
+    PRIVATE
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+
+add_test(NAME FullTextGC COMMAND test_fulltext_gc)
+set_tests_properties(FullTextGC PROPERTIES
+    LABELS "integration;index;fulltext;gc;plan01"
+    TIMEOUT 60
+)
+
+# Plan 01 Task D.3: BRIN GC Tests
+add_executable(test_brin_gc
+    integration/test_brin_gc.cpp
+)
+
+target_link_libraries(test_brin_gc
+    PRIVATE
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+
+add_test(NAME BrinGC COMMAND test_brin_gc)
+set_tests_properties(BrinGC PROPERTIES
+    LABELS "integration;index;brin;gc;plan01"
+    TIMEOUT 60
+)
+
+# Plan 01 Task D.4: R-Tree GC Tests
+add_executable(test_rtree_gc
+    integration/test_rtree_gc.cpp
+)
+
+target_link_libraries(test_rtree_gc
+    PRIVATE
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+
+add_test(NAME RTreeGC COMMAND test_rtree_gc)
+set_tests_properties(RTreeGC PROPERTIES
+    LABELS "integration;index;rtree;gc;plan01"
+    TIMEOUT 60
+)
+
+# Plan 01 Task D.6: GIN GC Tests (Step 1: Pending list cleanup)
+add_executable(test_gin_gc
+    integration/test_gin_gc.cpp
+)
+
+target_link_libraries(test_gin_gc
+    PRIVATE
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+
+add_test(NAME GinGC COMMAND test_gin_gc)
+set_tests_properties(GinGC PROPERTIES
+    LABELS "integration;index;gin;gc;plan01"
+    TIMEOUT 60
+)
+
+# Plan 01 Task E: Shadow Index Rebuild Tests
+add_executable(test_shadow_index_rebuild
+    integration/test_shadow_index_rebuild.cpp
+)
+
+target_link_libraries(test_shadow_index_rebuild
+    PRIVATE
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+
+add_test(NAME ShadowIndexRebuild COMMAND test_shadow_index_rebuild)
+set_tests_properties(ShadowIndexRebuild PROPERTIES
+    LABELS "integration;index;shadow;rebuild;versioning;plan01"
+    TIMEOUT 60
+)

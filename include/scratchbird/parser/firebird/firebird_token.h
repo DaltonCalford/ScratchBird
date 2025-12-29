@@ -511,6 +511,7 @@ enum class TokenType : uint16_t {
     KW_RANK,
     KW_READ,
     KW_RELATIVE,
+    KW_RENAME,
     KW_REPLACE,
     KW_REQUESTS,
     KW_RESERV,

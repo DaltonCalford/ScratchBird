@@ -177,6 +177,10 @@ namespace scratchbird::core
         DomainValidation validation;
         DomainQuality quality;
 
+        // Cross-dialect compatibility (Plan 04)
+        std::string dialect_tag;      // e.g., "firebird", "postgresql", "mysql"
+        std::string compat_name;      // Dialect-specific type name for mapping
+
         uint64_t created_time;
         uint64_t last_modified_time;
 
@@ -242,7 +246,9 @@ namespace scratchbird::core
 
         // Drop domain
         auto dropDomain(const ID& domain_id,
-                       ErrorContext* ctx = nullptr) -> Status;
+                        ErrorContext* ctx = nullptr) -> Status;
+        auto renameDomain(const ID& domain_id, const std::string& new_name,
+                          ErrorContext* ctx = nullptr) -> Status;
 
         // Validate value against domain constraints
         auto validateValue(const ID& domain_id,

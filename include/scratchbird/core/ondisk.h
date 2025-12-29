@@ -43,7 +43,7 @@ namespace scratchbird::core
     constexpr uint32_t PAGE_FLAG_COMPRESSED = 0x0004; // Page data is compressed
     constexpr uint32_t PAGE_FLAG_ENCRYPTED = 0x0008;  // Page data is encrypted
 
-// Fixed 64-byte page header; little-endian integers assumed
+// Fixed 80-byte page header per ON_DISK_FORMAT.md v1.4.0; little-endian integers assumed
 #pragma pack(push, 1)
     struct PageHeader
     {
@@ -58,14 +58,17 @@ namespace scratchbird::core
         uint32_t flags;   // 0x1C
 
         uint8_t database_uuid[16]; // 0x20 UUID v7 bytes
+        uint8_t table_id[16];      // 0x30 Table UUID (v7) - MUST be non-zero for PAGE_TYPE_HEAP, zero for non-heap pages
 
-        uint64_t generation;   // 0x30
-        uint16_t free_space;   // 0x38
-        uint16_t item_count;   // 0x3A
-        uint16_t free_offset;  // 0x3C
-        uint16_t special_size; // 0x3E
+        uint64_t generation;   // 0x40
+        uint16_t free_space;   // 0x48
+        uint16_t item_count;   // 0x4A
+        uint16_t free_offset;  // 0x4C
+        uint16_t special_size; // 0x4E
     };
 #pragma pack(pop)
+
+static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per ON_DISK_FORMAT.md");
 
     constexpr uint32_t K_MAGIC_SBRD = 0x53425244; // 'SBRD' little-endian
 

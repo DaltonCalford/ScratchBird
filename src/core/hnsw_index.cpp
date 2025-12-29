@@ -435,30 +435,117 @@ Status HnswIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
                                    uint64_t *pages_modified_out,
                                    ErrorContext *ctx)
 {
-    // Convert TIDs to legacy format
-    std::set<uint64_t> dead_set;
-    for (const TID &tid : dead_tids)
+    // Plan 01 Task D.1: HNSW GC implementation per plan_01_index_gc_clarifications.md
+
+    // Empty dead_tids is a no-op
+    if (dead_tids.empty())
     {
-        uint64_t legacy = convertTIDtoLegacy(tid);
-        if (legacy != 0)
+        if (entries_removed_out) *entries_removed_out = 0;
+        if (pages_modified_out) *pages_modified_out = 0;
+        return Status::OK;
+    }
+
+    // Build dead_set using TID (compare node_gpid + node_slot)
+    std::set<TID> dead_set(dead_tids.begin(), dead_tids.end());
+
+    // Get current transaction ID for marking xmax
+    auto txn_mgr = db_->transaction_manager();
+    if (!txn_mgr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No transaction manager");
+        return Status::INVALID_ARGUMENT;
+    }
+    uint64_t current_xid = txn_mgr->getCurrentXid();
+
+    BufferPool *buffer_pool = db_->buffer_pool();
+    if (!buffer_pool)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No buffer pool");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint64_t entries_removed = 0;
+    uint64_t pages_modified = 0;
+
+    // Traverse all pages using hnsw_right_sibling starting at idx_root_page
+    uint32_t current_page_id = index_info_.idx_root_page;
+
+    while (current_page_id != 0)
+    {
+        void *page_buffer = nullptr;
+        Status status = buffer_pool->pinPage(current_page_id, &page_buffer, ctx);
+        if (status != Status::OK)
         {
-            dead_set.insert(legacy);
+            LOG_WARNING(GENERAL, "HNSW GC: Failed to pin page %u", current_page_id);
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin HNSW page during GC");
+            return Status::IO_ERROR;
         }
+
+        SBHnswPage *page = static_cast<SBHnswPage*>(page_buffer);
+        uint8_t *page_data = reinterpret_cast<uint8_t*>(page_buffer) + sizeof(SBHnswPage);
+        uint32_t offset = 0;
+        bool page_modified = false;
+        uint64_t nodes_deleted_in_page = 0;
+
+        // For each node in this page
+        for (uint16_t i = 0; i < page->hnsw_count; i++)
+        {
+            SBHnswNode *node = reinterpret_cast<SBHnswNode*>(page_data + offset);
+
+            // Check if this node's TID is in dead_set
+            TID node_tid = node->getTID();
+            if (dead_set.find(node_tid) != dead_set.end())
+            {
+                // Only mark as deleted if not already deleted
+                if (node->node_xmax == 0)
+                {
+                    // Set node_xmax = TransactionManager::getCurrentXid()
+                    node->node_xmax = current_xid;
+
+                    // Set node_flags |= DELETED
+                    node->node_flags |= static_cast<uint16_t>(HnswNodeFlags::DELETED);
+
+                    entries_removed++;
+                    nodes_deleted_in_page++;
+                    page_modified = true;
+                }
+            }
+
+            // Calculate size of this node and advance offset
+            size_t node_size = sizeof(SBHnswNode) +
+                              node->node_num_neighbors * sizeof(uint64_t) +
+                              node->node_vector_len;
+            offset += node_size;
+        }
+
+        // If we modified any nodes, update page stats and mark dirty
+        if (page_modified)
+        {
+            // Increment hnsw_deleted_nodes in page header
+            page->hnsw_deleted_nodes += nodes_deleted_in_page;
+
+            // Set HAS_GARBAGE flag
+            page->hnsw_flags |= static_cast<uint16_t>(HnswFlags::HAS_GARBAGE);
+
+            pages_modified++;
+        }
+
+        // Get next page in chain
+        uint32_t next_page_id = static_cast<uint32_t>(page->hnsw_right_sibling);
+
+        // Unpin page (mark dirty if modified)
+        buffer_pool->unpinPage(current_page_id, page_modified, ctx);
+
+        // Move to next page
+        current_page_id = next_page_id;
     }
 
-    // For now, just report counts
-    // Full implementation would remove nodes and update links
-    if (entries_removed_out)
-    {
-        *entries_removed_out = 0;
-    }
-    if (pages_modified_out)
-    {
-        *pages_modified_out = 0;
-    }
+    // Set output counters
+    if (entries_removed_out) *entries_removed_out = entries_removed;
+    if (pages_modified_out) *pages_modified_out = pages_modified;
 
-    LOG_DEBUG(GENERAL, "HNSW: removeDeadEntries called with %zu dead nodes",
-             dead_set.size());
+    LOG_DEBUG(GENERAL, "HNSW GC: Marked %lu nodes deleted across %lu pages",
+             entries_removed, pages_modified);
 
     return Status::OK;
 }

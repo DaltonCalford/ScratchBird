@@ -111,7 +111,15 @@ auto CatalogManager::getConstraintByName(const ID& table_id,
         return Status::NOT_FOUND;
     }
 
-    return getConstraint(it->second, constraint_out, ctx);
+    auto cache_it = constraints_cache_.find(it->second);
+    if (cache_it == constraints_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Constraint not found");
+        return Status::NOT_FOUND;
+    }
+
+    constraint_out = cache_it->second;
+    return Status::OK;
 }
 
 // WP-5 EXEC-M4: Find a constraint by name globally (for SET CONSTRAINTS named)

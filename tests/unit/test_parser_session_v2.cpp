@@ -86,6 +86,24 @@ TEST_F(ParserSessionV2Test, StartTransactionReadCommitted) {
     EXPECT_EQ(stmt->isolation_level, IsolationLevel::READ_COMMITTED);
 }
 
+TEST_F(ParserSessionV2Test, StartTransactionReadCommittedReadConsistency) {
+    auto* stmt = parseAs<StartTransactionStmt>(
+        "START TRANSACTION ISOLATION LEVEL READ COMMITTED READ CONSISTENCY");
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_TRUE(stmt->has_isolation_level);
+    EXPECT_TRUE(stmt->has_read_committed_mode);
+    EXPECT_EQ(stmt->read_committed_mode, ReadCommittedMode::READ_CONSISTENCY);
+}
+
+TEST_F(ParserSessionV2Test, StartTransactionReadCommittedRecordVersion) {
+    auto* stmt = parseAs<StartTransactionStmt>(
+        "START TRANSACTION ISOLATION LEVEL READ COMMITTED RECORD VERSION");
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_TRUE(stmt->has_isolation_level);
+    EXPECT_TRUE(stmt->has_read_committed_mode);
+    EXPECT_EQ(stmt->read_committed_mode, ReadCommittedMode::RECORD_VERSION);
+}
+
 TEST_F(ParserSessionV2Test, StartTransactionSerializable) {
     auto* stmt = parseAs<StartTransactionStmt>("START TRANSACTION ISOLATION LEVEL SERIALIZABLE");
     ASSERT_NE(stmt, nullptr);
@@ -143,6 +161,54 @@ TEST_F(ParserSessionV2Test, StartTransactionMultipleOptions) {
     EXPECT_TRUE(stmt->deferrable);
 }
 
+TEST_F(ParserSessionV2Test, StartTransactionWaitModes) {
+    auto* wait_stmt = parseAs<StartTransactionStmt>("START TRANSACTION WAIT");
+    ASSERT_NE(wait_stmt, nullptr);
+    EXPECT_TRUE(wait_stmt->has_wait_mode);
+    EXPECT_EQ(wait_stmt->wait_mode, TransactionWaitMode::WAIT);
+
+    auto* no_wait_stmt = parseAs<StartTransactionStmt>("START TRANSACTION NO WAIT");
+    ASSERT_NE(no_wait_stmt, nullptr);
+    EXPECT_TRUE(no_wait_stmt->has_wait_mode);
+    EXPECT_EQ(no_wait_stmt->wait_mode, TransactionWaitMode::NO_WAIT);
+}
+
+TEST_F(ParserSessionV2Test, StartTransactionLockTimeout) {
+    auto* stmt = parseAs<StartTransactionStmt>("START TRANSACTION LOCK TIMEOUT 15");
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_TRUE(stmt->has_lock_timeout);
+    EXPECT_EQ(stmt->lock_timeout_seconds, 15u);
+}
+
+TEST_F(ParserSessionV2Test, StartTransactionReserving) {
+    auto* stmt = parseAs<StartTransactionStmt>("START TRANSACTION RESERVING widgets FOR SHARED READ");
+    ASSERT_NE(stmt, nullptr);
+    ASSERT_EQ(stmt->table_reservations.size(), 1u);
+    EXPECT_EQ(stmt->table_reservations[0].lock_mode, TableLockMode::SHARED);
+    EXPECT_FALSE(stmt->table_reservations[0].for_write);
+}
+
+TEST_F(ParserSessionV2Test, StartTransactionAutocommit) {
+    auto* stmt = parseAs<StartTransactionStmt>("START TRANSACTION AUTOCOMMIT ON");
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_TRUE(stmt->has_autocommit);
+    EXPECT_EQ(stmt->autocommit_mode, AutocommitMode::ON);
+}
+
+TEST_F(ParserSessionV2Test, StartTransactionOnConflict) {
+    auto* stmt = parseAs<StartTransactionStmt>("START TRANSACTION ON CONFLICT ERROR 42");
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(stmt->conflict_action, TransactionConflictAction::ERROR);
+    EXPECT_TRUE(stmt->has_conflict_error_code);
+    EXPECT_EQ(stmt->conflict_error_code, 42);
+}
+
+TEST_F(ParserSessionV2Test, PrepareTransaction) {
+    auto* stmt = parseAs<PrepareTransactionStmt>("PREPARE TRANSACTION 'tx1'");
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_NE(stmt->gid, StringPool::INVALID_ID);
+}
+
 // =============================================================================
 // COMMIT Tests
 // =============================================================================
@@ -174,6 +240,13 @@ TEST_F(ParserSessionV2Test, CommitAndNoChain) {
     auto* stmt = parseAs<CommitStmt>("COMMIT AND NO CHAIN");
     ASSERT_NE(stmt, nullptr);
     EXPECT_TRUE(stmt->and_no_chain);
+}
+
+TEST_F(ParserSessionV2Test, CommitPrepared) {
+    auto* stmt = parseAs<CommitStmt>("COMMIT PREPARED 'tx1'");
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_TRUE(stmt->is_prepared);
+    EXPECT_NE(stmt->prepared_gid, StringPool::INVALID_ID);
 }
 
 // =============================================================================
@@ -220,6 +293,13 @@ TEST_F(ParserSessionV2Test, RollbackToSavepointExplicit) {
     auto* stmt = parseAs<RollbackStmt>("ROLLBACK TO SAVEPOINT sp1");
     ASSERT_NE(stmt, nullptr);
     EXPECT_TRUE(stmt->to_savepoint);
+}
+
+TEST_F(ParserSessionV2Test, RollbackPrepared) {
+    auto* stmt = parseAs<RollbackStmt>("ROLLBACK PREPARED 'tx1'");
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_TRUE(stmt->is_prepared);
+    EXPECT_NE(stmt->prepared_gid, StringPool::INVALID_ID);
 }
 
 // =============================================================================
@@ -312,6 +392,32 @@ TEST_F(ParserSessionV2Test, SetTransactionReadOnly) {
     EXPECT_EQ(stmt->set_type, SetStmt::SetType::TRANSACTION);
     EXPECT_TRUE(stmt->has_access_mode);
     EXPECT_EQ(stmt->access_mode, TransactionAccess::READ_ONLY);
+}
+
+TEST_F(ParserSessionV2Test, SetTransactionReadCommittedNoRecordVersion) {
+    auto* stmt = parseAs<SetStmt>(
+        "SET TRANSACTION READ COMMITTED NO RECORD VERSION");
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(stmt->set_type, SetStmt::SetType::TRANSACTION);
+    EXPECT_TRUE(stmt->has_isolation_level);
+    EXPECT_TRUE(stmt->has_read_committed_mode);
+    EXPECT_EQ(stmt->read_committed_mode, ReadCommittedMode::NO_RECORD_VERSION);
+}
+
+TEST_F(ParserSessionV2Test, SetTransactionLockTimeout) {
+    auto* stmt = parseAs<SetStmt>("SET TRANSACTION LOCK TIMEOUT 7");
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(stmt->set_type, SetStmt::SetType::TRANSACTION);
+    EXPECT_TRUE(stmt->has_lock_timeout);
+    EXPECT_EQ(stmt->lock_timeout_seconds, 7u);
+}
+
+TEST_F(ParserSessionV2Test, SetAutocommit) {
+    auto* stmt = parseAs<SetStmt>("SET AUTOCOMMIT OFF");
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(stmt->set_type, SetStmt::SetType::AUTOCOMMIT);
+    EXPECT_TRUE(stmt->has_autocommit);
+    EXPECT_EQ(stmt->autocommit_mode, AutocommitMode::OFF);
 }
 
 TEST_F(ParserSessionV2Test, SetRole) {

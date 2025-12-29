@@ -21,6 +21,8 @@ void CreateIndexStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateViewStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateSequenceStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void RenameObjectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void MoveObjectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropIndexStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropViewStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -34,6 +36,7 @@ void DeleteStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 
 // Transaction statements
 void StartTransactionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void PrepareTransactionStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CommitStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void RollbackStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void SavepointStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -214,6 +217,8 @@ const char* astKindToString(ASTKind kind) {
         case ASTKind::CreateTypeStmt: return "CreateTypeStmt";
         case ASTKind::CreateDomainStmt: return "CreateDomainStmt";
         case ASTKind::AlterTableStmt: return "AlterTableStmt";
+        case ASTKind::RenameObjectStmt: return "RenameObjectStmt";
+        case ASTKind::MoveObjectStmt: return "MoveObjectStmt";
         case ASTKind::DropTableStmt: return "DropTableStmt";
         case ASTKind::DropIndexStmt: return "DropIndexStmt";
         case ASTKind::DropViewStmt: return "DropViewStmt";
@@ -228,6 +233,7 @@ const char* astKindToString(ASTKind kind) {
 
         // Transaction
         case ASTKind::StartTransactionStmt: return "StartTransactionStmt";
+        case ASTKind::PrepareTransactionStmt: return "PrepareTransactionStmt";
         case ASTKind::CommitStmt: return "CommitStmt";
         case ASTKind::RollbackStmt: return "RollbackStmt";
         case ASTKind::SavepointStmt: return "SavepointStmt";

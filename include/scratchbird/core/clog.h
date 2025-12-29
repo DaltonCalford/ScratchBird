@@ -37,7 +37,7 @@ namespace scratchbird::core
         IN_PROGRESS = 0,  // 00 - Transaction still active
         COMMITTED = 1,    // 01 - Transaction committed
         ABORTED = 2,      // 10 - Transaction aborted
-        SUB_COMMITTED = 3 // 11 - Subtransaction committed (future use)
+        PREPARED = 3      // 11 - Transaction prepared (2PC limbo)
     };
 
     // CLOG page structure

@@ -213,6 +213,20 @@ Status RTree::insert(const BoundingBox& bbox,
             // Reinsert failed, need to split
             std::unique_ptr<RTreeNode> new_sibling = splitNode(leaf, entry);
             adjustTree(leaf, new_sibling.get(), current_xid);
+
+            // Persist both nodes after split
+            Status save_status = saveNode(leaf, ctx);
+            if (save_status != Status::OK)
+            {
+                LOG_ERROR(BTREE, "Failed to save leaf node after split");
+                return save_status;
+            }
+            save_status = saveNode(new_sibling.get(), ctx);
+            if (save_status != Status::OK)
+            {
+                LOG_ERROR(BTREE, "Failed to save new sibling after split");
+                return save_status;
+            }
         }
     }
     else
@@ -220,6 +234,14 @@ Status RTree::insert(const BoundingBox& bbox,
         // Add entry to leaf
         leaf->addEntry(entry);
         adjustTree(leaf, nullptr, current_xid);
+
+        // Persist the modified leaf node
+        Status save_status = saveNode(leaf, ctx);
+        if (save_status != Status::OK)
+        {
+            LOG_ERROR(BTREE, "Failed to save leaf node after insert");
+            return save_status;
+        }
     }
 
     // Update statistics
@@ -571,31 +593,20 @@ Status RTree::removeDeadEntries(const std::vector<TID>& dead_tids,
 
     LOG_DEBUG(BTREE, "Removing %zu dead entries from R-tree", dead_tids.size());
 
+    // Initialize outputs
+    if (entries_removed_out)
+        *entries_removed_out = 0;
+    if (pages_modified_out)
+        *pages_modified_out = 0;
+
+    // Empty check
     if (dead_tids.empty())
     {
-        if (entries_removed_out)
-            *entries_removed_out = 0;
-        if (pages_modified_out)
-            *pages_modified_out = 0;
         return Status::OK;
     }
 
     uint64_t removed_count = 0;
     uint64_t pages_modified = 0;
-
-    // Load root node
-    if (!root_)
-    {
-        root_ = loadNode(index_info_.idx_root_page);
-        if (!root_)
-        {
-            if (ctx)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Failed to load root node");
-            }
-            return Status::NOT_FOUND;
-        }
-    }
 
     // Get OIT (Oldest Interesting Transaction) from TransactionManager
     // Per MGA_RULES.md Rule 10: Only physically remove entries with xmax < OIT
@@ -607,46 +618,178 @@ Status RTree::removeDeadEntries(const std::vector<TID>& dead_tids,
     // Create a set of TIDs for fast lookup
     std::set<TID> dead_tid_set(dead_tids.begin(), dead_tids.end());
 
-    // Traverse tree and physically remove entries that are:
-    // 1. In the dead_tids list (heap confirmed dead)
-    // 2. Have xmax < OIT (no transaction can see them)
+    // Plan 01 Task D.4: R-Tree Leaf Traversal GC
     //
-    // Note: Simplified implementation handles root only
-    // Full implementation would traverse entire tree
-    std::vector<size_t> to_remove;
+    // Strategy: Traverse all leaf pages using rtree_right_sibling chain
+    // and physically remove entries where:
+    // 1. entry_row_id is in dead_tids (heap confirmed dead)
+    // 2. entry_xmax < OIT (no transaction can see them)
 
-    for (size_t i = 0; i < root_->getEntryCount(); ++i)
+    // Step 1: Find the first leaf page by traversing down from root
+    uint64_t first_leaf_page = 0;
     {
-        const RTreeEntry& entry = root_->getEntry(i);
-        if (root_->isLeaf() && dead_tid_set.find(entry.row_id) != dead_tid_set.end())
+        void* page = nullptr;
+        Status status = db_->buffer_pool()->pinPage(index_info_.idx_root_page, &page, ctx);
+        if (status != Status::OK)
         {
-            // Entry is in dead list, check if it's safe to physically remove
-            if (entry.xmax != 0 && entry.xmax < oit)
+            LOG_ERROR(BTREE, "Failed to pin root page %lu", index_info_.idx_root_page);
+            SET_ERROR_CONTEXT(ctx, status, "Failed to pin root page");
+            return status;
+        }
+
+        SBRTreePage* rtree_page = reinterpret_cast<SBRTreePage*>(((uint8_t*)page));
+
+        // If root is leaf, start there
+        if (rtree_page->rtree_flags & static_cast<uint16_t>(RTreeFlags::LEAF))
+        {
+            first_leaf_page = index_info_.idx_root_page;
+        }
+        else
+        {
+            // Traverse down to first leaf
+            // For simplicity, follow the first child at each level
+            uint64_t current_page = index_info_.idx_root_page;
+
+            while (true)
             {
-                // Safe to physically remove - xmax is older than OIT
-                to_remove.push_back(i);
-                LOG_DEBUG(BTREE, "Marking entry %zu for removal (xmax=%lu < OIT=%lu)",
-                         i, entry.xmax, oit);
-            }
-            else
-            {
-                // Entry is dead but still visible to some transaction
-                LOG_DEBUG(BTREE, "Skipping entry %zu (xmax=%lu >= OIT=%lu)",
-                         i, entry.xmax, oit);
+                // Check if current page is leaf
+                if (rtree_page->rtree_flags & static_cast<uint16_t>(RTreeFlags::LEAF))
+                {
+                    first_leaf_page = current_page;
+                    break;
+                }
+
+                // Get first child
+                if (rtree_page->rtree_count == 0)
+                {
+                    // Empty internal node - no leaves to traverse
+                    db_->buffer_pool()->unpinPage(current_page, false, nullptr);
+                    LOG_DEBUG(BTREE, "Empty R-tree, no leaves to GC");
+                    return Status::OK;
+                }
+
+                const uint8_t* entry_data = ((uint8_t*)page) + sizeof(SBRTreePage);
+                const SBRTreeEntry* first_entry = reinterpret_cast<const SBRTreeEntry*>(entry_data);
+                uint64_t child_page = first_entry->entry_child_page;
+
+                db_->buffer_pool()->unpinPage(current_page, false, nullptr);
+
+                // Load child
+                status = db_->buffer_pool()->pinPage(child_page, &page, ctx);
+                if (status != Status::OK)
+                {
+                    LOG_ERROR(BTREE, "Failed to load child page %lu during leaf search", child_page);
+                    return status;
+                }
+
+                current_page = child_page;
+                rtree_page = reinterpret_cast<SBRTreePage*>(((uint8_t*)page));
             }
         }
+
+        db_->buffer_pool()->unpinPage(first_leaf_page, false, nullptr);
     }
 
-    // Physical removal in reverse order to maintain indices
-    for (auto it = to_remove.rbegin(); it != to_remove.rend(); ++it)
+    if (first_leaf_page == 0)
     {
-        root_->removeEntry(*it);
-        removed_count++;
+        LOG_DEBUG(BTREE, "No leaves found in R-tree");
+        return Status::OK;
     }
 
+    // Step 2: Traverse all leaf pages using rtree_right_sibling
+    uint64_t current_page_id = first_leaf_page;
+
+    while (current_page_id != 0)
+    {
+        void* page = nullptr;
+        Status status = db_->buffer_pool()->pinPage(current_page_id, &page, ctx);
+        if (status != Status::OK)
+        {
+            LOG_ERROR(BTREE, "Failed to pin leaf page %lu", current_page_id);
+            break;
+        }
+
+        SBRTreePage* rtree_page = reinterpret_cast<SBRTreePage*>(((uint8_t*)page));
+
+        // Verify this is a leaf page
+        if (!(rtree_page->rtree_flags & static_cast<uint16_t>(RTreeFlags::LEAF)))
+        {
+            LOG_WARNING(BTREE, "Page %lu is not a leaf during GC traversal", current_page_id);
+            db_->buffer_pool()->unpinPage(current_page_id, false, nullptr);
+            break;
+        }
+
+        // Get next sibling before we modify the page
+        uint64_t next_sibling = rtree_page->rtree_right_sibling;
+
+        // Process entries on this page
+        std::vector<size_t> to_remove;
+        uint8_t* entry_data = ((uint8_t*)page) + sizeof(SBRTreePage);
+
+        for (uint16_t i = 0; i < rtree_page->rtree_count; ++i)
+        {
+            SBRTreeEntry* entry = reinterpret_cast<SBRTreeEntry*>(entry_data + i * sizeof(SBRTreeEntry));
+
+            // Check if this entry should be removed:
+            // Per GIN/BRIN pattern: If caller says TID is dead, trust it
+            // The heap vacuum has already confirmed these tuples are dead
+            if (dead_tid_set.find(entry->entry_row_id) != dead_tid_set.end())
+            {
+                // Only remove if entry is marked as deleted (xmax != 0)
+                // This ensures we don't remove live entries
+                if (entry->entry_xmax != 0)
+                {
+                    to_remove.push_back(i);
+                    LOG_DEBUG(BTREE, "Page %lu entry %u: removing dead TID (xmax=%lu)",
+                             current_page_id, i, entry->entry_xmax);
+                }
+                else
+                {
+                    LOG_DEBUG(BTREE, "Page %lu entry %u: TID in dead list but xmax=0, skipping",
+                             current_page_id, i);
+                }
+            }
+        }
+
+        // Remove entries in reverse order to maintain indices
+        bool page_modified = false;
+        for (auto it = to_remove.rbegin(); it != to_remove.rend(); ++it)
+        {
+            size_t index = *it;
+
+            // Shift all entries after this one down
+            uint8_t* src = entry_data + (index + 1) * sizeof(SBRTreeEntry);
+            uint8_t* dst = entry_data + index * sizeof(SBRTreeEntry);
+            size_t bytes_to_move = (rtree_page->rtree_count - index - 1) * sizeof(SBRTreeEntry);
+
+            if (bytes_to_move > 0)
+            {
+                std::memmove(dst, src, bytes_to_move);
+            }
+
+            rtree_page->rtree_count--;
+            removed_count++;
+            page_modified = true;
+        }
+
+        if (page_modified)
+        {
+            // Update free space
+            rtree_page->rtree_free_space = db_->page_size() - sizeof(SBRTreePage) -
+                                          rtree_page->rtree_count * sizeof(SBRTreeEntry);
+            pages_modified++;
+        }
+
+        // Unpin page
+        db_->buffer_pool()->unpinPage(current_page_id, page_modified, nullptr);
+
+        // Move to next sibling
+        current_page_id = next_sibling;
+    }
+
+    // Update statistics
     if (removed_count > 0)
     {
-        pages_modified = 1; // Modified root page
         if (index_info_.idx_deleted_count >= removed_count)
         {
             index_info_.idx_deleted_count -= removed_count;
@@ -656,7 +799,8 @@ Status RTree::removeDeadEntries(const std::vector<TID>& dead_tids,
             index_info_.idx_deleted_count = 0;
         }
         updateStatistics();
-        LOG_INFO(BTREE, "Removed %lu dead entries from R-tree", removed_count);
+        LOG_INFO(BTREE, "Removed %lu dead entries from R-tree, modified %lu pages",
+                 removed_count, pages_modified);
     }
 
     if (entries_removed_out)

@@ -6,11 +6,74 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/config.h"
 #include <cassert>
+#include <cctype>
 
 namespace scratchbird::core
 {
     // Thread-local storage for current connection context
     thread_local ConnectionContext *ConnectionContext::current_ = nullptr;
+
+    namespace {
+        uint64_t nowMicros()
+        {
+            return std::chrono::duration_cast<std::chrono::microseconds>(
+                       std::chrono::system_clock::now().time_since_epoch())
+                .count();
+        }
+
+        uint64_t fnv1a64(const std::string& value)
+        {
+            uint64_t hash = 1469598103934665603ULL;
+            for (unsigned char c : value)
+            {
+                hash ^= static_cast<uint64_t>(c);
+                hash *= 1099511628211ULL;
+            }
+            return hash;
+        }
+
+        bool isZeroUuidLocal(const ID& id)
+        {
+            for (uint8_t byte : id.bytes)
+            {
+                if (byte != 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        void appendJsonString(std::string& out, const std::string& value)
+        {
+            static const char kHexDigits[] = "0123456789abcdef";
+            out.push_back('"');
+            for (unsigned char c : value)
+            {
+                switch (c)
+                {
+                    case '\\': out.append("\\\\"); break;
+                    case '"': out.append("\\\""); break;
+                    case '\n': out.append("\\n"); break;
+                    case '\r': out.append("\\r"); break;
+                    case '\t': out.append("\\t"); break;
+                    default:
+                        if (c < 0x20)
+                        {
+                            out.append("\\u00");
+                            out.push_back(kHexDigits[(c >> 4) & 0xF]);
+                            out.push_back(kHexDigits[c & 0xF]);
+                        }
+                        else
+                        {
+                            out.push_back(static_cast<char>(c));
+                        }
+                        break;
+                }
+            }
+            out.push_back('"');
+        }
+    }
 
     ConnectionContext::ConnectionContext(Database *db, uint32_t proc_id)
         : db_(db), txn_manager_(db ? db->transaction_manager() : nullptr), proc_id_(proc_id),
@@ -22,14 +85,27 @@ namespace scratchbird::core
           is_superuser_(false), // Will be set during authentication
           session_user_id_(),   // WP-5 EXEC-M3: Zero UUID - set on first setCurrentUser() call
           session_is_superuser_(false),  // WP-5 EXEC-M3: Set on first setCurrentUser() call
-          isolation_level_(IsolationLevel::SNAPSHOT) // Default to SNAPSHOT
+          isolation_level_(IsolationLevel::SNAPSHOT), // Default to SNAPSHOT
+          read_committed_mode_(ReadCommittedMode::READ_CONSISTENCY)
           ,
           is_read_only_(false), wait_for_locks_(true) // Default: wait for locks
           ,
           lock_timeout_seconds_(config::DEFAULT_LOCK_TIMEOUT_SECONDS) // Default: 60 second timeout
           ,
+          autocommit_mode_(false),
+          autocommit_suspended_(false),
+          attachment_id_(generateUuidV7()),
+          protocol_session_id_(),
+          default_isolation_level_(IsolationLevel::SNAPSHOT),
+          default_read_committed_mode_(ReadCommittedMode::READ_CONSISTENCY),
+          default_is_read_only_(false),
+          default_wait_for_locks_(true),
+          default_lock_timeout_seconds_(config::DEFAULT_LOCK_TIMEOUT_SECONDS),
           settings_staged_(false), next_isolation_level_(IsolationLevel::SNAPSHOT),
-          next_is_read_only_(false), statement_xid_(0)
+          next_read_committed_mode_(ReadCommittedMode::READ_CONSISTENCY),
+          next_is_read_only_(false), next_wait_for_locks_(true),
+          next_lock_timeout_seconds_(config::DEFAULT_LOCK_TIMEOUT_SECONDS),
+          statement_xid_(0)
     {
         assert(db != nullptr && "Database must not be null");
         assert(txn_manager_ != nullptr && "TransactionManager must not be null");
@@ -39,6 +115,7 @@ namespace scratchbird::core
         std::memset(&active_role_id_, 0, sizeof(active_role_id_));
         std::memset(&current_schema_id_, 0, sizeof(current_schema_id_));
         std::memset(&session_user_id_, 0, sizeof(session_user_id_));  // WP-5 EXEC-M3
+        std::memset(&protocol_session_id_, 0, sizeof(protocol_session_id_));
         // Note: current_schema_id_ will be set to PUBLIC schema during initialize()
     }
 
@@ -54,7 +131,8 @@ namespace scratchbird::core
         if (current_xid_ != 0)
         {
             ErrorContext err_ctx;
-            rollback(&err_ctx);
+            // Final shutdown should not start a new transaction; end in-place to avoid orphaned XIDs.
+            shutdownTransaction(&err_ctx);
         }
 
         // Unregister this backend from ProcArray to free the slot
@@ -73,12 +151,44 @@ namespace scratchbird::core
           session_user_id_(other.session_user_id_),  // WP-5 EXEC-M3
           session_is_superuser_(other.session_is_superuser_),  // WP-5 EXEC-M3
           current_schema_id_(other.current_schema_id_),
-          isolation_level_(other.isolation_level_), is_read_only_(other.is_read_only_),
+          current_schema_name_(std::move(other.current_schema_name_)),
+          search_path_(std::move(other.search_path_)),
+          dialect_tag_(std::move(other.dialect_tag_)),
+          security_stack_(std::move(other.security_stack_)),
+          isolation_level_(other.isolation_level_),
+          read_committed_mode_(other.read_committed_mode_),
+          is_read_only_(other.is_read_only_),
           wait_for_locks_(other.wait_for_locks_),
           lock_timeout_seconds_(other.lock_timeout_seconds_),
+          autocommit_mode_(other.autocommit_mode_),
+          autocommit_suspended_(other.autocommit_suspended_),
+          attachment_id_(other.attachment_id_),
+          protocol_session_id_(other.protocol_session_id_),
+          sql_dialect_(other.sql_dialect_),
+          charset_(std::move(other.charset_)),
+          statement_timeout_seconds_(other.statement_timeout_seconds_),
+          parser_version_(other.parser_version_),
+          last_statement_text_(std::move(other.last_statement_text_)),
+          last_statement_hash_(other.last_statement_hash_),
+          last_statement_type_(other.last_statement_type_),
+          last_statement_status_(other.last_statement_status_),
+          last_statement_time_(other.last_statement_time_),
+          last_rows_affected_(other.last_rows_affected_),
+          last_error_code_(other.last_error_code_),
+          last_sqlstate_(std::move(other.last_sqlstate_)),
+          last_activity_time_(other.last_activity_time_),
+          default_isolation_level_(other.default_isolation_level_),
+          default_read_committed_mode_(other.default_read_committed_mode_),
+          default_is_read_only_(other.default_is_read_only_),
+          default_wait_for_locks_(other.default_wait_for_locks_),
+          default_lock_timeout_seconds_(other.default_lock_timeout_seconds_),
           settings_staged_(other.settings_staged_),
           next_isolation_level_(other.next_isolation_level_),
-          next_is_read_only_(other.next_is_read_only_), statement_xid_(other.statement_xid_),
+          next_read_committed_mode_(other.next_read_committed_mode_),
+          next_is_read_only_(other.next_is_read_only_),
+          next_wait_for_locks_(other.next_wait_for_locks_),
+          next_lock_timeout_seconds_(other.next_lock_timeout_seconds_),
+          statement_xid_(other.statement_xid_),
           table_reservations_(std::move(other.table_reservations_))
     {
         // Clear other's state - critical to invalidate proc_id_ so destructor doesn't unregister
@@ -91,8 +201,19 @@ namespace scratchbird::core
         std::memset(&other.active_role_id_, 0, sizeof(other.active_role_id_));
         std::memset(&other.current_schema_id_, 0, sizeof(other.current_schema_id_));
         std::memset(&other.session_user_id_, 0, sizeof(other.session_user_id_));  // WP-5 EXEC-M3
+        std::memset(&other.attachment_id_, 0, sizeof(other.attachment_id_));
+        std::memset(&other.protocol_session_id_, 0, sizeof(other.protocol_session_id_));
         other.is_superuser_ = false;
         other.session_is_superuser_ = false;  // WP-5 EXEC-M3
+        other.last_statement_text_.clear();
+        other.last_statement_hash_ = 0;
+        other.last_statement_type_ = StatementType::UNKNOWN;
+        other.last_statement_status_ = StatementStatus::UNKNOWN;
+        other.last_statement_time_ = 0;
+        other.last_rows_affected_ = 0;
+        other.last_error_code_ = 0;
+        other.last_sqlstate_.clear();
+        other.last_activity_time_ = 0;
     }
 
     ConnectionContext &ConnectionContext::operator=(ConnectionContext &&other) noexcept
@@ -103,7 +224,8 @@ namespace scratchbird::core
             if (current_xid_ != 0)
             {
                 ErrorContext err_ctx;
-                rollback(&err_ctx);
+                // Avoid starting a new transaction while being overwritten.
+                shutdownTransaction(&err_ctx);
             }
 
             // Unregister our current backend before taking the new one
@@ -124,13 +246,43 @@ namespace scratchbird::core
             session_user_id_ = other.session_user_id_;  // WP-5 EXEC-M3
             session_is_superuser_ = other.session_is_superuser_;  // WP-5 EXEC-M3
             current_schema_id_ = other.current_schema_id_;
+            current_schema_name_ = std::move(other.current_schema_name_);
+            search_path_ = std::move(other.search_path_);
+            dialect_tag_ = std::move(other.dialect_tag_);
+            security_stack_ = std::move(other.security_stack_);
             isolation_level_ = other.isolation_level_;
+            read_committed_mode_ = other.read_committed_mode_;
             is_read_only_ = other.is_read_only_;
             wait_for_locks_ = other.wait_for_locks_;
             lock_timeout_seconds_ = other.lock_timeout_seconds_;
+            autocommit_mode_ = other.autocommit_mode_;
+            autocommit_suspended_ = other.autocommit_suspended_;
+            attachment_id_ = other.attachment_id_;
+            protocol_session_id_ = other.protocol_session_id_;
+            sql_dialect_ = other.sql_dialect_;
+            charset_ = std::move(other.charset_);
+            statement_timeout_seconds_ = other.statement_timeout_seconds_;
+            parser_version_ = other.parser_version_;
+            last_statement_text_ = std::move(other.last_statement_text_);
+            last_statement_hash_ = other.last_statement_hash_;
+            last_statement_type_ = other.last_statement_type_;
+            last_statement_status_ = other.last_statement_status_;
+            last_statement_time_ = other.last_statement_time_;
+            last_rows_affected_ = other.last_rows_affected_;
+            last_error_code_ = other.last_error_code_;
+            last_sqlstate_ = std::move(other.last_sqlstate_);
+            last_activity_time_ = other.last_activity_time_;
+            default_isolation_level_ = other.default_isolation_level_;
+            default_read_committed_mode_ = other.default_read_committed_mode_;
+            default_is_read_only_ = other.default_is_read_only_;
+            default_wait_for_locks_ = other.default_wait_for_locks_;
+            default_lock_timeout_seconds_ = other.default_lock_timeout_seconds_;
             settings_staged_ = other.settings_staged_;
             next_isolation_level_ = other.next_isolation_level_;
+            next_read_committed_mode_ = other.next_read_committed_mode_;
             next_is_read_only_ = other.next_is_read_only_;
+            next_wait_for_locks_ = other.next_wait_for_locks_;
+            next_lock_timeout_seconds_ = other.next_lock_timeout_seconds_;
             statement_xid_ = other.statement_xid_;
             table_reservations_ = std::move(other.table_reservations_);
 
@@ -144,8 +296,19 @@ namespace scratchbird::core
             std::memset(&other.active_role_id_, 0, sizeof(other.active_role_id_));
             std::memset(&other.current_schema_id_, 0, sizeof(other.current_schema_id_));
             std::memset(&other.session_user_id_, 0, sizeof(other.session_user_id_));  // WP-5 EXEC-M3
+            std::memset(&other.attachment_id_, 0, sizeof(other.attachment_id_));
+            std::memset(&other.protocol_session_id_, 0, sizeof(other.protocol_session_id_));
             other.is_superuser_ = false;
             other.session_is_superuser_ = false;  // WP-5 EXEC-M3
+            other.last_statement_text_.clear();
+            other.last_statement_hash_ = 0;
+            other.last_statement_type_ = StatementType::UNKNOWN;
+            other.last_statement_status_ = StatementStatus::UNKNOWN;
+            other.last_statement_time_ = 0;
+            other.last_rows_affected_ = 0;
+            other.last_error_code_ = 0;
+            other.last_sqlstate_.clear();
+            other.last_activity_time_ = 0;
         }
         return *this;
     }
@@ -304,29 +467,127 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    Status ConnectionContext::prepareTransaction(const std::string& gid, ErrorContext *ctx)
+    {
+        if (current_xid_ == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No active transaction to prepare");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (gid.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "GID required for prepare");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        LOG_DEBUG(TRANSACTION, "Preparing transaction: proc_id=%u, xid=%lu, gid=%s",
+                  proc_id_, current_xid_, gid.c_str());
+
+        Status s = checkTerminationRequested(ctx);
+        if (s != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION,
+                        "Termination requested, rolling back instead of preparing: proc_id=%u, "
+                        "xid=%lu",
+                        proc_id_, current_xid_);
+            rollback(nullptr);
+            return s;
+        }
+
+        s = txn_manager_->prepareTransaction(proc_id_, current_xid_, gid, current_user_id_, ctx);
+        if (s != Status::OK)
+        {
+            LOG_ERROR(TRANSACTION,
+                      "Failed to prepare transaction: proc_id=%u, xid=%lu, status=%d",
+                      proc_id_, current_xid_, static_cast<int>(s));
+            return s;
+        }
+
+        // Prepared transactions don't have a dedicated lock owner yet, so release locks
+        // to avoid leaking them into the next transaction on the same proc_id.
+        LockManager *lock_mgr = db_->lock_manager();
+        if (lock_mgr)
+        {
+            Status lock_status = lock_mgr->releaseAllLocks(proc_id_, ctx);
+            if (lock_status != Status::OK)
+            {
+                LOG_WARNING(LOCK, "Failed to release locks after prepare: proc_id=%u, xid=%lu",
+                            proc_id_, current_xid_);
+            }
+        }
+
+        statement_xid_ = 0;
+        savepoint_stack_.clear();
+        savepoint_level_ = 0;
+        command_id_ = 0;
+        current_xid_ = 0;
+        xact_start_time_ = std::chrono::microseconds(0);
+
+        applyStagedSettings();
+
+        s = beginNewTransaction(ctx);
+        if (s != Status::OK)
+        {
+            LOG_ERROR(TRANSACTION,
+                      "Failed to start new transaction after prepare: proc_id=%u, status=%d",
+                      proc_id_, static_cast<int>(s));
+            return s;
+        }
+
+        LOG_DEBUG(TRANSACTION, "Started new transaction after prepare: proc_id=%u, new_xid=%lu",
+                  proc_id_, current_xid_);
+
+        return Status::OK;
+    }
+
+    Status ConnectionContext::shutdownTransaction(ErrorContext *ctx)
+    {
+        if (current_xid_ == 0)
+        {
+            return Status::OK;
+        }
+
+        // Disconnects should not start a new transaction; end the current one in-place.
+        return endCurrentTransaction(false, ctx);
+    }
+
     Status ConnectionContext::startTransaction(bool read_only, IsolationLevel isolation_level,
                                                bool commit_outstanding, ErrorContext *ctx)
     {
+        return startTransaction(read_only, isolation_level, ReadCommittedMode::DEFAULT,
+                                commit_outstanding, ctx);
+    }
+
+    Status ConnectionContext::startTransaction(bool read_only, IsolationLevel isolation_level,
+                                               ReadCommittedMode read_committed_mode,
+                                               bool commit_outstanding, ErrorContext *ctx)
+    {
+        ReadCommittedMode effective_mode = read_committed_mode;
+        if (effective_mode == ReadCommittedMode::DEFAULT)
+        {
+            effective_mode = read_committed_mode_;
+        }
+
         LOG_DEBUG(
             TRANSACTION,
-            "START TRANSACTION: proc_id=%u, read_only=%d, isolation=%d, commit_outstanding=%d",
-            proc_id_, read_only, static_cast<int>(isolation_level), commit_outstanding);
+            "START TRANSACTION: proc_id=%u, read_only=%d, isolation=%d, rc_mode=%d, commit_outstanding=%d",
+            proc_id_, read_only, static_cast<int>(isolation_level),
+            static_cast<int>(effective_mode), commit_outstanding);
 
         if (commit_outstanding)
         {
             // Commit current transaction and apply new settings immediately
-            next_isolation_level_ = isolation_level;
-            next_is_read_only_ = read_only;
-            settings_staged_ = true;
+            stageTransactionSettings(isolation_level, read_only, wait_for_locks_,
+                                     lock_timeout_seconds_, effective_mode);
 
             return commit(ctx);
         }
         else
         {
             // Stage settings for next commit/rollback
-            next_isolation_level_ = isolation_level;
-            next_is_read_only_ = read_only;
-            settings_staged_ = true;
+            stageTransactionSettings(isolation_level, read_only, wait_for_locks_,
+                                     lock_timeout_seconds_, effective_mode);
 
             LOG_DEBUG(TRANSACTION, "Staged transaction settings: isolation=%d, read_only=%d",
                       static_cast<int>(isolation_level), read_only);
@@ -335,15 +596,218 @@ namespace scratchbird::core
         }
     }
 
+    void ConnectionContext::stageTransactionSettings(IsolationLevel isolation_level,
+                                                     bool read_only,
+                                                     bool wait_for_locks,
+                                                     uint32_t lock_timeout_seconds,
+                                                     ReadCommittedMode read_committed_mode)
+    {
+        next_isolation_level_ = isolation_level;
+        next_is_read_only_ = read_only;
+        next_wait_for_locks_ = wait_for_locks;
+        next_lock_timeout_seconds_ = lock_timeout_seconds;
+        next_read_committed_mode_ = read_committed_mode;
+        settings_staged_ = true;
+    }
+
+    void ConnectionContext::stageDefaultTransactionSettings()
+    {
+        stageTransactionSettings(default_isolation_level_,
+                                 default_is_read_only_,
+                                 default_wait_for_locks_,
+                                 default_lock_timeout_seconds_,
+                                 default_read_committed_mode_);
+    }
+
+    void ConnectionContext::beginStatementTracking(const std::string& sql)
+    {
+        // Record the SQL text so dormant reattach can show what was running.
+        last_statement_text_ = sql;
+        last_statement_hash_ = fnv1a64(sql);
+        last_statement_time_ = nowMicros();
+        last_activity_time_ = last_statement_time_;
+        last_rows_affected_ = 0;
+        last_error_code_ = 0;
+        last_sqlstate_.clear();
+
+        // Classify statement type using the leading keyword only (fast, dialect-agnostic).
+        size_t i = 0;
+        while (i < sql.size() && std::isspace(static_cast<unsigned char>(sql[i])))
+        {
+            ++i;
+        }
+
+        std::string keyword;
+        for (; i < sql.size(); ++i)
+        {
+            unsigned char c = static_cast<unsigned char>(sql[i]);
+            if (std::isalnum(c) || c == '_' || c == '$')
+            {
+                keyword.push_back(static_cast<char>(std::toupper(c)));
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        if (keyword.empty())
+        {
+            last_statement_type_ = StatementType::UNKNOWN;
+        }
+        else if (keyword == "SELECT" || keyword == "INSERT" || keyword == "UPDATE" ||
+                 keyword == "DELETE" || keyword == "MERGE" || keyword == "WITH")
+        {
+            last_statement_type_ = StatementType::DML;
+        }
+        else if (keyword == "CREATE" || keyword == "ALTER" || keyword == "DROP" ||
+                 keyword == "TRUNCATE" || keyword == "COMMENT" || keyword == "GRANT" ||
+                 keyword == "REVOKE" || keyword == "RENAME")
+        {
+            last_statement_type_ = StatementType::DDL;
+        }
+        else
+        {
+            last_statement_type_ = StatementType::OTHER;
+        }
+
+        last_statement_status_ = StatementStatus::IN_PROGRESS;
+    }
+
+    void ConnectionContext::endStatementTrackingSuccess(int64_t rows_affected)
+    {
+        last_statement_status_ = StatementStatus::COMPLETED;
+        last_rows_affected_ = rows_affected;
+        last_error_code_ = 0;
+        last_sqlstate_.clear();
+        last_statement_time_ = nowMicros();
+        last_activity_time_ = last_statement_time_;
+    }
+
+    void ConnectionContext::endStatementTrackingFailure(uint32_t error_code,
+                                                       const std::string& sqlstate)
+    {
+        last_statement_status_ = StatementStatus::FAILED;
+        last_rows_affected_ = 0;
+        last_error_code_ = error_code;
+        last_sqlstate_ = sqlstate;
+        last_statement_time_ = nowMicros();
+        last_activity_time_ = last_statement_time_;
+    }
+
+    std::string ConnectionContext::sessionSettingsJson() const
+    {
+        // Stable ordering keeps diffs readable in dormant transaction records.
+        std::string json;
+        json.reserve(256);
+
+        json.append("{\"search_path\":[");
+        for (size_t i = 0; i < search_path_.size(); ++i)
+        {
+            if (i > 0)
+            {
+                json.push_back(',');
+            }
+            appendJsonString(json, search_path_[i]);
+        }
+        json.append("],\"dialect_tag\":");
+        appendJsonString(json, dialect_tag_);
+        json.append(",\"sql_dialect\":");
+        json.append(std::to_string(sql_dialect_));
+        json.append(",\"charset\":");
+        appendJsonString(json, charset_);
+        json.append(",\"parser_version\":");
+        json.append(std::to_string(parser_version_));
+        json.append(",\"statement_timeout\":");
+        json.append(std::to_string(statement_timeout_seconds_));
+        json.push_back('}');
+
+        return json;
+    }
+
     Status ConnectionContext::reserveTables(const std::vector<TableReservation> &reservations,
                                             ErrorContext *ctx)
     {
-        // Store the reservations
-        // Actual lock acquisition happens in beginNewTransaction() for SNAPSHOT TABLE STABILITY
-        table_reservations_ = reservations;
+        // Resolve table names to UUIDs so renames don't affect lock identity.
+        table_reservations_.clear();
+        table_reservations_.reserve(reservations.size());
+
+        CatalogManager *catalog = db_ ? db_->catalog_manager() : nullptr;
+        if (!catalog)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "CatalogManager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        for (const auto &reservation : reservations)
+        {
+            TableReservation resolved = reservation;
+            if (isZeroUuidLocal(resolved.table_id))
+            {
+                if (resolved.table_name.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Table name required");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                ObjectPath path;
+                path.type = PathType::UNQUALIFIED;
+
+                size_t start = 0;
+                while (start < resolved.table_name.size())
+                {
+                    size_t dot = resolved.table_name.find('.', start);
+                    if (dot == std::string::npos)
+                    {
+                        path.components.push_back(resolved.table_name.substr(start));
+                        break;
+                    }
+                    if (dot == start)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Invalid table name in RESERVING clause");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                    path.components.push_back(resolved.table_name.substr(start, dot - start));
+                    start = dot + 1;
+                }
+
+                if (path.components.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Invalid table name in RESERVING clause");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                if (path.components.size() > 1)
+                {
+                    path.type = PathType::ABSOLUTE;
+                }
+
+                CatalogManager::ResolveOptions opts;
+                opts.dialect_tag = dialect_tag_;
+
+                ID resolved_id;
+                CatalogManager::ObjectType resolved_type;
+                Status status = catalog->resolveObjectPath(
+                    path, CatalogManager::ObjectType::TABLE, opts,
+                    resolved_id, resolved_type, ctx);
+                if (status != Status::OK)
+                {
+                    std::string msg = "Failed to resolve table '" + resolved.table_name + "'";
+                    SET_ERROR_CONTEXT(ctx, status, msg.c_str());
+                    return status;
+                }
+
+                (void)resolved_type;
+                resolved.table_id = resolved_id;
+            }
+
+            table_reservations_.push_back(std::move(resolved));
+        }
 
         LOG_DEBUG(LOCK, "Reserved %zu tables for transaction: proc_id=%u, xid=%lu",
-                  reservations.size(), proc_id_, current_xid_);
+                  table_reservations_.size(), proc_id_, current_xid_);
 
         // Note: Table locks will be acquired when the next transaction starts with
         // SNAPSHOT TABLE STABILITY isolation level. See beginNewTransaction().
@@ -365,6 +829,8 @@ namespace scratchbird::core
         current_xid_ = new_xid;
         xact_start_time_ = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::system_clock::now().time_since_epoch());
+        // Track activity at transaction start for dormant transaction auditing.
+        last_activity_time_ = static_cast<uint64_t>(xact_start_time_.count());
 
         // Update isolation level in ProcArray for transaction marker tracking
         s = ProcArrayManager::setIsolationLevel(proc_id_, static_cast<uint8_t>(isolation_level_),
@@ -422,37 +888,21 @@ namespace scratchbird::core
             !table_reservations_.empty())
         {
             LockManager *lock_mgr = db_->lock_manager();
-            CatalogManager *catalog = db_->catalog_manager();
-
-            if (!lock_mgr || !catalog)
+            if (!lock_mgr)
             {
-                LOG_ERROR(LOCK, "LockManager or CatalogManager not available");
+                LOG_ERROR(LOCK, "LockManager not available");
                 return Status::IO_ERROR;
-            }
-
-            // First, get the default schema ID (use "[sys]" for now)
-            CatalogManager::SchemaInfo schema_info;
-            s = catalog->getSchema("[sys]", schema_info, ctx);
-            if (s != Status::OK)
-            {
-                LOG_ERROR(LOCK, "Failed to get [sys] schema for table locking");
-                return s;
             }
 
             // Acquire locks for each reserved table
             for (const auto &reservation : table_reservations_)
             {
-                // Look up table to get its UUID
-                CatalogManager::TableInfo table_info;
-                s = catalog->getTable(schema_info.schema_id, reservation.table_name, table_info,
-                                      ctx);
-                if (s != Status::OK)
+                if (isZeroUuidLocal(reservation.table_id))
                 {
-                    LOG_ERROR(LOCK, "Failed to find table '%s' for locking",
+                    LOG_ERROR(LOCK, "Missing table UUID for reservation '%s'",
                               reservation.table_name.c_str());
-                    // Release all locks acquired so far
                     lock_mgr->releaseAllLocks(proc_id_, nullptr);
-                    return s;
+                    return Status::INVALID_ARGUMENT;
                 }
 
                 // Convert TableLockMode to LockMode
@@ -471,7 +921,7 @@ namespace scratchbird::core
                 // Create lock tag for table
                 LockTag tag;
                 tag.target_type = LockTarget::LOCK_TARGET_TABLE;
-                tag.object_uuid = table_info.table_id;
+                tag.object_uuid = reservation.table_id;
                 tag.page_num = 0;
                 tag.offset_num = 0;
                 tag.padding = 0;
@@ -562,10 +1012,15 @@ namespace scratchbird::core
         {
             isolation_level_ = next_isolation_level_;
             is_read_only_ = next_is_read_only_;
+            wait_for_locks_ = next_wait_for_locks_;
+            lock_timeout_seconds_ = next_lock_timeout_seconds_;
+            read_committed_mode_ = next_read_committed_mode_;
             settings_staged_ = false;
 
-            LOG_DEBUG(TRANSACTION, "Applied staged settings: isolation=%d, read_only=%d",
-                      static_cast<int>(isolation_level_), is_read_only_);
+            LOG_DEBUG(TRANSACTION,
+                      "Applied staged settings: isolation=%d, read_only=%d, wait=%d, lock_timeout=%u, rc_mode=%d",
+                      static_cast<int>(isolation_level_), is_read_only_, wait_for_locks_,
+                      lock_timeout_seconds_, static_cast<int>(read_committed_mode_));
         }
     }
 

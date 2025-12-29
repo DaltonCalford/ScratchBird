@@ -60,6 +60,8 @@ enum class ASTKind : uint16_t {
     CreateTypeStmt,
     CreateDomainStmt,
     AlterTableStmt,
+    RenameObjectStmt,
+    MoveObjectStmt,
     DropTableStmt,
     DropIndexStmt,
     DropViewStmt,
@@ -74,6 +76,7 @@ enum class ASTKind : uint16_t {
 
     // Statements - Transaction
     StartTransactionStmt,
+    PrepareTransactionStmt,
     CommitStmt,
     RollbackStmt,
     SavepointStmt,
@@ -475,6 +478,34 @@ public:
 };
 
 /**
+ * DDL object types for rename/move statements.
+ * Values align with core::CatalogManager::ObjectType.
+ */
+enum class DdlObjectType : uint8_t {
+    SCHEMA = 0,
+    TABLE = 1,
+    COLUMN = 2,
+    INDEX = 3,
+    VIEW = 4,
+    SEQUENCE = 5,
+    CONSTRAINT = 6,
+    TRIGGER = 7,
+    PROCEDURE = 8,
+    FUNCTION = 9,
+    DOMAIN = 10,
+    ROLE = 12,
+    USER = 13,
+    GROUP = 14,
+    TABLESPACE = 15,
+    DATABASE = 16,
+    PACKAGE = 22,
+    UDR = 23,
+    EXCEPTION = 24,
+    FOREIGN_TABLE = 32,
+    SYNONYM = 38,
+};
+
+/**
  * ALTER TABLE action types
  */
 enum class AlterTableAction : uint8_t {
@@ -484,8 +515,10 @@ enum class AlterTableAction : uint8_t {
     RENAME_COLUMN,
     ADD_CONSTRAINT,
     DROP_CONSTRAINT,
+    RENAME_CONSTRAINT,
     RENAME_TABLE,
     SET_TABLESPACE,
+    SET_SCHEMA,
     ENABLE_RLS,
     DISABLE_RLS,
 };
@@ -520,6 +553,39 @@ public:
 
     // For SET TABLESPACE
     SchemaPath tablespace;
+
+    // For SET SCHEMA
+    SchemaPath target_schema;
+};
+
+/**
+ * RENAME OBJECT statement (generic)
+ */
+class RenameObjectStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::RenameObjectStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    DdlObjectType object_type = DdlObjectType::TABLE;
+    bool if_exists = false;
+    SchemaPath object_path;
+    StringPool::StringId new_name = StringPool::INVALID_ID;
+};
+
+/**
+ * MOVE OBJECT statement (generic)
+ */
+class MoveObjectStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::MoveObjectStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    DdlObjectType object_type = DdlObjectType::TABLE;
+    bool if_exists = false;
+    SchemaPath object_path;
+    SchemaPath target_schema;
+    bool has_new_name = false;
+    StringPool::StringId new_name = StringPool::INVALID_ID;
 };
 
 /**
@@ -1581,11 +1647,69 @@ enum class IsolationLevel : uint8_t {
 };
 
 /**
+ * Transaction wait mode (Firebird legacy)
+ */
+enum class TransactionWaitMode : uint8_t {
+    NO_WAIT = 0,
+    WAIT = 1,
+};
+
+/**
  * Transaction access mode
  */
 enum class TransactionAccess : uint8_t {
     READ_WRITE,
     READ_ONLY,
+};
+
+/**
+ * Read committed variants (Firebird legacy)
+ */
+enum class ReadCommittedMode : uint8_t {
+    DEFAULT = 0,
+    READ_CONSISTENCY = 1,
+    RECORD_VERSION = 2,
+    NO_RECORD_VERSION = 3,
+};
+
+/**
+ * Transaction conflict action (ScratchBird extension)
+ */
+enum class TransactionConflictAction : uint8_t {
+    DEFAULT = 0,
+    COMMIT = 1,
+    ROLLBACK = 2,
+    ERROR = 3,
+    KEEP = 4,
+};
+
+/**
+ * Autocommit mode for transaction payloads
+ */
+enum class AutocommitMode : uint8_t {
+    UNCHANGED = 0,
+    ON = 1,
+    OFF = 2,
+};
+
+/**
+ * Table lock mode for RESERVING clause (Firebird legacy)
+ */
+enum class TableLockMode : uint8_t {
+    SHARED = 0,
+    PROTECTED = 1,
+};
+
+/**
+ * Table reservation entry for RESERVING clause
+ */
+struct TableReservation {
+    StringPool::StringId table_name = StringPool::INVALID_ID;
+    TableLockMode lock_mode = TableLockMode::SHARED;
+    bool for_write = false;
+
+    TableReservation(StringPool::StringId name, TableLockMode mode, bool write)
+        : table_name(name), lock_mode(mode), for_write(write) {}
 };
 
 /**
@@ -1603,8 +1727,39 @@ public:
     bool has_access_mode = false;
     TransactionAccess access_mode = TransactionAccess::READ_WRITE;
 
+    bool has_read_committed_mode = false;
+    ReadCommittedMode read_committed_mode = ReadCommittedMode::DEFAULT;
+
     bool deferrable = false;
     bool not_deferrable = false;
+
+    // Firebird legacy options
+    bool has_wait_mode = false;
+    TransactionWaitMode wait_mode = TransactionWaitMode::WAIT;
+
+    bool has_lock_timeout = false;
+    uint32_t lock_timeout_seconds = 0;
+
+    std::vector<TableReservation> table_reservations;
+
+    // ScratchBird extensions
+    bool has_autocommit = false;
+    AutocommitMode autocommit_mode = AutocommitMode::UNCHANGED;
+
+    TransactionConflictAction conflict_action = TransactionConflictAction::DEFAULT;
+    bool has_conflict_error_code = false;
+    int32_t conflict_error_code = 0;
+};
+
+/**
+ * PREPARE TRANSACTION statement (2PC)
+ */
+class PrepareTransactionStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::PrepareTransactionStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId gid = StringPool::INVALID_ID;
 };
 
 /**
@@ -1619,6 +1774,12 @@ public:
     bool and_chain = false;
     // COMMIT AND NO CHAIN (default)
     bool and_no_chain = false;
+    // COMMIT RETAINING (Firebird semantics)
+    bool retaining = false;
+
+    // COMMIT PREPARED
+    bool is_prepared = false;
+    StringPool::StringId prepared_gid = StringPool::INVALID_ID;
 };
 
 /**
@@ -1636,6 +1797,12 @@ public:
     // ROLLBACK AND CHAIN
     bool and_chain = false;
     bool and_no_chain = false;
+    // ROLLBACK RETAINING (Firebird semantics)
+    bool retaining = false;
+
+    // ROLLBACK PREPARED
+    bool is_prepared = false;
+    StringPool::StringId prepared_gid = StringPool::INVALID_ID;
 };
 
 /**
@@ -1689,6 +1856,7 @@ public:
         VARIABLE,       // SET name = value
         TIME_ZONE,      // SET TIME ZONE ...
         TRANSACTION,    // SET TRANSACTION ...
+        AUTOCOMMIT,     // SET AUTOCOMMIT ...
         SESSION_AUTHORIZATION,  // SET SESSION AUTHORIZATION ...
         ROLE,           // SET ROLE ...
         PARSER_VERSION, // SET PARSER VERSION 1|2
@@ -1708,8 +1876,27 @@ public:
     IsolationLevel isolation_level = IsolationLevel::READ_COMMITTED;
     bool has_access_mode = false;
     TransactionAccess access_mode = TransactionAccess::READ_WRITE;
+    bool has_read_committed_mode = false;
+    ReadCommittedMode read_committed_mode = ReadCommittedMode::DEFAULT;
     bool deferrable = false;
     bool not_deferrable = false;
+
+    // Firebird legacy options for SET TRANSACTION
+    bool has_wait_mode = false;
+    TransactionWaitMode wait_mode = TransactionWaitMode::WAIT;
+
+    bool has_lock_timeout = false;
+    uint32_t lock_timeout_seconds = 0;
+
+    std::vector<TableReservation> table_reservations;
+
+    // SET AUTOCOMMIT or SET TRANSACTION AUTOCOMMIT
+    bool has_autocommit = false;
+    AutocommitMode autocommit_mode = AutocommitMode::UNCHANGED;
+
+    TransactionConflictAction conflict_action = TransactionConflictAction::DEFAULT;
+    bool has_conflict_error_code = false;
+    int32_t conflict_error_code = 0;
 
     // For SET PARSER VERSION
     uint8_t parser_version = 0;  // 1 or 2 (0 = not set)
@@ -1951,6 +2138,8 @@ public:
     virtual void visit(CreateViewStmt* stmt) = 0;
     virtual void visit(CreateSequenceStmt* stmt) = 0;
     virtual void visit(AlterTableStmt* stmt) = 0;
+    virtual void visit(RenameObjectStmt* stmt) = 0;
+    virtual void visit(MoveObjectStmt* stmt) = 0;
     virtual void visit(DropTableStmt* stmt) = 0;
     virtual void visit(DropIndexStmt* stmt) = 0;
     virtual void visit(DropViewStmt* stmt) = 0;
@@ -1964,6 +2153,7 @@ public:
 
     // Transaction statements
     virtual void visit(StartTransactionStmt* stmt) = 0;
+    virtual void visit(PrepareTransactionStmt* stmt) = 0;
     virtual void visit(CommitStmt* stmt) = 0;
     virtual void visit(RollbackStmt* stmt) = 0;
     virtual void visit(SavepointStmt* stmt) = 0;

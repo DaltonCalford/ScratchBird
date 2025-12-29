@@ -14,7 +14,7 @@ Completed:
 
 Partial / Outstanding:
 - Metadata visibility policy hooks (redaction levels, restricted enumeration) are still stubbed beyond basic body redaction.
-- Decision gate: finalize metadata redaction/visibility rules after Plan 03 role/priv enforcement is complete.
+- Decision gate: finalize metadata redaction/visibility rules after Plan 03 role/priv enforcement is complete; until then, only missing-body redaction is guaranteed.
 - Emulated catalog views and runtime monitoring views are still pending.
 
 ## References
@@ -108,6 +108,13 @@ Partial / Outstanding:
 - **Firebird catalog**: map `RDB$FIELDS` and `RDB$RELATION_FIELDS` domain metadata to `sys.catalog.domains` and `sys.catalog.domain_*` views.
 - **Redaction**: enforce metadata visibility policy before returning rows.
 - **Runtime monitoring**: implement `sys.runtime.attachments` and `sys.runtime.transactions` (Plan 16) and map to emulated views.
+
+## Redaction Policy (Pending Plan 03)
+- Finalize once role/privilege enforcement and permission cache hooks land (Plan 03).
+- Candidate rules to lock in at that point:
+  - Object names/paths appear only when caller has USAGE/SELECT/EXECUTE or is owner; otherwise apply restricted enumeration rules.
+  - SHOW returns input/output + comments; body is redacted unless owner/superuser or explicit VIEW DEFINITION/EXECUTE privilege grants definition access.
+  - Redacted bodies return literal `Redacted` with a reason code for audit/debugging.
 
 ## Full Implementation Detail (No Ambiguity)
 ### 1) Catalog Tables

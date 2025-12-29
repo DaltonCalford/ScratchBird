@@ -24,42 +24,71 @@ void Parser::parseSetStmt() {
         // SET TRANSACTION
         emit(sblr::Opcode::SET_TRANSACTION);
 
+        constexpr uint8_t kIsoReadCommitted = 0;
+        constexpr uint8_t kIsoSnapshot = 2;
+        constexpr uint8_t kIsoSnapshotTableStability = 3;
+
+        bool has_isolation = false;
+        bool has_access_mode = false;
+        bool has_deferrable = false;
+        uint8_t isolation = kIsoReadCommitted;
+        uint8_t access_mode = 0;  // 0=READ WRITE, 1=READ ONLY
+        uint8_t deferrable = 0;
+
         // Transaction characteristics
         while (true) {
             if (matchKeyword(TokenType::KW_ISOLATION)) {
                 consumeKeyword(TokenType::KW_LEVEL, "Expected LEVEL");
                 if (matchKeyword(TokenType::KW_SERIALIZABLE)) {
-                    emitByte(4);
+                    has_isolation = true;
+                    isolation = kIsoSnapshotTableStability;
                 } else if (matchKeyword(TokenType::KW_REPEATABLE)) {
                     consumeKeyword(TokenType::KW_READ, "Expected READ");
-                    emitByte(3);
+                    has_isolation = true;
+                    isolation = kIsoSnapshot;
                 } else if (matchKeyword(TokenType::KW_READ)) {
                     if (matchKeyword(TokenType::KW_COMMITTED)) {
-                        emitByte(2);
+                        has_isolation = true;
+                        isolation = kIsoReadCommitted;
                     } else if (matchKeyword(TokenType::KW_UNCOMMITTED)) {
-                        emitByte(1);
+                        has_isolation = true;
+                        isolation = kIsoReadCommitted;
                     }
                 }
             } else if (matchKeyword(TokenType::KW_READ)) {
                 if (matchKeyword(TokenType::KW_ONLY)) {
-                    emitByte(1);  // Read only
+                    has_access_mode = true;
+                    access_mode = 1;
                 } else if (matchKeyword(TokenType::KW_WRITE)) {
-                    emitByte(0);  // Read write
+                    has_access_mode = true;
+                    access_mode = 0;
                 }
             } else if (matchKeyword(TokenType::KW_DEFERRABLE)) {
-                emitByte(1);
+                has_deferrable = true;
+                deferrable = 1;
             } else if (matchKeyword(TokenType::KW_NOT)) {
                 consumeKeyword(TokenType::KW_DEFERRABLE, "Expected DEFERRABLE");
-                emitByte(0);
+                has_deferrable = true;
+                deferrable = 0;
             } else {
                 break;
             }
             match(TokenType::COMMA);
         }
+
+        uint16_t flags = 0;
+        if (has_isolation) flags |= sblr::TransactionFlags::HAS_ISOLATION;
+        if (has_access_mode) flags |= sblr::TransactionFlags::HAS_ACCESS_MODE;
+        if (has_deferrable) flags |= sblr::TransactionFlags::HAS_DEFERRABLE;
+        emitU16(flags);
+        emitByte(static_cast<uint8_t>(sblr::TransactionConflictAction::DEFAULT));
+        if (has_isolation) emitByte(isolation);
+        if (has_access_mode) emitByte(access_mode);
+        if (has_deferrable) emitByte(deferrable);
     } else if (matchKeyword(TokenType::KW_CONSTRAINTS)) {
         // SET CONSTRAINTS
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SET_CONSTRAINTS));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SET_CONSTRAINTS));
 
         if (matchKeyword(TokenType::KW_ALL)) {
             emitByte(0);  // All constraints
@@ -86,7 +115,7 @@ void Parser::parseSetStmt() {
     } else if (matchKeyword(TokenType::KW_ROLE)) {
         // SET ROLE
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SET_ROLE));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SET_ROLE));
 
         if (matchKeyword(TokenType::KW_NONE)) {
             emitString("");
@@ -98,7 +127,7 @@ void Parser::parseSetStmt() {
         if (matchKeyword(TokenType::KW_AUTHORIZATION)) {
             // SET SESSION AUTHORIZATION
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SET_SESSION_AUTH));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SET_SESSION_AUTH));
 
             if (matchKeyword(TokenType::KW_DEFAULT)) {
                 emitString("");
@@ -111,7 +140,7 @@ void Parser::parseSetStmt() {
         consumeKeyword(TokenType::KW_ZONE, "Expected ZONE");
         // SET TIME ZONE
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SET_VARIABLE));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SET_VARIABLE));
         emitString("timezone");
 
         if (matchKeyword(TokenType::KW_LOCAL)) {
@@ -128,7 +157,7 @@ void Parser::parseSetStmt() {
     } else if (matchKeyword(TokenType::KW_SEARCH_PATH)) {
         // SET search_path
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SET_VARIABLE));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SET_VARIABLE));
         emitString("search_path");
 
         if (matchKeyword(TokenType::KW_TO) || match(TokenType::EQUAL)) {
@@ -147,7 +176,7 @@ void Parser::parseSetStmt() {
     } else {
         // Generic SET variable = value
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SET_VARIABLE));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SET_VARIABLE));
 
         std::string var_name = parseIdentifier();
         // Handle dotted names like client_encoding
@@ -176,15 +205,15 @@ void Parser::parseShowStmt() {
 
     if (matchKeyword(TokenType::KW_ALL)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_ALL));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_ALL));
     } else if (matchKeyword(TokenType::KW_TRANSACTION)) {
         consumeKeyword(TokenType::KW_ISOLATION, "Expected ISOLATION");
         consumeKeyword(TokenType::KW_LEVEL, "Expected LEVEL");
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_TRANSACTION_LEVEL));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_TRANSACTION_LEVEL));
     } else if (matchKeyword(TokenType::KW_TABLES)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_TABLES));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_TABLES));
         // Optional schema
         if (matchKeyword(TokenType::KW_FROM) || matchKeyword(TokenType::KW_IN)) {
             std::string schema = parseIdentifier();
@@ -192,26 +221,26 @@ void Parser::parseShowStmt() {
         }
     } else if (matchKeyword(TokenType::KW_DATABASES)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_DATABASES));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_DATABASES));
     } else if (matchKeyword(TokenType::KW_COLUMNS)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_COLUMNS));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_COLUMNS));
         consumeKeyword(TokenType::KW_FROM, "Expected FROM");
         std::string table_name = parseQualifiedName();
         emitString(table_name);
     } else if (matchKeyword(TokenType::KW_INDEXES)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_INDEXES));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_INDEXES));
         consumeKeyword(TokenType::KW_FROM, "Expected FROM");
         std::string table_name = parseQualifiedName();
         emitString(table_name);
     } else if (matchKeyword(TokenType::KW_SEARCH_PATH)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_SEARCH_PATH));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_SEARCH_PATH));
     } else {
         // Generic SHOW variable
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_VARIABLE));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_VARIABLE));
         std::string var_name = parseIdentifier();
         emitString(var_name);
     }
@@ -229,37 +258,83 @@ void Parser::parseBeginStmt() {
     // Optional WORK/TRANSACTION
     matchKeyword(TokenType::KW_WORK) || matchKeyword(TokenType::KW_TRANSACTION);
 
+    constexpr uint8_t kIsoReadCommitted = 0;
+    constexpr uint8_t kIsoSnapshot = 2;
+    constexpr uint8_t kIsoSnapshotTableStability = 3;
+
+    bool has_isolation = false;
+    bool has_access_mode = false;
+    bool has_deferrable = false;
+    uint8_t isolation = kIsoReadCommitted;
+    uint8_t access_mode = 0;  // 0=READ WRITE, 1=READ ONLY
+    uint8_t deferrable = 0;
+
     // Transaction characteristics
     while (true) {
         if (matchKeyword(TokenType::KW_ISOLATION)) {
             consumeKeyword(TokenType::KW_LEVEL, "Expected LEVEL");
             if (matchKeyword(TokenType::KW_SERIALIZABLE)) {
-                emitByte(4);
+                has_isolation = true;
+                isolation = kIsoSnapshotTableStability;
             } else if (matchKeyword(TokenType::KW_REPEATABLE)) {
                 consumeKeyword(TokenType::KW_READ, "Expected READ");
-                emitByte(3);
+                has_isolation = true;
+                isolation = kIsoSnapshot;
             } else if (matchKeyword(TokenType::KW_READ)) {
                 if (matchKeyword(TokenType::KW_COMMITTED)) {
-                    emitByte(2);
+                    has_isolation = true;
+                    isolation = kIsoReadCommitted;
                 } else if (matchKeyword(TokenType::KW_UNCOMMITTED)) {
-                    emitByte(1);
+                    has_isolation = true;
+                    isolation = kIsoReadCommitted;
                 }
             }
         } else if (matchKeyword(TokenType::KW_READ)) {
             if (matchKeyword(TokenType::KW_ONLY)) {
-                emitByte(1);
+                has_access_mode = true;
+                access_mode = 1;
             } else if (matchKeyword(TokenType::KW_WRITE)) {
-                emitByte(0);
+                has_access_mode = true;
+                access_mode = 0;
             }
         } else if (matchKeyword(TokenType::KW_DEFERRABLE)) {
-            emitByte(1);
+            has_deferrable = true;
+            deferrable = 1;
         } else if (matchKeyword(TokenType::KW_NOT)) {
             consumeKeyword(TokenType::KW_DEFERRABLE, "Expected DEFERRABLE");
-            emitByte(0);
+            has_deferrable = true;
+            deferrable = 0;
         } else {
             break;
         }
         match(TokenType::COMMA);
+    }
+
+    uint16_t flags = 0;
+    if (has_isolation) flags |= sblr::TransactionFlags::HAS_ISOLATION;
+    if (has_access_mode) flags |= sblr::TransactionFlags::HAS_ACCESS_MODE;
+    if (has_deferrable) flags |= sblr::TransactionFlags::HAS_DEFERRABLE;
+    emitU16(flags);
+    emitByte(static_cast<uint8_t>(sblr::TransactionConflictAction::DEFAULT));
+    if (has_isolation) emitByte(isolation);
+    if (has_access_mode) emitByte(access_mode);
+    if (has_deferrable) emitByte(deferrable);
+}
+
+void Parser::parsePrepareStmt() {
+    consume(TokenType::KW_PREPARE, "Expected PREPARE");
+    consumeKeyword(TokenType::KW_TRANSACTION, "Expected TRANSACTION");
+
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_PREPARE_TRANSACTION));
+
+    if (check(TokenType::STRING_LITERAL)) {
+        uint32_t id = current_token_.value.string_id;
+        emitString(lexer_.stringPool().get(id));
+        advance();
+    } else {
+        error("Expected string literal after PREPARE TRANSACTION");
+        emitString("");
     }
 }
 
@@ -267,44 +342,78 @@ void Parser::parseCommitStmt() {
     consume(TokenType::KW_COMMIT, "Expected COMMIT");
     matchKeyword(TokenType::KW_WORK) || matchKeyword(TokenType::KW_TRANSACTION);
 
+    if (matchIdentifierKeyword("PREPARED")) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_COMMIT_PREPARED));
+
+        if (check(TokenType::STRING_LITERAL)) {
+            uint32_t id = current_token_.value.string_id;
+            emitString(lexer_.stringPool().get(id));
+            advance();
+        } else {
+            error("Expected string literal after COMMIT PREPARED");
+            emitString("");
+        }
+        return;
+    }
+
     emit(sblr::Opcode::COMMIT);
+    uint8_t flags = sblr::CommitRollbackFlags::AND_NO_CHAIN;
 
     // AND [NO] CHAIN
     if (matchKeyword(TokenType::KW_AND)) {
         if (matchKeyword(TokenType::KW_NO)) {
             consumeKeyword(TokenType::KW_CHAIN, "Expected CHAIN");
-            emitByte(0);
+            flags = sblr::CommitRollbackFlags::AND_NO_CHAIN;
         } else {
             consumeKeyword(TokenType::KW_CHAIN, "Expected CHAIN");
-            emitByte(1);
+            flags = sblr::CommitRollbackFlags::AND_CHAIN;
         }
     }
+    emitByte(flags);
 }
 
 void Parser::parseRollbackStmt() {
     consume(TokenType::KW_ROLLBACK, "Expected ROLLBACK");
     matchKeyword(TokenType::KW_WORK) || matchKeyword(TokenType::KW_TRANSACTION);
 
+    if (matchIdentifierKeyword("PREPARED")) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ROLLBACK_PREPARED));
+
+        if (check(TokenType::STRING_LITERAL)) {
+            uint32_t id = current_token_.value.string_id;
+            emitString(lexer_.stringPool().get(id));
+            advance();
+        } else {
+            error("Expected string literal after ROLLBACK PREPARED");
+            emitString("");
+        }
+        return;
+    }
+
     // ROLLBACK TO SAVEPOINT
     if (matchKeyword(TokenType::KW_TO)) {
         matchKeyword(TokenType::KW_SAVEPOINT);
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ROLLBACK_TO_SAVEPOINT));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ROLLBACK_TO_SAVEPOINT));
         std::string savepoint_name = parseIdentifier();
         emitString(savepoint_name);
     } else {
         emit(sblr::Opcode::ROLLBACK);
+        uint8_t flags = sblr::CommitRollbackFlags::AND_NO_CHAIN;
 
         // AND [NO] CHAIN
         if (matchKeyword(TokenType::KW_AND)) {
             if (matchKeyword(TokenType::KW_NO)) {
                 consumeKeyword(TokenType::KW_CHAIN, "Expected CHAIN");
-                emitByte(0);
+                flags = sblr::CommitRollbackFlags::AND_NO_CHAIN;
             } else {
                 consumeKeyword(TokenType::KW_CHAIN, "Expected CHAIN");
-                emitByte(1);
+                flags = sblr::CommitRollbackFlags::AND_CHAIN;
             }
         }
+        emitByte(flags);
     }
 }
 
@@ -312,7 +421,7 @@ void Parser::parseSavepointStmt() {
     consume(TokenType::KW_SAVEPOINT, "Expected SAVEPOINT");
 
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SAVEPOINT));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SAVEPOINT));
 
     std::string savepoint_name = parseIdentifier();
     emitString(savepoint_name);
@@ -323,7 +432,7 @@ void Parser::parseReleaseStmt() {
     matchKeyword(TokenType::KW_SAVEPOINT);
 
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_RELEASE_SAVEPOINT));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_RELEASE_SAVEPOINT));
 
     std::string savepoint_name = parseIdentifier();
     emitString(savepoint_name);
@@ -337,7 +446,7 @@ void Parser::parseGrantStmt() {
     consume(TokenType::KW_GRANT, "Expected GRANT");
 
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_GRANT));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_GRANT));
 
     // Privileges
     emit(sblr::Opcode::BEGIN_LIST);
@@ -464,7 +573,7 @@ void Parser::parseGrantStmt() {
         consumeKeyword(TokenType::KW_GRANT, "Expected GRANT");
         consumeKeyword(TokenType::KW_OPTION, "Expected OPTION");
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_GRANT_OPTION));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_GRANT_OPTION));
     }
 }
 
@@ -472,7 +581,7 @@ void Parser::parseRevokeStmt() {
     consume(TokenType::KW_REVOKE, "Expected REVOKE");
 
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_REVOKE));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_REVOKE));
 
     // GRANT OPTION FOR
     bool revoke_grant_option = false;
@@ -570,7 +679,7 @@ void Parser::parseAnalyzeStmt() {
     consume(TokenType::KW_ANALYZE, "Expected ANALYZE");
 
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ANALYZE));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ANALYZE));
 
     // VERBOSE
     bool verbose = matchKeyword(TokenType::KW_VERBOSE);

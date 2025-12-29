@@ -150,6 +150,22 @@ namespace scratchbird
             Status connect(std::unique_ptr<class ConnectionContext> &connection_out,
                            ErrorContext *ctx = nullptr);
 
+            // Server instance ID (ephemeral, per process). Used to invalidate stale dormant records.
+            const ID& server_instance_id() const
+            {
+                return server_instance_id_;
+            }
+
+            // Dormant transaction handling (reattach support).
+            // The ConnectionContext is retained to preserve locks and ProcArray visibility.
+            Status detachToDormant(std::unique_ptr<class ConnectionContext> &connection,
+                                   ID &dormant_id_out,
+                                   ErrorContext *ctx = nullptr);
+
+            Status reattachDormant(const ID &dormant_id,
+                                   std::unique_ptr<class ConnectionContext> &connection_out,
+                                   ErrorContext *ctx = nullptr);
+
             // Get database information
             bool is_open() const
             {
@@ -467,6 +483,7 @@ namespace scratchbird
             std::string path_;                               // Database file path
             uint32_t page_size_ = 0;                         // Page size
             ID db_uuid_;                                     // Database UUID
+            ID server_instance_id_;                          // Ephemeral server instance UUID
             std::unique_ptr<uint8_t[]> header_buffer_;       // Header buffer (LOW-1 FIX: Modern RAII)
             DatabaseHeader *header_ = nullptr;               // Cached header (points into header_buffer_)
             uint16_t connection_timezone_ = 1;               // Connection timezone (1 = UTC)
@@ -494,6 +511,16 @@ namespace scratchbird
 
             // Security components (Phase 3.2.3)
             std::unique_ptr<PermissionCache> permission_cache_; // Permission cache (owned)
+
+            // Dormant connection registry (reattach support)
+            struct DormantContextEntry
+            {
+                ID dormant_id;
+                uint64_t lease_expires_at = 0;
+                std::unique_ptr<ConnectionContext> connection;
+            };
+            std::unordered_map<ID, DormantContextEntry, IDHash> dormant_contexts_;
+            std::mutex dormant_mutex_;
 
             // === Tablespace File Descriptors (Phase 1, Task 1.3.4) ===
             std::unordered_map<uint16_t, int> tablespace_fds_; // Map: tablespace_id -> file descriptor

@@ -116,6 +116,129 @@ protected:
         return count;
     }
 
+    size_t findOpcodeOffset(const std::vector<uint8_t>& bytecode, Opcode op) {
+        uint8_t target = static_cast<uint8_t>(op);
+        for (size_t i = 0; i < bytecode.size(); ++i) {
+            if (bytecode[i] == target) {
+                return i;
+            }
+        }
+        return bytecode.size();
+    }
+
+    bool findExtendedOpcode(const std::vector<uint8_t>& bytecode,
+                            sblr::ExtendedOpcode ext_op,
+                            size_t& payload_offset) {
+        uint8_t marker = static_cast<uint8_t>(Opcode::EXTENDED_OPCODE);
+        for (size_t i = 0; i + 2 < bytecode.size(); ++i) {
+            if (bytecode[i] != marker) {
+                continue;
+            }
+            uint16_t found = sblr::readInt16(&bytecode[i + 1]);
+            if (found == static_cast<uint16_t>(ext_op)) {
+                payload_offset = i + 3;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    struct StartTransactionPayload {
+        uint16_t flags = 0;
+        uint8_t conflict_action = 0;
+        bool has_conflict_error_code = false;
+        int32_t conflict_error_code = 0;
+        bool has_autocommit = false;
+        uint8_t autocommit_mode = 0;
+        bool has_read_committed_mode = false;
+        uint8_t read_committed_mode = 0;
+        bool has_wait_mode = false;
+        uint8_t wait_mode = 0;
+        bool has_lock_timeout = false;
+        uint32_t lock_timeout = 0;
+        bool has_reservations = false;
+        uint32_t reservation_count = 0;
+        uint8_t first_lock_mode = 0;
+        uint8_t first_for_write = 0;
+    };
+
+    bool parseStartTransactionPayload(const std::vector<uint8_t>& bytecode,
+                                      StartTransactionPayload& out) {
+        size_t offset = findOpcodeOffset(bytecode, Opcode::START_TRANSACTION);
+        if (offset == bytecode.size()) {
+            return false;
+        }
+        offset += 1;
+        if (offset + 3 > bytecode.size()) {
+            return false;
+        }
+
+        out.flags = sblr::readInt16(&bytecode[offset]);
+        offset += 2;
+        out.conflict_action = bytecode[offset++];
+
+        if (out.flags & sblr::TransactionFlags::HAS_CONFLICT_ERROR_CODE) {
+            if (offset + 4 > bytecode.size()) return false;
+            out.has_conflict_error_code = true;
+            out.conflict_error_code = static_cast<int32_t>(sblr::readInt32(&bytecode[offset]));
+            offset += 4;
+        }
+        if (out.flags & sblr::TransactionFlags::HAS_AUTOCOMMIT) {
+            if (offset + 1 > bytecode.size()) return false;
+            out.has_autocommit = true;
+            out.autocommit_mode = bytecode[offset++];
+        }
+        if (out.flags & sblr::TransactionFlags::HAS_ISOLATION) {
+            if (offset + 1 > bytecode.size()) return false;
+            offset += 1;
+        }
+        if (out.flags & sblr::TransactionFlags::HAS_READ_COMMITTED_MODE) {
+            if (offset + 1 > bytecode.size()) return false;
+            out.has_read_committed_mode = true;
+            out.read_committed_mode = bytecode[offset++];
+        }
+        if (out.flags & sblr::TransactionFlags::HAS_ACCESS_MODE) {
+            if (offset + 1 > bytecode.size()) return false;
+            offset += 1;
+        }
+        if (out.flags & sblr::TransactionFlags::HAS_DEFERRABLE) {
+            if (offset + 1 > bytecode.size()) return false;
+            offset += 1;
+        }
+        if (out.flags & sblr::TransactionFlags::HAS_WAIT_MODE) {
+            if (offset + 1 > bytecode.size()) return false;
+            out.has_wait_mode = true;
+            out.wait_mode = bytecode[offset++];
+        }
+        if (out.flags & sblr::TransactionFlags::HAS_LOCK_TIMEOUT) {
+            if (offset + 4 > bytecode.size()) return false;
+            out.has_lock_timeout = true;
+            out.lock_timeout = sblr::readInt32(&bytecode[offset]);
+            offset += 4;
+        }
+        if (out.flags & sblr::TransactionFlags::HAS_RESERVATIONS) {
+            if (offset + 1 > bytecode.size()) return false;
+            out.has_reservations = true;
+            if (bytecode[offset++] != static_cast<uint8_t>(Opcode::BEGIN_LIST)) return false;
+            if (offset + 4 > bytecode.size()) return false;
+            out.reservation_count = sblr::readInt32(&bytecode[offset]);
+            offset += 4;
+            if (out.reservation_count > 0) {
+                if (offset + 1 > bytecode.size()) return false;
+                if (bytecode[offset++] != static_cast<uint8_t>(Opcode::TABLE_REF)) return false;
+                if (offset + 4 > bytecode.size()) return false;
+                uint32_t name_len = sblr::readInt32(&bytecode[offset]);
+                offset += 4;
+                if (offset + name_len + 2 > bytecode.size()) return false;
+                offset += name_len;
+                out.first_lock_mode = bytecode[offset++];
+                out.first_for_write = bytecode[offset++];
+            }
+        }
+
+        return true;
+    }
+
     std::string input_sql_;
     std::unique_ptr<Parser> parser_;
     std::unique_ptr<SemanticAnalyzerV2> analyzer_;
@@ -333,6 +456,51 @@ TEST_F(BytecodeGeneratorV2Test, StartTransaction) {
     EXPECT_TRUE(hasOpcode(result.bytecode(), Opcode::START_TRANSACTION));
 }
 
+TEST_F(BytecodeGeneratorV2Test, StartTransactionExtendedPayload) {
+    auto result = generateBytecode(
+        "START TRANSACTION AUTOCOMMIT ON, ON CONFLICT ERROR 99, NO WAIT, "
+        "LOCK TIMEOUT 12, RESERVING widgets FOR PROTECTED WRITE");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    StartTransactionPayload payload;
+    ASSERT_TRUE(parseStartTransactionPayload(result.bytecode(), payload));
+
+    EXPECT_TRUE(payload.flags & sblr::TransactionFlags::HAS_AUTOCOMMIT);
+    EXPECT_TRUE(payload.flags & sblr::TransactionFlags::HAS_CONFLICT_ERROR_CODE);
+    EXPECT_TRUE(payload.flags & sblr::TransactionFlags::HAS_WAIT_MODE);
+    EXPECT_TRUE(payload.flags & sblr::TransactionFlags::HAS_LOCK_TIMEOUT);
+    EXPECT_TRUE(payload.flags & sblr::TransactionFlags::HAS_RESERVATIONS);
+
+    EXPECT_EQ(payload.conflict_action,
+              static_cast<uint8_t>(sblr::TransactionConflictAction::ERROR));
+    EXPECT_TRUE(payload.has_conflict_error_code);
+    EXPECT_EQ(payload.conflict_error_code, 99);
+    EXPECT_TRUE(payload.has_autocommit);
+    EXPECT_EQ(payload.autocommit_mode, static_cast<uint8_t>(sblr::AutocommitMode::ON));
+    EXPECT_TRUE(payload.has_wait_mode);
+    EXPECT_EQ(payload.wait_mode, 0u);
+    EXPECT_TRUE(payload.has_lock_timeout);
+    EXPECT_EQ(payload.lock_timeout, 12u);
+    EXPECT_TRUE(payload.has_reservations);
+    EXPECT_EQ(payload.reservation_count, 1u);
+    EXPECT_EQ(payload.first_lock_mode, static_cast<uint8_t>(TableLockMode::PROTECTED));
+    EXPECT_EQ(payload.first_for_write, 1u);
+}
+
+TEST_F(BytecodeGeneratorV2Test, StartTransactionReadCommittedModePayload) {
+    auto result = generateBytecode(
+        "START TRANSACTION READ COMMITTED RECORD VERSION");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    StartTransactionPayload payload;
+    ASSERT_TRUE(parseStartTransactionPayload(result.bytecode(), payload));
+
+    EXPECT_TRUE(payload.flags & sblr::TransactionFlags::HAS_READ_COMMITTED_MODE);
+    EXPECT_TRUE(payload.has_read_committed_mode);
+    EXPECT_EQ(payload.read_committed_mode,
+              static_cast<uint8_t>(sblr::ReadCommittedMode::RECORD_VERSION));
+}
+
 TEST_F(BytecodeGeneratorV2Test, Commit) {
     auto result = generateBytecode("COMMIT");
     ASSERT_TRUE(result.success()) << "Bytecode generation failed";
@@ -340,11 +508,44 @@ TEST_F(BytecodeGeneratorV2Test, Commit) {
     EXPECT_TRUE(hasOpcode(result.bytecode(), Opcode::COMMIT));
 }
 
+TEST_F(BytecodeGeneratorV2Test, CommitPrepared) {
+    auto result = generateBytecode("COMMIT PREPARED 'tx1'");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    size_t payload_offset = 0;
+    EXPECT_TRUE(findExtendedOpcode(result.bytecode(),
+                                   sblr::ExtendedOpcode::EXT_COMMIT_PREPARED,
+                                   payload_offset));
+    EXPECT_LT(payload_offset, result.bytecode().size());
+}
+
 TEST_F(BytecodeGeneratorV2Test, Rollback) {
     auto result = generateBytecode("ROLLBACK");
     ASSERT_TRUE(result.success()) << "Bytecode generation failed";
 
     EXPECT_TRUE(hasOpcode(result.bytecode(), Opcode::ROLLBACK));
+}
+
+TEST_F(BytecodeGeneratorV2Test, RollbackPrepared) {
+    auto result = generateBytecode("ROLLBACK PREPARED 'tx1'");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    size_t payload_offset = 0;
+    EXPECT_TRUE(findExtendedOpcode(result.bytecode(),
+                                   sblr::ExtendedOpcode::EXT_ROLLBACK_PREPARED,
+                                   payload_offset));
+    EXPECT_LT(payload_offset, result.bytecode().size());
+}
+
+TEST_F(BytecodeGeneratorV2Test, PrepareTransaction) {
+    auto result = generateBytecode("PREPARE TRANSACTION 'tx1'");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    size_t payload_offset = 0;
+    EXPECT_TRUE(findExtendedOpcode(result.bytecode(),
+                                   sblr::ExtendedOpcode::EXT_PREPARE_TRANSACTION,
+                                   payload_offset));
+    EXPECT_LT(payload_offset, result.bytecode().size());
 }
 
 // =============================================================================

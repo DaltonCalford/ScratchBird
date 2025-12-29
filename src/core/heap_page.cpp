@@ -55,6 +55,40 @@ namespace scratchbird::core
             hdr->free_offset = sizeof(PageHeader);
             hdr->special_size = sizeof(HeapPageSpecial);
 
+            // Set database_uuid and table_id per ON_DISK_FORMAT.md v1.4.0
+            if (db_ != nullptr)
+            {
+                // Get database UUID from database
+                const ID &db_uuid = db_->uuid();
+                memcpy(hdr->database_uuid, db_uuid.bytes.data(), sizeof(hdr->database_uuid));
+            }
+            else
+            {
+                // If no database available, zero it (will be set later)
+                memset(hdr->database_uuid, 0, sizeof(hdr->database_uuid));
+            }
+
+            // Set table_id (MUST be non-zero for PAGE_TYPE_HEAP per ON_DISK_FORMAT.md)
+            memcpy(hdr->table_id, table_id_.bytes.data(), sizeof(hdr->table_id));
+
+            // Validate: table_id must be non-zero for heap pages
+            bool table_id_is_zero = true;
+            for (size_t i = 0; i < sizeof(hdr->table_id); i++)
+            {
+                if (hdr->table_id[i] != 0)
+                {
+                    table_id_is_zero = false;
+                    break;
+                }
+            }
+
+            if (table_id_is_zero)
+            {
+                LOG_WARNING(STORAGE,
+                           "Heap page %u initialized with zero table_id (corruption risk per ON_DISK_FORMAT.md)",
+                           page_id);
+            }
+
             // Initialize special area only for new pages
             HeapPageSpecial *special = getSpecial();
             special->pd_flags = 0;

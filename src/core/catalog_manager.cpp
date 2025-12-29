@@ -295,7 +295,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // Track 3.2: Dormant transactions
         uint32_t dormant_transactions_page; // Page containing dormant transactions table
 
-        uint8_t reserved[3852];       // Padding for 4KB page (244 bytes used)
+        // Track 2: Prepared transactions (2PC)
+        uint32_t prepared_transactions_page; // Page containing prepared transactions table
+
+        uint8_t reserved[3848];       // Padding for 4KB page (248 bytes used)
     };
 
     // Schema record on disk
@@ -1156,6 +1159,19 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint32_t padding;
     };
 
+    // Prepared transaction record on disk (Track 2 - 2PC)
+    struct PreparedTransactionRecord
+    {
+        ID prepared_id;
+        uint64_t txn_id;
+        ID owner_id;
+        ID database_id;
+        char gid[512];
+        uint64_t prepared_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
     // Collation record on disk - see updated CollationRecord structure below at line ~194
 
 #pragma pack(pop)
@@ -1914,6 +1930,270 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             else
             {
                 // If we successfully read catalog root, load the data
+                bool backfilled_catalog_pages = false;
+
+                auto require_catalog_page = [&](uint32_t page_id, const char *name) -> Status {
+                    if (page_id != 0)
+                    {
+                        return Status::OK;
+                    }
+
+                    std::string msg = std::string("Catalog root missing core table page: ") + name;
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, msg.c_str());
+                    return Status::PAGE_CORRUPT;
+                };
+
+                auto backfill_catalog_page = [&](uint32_t &page_id, const char *name) -> Status {
+                    if (page_id != 0)
+                    {
+                        return Status::OK;
+                    }
+
+                    Status alloc_status = allocateCatalogPage(page_id, ctx);
+                    if (alloc_status != Status::OK)
+                    {
+                        std::string msg = std::string("Failed to allocate catalog table page: ") + name;
+                        SET_ERROR_CONTEXT(ctx, alloc_status, msg.c_str());
+                        return alloc_status;
+                    }
+
+                    backfilled_catalog_pages = true;
+                    LOG_INFO(CATALOG, "Catalog backfill: allocated %s page %u", name, page_id);
+                    return Status::OK;
+                };
+
+                status = require_catalog_page(schemas_table_page_, "schemas");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = require_catalog_page(tables_table_page_, "tables");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = require_catalog_page(columns_table_page_, "columns");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = require_catalog_page(indexes_table_page_, "indexes");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Backfill newer catalog tables for older databases.
+                status = backfill_catalog_page(constraints_table_page_, "constraints");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(sequences_table_page_, "sequences");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(views_table_page_, "views");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(triggers_table_page_, "triggers");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(permissions_table_page_, "permissions");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(statistics_table_page_, "statistics");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(collations_table_page_, "collations");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(timezones_table_page_, "timezones");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(charsets_table_page_, "charsets");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(collation_defs_table_page_, "collation_defs");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(dependencies_table_page_, "dependencies");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(comments_table_page_, "comments");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(users_table_page_, "users");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(roles_table_page_, "roles");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(groups_table_page_, "groups");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(role_memberships_table_page_, "role_memberships");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(group_memberships_table_page_, "group_memberships");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(group_mappings_table_page_, "group_mappings");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(procedures_table_page_, "procedures");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(procedure_params_table_page_, "procedure_params");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(domains_table_page_, "domains");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(udr_table_page_, "udr");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(exceptions_table_page_, "exceptions");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(packages_table_page_, "packages");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(emulation_types_table_page_, "emulation_types");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(emulation_servers_table_page_, "emulation_servers");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(emulated_dbs_table_page_, "emulated_dbs");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(tablespaces_table_page_, "tablespaces");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(extensions_table_page_, "extensions");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(foreign_keys_table_page_, "foreign_keys");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(synonyms_table_page_, "synonyms");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(foreign_servers_table_page_, "foreign_servers");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(foreign_tables_table_page_, "foreign_tables");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(user_mappings_table_page_, "user_mappings");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(server_registry_table_page_, "server_registry");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(udr_engines_table_page_, "udr_engines");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(udr_modules_table_page_, "udr_modules");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(migration_history_table_page_, "migration_history");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(dormant_transactions_table_page_, "dormant_transactions");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(prepared_transactions_table_page_, "prepared_transactions");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                if (backfilled_catalog_pages)
+                {
+                    status = writeCatalogRoot(ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                    db_->sync(ctx);
+                }
 
                 // Load schemas
                 status = readSchemaRecords(ctx);
@@ -2510,7 +2790,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     {
         std::vector<SchemaInfo> schemas;
         std::vector<TableInfo> tables;
-        std::unordered_map<ID, std::vector<ColumnInfo>, IDHash> columns_by_table;
+        std::unordered_map<ID, std::vector<ColumnInfo>> columns_by_table;
         std::vector<IndexInfo> indexes;
         std::vector<TablespaceInfo> tablespaces;
 
@@ -4950,6 +5230,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         root->udr_modules_page = udr_modules_table_page_;
         root->migration_history_page = migration_history_table_page_;
         root->dormant_transactions_page = dormant_transactions_table_page_;
+        root->prepared_transactions_page = prepared_transactions_table_page_;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, true, ctx);
     }
@@ -5039,8 +5320,53 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         udr_modules_table_page_ = root->udr_modules_page;
         migration_history_table_page_ = root->migration_history_page;
         dormant_transactions_table_page_ = root->dormant_transactions_page;
+        prepared_transactions_table_page_ = root->prepared_transactions_page;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, false, ctx);
+    }
+
+    auto CatalogManager::allocateCatalogPage(uint32_t &page_id, ErrorContext *ctx) -> Status
+    {
+        if (page_id != 0)
+        {
+            return Status::OK;
+        }
+
+        BufferPool *bp = db_->buffer_pool();
+        if (bp == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BufferPool not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        void *page_buffer = nullptr;
+        Status status = bp->allocatePage(&page_id, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // Backfill helper for older catalogs missing newer table pages.
+        memset(page_buffer, 0, db_->page_size());
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+
+        heap->header.magic = K_MAGIC_SBRD;
+        heap->header.version = 1;
+        heap->header.page_type = PAGE_TYPE_HEAP;
+        heap->header.page_size = db_->page_size();
+        heap->header.page_id = page_id;
+        heap->header.flags = 0;
+        memcpy(heap->header.database_uuid, db_->uuid().bytes.data(), 16);
+        heap->header.generation = 1;
+        heap->record_count = 0;
+        heap->free_offset = sizeof(CatalogHeapPage);
+        heap->next_page = 0;
+        heap->reserved = 0;
+        heap->header.free_space = db_->page_size() - sizeof(CatalogHeapPage);
+        heap->header.item_count = 0;
+        heap->header.free_offset = sizeof(CatalogHeapPage);
+
+        return bp->unpinPage(page_id, true, ctx);
     }
 
     // Helper to write a record to a catalog heap page (with overflow page support)
@@ -9486,31 +9812,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         // Check if migration_history_table_page_ is allocated
         if (migration_history_table_page_ == 0) {
-            // Allocate page for migration history table
-            PageManager *pm = db_->page_manager();
-            Status status = pm->allocatePage(migration_history_table_page_, ctx);
+            Status status = allocateCatalogPage(migration_history_table_page_, ctx);
             if (status != Status::OK) {
                 SET_ERROR_CONTEXT(ctx, status, "Failed to allocate migration history table page");
                 return status;
             }
-
-            // Initialize the page as catalog heap page
-            BufferPool *bp = db_->buffer_pool();
-            void *page_buffer;
-            status = bp->pinPage(migration_history_table_page_, &page_buffer, ctx);
-            if (status != Status::OK) {
-                return status;
-            }
-
-            CatalogHeapPage *heap = static_cast<CatalogHeapPage *>(page_buffer);
-            heap->header.page_type = PAGE_TYPE_HEAP;
-            heap->header.page_id = migration_history_table_page_;
-            heap->record_count = 0;
-            heap->free_offset = sizeof(CatalogHeapPage);
-            heap->next_page = 0;
-            heap->reserved = 0;
-
-            bp->unpinPage(migration_history_table_page_, true, ctx);
 
             LOG_INFO(CATALOG, "recordMigrationHistory: Allocated migration history table page {}",
                     migration_history_table_page_);
@@ -12779,7 +13085,6 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
             }
 
             std::string old_name = it->second.name;
-            const ID schema_id = it->second.schema_id;
             bool old_delimited = it->second.name_is_delimited;
             ViewInfo old_info = it->second;
             it->second.name = new_name;
@@ -22898,6 +23203,220 @@ auto CatalogManager::listDormantTransactions(std::vector<DormantTransactionInfo>
 
     return readRecordsToVector<DormantTransactionRecord, DormantTransactionInfo>(
         dormant_transactions_table_page_, dormants_out, filter, converter, ctx);
+}
+
+// ============================================================================
+// Prepared transaction persistence (Track 2 - 2PC)
+// ============================================================================
+
+auto CatalogManager::createPreparedTransaction(PreparedTransactionInfo& info,
+                                               ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (info.gid.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Prepared transaction GID is required");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (info.txn_id == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Prepared transaction XID is required");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (isZeroUuidLocal(info.prepared_id))
+    {
+        info.prepared_id = generateUuidV7();
+    }
+
+    if (isZeroUuidLocal(info.database_id))
+    {
+        info.database_id = db_->uuid();
+    }
+
+    if (prepared_transactions_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(prepared_transactions_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to allocate prepared transactions table page");
+            return status;
+        }
+
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto predicate = [&info](const PreparedTransactionRecord& rec) {
+        if (!rec.is_valid)
+        {
+            return false;
+        }
+        std::string stored(rec.gid, strnlen(rec.gid, sizeof(rec.gid)));
+        return stored == info.gid;
+    };
+    auto existing = findRecordInHeapPage<PreparedTransactionRecord>(
+        prepared_transactions_table_page_, predicate, ctx);
+    if (existing.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Prepared transaction already exists");
+        return Status::FILE_EXISTS;
+    }
+    if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    if (info.gid.size() >= sizeof(PreparedTransactionRecord::gid))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Prepared transaction GID too long");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    PreparedTransactionRecord record;
+    memset(&record, 0, sizeof(record));
+    record.prepared_id = info.prepared_id;
+    record.txn_id = info.txn_id;
+    record.owner_id = info.owner_id;
+    record.database_id = info.database_id;
+    memcpy(record.gid, info.gid.c_str(), info.gid.size());
+    record.gid[info.gid.size()] = '\0';
+    record.prepared_time = info.prepared_time;
+    record.is_valid = info.is_valid ? 1 : 0;
+
+    Status status = writeRecordToHeapPage(prepared_transactions_table_page_, record, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write prepared transaction record");
+        return status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getPreparedTransactionByGid(const std::string& gid,
+                                                 PreparedTransactionInfo& info_out,
+                                                 ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (prepared_transactions_table_page_ == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Prepared transactions table not initialized");
+        return Status::NOT_FOUND;
+    }
+
+    auto predicate = [&gid](const PreparedTransactionRecord& rec) {
+        if (!rec.is_valid)
+        {
+            return false;
+        }
+        std::string stored(rec.gid, strnlen(rec.gid, sizeof(rec.gid)));
+        return stored == gid;
+    };
+    auto result = findRecordInHeapPage<PreparedTransactionRecord>(
+        prepared_transactions_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "Prepared transaction not found");
+        return result.status;
+    }
+
+    const PreparedTransactionRecord& rec = result.record;
+    info_out.prepared_id = rec.prepared_id;
+    info_out.txn_id = rec.txn_id;
+    info_out.owner_id = rec.owner_id;
+    info_out.database_id = rec.database_id;
+    info_out.gid.assign(rec.gid, strnlen(rec.gid, sizeof(rec.gid)));
+    info_out.prepared_time = rec.prepared_time;
+    info_out.is_valid = rec.is_valid != 0;
+
+    return Status::OK;
+}
+
+auto CatalogManager::deletePreparedTransaction(const std::string& gid,
+                                               ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (prepared_transactions_table_page_ == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Prepared transactions table not initialized");
+        return Status::NOT_FOUND;
+    }
+
+    BufferPool *bp = db_->buffer_pool();
+    uint32_t current_page_id = prepared_transactions_table_page_;
+    while (current_page_id != 0)
+    {
+        void *page_buffer;
+        Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            auto *record = reinterpret_cast<PreparedTransactionRecord *>(
+                reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+            if (record->is_valid)
+            {
+                std::string stored(record->gid, strnlen(record->gid, sizeof(record->gid)));
+                if (stored == gid)
+                {
+                    record->is_valid = 0;
+                    heap->header.generation++;
+                    return bp->unpinPage(current_page_id, true, ctx);
+                }
+            }
+
+            offset += sizeof(PreparedTransactionRecord);
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, false, ctx);
+        current_page_id = next_page;
+    }
+
+    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Prepared transaction not found");
+    return Status::NOT_FOUND;
+}
+
+auto CatalogManager::listPreparedTransactions(std::vector<PreparedTransactionInfo>& prepared_out,
+                                              ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    prepared_out.clear();
+
+    if (prepared_transactions_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    auto filter = [](const PreparedTransactionRecord& rec) { return rec.is_valid; };
+    auto converter = [](const PreparedTransactionRecord& rec, PreparedTransactionInfo& info) {
+        info.prepared_id = rec.prepared_id;
+        info.txn_id = rec.txn_id;
+        info.owner_id = rec.owner_id;
+        info.database_id = rec.database_id;
+        info.gid.assign(rec.gid, strnlen(rec.gid, sizeof(rec.gid)));
+        info.prepared_time = rec.prepared_time;
+        info.is_valid = rec.is_valid != 0;
+    };
+
+    return readRecordsToVector<PreparedTransactionRecord, PreparedTransactionInfo>(
+        prepared_transactions_table_page_, prepared_out, filter, converter, ctx);
 }
 
 // Compute transitive closure of roles

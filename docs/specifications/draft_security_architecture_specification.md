@@ -711,6 +711,7 @@ DSH is computed per statement/plan from the resolved dependency set:
 - Transaction UUID
 - SCH and PEH
 - Declared dependency UUID set and DSH
+- Code identity (SBLR checksum for transportable code, native blob hash + metadata for non-transportable code)
 - Any declared capability requirements (plugins/remote connectivity)
 
 ### I.7 Invalidation Rules (Normative)
@@ -911,4 +912,3 @@ For any operation in this matrix, audit logs MUST capture:
 - If quorum cannot be established, Critical-class operations MUST fail closed.
 - Approvals may be represented as signed approval records bound to the request payload hash.
 - All approvals must be replay-protected (single-use request IDs).
-

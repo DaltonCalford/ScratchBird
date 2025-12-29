@@ -4,6 +4,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/types.h"
 #include <algorithm>
 #include <filesystem>
 #include <thread>
@@ -297,10 +298,32 @@ TEST_F(ConnectionContextTest, TableReservation)
     Status s = db_.connect(conn, &err_ctx);
     ASSERT_EQ(s, Status::OK);
 
+    auto *catalog = db_.catalog_manager();
+    ASSERT_NE(catalog, nullptr);
+
+    CatalogManager::SchemaInfo schema_info;
+    s = catalog->getSchema("public", schema_info, &err_ctx);
+    ASSERT_EQ(s, Status::OK);
+
+    CatalogManager::ColumnInfo col;
+    col.column_name = "id";
+    col.data_type = static_cast<uint16_t>(DataType::INT32);
+    std::vector<CatalogManager::ColumnInfo> columns{col};
+
+    ID table_id1;
+    s = catalog->createTable(schema_info.schema_id, "test_table1", columns, table_id1, 0,
+                             &err_ctx);
+    ASSERT_EQ(s, Status::OK);
+
+    ID table_id2;
+    s = catalog->createTable(schema_info.schema_id, "test_table2", columns, table_id2, 0,
+                             &err_ctx);
+    ASSERT_EQ(s, Status::OK);
+
     // Create table reservations
     std::vector<ConnectionContext::TableReservation> reservations;
-    reservations.push_back({"test_table1", TableLockMode::SHARED, false});
-    reservations.push_back({"test_table2", TableLockMode::PROTECTED, true});
+    reservations.push_back({ID{}, "test_table1", TableLockMode::SHARED, false});
+    reservations.push_back({ID{}, "test_table2", TableLockMode::PROTECTED, true});
 
     s = conn->reserveTables(reservations, &err_ctx);
     EXPECT_EQ(s, Status::OK) << "Table reservation failed: " << err_ctx.message;

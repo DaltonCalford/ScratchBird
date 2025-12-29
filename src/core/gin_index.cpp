@@ -4382,38 +4382,263 @@ namespace scratchbird
             }
 
             // ===== Step 2: Remove dead TIDs from posting lists/trees =====
-            // This is complex because we need to:
-            // 1. Scan all keys in the entry tree
-            // 2. For each key, load its posting list/tree
-            // 3. Remove dead TIDs from the posting structure
-            // 4. Recompress if needed
-            // 5. Mark empty posting lists for deletion
+            // Plan 01 Task D.6: Posting list/tree pruning
+            // Implementation: Reuse pattern from updateTIDsAfterMigration()
 
-            // For now, we implement a simplified version that handles uncompressed posting lists
-            // Full implementation would handle:
-            // - Compressed posting lists (decompress → filter → recompress)
-            // - Posting trees (scan tree leaves, remove TIDs)
-            // - Empty posting list cleanup
+            uint64_t posting_entries_removed = 0;
 
-            // This is a placeholder for the full implementation
-            // The full algorithm would:
-            //
-            // 1. Navigate to leftmost leaf of entry tree
-            // 2. For each entry in entry tree leaves:
-            //    a. Load posting page
-            //    b. Check gpl_is_tree flag
-            //    c. If tree: scan posting tree leaves, remove dead TIDs
-            //    d. If list:
-            //       - If compressed: decompress → filter → recompress
-            //       - If uncompressed: scan array, mark deleted
-            //    e. If posting list becomes empty, mark key for deletion
-            // 3. Remove empty keys from entry tree
-            //
-            // This requires significant complexity, so we log a warning and return
+            // Get entry tree root
+            status = buffer_pool_->pinPage(meta_page_, (void **)&meta_data, ctx);
+            if (status != Status::OK)
+            {
+                LOG_WARNING(VACUUM, "GIN GC: Failed to pin meta page for entry tree: %d",
+                           static_cast<int>(status));
+                if (entries_removed_out)
+                    *entries_removed_out = total_entries_removed;
+                if (pages_modified_out)
+                    *pages_modified_out = total_pages_modified;
+                return had_errors ? Status::IO_ERROR : Status::OK;
+            }
 
-            LOG_WARNING(VACUUM, "GIN GC: Removed %lu entries from pending list, "
-                               "but posting list/tree pruning not yet implemented",
+            meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
+            uint64_t keys_tree_root = meta->gin_keys_btree_root;
+            buffer_pool_->unpinPage(meta_page_, false, ctx);
+
+            if (keys_tree_root == 0)
+            {
+                // Empty index, nothing to do
+                LOG_INFO(VACUUM, "GIN GC: Removed %lu entries from pending list (empty entry tree)",
                         pending_entries_removed);
+                if (entries_removed_out)
+                    *entries_removed_out = total_entries_removed;
+                if (pages_modified_out)
+                    *pages_modified_out = total_pages_modified;
+                return had_errors ? Status::IO_ERROR : Status::OK;
+            }
+
+            // Helper: Recursively traverse entry tree and collect all posting page numbers
+            std::vector<uint64_t> posting_pages;
+            std::function<void(uint32_t)> collectPostingPages = [&](uint32_t page_num)
+            {
+                uint8_t *page_data = nullptr;
+                Status pin_status = buffer_pool_->pinPage(page_num, (void **)&page_data, ctx);
+                if (pin_status != Status::OK)
+                {
+                    LOG_WARNING(VACUUM, "GIN GC: Failed to pin entry tree page %u: %d",
+                               page_num, static_cast<int>(pin_status));
+                    had_errors = true;
+                    return;
+                }
+
+                auto *leaf = reinterpret_cast<SBGinEntryTreeLeaf *>(page_data);
+                bool is_leaf = (leaf->get_is_leaf != 0);
+
+                if (is_leaf)
+                {
+                    // Leaf node: collect posting pages from entries
+                    uint16_t entry_count = leaf->get_entry_count;
+
+                    for (uint16_t i = 0; i < entry_count && i < MAX_ENTRY_TREE_LEAF_ENTRIES; i++)
+                    {
+                        uint16_t offset = leaf->get_offsets[i];
+                        if (offset == 0 || offset >= db_->page_size())
+                            continue;
+
+                        auto *entry = reinterpret_cast<GinEntryTreeLeafEntry *>(page_data + offset);
+                        uint64_t posting_page = entry->value.posting_list_page;
+
+                        if (posting_page != 0)
+                        {
+                            posting_pages.push_back(posting_page);
+                        }
+                    }
+                }
+                else
+                {
+                    // Internal node: recurse to children
+                    auto *internal = reinterpret_cast<SBGinEntryTreeInternal *>(page_data);
+                    uint16_t entry_count = internal->get_entry_count;
+
+                    for (uint16_t i = 0; i < entry_count && i < MAX_ENTRY_TREE_INTERNAL_ENTRIES; i++)
+                    {
+                        uint16_t offset = internal->get_offsets[i];
+                        if (offset == 0 || offset >= db_->page_size())
+                            continue;
+
+                        auto *entry = reinterpret_cast<GinEntryTreeInternalEntry *>(page_data + offset);
+                        uint32_t child_page = entry->child_page;
+
+                        if (child_page != 0)
+                        {
+                            collectPostingPages(child_page);
+                        }
+                    }
+
+                    if (internal->get_rightmost_child != 0)
+                    {
+                        collectPostingPages(internal->get_rightmost_child);
+                    }
+                }
+
+                buffer_pool_->unpinPage(page_num, false, ctx);
+            };
+
+            // Collect all posting pages
+            collectPostingPages(static_cast<uint32_t>(keys_tree_root));
+
+            LOG_INFO(VACUUM, "GIN GC: Found %lu posting pages to process", posting_pages.size());
+
+            // Process each posting page
+            for (uint64_t posting_page_num : posting_pages)
+            {
+                uint8_t *posting_data = nullptr;
+                status = buffer_pool_->pinPage(static_cast<uint32_t>(posting_page_num),
+                                              (void **)&posting_data, ctx);
+                if (status != Status::OK)
+                {
+                    LOG_WARNING(VACUUM, "GIN GC: Failed to pin posting page %lu: %d",
+                               posting_page_num, static_cast<int>(status));
+                    had_errors = true;
+                    continue;
+                }
+
+                auto *posting_page = reinterpret_cast<SBGinPostingListPage *>(posting_data);
+
+                if (posting_page->gpl_is_tree)
+                {
+                    // Posting tree: recursively process leaf nodes
+                    uint64_t tree_root = posting_page->gpl_data.gpl_tree_root;
+                    buffer_pool_->unpinPage(static_cast<uint32_t>(posting_page_num), false, ctx);
+
+                    std::function<void(uint32_t)> prunePostingTree = [&](uint32_t tree_page_num)
+                    {
+                        uint8_t *tree_data = nullptr;
+                        Status tree_pin_status = buffer_pool_->pinPage(tree_page_num,
+                                                                       (void **)&tree_data, ctx);
+                        if (tree_pin_status != Status::OK)
+                        {
+                            LOG_WARNING(VACUUM, "GIN GC: Failed to pin posting tree page %u: %d",
+                                       tree_page_num, static_cast<int>(tree_pin_status));
+                            had_errors = true;
+                            return;
+                        }
+
+                        auto *leaf = reinterpret_cast<SBGinPostingTreeLeaf *>(tree_data);
+                        bool is_leaf_node = (leaf->gpt_is_leaf != 0);
+                        bool tree_page_modified = false;
+
+                        if (is_leaf_node)
+                        {
+                            // Compact TID array by removing dead entries
+                            uint16_t entry_count = leaf->gpt_entry_count;
+                            uint16_t new_count = 0;
+
+                            for (uint16_t i = 0; i < entry_count && i < getMaxPostingTreeLeafTids(); i++)
+                            {
+                                uint64_t tid = convertTIDtoLegacy(leaf->gpt_tids[i].getTID());
+
+                                if (dead_set.find(tid) == dead_set.end())
+                                {
+                                    // Keep this entry
+                                    if (new_count != i)
+                                    {
+                                        leaf->gpt_tids[new_count] = leaf->gpt_tids[i];
+                                        tree_page_modified = true;
+                                    }
+                                    new_count++;
+                                }
+                                else
+                                {
+                                    posting_entries_removed++;
+                                    tree_page_modified = true;
+                                }
+                            }
+
+                            if (tree_page_modified)
+                            {
+                                leaf->gpt_entry_count = new_count;
+                                total_pages_modified++;
+                            }
+                        }
+                        else
+                        {
+                            // Internal node: recurse to children
+                            auto *internal = reinterpret_cast<SBGinPostingTreeInternal *>(tree_data);
+                            uint16_t entry_count = internal->gpt_entry_count;
+
+                            for (uint16_t i = 0; i < entry_count && i < getMaxPostingTreeInternalEntries(); i++)
+                            {
+                                uint32_t child_page = internal->gpt_entries[i].child_page;
+                                if (child_page != 0)
+                                {
+                                    prunePostingTree(child_page);
+                                }
+                            }
+                        }
+
+                        buffer_pool_->unpinPage(tree_page_num, tree_page_modified, ctx);
+                    };
+
+                    if (tree_root != 0)
+                    {
+                        prunePostingTree(static_cast<uint32_t>(tree_root));
+                    }
+                }
+                else
+                {
+                    // Simple posting list
+                    bool page_modified = false;
+
+                    if (posting_page->gpl_is_compressed)
+                    {
+                        // Compressed list: decompress, filter, recompress
+                        // For now, skip compressed lists (alpha limitation)
+                        LOG_INFO(VACUUM, "GIN GC: Skipping compressed posting list at page %lu",
+                                posting_page_num);
+                        buffer_pool_->unpinPage(static_cast<uint32_t>(posting_page_num), false, ctx);
+                        continue;
+                    }
+
+                    // Uncompressed list: compact array
+                    uint16_t entry_count = posting_page->gpl_entry_count;
+                    uint16_t new_count = 0;
+                    GinPostingEntry* entries = posting_page->getEntries();
+
+                    for (uint16_t i = 0; i < entry_count && i < getMaxPostingEntriesPerPage(); i++)
+                    {
+                        uint64_t tid = convertTIDtoLegacy(entries[i].getTID());
+
+                        if (dead_set.find(tid) == dead_set.end())
+                        {
+                            // Keep this entry
+                            if (new_count != i)
+                            {
+                                entries[new_count] = entries[i];
+                                page_modified = true;
+                            }
+                            new_count++;
+                        }
+                        else
+                        {
+                            posting_entries_removed++;
+                            page_modified = true;
+                        }
+                    }
+
+                    if (page_modified)
+                    {
+                        posting_page->gpl_entry_count = new_count;
+                        total_pages_modified++;
+                    }
+
+                    buffer_pool_->unpinPage(static_cast<uint32_t>(posting_page_num), page_modified, ctx);
+                }
+            }
+
+            total_entries_removed += posting_entries_removed;
+
+            LOG_INFO(VACUUM, "GIN GC: Removed %lu entries (%lu pending + %lu posting)",
+                     total_entries_removed, pending_entries_removed, posting_entries_removed);
 
             // Set output parameters
             if (entries_removed_out)

@@ -671,7 +671,8 @@ namespace scratchbird::core
             UDR_ENGINE = 35,        // Phase B: UDR engine plugin
             UDR_MODULE = 36,        // Phase B: UDR module
             CLUSTER = 37,           // Phase B: Distributed MVCC cluster
-            SYNONYM = 38            // Phase B: Cross-schema pointer/alias
+            SYNONYM = 38,           // Phase B: Cross-schema pointer/alias
+            UNKNOWN = 255           // Sentinel for resolver filters/unknown type
         };
 
         // Dependency types (Phase 1.4 - Catalog Corrections)
@@ -1097,6 +1098,17 @@ namespace scratchbird::core
             uint32_t last_error_code = 0;
             std::string last_sqlstate;     // 5-char SQLSTATE if available
             ID server_instance_id;
+            bool is_valid = true;
+        };
+
+        struct PreparedTransactionInfo
+        {
+            ID prepared_id;         // Internal UUID for catalog storage
+            uint64_t txn_id = 0;    // MGA transaction ID
+            std::string gid;        // Global transaction ID (2PC)
+            ID owner_id;            // User that prepared the transaction
+            ID database_id;         // Database UUID
+            uint64_t prepared_time = 0; // Epoch micros
             bool is_valid = true;
         };
 
@@ -2358,6 +2370,20 @@ namespace scratchbird::core
         auto listDormantTransactions(std::vector<DormantTransactionInfo>& dormants_out,
                                     ErrorContext* ctx = nullptr) -> Status;
 
+        // Prepared transaction persistence (2PC)
+        auto createPreparedTransaction(PreparedTransactionInfo& info,
+                                      ErrorContext* ctx = nullptr) -> Status;
+
+        auto getPreparedTransactionByGid(const std::string& gid,
+                                        PreparedTransactionInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto deletePreparedTransaction(const std::string& gid,
+                                      ErrorContext* ctx = nullptr) -> Status;
+
+        auto listPreparedTransactions(std::vector<PreparedTransactionInfo>& prepared_out,
+                                     ErrorContext* ctx = nullptr) -> Status;
+
         // Compute transitive closure of roles (including roles granted to roles)
         auto getEffectiveRoles(const ID& user_id, std::vector<ID>& roles_out,
                               ErrorContext* ctx = nullptr) -> Status;
@@ -3566,6 +3592,7 @@ namespace scratchbird::core
         uint32_t udr_modules_table_page_ = 0;       // UDR modules (Phase B - UDR Plugin)
         uint32_t migration_history_table_page_ = 0; // Migration history (WP-2 CAT-L2)
         uint32_t dormant_transactions_table_page_ = 0; // Dormant transactions (Track 3.2)
+        uint32_t prepared_transactions_table_page_ = 0; // Prepared transactions (2PC)
 
         // Internal methods
         auto writeCatalogRoot(ErrorContext *ctx) -> Status;

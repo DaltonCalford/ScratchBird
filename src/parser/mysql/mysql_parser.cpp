@@ -6,9 +6,11 @@
  */
 
 #include "scratchbird/parser/mysql/mysql_parser.h"
+#include "scratchbird/core/catalog_manager.h"
 #include <cstring>
 #include <algorithm>
 #include <stdexcept>
+#include <limits>
 
 namespace scratchbird::parser::mysql {
 
@@ -316,6 +318,9 @@ void Parser::parseStatementInternal() {
             break;
         case TokenType::KW_CREATE:
             parseCreateStmt();
+            break;
+        case TokenType::KW_RENAME:
+            parseRenameStmt();
             break;
         case TokenType::KW_ALTER:
             parseAlterStmt();
@@ -674,7 +679,7 @@ void Parser::parseGroupByClause() {
     if (matchKeyword(TokenType::KW_WITH)) {
         if (matchKeyword(TokenType::KW_ROLLUP)) {
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_GROUP_ROLLUP));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_GROUP_ROLLUP));
         }
     }
 }
@@ -782,7 +787,7 @@ void Parser::parseXorExpr() {
         // XOR can be implemented as (A OR B) AND NOT (A AND B)
         // For now, emit as special opcode or implement in executor
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_BIT_XOR));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_XOR));
     }
 }
 
@@ -799,7 +804,7 @@ void Parser::parseNotExpr() {
     if (matchKeyword(TokenType::KW_NOT) || match(TokenType::NOT_OP)) {
         parseNotExpr();
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_BIT_NOT));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_NOT));
         return;
     }
     parseComparisonExpr();
@@ -854,14 +859,14 @@ void Parser::parseComparisonExpr() {
         if (check(TokenType::KW_SELECT)) {
             // Subquery
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_IN));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_IN));
             parseSelectStmt();
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_END));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_END));
         } else {
             // Value list
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_IN_LIST));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_IN_LIST));
             emit(sblr::Opcode::BEGIN_LIST);
 
             size_t count_pos = bytecode_.size();
@@ -899,7 +904,7 @@ void Parser::parseComparisonExpr() {
     } else if (matchKeyword(TokenType::KW_REGEXP) || matchKeyword(TokenType::KW_RLIKE)) {
         parseAdditiveExpr();
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_REGEX_MATCH));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_REGEX_MATCH));
     }
 }
 
@@ -909,7 +914,7 @@ void Parser::parseBitwiseOrExpr() {
     while (match(TokenType::PIPE)) {
         parseBitwiseXorExpr();
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_BIT_OR));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_OR));
     }
 }
 
@@ -919,7 +924,7 @@ void Parser::parseBitwiseXorExpr() {
     while (match(TokenType::CARET)) {
         parseBitwiseAndExpr();
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_BIT_XOR));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_XOR));
     }
 }
 
@@ -929,7 +934,7 @@ void Parser::parseBitwiseAndExpr() {
     while (match(TokenType::AMPERSAND)) {
         parseShiftExpr();
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_BIT_AND));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_AND));
     }
 }
 
@@ -940,11 +945,11 @@ void Parser::parseShiftExpr() {
         if (match(TokenType::SHIFT_LEFT)) {
             parseAdditiveExpr();
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_BIT_SHIFT_LEFT));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_SHIFT_LEFT));
         } else if (match(TokenType::SHIFT_RIGHT)) {
             parseAdditiveExpr();
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_BIT_SHIFT_RIGHT));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_SHIFT_RIGHT));
         } else {
             break;
         }
@@ -1002,13 +1007,13 @@ void Parser::parseUnaryExpr() {
     if (match(TokenType::TILDE)) {
         parseUnaryExpr();
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_BIT_NOT));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_NOT));
         return;
     }
     if (match(TokenType::NOT_OP)) {
         parseUnaryExpr();
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_BIT_NOT));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_NOT));
         return;
     }
 
@@ -1076,7 +1081,7 @@ void Parser::parsePrimaryExpr() {
     if (check(TokenType::USER_VARIABLE)) {
         std::string_view var = lexer_.stringPool().get(current_token_.value.string_id);
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_VAR_LOAD));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_VAR_LOAD));
         emitString(var);
         advance();
         return;
@@ -1086,7 +1091,7 @@ void Parser::parsePrimaryExpr() {
     if (check(TokenType::SYSTEM_VARIABLE)) {
         std::string_view var = lexer_.stringPool().get(current_token_.value.string_id);
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_VARIABLE));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_VARIABLE));
         emitString(var);
         advance();
         return;
@@ -1103,10 +1108,10 @@ void Parser::parsePrimaryExpr() {
         if (check(TokenType::KW_SELECT)) {
             // Scalar subquery
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_SCALAR));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_SCALAR));
             parseSelectStmt();
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_END));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_END));
         } else {
             parseExpression();
         }
@@ -1130,10 +1135,10 @@ void Parser::parsePrimaryExpr() {
     if (matchKeyword(TokenType::KW_EXISTS)) {
         consume(TokenType::LEFT_PAREN, "Expected ( after EXISTS");
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_EXISTS));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_EXISTS));
         parseSelectStmt();
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_END));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_END));
         consume(TokenType::RIGHT_PAREN, "Expected ) after EXISTS subquery");
         return;
     }
@@ -1322,7 +1327,7 @@ void Parser::parseFunctionCall(const std::string& name) {
     // Mathematical functions
     if (upper_name == "ABS") {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_FUNC_ABS));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_FUNC_ABS));
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         return;
@@ -1330,7 +1335,7 @@ void Parser::parseFunctionCall(const std::string& name) {
 
     if (upper_name == "ROUND") {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_FUNC_ROUND));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_FUNC_ROUND));
         parseExpression();
         if (match(TokenType::COMMA)) {
             parseExpression();  // decimal places
@@ -1344,7 +1349,7 @@ void Parser::parseFunctionCall(const std::string& name) {
 
     if (upper_name == "FLOOR") {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_FUNC_FLOOR));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_FUNC_FLOOR));
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         return;
@@ -1352,7 +1357,7 @@ void Parser::parseFunctionCall(const std::string& name) {
 
     if (upper_name == "CEIL" || upper_name == "CEILING") {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_FUNC_CEIL));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_FUNC_CEIL));
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         return;
@@ -1360,7 +1365,7 @@ void Parser::parseFunctionCall(const std::string& name) {
 
     if (upper_name == "SQRT") {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_FUNC_SQRT));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_FUNC_SQRT));
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         return;
@@ -1368,7 +1373,7 @@ void Parser::parseFunctionCall(const std::string& name) {
 
     if (upper_name == "POWER" || upper_name == "POW") {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_FUNC_POWER));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_FUNC_POWER));
         parseExpression();
         consume(TokenType::COMMA, "Expected ,");
         parseExpression();
@@ -1475,7 +1480,7 @@ void Parser::parseFunctionCall(const std::string& name) {
     // Generic function call (unknown function)
     // Emit as literal function name + argument list
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CALL));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CALL));
     emitString(upper_name);
 
     emit(sblr::Opcode::BEGIN_LIST);
@@ -1658,7 +1663,7 @@ void Parser::parseInsertStmt() {
         consumeKeyword(TokenType::KW_UPDATE, "Expected UPDATE");
 
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ON_CONFLICT_DO_UPDATE));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT_DO_UPDATE));
 
         emit(sblr::Opcode::BEGIN_LIST);
         size_t update_count_pos = bytecode_.size();
@@ -1846,7 +1851,7 @@ void Parser::parseReplaceStmt() {
     // For now, treat as INSERT with conflict handling
     emit(sblr::Opcode::INSERT);
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ON_CONFLICT_DO_UPDATE));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT_DO_UPDATE));
 
     // Table name
     std::string schema;
@@ -1924,9 +1929,237 @@ void Parser::parseCreateStmt() {
     parseCreateTable();  // Simplified - just handle TABLE for now
 }
 
+void Parser::parseRenameStmt() {
+    advance();  // Consume RENAME
+
+    consumeKeyword(TokenType::KW_TABLE, "Expected TABLE after RENAME");
+
+    auto emit_string16 = [&](std::string_view str) {
+        if (str.size() > std::numeric_limits<uint16_t>::max()) {
+            error("Identifier length exceeds 16-bit limit");
+            emitU16(0);
+            return;
+        }
+        emitU16(static_cast<uint16_t>(str.size()));
+        for (unsigned char ch : str) {
+            emitByte(static_cast<uint8_t>(ch));
+        }
+    };
+
+    auto split_path = [&](const std::string& path) {
+        std::vector<std::string> parts;
+        std::string current;
+        for (char ch : path) {
+            if (ch == '/') {
+                if (!current.empty()) {
+                    parts.push_back(current);
+                    current.clear();
+                }
+            } else {
+                current.push_back(ch);
+            }
+        }
+        if (!current.empty()) {
+            parts.push_back(current);
+        }
+        return parts;
+    };
+
+    auto build_object_path = [&](const std::string& schema_in,
+                                 const std::string& object_name) {
+        std::string schema = schema_in;
+        std::string object = object_name;
+        resolveTableName(schema, object);
+        auto components = split_path(schema);
+        components.push_back(object);
+        return components;
+    };
+
+    auto build_schema_path = [&](const std::string& schema_in) {
+        std::string schema = schema_in;
+        std::string dummy = "x";
+        resolveTableName(schema, dummy);
+        return split_path(schema);
+    };
+
+    auto emit_object_path = [&](const std::vector<std::string>& components) {
+        emitByte(static_cast<uint8_t>(core::PathType::ABSOLUTE));
+        if (components.size() > std::numeric_limits<uint8_t>::max()) {
+            error("Object path has too many components");
+            emitByte(0);
+            return;
+        }
+        emitByte(static_cast<uint8_t>(components.size()));
+        for (const auto& comp : components) {
+            emit_string16(comp);
+        }
+    };
+
+    auto emit_rename = [&](const std::vector<std::string>& components,
+                           std::string_view new_name) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_RENAME_OBJECT));
+        emitByte(0);
+        emitByte(static_cast<uint8_t>(core::CatalogManager::ObjectType::TABLE));
+        emit_object_path(components);
+        emit_string16(new_name);
+    };
+
+    auto emit_move = [&](const std::vector<std::string>& components,
+                         const std::vector<std::string>& target_schema,
+                         std::string_view new_name) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MOVE_OBJECT));
+        emitByte(0);
+        emitByte(static_cast<uint8_t>(core::CatalogManager::ObjectType::TABLE));
+        emit_object_path(components);
+        emit_object_path(target_schema);
+        emit_string16(new_name);
+    };
+
+    std::string old_schema;
+    std::string old_table = parseIdentifier();
+    if (match(TokenType::DOT)) {
+        old_schema = old_table;
+        old_table = parseIdentifier();
+    }
+    auto old_components = build_object_path(old_schema, old_table);
+
+    if (!(matchKeyword(TokenType::KW_TO) || match(TokenType::KW_AS))) {
+        error("Expected TO in RENAME TABLE");
+        return;
+    }
+
+    std::string new_schema;
+    std::string new_table = parseIdentifier();
+    if (match(TokenType::DOT)) {
+        new_schema = new_table;
+        new_table = parseIdentifier();
+    }
+
+    if (!new_schema.empty()) {
+        auto target_schema = build_schema_path(new_schema);
+        emit_move(old_components, target_schema, new_table);
+    } else {
+        emit_rename(old_components, new_table);
+    }
+}
+
 void Parser::parseAlterStmt() {
     advance();  // Consume ALTER
-    error("ALTER statement not yet implemented");
+    consumeKeyword(TokenType::KW_TABLE, "Expected TABLE after ALTER");
+
+    auto emit_string16 = [&](std::string_view str) {
+        if (str.size() > std::numeric_limits<uint16_t>::max()) {
+            error("Identifier length exceeds 16-bit limit");
+            emitU16(0);
+            return;
+        }
+        emitU16(static_cast<uint16_t>(str.size()));
+        for (unsigned char ch : str) {
+            emitByte(static_cast<uint8_t>(ch));
+        }
+    };
+
+    auto split_path = [&](const std::string& path) {
+        std::vector<std::string> parts;
+        std::string current;
+        for (char ch : path) {
+            if (ch == '/') {
+                if (!current.empty()) {
+                    parts.push_back(current);
+                    current.clear();
+                }
+            } else {
+                current.push_back(ch);
+            }
+        }
+        if (!current.empty()) {
+            parts.push_back(current);
+        }
+        return parts;
+    };
+
+    auto build_object_path = [&](const std::string& schema_in,
+                                 const std::string& object_name) {
+        std::string schema = schema_in;
+        std::string object = object_name;
+        resolveTableName(schema, object);
+        auto components = split_path(schema);
+        components.push_back(object);
+        return components;
+    };
+
+    auto build_schema_path = [&](const std::string& schema_in) {
+        std::string schema = schema_in;
+        std::string dummy = "x";
+        resolveTableName(schema, dummy);
+        return split_path(schema);
+    };
+
+    auto emit_object_path = [&](const std::vector<std::string>& components) {
+        emitByte(static_cast<uint8_t>(core::PathType::ABSOLUTE));
+        if (components.size() > std::numeric_limits<uint8_t>::max()) {
+            error("Object path has too many components");
+            emitByte(0);
+            return;
+        }
+        emitByte(static_cast<uint8_t>(components.size()));
+        for (const auto& comp : components) {
+            emit_string16(comp);
+        }
+    };
+
+    auto emit_rename = [&](const std::vector<std::string>& components,
+                           std::string_view new_name) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_RENAME_OBJECT));
+        emitByte(0);
+        emitByte(static_cast<uint8_t>(core::CatalogManager::ObjectType::TABLE));
+        emit_object_path(components);
+        emit_string16(new_name);
+    };
+
+    auto emit_move = [&](const std::vector<std::string>& components,
+                         const std::vector<std::string>& target_schema,
+                         std::string_view new_name) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MOVE_OBJECT));
+        emitByte(0);
+        emitByte(static_cast<uint8_t>(core::CatalogManager::ObjectType::TABLE));
+        emit_object_path(components);
+        emit_object_path(target_schema);
+        emit_string16(new_name);
+    };
+
+    std::string schema;
+    std::string table = parseIdentifier();
+    if (match(TokenType::DOT)) {
+        schema = table;
+        table = parseIdentifier();
+    }
+
+    auto components = build_object_path(schema, table);
+
+    if (matchKeyword(TokenType::KW_RENAME)) {
+        if (matchKeyword(TokenType::KW_TO)) {
+            std::string new_schema;
+            std::string new_table = parseIdentifier();
+            if (match(TokenType::DOT)) {
+                new_schema = new_table;
+                new_table = parseIdentifier();
+            }
+            if (!new_schema.empty()) {
+                auto target_schema = build_schema_path(new_schema);
+                emit_move(components, target_schema, new_table);
+            } else {
+                emit_rename(components, new_table);
+            }
+            return;
+        }
+    }
+
+    error("ALTER TABLE supports only RENAME TO [schema.table] in MySQL parser");
     synchronize();
 }
 
@@ -2344,13 +2577,66 @@ ForeignKeyDef Parser::parseForeignKeyDef() {
 void Parser::parseSetStmt() {
     consume(TokenType::KW_SET, "Expected SET");
 
-    emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SET_VARIABLE));
-
     // Handle various SET forms
     if (matchKeyword(TokenType::KW_GLOBAL) || matchKeyword(TokenType::KW_SESSION) ||
         matchKeyword(TokenType::KW_LOCAL)) {
-        // SET [GLOBAL|SESSION|LOCAL] var = value
+        // Scope is parsed for MySQL compatibility; ScratchBird treats scope as session-level.
+    }
+
+    if (matchKeyword(TokenType::KW_TRANSACTION)) {
+        emit(sblr::Opcode::SET_TRANSACTION);
+
+        constexpr uint8_t kIsoReadCommitted = 0;
+        constexpr uint8_t kIsoSnapshot = 2;
+        constexpr uint8_t kIsoSnapshotTableStability = 3;
+
+        bool has_isolation = false;
+        bool has_access_mode = false;
+        uint8_t isolation = kIsoReadCommitted;
+        uint8_t access_mode = 0;  // 0=READ WRITE, 1=READ ONLY
+
+        while (true) {
+            if (matchKeyword(TokenType::KW_ISOLATION)) {
+                consumeKeyword(TokenType::KW_LEVEL, "Expected LEVEL");
+                if (matchKeyword(TokenType::KW_SERIALIZABLE)) {
+                    has_isolation = true;
+                    isolation = kIsoSnapshotTableStability;
+                } else if (matchKeyword(TokenType::KW_REPEATABLE)) {
+                    consumeKeyword(TokenType::KW_READ, "Expected READ");
+                    has_isolation = true;
+                    isolation = kIsoSnapshot;
+                } else if (matchKeyword(TokenType::KW_READ)) {
+                    if (matchKeyword(TokenType::KW_COMMITTED)) {
+                        has_isolation = true;
+                        isolation = kIsoReadCommitted;
+                    } else if (matchKeyword(TokenType::KW_UNCOMMITTED)) {
+                        has_isolation = true;
+                        isolation = kIsoReadCommitted;
+                    }
+                }
+            } else if (matchKeyword(TokenType::KW_READ)) {
+                if (matchKeyword(TokenType::KW_ONLY)) {
+                    has_access_mode = true;
+                    access_mode = 1;
+                } else if (matchKeyword(TokenType::KW_WRITE)) {
+                    has_access_mode = true;
+                    access_mode = 0;
+                }
+            } else {
+                break;
+            }
+
+            match(TokenType::COMMA);
+        }
+
+        uint16_t flags = 0;
+        if (has_isolation) flags |= sblr::TransactionFlags::HAS_ISOLATION;
+        if (has_access_mode) flags |= sblr::TransactionFlags::HAS_ACCESS_MODE;
+        emitU16(flags);
+        emitByte(static_cast<uint8_t>(sblr::TransactionConflictAction::DEFAULT));
+        if (has_isolation) emitByte(isolation);
+        if (has_access_mode) emitByte(access_mode);
+        return;
     }
 
     // Variable name
@@ -2365,12 +2651,33 @@ void Parser::parseSetStmt() {
         var = parseIdentifier();
     }
 
-    emitString(var);
-
     // = or :=
     if (!match(TokenType::EQUAL) && !match(TokenType::COLON_EQUAL)) {
         error("Expected = or :=");
     }
+
+    std::string var_upper = var;
+    for (char& c : var_upper) {
+        if (c >= 'a' && c <= 'z') {
+            c = static_cast<char>(c - 32);
+        }
+    }
+
+    if (var_upper == "AUTOCOMMIT" && check(TokenType::INTEGER_LITERAL)) {
+        int64_t value = current_token_.value.int_value;
+        if (value == 0 || value == 1) {
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SET_AUTOCOMMIT));
+            emitByte(static_cast<uint8_t>(value));
+            emitByte(static_cast<uint8_t>(sblr::TransactionConflictAction::DEFAULT));
+            advance();
+            return;
+        }
+    }
+
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SET_VARIABLE));
+    emitString(var);
 
     // Value
     parseExpression();
@@ -2381,7 +2688,7 @@ void Parser::parseShowStmt() {
 
     if (matchKeyword(TokenType::KW_TABLES)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_TABLES));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_TABLES));
 
         // FROM database
         if (matchKeyword(TokenType::KW_FROM) || matchKeyword(TokenType::KW_IN)) {
@@ -2402,7 +2709,7 @@ void Parser::parseShowStmt() {
         }
     } else if (matchKeyword(TokenType::KW_DATABASES) || matchKeyword(TokenType::KW_SCHEMAS)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_DATABASES));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_DATABASES));
 
         if (matchKeyword(TokenType::KW_LIKE)) {
             if (check(TokenType::STRING_LITERAL)) {
@@ -2414,7 +2721,7 @@ void Parser::parseShowStmt() {
         }
     } else if (matchKeyword(TokenType::KW_COLUMNS)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_COLUMNS));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_COLUMNS));
 
         consumeKeyword(TokenType::KW_FROM, "Expected FROM");
         std::string table = parseQualifiedName();
@@ -2431,7 +2738,7 @@ void Parser::parseShowStmt() {
     } else if (matchKeyword(TokenType::KW_INDEX) || matchKeyword(TokenType::KW_INDEXES) ||
                matchKeyword(TokenType::KW_KEY)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_INDEXES));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_INDEXES));
 
         consumeKeyword(TokenType::KW_FROM, "Expected FROM");
         std::string table = parseQualifiedName();
@@ -2439,13 +2746,13 @@ void Parser::parseShowStmt() {
     } else if (matchKeyword(TokenType::KW_CREATE)) {
         if (matchKeyword(TokenType::KW_TABLE)) {
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_CREATE_TABLE));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_CREATE_TABLE));
 
             std::string table = parseQualifiedName();
             emitString(table);
         } else if (matchKeyword(TokenType::KW_DATABASE)) {
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_DATABASE));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_DATABASE));
 
             std::string db = parseIdentifier();
             emitString(db);
@@ -2460,7 +2767,7 @@ void Parser::parseDescribeStmt() {
     consume(TokenType::KW_DESCRIBE, "Expected DESCRIBE");
 
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_DESCRIBE_TABLE));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DESCRIBE_TABLE));
 
     std::string table = parseQualifiedName();
     emitString(table);
@@ -2485,7 +2792,7 @@ void Parser::parseUseStmt() {
 
     // Emit a schema change opcode
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SET_VARIABLE));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SET_VARIABLE));
     emitString("search_path");
     emit(sblr::Opcode::LITERAL_STRING);
     emitString(default_schema_);
@@ -2503,16 +2810,18 @@ void Parser::parseBeginStmt() {
     }
 
     emit(sblr::Opcode::START_TRANSACTION);
+    bool has_access_mode = false;
+    uint8_t access_mode = 0;  // 0=READ WRITE, 1=READ ONLY
 
     // Transaction characteristics
     while (true) {
         if (matchKeyword(TokenType::KW_READ)) {
             if (matchKeyword(TokenType::KW_ONLY)) {
-                emit(sblr::Opcode::SET_TRANSACTION);
-                emitByte(1);  // Read only
+                has_access_mode = true;
+                access_mode = 1;
             } else if (matchKeyword(TokenType::KW_WRITE)) {
-                emit(sblr::Opcode::SET_TRANSACTION);
-                emitByte(0);  // Read write
+                has_access_mode = true;
+                access_mode = 0;
             }
         } else if (matchKeyword(TokenType::KW_WITH)) {
             // WITH CONSISTENT SNAPSHOT - MySQL specific
@@ -2529,6 +2838,14 @@ void Parser::parseBeginStmt() {
 
         match(TokenType::COMMA);
     }
+
+    uint16_t flags = 0;
+    if (has_access_mode) flags |= sblr::TransactionFlags::HAS_ACCESS_MODE;
+    emitU16(flags);
+    emitByte(static_cast<uint8_t>(sblr::TransactionConflictAction::DEFAULT));
+    if (has_access_mode) {
+        emitByte(access_mode);
+    }
 }
 
 void Parser::parseCommitStmt() {
@@ -2536,14 +2853,17 @@ void Parser::parseCommitStmt() {
     matchKeyword(TokenType::KW_WORK);
 
     emit(sblr::Opcode::COMMIT);
+    uint8_t flags = sblr::CommitRollbackFlags::AND_NO_CHAIN;
 
     // AND [NO] CHAIN
     if (matchKeyword(TokenType::KW_AND)) {
         bool no = matchKeyword(TokenType::KW_NO);
         if (matchKeyword(TokenType::KW_CHAIN)) {
-            emitByte(no ? 0 : 1);
+            flags = no ? sblr::CommitRollbackFlags::AND_NO_CHAIN
+                       : sblr::CommitRollbackFlags::AND_CHAIN;
         }
     }
+    emitByte(flags);
 }
 
 void Parser::parseRollbackStmt() {
@@ -2556,10 +2876,21 @@ void Parser::parseRollbackStmt() {
         std::string name = parseIdentifier();
 
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ROLLBACK_TO_SAVEPOINT));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ROLLBACK_TO_SAVEPOINT));
         emitString(name);
     } else {
         emit(sblr::Opcode::ROLLBACK);
+        uint8_t flags = sblr::CommitRollbackFlags::AND_NO_CHAIN;
+
+        // AND [NO] CHAIN
+        if (matchKeyword(TokenType::KW_AND)) {
+            bool no = matchKeyword(TokenType::KW_NO);
+            if (matchKeyword(TokenType::KW_CHAIN)) {
+                flags = no ? sblr::CommitRollbackFlags::AND_NO_CHAIN
+                           : sblr::CommitRollbackFlags::AND_CHAIN;
+            }
+        }
+        emitByte(flags);
     }
 }
 
@@ -2569,7 +2900,7 @@ void Parser::parseSavepointStmt() {
     std::string name = parseIdentifier();
 
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SAVEPOINT));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SAVEPOINT));
     emitString(name);
 }
 
@@ -2580,7 +2911,7 @@ void Parser::parseReleaseStmt() {
     std::string name = parseIdentifier();
 
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_RELEASE_SAVEPOINT));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_RELEASE_SAVEPOINT));
     emitString(name);
 }
 
@@ -2607,10 +2938,10 @@ void Parser::parseUnlockStmt() {
 
 void Parser::parseSubquery() {
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_SCALAR));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_SCALAR));
     parseSelectStmt();
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_END));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_END));
 }
 
 } // namespace scratchbird::parser::mysql

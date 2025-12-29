@@ -13,6 +13,7 @@
 #include <functional>
 #include <string>
 #include <map>
+#include <set>
 
 namespace scratchbird::core
 {
@@ -187,7 +188,7 @@ struct SBGiSTEntry
 
 #pragma pack(pop)
 
-static_assert(sizeof(SBGiSTPage) == 208, "GiST page header must be 208 bytes");
+static_assert(sizeof(SBGiSTPage) == 224, "GiST page header must be 224 bytes (80-byte PageHeader + 144 bytes)");
 static_assert(sizeof(SBGiSTEntry) == 40, "GiST entry fixed header must be 40 bytes");
 
 /**
@@ -312,7 +313,7 @@ public:
 /**
  * GiST index implementation
  */
-class GiSTIndex
+class GiSTIndex : public IndexGCInterface
 {
 public:
     /**
@@ -460,8 +461,15 @@ public:
                            std::vector<TID>& results,
                            ErrorContext* ctx);
 
-    // Garbage collection methods
-    Status removeDeadEntries(uint64_t oldest_active_xid, ErrorContext* ctx);
+    // IndexGCInterface implementation
+    Status removeDeadEntries(const std::vector<TID>& dead_tids,
+                            uint64_t* entries_removed_out = nullptr,
+                            uint64_t* pages_modified_out = nullptr,
+                            ErrorContext* ctx = nullptr) override;
+
+    const char* indexTypeName() const override { return "GiST"; }
+
+    // Additional GC methods
     uint64_t getDeadEntryCount() const;
 
     // Index metadata
@@ -506,8 +514,10 @@ private:
                           ErrorContext* ctx);
 
     Status removeDeadEntriesRecursive(uint64_t page_num,
-                                      uint64_t oldest_active_xid,
+                                      const std::set<TID>& dead_tid_set,
+                                      uint64_t oit,
                                       uint64_t* removed_count,
+                                      uint64_t* pages_modified,
                                       ErrorContext* ctx);
 
     // Helper methods

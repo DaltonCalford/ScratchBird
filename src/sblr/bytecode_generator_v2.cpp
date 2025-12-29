@@ -10,8 +10,32 @@
 #include <sstream>
 #include <cmath>
 #include <iostream>
+#include <limits>
 
 namespace scratchbird::parser::v2 {
+
+namespace {
+
+uint8_t mapIsolationLevel(IsolationLevel level) {
+    // Keep in sync with core::IsolationLevel numeric values.
+    switch (level) {
+        case IsolationLevel::READ_UNCOMMITTED:
+        case IsolationLevel::READ_COMMITTED:
+            return 0; // core::IsolationLevel::READ_COMMITTED
+        case IsolationLevel::REPEATABLE_READ:
+            return 2; // core::IsolationLevel::SNAPSHOT
+        case IsolationLevel::SERIALIZABLE:
+            return 3; // core::IsolationLevel::SNAPSHOT_TABLE_STABILITY
+        default:
+            return 0;
+    }
+}
+
+uint8_t mapWaitMode(TransactionWaitMode mode) {
+    return mode == TransactionWaitMode::WAIT ? 1 : 0;
+}
+
+} // namespace
 
 // =============================================================================
 // BytecodeGeneratorV2 Implementation
@@ -64,10 +88,16 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateCreateIndex(create_index);
     } else if (auto* create_view = dynamic_cast<ResolvedCreateViewStmt*>(stmt)) {
         generateCreateView(create_view);
+    } else if (auto* rename_obj = dynamic_cast<ResolvedRenameObjectStmt*>(stmt)) {
+        generateRenameObject(rename_obj);
+    } else if (auto* move_obj = dynamic_cast<ResolvedMoveObjectStmt*>(stmt)) {
+        generateMoveObject(move_obj);
     } else if (auto* drop = dynamic_cast<ResolvedDropStmt*>(stmt)) {
         generateDrop(drop);
     } else if (auto* start_tx = dynamic_cast<ResolvedStartTransactionStmt*>(stmt)) {
         generateStartTransaction(start_tx);
+    } else if (auto* prepare_tx = dynamic_cast<ResolvedPrepareTransactionStmt*>(stmt)) {
+        generatePrepareTransaction(prepare_tx);
     } else if (auto* commit = dynamic_cast<ResolvedCommitStmt*>(stmt)) {
         generateCommit(commit);
     } else if (auto* rollback = dynamic_cast<ResolvedRollbackStmt*>(stmt)) {
@@ -131,28 +161,28 @@ void BytecodeGeneratorV2::generateSelect(ResolvedSelectStmt* stmt) {
             case SetOpType::UNION:
                 if (stmt->set_op_all) {
                     current_result_->writeExtendedOpcode(
-                        static_cast<uint8_t>(sblr::Opcode::EXT_UNION_ALL));
+                        sblr::ExtendedOpcode::EXT_UNION_ALL);
                 } else {
                     current_result_->writeExtendedOpcode(
-                        static_cast<uint8_t>(sblr::Opcode::EXT_UNION));
+                        sblr::ExtendedOpcode::EXT_UNION);
                 }
                 break;
             case SetOpType::INTERSECT:
                 if (stmt->set_op_all) {
                     current_result_->writeExtendedOpcode(
-                        static_cast<uint8_t>(sblr::Opcode::EXT_INTERSECT_ALL));
+                        sblr::ExtendedOpcode::EXT_INTERSECT_ALL);
                 } else {
                     current_result_->writeExtendedOpcode(
-                        static_cast<uint8_t>(sblr::Opcode::EXT_INTERSECT));
+                        sblr::ExtendedOpcode::EXT_INTERSECT);
                 }
                 break;
             case SetOpType::EXCEPT:
                 if (stmt->set_op_all) {
                     current_result_->writeExtendedOpcode(
-                        static_cast<uint8_t>(sblr::Opcode::EXT_EXCEPT_ALL));
+                        sblr::ExtendedOpcode::EXT_EXCEPT_ALL);
                 } else {
                     current_result_->writeExtendedOpcode(
-                        static_cast<uint8_t>(sblr::Opcode::EXT_EXCEPT));
+                        sblr::ExtendedOpcode::EXT_EXCEPT);
                 }
                 break;
             default:
@@ -175,7 +205,7 @@ void BytecodeGeneratorV2::generateSelectListV1Compatible(const std::vector<Resol
 
             case ResolvedSelectItem::ItemType::TABLE_STAR:
                 current_result_->writeExtendedOpcode(
-                    static_cast<uint8_t>(sblr::Opcode::EXT_SELECT_TABLE_STAR));
+                    sblr::ExtendedOpcode::EXT_SELECT_TABLE_STAR);
                 current_result_->writeUUID(item.table_uuid);
                 break;
 
@@ -275,8 +305,7 @@ void BytecodeGeneratorV2::generateInsert(ResolvedInsertStmt* stmt) {
 
     // Handle RETURNING
     if (!stmt->returning.empty()) {
-        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
-        current_result_->writeByte(static_cast<uint8_t>(sblr::Opcode::EXT_RETURNING));
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_RETURNING);
         current_result_->writeInt32(static_cast<uint32_t>(stmt->returning.size()));
         for (const auto& item : stmt->returning) {
             if (item.alias != StringPool::INVALID_ID) {
@@ -319,7 +348,7 @@ void BytecodeGeneratorV2::generateUpdate(ResolvedUpdateStmt* stmt) {
     // Handle RETURNING
     if (!stmt->returning.empty()) {
         current_result_->writeExtendedOpcode(
-            static_cast<uint8_t>(sblr::Opcode::EXT_RETURNING));
+            sblr::ExtendedOpcode::EXT_RETURNING);
         generateSelectList(stmt->returning);
     }
 }
@@ -343,7 +372,7 @@ void BytecodeGeneratorV2::generateDelete(ResolvedDeleteStmt* stmt) {
     // Handle RETURNING
     if (!stmt->returning.empty()) {
         current_result_->writeExtendedOpcode(
-            static_cast<uint8_t>(sblr::Opcode::EXT_RETURNING));
+            sblr::ExtendedOpcode::EXT_RETURNING);
         generateSelectList(stmt->returning);
     }
 }
@@ -548,6 +577,45 @@ void BytecodeGeneratorV2::generateCreateView(ResolvedCreateViewStmt* stmt) {
     }
 }
 
+void BytecodeGeneratorV2::generateRenameObject(ResolvedRenameObjectStmt* stmt) {
+    current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_RENAME_OBJECT);
+
+    uint8_t flags = 0;
+    if (stmt->has_uuid) flags |= 0x01;
+    if (stmt->if_exists) flags |= 0x02;
+    current_result_->writeByte(flags);
+    current_result_->writeByte(static_cast<uint8_t>(stmt->object_type));
+
+    if (stmt->has_uuid) {
+        current_result_->writeUUID(stmt->object_uuid);
+    }
+
+    writeObjectPath(stmt->object_path);
+    writeString16(getString(stmt->new_name));
+}
+
+void BytecodeGeneratorV2::generateMoveObject(ResolvedMoveObjectStmt* stmt) {
+    current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_MOVE_OBJECT);
+
+    uint8_t flags = 0;
+    if (stmt->has_uuid) flags |= 0x01;
+    if (stmt->if_exists) flags |= 0x02;
+    current_result_->writeByte(flags);
+    current_result_->writeByte(static_cast<uint8_t>(stmt->object_type));
+
+    if (stmt->has_uuid) {
+        current_result_->writeUUID(stmt->object_uuid);
+    }
+
+    writeObjectPath(stmt->object_path);
+    writeObjectPath(stmt->target_schema);
+    if (stmt->has_new_name) {
+        writeString16(getString(stmt->new_name));
+    } else {
+        writeString16(std::string_view());
+    }
+}
+
 void BytecodeGeneratorV2::generateDrop(ResolvedDropStmt* stmt) {
     switch (stmt->object_type) {
         case ResolvedDropStmt::ObjectType::TABLE:
@@ -584,43 +652,120 @@ void BytecodeGeneratorV2::generateDrop(ResolvedDropStmt* stmt) {
 void BytecodeGeneratorV2::generateStartTransaction(ResolvedStartTransactionStmt* stmt) {
     current_result_->writeOpcode(sblr::Opcode::START_TRANSACTION);
 
-    // Write flags
-    uint8_t flags = 0;
-    if (stmt->has_isolation_level) flags |= 0x01;
-    if (stmt->has_access_mode) flags |= 0x02;
-    if (stmt->deferrable) flags |= 0x04;
-    current_result_->writeByte(flags);
+    uint16_t flags = 0;
+    if (stmt->has_isolation_level) flags |= sblr::TransactionFlags::HAS_ISOLATION;
+    if (stmt->has_access_mode) flags |= sblr::TransactionFlags::HAS_ACCESS_MODE;
+    if (stmt->has_read_committed_mode) flags |= sblr::TransactionFlags::HAS_READ_COMMITTED_MODE;
+    if (stmt->has_deferrable) flags |= sblr::TransactionFlags::HAS_DEFERRABLE;
+    if (stmt->has_wait_mode) flags |= sblr::TransactionFlags::HAS_WAIT_MODE;
+    if (stmt->has_lock_timeout) flags |= sblr::TransactionFlags::HAS_LOCK_TIMEOUT;
+    if (!stmt->table_reservations.empty()) flags |= sblr::TransactionFlags::HAS_RESERVATIONS;
+    if (stmt->has_autocommit) flags |= sblr::TransactionFlags::HAS_AUTOCOMMIT;
+    if (stmt->has_conflict_error_code) flags |= sblr::TransactionFlags::HAS_CONFLICT_ERROR_CODE;
 
-    // Write isolation level if specified
-    if (stmt->has_isolation_level) {
-        current_result_->writeByte(static_cast<uint8_t>(stmt->isolation_level));
+    current_result_->writeInt16(flags);
+    current_result_->writeByte(static_cast<uint8_t>(stmt->conflict_action));
+
+    if (flags & sblr::TransactionFlags::HAS_CONFLICT_ERROR_CODE) {
+        current_result_->writeInt32(static_cast<uint32_t>(stmt->conflict_error_code));
     }
-
-    // Write access mode if specified
-    if (stmt->has_access_mode) {
+    if (flags & sblr::TransactionFlags::HAS_AUTOCOMMIT) {
+        current_result_->writeByte(static_cast<uint8_t>(stmt->autocommit_mode));
+    }
+    if (flags & sblr::TransactionFlags::HAS_ISOLATION) {
+        current_result_->writeByte(mapIsolationLevel(stmt->isolation_level));
+    }
+    if (flags & sblr::TransactionFlags::HAS_READ_COMMITTED_MODE) {
+        current_result_->writeByte(static_cast<uint8_t>(stmt->read_committed_mode));
+    }
+    if (flags & sblr::TransactionFlags::HAS_ACCESS_MODE) {
         current_result_->writeByte(static_cast<uint8_t>(stmt->access_mode));
     }
+    if (flags & sblr::TransactionFlags::HAS_DEFERRABLE) {
+        current_result_->writeByte(stmt->deferrable ? 1 : 0);
+    }
+    if (flags & sblr::TransactionFlags::HAS_WAIT_MODE) {
+        current_result_->writeByte(mapWaitMode(stmt->wait_mode));
+    }
+    if (flags & sblr::TransactionFlags::HAS_LOCK_TIMEOUT) {
+        current_result_->writeInt32(stmt->lock_timeout_seconds);
+    }
+    if (flags & sblr::TransactionFlags::HAS_RESERVATIONS) {
+        // V2 reservation list encoding matches executor expectations (BEGIN_LIST/TABLE_REF/END_LIST).
+        current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
+        current_result_->writeInt32(static_cast<uint32_t>(stmt->table_reservations.size()));
+        for (const auto& reservation : stmt->table_reservations) {
+            current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
+            writeStringId(reservation.table_name);
+            current_result_->writeByte(static_cast<uint8_t>(reservation.lock_mode));
+            current_result_->writeByte(reservation.for_write ? 1 : 0);
+        }
+        current_result_->writeOpcode(sblr::Opcode::END_LIST);
+    }
+}
+
+void BytecodeGeneratorV2::generatePrepareTransaction(ResolvedPrepareTransactionStmt* stmt) {
+    current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_PREPARE_TRANSACTION);
+    writeStringId(stmt->gid);
 }
 
 void BytecodeGeneratorV2::generateCommit(ResolvedCommitStmt* stmt) {
+    if (stmt->is_prepared && stmt->prepared_gid != StringPool::INVALID_ID) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_COMMIT_PREPARED);
+        writeStringId(stmt->prepared_gid);
+        return;
+    }
+
     current_result_->writeOpcode(sblr::Opcode::COMMIT);
-    current_result_->writeByte(stmt->and_chain ? 1 : 0);
+    uint8_t flags = 0;
+    if (stmt->and_chain) {
+        flags |= sblr::CommitRollbackFlags::AND_CHAIN;
+    }
+    if (stmt->and_no_chain) {
+        flags |= sblr::CommitRollbackFlags::AND_NO_CHAIN;
+    }
+    if (stmt->retaining) {
+        flags |= sblr::CommitRollbackFlags::RETAINING;
+    }
+    if (flags == 0) {
+        flags = sblr::CommitRollbackFlags::AND_NO_CHAIN;
+    }
+    current_result_->writeByte(flags);
 }
 
 void BytecodeGeneratorV2::generateRollback(ResolvedRollbackStmt* stmt) {
+    if (stmt->is_prepared && stmt->prepared_gid != StringPool::INVALID_ID) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ROLLBACK_PREPARED);
+        writeStringId(stmt->prepared_gid);
+        return;
+    }
+
     if (stmt->to_savepoint && stmt->savepoint_name != StringPool::INVALID_ID) {
         current_result_->writeExtendedOpcode(
-            static_cast<uint8_t>(sblr::Opcode::EXT_ROLLBACK_TO_SAVEPOINT));
+            sblr::ExtendedOpcode::EXT_ROLLBACK_TO_SAVEPOINT);
         writeStringId(stmt->savepoint_name);
     } else {
         current_result_->writeOpcode(sblr::Opcode::ROLLBACK);
-        current_result_->writeByte(stmt->and_chain ? 1 : 0);
+        uint8_t flags = 0;
+        if (stmt->and_chain) {
+            flags |= sblr::CommitRollbackFlags::AND_CHAIN;
+        }
+        if (stmt->and_no_chain) {
+            flags |= sblr::CommitRollbackFlags::AND_NO_CHAIN;
+        }
+        if (stmt->retaining) {
+            flags |= sblr::CommitRollbackFlags::RETAINING;
+        }
+        if (flags == 0) {
+            flags = sblr::CommitRollbackFlags::AND_NO_CHAIN;
+        }
+        current_result_->writeByte(flags);
     }
 }
 
 void BytecodeGeneratorV2::generateSavepoint(ResolvedSavepointStmt* stmt) {
     current_result_->writeExtendedOpcode(
-        static_cast<uint8_t>(sblr::Opcode::EXT_SAVEPOINT));
+        sblr::ExtendedOpcode::EXT_SAVEPOINT);
     writeStringId(stmt->name);
 }
 
@@ -629,17 +774,75 @@ void BytecodeGeneratorV2::generateSet(ResolvedSetStmt* stmt) {
     switch (stmt->set_type) {
         case SetStmt::SetType::TRANSACTION:
             current_result_->writeOpcode(sblr::Opcode::SET_TRANSACTION);
-            if (stmt->has_isolation_level) {
-                current_result_->writeByte(static_cast<uint8_t>(stmt->isolation_level));
+            {
+                uint16_t flags = 0;
+                if (stmt->has_isolation_level) flags |= sblr::TransactionFlags::HAS_ISOLATION;
+                if (stmt->has_access_mode) flags |= sblr::TransactionFlags::HAS_ACCESS_MODE;
+                if (stmt->has_read_committed_mode) flags |= sblr::TransactionFlags::HAS_READ_COMMITTED_MODE;
+                if (stmt->has_deferrable) flags |= sblr::TransactionFlags::HAS_DEFERRABLE;
+                if (stmt->has_wait_mode) flags |= sblr::TransactionFlags::HAS_WAIT_MODE;
+                if (stmt->has_lock_timeout) flags |= sblr::TransactionFlags::HAS_LOCK_TIMEOUT;
+                if (!stmt->table_reservations.empty())
+                    flags |= sblr::TransactionFlags::HAS_RESERVATIONS;
+                if (stmt->has_autocommit) flags |= sblr::TransactionFlags::HAS_AUTOCOMMIT;
+                if (stmt->has_conflict_error_code)
+                    flags |= sblr::TransactionFlags::HAS_CONFLICT_ERROR_CODE;
+
+                current_result_->writeInt16(flags);
+                current_result_->writeByte(static_cast<uint8_t>(stmt->conflict_action));
+
+                if (flags & sblr::TransactionFlags::HAS_CONFLICT_ERROR_CODE) {
+                    current_result_->writeInt32(static_cast<uint32_t>(stmt->conflict_error_code));
+                }
+                if (flags & sblr::TransactionFlags::HAS_AUTOCOMMIT) {
+                    current_result_->writeByte(static_cast<uint8_t>(stmt->autocommit_mode));
+                }
+                if (flags & sblr::TransactionFlags::HAS_ISOLATION) {
+                    current_result_->writeByte(mapIsolationLevel(stmt->isolation_level));
+                }
+                if (flags & sblr::TransactionFlags::HAS_READ_COMMITTED_MODE) {
+                    current_result_->writeByte(static_cast<uint8_t>(stmt->read_committed_mode));
+                }
+                if (flags & sblr::TransactionFlags::HAS_ACCESS_MODE) {
+                    current_result_->writeByte(static_cast<uint8_t>(stmt->access_mode));
+                }
+                if (flags & sblr::TransactionFlags::HAS_DEFERRABLE) {
+                    current_result_->writeByte(stmt->deferrable ? 1 : 0);
+                }
+                if (flags & sblr::TransactionFlags::HAS_WAIT_MODE) {
+                    current_result_->writeByte(mapWaitMode(stmt->wait_mode));
+                }
+                if (flags & sblr::TransactionFlags::HAS_LOCK_TIMEOUT) {
+                    current_result_->writeInt32(stmt->lock_timeout_seconds);
+                }
+                if (flags & sblr::TransactionFlags::HAS_RESERVATIONS) {
+                    current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
+                    current_result_->writeInt32(
+                        static_cast<uint32_t>(stmt->table_reservations.size()));
+                    for (const auto& reservation : stmt->table_reservations) {
+                        current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
+                        writeStringId(reservation.table_name);
+                        current_result_->writeByte(static_cast<uint8_t>(reservation.lock_mode));
+                        current_result_->writeByte(reservation.for_write ? 1 : 0);
+                    }
+                    current_result_->writeOpcode(sblr::Opcode::END_LIST);
+                }
             }
-            if (stmt->has_access_mode) {
-                current_result_->writeByte(static_cast<uint8_t>(stmt->access_mode));
+            break;
+        case SetStmt::SetType::AUTOCOMMIT:
+            current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_SET_AUTOCOMMIT);
+            current_result_->writeByte(
+                stmt->autocommit_mode == AutocommitMode::ON ? 1 : 0);
+            current_result_->writeByte(static_cast<uint8_t>(stmt->conflict_action));
+            if (stmt->conflict_action == TransactionConflictAction::ERROR &&
+                stmt->has_conflict_error_code) {
+                current_result_->writeInt32(static_cast<uint32_t>(stmt->conflict_error_code));
             }
             break;
 
         case SetStmt::SetType::ROLE:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SET_ROLE));
+                sblr::ExtendedOpcode::EXT_SET_ROLE);
             if (stmt->variable_name != StringPool::INVALID_ID) {
                 writeStringId(stmt->variable_name);
             } else {
@@ -649,7 +852,7 @@ void BytecodeGeneratorV2::generateSet(ResolvedSetStmt* stmt) {
 
         case SetStmt::SetType::SESSION_AUTHORIZATION:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SET_SESSION_AUTH));
+                sblr::ExtendedOpcode::EXT_SET_SESSION_AUTH);
             if (stmt->variable_name != StringPool::INVALID_ID) {
                 writeStringId(stmt->variable_name);
             } else {
@@ -659,14 +862,14 @@ void BytecodeGeneratorV2::generateSet(ResolvedSetStmt* stmt) {
 
         case SetStmt::SetType::PARSER_VERSION:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SET_PARSER_VERSION));
+                sblr::ExtendedOpcode::EXT_SET_PARSER_VERSION);
             current_result_->writeByte(stmt->parser_version);  // 1 or 2
             break;
 
         default:
             // Generic SET variable = value
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SET_VARIABLE));
+                sblr::ExtendedOpcode::EXT_SET_VARIABLE);
             // Write variable name
             writeStringId(stmt->variable_name);
             // Write value (or 0 for DEFAULT/RESET)
@@ -685,155 +888,155 @@ void BytecodeGeneratorV2::generateShow(ResolvedShowStmt* stmt) {
         // Session variable commands
         case ShowStmt::ShowType::VARIABLE:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_VARIABLE));
+                sblr::ExtendedOpcode::EXT_SHOW_VARIABLE);
             writeStringId(stmt->variable_name);
             break;
 
         case ShowStmt::ShowType::ALL:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_ALL));
+                sblr::ExtendedOpcode::EXT_SHOW_ALL);
             break;
 
         case ShowStmt::ShowType::TRANSACTION_ISOLATION_LEVEL:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_TRANSACTION_LEVEL));
+                sblr::ExtendedOpcode::EXT_SHOW_TRANSACTION_LEVEL);
             break;
 
         // Basic catalog queries (MySQL/PostgreSQL style)
         case ShowStmt::ShowType::TABLES:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_TABLES));
+                sblr::ExtendedOpcode::EXT_SHOW_TABLES);
             writeStringId(stmt->from_name);      // Optional FROM database
             writeStringId(stmt->like_pattern);   // Optional LIKE pattern
             break;
 
         case ShowStmt::ShowType::DATABASES:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_DATABASES));
+                sblr::ExtendedOpcode::EXT_SHOW_DATABASES);
             writeStringId(stmt->like_pattern);   // Optional LIKE pattern
             break;
 
         case ShowStmt::ShowType::COLUMNS:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_COLUMNS));
+                sblr::ExtendedOpcode::EXT_SHOW_COLUMNS);
             writeStringId(stmt->from_name);      // Required FROM table
             writeStringId(stmt->like_pattern);   // Optional LIKE pattern
             break;
 
         case ShowStmt::ShowType::INDEXES:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_INDEXES));
+                sblr::ExtendedOpcode::EXT_SHOW_INDEXES);
             writeStringId(stmt->from_name);      // Required FROM table
             break;
 
         case ShowStmt::ShowType::CREATE_TABLE:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_CREATE_TABLE));
+                sblr::ExtendedOpcode::EXT_SHOW_CREATE_TABLE);
             writeStringId(stmt->variable_name);  // Table name
             break;
 
         // Firebird ISQL style (detailed object info)
         case ShowStmt::ShowType::TABLE:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_TABLE));
+                sblr::ExtendedOpcode::EXT_SHOW_TABLE);
             writeStringId(stmt->variable_name);  // Table name
             break;
 
         case ShowStmt::ShowType::INDEX:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_INDEX));
+                sblr::ExtendedOpcode::EXT_SHOW_INDEX);
             writeStringId(stmt->variable_name);  // Index name
             break;
 
         case ShowStmt::ShowType::TRIGGER:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_TRIGGER));
+                sblr::ExtendedOpcode::EXT_SHOW_TRIGGER);
             writeStringId(stmt->variable_name);  // Trigger name
             break;
 
         case ShowStmt::ShowType::VIEW:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_VIEW));
+                sblr::ExtendedOpcode::EXT_SHOW_VIEW);
             writeStringId(stmt->variable_name);  // View name
             break;
 
         case ShowStmt::ShowType::PROCEDURE:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_PROCEDURE));
+                sblr::ExtendedOpcode::EXT_SHOW_PROCEDURE);
             writeStringId(stmt->variable_name);  // Procedure name
             break;
 
         case ShowStmt::ShowType::FUNCTION:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_FUNCTION));
+                sblr::ExtendedOpcode::EXT_SHOW_FUNCTION);
             writeStringId(stmt->variable_name);  // Function name
             break;
 
         case ShowStmt::ShowType::DOMAIN:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_DOMAIN));
+                sblr::ExtendedOpcode::EXT_SHOW_DOMAIN);
             writeStringId(stmt->variable_name);  // Domain name
             break;
 
         case ShowStmt::ShowType::GENERATOR:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_GENERATOR));
+                sblr::ExtendedOpcode::EXT_SHOW_GENERATOR);
             writeStringId(stmt->variable_name);  // Generator/sequence name
             break;
 
         case ShowStmt::ShowType::SCHEMA:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_SCHEMA));
+                sblr::ExtendedOpcode::EXT_SHOW_SCHEMA);
             writeStringId(stmt->variable_name);  // Optional schema name
             break;
 
         case ShowStmt::ShowType::ROLE:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_ROLE));
+                sblr::ExtendedOpcode::EXT_SHOW_ROLE);
             writeStringId(stmt->variable_name);  // Role name
             break;
 
         case ShowStmt::ShowType::GRANTS:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_GRANTS));
+                sblr::ExtendedOpcode::EXT_SHOW_GRANTS);
             writeStringId(stmt->variable_name);  // Optional FOR object_name
             break;
 
         case ShowStmt::ShowType::CHECKS:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_CHECKS));
+                sblr::ExtendedOpcode::EXT_SHOW_CHECKS);
             writeStringId(stmt->variable_name);  // Table name
             break;
 
         case ShowStmt::ShowType::COLLATIONS:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_COLLATIONS));
+                sblr::ExtendedOpcode::EXT_SHOW_COLLATIONS);
             writeStringId(stmt->like_pattern);   // Optional LIKE pattern
             break;
 
         case ShowStmt::ShowType::SQL_DIALECT:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_SQL_DIALECT));
+                sblr::ExtendedOpcode::EXT_SHOW_SQL_DIALECT);
             break;
 
         case ShowStmt::ShowType::VERSION:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_VERSION));
+                sblr::ExtendedOpcode::EXT_SHOW_VERSION);
             break;
 
         case ShowStmt::ShowType::DATABASE:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_DATABASE));
+                sblr::ExtendedOpcode::EXT_SHOW_DATABASE);
             break;
 
         case ShowStmt::ShowType::SYSTEM:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_SYSTEM));
+                sblr::ExtendedOpcode::EXT_SHOW_SYSTEM);
             break;
 
         case ShowStmt::ShowType::PARSER_VERSION:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_VARIABLE));
+                sblr::ExtendedOpcode::EXT_SHOW_VARIABLE);
             // Write "parser_version" as the variable name
             writeStringId(stmt->variable_name);
             break;
@@ -1017,7 +1220,7 @@ void BytecodeGeneratorV2::generateUnaryExpr(ResolvedUnaryExpr* expr) {
 
         case UnaryOp::BIT_NOT:
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_BIT_NOT));
+                sblr::ExtendedOpcode::EXT_BIT_NOT);
             break;
 
         default:
@@ -1078,22 +1281,22 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
     // Math functions
     else if (name == "ABS") {
         current_result_->writeExtendedOpcode(
-            static_cast<uint8_t>(sblr::Opcode::EXT_FUNC_ABS));
+            sblr::ExtendedOpcode::EXT_FUNC_ABS);
     } else if (name == "ROUND") {
         current_result_->writeExtendedOpcode(
-            static_cast<uint8_t>(sblr::Opcode::EXT_FUNC_ROUND));
+            sblr::ExtendedOpcode::EXT_FUNC_ROUND);
     } else if (name == "FLOOR") {
         current_result_->writeExtendedOpcode(
-            static_cast<uint8_t>(sblr::Opcode::EXT_FUNC_FLOOR));
+            sblr::ExtendedOpcode::EXT_FUNC_FLOOR);
     } else if (name == "CEIL" || name == "CEILING") {
         current_result_->writeExtendedOpcode(
-            static_cast<uint8_t>(sblr::Opcode::EXT_FUNC_CEIL));
+            sblr::ExtendedOpcode::EXT_FUNC_CEIL);
     } else if (name == "SQRT") {
         current_result_->writeExtendedOpcode(
-            static_cast<uint8_t>(sblr::Opcode::EXT_FUNC_SQRT));
+            sblr::ExtendedOpcode::EXT_FUNC_SQRT);
     } else if (name == "POWER" || name == "POW") {
         current_result_->writeExtendedOpcode(
-            static_cast<uint8_t>(sblr::Opcode::EXT_FUNC_POWER));
+            sblr::ExtendedOpcode::EXT_FUNC_POWER);
     }
     // Null handling
     else if (name == "COALESCE") {
@@ -1147,7 +1350,7 @@ void BytecodeGeneratorV2::generateCase(ResolvedCase* expr) {
 void BytecodeGeneratorV2::generateSubquery(ResolvedSubqueryExpr* expr) {
     if (expr->is_scalar) {
         current_result_->writeExtendedOpcode(
-            static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_SCALAR));
+            sblr::ExtendedOpcode::EXT_SUBQUERY_SCALAR);
     }
 
     if (expr->subquery) {
@@ -1155,12 +1358,12 @@ void BytecodeGeneratorV2::generateSubquery(ResolvedSubqueryExpr* expr) {
     }
 
     current_result_->writeExtendedOpcode(
-        static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_END));
+        sblr::ExtendedOpcode::EXT_SUBQUERY_END);
 }
 
 void BytecodeGeneratorV2::generateExists(ResolvedExistsExpr* expr) {
     current_result_->writeExtendedOpcode(
-        static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_EXISTS));
+        sblr::ExtendedOpcode::EXT_SUBQUERY_EXISTS);
 
     if (expr->negated) {
         current_result_->writeByte(1);
@@ -1173,7 +1376,7 @@ void BytecodeGeneratorV2::generateExists(ResolvedExistsExpr* expr) {
     }
 
     current_result_->writeExtendedOpcode(
-        static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_END));
+        sblr::ExtendedOpcode::EXT_SUBQUERY_END);
 }
 
 void BytecodeGeneratorV2::generateIn(ResolvedInExpr* expr) {
@@ -1182,18 +1385,18 @@ void BytecodeGeneratorV2::generateIn(ResolvedInExpr* expr) {
     if (expr->has_subquery && expr->subquery) {
         if (expr->negated) {
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_NOT_IN));
+                sblr::ExtendedOpcode::EXT_SUBQUERY_NOT_IN);
         } else {
             current_result_->writeExtendedOpcode(
-                static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_IN));
+                sblr::ExtendedOpcode::EXT_SUBQUERY_IN);
         }
         generateStatement(expr->subquery);
         current_result_->writeExtendedOpcode(
-            static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_END));
+            sblr::ExtendedOpcode::EXT_SUBQUERY_END);
     } else {
         // IN with value list
         current_result_->writeExtendedOpcode(
-            static_cast<uint8_t>(sblr::Opcode::EXT_IN_LIST));
+            sblr::ExtendedOpcode::EXT_IN_LIST);
         current_result_->writeByte(expr->negated ? 1 : 0);
         current_result_->writeInt32(static_cast<uint32_t>(expr->values.size()));
         for (auto* val : expr->values) {
@@ -1260,13 +1463,13 @@ void BytecodeGeneratorV2::generateIsNull(ResolvedIsNullExpr* expr) {
 void BytecodeGeneratorV2::generateArray(ResolvedArrayExpr* expr) {
     if (expr->has_subquery && expr->subquery) {
         current_result_->writeExtendedOpcode(
-            static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_ARRAY));
+            sblr::ExtendedOpcode::EXT_SUBQUERY_ARRAY);
         generateStatement(expr->subquery);
         current_result_->writeExtendedOpcode(
-            static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_END));
+            sblr::ExtendedOpcode::EXT_SUBQUERY_END);
     } else {
         current_result_->writeExtendedOpcode(
-            static_cast<uint8_t>(sblr::Opcode::EXT_ARRAY_CONSTRUCT));
+            sblr::ExtendedOpcode::EXT_ARRAY_CONSTRUCT);
         current_result_->writeInt32(static_cast<uint32_t>(expr->elements.size()));
         for (auto* elem : expr->elements) {
             generateExpression(elem);
@@ -1476,6 +1679,32 @@ std::string_view BytecodeGeneratorV2::getString(StringPool::StringId id) const {
 void BytecodeGeneratorV2::writeStringId(StringPool::StringId id) {
     std::string_view str = getString(id);
     current_result_->writeString(std::string(str));
+}
+
+void BytecodeGeneratorV2::writeString16(std::string_view str) {
+    if (str.size() > std::numeric_limits<uint16_t>::max()) {
+        current_result_->addError("String length exceeds 16-bit limit");
+        current_result_->writeInt16(0);
+        return;
+    }
+
+    current_result_->writeInt16(static_cast<uint16_t>(str.size()));
+    for (unsigned char ch : str) {
+        current_result_->writeByte(static_cast<uint8_t>(ch));
+    }
+}
+
+void BytecodeGeneratorV2::writeObjectPath(const SchemaPath& path) {
+    current_result_->writeByte(static_cast<uint8_t>(path.type));
+    if (path.components.size() > std::numeric_limits<uint8_t>::max()) {
+        current_result_->addError("Object path has too many components");
+        current_result_->writeByte(0);
+        return;
+    }
+    current_result_->writeByte(static_cast<uint8_t>(path.components.size()));
+    for (auto component : path.components) {
+        writeString16(getString(component));
+    }
 }
 
 sblr::Opcode BytecodeGeneratorV2::binaryOpToOpcode(BinaryOp op) {

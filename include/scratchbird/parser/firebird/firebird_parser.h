@@ -348,7 +348,9 @@ private:
     v2::CreateViewStmt* parseCreateViewImpl(bool or_replace);
     v2::CreateSequenceStmt* parseCreateSequenceImpl();
     v2::AlterTableStmt* parseAlterTableImpl();
+    Statement* parseAlterDomainImpl();
     Statement* parseAlterIndexImpl();
+    Statement* parseAlterRenameMoveImpl(v2::DdlObjectType object_type);
     v2::DropTableStmt* parseDropTableImpl(bool if_exists);
     v2::DropIndexStmt* parseDropIndexImpl(bool if_exists);
     v2::DropViewStmt* parseDropViewImpl(bool if_exists);

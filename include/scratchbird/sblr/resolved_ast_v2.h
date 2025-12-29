@@ -640,6 +640,32 @@ struct ResolvedCreateViewStmt : public ResolvedStatement {
 };
 
 /**
+ * Resolved RENAME OBJECT statement
+ */
+struct ResolvedRenameObjectStmt : public ResolvedStatement {
+    DdlObjectType object_type = DdlObjectType::TABLE;
+    bool if_exists = false;
+    bool has_uuid = false;
+    ID object_uuid;
+    SchemaPath object_path;
+    StringPool::StringId new_name = StringPool::INVALID_ID;
+};
+
+/**
+ * Resolved MOVE OBJECT statement
+ */
+struct ResolvedMoveObjectStmt : public ResolvedStatement {
+    DdlObjectType object_type = DdlObjectType::TABLE;
+    bool if_exists = false;
+    bool has_uuid = false;
+    ID object_uuid;
+    SchemaPath object_path;
+    SchemaPath target_schema;
+    bool has_new_name = false;
+    StringPool::StringId new_name = StringPool::INVALID_ID;
+};
+
+/**
  * Resolved DROP statement (table, view, index)
  */
 struct ResolvedDropStmt : public ResolvedStatement {
@@ -698,7 +724,31 @@ struct ResolvedStartTransactionStmt : public ResolvedStatement {
     IsolationLevel isolation_level = IsolationLevel::READ_COMMITTED;
     bool has_access_mode = false;
     TransactionAccess access_mode = TransactionAccess::READ_WRITE;
+    bool has_read_committed_mode = false;
+    ReadCommittedMode read_committed_mode = ReadCommittedMode::DEFAULT;
+    bool has_deferrable = false;
     bool deferrable = false;
+
+    // Firebird legacy options
+    bool has_wait_mode = false;
+    TransactionWaitMode wait_mode = TransactionWaitMode::WAIT;
+    bool has_lock_timeout = false;
+    uint32_t lock_timeout_seconds = 0;
+    std::vector<TableReservation> table_reservations;
+
+    // ScratchBird extensions
+    bool has_autocommit = false;
+    AutocommitMode autocommit_mode = AutocommitMode::UNCHANGED;
+    TransactionConflictAction conflict_action = TransactionConflictAction::DEFAULT;
+    bool has_conflict_error_code = false;
+    int32_t conflict_error_code = 0;
+};
+
+/**
+ * Resolved PREPARE TRANSACTION (2PC)
+ */
+struct ResolvedPrepareTransactionStmt : public ResolvedStatement {
+    StringPool::StringId gid = StringPool::INVALID_ID;
 };
 
 /**
@@ -706,6 +756,10 @@ struct ResolvedStartTransactionStmt : public ResolvedStatement {
  */
 struct ResolvedCommitStmt : public ResolvedStatement {
     bool and_chain = false;
+    bool and_no_chain = false;
+    bool retaining = false;
+    bool is_prepared = false;
+    StringPool::StringId prepared_gid = StringPool::INVALID_ID;
 };
 
 /**
@@ -715,6 +769,10 @@ struct ResolvedRollbackStmt : public ResolvedStatement {
     bool to_savepoint = false;
     StringPool::StringId savepoint_name = StringPool::INVALID_ID;
     bool and_chain = false;
+    bool and_no_chain = false;
+    bool retaining = false;
+    bool is_prepared = false;
+    StringPool::StringId prepared_gid = StringPool::INVALID_ID;
 };
 
 /**
@@ -740,6 +798,24 @@ struct ResolvedSetStmt : public ResolvedStatement {
     IsolationLevel isolation_level = IsolationLevel::READ_COMMITTED;
     bool has_access_mode = false;
     TransactionAccess access_mode = TransactionAccess::READ_WRITE;
+    bool has_read_committed_mode = false;
+    ReadCommittedMode read_committed_mode = ReadCommittedMode::DEFAULT;
+    bool has_deferrable = false;
+    bool deferrable = false;
+
+    // Firebird legacy options for SET TRANSACTION
+    bool has_wait_mode = false;
+    TransactionWaitMode wait_mode = TransactionWaitMode::WAIT;
+    bool has_lock_timeout = false;
+    uint32_t lock_timeout_seconds = 0;
+    std::vector<TableReservation> table_reservations;
+
+    // SET AUTOCOMMIT or SET TRANSACTION AUTOCOMMIT
+    bool has_autocommit = false;
+    AutocommitMode autocommit_mode = AutocommitMode::UNCHANGED;
+    TransactionConflictAction conflict_action = TransactionConflictAction::DEFAULT;
+    bool has_conflict_error_code = false;
+    int32_t conflict_error_code = 0;
 
     // For SET PARSER VERSION
     uint8_t parser_version = 0;  // 1 or 2 (0 = not set)

@@ -40,7 +40,7 @@ void Parser::parseNotExpr() {
     if (matchKeyword(TokenType::KW_NOT)) {
         parseNotExpr();
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_BIT_NOT));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_NOT));
         return;
     }
     parseComparisonExpr();
@@ -122,13 +122,13 @@ void Parser::parseInExpr() {
         if (check(TokenType::KW_SELECT)) {
             // Subquery
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(is_not ? sblr::Opcode::EXT_SUBQUERY_NOT_IN
-                                                  : sblr::Opcode::EXT_SUBQUERY_IN));
+            emitU16(static_cast<uint16_t>(is_not ? sblr::ExtendedOpcode::EXT_SUBQUERY_NOT_IN
+                                                  : sblr::ExtendedOpcode::EXT_SUBQUERY_IN));
             parseSubquery();
         } else {
             // Value list
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_IN_LIST));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_IN_LIST));
             emitByte(is_not ? 1 : 0);
 
             emit(sblr::Opcode::BEGIN_LIST);
@@ -219,8 +219,8 @@ void Parser::parseLikeExpr() {
         parseBitwiseOrExpr();  // pattern
         // SIMILAR TO uses regex matching
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(is_not ? sblr::Opcode::EXT_REGEX_NOT_MATCH
-                                              : sblr::Opcode::EXT_REGEX_MATCH));
+        emitU16(static_cast<uint16_t>(is_not ? sblr::ExtendedOpcode::EXT_REGEX_NOT_MATCH
+                                              : sblr::ExtendedOpcode::EXT_REGEX_MATCH));
 
         if (matchKeyword(TokenType::KW_ESCAPE)) {
             parseBitwiseOrExpr();
@@ -236,7 +236,7 @@ void Parser::parseBitwiseOrExpr() {
     while (match(TokenType::PIPE)) {
         parseBitwiseXorExpr();
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_BIT_OR));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_OR));
     }
 }
 
@@ -246,7 +246,7 @@ void Parser::parseBitwiseXorExpr() {
     while (match(TokenType::CARET)) {
         parseBitwiseAndExpr();
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_BIT_XOR));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_XOR));
     }
 }
 
@@ -256,7 +256,7 @@ void Parser::parseBitwiseAndExpr() {
     while (match(TokenType::AMPERSAND)) {
         parseShiftExpr();
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_BIT_AND));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_AND));
     }
 }
 
@@ -267,11 +267,11 @@ void Parser::parseShiftExpr() {
         if (match(TokenType::LEFT_SHIFT)) {
             parseAdditiveExpr();
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_BIT_SHIFT_LEFT));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_SHIFT_LEFT));
         } else if (match(TokenType::RIGHT_SHIFT)) {
             parseAdditiveExpr();
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_BIT_SHIFT_RIGHT));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_SHIFT_RIGHT));
         } else {
             break;
         }
@@ -292,7 +292,7 @@ void Parser::parseAdditiveExpr() {
             // || is string concatenation in PostgreSQL
             parseMultiplicativeExpr();
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ARRAY_CAT));  // Reuse for string concat
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_CAT));  // Reuse for string concat
         } else {
             break;
         }
@@ -335,7 +335,7 @@ void Parser::parseUnaryExpr() {
         // Bitwise NOT
         parseUnaryExpr();
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_BIT_NOT));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_NOT));
         return;
     }
 
@@ -355,7 +355,7 @@ void Parser::parsePostfixExpr() {
             parseExpression();
             consume(TokenType::RIGHT_BRACKET, "Expected ]");
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ARRAY_LENGTH));  // TODO: array subscript
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_LENGTH));  // TODO: array subscript
         } else if (match(TokenType::ARROW)) {
             // -> JSON object field
             parseExpression();
@@ -376,12 +376,12 @@ void Parser::parsePostfixExpr() {
             // @> contains
             parsePrimaryExpr();
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ARRAY_CONTAINS));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_CONTAINS));
         } else if (match(TokenType::LESS_AT)) {
             // <@ contained by
             parsePrimaryExpr();
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ARRAY_CONTAINED_BY));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_CONTAINED_BY));
         } else if (match(TokenType::QUESTION)) {
             // ? key exists
             parsePrimaryExpr();
@@ -393,17 +393,17 @@ void Parser::parsePostfixExpr() {
             // ?| any key exists
             parsePrimaryExpr();
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ARRAY_OVERLAP));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_OVERLAP));
         } else if (match(TokenType::QUESTION_AMPERSAND)) {
             // ?& all keys exist
             parsePrimaryExpr();
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ARRAY_CONTAINS));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_CONTAINS));
         } else if (match(TokenType::AT_AT)) {
             // @@ text search match or JSON path match
             parsePrimaryExpr();
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_TSMATCH));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_TSMATCH));
         } else {
             break;
         }
@@ -479,7 +479,7 @@ void Parser::parsePrimaryExpr() {
         if (check(TokenType::KW_SELECT)) {
             // Scalar subquery
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_SCALAR));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_SCALAR));
             parseSubquery();
             consume(TokenType::RIGHT_PAREN, "Expected ) after subquery");
             return;
@@ -495,7 +495,7 @@ void Parser::parsePrimaryExpr() {
     if (matchKeyword(TokenType::KW_EXISTS)) {
         consume(TokenType::LEFT_PAREN, "Expected ( after EXISTS");
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_EXISTS));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_EXISTS));
         parseSubquery();
         consume(TokenType::RIGHT_PAREN, "Expected ) after EXISTS subquery");
         return;
@@ -505,7 +505,7 @@ void Parser::parsePrimaryExpr() {
     if (check(TokenType::PARAMETER)) {
         // Parameters are stored as their number
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_VAR_LOAD));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_VAR_LOAD));
         emitU32(static_cast<uint32_t>(current_token_.value.int_value));
         advance();
         return;
@@ -687,21 +687,21 @@ void Parser::parseFunctionCall(const std::string& name) {
     // Math functions
     if (lower_name == "abs") {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_FUNC_ABS));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_FUNC_ABS));
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         return;
     }
     if (lower_name == "sqrt") {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_FUNC_SQRT));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_FUNC_SQRT));
         parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
         return;
     }
     if (lower_name == "round") {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_FUNC_ROUND));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_FUNC_ROUND));
         parseExpression();
         if (match(TokenType::COMMA)) {
             parseExpression();  // precision
@@ -756,7 +756,7 @@ void Parser::parseFunctionCall(const std::string& name) {
 
     // Generic function call
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CALL));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CALL));
     emitString(name);
 
     // Parse arguments
@@ -843,7 +843,7 @@ void Parser::parseArrayConstructor() {
     if (match(TokenType::LEFT_BRACKET)) {
         // ARRAY[val1, val2, ...]
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ARRAY_CONSTRUCT));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_CONSTRUCT));
 
         emit(sblr::Opcode::BEGIN_LIST);
         size_t count_pos = bytecode_.size();
@@ -863,7 +863,7 @@ void Parser::parseArrayConstructor() {
     } else if (match(TokenType::LEFT_PAREN)) {
         // ARRAY(SELECT ...) - array subquery
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_ARRAY));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_ARRAY));
         parseSubquery();
         consume(TokenType::RIGHT_PAREN, "Expected )");
     }
@@ -873,7 +873,7 @@ void Parser::parseSubquery() {
     // Parse a full SELECT statement
     parseSelectStmt();
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_END));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_END));
 }
 
 void Parser::parseTypeCast() {

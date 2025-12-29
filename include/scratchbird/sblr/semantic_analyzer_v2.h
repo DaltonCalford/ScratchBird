@@ -285,6 +285,8 @@ private:
     ResolvedStatement* analyzeCreateIndex(CreateIndexStmt* stmt);
     ResolvedStatement* analyzeCreateView(CreateViewStmt* stmt);
     ResolvedStatement* analyzeAlterTable(AlterTableStmt* stmt);
+    ResolvedStatement* analyzeRenameObject(RenameObjectStmt* stmt);
+    ResolvedStatement* analyzeMoveObject(MoveObjectStmt* stmt);
     ResolvedStatement* analyzeDropTable(DropTableStmt* stmt);
     ResolvedStatement* analyzeDropIndex(DropIndexStmt* stmt);
     ResolvedStatement* analyzeDropView(DropViewStmt* stmt);
@@ -298,6 +300,7 @@ private:
 
     // Transaction/Session
     ResolvedStatement* analyzeStartTransaction(StartTransactionStmt* stmt);
+    ResolvedStatement* analyzePrepareTransaction(PrepareTransactionStmt* stmt);
     ResolvedStatement* analyzeCommit(CommitStmt* stmt);
     ResolvedStatement* analyzeRollback(RollbackStmt* stmt);
     ResolvedStatement* analyzeSavepoint(SavepointStmt* stmt);

@@ -2,6 +2,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/clog.h"
 #include "scratchbird/core/sweep_manager.h"
@@ -16,6 +17,15 @@
 #include <thread>
 #include <unistd.h>
 #include <unordered_set>
+
+namespace {
+    uint64_t nowMicros() {
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count());
+    }
+}
 
 namespace scratchbird::core
 {
@@ -169,7 +179,42 @@ namespace scratchbird::core
             return Status::PAGE_CORRUPT;
         }
 
-        return loadTipPage(tip_root_page_, ctx);
+        Status status = loadTipPage(tip_root_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        CatalogManager *catalog = db_->catalog_manager();
+        if (catalog)
+        {
+            std::vector<CatalogManager::PreparedTransactionInfo> prepared;
+            Status list_status = catalog->listPreparedTransactions(prepared, ctx);
+            if (list_status == Status::OK)
+            {
+                for (const auto &entry : prepared)
+                {
+                    prepared_xids_.insert(entry.txn_id);
+                    auto cache_it = transaction_cache_.find(entry.txn_id);
+                    if (cache_it != transaction_cache_.end())
+                    {
+                        cache_it->second = TransactionState::PREPARED;
+                        touchCacheEntry(entry.txn_id);
+                    }
+                    else
+                    {
+                        addToCacheLRU(entry.txn_id, TransactionState::PREPARED);
+                    }
+                }
+            }
+            else if (list_status != Status::NOT_FOUND)
+            {
+                LOG_WARNING(TRANSACTION, "Failed to load prepared transactions: %d",
+                            static_cast<int>(list_status));
+            }
+        }
+
+        return Status::OK;
     }
 
     auto TransactionManager::loadTipPage(uint32_t page_id, ErrorContext *ctx) -> Status
@@ -470,6 +515,338 @@ namespace scratchbird::core
         return status;
     }
 
+    auto TransactionManager::prepareTransaction(uint32_t proc_id, uint64_t xid,
+                                                const std::string& gid,
+                                                const ID& owner_id,
+                                                ErrorContext *ctx) -> Status
+    {
+        if (xid == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Cannot prepare transaction with XID 0");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (gid.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Prepared transaction GID is required");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        TransactionState state = TransactionState::ACTIVE;
+        Status status = getTransactionState(xid, state, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        if (state != TransactionState::ACTIVE)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Transaction is not active; cannot prepare");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        CatalogManager *catalog = db_->catalog_manager();
+        if (!catalog)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        CatalogManager::PreparedTransactionInfo info;
+        info.txn_id = xid;
+        info.gid = gid;
+        info.owner_id = owner_id;
+        info.database_id = db_->uuid();
+        info.prepared_time = nowMicros();
+        info.is_valid = true;
+
+        status = catalog->createPreparedTransaction(info, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            prepared_xids_.insert(xid);
+
+            auto cache_it = transaction_cache_.find(xid);
+            if (cache_it != transaction_cache_.end())
+            {
+                cache_it->second = TransactionState::PREPARED;
+                touchCacheEntry(xid);
+            }
+            else
+            {
+                addToCacheLRU(xid, TransactionState::PREPARED);
+            }
+
+            status = db_->clog()->setStatus(xid, ClogStatus::PREPARED, ctx);
+            if (status != Status::OK)
+            {
+                prepared_xids_.erase(xid);
+                if (cache_it != transaction_cache_.end())
+                {
+                    cache_it->second = TransactionState::ACTIVE;
+                    touchCacheEntry(xid);
+                }
+                else
+                {
+                    removeFromCacheLRU(xid);
+                }
+
+                ErrorContext cleanup_ctx;
+                catalog->deletePreparedTransaction(gid, &cleanup_ctx);
+
+                return status;
+            }
+        }
+
+        Status tip_status = writeTipEntry(xid, TransactionState::PREPARED, ctx);
+        if (tip_status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to update TIP entry for prepared XID %lu", xid);
+            status = tip_status;
+        }
+
+        Status sync_status = db_->sync(ctx);
+        if (sync_status != Status::OK)
+        {
+            status = sync_status;
+        }
+
+        Status clear_status = ProcArrayManager::clearTransactionId(proc_id, ctx);
+        if (clear_status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to clear ProcArray slot for prepared XID %lu", xid);
+        }
+
+        Status marker_status = updateTransactionMarkers(ctx);
+        if (marker_status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to update transaction markers after prepare");
+        }
+
+        return status;
+    }
+
+    auto TransactionManager::commitPreparedTransaction(const std::string& gid,
+                                                       ErrorContext *ctx) -> Status
+    {
+        if (gid.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Prepared transaction GID is required");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        CatalogManager *catalog = db_->catalog_manager();
+        if (!catalog)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        CatalogManager::PreparedTransactionInfo info;
+        Status status = catalog->getPreparedTransactionByGid(gid, info, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        TransactionState state = TransactionState::ACTIVE;
+        status = getTransactionState(info.txn_id, state, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (state != TransactionState::PREPARED)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Prepared transaction is not in PREPARED state");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            prepared_xids_.erase(info.txn_id);
+
+            auto cache_it = transaction_cache_.find(info.txn_id);
+            bool added_cache = false;
+            if (cache_it != transaction_cache_.end())
+            {
+                cache_it->second = TransactionState::COMMITTED;
+                touchCacheEntry(info.txn_id);
+            }
+            else
+            {
+                addToCacheLRU(info.txn_id, TransactionState::COMMITTED);
+                added_cache = true;
+            }
+
+            status = db_->clog()->setStatus(info.txn_id, ClogStatus::COMMITTED, ctx);
+            if (status != Status::OK)
+            {
+                prepared_xids_.insert(info.txn_id);
+                if (cache_it != transaction_cache_.end())
+                {
+                    cache_it->second = TransactionState::PREPARED;
+                    touchCacheEntry(info.txn_id);
+                }
+                else if (added_cache)
+                {
+                    removeFromCacheLRU(info.txn_id);
+                    addToCacheLRU(info.txn_id, TransactionState::PREPARED);
+                }
+                return status;
+            }
+
+            stats_.transactions_committed++;
+        }
+
+        Status tip_status = writeTipEntry(info.txn_id, TransactionState::COMMITTED, ctx);
+        if (tip_status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to update TIP entry for committed XID %lu",
+                        info.txn_id);
+            status = tip_status;
+        }
+
+        Status sync_status = db_->sync(ctx);
+        if (sync_status != Status::OK)
+        {
+            status = sync_status;
+        }
+
+        Status delete_status = catalog->deletePreparedTransaction(gid, ctx);
+        if (delete_status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to delete prepared transaction record: %s",
+                        gid.c_str());
+            status = delete_status;
+        }
+
+        Status marker_status = updateTransactionMarkers(ctx);
+        if (marker_status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to update transaction markers after commit prepared");
+        }
+
+        return status;
+    }
+
+    auto TransactionManager::rollbackPreparedTransaction(const std::string& gid,
+                                                         ErrorContext *ctx) -> Status
+    {
+        if (gid.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Prepared transaction GID is required");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        CatalogManager *catalog = db_->catalog_manager();
+        if (!catalog)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        CatalogManager::PreparedTransactionInfo info;
+        Status status = catalog->getPreparedTransactionByGid(gid, info, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        TransactionState state = TransactionState::ACTIVE;
+        status = getTransactionState(info.txn_id, state, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (state != TransactionState::PREPARED)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Prepared transaction is not in PREPARED state");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            prepared_xids_.erase(info.txn_id);
+
+            auto cache_it = transaction_cache_.find(info.txn_id);
+            bool added_cache = false;
+            if (cache_it != transaction_cache_.end())
+            {
+                cache_it->second = TransactionState::ABORTED;
+                touchCacheEntry(info.txn_id);
+            }
+            else
+            {
+                addToCacheLRU(info.txn_id, TransactionState::ABORTED);
+                added_cache = true;
+            }
+
+            status = db_->clog()->setStatus(info.txn_id, ClogStatus::ABORTED, ctx);
+            if (status != Status::OK)
+            {
+                prepared_xids_.insert(info.txn_id);
+                if (cache_it != transaction_cache_.end())
+                {
+                    cache_it->second = TransactionState::PREPARED;
+                    touchCacheEntry(info.txn_id);
+                }
+                else if (added_cache)
+                {
+                    removeFromCacheLRU(info.txn_id);
+                    addToCacheLRU(info.txn_id, TransactionState::PREPARED);
+                }
+                return status;
+            }
+
+            stats_.transactions_aborted++;
+        }
+
+        Status tip_status = writeTipEntry(info.txn_id, TransactionState::ABORTED, ctx);
+        if (tip_status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to update TIP entry for aborted XID %lu",
+                        info.txn_id);
+            status = tip_status;
+        }
+
+        Status sync_status = db_->sync(ctx);
+        if (sync_status != Status::OK)
+        {
+            status = sync_status;
+        }
+
+        Status delete_status = catalog->deletePreparedTransaction(gid, ctx);
+        if (delete_status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to delete prepared transaction record: %s",
+                        gid.c_str());
+            status = delete_status;
+        }
+
+        Status marker_status = updateTransactionMarkers(ctx);
+        if (marker_status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to update transaction markers after rollback prepared");
+        }
+
+        return status;
+    }
+
     auto TransactionManager::rollbackTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx)
         -> Status
     {
@@ -658,9 +1035,8 @@ namespace scratchbird::core
             case ClogStatus::ABORTED:
                 state_out = TransactionState::ABORTED;
                 break;
-            case ClogStatus::SUB_COMMITTED:
-                // For now, treat sub-committed as committed
-                state_out = TransactionState::COMMITTED;
+            case ClogStatus::PREPARED:
+                state_out = TransactionState::PREPARED;
                 break;
         }
         transaction_cache_[xid] = state_out;
@@ -871,6 +1247,17 @@ namespace scratchbird::core
         uint64_t new_ost = current_next_xid; // Start with next_xid (will be reduced)
         bool has_active = false;
         bool has_snapshot = false;
+        uint64_t prepared_oat = current_next_xid;
+        bool has_prepared = false;
+
+        for (const auto &prepared_xid : prepared_xids_)
+        {
+            if (prepared_xid != 0 && prepared_xid < prepared_oat)
+            {
+                prepared_oat = prepared_xid;
+                has_prepared = true;
+            }
+        }
 
         // Scan all process control blocks
         ProcessControlBlock *pcbs = reinterpret_cast<ProcessControlBlock *>(
@@ -914,6 +1301,15 @@ namespace scratchbird::core
         if (!has_active)
         {
             new_oat = 0;
+        }
+
+        if (has_prepared)
+        {
+            if (!has_active || prepared_oat < new_oat)
+            {
+                new_oat = prepared_oat;
+            }
+            has_active = true;
         }
 
         // If no snapshot transactions, set OST to 0

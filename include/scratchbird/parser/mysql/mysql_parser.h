@@ -342,6 +342,7 @@ private:
     void parseDeleteStmt();
     void parseReplaceStmt();
     void parseCreateStmt();
+    void parseRenameStmt();
     void parseAlterStmt();
     void parseDropStmt();
     void parseTruncateStmt();

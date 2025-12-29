@@ -7,6 +7,8 @@
 #include "scratchbird/parser/firebird/firebird_parser.h"
 #include <algorithm>
 #include <cctype>
+#include <cstring>
+#include <limits>
 #include <sstream>
 
 namespace scratchbird::parser::firebird {
@@ -230,6 +232,7 @@ bool Parser::isNonReservedKeyword() const {
         case TokenType::KW_SEQUENCE:
         case TokenType::KW_GENERATOR:
         case TokenType::KW_RETAIN:
+        case TokenType::KW_RENAME:
         case TokenType::KW_WORK:
         case TokenType::KW_ZONE:
         case TokenType::KW_SECURITY:
@@ -1372,10 +1375,12 @@ Statement* Parser::parseAlterStatement() {
     if (matchKeyword(TokenType::KW_TABLE)) {
         return parseAlterTableImpl();
     }
+    if (matchKeyword(TokenType::KW_DOMAIN)) {
+        return parseAlterDomainImpl();
+    }
     if (matchKeyword(TokenType::KW_INDEX)) {
         return parseAlterIndexImpl();
     }
-
     error("ALTER statement for this object type not yet implemented");
     return nullptr;
 }
@@ -1611,19 +1616,68 @@ ast::AlterTableStmt* Parser::parseAlterTableImpl() {
             stmt->constraint_name = parseIdentifier();
         }
     } else if (matchKeyword(TokenType::KW_ALTER)) {
-        if (matchKeyword(TokenType::KW_COLUMN)) {
+        matchKeyword(TokenType::KW_COLUMN);  // Optional in Firebird
+        stmt->column_name = parseIdentifier();
+        if (matchKeyword(TokenType::KW_TO)) {
+            stmt->action = ast::AlterTableAction::RENAME_COLUMN;
+            stmt->new_name = parseIdentifier();
+        } else {
             stmt->action = ast::AlterTableAction::ALTER_COLUMN;
-            stmt->column_name = parseIdentifier();
             // Parse column alteration (TYPE, SET DEFAULT, DROP DEFAULT, etc.)
         }
+    } else if (matchKeyword(TokenType::KW_RENAME)) {
+        error("ALTER TABLE RENAME is not supported in Firebird parser");
+        return nullptr;
+    } else if (matchKeyword(TokenType::KW_SET)) {
+        error("ALTER TABLE SET is not supported in Firebird parser");
+        return nullptr;
     }
 
     return stmt;
 }
 
+Statement* Parser::parseAlterDomainImpl() {
+    ast::SchemaPath domain_path = parseSchemaPath();
+
+    if (matchKeyword(TokenType::KW_TO)) {
+        auto* stmt = allocate<ast::RenameObjectStmt>();
+        stmt->object_type = ast::DdlObjectType::DOMAIN;
+        stmt->if_exists = false;
+        stmt->object_path = domain_path;
+        stmt->new_name = parseIdentifier();
+        return stmt;
+    }
+
+    error("ALTER DOMAIN supports only TO <new_name> in Firebird parser");
+    return nullptr;
+}
+
 // Stub for ALTER INDEX
 Statement* Parser::parseAlterIndexImpl() {
-    error("ALTER INDEX not yet implemented");
+    error("ALTER INDEX is not supported in Firebird parser");
+    return nullptr;
+}
+
+Statement* Parser::parseAlterRenameMoveImpl(ast::DdlObjectType object_type) {
+    bool if_exists = false;
+    if (matchKeyword(TokenType::KW_IF)) {
+        consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        if_exists = true;
+    }
+
+    ast::SchemaPath object_path = parseSchemaPath();
+
+    if (matchKeyword(TokenType::KW_RENAME)) {
+        consume(TokenType::KW_TO, "Expected TO after RENAME");
+        auto* stmt = allocate<ast::RenameObjectStmt>();
+        stmt->object_type = object_type;
+        stmt->if_exists = if_exists;
+        stmt->object_path = object_path;
+        stmt->new_name = parseIdentifier();
+        return stmt;
+    }
+
+    error("Expected RENAME TO after object name");
     return nullptr;
 }
 
@@ -2015,15 +2069,147 @@ Statement* Parser::parseExecuteProcedure() {
 
 // Transaction statements
 Statement* Parser::parseSetTransaction() {
-    error("SET TRANSACTION statement not yet implemented");
-    return nullptr;
+    auto* stmt = allocate<ast::SetStmt>();
+    stmt->set_type = ast::SetStmt::SetType::TRANSACTION;
+
+    consume(TokenType::KW_TRANSACTION, "Expected TRANSACTION after SET");
+
+    auto matchIdentifierText = [&](const char* keyword) -> bool {
+        if (!check(TokenType::IDENTIFIER)) {
+            return false;
+        }
+        std::string_view text = lexer_.getTokenText(current_token_);
+        size_t len = std::strlen(keyword);
+        if (text.size() != len) {
+            return false;
+        }
+        for (size_t i = 0; i < len; ++i) {
+            char a = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
+            char b = static_cast<char>(std::tolower(static_cast<unsigned char>(keyword[i])));
+            if (a != b) {
+                return false;
+            }
+        }
+        advance();
+        return true;
+    };
+
+    auto parseReadCommittedVariant = [&]() {
+        if (stmt->has_read_committed_mode) {
+            error("READ COMMITTED mode specified more than once");
+            return;
+        }
+        if (matchKeyword(TokenType::KW_READ)) {
+            consume(TokenType::KW_CONSISTENCY, "Expected CONSISTENCY after READ COMMITTED READ");
+            stmt->has_read_committed_mode = true;
+            stmt->read_committed_mode = ast::ReadCommittedMode::READ_CONSISTENCY;
+        } else if (matchKeyword(TokenType::KW_RECORD_VERSION)) {
+            stmt->has_read_committed_mode = true;
+            stmt->read_committed_mode = ast::ReadCommittedMode::RECORD_VERSION;
+        } else if (checkKeyword(TokenType::KW_NO)) {
+            Token next = peek();
+            if (next.type == TokenType::KW_RECORD_VERSION) {
+                advance();
+                consume(TokenType::KW_RECORD_VERSION, "Expected RECORD_VERSION after NO");
+                stmt->has_read_committed_mode = true;
+                stmt->read_committed_mode = ast::ReadCommittedMode::NO_RECORD_VERSION;
+            }
+        }
+    };
+
+    while (!atEnd() && current_token_.type != TokenType::SEMICOLON) {
+        if (matchKeyword(TokenType::KW_READ)) {
+            if (matchKeyword(TokenType::KW_ONLY)) {
+                stmt->has_access_mode = true;
+                stmt->access_mode = ast::TransactionAccess::READ_ONLY;
+            } else if (matchKeyword(TokenType::KW_WRITE)) {
+                stmt->has_access_mode = true;
+                stmt->access_mode = ast::TransactionAccess::READ_WRITE;
+            } else if (matchKeyword(TokenType::KW_COMMITTED)) {
+                stmt->has_isolation_level = true;
+                stmt->isolation_level = ast::IsolationLevel::READ_COMMITTED;
+                parseReadCommittedVariant();
+            } else {
+                error("Expected ONLY, WRITE, or COMMITTED after READ");
+                advance();
+            }
+        } else if (matchKeyword(TokenType::KW_SNAPSHOT)) {
+            stmt->has_isolation_level = true;
+            if (matchKeyword(TokenType::KW_TABLE)) {
+                if (!matchIdentifierText("STABILITY")) {
+                    error("Expected STABILITY after SNAPSHOT TABLE");
+                }
+                stmt->isolation_level = ast::IsolationLevel::SERIALIZABLE;
+            } else {
+                stmt->isolation_level = ast::IsolationLevel::REPEATABLE_READ;
+            }
+        } else if (matchKeyword(TokenType::KW_WAIT)) {
+            stmt->has_wait_mode = true;
+            stmt->wait_mode = ast::TransactionWaitMode::WAIT;
+        } else if (matchKeyword(TokenType::KW_NO)) {
+            if (matchKeyword(TokenType::KW_WAIT)) {
+                stmt->has_wait_mode = true;
+                stmt->wait_mode = ast::TransactionWaitMode::NO_WAIT;
+            } else {
+                error("Expected WAIT after NO");
+                advance();
+            }
+        } else if (matchKeyword(TokenType::KW_LOCK)) {
+            consume(TokenType::KW_TIMEOUT, "Expected TIMEOUT after LOCK");
+            if (check(TokenType::INTEGER_LITERAL)) {
+                int64_t value = current_token_.value.int_value;
+                advance();
+                if (value < 0 || value > std::numeric_limits<uint32_t>::max()) {
+                    error("LOCK TIMEOUT out of range");
+                } else {
+                    stmt->has_lock_timeout = true;
+                    stmt->lock_timeout_seconds = static_cast<uint32_t>(value);
+                }
+            } else {
+                error("Expected integer literal after LOCK TIMEOUT");
+                advance();
+            }
+        } else if (matchKeyword(TokenType::KW_RESERVING)) {
+            do {
+                ast::StringPool::StringId table_name = parseIdentifier();
+                consume(TokenType::KW_FOR, "Expected FOR after RESERVING table name");
+
+                ast::TableLockMode lock_mode = ast::TableLockMode::SHARED;
+                if (matchKeyword(TokenType::KW_SHARED)) {
+                    lock_mode = ast::TableLockMode::SHARED;
+                } else if (matchKeyword(TokenType::KW_PROTECTED)) {
+                    lock_mode = ast::TableLockMode::PROTECTED;
+                } else {
+                    error("Expected SHARED or PROTECTED in RESERVING clause");
+                }
+
+                bool for_write = false;
+                if (matchKeyword(TokenType::KW_READ)) {
+                    for_write = false;
+                } else if (matchKeyword(TokenType::KW_WRITE)) {
+                    for_write = true;
+                } else {
+                    error("Expected READ or WRITE in RESERVING clause");
+                }
+
+                stmt->table_reservations.emplace_back(table_name, lock_mode, for_write);
+            } while (match(TokenType::COMMA));
+        } else {
+            error("Unexpected token in SET TRANSACTION");
+            advance();
+        }
+
+        match(TokenType::COMMA);
+    }
+
+    return stmt;
 }
 
 Statement* Parser::parseCommit() {
     auto* stmt = allocate<ast::CommitStmt>();
     // Check for RETAIN (Firebird-specific, similar to AND CHAIN)
     if (matchKeyword(TokenType::KW_RETAIN)) {
-        stmt->and_chain = true;  // COMMIT RETAIN starts a new transaction
+        stmt->retaining = true;  // COMMIT RETAINING
     }
     return stmt;
 }
@@ -2041,7 +2227,7 @@ Statement* Parser::parseRollback() {
     }
     // Check for RETAIN (Firebird-specific, similar to AND CHAIN)
     if (matchKeyword(TokenType::KW_RETAIN)) {
-        stmt->and_chain = true;  // ROLLBACK RETAIN starts a new transaction
+        stmt->retaining = true;  // ROLLBACK RETAINING
     }
     return stmt;
 }

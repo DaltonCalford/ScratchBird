@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/sblr/opcodes.h"
@@ -19,6 +20,7 @@ protected:
     std::string test_db_path;
     Database *db = nullptr;
     CatalogManager *catalog = nullptr;
+    DomainManager *domain_mgr = nullptr;
     ID schema_id;
 
     void SetUp() override
@@ -33,6 +35,8 @@ protected:
         ASSERT_EQ(db->open(test_db_path, &ctx), Status::OK);
         catalog = db->catalog_manager();
         ASSERT_NE(catalog, nullptr);
+        domain_mgr = db->domain_manager();
+        ASSERT_NE(domain_mgr, nullptr);
 
         CatalogManager::SchemaInfo schema_info;
         ASSERT_EQ(catalog->getSchema("PUBLIC", schema_info, &ctx), Status::OK);
@@ -116,7 +120,9 @@ TEST_F(TypeDependencyTest, DropDomainFailsIfColumnUsesDomain)
     ErrorContext ctx;
 
     ID domain_id;
-    Status status = catalog->createDomain(schema_id, "dom_int", "INT", "", false, domain_id, &ctx);
+    // Create domain using DomainManager
+    Status status = domain_mgr->createBasicDomain(schema_id, "dom_int", DataType::INT32,
+                                                  0, 0, false, "", {}, domain_id, &ctx);
     ASSERT_EQ(status, Status::OK) << ctx.message;
 
     std::vector<CatalogManager::ColumnInfo> columns;
@@ -134,7 +140,8 @@ TEST_F(TypeDependencyTest, DropDomainFailsIfColumnUsesDomain)
     ASSERT_EQ(status, Status::OK) << ctx.message;
     (void)table_id;
 
-    status = catalog->dropDomain(domain_id, false, &ctx);
+    // Drop domain using DomainManager - should fail due to dependency
+    status = domain_mgr->dropDomain(domain_id, &ctx);
     EXPECT_EQ(status, Status::CONSTRAINT_VIOLATION);
     EXPECT_NE(std::string(ctx.message).find("column"), std::string::npos) << ctx.message;
 }

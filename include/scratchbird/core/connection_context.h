@@ -34,6 +34,14 @@ namespace scratchbird::core
         SNAPSHOT_TABLE_STABILITY = 3
     };
 
+    enum class ReadCommittedMode : uint8_t
+    {
+        DEFAULT = 0,
+        READ_CONSISTENCY = 1,
+        RECORD_VERSION = 2,
+        NO_RECORD_VERSION = 3
+    };
+
     // Transaction lock mode for table reservation (Firebird-style)
     enum class TableLockMode : uint8_t
     {
@@ -49,6 +57,24 @@ namespace scratchbird::core
     public:
         // Type alias for UUID-based IDs
         using ID = UuidV7Bytes;
+
+        // Statement tracking for dormant reattach diagnostics.
+        // Values intentionally align with CatalogManager dormant enums for direct persistence.
+        enum class StatementType : uint8_t
+        {
+            UNKNOWN = 0,
+            DDL = 1,
+            DML = 2,
+            OTHER = 3
+        };
+
+        enum class StatementStatus : uint8_t
+        {
+            UNKNOWN = 0,
+            IN_PROGRESS = 1,
+            COMPLETED = 2,
+            FAILED = 3
+        };
 
         ConnectionContext(Database *db, uint32_t proc_id);
         ~ConnectionContext();
@@ -84,10 +110,19 @@ namespace scratchbird::core
         // Rollback current transaction and start new one atomically
         Status rollback(ErrorContext *ctx = nullptr);
 
+        // Prepare current transaction for 2PC and start a new one atomically.
+        Status prepareTransaction(const std::string& gid, ErrorContext *ctx = nullptr);
+
+        // End current transaction without starting a new one (disconnect/cleanup path).
+        Status shutdownTransaction(ErrorContext *ctx = nullptr);
+
         // Start new transaction with specific settings
         // If commit_outstanding is true, commits current transaction first
         // If commit_outstanding is false and settings changed, stages settings for next commit
         Status startTransaction(bool read_only, IsolationLevel isolation_level,
+                                bool commit_outstanding, ErrorContext *ctx = nullptr);
+        Status startTransaction(bool read_only, IsolationLevel isolation_level,
+                                ReadCommittedMode read_committed_mode,
                                 bool commit_outstanding, ErrorContext *ctx = nullptr);
 
         // Transaction state queries
@@ -112,6 +147,13 @@ namespace scratchbird::core
             return xact_start_time_;
         }
 
+        // Attachment + protocol session identifiers
+        const ID& attachmentId() const { return attachment_id_; }
+        void setAttachmentId(const ID& id) { attachment_id_ = id; }
+
+        const ID& protocolSessionId() const { return protocol_session_id_; }
+        void setProtocolSessionId(const ID& id) { protocol_session_id_ = id; }
+
         // Security context queries (Phase 2 - Security System)
         const ID& getCurrentUserId() const { return current_user_id_; }
         const ID& getActiveRoleId() const { return active_role_id_; }
@@ -132,6 +174,8 @@ namespace scratchbird::core
         void set_current_schema(const std::string& schema) { current_schema_name_ = schema; }
         const std::vector<std::string>& search_path() const { return search_path_; }
         void set_search_path(const std::vector<std::string>& paths) { search_path_ = paths; }
+        const std::string& dialect_tag() const { return dialect_tag_; }
+        void set_dialect_tag(const std::string& tag) { dialect_tag_ = tag; }
 
         // Security context types (Phase 3.1 - SQL Object Permissions)
         enum class SecurityMode : uint8_t
@@ -211,6 +255,46 @@ namespace scratchbird::core
             return lock_timeout_seconds_;
         }
 
+        void stageTransactionSettings(IsolationLevel isolation_level,
+                                      bool read_only,
+                                      bool wait_for_locks,
+                                      uint32_t lock_timeout_seconds,
+                                      ReadCommittedMode read_committed_mode);
+        void stageDefaultTransactionSettings();
+
+        void setAutocommitMode(bool enabled)
+        {
+            autocommit_mode_ = enabled;
+        }
+        bool autocommitMode() const
+        {
+            return autocommit_mode_;
+        }
+        void setAutocommitSuspended(bool suspended)
+        {
+            autocommit_suspended_ = suspended;
+        }
+        bool autocommitSuspended() const
+        {
+            return autocommit_suspended_;
+        }
+
+        // Statement tracking (used for dormant reattach inspection).
+        void beginStatementTracking(const std::string& sql);
+        void endStatementTrackingSuccess(int64_t rows_affected);
+        void endStatementTrackingFailure(uint32_t error_code, const std::string& sqlstate);
+
+        uint64_t lastActivityTime() const { return last_activity_time_; }
+        std::string sessionSettingsJson() const;
+        const std::string& lastStatementText() const { return last_statement_text_; }
+        uint64_t lastStatementHash() const { return last_statement_hash_; }
+        StatementType lastStatementType() const { return last_statement_type_; }
+        StatementStatus lastStatementStatus() const { return last_statement_status_; }
+        uint64_t lastStatementTime() const { return last_statement_time_; }
+        int64_t lastRowsAffected() const { return last_rows_affected_; }
+        uint32_t lastErrorCode() const { return last_error_code_; }
+        const std::string& lastSqlstate() const { return last_sqlstate_; }
+
         // Session settings (Firebird ISQL compatibility)
         void set_sql_dialect(uint8_t dialect)
         {
@@ -249,9 +333,19 @@ namespace scratchbird::core
             return parser_version_;
         }
 
+        void setReadCommittedMode(ReadCommittedMode mode)
+        {
+            read_committed_mode_ = mode;
+        }
+        ReadCommittedMode getReadCommittedMode() const
+        {
+            return read_committed_mode_;
+        }
+
         // Table reservation (for SNAPSHOT TABLE STABILITY)
         struct TableReservation
         {
+            ID table_id{};
             std::string table_name;
             TableLockMode lock_mode;
             bool for_write;
@@ -283,6 +377,7 @@ namespace scratchbird::core
         // Schema navigation support (hierarchical schemas)
         std::string current_schema_name_ = "public";  // Current schema name
         std::vector<std::string> search_path_ = {"public"};  // Schema search path
+        std::string dialect_tag_ = "scratchbird";
 
         // Security context stack (Phase 3.1 - SQL Object Permissions)
         // SecurityMode and SecurityContext types defined in public section above
@@ -290,9 +385,16 @@ namespace scratchbird::core
 
         // Transaction settings
         IsolationLevel isolation_level_; // Current isolation level
+        ReadCommittedMode read_committed_mode_; // READ COMMITTED variant
         bool is_read_only_;              // Is transaction read-only?
         bool wait_for_locks_;            // Wait for locks or fail immediately?
         uint32_t lock_timeout_seconds_;  // Lock timeout (0 = no wait, UINT32_MAX = wait forever)
+        bool autocommit_mode_ = false;   // Autocommit mode (session-level)
+        bool autocommit_suspended_ = false;  // Explicit transaction block active
+
+        // Attachment/session identifiers (minimal attachment model placeholder)
+        ID attachment_id_;
+        ID protocol_session_id_;
 
         // Session settings (Firebird ISQL compatibility)
         uint8_t sql_dialect_ = 3;             // SQL dialect (1, 2, or 3) - default 3 (modern)
@@ -300,10 +402,31 @@ namespace scratchbird::core
         uint32_t statement_timeout_seconds_ = 0;  // Statement timeout (0 = no limit)
         uint8_t parser_version_ = 2;          // Phase 10: Parser version (1 = V1, 2 = V2) - default V2
 
+        // Last statement tracking (for dormant reattach inspection)
+        std::string last_statement_text_;
+        uint64_t last_statement_hash_ = 0;
+        StatementType last_statement_type_ = StatementType::UNKNOWN;
+        StatementStatus last_statement_status_ = StatementStatus::UNKNOWN;
+        uint64_t last_statement_time_ = 0;
+        int64_t last_rows_affected_ = 0;
+        uint32_t last_error_code_ = 0;
+        std::string last_sqlstate_;
+        uint64_t last_activity_time_ = 0;
+
+        // Default transaction settings (for AND NO CHAIN resets)
+        IsolationLevel default_isolation_level_;
+        ReadCommittedMode default_read_committed_mode_;
+        bool default_is_read_only_;
+        bool default_wait_for_locks_;
+        uint32_t default_lock_timeout_seconds_;
+
         // Staged settings (from START TRANSACTION without COMMIT OUTSTANDING)
         bool settings_staged_;                // Are there staged settings?
         IsolationLevel next_isolation_level_; // Staged isolation level
+        ReadCommittedMode next_read_committed_mode_;
         bool next_is_read_only_;              // Staged read-only flag
+        bool next_wait_for_locks_;            // Staged wait mode
+        uint32_t next_lock_timeout_seconds_;  // Staged lock timeout
 
         // FIREBIRD MGA: No snapshot structures needed
         // Transaction visibility is determined by current_xid_ and TIP lookups

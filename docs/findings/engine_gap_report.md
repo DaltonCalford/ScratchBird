@@ -282,7 +282,20 @@ Note on design: each parser is standalone and emits SBLR bytecode. The ScratchBi
 
 If you want, I can break these into per-dialect implementation checklists (ScratchBird/V2, Firebird, MySQL, PostgreSQL) and map each gap to specific specs in `docs/specifications/`.
 
-## 9) Security Configuration Matrix (Architect-Controlled)
+## 9) Object Persistence Gaps
+
+30. **Multiple SQL object types are in-memory only (no catalog persistence)**
+   - **Where**:
+     - Views: `src/core/catalog_manager.cpp` (ViewRecord defined but unused; `CatalogManager::createView` only updates `view_cache_`)
+     - Sequences: `src/core/catalog_manager.cpp` (SequenceRecord defined but unused; `CatalogManager::createSequence` only updates `sequence_cache_`)
+     - Triggers (table + database): `src/core/catalog_manager.cpp` (`CatalogManager::createTrigger`/`createDatabaseTrigger` update caches only; TriggerRecord unused)
+     - Functions/Procedures: `src/core/catalog_manager.cpp` (`registerFunction`/`registerProcedure` only update maps; ProcedureRecord unused)
+     - Synonyms/Foreign tables: `src/core/catalog_manager.cpp` (caches exist; no create/load/write paths)
+   - **Observed**: These objects are created and renamed in memory but no on-disk catalog writes occur, so they vanish after restart and resolver cache rebuilds lose them.
+   - **Impact**: Non-durable metadata, broken dependency tracking after restart, and SHOW/DDL output becomes inconsistent with prior state.
+   - **Expected**: Add catalog tables and read/write paths for each object type; update CREATE/ALTER/DROP to persist via `writeRecordToHeapPage`/`updateRecordInHeapPage`, and load them on startup.
+
+## 10) Security Configuration Matrix (Architect-Controlled)
 
 This matrix captures security-relevant settings that must be configurable by the system architect. It serves as a readiness checklist for Beta.
 

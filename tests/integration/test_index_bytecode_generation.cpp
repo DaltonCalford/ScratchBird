@@ -488,11 +488,11 @@ TEST_F(IndexBytecodeGenerationTest, InsertDoesNotContainIndexOpcodes)
 
     // Check that no extended index opcodes are present
     bool has_index_ops = false;
-    for (size_t i = 0; i < bc.size() - 1; i++)
+    for (size_t i = 0; i + 2 < bc.size(); i++)
     {
         if (bc[i] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
         {
-            uint8_t ext_op = bc[i + 1];
+            uint16_t ext_op = scratchbird::sblr::readInt16(&bc[i + 1]);
             if (ext_op >= 0x0A && ext_op <= 0x14)  // Index operation range
             {
                 has_index_ops = true;
@@ -517,11 +517,11 @@ TEST_F(IndexBytecodeGenerationTest, UpdateDoesNotContainIndexOpcodes)
 
     // Check that no extended index opcodes are present
     bool has_index_ops = false;
-    for (size_t i = 0; i < bc.size() - 1; i++)
+    for (size_t i = 0; i + 2 < bc.size(); i++)
     {
         if (bc[i] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
         {
-            uint8_t ext_op = bc[i + 1];
+            uint16_t ext_op = scratchbird::sblr::readInt16(&bc[i + 1]);
             if (ext_op >= 0x0A && ext_op <= 0x14)
             {
                 has_index_ops = true;
@@ -546,11 +546,11 @@ TEST_F(IndexBytecodeGenerationTest, DeleteDoesNotContainIndexOpcodes)
 
     // Check that no extended index opcodes are present
     bool has_index_ops = false;
-    for (size_t i = 0; i < bc.size() - 1; i++)
+    for (size_t i = 0; i + 2 < bc.size(); i++)
     {
         if (bc[i] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
         {
-            uint8_t ext_op = bc[i + 1];
+            uint16_t ext_op = scratchbird::sblr::readInt16(&bc[i + 1]);
             if (ext_op >= 0x0A && ext_op <= 0x14)
             {
                 has_index_ops = true;

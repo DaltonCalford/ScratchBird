@@ -26,21 +26,22 @@ namespace core {
     Status RTreeIndex::create(Database *db, const UuidV7Bytes &index_uuid,
                               uint32_t *meta_page_out, ErrorContext *ctx)
     {
-        // Allocate meta page for storing index metadata
-        auto page_mgr = db->page_manager();
-        uint32_t meta_page = 0;
-        Status status = page_mgr->allocatePage(meta_page, ctx);
+        // Generate dummy UUIDs for table and columns (wrapper doesn't track these)
+        UuidV7Bytes table_uuid = generateUuidV7();
+        std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
+
+        // Delegate to low-level RTree::create with default max_entries
+        uint32_t root_page = 0;
+        Status status = RTree::create(db, index_uuid, table_uuid, column_uuids,
+                                     MAX_ENTRIES, &root_page, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        // The real RTree will be created lazily on first use
-        // or we could delegate to RTree::create() here
-
         if (meta_page_out)
         {
-            *meta_page_out = meta_page;
+            *meta_page_out = root_page;
         }
 
         return Status::OK;
@@ -51,9 +52,13 @@ namespace core {
     {
         auto index = std::make_unique<RTreeIndex>(db, index_uuid, meta_page);
 
-        // Load root page from metadata
-        // The real RTree will be initialized lazily
-        index->root_page_ = meta_page + 1; // Placeholder - real impl would load from meta page
+        // Delegate to low-level RTree::open
+        index->root_page_ = meta_page; // Root page is the meta page
+        index->rtree_ = RTree::open(db, index_uuid, meta_page, MAX_ENTRIES, ctx);
+        if (!index->rtree_)
+        {
+            return nullptr;
+        }
 
         return index;
     }
@@ -61,30 +66,18 @@ namespace core {
     Status RTreeIndex::insert(const std::vector<uint8_t> &key, const TID &tid,
                               uint64_t xmin, ErrorContext *ctx)
     {
+        if (!rtree_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "R-Tree index not opened");
+            return Status::NOT_FOUND;
+        }
+
         // Parse bounding box from serialized key
         scratchbird::core::BoundingBox bbox;
         Status status = deserializeBoundingBox(key, &bbox, ctx);
         if (status != Status::OK)
         {
             return status;
-        }
-
-        // Lazy initialization of RTree
-        if (!rtree_)
-        {
-            // Build SBRTreeIndex metadata structure
-            SBRTreeIndex index_info;
-            std::memcpy(&index_info.idx_uuid, &index_uuid_, sizeof(ID));
-            // Note: idx_table_uuid and idx_column_ids would need to be loaded from meta page
-            // For now, using defaults
-            index_info.idx_root_page = root_page_;
-            index_info.idx_max_entries = MAX_ENTRIES;
-            index_info.idx_height = 0;
-            index_info.idx_entry_count = 0;
-            index_info.idx_page_count = 0;
-            index_info.idx_deleted_count = 0;
-
-            rtree_ = std::make_unique<RTree>(db_, index_info);
         }
 
         // Delegate to real RTree implementation
@@ -94,6 +87,12 @@ namespace core {
     Status RTreeIndex::search(const std::vector<uint8_t> &query_box, uint64_t current_xid,
                               std::vector<TID> *results_out, ErrorContext *ctx)
     {
+        if (!rtree_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "R-Tree index not opened");
+            return Status::NOT_FOUND;
+        }
+
         if (results_out)
         {
             results_out->clear();
@@ -107,21 +106,6 @@ namespace core {
             return status;
         }
 
-        // Lazy initialization of RTree
-        if (!rtree_)
-        {
-            SBRTreeIndex index_info;
-            std::memcpy(&index_info.idx_uuid, &index_uuid_, sizeof(ID));
-            index_info.idx_root_page = root_page_;
-            index_info.idx_max_entries = MAX_ENTRIES;
-            index_info.idx_height = 0;
-            index_info.idx_entry_count = 0;
-            index_info.idx_page_count = 0;
-            index_info.idx_deleted_count = 0;
-
-            rtree_ = std::make_unique<RTree>(db_, index_info);
-        }
-
         // Delegate to real RTree implementation
         return rtree_->search(query, current_xid, results_out, ctx);
     }
@@ -129,27 +113,18 @@ namespace core {
     Status RTreeIndex::remove(const std::vector<uint8_t> &key, const TID &tid,
                               uint64_t xmax, ErrorContext *ctx)
     {
+        if (!rtree_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "R-Tree index not opened");
+            return Status::NOT_FOUND;
+        }
+
         // Parse bounding box
         scratchbird::core::BoundingBox bbox;
         Status status = deserializeBoundingBox(key, &bbox, ctx);
         if (status != Status::OK)
         {
             return status;
-        }
-
-        // Lazy initialization of RTree
-        if (!rtree_)
-        {
-            SBRTreeIndex index_info;
-            std::memcpy(&index_info.idx_uuid, &index_uuid_, sizeof(ID));
-            index_info.idx_root_page = root_page_;
-            index_info.idx_max_entries = MAX_ENTRIES;
-            index_info.idx_height = 0;
-            index_info.idx_entry_count = 0;
-            index_info.idx_page_count = 0;
-            index_info.idx_deleted_count = 0;
-
-            rtree_ = std::make_unique<RTree>(db_, index_info);
         }
 
         // Delegate to real RTree implementation
@@ -160,13 +135,14 @@ namespace core {
 
     Status RTreeIndex::vacuum(ErrorContext *ctx)
     {
-        // Delegate to RTree if initialized
-        if (rtree_)
+        if (!rtree_)
         {
-            return rtree_->clear(ctx);
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "R-Tree index not opened");
+            return Status::NOT_FOUND;
         }
 
-        return Status::OK;
+        // Delegate to RTree clear (vacuum equivalent)
+        return rtree_->clear(ctx);
     }
 
     Status RTreeIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
@@ -174,6 +150,12 @@ namespace core {
                                          uint64_t *pages_modified_out,
                                          ErrorContext *ctx)
     {
+        if (!rtree_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "R-Tree index not opened");
+            return Status::NOT_FOUND;
+        }
+
         // Initialize outputs
         if (entries_removed_out) *entries_removed_out = 0;
         if (pages_modified_out) *pages_modified_out = 0;
@@ -181,21 +163,6 @@ namespace core {
         if (dead_tids.empty())
         {
             return Status::OK;
-        }
-
-        // Lazy initialization of RTree
-        if (!rtree_)
-        {
-            SBRTreeIndex index_info;
-            std::memcpy(&index_info.idx_uuid, &index_uuid_, sizeof(ID));
-            index_info.idx_root_page = root_page_;
-            index_info.idx_max_entries = MAX_ENTRIES;
-            index_info.idx_height = 0;
-            index_info.idx_entry_count = 0;
-            index_info.idx_page_count = 0;
-            index_info.idx_deleted_count = 0;
-
-            rtree_ = std::make_unique<RTree>(db_, index_info);
         }
 
         // Delegate to real RTree implementation (IndexGCInterface)

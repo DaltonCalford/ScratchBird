@@ -276,11 +276,21 @@ namespace scratchbird
 
             // Execution helpers
             uint8_t readByte();
+            uint16_t readExtendedOpcode();
             uint16_t readInt16();
             uint32_t readInt32();
             uint64_t readInt64();
             double readDouble();
             std::string readString();
+            std::string readString16();
+            core::ObjectPath readObjectPath();
+            core::Status resolveSchemaIdForName(const std::string& schema_path,
+                                                core::ID& schema_id_out,
+                                                core::ErrorContext* ctx);
+            core::Status resolveSchemaIdForQualifiedName(const std::string& qualified_name,
+                                                         std::string& object_name_out,
+                                                         core::ID& schema_id_out,
+                                                         core::ErrorContext* ctx);
 
             void push(const Value &v)
             {
@@ -334,6 +344,8 @@ namespace scratchbird
             void executeDropTable();               // ALPHA Phase 1 - DDL Modifications
             void executeDropIndex();               // ALPHA Phase 1 - DDL Modifications
             void executeAlterTable();              // ALPHA Phase 1 - DDL Modifications
+            void executeRenameObject();
+            void executeMoveObject();
             void executeTruncateTable();           // ALPHA Phase 1 - DDL Modifications (TRUNCATE TABLE ASYNC)
             void executeDropTablespace();          // Phase 2 Task 2.1
             void executeAttachTablespace();        // Phase 6 Task 6.1
@@ -352,8 +364,15 @@ namespace scratchbird
             void executeSweep();            // Phase 3 Task 3.3
             void executeStartTransaction(); // Phase 2 Task 2.6, Phase 3 Task 3.6
             void executeSetTransaction();   // Phase 3 Task 3.6
+            void executeStartOrSetTransaction();
             void executeCommit();           // Phase 2 Task 2.6
             void executeRollback();         // Phase 2 Task 2.6
+            void executeCommitFlags(uint8_t flags);
+            void executeRollbackFlags(uint8_t flags);
+            void executeSetAutocommitOpcode();
+            void executePrepareTransaction();
+            void executeCommitPrepared();
+            void executeRollbackPrepared();
 
             // Set operations (UNION, INTERSECT, EXCEPT)
             void executeUnionAll();         // UNION ALL - concatenate with duplicates
@@ -705,6 +724,7 @@ namespace scratchbird
             void executeSetRole();           // Execute SET ROLE / RESET ROLE
             void executeSetSessionAuth();    // Execute SET/RESET SESSION AUTHORIZATION
             void executeSetConstraints();    // P2-7: Execute SET CONSTRAINTS
+            void executeSetVariable();       // Execute SET variable (EXT_SET_VARIABLE)
             void executeCreatePolicy();      // Execute CREATE POLICY (Security Phase 3.4.4)
             void executeDropPolicy();        // Execute DROP POLICY (Security Phase 3.4.4)
             void executeAlterTableRLS();     // Execute ALTER TABLE ... ROW LEVEL SECURITY (Security Phase 3.4.4)
@@ -746,6 +766,9 @@ namespace scratchbird
             void executeShowLocation();      // Execute SHOW LOCATION OF [type] name
             void executeShowResolved();      // Execute SHOW RESOLVED name
             void executeShowObjects();       // Execute SHOW OBJECTS
+            void executeObjectResolverQuery(
+                const std::vector<std::pair<std::string, std::string>>& select_items,
+                bool is_select_star);
 
             // Session SET Commands (Firebird ISQL compatibility)
             void executeSetSqlDialect();     // Execute SET SQL DIALECT n

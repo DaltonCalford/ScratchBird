@@ -6,7 +6,9 @@
 
 #include "scratchbird/parser/postgresql/pg_parser.h"
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/catalog_manager.h"
 #include <algorithm>
+#include <limits>
 
 namespace scratchbird::parser::postgresql {
 
@@ -107,12 +109,12 @@ void Parser::parseCreateStmt() {
         parseCreateDomain();
     } else if (matchKeyword(TokenType::KW_ROLE)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CREATE_ROLE));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_ROLE));
         std::string role_name = parseIdentifier();
         emitString(role_name);
     } else if (matchKeyword(TokenType::KW_USER)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CREATE_USER));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_USER));
         std::string user_name = parseIdentifier();
         emitString(user_name);
         // Optional WITH PASSWORD
@@ -942,7 +944,7 @@ void Parser::parseCreateSequence() {
 
 void Parser::parseCreateDatabase() {
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SHOW_DATABASE));  // Use a placeholder
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_DATABASE));  // Use a placeholder
 
     std::string db_name = parseIdentifier();
     emitString(db_name);
@@ -996,7 +998,7 @@ void Parser::parseCreateSchema() {
 
 void Parser::parseCreateFunction() {
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CREATE_FUNCTION_STMT));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_FUNCTION_STMT));
 
     std::string schema;
     std::string func_name = parseIdentifier();
@@ -1076,7 +1078,7 @@ void Parser::parseCreateFunction() {
 
 void Parser::parseCreateProcedure() {
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CREATE_PROCEDURE_STMT));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_PROCEDURE_STMT));
 
     std::string proc_name = parseIdentifier();
 
@@ -1131,7 +1133,7 @@ void Parser::parseCreateProcedure() {
 
 void Parser::parseCreateTrigger() {
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CREATE_TRIGGER));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_TRIGGER));
 
     std::string trigger_name = parseIdentifier();
     emitString(trigger_name);
@@ -1198,7 +1200,7 @@ void Parser::parseCreateTrigger() {
 
 void Parser::parseCreateType() {
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CREATE_TYPE));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_TYPE));
 
     std::string type_name = parseQualifiedName();
     emitString(type_name);
@@ -1237,7 +1239,7 @@ void Parser::parseCreateType() {
 
 void Parser::parseCreateDomain() {
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CREATE_DOMAIN));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_DOMAIN));
 
     std::string domain_name = parseQualifiedName();
     emitString(domain_name);
@@ -1271,21 +1273,206 @@ void Parser::parseCreateDomain() {
 
 void Parser::parseAlterStmt() {
     consume(TokenType::KW_ALTER, "Expected ALTER");
-    emit(sblr::Opcode::ALTER_TABLE);
+
+    auto emit_string16 = [&](std::string_view str) {
+        if (str.size() > std::numeric_limits<uint16_t>::max()) {
+            error("Identifier length exceeds 16-bit limit");
+            emitU16(0);
+            return;
+        }
+        emitU16(static_cast<uint16_t>(str.size()));
+        for (unsigned char ch : str) {
+            emitByte(static_cast<uint8_t>(ch));
+        }
+    };
+
+    auto split_path = [&](const std::string& path) {
+        std::vector<std::string> parts;
+        std::string current;
+        for (char ch : path) {
+            if (ch == '/') {
+                if (!current.empty()) {
+                    parts.push_back(current);
+                    current.clear();
+                }
+            } else {
+                current.push_back(ch);
+            }
+        }
+        if (!current.empty()) {
+            parts.push_back(current);
+        }
+        return parts;
+    };
+
+    auto split_qualified = [&](const std::string& qualified) {
+        std::vector<std::string> parts;
+        std::string current;
+        for (char ch : qualified) {
+            if (ch == '.') {
+                parts.push_back(current);
+                current.clear();
+            } else {
+                current.push_back(ch);
+            }
+        }
+        parts.push_back(current);
+        std::string schema;
+        std::string object = parts.back();
+        if (parts.size() > 1) {
+            for (size_t i = 0; i + 1 < parts.size(); ++i) {
+                if (!schema.empty()) schema += ".";
+                schema += parts[i];
+            }
+        }
+        return std::make_pair(schema, object);
+    };
+
+    auto build_object_path = [&](const std::string& schema_in,
+                                 const std::string& object_name) {
+        std::string schema = schema_in;
+        std::string object = object_name;
+        resolveTableName(schema, object);
+        auto components = split_path(schema);
+        components.push_back(object);
+        return components;
+    };
+
+    auto build_schema_path = [&](const std::string& schema_in) {
+        std::string schema = schema_in;
+        std::string dummy = "x";
+        resolveTableName(schema, dummy);
+        return split_path(schema);
+    };
+
+    auto emit_object_path = [&](const std::vector<std::string>& components) {
+        emitByte(static_cast<uint8_t>(core::PathType::ABSOLUTE));
+        if (components.size() > std::numeric_limits<uint8_t>::max()) {
+            error("Object path has too many components");
+            emitByte(0);
+            return;
+        }
+        emitByte(static_cast<uint8_t>(components.size()));
+        for (const auto& comp : components) {
+            emit_string16(comp);
+        }
+    };
+
+    auto emit_rename = [&](core::CatalogManager::ObjectType object_type,
+                           const std::vector<std::string>& components,
+                           bool if_exists,
+                           std::string_view new_name) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_RENAME_OBJECT));
+        uint8_t flags = if_exists ? 0x02 : 0x00;
+        emitByte(flags);
+        emitByte(static_cast<uint8_t>(object_type));
+        emit_object_path(components);
+        emit_string16(new_name);
+    };
+
+    auto emit_move = [&](core::CatalogManager::ObjectType object_type,
+                         const std::vector<std::string>& components,
+                         bool if_exists,
+                         const std::vector<std::string>& target_schema,
+                         std::string_view new_name) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MOVE_OBJECT));
+        uint8_t flags = if_exists ? 0x02 : 0x00;
+        emitByte(flags);
+        emitByte(static_cast<uint8_t>(object_type));
+        emit_object_path(components);
+        emit_object_path(target_schema);
+        emit_string16(new_name);
+    };
+
+    auto parse_rename_move = [&](core::CatalogManager::ObjectType object_type) {
+        bool if_exists = false;
+        if (matchKeyword(TokenType::KW_IF)) {
+            consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+            if_exists = true;
+        }
+
+        auto name_pair = split_qualified(parseQualifiedName());
+        auto components = build_object_path(name_pair.first, name_pair.second);
+
+        if (matchKeyword(TokenType::KW_RENAME)) {
+            consumeKeyword(TokenType::KW_TO, "Expected TO");
+            std::string new_name = parseIdentifier();
+            emit_rename(object_type, components, if_exists, new_name);
+            return;
+        }
+
+        if (matchKeyword(TokenType::KW_SET)) {
+            consumeKeyword(TokenType::KW_SCHEMA, "Expected SCHEMA");
+            std::string new_schema = parseIdentifier();
+            auto target_schema = build_schema_path(new_schema);
+            emit_move(object_type, components, if_exists, target_schema, std::string_view());
+            return;
+        }
+
+        error("Expected RENAME TO or SET SCHEMA after object name");
+    };
 
     if (matchKeyword(TokenType::KW_TABLE)) {
-        // Table name
+        bool if_exists = false;
+        if (matchKeyword(TokenType::KW_IF)) {
+            consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+            if_exists = true;
+        }
+
         std::string schema;
         std::string table = parseIdentifier();
         if (match(TokenType::DOT)) {
             schema = table;
             table = parseIdentifier();
         }
+
+        auto table_components = build_object_path(schema, table);
+
+        if (matchKeyword(TokenType::KW_RENAME)) {
+            if (matchKeyword(TokenType::KW_COLUMN)) {
+                std::string old_name = parseIdentifier();
+                consumeKeyword(TokenType::KW_TO, "Expected TO");
+                std::string new_name = parseIdentifier();
+                auto column_components = table_components;
+                column_components.push_back(old_name);
+                emit_rename(core::CatalogManager::ObjectType::COLUMN,
+                            column_components, if_exists, new_name);
+            } else if (matchKeyword(TokenType::KW_CONSTRAINT)) {
+                std::string old_name = parseIdentifier();
+                consumeKeyword(TokenType::KW_TO, "Expected TO");
+                std::string new_name = parseIdentifier();
+                auto constraint_components = table_components;
+                constraint_components.push_back(old_name);
+                emit_rename(core::CatalogManager::ObjectType::CONSTRAINT,
+                            constraint_components, if_exists, new_name);
+            } else if (matchKeyword(TokenType::KW_TO)) {
+                std::string new_name = parseIdentifier();
+                emit_rename(core::CatalogManager::ObjectType::TABLE,
+                            table_components, if_exists, new_name);
+            } else {
+                error("Expected COLUMN, CONSTRAINT, or TO after RENAME");
+            }
+            return;
+        }
+
+        if (matchKeyword(TokenType::KW_SET)) {
+            if (matchKeyword(TokenType::KW_SCHEMA)) {
+                std::string new_schema = parseIdentifier();
+                auto target_schema = build_schema_path(new_schema);
+                emit_move(core::CatalogManager::ObjectType::TABLE,
+                          table_components, if_exists, target_schema, std::string_view());
+                return;
+            }
+        }
+
+        // Fallback to legacy ALTER TABLE encoding
+        emit(sblr::Opcode::ALTER_TABLE);
         resolveTableName(schema, table);
         emit(sblr::Opcode::TABLE_REF);
         emitString(schema + "/" + table);
 
-        // ALTER TABLE actions
         do {
             if (matchKeyword(TokenType::KW_ADD)) {
                 if (matchKeyword(TokenType::KW_COLUMN)) {
@@ -1294,10 +1481,8 @@ void Parser::parseAlterStmt() {
                     emitString(col.name);
                     emit(typeToOpcode(col.type.kind));
                 } else if (matchKeyword(TokenType::KW_CONSTRAINT)) {
-                    // Add constraint
                     parseIdentifier();  // constraint name
                 } else {
-                    // Default is ADD COLUMN
                     ColumnDef col = parseColumnDef();
                     emit(sblr::Opcode::COLUMN_DEF);
                     emitString(col.name);
@@ -1318,7 +1503,6 @@ void Parser::parseAlterStmt() {
                 consumeKeyword(TokenType::KW_COLUMN, "Expected COLUMN");
                 std::string col_name = parseIdentifier();
                 emitString(col_name);
-                // ALTER COLUMN actions
                 if (matchKeyword(TokenType::KW_SET)) {
                     if (matchKeyword(TokenType::KW_DEFAULT)) {
                         parseExpression();
@@ -1334,30 +1518,81 @@ void Parser::parseAlterStmt() {
                 } else if (matchKeyword(TokenType::KW_TYPE)) {
                     parseDataType();
                 }
-            } else if (matchKeyword(TokenType::KW_RENAME)) {
-                if (matchKeyword(TokenType::KW_COLUMN)) {
-                    std::string old_name = parseIdentifier();
-                    consumeKeyword(TokenType::KW_TO, "Expected TO");
-                    std::string new_name = parseIdentifier();
-                    emitString(old_name);
-                    emitString(new_name);
-                } else if (matchKeyword(TokenType::KW_TO)) {
-                    std::string new_name = parseIdentifier();
-                    emitString(new_name);
-                }
-            } else if (matchKeyword(TokenType::KW_SET)) {
-                if (matchKeyword(TokenType::KW_SCHEMA)) {
-                    std::string new_schema = parseIdentifier();
-                    emitString(new_schema);
-                }
             }
         } while (match(TokenType::COMMA));
-    } else if (matchKeyword(TokenType::KW_SEQUENCE)) {
-        emit(sblr::Opcode::ALTER_SEQUENCE);
-        std::string seq_name = parseQualifiedName();
-        emitString(seq_name);
-        // Sequence options (similar to CREATE SEQUENCE)
+        return;
     }
+
+    if (matchKeyword(TokenType::KW_VIEW)) {
+        parse_rename_move(core::CatalogManager::ObjectType::VIEW);
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_INDEX)) {
+        parse_rename_move(core::CatalogManager::ObjectType::INDEX);
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_SEQUENCE)) {
+        bool if_exists = false;
+        if (matchKeyword(TokenType::KW_IF)) {
+            consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+            if_exists = true;
+        }
+        auto name_pair = split_qualified(parseQualifiedName());
+        auto components = build_object_path(name_pair.first, name_pair.second);
+
+        if (matchKeyword(TokenType::KW_RENAME)) {
+            consumeKeyword(TokenType::KW_TO, "Expected TO");
+            std::string new_name = parseIdentifier();
+            emit_rename(core::CatalogManager::ObjectType::SEQUENCE,
+                        components, if_exists, new_name);
+            return;
+        }
+
+        if (matchKeyword(TokenType::KW_SET)) {
+            consumeKeyword(TokenType::KW_SCHEMA, "Expected SCHEMA");
+            std::string new_schema = parseIdentifier();
+            auto target_schema = build_schema_path(new_schema);
+            emit_move(core::CatalogManager::ObjectType::SEQUENCE,
+                      components, if_exists, target_schema, std::string_view());
+            return;
+        }
+
+        emit(sblr::Opcode::ALTER_SEQUENCE);
+        std::string seq_name = name_pair.first.empty()
+                                   ? name_pair.second
+                                   : (name_pair.first + "." + name_pair.second);
+        emitString(seq_name);
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_FUNCTION)) {
+        parse_rename_move(core::CatalogManager::ObjectType::FUNCTION);
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_PROCEDURE)) {
+        parse_rename_move(core::CatalogManager::ObjectType::PROCEDURE);
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_TRIGGER)) {
+        parse_rename_move(core::CatalogManager::ObjectType::TRIGGER);
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_DOMAIN)) {
+        parse_rename_move(core::CatalogManager::ObjectType::DOMAIN);
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_SCHEMA)) {
+        parse_rename_move(core::CatalogManager::ObjectType::SCHEMA);
+        return;
+    }
+
+    error("ALTER statement for this object type not yet implemented");
 }
 
 // ============================================================================
@@ -1437,11 +1672,11 @@ void Parser::parseDropStmt() {
         emitString(seq_name);
     } else if (matchKeyword(TokenType::KW_FUNCTION)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_FUNCTION));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_FUNCTION));
         // ... function signature
     } else if (matchKeyword(TokenType::KW_TRIGGER)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_DROP_TRIGGER));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_TRIGGER));
         std::string trigger_name = parseIdentifier();
         emitString(trigger_name);
         consumeKeyword(TokenType::KW_ON, "Expected ON");
@@ -1449,12 +1684,12 @@ void Parser::parseDropStmt() {
         emitString(table_name);
     } else if (matchKeyword(TokenType::KW_ROLE)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_DROP_ROLE));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_ROLE));
         std::string role_name = parseIdentifier();
         emitString(role_name);
     } else if (matchKeyword(TokenType::KW_USER)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_DROP_USER));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_USER));
         std::string user_name = parseIdentifier();
         emitString(user_name);
     }

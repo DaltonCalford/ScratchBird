@@ -51,9 +51,13 @@ public:
     void writeByte(uint8_t byte) { bytecode_.push_back(byte); }
     void writeOpcode(sblr::Opcode op) { writeByte(static_cast<uint8_t>(op)); }
 
-    void writeExtendedOpcode(uint8_t ext_op) {
+    void writeExtendedOpcode(uint16_t ext_op) {
         writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
-        writeByte(ext_op);
+        writeInt16(ext_op);
+    }
+
+    void writeExtendedOpcode(sblr::ExtendedOpcode ext_op) {
+        writeExtendedOpcode(static_cast<uint16_t>(ext_op));
     }
 
     void writeInt16(uint16_t value) {
@@ -156,10 +160,13 @@ private:
     void generateCreateTable(ResolvedCreateTableStmt* stmt);
     void generateCreateIndex(ResolvedCreateIndexStmt* stmt);
     void generateCreateView(ResolvedCreateViewStmt* stmt);
+    void generateRenameObject(ResolvedRenameObjectStmt* stmt);
+    void generateMoveObject(ResolvedMoveObjectStmt* stmt);
     void generateDrop(ResolvedDropStmt* stmt);
 
     // Transaction/Session
     void generateStartTransaction(ResolvedStartTransactionStmt* stmt);
+    void generatePrepareTransaction(ResolvedPrepareTransactionStmt* stmt);
     void generateCommit(ResolvedCommitStmt* stmt);
     void generateRollback(ResolvedRollbackStmt* stmt);
     void generateSavepoint(ResolvedSavepointStmt* stmt);
@@ -227,6 +234,8 @@ private:
      * Write string from pool
      */
     void writeStringId(StringPool::StringId id);
+    void writeString16(std::string_view str);
+    void writeObjectPath(const SchemaPath& path);
 
     /**
      * Map binary operator to opcode

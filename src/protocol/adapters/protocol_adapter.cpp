@@ -141,6 +141,11 @@ core::Status ProtocolAdapter::executeQuery(const QueryContext& query, ResultCont
         return status;
     }
 
+    // Track the statement for dormant reattach inspection (no cursor state retained).
+    if (connection_ctx_) {
+        connection_ctx_->beginStatementTracking(query.query);
+    }
+
     std::vector<uint8_t> bytecode;
     std::string compile_error;
     status = compileQuery(query.query, bytecode, compile_error);
@@ -149,10 +154,23 @@ core::Status ProtocolAdapter::executeQuery(const QueryContext& query, ResultCont
         result.error_code = static_cast<uint32_t>(status);
         result.sqlstate = "42000";
         result.error_message = compile_error.empty() ? "Compilation error" : compile_error;
+        if (connection_ctx_) {
+            connection_ctx_->endStatementTrackingFailure(result.error_code, result.sqlstate);
+        }
         return core::Status::OK;
     }
 
-    return executeBytecode(query.query, bytecode, result, &ctx);
+    status = executeBytecode(query.query, bytecode, result, &ctx);
+    if (connection_ctx_) {
+        if (result.has_error) {
+            const std::string sqlstate = result.sqlstate.empty() ? "42000" : result.sqlstate;
+            connection_ctx_->endStatementTrackingFailure(result.error_code, sqlstate);
+        } else {
+            connection_ctx_->endStatementTrackingSuccess(result.rows_affected);
+        }
+    }
+
+    return status;
 }
 
 core::Status ProtocolAdapter::prepareStatement(const std::string& name,
@@ -348,6 +366,31 @@ core::Status ProtocolAdapter::ensureEngine(core::ErrorContext* ctx) {
         return status;
     }
 
+    if (connection_ctx_) {
+        const char* dialect_tag = "scratchbird";
+        switch (getProtocolType()) {
+            case network::ProtocolType::POSTGRESQL:
+                dialect_tag = "postgresql";
+                break;
+            case network::ProtocolType::MYSQL:
+                dialect_tag = "mysql";
+                break;
+            case network::ProtocolType::FIREBIRD:
+                dialect_tag = "firebird";
+                break;
+            case network::ProtocolType::NATIVE:
+            case network::ProtocolType::AUTO_DETECT:
+            default:
+                dialect_tag = "scratchbird";
+                break;
+        }
+        connection_ctx_->set_dialect_tag(dialect_tag);
+
+        core::ID protocol_session_id;
+        generateSessionId(protocol_session_id.bytes.data());
+        connection_ctx_->setProtocolSessionId(protocol_session_id);
+    }
+
     executor_ = std::make_unique<sblr::Executor>(database_.get());
     executor_->setConnectionContext(connection_ctx_.get());
     compiler_v2_ = std::make_unique<sblr::QueryCompilerV2>(database_.get());
@@ -358,6 +401,31 @@ core::Status ProtocolAdapter::ensureEngine(core::ErrorContext* ctx) {
 core::Status ProtocolAdapter::compileQuery(const std::string& sql,
                                            std::vector<uint8_t>& bytecode_out,
                                            std::string& error_out) {
+    struct ConnectionContextGuard
+    {
+        core::ConnectionContext* previous = nullptr;
+        bool changed = false;
+
+        explicit ConnectionContextGuard(core::ConnectionContext* current)
+            : previous(core::ConnectionContext::getCurrent())
+        {
+            if (current && current != previous)
+            {
+                core::ConnectionContext::setCurrent(current);
+                changed = true;
+            }
+        }
+
+        ~ConnectionContextGuard()
+        {
+            if (changed)
+            {
+                core::ConnectionContext::setCurrent(previous);
+            }
+        }
+    };
+
+    ConnectionContextGuard ctx_guard(connection_ctx_.get());
     auto result = compiler_v2_->compile(sql);
     if (!result.success()) {
         error_out = result.errors().empty() ? "Compilation failed" : result.errors().front();

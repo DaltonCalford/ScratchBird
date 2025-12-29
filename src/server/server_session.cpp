@@ -106,6 +106,19 @@ core::Status ServerSession::run() {
         }
     }
 
+    // If the client vanished without a DISCONNECT message, preserve the transaction if possible.
+    if (conn_ctx_ && state_ != SessionState::CLOSED && state_ != SessionState::CLOSING) {
+        fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent::ON_DISCONNECT);
+
+        core::ErrorContext detach_ctx;
+        core::ID dormant_id;
+        core::Status detach_status = database_->detachToDormant(conn_ctx_, dormant_id, &detach_ctx);
+        if (detach_status != core::Status::OK) {
+            conn_ctx_->shutdownTransaction(&detach_ctx);
+            conn_ctx_.reset();
+        }
+    }
+
     state_ = SessionState::CLOSED;
     return core::Status::OK;
 }
@@ -218,6 +231,11 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         // Create connection context
         database_->connect(conn_ctx_, ctx);
         if (conn_ctx_) {
+            // Preserve the protocol session UUID for dormant reattach diagnostics.
+            core::ID protocol_session_id;
+            std::memcpy(protocol_session_id.bytes.data(), session_id_, 16);
+            conn_ctx_->setProtocolSessionId(protocol_session_id);
+
             // Set user with ID and superuser flag
             conn_ctx_->setCurrentUser(user_id, is_superuser);
             executor_->setConnectionContext(conn_ctx_.get());
@@ -248,11 +266,16 @@ core::Status ServerSession::handleDisconnect(const protocol::Message& msg, core:
     // Fire ON DISCONNECT database triggers (Firebird-style) before closing
     fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent::ON_DISCONNECT);
 
-    // Rollback any active transaction (if we have a connection context)
+    // Detach to dormant transaction so a privileged client can reattach later.
     if (conn_ctx_) {
-        // Rollback always succeeds, even if there's no active transaction
-        conn_ctx_->rollback(ctx);
-        stats_.transactions_rolled_back++;
+        core::ID dormant_id;
+        core::Status detach_status = database_->detachToDormant(conn_ctx_, dormant_id, ctx);
+        if (detach_status != core::Status::OK) {
+            // Fallback to hard rollback if we cannot persist dormant state.
+            conn_ctx_->shutdownTransaction(ctx);
+            stats_.transactions_rolled_back++;
+            conn_ctx_.reset();
+        }
     }
 
     state_ = SessionState::CLOSED;
@@ -446,6 +469,11 @@ core::Status ServerSession::executeQuery(const std::string& sql, core::ErrorCont
     }
     query_executing_.store(true, std::memory_order_release);
 
+    // Track the statement for dormant reattach inspection (no cursor state retained).
+    if (conn_ctx_) {
+        conn_ctx_->beginStatementTracking(sql);
+    }
+
     // NET-M1: Scope guard to ensure query_executing_ is reset on exit
     // This is a simple lambda-based scope guard
     struct QueryExecutingGuard {
@@ -467,6 +495,10 @@ core::Status ServerSession::executeQuery(const std::string& sql, core::ErrorCont
         if (!compile_result.errors().empty()) {
             error_msg = compile_result.errors()[0];
         }
+        if (conn_ctx_) {
+            conn_ctx_->endStatementTrackingFailure(
+                static_cast<uint32_t>(core::Status::INVALID_ARGUMENT), "42000");
+        }
         return sendError(error_msg, "42000", ctx);
     }
 
@@ -477,6 +509,10 @@ core::Status ServerSession::executeQuery(const std::string& sql, core::ErrorCont
 
     if (!exec_result.success()) {
         stats_.queries_failed++;
+        if (conn_ctx_) {
+            conn_ctx_->endStatementTrackingFailure(
+                static_cast<uint32_t>(core::Status::INTERNAL_ERROR), "42000");
+        }
         return sendError(exec_result.error(), "42000", ctx);
     }
 
@@ -500,6 +536,9 @@ core::Status ServerSession::executeQuery(const std::string& sql, core::ErrorCont
 
         protocol::Message response = protocol::ProtocolCodec::buildCommandComplete(
             command, exec_result.affectedCount());
+        if (conn_ctx_) {
+            conn_ctx_->endStatementTrackingSuccess(exec_result.affectedCount());
+        }
         return protocol_session_->sendMessage(response, ctx);
     }
 }
@@ -597,6 +636,10 @@ core::Status ServerSession::sendResultSet(const sblr::ResultSet* results, core::
         if (status != core::Status::OK) return status;
 
         stats_.rows_returned++;
+    }
+
+    if (conn_ctx_) {
+        conn_ctx_->endStatementTrackingSuccess(static_cast<int64_t>(results->rowCount()));
     }
 
     // Send COMMAND_COMPLETE

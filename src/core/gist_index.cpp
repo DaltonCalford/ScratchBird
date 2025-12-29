@@ -1074,27 +1074,72 @@ Status GiSTIndex::chooseSubtree(uint64_t page_num,
     return Status::OK;
 }
 
-Status GiSTIndex::removeDeadEntries(uint64_t oldest_active_xid, ErrorContext* ctx)
+Status GiSTIndex::removeDeadEntries(const std::vector<TID>& dead_tids,
+                                   uint64_t* entries_removed_out,
+                                   uint64_t* pages_modified_out,
+                                   ErrorContext* ctx)
 {
     std::unique_lock lock(mutex_);
 
-    // Traverse tree and physically remove entries where xmax < oldest_active_xid
+    // Initialize outputs
+    if (entries_removed_out)
+        *entries_removed_out = 0;
+    if (pages_modified_out)
+        *pages_modified_out = 0;
+
+    // Empty check
+    if (dead_tids.empty())
+    {
+        return Status::OK;
+    }
+
+    // Get OIT (Oldest Interesting Transaction) from TransactionManager
+    // Per MGA_RULES.md Rule 10: Only physically remove entries with xmax < OIT
+    uint64_t oit = txn_manager_->getOldestXid();
+
+    LOG_DEBUG(CATALOG, "GiST GC: OIT=%lu, checking %zu dead TIDs", oit, dead_tids.size());
+
+    // Create a set of TIDs for fast lookup
+    std::set<TID> dead_tid_set(dead_tids.begin(), dead_tids.end());
+
+    // Plan 01 Task D.5: GiST Recursive GC
+    // Traverse tree recursively and physically remove entries where:
+    // 1. entry_row_id is in dead_tids (heap confirmed dead) - LEAF NODES ONLY
+    // 2. entry_xmax < OIT (no transaction can see them)
     uint64_t removed_count = 0;
-    Status status = removeDeadEntriesRecursive(root_page_, oldest_active_xid, &removed_count, ctx);
+    uint64_t pages_modified = 0;
+
+    Status status = removeDeadEntriesRecursive(root_page_, dead_tid_set, oit,
+                                              &removed_count, &pages_modified, ctx);
 
     if (status == Status::OK)
     {
-        deleted_count_ -= removed_count;
-        LOG_INFO(CATALOG, "GiST garbage collection: removed %lu dead entries, %lu remaining",
-                 removed_count, deleted_count_);
+        if (deleted_count_ >= removed_count)
+        {
+            deleted_count_ -= removed_count;
+        }
+        else
+        {
+            deleted_count_ = 0;
+        }
+
+        LOG_INFO(CATALOG, "GiST garbage collection: removed %lu dead entries from %lu pages, %lu remaining",
+                 removed_count, pages_modified, deleted_count_);
     }
+
+    if (entries_removed_out)
+        *entries_removed_out = removed_count;
+    if (pages_modified_out)
+        *pages_modified_out = pages_modified;
 
     return status;
 }
 
 Status GiSTIndex::removeDeadEntriesRecursive(uint64_t page_num,
-                                             uint64_t oldest_active_xid,
+                                             const std::set<TID>& dead_tid_set,
+                                             uint64_t oit,
                                              uint64_t* removed_count,
+                                             uint64_t* pages_modified,
                                              ErrorContext* ctx)
 {
     SBGiSTPage* page = nullptr;
@@ -1116,7 +1161,7 @@ Status GiSTIndex::removeDeadEntriesRecursive(uint64_t page_num,
             SBGiSTEntry* entry = reinterpret_cast<SBGiSTEntry*>(entry_ptr);
 
             // Only visit live entries (we'll clean up dead ones below)
-            if (entry->entry_xmax == 0 || entry->entry_xmax >= oldest_active_xid)
+            if (entry->entry_xmax == 0 || entry->entry_xmax >= oit)
             {
                 uint64_t child_page = entry->entry_child_page;
 
@@ -1124,7 +1169,8 @@ Status GiSTIndex::removeDeadEntriesRecursive(uint64_t page_num,
                 buffer_pool_->unpinPage(static_cast<uint32_t>(page_num), page_modified, ctx);
 
                 // Recurse into child
-                status = removeDeadEntriesRecursive(child_page, oldest_active_xid, removed_count, ctx);
+                status = removeDeadEntriesRecursive(child_page, dead_tid_set, oit,
+                                                   removed_count, pages_modified, ctx);
                 if (status != Status::OK)
                 {
                     return status;
@@ -1152,15 +1198,36 @@ Status GiSTIndex::removeDeadEntriesRecursive(uint64_t page_num,
     {
         SBGiSTEntry* entry = reinterpret_cast<SBGiSTEntry*>(entry_ptr);
 
-        // Check if entry is dead (xmax < oldest_active_xid)
-        if (entry->entry_xmax != 0 && entry->entry_xmax < oldest_active_xid)
+        bool should_remove = false;
+
+        // Check if entry is dead:
+        // 1. xmax < OIT (no transaction can see it)
+        // 2. For LEAF nodes only: TID must be in dead_tid_set (heap confirmed dead)
+        if (entry->entry_xmax != 0 && entry->entry_xmax < oit)
+        {
+            if (is_leaf)
+            {
+                // Leaf node: Check if TID is in dead_tid_set
+                if (dead_tid_set.find(entry->entry_row_id) != dead_tid_set.end())
+                {
+                    should_remove = true;
+                }
+            }
+            else
+            {
+                // Internal node: Remove if xmax < OIT (no TID check needed)
+                should_remove = true;
+            }
+        }
+
+        if (should_remove)
         {
             // Entry is dead - skip it (physical removal)
             (*removed_count)++;
             page_modified = true;
 
-            LOG_DEBUG(CATALOG, "GiST GC: removing dead entry from page %lu, xmax=%lu < oldest=%lu",
-                     page_num, entry->entry_xmax, oldest_active_xid);
+            LOG_DEBUG(CATALOG, "GiST GC: removing dead entry from page %lu (leaf=%d), xmax=%lu < OIT=%lu",
+                     page_num, is_leaf, entry->entry_xmax, oit);
         }
         else
         {
@@ -1199,6 +1266,9 @@ Status GiSTIndex::removeDeadEntriesRecursive(uint64_t page_num,
             page->gist_deleted_entries = 0;
             page->gist_flags &= ~static_cast<uint16_t>(GiSTFlags::HAS_GARBAGE);
         }
+
+        // Increment pages_modified counter
+        (*pages_modified)++;
     }
 
     // Unpin page (mark dirty if modified)

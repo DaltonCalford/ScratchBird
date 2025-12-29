@@ -74,7 +74,22 @@ namespace scratchbird
             uint32_t getMetaPage() const { return meta_page_; }
 
         private:
-            // Column segment metadata
+            // Plan 01 Task C: Dual meta page structure for crash-safe catalog persistence
+            // Meta page format: [header][segment entries...]
+            struct ColumnstoreMetaHeader
+            {
+                uint32_t magic;           // 0x43534D50 ('CSMP' = Columnstore Meta Page)
+                uint16_t version;         // Format version (1 for now)
+                uint16_t reserved;        // Alignment padding
+                uint64_t generation;      // Incremented on each write
+                uint32_t segment_count;   // Number of ColumnSegment entries
+                uint32_t peer_page_id;    // The other meta page (for dual-page persistence)
+                uint32_t checksum;        // CRC32C of everything after this field
+            };
+
+            static constexpr uint32_t COLUMNSTORE_META_MAGIC = 0x43534D50; // 'CSMP'
+
+            // Column segment metadata (persisted to disk)
             struct ColumnSegment
             {
                 uint16_t column_id;
@@ -97,7 +112,9 @@ namespace scratchbird
 
             Database *db_;
             UuidV7Bytes index_uuid_;
-            uint32_t meta_page_;
+            uint32_t meta_page_;         // meta_page_a (primary)
+            uint32_t peer_meta_page_;    // meta_page_b (secondary for dual-page persistence)
+            uint64_t generation_;        // Current generation counter
 
             // In-memory segment catalog (loaded from meta page)
             std::map<uint16_t, std::vector<ColumnSegment>> column_segments_;

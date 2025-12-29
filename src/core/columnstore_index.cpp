@@ -7,6 +7,7 @@
 #include "scratchbird/core/columnstore_index.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/buffer_pool.h"
 #include <cstring>
 #include <algorithm>
 
@@ -14,7 +15,7 @@ namespace scratchbird {
 namespace core {
 
     ColumnstoreIndexSimple::ColumnstoreIndexSimple(Database *db, const UuidV7Bytes &index_uuid, uint32_t meta_page)
-        : db_(db), index_uuid_(index_uuid), meta_page_(meta_page)
+        : db_(db), index_uuid_(index_uuid), meta_page_(meta_page), peer_meta_page_(0), generation_(0)
     {
     }
 
@@ -23,22 +24,76 @@ namespace core {
     Status ColumnstoreIndexSimple::create(Database *db, const UuidV7Bytes &index_uuid,
                                     uint32_t *meta_page_out, ErrorContext *ctx)
     {
-        // Allocate meta page for segment catalog
+        // Plan 01 Task C: Allocate dual meta pages for crash-safe catalog persistence
         auto page_mgr = db->page_manager();
-        uint32_t meta_page;
-        Status status = page_mgr->allocatePage(meta_page, ctx);
+        auto buffer_pool = db->buffer_pool();
+
+        // Allocate meta_page_a (primary)
+        uint32_t meta_page_a;
+        Status status = page_mgr->allocatePage(meta_page_a, ctx);
         if (status != Status::OK)
         {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to allocate meta_page_a");
             return status;
         }
 
-        // Initialize empty segment catalog
-        // In production: write empty catalog to meta_page
-        // For now, catalog is in-memory
+        // Allocate meta_page_b (secondary/peer)
+        uint32_t meta_page_b;
+        status = page_mgr->allocatePage(meta_page_b, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to allocate meta_page_b");
+            // Free meta_page_a before returning
+            page_mgr->freePage(meta_page_a, nullptr);
+            return status;
+        }
+
+        // Initialize both meta pages with empty catalog (generation = 0)
+        ColumnstoreMetaHeader header;
+        header.magic = COLUMNSTORE_META_MAGIC;
+        header.version = 1;
+        header.reserved = 0;
+        header.generation = 0;
+        header.segment_count = 0;
+        header.peer_page_id = meta_page_b;  // Store peer in meta_page_a
+        header.checksum = 0;  // Will calculate below
+
+        // Calculate checksum (CRC32C of everything after checksum field)
+        // For empty catalog, this checksums fields after checksum in the header
+        const uint8_t* checksum_data_start = reinterpret_cast<const uint8_t*>(&header) +
+                                            offsetof(ColumnstoreMetaHeader, checksum) + sizeof(uint32_t);
+        size_t checksum_data_len = sizeof(ColumnstoreMetaHeader) -
+                                   offsetof(ColumnstoreMetaHeader, checksum) - sizeof(uint32_t);
+        uint32_t crc = crc32cCompute(checksum_data_start, checksum_data_len, 0xFFFFFFFF);
+        header.checksum = crc ^ 0xFFFFFFFF;
+
+        // Write to meta_page_a
+        void* buffer_a = nullptr;
+        status = buffer_pool->pinPage(meta_page_a, &buffer_a, ctx);
+        if (status != Status::OK)
+        {
+            page_mgr->freePage(meta_page_a, nullptr);
+            page_mgr->freePage(meta_page_b, nullptr);
+            return status;
+        }
+        memcpy(buffer_a, &header, sizeof(header));
+        buffer_pool->unpinPage(meta_page_a, true, ctx);
+
+        // Write to meta_page_b (same content)
+        void* buffer_b = nullptr;
+        status = buffer_pool->pinPage(meta_page_b, &buffer_b, ctx);
+        if (status != Status::OK)
+        {
+            page_mgr->freePage(meta_page_a, nullptr);
+            page_mgr->freePage(meta_page_b, nullptr);
+            return status;
+        }
+        memcpy(buffer_b, &header, sizeof(header));
+        buffer_pool->unpinPage(meta_page_b, true, ctx);
 
         if (meta_page_out)
         {
-            *meta_page_out = meta_page;
+            *meta_page_out = meta_page_a;
         }
 
         return Status::OK;
@@ -53,7 +108,13 @@ namespace core {
 
         // Load segment catalog from meta page
         Status status = index->loadSegmentCatalog(ctx);
-        if (status != Status::OK)
+        if (status == Status::INDEX_CORRUPTED)
+        {
+            // Both meta pages are corrupted - cannot open index
+            SET_ERROR_CONTEXT(ctx, status, "Cannot open columnstore index: both meta pages corrupted");
+            return nullptr;
+        }
+        else if (status != Status::OK)
         {
             // Empty index is OK
             index->column_segments_.clear();
@@ -471,21 +532,194 @@ namespace core {
 
     Status ColumnstoreIndexSimple::loadSegmentCatalog(ErrorContext* ctx)
     {
-        // In production: read segment catalog from meta_page_
-        // Format: [num_columns:2] [for each column: column_id:2, num_segments:4, segments...]
+        // Plan 01 Task C: Read from both meta pages, select newest valid based on generation
+        auto buffer_pool = db_->buffer_pool();
 
-        // For now, start with empty catalog
-        column_segments_.clear();
+        // Helper lambda to read and validate a meta page
+        auto readMetaPage = [&](uint32_t page_id, ColumnstoreMetaHeader* header_out, std::vector<ColumnSegment>* segments_out) -> bool
+        {
+            void* buffer = nullptr;
+            Status status = buffer_pool->pinPage(page_id, &buffer, nullptr);
+            if (status != Status::OK)
+            {
+                return false;
+            }
+
+            // Read header
+            memcpy(header_out, buffer, sizeof(ColumnstoreMetaHeader));
+
+            // Validate magic
+            if (header_out->magic != COLUMNSTORE_META_MAGIC)
+            {
+                buffer_pool->unpinPage(page_id, false, nullptr);
+                return false;
+            }
+
+            // Validate checksum
+            const uint8_t* checksum_data_start = static_cast<const uint8_t*>(buffer) + offsetof(ColumnstoreMetaHeader, checksum) + sizeof(uint32_t);
+            size_t checksum_data_len = sizeof(ColumnstoreMetaHeader) + header_out->segment_count * sizeof(ColumnSegment) - offsetof(ColumnstoreMetaHeader, checksum) - sizeof(uint32_t);
+            uint32_t calculated_crc = crc32cCompute(checksum_data_start, checksum_data_len, 0xFFFFFFFF) ^ 0xFFFFFFFF;
+
+            if (calculated_crc != header_out->checksum)
+            {
+                buffer_pool->unpinPage(page_id, false, nullptr);
+                return false;
+            }
+
+            // Read segments
+            if (header_out->segment_count > 0)
+            {
+                const ColumnSegment* segments_ptr = reinterpret_cast<const ColumnSegment*>(static_cast<const uint8_t*>(buffer) + sizeof(ColumnstoreMetaHeader));
+                segments_out->assign(segments_ptr, segments_ptr + header_out->segment_count);
+            }
+
+            buffer_pool->unpinPage(page_id, false, nullptr);
+            return true;
+        };
+
+        // Read meta_page_a
+        ColumnstoreMetaHeader header_a;
+        std::vector<ColumnSegment> segments_a;
+        bool valid_a = readMetaPage(meta_page_, &header_a, &segments_a);
+
+        // Get peer page ID from header_a if valid
+        if (valid_a && header_a.peer_page_id != 0)
+        {
+            peer_meta_page_ = header_a.peer_page_id;
+        }
+
+        // Read meta_page_b if we know where it is
+        ColumnstoreMetaHeader header_b;
+        std::vector<ColumnSegment> segments_b;
+        bool valid_b = false;
+        if (peer_meta_page_ != 0)
+        {
+            valid_b = readMetaPage(peer_meta_page_, &header_b, &segments_b);
+        }
+
+        // Select newest valid page based on generation
+        if (!valid_a && !valid_b)
+        {
+            // Both invalid - mark index failed
+            SET_ERROR_CONTEXT(ctx, Status::INDEX_CORRUPTED, "Both columnstore meta pages invalid");
+            return Status::INDEX_CORRUPTED;
+        }
+        else if (valid_a && !valid_b)
+        {
+            // Only A valid
+            generation_ = header_a.generation;
+            // Rebuild column_segments_ map from flat array
+            column_segments_.clear();
+            for (const auto& seg : segments_a)
+            {
+                column_segments_[seg.column_id].push_back(seg);
+            }
+        }
+        else if (!valid_a && valid_b)
+        {
+            // Only B valid
+            generation_ = header_b.generation;
+            column_segments_.clear();
+            for (const auto& seg : segments_b)
+            {
+                column_segments_[seg.column_id].push_back(seg);
+            }
+        }
+        else
+        {
+            // Both valid - pick newest generation
+            if (header_a.generation >= header_b.generation)
+            {
+                generation_ = header_a.generation;
+                column_segments_.clear();
+                for (const auto& seg : segments_a)
+                {
+                    column_segments_[seg.column_id].push_back(seg);
+                }
+            }
+            else
+            {
+                generation_ = header_b.generation;
+                column_segments_.clear();
+                for (const auto& seg : segments_b)
+                {
+                    column_segments_[seg.column_id].push_back(seg);
+                }
+            }
+        }
 
         return Status::OK;
     }
 
     Status ColumnstoreIndexSimple::saveSegmentCatalog(ErrorContext* ctx)
     {
-        // In production: write segment catalog to meta_page_
-        // Serialize all segments to disk
+        // Plan 01 Task C: Write segment catalog to dual meta pages with generation increment
+        auto buffer_pool = db_->buffer_pool();
 
-        // For now, catalog is in-memory only
+        // Count total segments
+        uint32_t total_segments = 0;
+        for (const auto& [column_id, segments] : column_segments_)
+        {
+            total_segments += segments.size();
+        }
+
+        // Increment generation
+        generation_++;
+
+        // Build catalog data: [header][segment1][segment2]...
+        std::vector<uint8_t> catalog_data;
+        catalog_data.resize(sizeof(ColumnstoreMetaHeader) + total_segments * sizeof(ColumnSegment));
+
+        // Fill header
+        ColumnstoreMetaHeader* header = reinterpret_cast<ColumnstoreMetaHeader*>(catalog_data.data());
+        header->magic = COLUMNSTORE_META_MAGIC;
+        header->version = 1;
+        header->reserved = 0;
+        header->generation = generation_;
+        header->segment_count = total_segments;
+        header->peer_page_id = peer_meta_page_;
+        header->checksum = 0;  // Will calculate below
+
+        // Fill segments
+        ColumnSegment* segments_ptr = reinterpret_cast<ColumnSegment*>(catalog_data.data() + sizeof(ColumnstoreMetaHeader));
+        size_t idx = 0;
+        for (const auto& [column_id, segments] : column_segments_)
+        {
+            for (const auto& seg : segments)
+            {
+                segments_ptr[idx++] = seg;
+            }
+        }
+
+        // Calculate checksum (CRC32C of everything after checksum field)
+        const uint8_t* checksum_data_start = catalog_data.data() + offsetof(ColumnstoreMetaHeader, checksum) + sizeof(uint32_t);
+        size_t checksum_data_len = catalog_data.size() - offsetof(ColumnstoreMetaHeader, checksum) - sizeof(uint32_t);
+        uint32_t crc = crc32cCompute(checksum_data_start, checksum_data_len, 0xFFFFFFFF);
+        header->checksum = crc ^ 0xFFFFFFFF;
+
+        // Write to meta_page_a (primary)
+        void* buffer_a = nullptr;
+        Status status = buffer_pool->pinPage(meta_page_, &buffer_a, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to pin meta_page_a for write");
+            return status;
+        }
+        memcpy(buffer_a, catalog_data.data(), catalog_data.size());
+        buffer_pool->unpinPage(meta_page_, true, ctx);
+
+        // Write to meta_page_b (peer)
+        void* buffer_b = nullptr;
+        status = buffer_pool->pinPage(peer_meta_page_, &buffer_b, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to pin meta_page_b for write");
+            // Note: meta_page_a already written, but that's OK - it has newer generation
+            return status;
+        }
+        memcpy(buffer_b, catalog_data.data(), catalog_data.size());
+        buffer_pool->unpinPage(peer_meta_page_, true, ctx);
+
         return Status::OK;
     }
 

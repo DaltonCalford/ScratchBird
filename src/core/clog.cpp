@@ -31,8 +31,8 @@ namespace scratchbird::core
                   "ClogStatus::COMMITTED must be 1 to fit in 2-bit storage");
     static_assert(static_cast<uint8_t>(ClogStatus::ABORTED) == 2,
                   "ClogStatus::ABORTED must be 2 to fit in 2-bit storage");
-    static_assert(static_cast<uint8_t>(ClogStatus::SUB_COMMITTED) == 3,
-                  "ClogStatus::SUB_COMMITTED must be 3 to fit in 2-bit storage");
+    static_assert(static_cast<uint8_t>(ClogStatus::PREPARED) == 3,
+                  "ClogStatus::PREPARED must be 3 to fit in 2-bit storage");
 
     // Ensure no enum value exceeds 3 (maximum value for 2 bits)
     static_assert(static_cast<uint8_t>(ClogStatus::IN_PROGRESS) <= 3,
@@ -41,7 +41,7 @@ namespace scratchbird::core
                   "ClogStatus values must fit in 2 bits (0-3)");
     static_assert(static_cast<uint8_t>(ClogStatus::ABORTED) <= 3,
                   "ClogStatus values must fit in 2 bits (0-3)");
-    static_assert(static_cast<uint8_t>(ClogStatus::SUB_COMMITTED) <= 3,
+    static_assert(static_cast<uint8_t>(ClogStatus::PREPARED) <= 3,
                   "ClogStatus values must fit in 2 bits (0-3)");
 
     // ============================================================================

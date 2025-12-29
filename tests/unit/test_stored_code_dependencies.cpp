@@ -13,6 +13,7 @@ using scratchbird::core::Database;
 using scratchbird::core::Status;
 using scratchbird::sblr::Executor;
 using scratchbird::sblr::Opcode;
+using scratchbird::sblr::ExtendedOpcode;
 using scratchbird::sblr::QueryCompilerV2;
 
 namespace {
@@ -34,6 +35,11 @@ void writeInt32(std::vector<uint8_t>& buf, int32_t value) {
     buf.push_back(static_cast<uint8_t>((v >> 24) & 0xFF));
 }
 
+void writeInt16(std::vector<uint8_t>& buf, uint16_t value) {
+    buf.push_back(static_cast<uint8_t>(value & 0xFF));
+    buf.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+}
+
 void writeString(std::vector<uint8_t>& buf, const std::string& str) {
     writeInt32(buf, static_cast<int32_t>(str.size()));
     buf.insert(buf.end(), str.begin(), str.end());
@@ -45,7 +51,7 @@ std::vector<uint8_t> buildCreateFunctionBytecode(const std::string& name,
     bc.push_back(static_cast<uint8_t>(Opcode::VERSION));
     bc.push_back(scratchbird::sblr::SBLR_VERSION);
     bc.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bc.push_back(static_cast<uint8_t>(Opcode::EXT_CREATE_FUNCTION_STMT));
+    writeInt16(bc, static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_FUNCTION_STMT));
 
     uint8_t flags = 0x00; // no OR REPLACE, INVOKER
     bc.push_back(flags);
@@ -67,7 +73,7 @@ std::vector<uint8_t> buildDropFunctionBytecode(const std::string& name) {
     bc.push_back(static_cast<uint8_t>(Opcode::VERSION));
     bc.push_back(scratchbird::sblr::SBLR_VERSION);
     bc.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bc.push_back(static_cast<uint8_t>(Opcode::EXT_DROP_FUNCTION_STMT));
+    writeInt16(bc, static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_FUNCTION_STMT));
     bc.push_back(0x01); // IF EXISTS
     writeString(bc, name);
     bc.push_back(static_cast<uint8_t>(Opcode::END));
@@ -80,7 +86,7 @@ std::vector<uint8_t> buildCreateProcedureBytecode(const std::string& name,
     bc.push_back(static_cast<uint8_t>(Opcode::VERSION));
     bc.push_back(scratchbird::sblr::SBLR_VERSION);
     bc.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
-    bc.push_back(static_cast<uint8_t>(Opcode::EXT_CREATE_PROCEDURE_STMT));
+    writeInt16(bc, static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_PROCEDURE_STMT));
 
     bc.push_back(0x00); // flags
     writeString(bc, name);
@@ -180,4 +186,3 @@ TEST_F(StoredCodeDependencyTest, CreateProcedureRegistersDependencies) {
     ASSERT_FALSE(deps.empty());
     EXPECT_EQ(deps[0].referenced_object_id, table_info_.table_id);
 }
-

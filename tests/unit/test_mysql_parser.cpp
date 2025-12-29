@@ -369,6 +369,9 @@ TEST_F(MySQLParserTest, TransactionStatements) {
     expectSuccess("BEGIN");
     expectSuccess("BEGIN WORK");
     expectSuccess("START TRANSACTION");
+    expectSuccess("START TRANSACTION READ ONLY");
+    expectSuccess("START TRANSACTION READ WRITE");
+    expectSuccess("START TRANSACTION WITH CONSISTENT SNAPSHOT");
     expectSuccess("COMMIT");
     expectSuccess("ROLLBACK");
     expectSuccess("SAVEPOINT my_savepoint");
@@ -379,6 +382,9 @@ TEST_F(MySQLParserTest, TransactionStatements) {
 TEST_F(MySQLParserTest, SetStatements) {
     expectSuccess("SET @var = 1");
     expectSuccess("SET @name = 'test'");
+    expectSuccess("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
+    expectSuccess("SET TRANSACTION READ ONLY");
+    expectSuccess("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ WRITE");
 }
 
 TEST_F(MySQLParserTest, ShowStatements) {

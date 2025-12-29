@@ -31,6 +31,7 @@
 #include <iostream>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace scratchbird::core
 {
@@ -53,6 +54,12 @@ namespace scratchbird::core
             long_transaction_monitor_->stopMonitoring(&ctx);
         }
         long_transaction_monitor_.reset();
+
+        {
+            std::lock_guard<std::mutex> lock(dormant_mutex_);
+            // Tear down dormant contexts while lock/txn managers are still available.
+            dormant_contexts_.clear();
+        }
 
         // Shut down domain manager
         domain_manager_.reset();
@@ -182,6 +189,141 @@ namespace scratchbird::core
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate ConnectionContext");
             return Status::OOM;
         }
+    }
+
+    Status Database::detachToDormant(std::unique_ptr<ConnectionContext> &connection,
+                                     ID &dormant_id_out,
+                                     ErrorContext *ctx)
+    {
+        if (!connection)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Connection context is null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        auto *catalog = catalog_manager_.get();
+        if (!catalog)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        CatalogManager::DormantTransactionInfo info;
+        info.attachment_id = connection->attachmentId();
+        info.proc_id = connection->getProcId();
+        info.txn_id = connection->getCurrentXid();
+        info.session_id = connection->protocolSessionId();
+        info.user_id = connection->getCurrentUserId();
+        info.session_user_id = connection->getSessionUserId();
+        info.role_id = connection->getActiveRoleId();
+        info.isolation_level = static_cast<uint8_t>(connection->getIsolationLevel());
+        info.access_mode = connection->isReadOnly()
+            ? CatalogManager::DormantAccessMode::READ_ONLY
+            : CatalogManager::DormantAccessMode::READ_WRITE;
+        info.wait_mode = connection->getWaitForLocks()
+            ? CatalogManager::DormantWaitMode::WAIT
+            : CatalogManager::DormantWaitMode::NO_WAIT;
+        info.autocommit_mode = connection->autocommitMode();
+        info.lock_timeout_seconds = connection->getLockTimeout();
+        info.current_schema_id = connection->getCurrentSchemaId();
+        info.session_settings = connection->sessionSettingsJson();
+        info.last_statement_text = connection->lastStatementText();
+        info.last_statement_hash = connection->lastStatementHash();
+        info.last_statement_type = static_cast<CatalogManager::DormantStatementType>(
+            connection->lastStatementType());
+        info.last_statement_status = static_cast<CatalogManager::DormantStatementStatus>(
+            connection->lastStatementStatus());
+        info.state = CatalogManager::DormantTransactionState::DORMANT;
+        info.start_time = static_cast<uint64_t>(connection->getTransactionStartTime().count());
+
+        uint64_t now_micros = std::chrono::duration_cast<std::chrono::microseconds>(
+                                  std::chrono::system_clock::now().time_since_epoch())
+                                  .count();
+        info.last_activity_time = connection->lastActivityTime();
+        if (info.last_activity_time == 0)
+        {
+            info.last_activity_time = now_micros;
+        }
+        info.dormant_since = now_micros;
+
+        uint64_t lease_seconds = Config::getInstance().getUInt(
+            "transactions", "dormant_lease_seconds",
+            config::DEFAULT_DORMANT_TXN_LEASE_SECONDS);
+        if (lease_seconds == 0)
+        {
+            info.lease_expires_at = 0;
+        }
+        else
+        {
+            info.lease_expires_at = now_micros + lease_seconds * 1000000ULL;
+        }
+
+        info.last_statement_time = connection->lastStatementTime();
+        info.last_rows_affected = connection->lastRowsAffected();
+        info.last_error_code = connection->lastErrorCode();
+        info.last_sqlstate = connection->lastSqlstate();
+        info.server_instance_id = server_instance_id_;
+        info.is_valid = true;
+
+        Status status = catalog->createDormantTransaction(info, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        dormant_id_out = info.dormant_id;
+
+        DormantContextEntry entry;
+        entry.dormant_id = info.dormant_id;
+        entry.lease_expires_at = info.lease_expires_at;
+        entry.connection = std::move(connection);
+
+        {
+            std::lock_guard<std::mutex> lock(dormant_mutex_);
+            // Keep the ConnectionContext alive so locks + ProcArray visibility remain intact.
+            dormant_contexts_.emplace(entry.dormant_id, std::move(entry));
+        }
+
+        return Status::OK;
+    }
+
+    Status Database::reattachDormant(const ID &dormant_id,
+                                     std::unique_ptr<ConnectionContext> &connection_out,
+                                     ErrorContext *ctx)
+    {
+        std::lock_guard<std::mutex> lock(dormant_mutex_);
+
+        auto it = dormant_contexts_.find(dormant_id);
+        if (it == dormant_contexts_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Dormant transaction not found");
+            return Status::NOT_FOUND;
+        }
+
+        if (catalog_manager_)
+        {
+            CatalogManager::DormantTransactionInfo info;
+            Status status = catalog_manager_->getDormantTransaction(dormant_id, info, ctx);
+            if (status == Status::OK)
+            {
+                if (info.server_instance_id != server_instance_id_)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Dormant transaction belongs to a different server instance");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                info.state = CatalogManager::DormantTransactionState::REATTACHED;
+                info.last_activity_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                                              std::chrono::system_clock::now().time_since_epoch())
+                                              .count();
+                catalog_manager_->updateDormantTransaction(info, ctx);
+            }
+        }
+
+        connection_out = std::move(it->second.connection);
+        dormant_contexts_.erase(it);
+        return Status::OK;
     }
 
     auto Database::create_catalog_page(int fd, uint32_t page_size, uint8_t *page_buffer,
@@ -621,6 +763,8 @@ namespace scratchbird::core
 
         // Store database UUID
         memcpy(db_uuid_.bytes.data(), header_->page_header.database_uuid, 16);
+        // Per-process instance identifier (used to invalidate stale dormant records on restart).
+        server_instance_id_ = generateUuidV7();
         path_ = canonical_path;
 
         // Initialize logger
@@ -692,6 +836,22 @@ namespace scratchbird::core
             // PageCorrupt means catalog not initialized yet, which is OK
             close();
             return status;
+        }
+        if (status == Status::OK)
+        {
+            // On restart we cannot reattach previous in-memory contexts, so purge stale records.
+            std::vector<CatalogManager::DormantTransactionInfo> dormants;
+            Status list_status = catalog_manager_->listDormantTransactions(dormants, ctx);
+            if (list_status == Status::OK)
+            {
+                for (const auto &entry : dormants)
+                {
+                    if (entry.server_instance_id != server_instance_id_)
+                    {
+                        catalog_manager_->deleteDormantTransaction(entry.dormant_id, ctx);
+                    }
+                }
+            }
         }
 
         // Initialize storage engine

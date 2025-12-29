@@ -6,6 +6,26 @@ Upgrade SBLR to version 2, switch extended opcode encoding to 16-bit, update all
 ## Priority
 P0 (required for rename/move opcodes and future opcode growth).
 
+## Status (Current)
+Completed:
+- SBLR_VERSION set to 2 and enforced in executor.
+- ExtendedOpcode enum migrated to 16-bit; v2 bytecode generator writes 16-bit extended opcodes.
+- PostgreSQL/MySQL emitters updated to write 16-bit extended opcodes.
+- Executor decodes 16-bit extended opcodes via readExtendedOpcode().
+- EXT_RENAME_OBJECT / EXT_MOVE_OBJECT / EXT_SET_AUTOCOMMIT and retaining opcodes are defined and handled in executor.
+- ScratchBird parser v2 parses PREPARE/COMMIT/ROLLBACK PREPARED; bytecode generator emits EXT_PREPARE/COMMIT/ROLLBACK PREPARED.
+- PostgreSQL parser emits PREPARE/COMMIT/ROLLBACK PREPARED opcodes; Firebird parser now supports SET TRANSACTION payload options.
+- Added v2 parser/bytecode tests for transaction payload flags and 2PC opcodes.
+- Added READ_COMMITTED_MODE payload flag and encoding (READ CONSISTENCY / RECORD VERSION / NO RECORD VERSION).
+- Executor now handles PREPARE/COMMIT/ROLLBACK PREPARED and TransactionManager persists prepared transactions.
+- Added executor tests for autocommit transitions and 2PC prepare/commit/rollback flows.
+
+Partial / Outstanding:
+- Transaction payload v2 emission is complete for ScratchBird v2; PostgreSQL/MySQL emitters still only write isolation/access/deferrable (and MySQL SET AUTOCOMMIT only).
+- EXT_SET_AUTOCOMMIT is emitted by ScratchBird v2 with conflict action/error code support; MySQL still emits DEFAULT conflict action only.
+- Wire protocol SBLR version checks outside executor need verification (native/protocol adapters).
+- Missing tests for extended opcode streams beyond current transaction payload coverage.
+
 ## References
 - `docs/specifications/Appendix_A_SBLR_BYTECODE.md`
 - `docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md`

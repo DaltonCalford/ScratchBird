@@ -598,6 +598,7 @@ void Lexer::initKeywordTables() {
         {"RANK", TokenType::KW_RANK},
         {"READ", TokenType::KW_READ},
         {"RELATIVE", TokenType::KW_RELATIVE},
+        {"RENAME", TokenType::KW_RENAME},
         {"REPLACE", TokenType::KW_REPLACE},
         {"REQUESTS", TokenType::KW_REQUESTS},
         {"RESERV", TokenType::KW_RESERV},

@@ -61,7 +61,17 @@
 - Wired statement tracking in ServerSession/ProtocolAdapter and added Database-level dormant detach/reattach registry (keeps ProcArray/locks alive). Server restart purges dormant records from prior instances; GC/lease enforcement still pending.
 - CatalogManager now persists sequences, views, triggers, procedures/functions (including parameter records), synonyms, and foreign tables and reloads them on startup; rename/move updates are persisted for those types.
 - SHOW TRIGGER/PROCEDURE/FUNCTION/VIEW/COMMENTS/DEPENDENCIES/PACKAGE/DOMAIN/GRANTS/CHECKS read from catalog data with body redaction hooks when source text is missing.
-- Constraint + FDW/server-registry/UDR engine/module persistence is now wired (record structs, CRUD, cache load); remaining gaps are migration/backfill for older catalogs missing pages and persistence tests.
+- Constraint + FDW/server-registry/UDR engine/module persistence is wired; catalog load now backfills missing table pages via `allocateCatalogPage` and rewrites the root.
+- Added persistence/restart tests for constraints + FDW/user mappings + server registry + UDR engines/modules in `tests/unit/test_catalog_persistence_phase_b.cpp`; tests now build and pass.
+- Added a global test environment that defaults `SCRATCHBIRD_LONG_TRANSACTIONS_ENABLED=0` to suppress long-transaction monitor checks during unit tests unless explicitly enabled.
+- ScratchBird parser v2 now parses WAIT/NO WAIT, LOCK TIMEOUT, RESERVING, AUTOCOMMIT, and ON CONFLICT for START/SET TRANSACTION; bytecode emission now includes full v2 transaction payload and SET AUTOCOMMIT.
+- ScratchBird parser v2 parses PREPARE/COMMIT/ROLLBACK PREPARED and emits 2PC opcodes; PostgreSQL parser emits PREPARE/COMMIT/ROLLBACK PREPARED; Firebird parser now implements SET TRANSACTION payload options including READ COMMITTED variants; added v2 parser/bytecode tests for transaction payload flags + 2PC opcodes.
+- MySQL parser now supports SET TRANSACTION isolation/access modes and has test coverage for common transaction variants.
+- Added executor tests for READ COMMITTED READ CONSISTENCY and NO RECORD VERSION payload handling in `tests/unit/test_executor_transaction_payload.cpp`.
+- Table reservations now resolve to UUIDs via catalog resolver (search path aware) before locking; lock acquisition uses UUID identity rather than `[sys]` name lookup.
+- Prepared transaction persistence added (catalog table + root pointer); TransactionManager now supports PREPARE/COMMIT/ROLLBACK PREPARED with CLOG/TIP PREPARED state tracking and OAT pinning.
+- Executor now handles PREPARE/COMMIT/ROLLBACK PREPARED opcodes and autocommit transition tests were added alongside 2PC executor tests in `tests/unit/test_executor_transaction_payload.cpp`.
+- Fixed Firebird lexer/parser keyword mismatch (`KW_RENAME` added as non-reserved), restored `ObjectType::UNKNOWN` sentinel, and resolved a constraint lookup deadlock in `getConstraintByName`.
 - Redaction policy details are deferred to the security/visibility workstream; current SHOW paths only guarantee missing-body redaction where implemented.
 
 ## Next Steps for New Session

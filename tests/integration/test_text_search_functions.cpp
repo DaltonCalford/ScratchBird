@@ -238,9 +238,12 @@ bool testBytecodeGenerationRegex() {
 
     for (size_t i = 0; i < bc.size(); i++) {
         if (bc[i] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE)) {
-            if (i + 1 < bc.size() && bc[i + 1] == static_cast<uint8_t>(Opcode::EXT_REGEX_MATCH)) {
-                found_regex = true;
-                break;
+            if (i + 2 < bc.size()) {
+                uint16_t ext_op = scratchbird::sblr::readInt16(&bc[i + 1]);
+                if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_REGEX_MATCH)) {
+                    found_regex = true;
+                    break;
+                }
             }
         }
     }

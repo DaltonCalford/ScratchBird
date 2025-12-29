@@ -43,6 +43,9 @@ namespace scratchbird::core::config
     // Lock acquisition timeout in seconds
     constexpr uint32_t DEFAULT_LOCK_TIMEOUT_SECONDS = 60;
 
+    // Dormant transaction lease in seconds (0 = no automatic expiry)
+    constexpr uint32_t DEFAULT_DORMANT_TXN_LEASE_SECONDS = 3600;
+
     // ===== Transaction/MVCC Configuration =====
 
     // Initial transaction ID (start value for new databases)

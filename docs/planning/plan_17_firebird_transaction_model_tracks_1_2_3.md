@@ -45,13 +45,14 @@ Completed:
 - Constraint persistence wired (record struct, read/write/delete, cache load on startup).
 - Foreign server/user mapping/server registry/UDR engine/module persistence wired (record structs, CRUD, cache load on startup).
 - Rename now updates foreign servers, server registry entries, UDR engines, and UDR modules on disk.
+- Catalog load now backfills missing catalog table pages for older databases and persists the updated root.
 - SHOW DOMAIN/GRANTS/CHECKS switched to catalog-backed queries with metadata redaction hooks stubbed (policy still pending).
+- Persistence tests for constraints/FDW/server registry/UDR engines/modules compile and pass (see `tests/unit/test_catalog_persistence_phase_b.cpp`).
 - SHOW CHECKS parse/bytecode test restored.
 
 Partial / Outstanding:
 - Redaction enforcement policy is still a stub (always false); missing-body handling is not enforced in all SHOW paths.
-- Restart/migration coverage is still incomplete for older catalogs missing newer table pages.
-- Persistence tests for constraints/FDW/server registry/UDR engines/modules and restart/rename coverage still missing.
+- Restart/rename coverage still missing beyond the new persistence tests.
 
 ### 1.1 Inventory + Gap Audit
 - Enumerate all catalog caches and root page slots in `CatalogManager`.
@@ -90,7 +91,7 @@ Partial / Outstanding:
 ### 1.6 Restart + Migration
 - On startup, load all persisted objects into caches/resolver.
 - If a catalog page is missing (older DB), create the page and treat as empty.
-- Add migration steps to initialize missing catalog tables safely.
+- Implemented: `CatalogManager::load` backfills missing catalog tables and rewrites the catalog root.
 
 ### 1.7 Tests
 - Create object, restart, verify object exists and SHOW works (views, sequences, triggers, functions, procedures, synonyms, foreign tables).
@@ -99,6 +100,29 @@ Partial / Outstanding:
 - Verify SHOW redaction behavior for removed bodies.
 
 ## Track 2 - SBLR v2 Transaction Payloads + Autocommit + 2PC
+
+### 2.0 Status (Current)
+Completed / Implemented:
+- ScratchBird parser v2 parses SQL-standard + Firebird legacy transaction options (WAIT/NO WAIT, LOCK TIMEOUT, RESERVING, AUTOCOMMIT) and ON CONFLICT.
+- Bytecode generator v2 emits full START/SET TRANSACTION payloads (conflict action/error code, wait/lock/reservations/autocommit flags).
+- SET AUTOCOMMIT and SET TRANSACTION AUTOCOMMIT are parsed in ScratchBird v2 and emit EXT_SET_AUTOCOMMIT.
+- Executor decodes full flag set (isolation/access/deferrable/wait/lock timeout/reservations/autocommit/conflict action) and applies settings; autocommit commits after non-transaction control statements.
+- EXT_SET_AUTOCOMMIT opcode is implemented and used by the MySQL parser.
+- ScratchBird parser v2 now parses PREPARE/COMMIT/ROLLBACK PREPARED and emits 2PC opcodes (EXT_PREPARE/COMMIT/ROLLBACK PREPARED).
+- Firebird parser implements SET TRANSACTION with Firebird options (READ ONLY/WRITE, READ COMMITTED, SNAPSHOT, WAIT/NO WAIT, LOCK TIMEOUT, RESERVING).
+- v2 parser/bytecode tests cover transaction payload flags and 2PC opcodes.
+- READ COMMITTED variants (READ CONSISTENCY / RECORD VERSION / NO RECORD VERSION) are parsed and encoded via READ_COMMITTED_MODE payload flag; executor maps READ CONSISTENCY to statement-level snapshots.
+- MySQL parser now supports SET TRANSACTION isolation/access modes and emits the payload where the dialect allows it.
+- Executor tests cover READ COMMITTED READ CONSISTENCY and NO RECORD VERSION payload handling.
+- Table reservations are resolved to UUIDs via catalog resolver (search path/current schema aware) before locking.
+- Prepared transactions are persisted (catalog table), tracked in CLOG/TIP as PREPARED, and pinned in OAT.
+- Executor implements PREPARE/COMMIT/ROLLBACK PREPARED and integrates TransactionManager support.
+- Executor tests cover autocommit transitions and 2PC prepare/commit/rollback flows.
+
+Partial / Outstanding:
+- Emulated parsers only map a subset of options (PostgreSQL: isolation/access/deferrable; MySQL: isolation/access via SET TRANSACTION and access via START TRANSACTION).
+- 2PC prepared lock retention is not implemented (locks are released on prepare to avoid proc_id reuse conflicts).
+- Lock ownership is proc_id-based only; no owner separation for prepared transactions yet.
 
 ### 2.1 Payload Contract (Authoritative Source = opcodes.h)
 - Document full START/SET TRANSACTION payload mapping from `opcodes.h` flags:
@@ -144,7 +168,27 @@ Partial / Outstanding:
 - Executor tests for lock timeout, reservations, autocommit transitions.
 - 2PC tests: prepare, commit prepared, rollback prepared, and error paths.
 
+### 2.8 Prepared Lock Ownership Separation (Design + Implementation)
+- Introduce lock-owner identity distinct from `proc_id` (e.g., owner type + UUID).
+- Persist lock-owner identifier for prepared transactions and use it for lock release on COMMIT/ROLLBACK PREPARED.
+- Update deadlock detector to operate on lock-owner identities (not just proc_id).
+
 ## Track 3 - Storage/MVCC/GC Alignment to Firebird MGA
+
+### 3.0 Status (Current)
+Completed / Implemented:
+- Transaction markers (OIT/OAT/OST/NEXT) are tracked in `TransactionManager` and persisted to the DB header; markers update on begin/commit/rollback.
+- Sweep manager exists with foreground/background paths; `SWEEP` opcode triggers foreground sweep; OIT advances using transaction state scans.
+- Garbage collector exists with cooperative/background policies and config-driven tuning.
+- Long transaction monitor exists with LOG/ROLLBACK/TERMINATE policies; started by `Database`; `ConnectionContext` checks termination requests.
+- Dormant transaction catalog records, detach/reattach registry, and statement tracking are implemented (see Track 3.2 status).
+
+Partial / Outstanding:
+- Sweep trigger uses default interval constant and a simplified transaction-state scan (not TIP page scanning); space reclamation is still stubbed.
+- Metadata MVCC and catalog cache invalidation/generation tracking are not implemented.
+- READ COMMITTED RECORD_VERSION / NO_RECORD_VERSION behavior is not enforced yet; only READ CONSISTENCY maps to statement-level snapshots.
+- MON$ / runtime view coverage for live marker values and long-transaction stats remains incomplete.
+- Tests for isolation, sweep, GC reclaim, and long-transaction monitoring are missing or disabled; unit tests now default-disable long transaction monitoring via `SCRATCHBIRD_LONG_TRANSACTIONS_ENABLED=0`.
 
 ### 3.1 Cache Architecture Alignment (Firebird)
 - Default to SuperServer-style shared page cache (ScratchBird is single-process), but treat metadata caches as per-attachment.

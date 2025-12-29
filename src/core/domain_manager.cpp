@@ -1,15 +1,28 @@
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/composite.h"
+#include "scratchbird/core/utf8_utils.h"
 #include <cstring>
 #include <algorithm>
 #include <unordered_set>
 
 namespace scratchbird::core
 {
+    namespace {
+        bool isZeroUuidLocal(const ID& id) {
+            for (auto b : id.bytes) {
+                if (b != 0) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
     // On-disk domain record structure
     struct DomainRecord
     {
@@ -30,6 +43,8 @@ namespace scratchbird::core
         uint32_t fields_oid;        // TOAST reference for RECORD fields
         uint32_t enum_values_oid;   // TOAST reference for ENUM values
         uint16_t set_element_type;  // For SET domains
+        char dialect_tag[32];        // Cross-dialect compatibility tag
+        char compat_name[128];       // Dialect-specific type name
         uint16_t reserved;
 
         DomainRecord() : domain_type(0), base_type(0), precision(0), scale(0),
@@ -39,6 +54,8 @@ namespace scratchbird::core
         {
             std::memset(domain_name, 0, sizeof(domain_name));
             std::memset(default_value, 0, sizeof(default_value));
+            std::memset(dialect_tag, 0, sizeof(dialect_tag));
+            std::memset(compat_name, 0, sizeof(compat_name));
         }
     };
 
@@ -202,7 +219,11 @@ namespace scratchbird::core
 
         for (const auto& [id, domain_info] : domain_cache_)
         {
-            if (domain_info.schema_id == schema_id && domain_info.domain_name == domain_name)
+            if (!isZeroUuidLocal(schema_id) && domain_info.schema_id != schema_id)
+            {
+                continue;
+            }
+            if (domain_info.domain_name == domain_name)
             {
                 info = domain_info;
                 return Status::OK;
@@ -222,10 +243,11 @@ namespace scratchbird::core
         domains.clear();
         for (const auto& [id, info] : domain_cache_)
         {
-            if (info.schema_id == schema_id)
+            if (!isZeroUuidLocal(schema_id) && info.schema_id != schema_id)
             {
-                domains.push_back(info);
+                continue;
             }
+            domains.push_back(info);
         }
 
         return Status::OK;
@@ -243,10 +265,22 @@ namespace scratchbird::core
             return Status::NOT_FOUND;
         }
 
-        // Delete from catalog (if persisted)
-        // Note: writeDomainRecord is currently a no-op, so domains are only in-memory.
-        // deleteDomainRecord will return NOT_FOUND for in-memory-only domains, which is OK.
-        Status status = deleteDomainRecord(domain_id, ctx);
+        // Check for dependencies - domain cannot be dropped if used by columns
+        // We need to unlock mutex before calling catalog_manager to avoid deadlock
+        mutex_.unlock();
+        std::vector<std::pair<ID, std::string>> dependent_columns;
+        Status status = db_->catalog_manager()->findColumnsByDomain(domain_id, dependent_columns, ctx);
+        mutex_.lock();
+
+        if (status == Status::OK && !dependent_columns.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                            "Cannot drop domain: referenced by column(s)");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+
+        // Delete from catalog
+        status = deleteDomainRecord(domain_id, ctx);
         if (status != Status::OK && status != Status::NOT_FOUND)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to delete domain record");
@@ -259,6 +293,73 @@ namespace scratchbird::core
 
         LOG_INFO(CATALOG, "Dropped domain with ID %s",
                 domain_id.toString().c_str());
+
+        return Status::OK;
+    }
+
+    auto DomainManager::renameDomain(const ID& domain_id, const std::string& new_name,
+                                     ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        if (new_name.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Domain name cannot be empty");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        Status validation = UTF8Utils::validateStorageCapacity(
+            new_name,
+            CatalogConstants::MAX_IDENTIFIER_CHARS,
+            CatalogConstants::MAX_IDENTIFIER_STORAGE,
+            ctx
+        );
+        if (validation != Status::OK)
+        {
+            return validation;
+        }
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        DomainInfo old_info = it->second;
+
+        const std::string dialect_tag = IdentifierUtils::toUpper(old_info.dialect_tag);
+        for (const auto& [id, info] : domain_cache_)
+        {
+            if (id == domain_id)
+            {
+                continue;
+            }
+            if (IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
+                                               info.domain_name, false /*existing_is_delimited*/))
+            {
+                if (IdentifierUtils::toUpper(info.dialect_tag) == dialect_tag)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
+                                      "Domain name already exists for dialect");
+                    return Status::FILE_EXISTS;
+                }
+            }
+        }
+
+        DomainInfo& info = it->second;
+        info.domain_name = new_name;
+        info.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+        Status status = writeDomainRecord(info, ctx);
+        if (status != Status::OK)
+        {
+            it->second = old_info;
+            return status;
+        }
+
+        LOG_INFO(CATALOG, "Renamed domain '%s' to '%s'",
+                 old_info.domain_name.c_str(), new_name.c_str());
 
         return Status::OK;
     }
@@ -1759,13 +1860,85 @@ namespace scratchbird::core
 
     auto DomainManager::writeDomainRecord(const DomainInfo& domain, ErrorContext* ctx) -> Status
     {
-        // Domain records are stored in-memory only for now.
-        // Persistence is handled during domain creation via createBasicDomain.
-        // Updates to domain options (security, integrity, etc.) update the cache
-        // and will be persisted when the database is properly shut down.
-        (void)domain;
-        (void)ctx;
-        return Status::OK;
+        BufferPool* bp = db_->buffer_pool();
+        void* page_buffer;
+
+        Status status = bp->pinPage(domains_table_page_, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to pin domains catalog page");
+            return status;
+        }
+
+        auto* catalog_page = reinterpret_cast<DomainCatalogPage*>(page_buffer);
+
+        // Check if domain already exists (for updates)
+        DomainRecord* existing_record = nullptr;
+        for (uint32_t i = 0; i < catalog_page->record_count; i++)
+        {
+            auto* record = reinterpret_cast<DomainRecord*>(
+                catalog_page->data + (i * sizeof(DomainRecord)));
+
+            if (record->domain_id == domain.domain_id)
+            {
+                existing_record = record;
+                break;
+            }
+        }
+
+        DomainRecord* record;
+        if (existing_record)
+        {
+            // Update existing record
+            record = existing_record;
+        }
+        else
+        {
+            // Add new record
+            if (catalog_page->record_count >= (db_->page_size() - sizeof(DomainCatalogPage)) / sizeof(DomainRecord))
+            {
+                bp->unpinPage(domains_table_page_, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Domain catalog page full");
+                return Status::IO_ERROR;
+            }
+
+            record = reinterpret_cast<DomainRecord*>(
+                catalog_page->data + (catalog_page->record_count * sizeof(DomainRecord)));
+            catalog_page->record_count++;
+        }
+
+        // Populate record from DomainInfo
+        record->domain_id = domain.domain_id;
+        record->schema_id = domain.schema_id;
+
+        std::strncpy(record->domain_name, domain.domain_name.c_str(), sizeof(record->domain_name) - 1);
+        record->domain_name[sizeof(record->domain_name) - 1] = '\0';
+
+        record->domain_type = static_cast<uint8_t>(domain.domain_type);
+        record->base_type = static_cast<uint16_t>(domain.base_type);
+        record->precision = domain.precision;
+        record->scale = domain.scale;
+        record->nullable = domain.nullable ? 1 : 0;
+
+        std::strncpy(record->default_value, domain.default_value.c_str(), sizeof(record->default_value) - 1);
+        record->default_value[sizeof(record->default_value) - 1] = '\0';
+
+        record->parent_domain_id = domain.parent_domain_id;
+        record->is_valid = 1;
+        record->created_time = domain.created_time;
+        record->last_modified_time = domain.last_modified_time;
+        record->set_element_type = static_cast<uint16_t>(domain.set_element_type);
+
+        std::strncpy(record->dialect_tag, domain.dialect_tag.c_str(), sizeof(record->dialect_tag) - 1);
+        record->dialect_tag[sizeof(record->dialect_tag) - 1] = '\0';
+
+        std::strncpy(record->compat_name, domain.compat_name.c_str(), sizeof(record->compat_name) - 1);
+        record->compat_name[sizeof(record->compat_name) - 1] = '\0';
+
+        // TODO: Persist constraints, fields, enum_values to TOAST
+        // For now, constraints_oid, fields_oid, enum_values_oid remain 0
+
+        return bp->unpinPage(domains_table_page_, true, ctx);
     }
 
     auto DomainManager::readDomainRecords(ErrorContext* ctx) -> Status
@@ -1805,6 +1978,8 @@ namespace scratchbird::core
                 info.created_time = record->created_time;
                 info.last_modified_time = record->last_modified_time;
                 info.set_element_type = static_cast<DataType>(record->set_element_type);
+                info.dialect_tag = record->dialect_tag;
+                info.compat_name = record->compat_name;
 
                 // Phase 3 Enhancement: Load constraints, fields, enum_values from TOAST
                 // Currently domain constraints are stored inline; TOAST support for large constraint lists

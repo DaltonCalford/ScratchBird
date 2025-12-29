@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/sblr/opcodes.h"
@@ -18,6 +19,7 @@ protected:
     std::string test_db_path;
     Database *db = nullptr;
     CatalogManager *catalog = nullptr;
+    DomainManager *domain_mgr = nullptr;
     ID schema_id;
 
     void SetUp() override
@@ -32,6 +34,8 @@ protected:
         ASSERT_EQ(db->open(test_db_path, &ctx), Status::OK);
         catalog = db->catalog_manager();
         ASSERT_NE(catalog, nullptr);
+        domain_mgr = db->domain_manager();
+        ASSERT_NE(domain_mgr, nullptr);
 
         CatalogManager::SchemaInfo schema_info;
         ASSERT_EQ(catalog->getSchema("PUBLIC", schema_info, &ctx), Status::OK);
@@ -100,7 +104,10 @@ TEST_F(FirebirdDropSemanticsTest, DropDomainBlocksWhenReferenced)
 {
     ErrorContext ctx;
     ID domain_id;
-    ASSERT_EQ(catalog->createDomain(schema_id, "fb_domain", "INT", "", false, domain_id, &ctx), Status::OK);
+
+    // Create domain using DomainManager
+    ASSERT_EQ(domain_mgr->createBasicDomain(schema_id, "fb_domain", DataType::INT32,
+                                            0, 0, false, "", {}, domain_id, &ctx), Status::OK);
 
     std::vector<CatalogManager::ColumnInfo> columns;
     CatalogManager::ColumnInfo col;
@@ -116,5 +123,6 @@ TEST_F(FirebirdDropSemanticsTest, DropDomainBlocksWhenReferenced)
     ASSERT_EQ(catalog->createTable(schema_id, "fb_table2", columns, table_id, 0, &ctx), Status::OK);
     (void)table_id;
 
-    EXPECT_EQ(catalog->dropDomain(domain_id, false, &ctx), Status::CONSTRAINT_VIOLATION);
+    // Drop domain using DomainManager - should fail due to dependency
+    EXPECT_EQ(domain_mgr->dropDomain(domain_id, &ctx), Status::CONSTRAINT_VIOLATION);
 }

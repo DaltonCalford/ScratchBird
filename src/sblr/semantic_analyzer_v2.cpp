@@ -6,10 +6,37 @@
 
 #include "scratchbird/sblr/semantic_analyzer_v2.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/domain_manager.h"
 #include <algorithm>
+#include <array>
 #include <cassert>
 
 namespace scratchbird::parser::v2 {
+namespace {
+core::CatalogManager::ObjectType toCatalogObjectType(DdlObjectType type) {
+    return static_cast<core::CatalogManager::ObjectType>(static_cast<uint8_t>(type));
+}
+
+core::ObjectPath buildObjectPath(const SchemaPath& path, const StringPool& pool) {
+    core::ObjectPath out;
+    out.type = static_cast<core::PathType>(path.type);
+    out.components.reserve(path.components.size());
+    for (auto id : path.components) {
+        out.components.emplace_back(pool.get(id));
+    }
+    return out;
+}
+
+SchemaPath appendPathComponent(const SchemaPath& base,
+                               StringPool::StringId name,
+                               SourceSpan span) {
+    SchemaPath combined = base;
+    combined.components.push_back(name);
+    combined.span = span;
+    return combined;
+}
+} // namespace
 
 // =============================================================================
 // SemanticResult Implementation
@@ -252,11 +279,44 @@ SemanticAnalyzerV2::SemanticAnalyzerV2(CatalogManager& catalog, StringPool& stri
     : catalog_(catalog)
     , string_pool_(string_pool)
 {
-    // Initialize with default public schema
-    CatalogManager::SchemaInfo schema_info;
-    if (catalog_.getSchema("public", schema_info) == Status::OK) {
-        current_schema_ = schema_info.schema_id;
-        search_path_.push_back(schema_info.schema_id);
+    auto* conn_ctx = core::ConnectionContext::getCurrent();
+    if (conn_ctx)
+    {
+        current_schema_ = conn_ctx->getCurrentSchemaId();
+        if (isZeroUuidLocal(current_schema_) && !conn_ctx->current_schema().empty())
+        {
+            CatalogManager::SchemaInfo schema_info;
+            if (catalog_.getSchema(conn_ctx->current_schema(), schema_info) == Status::OK)
+            {
+                current_schema_ = schema_info.schema_id;
+            }
+        }
+
+        search_path_.clear();
+        for (const auto& schema_path : conn_ctx->search_path())
+        {
+            CatalogManager::SchemaInfo schema_info;
+            if (catalog_.getSchema(schema_path, schema_info) == Status::OK)
+            {
+                search_path_.push_back(schema_info.schema_id);
+            }
+        }
+
+        if (search_path_.empty() && !isZeroUuidLocal(current_schema_))
+        {
+            search_path_.push_back(current_schema_);
+        }
+    }
+
+    if (search_path_.empty())
+    {
+        // Initialize with default public schema
+        CatalogManager::SchemaInfo schema_info;
+        if (catalog_.getSchema("public", schema_info) == Status::OK)
+        {
+            current_schema_ = schema_info.schema_id;
+            search_path_.push_back(schema_info.schema_id);
+        }
     }
 }
 
@@ -335,50 +395,183 @@ ResolutionScope& SemanticAnalyzerV2::currentScope() {
 std::optional<ResolvedTableRef> SemanticAnalyzerV2::resolveTable(
     const SchemaPath& path, SourceSpan span)
 {
-    // Build table name from path
-    std::string schema_name;
-    std::string table_name;
-
-    if (path.components.size() == 1) {
-        // Unqualified name - search in search path
-        table_name = std::string(string_pool_.get(path.components[0]));
-    } else if (path.components.size() == 2) {
-        // schema.table
-        schema_name = std::string(string_pool_.get(path.components[0]));
-        table_name = std::string(string_pool_.get(path.components[1]));
-    } else {
-        error(span, "Invalid table reference: too many parts in path");
+    if (path.components.empty())
+    {
+        error(span, "Invalid table reference: empty path");
         return std::nullopt;
     }
 
-    // Try to resolve
+    std::vector<std::string> components;
+    components.reserve(path.components.size());
+    for (auto id : path.components)
+    {
+        components.emplace_back(string_pool_.get(id));
+    }
+
+    auto join_components = [&](size_t count) -> std::string {
+        std::string out;
+        for (size_t i = 0; i < count; ++i)
+        {
+            if (i > 0)
+            {
+                out += ".";
+            }
+            out += components[i];
+        }
+        return out;
+    };
+
+    auto is_object_resolver = [&](const std::vector<std::string>& comps) -> bool {
+        if (comps.size() != 3)
+        {
+            return false;
+        }
+        return core::IdentifierUtils::toUpper(comps[0]) == "SYS" &&
+               core::IdentifierUtils::toUpper(comps[1]) == "CATALOG" &&
+               core::IdentifierUtils::toUpper(comps[2]) == "OBJECT_RESOLVER";
+    };
+
+    if (path.type == PathType::ABSOLUTE && is_object_resolver(components))
+    {
+        ResolvedTableRef ref;
+        ref.table_uuid = ID{};
+        ref.schema_uuid = ID{};
+        ref.name = internString("sys.catalog.object_resolver");
+        ref.object_type = ResolvedTableRef::ObjectType::VIEW;
+
+        const std::array<const char*, 7> col_names = {
+            "object_id",
+            "object_type",
+            "schema_path",
+            "full_path",
+            "object_name",
+            "dialect_tag",
+            "compat_name"
+        };
+
+        ref.columns.clear();
+        ref.columns.reserve(col_names.size());
+        uint32_t index = 0;
+        for (const auto* col_name : col_names)
+        {
+            ResolvedTableRef::ColumnInfo col_info;
+            col_info.name = internString(col_name);
+            col_info.data_type = DataType::VARCHAR;
+            col_info.is_nullable = true;
+            col_info.column_index = index++;
+            ref.columns.push_back(col_info);
+        }
+
+        return ref;
+    }
+
+    std::string table_name = components.back();
+    std::string schema_path = components.size() > 1 ? join_components(components.size() - 1)
+                                                    : std::string();
+
     CatalogManager::TableInfo table_info;
     Status status = Status::NOT_FOUND;
 
-    if (schema_name.empty()) {
-        // Search in search path
-        for (const auto& schema_id : search_path_) {
+    if (path.type == PathType::UNQUALIFIED)
+    {
+        if (components.size() != 1)
+        {
+            error(span, "Invalid table reference: too many parts in path");
+            return std::nullopt;
+        }
+
+        for (const auto& schema_id : search_path_)
+        {
             status = catalog_.getTable(schema_id, table_name, table_info);
-            if (status == Status::OK) {
+            if (status == Status::OK)
+            {
                 break;
             }
         }
-        if (status != Status::OK) {
-            // Also try current schema
+        if (status != Status::OK && !isZeroUuidLocal(current_schema_))
+        {
             status = catalog_.getTable(current_schema_, table_name, table_info);
         }
-    } else {
-        // Get schema first
+    }
+    else
+    {
         CatalogManager::SchemaInfo schema_info;
-        status = catalog_.getSchema(schema_name, schema_info);
-        if (status != Status::OK) {
-            error(span, "Schema not found: " + schema_name);
+        ID schema_id{};
+        bool schema_id_resolved = false;
+        std::string resolved_schema_path = schema_path;
+
+        if (path.type == PathType::CURRENT)
+        {
+            if (schema_path.empty())
+            {
+                schema_id = current_schema_;
+                schema_id_resolved = true;
+            }
+            else if (!isZeroUuidLocal(current_schema_))
+            {
+                std::string current_path;
+                core::ErrorContext err_ctx;
+                if (catalog_.getSchemaPath(current_schema_, current_path, &err_ctx) == Status::OK &&
+                    !current_path.empty())
+                {
+                    resolved_schema_path = current_path + "." + schema_path;
+                }
+            }
+        }
+        else if (path.type == PathType::PARENT)
+        {
+            if (isZeroUuidLocal(current_schema_))
+            {
+                error(span, "Current schema not set for parent resolution");
+                return std::nullopt;
+            }
+
+            CatalogManager::SchemaInfo current_info;
+            if (catalog_.getSchema(current_schema_, current_info) != Status::OK ||
+                isZeroUuidLocal(current_info.parent_schema_id))
+            {
+                error(span, "Current schema has no parent");
+                return std::nullopt;
+            }
+
+            if (schema_path.empty())
+            {
+                schema_id = current_info.parent_schema_id;
+                schema_id_resolved = true;
+            }
+            else
+            {
+                std::string parent_path;
+                core::ErrorContext err_ctx;
+                if (catalog_.getSchemaPath(current_info.parent_schema_id, parent_path, &err_ctx) == Status::OK &&
+                    !parent_path.empty())
+                {
+                    resolved_schema_path = parent_path + "." + schema_path;
+                }
+            }
+        }
+        else if (path.type == PathType::ABSOLUTE && schema_path.empty())
+        {
+            error(span, "Invalid table reference: missing schema");
             return std::nullopt;
         }
-        status = catalog_.getTable(schema_info.schema_id, table_name, table_info);
+
+        if (!schema_id_resolved)
+        {
+            status = catalog_.getSchema(resolved_schema_path, schema_info);
+            if (status != Status::OK)
+            {
+                error(span, "Schema not found: " + resolved_schema_path);
+                return std::nullopt;
+            }
+            schema_id = schema_info.schema_id;
+        }
+
+        status = catalog_.getTable(schema_id, table_name, table_info);
     }
 
-    if (status != Status::OK) {
+    if (status != Status::OK)
+    {
         error(span, "Table not found: " + table_name);
         return std::nullopt;
     }
@@ -822,6 +1015,10 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeCreateView(static_cast<CreateViewStmt*>(stmt));
         case ASTKind::AlterTableStmt:
             return analyzeAlterTable(static_cast<AlterTableStmt*>(stmt));
+        case ASTKind::RenameObjectStmt:
+            return analyzeRenameObject(static_cast<RenameObjectStmt*>(stmt));
+        case ASTKind::MoveObjectStmt:
+            return analyzeMoveObject(static_cast<MoveObjectStmt*>(stmt));
         case ASTKind::DropTableStmt:
             return analyzeDropTable(static_cast<DropTableStmt*>(stmt));
         case ASTKind::DropIndexStmt:
@@ -844,6 +1041,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
         // Transaction
         case ASTKind::StartTransactionStmt:
             return analyzeStartTransaction(static_cast<StartTransactionStmt*>(stmt));
+        case ASTKind::PrepareTransactionStmt:
+            return analyzePrepareTransaction(static_cast<PrepareTransactionStmt*>(stmt));
         case ASTKind::CommitStmt:
             return analyzeCommit(static_cast<CommitStmt*>(stmt));
         case ASTKind::RollbackStmt:
@@ -878,7 +1077,27 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStartTransaction(StartTransactionS
     resolved->isolation_level = stmt->isolation_level;
     resolved->has_access_mode = stmt->has_access_mode;
     resolved->access_mode = stmt->access_mode;
+    resolved->has_read_committed_mode = stmt->has_read_committed_mode;
+    resolved->read_committed_mode = stmt->read_committed_mode;
+    resolved->has_deferrable = stmt->deferrable || stmt->not_deferrable;
     resolved->deferrable = stmt->deferrable;
+    resolved->has_wait_mode = stmt->has_wait_mode;
+    resolved->wait_mode = stmt->wait_mode;
+    resolved->has_lock_timeout = stmt->has_lock_timeout;
+    resolved->lock_timeout_seconds = stmt->lock_timeout_seconds;
+    resolved->table_reservations = stmt->table_reservations;
+    resolved->has_autocommit = stmt->has_autocommit;
+    resolved->autocommit_mode = stmt->autocommit_mode;
+    resolved->conflict_action = stmt->conflict_action;
+    resolved->has_conflict_error_code = stmt->has_conflict_error_code;
+    resolved->conflict_error_code = stmt->conflict_error_code;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzePrepareTransaction(PrepareTransactionStmt* stmt) {
+    auto* resolved = arena_.create<ResolvedPrepareTransactionStmt>();
+    resolved->span = stmt->span;
+    resolved->gid = stmt->gid;
     return resolved;
 }
 
@@ -886,6 +1105,10 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCommit(CommitStmt* stmt) {
     auto* resolved = arena_.create<ResolvedCommitStmt>();
     resolved->span = stmt->span;
     resolved->and_chain = stmt->and_chain;
+    resolved->and_no_chain = stmt->and_no_chain;
+    resolved->retaining = stmt->retaining;
+    resolved->is_prepared = stmt->is_prepared;
+    resolved->prepared_gid = stmt->prepared_gid;
     return resolved;
 }
 
@@ -895,6 +1118,10 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeRollback(RollbackStmt* stmt) {
     resolved->to_savepoint = stmt->to_savepoint;
     resolved->savepoint_name = stmt->savepoint_name;
     resolved->and_chain = stmt->and_chain;
+    resolved->and_no_chain = stmt->and_no_chain;
+    resolved->retaining = stmt->retaining;
+    resolved->is_prepared = stmt->is_prepared;
+    resolved->prepared_gid = stmt->prepared_gid;
     return resolved;
 }
 
@@ -928,6 +1155,20 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeSet(SetStmt* stmt) {
     resolved->isolation_level = stmt->isolation_level;
     resolved->has_access_mode = stmt->has_access_mode;
     resolved->access_mode = stmt->access_mode;
+    resolved->has_read_committed_mode = stmt->has_read_committed_mode;
+    resolved->read_committed_mode = stmt->read_committed_mode;
+    resolved->has_deferrable = stmt->deferrable || stmt->not_deferrable;
+    resolved->deferrable = stmt->deferrable;
+    resolved->has_wait_mode = stmt->has_wait_mode;
+    resolved->wait_mode = stmt->wait_mode;
+    resolved->has_lock_timeout = stmt->has_lock_timeout;
+    resolved->lock_timeout_seconds = stmt->lock_timeout_seconds;
+    resolved->table_reservations = stmt->table_reservations;
+    resolved->has_autocommit = stmt->has_autocommit;
+    resolved->autocommit_mode = stmt->autocommit_mode;
+    resolved->conflict_action = stmt->conflict_action;
+    resolved->has_conflict_error_code = stmt->has_conflict_error_code;
+    resolved->conflict_error_code = stmt->conflict_error_code;
 
     // For SET PARSER VERSION
     resolved->parser_version = stmt->parser_version;
@@ -1125,22 +1366,165 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateView(CreateViewStmt* stmt) {
     return resolved;
 }
 
+ResolvedStatement* SemanticAnalyzerV2::analyzeRenameObject(RenameObjectStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedRenameObjectStmt>();
+    resolved->span = stmt->span;
+    resolved->object_type = stmt->object_type;
+    resolved->if_exists = stmt->if_exists;
+    resolved->object_path = stmt->object_path;
+    resolved->new_name = stmt->new_name;
+    resolved->has_uuid = false;
+
+    core::ObjectPath obj_path = buildObjectPath(stmt->object_path, string_pool_);
+    core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+    core::ErrorContext err_ctx;
+    Status status = catalog_.resolveObjectPath(
+        obj_path,
+        toCatalogObjectType(stmt->object_type),
+        core::CatalogManager::ResolveOptions{},
+        resolved->object_uuid,
+        resolved_type,
+        &err_ctx);
+
+    if (status == Status::OK) {
+        resolved->has_uuid = true;
+    } else if (!(status == Status::NOT_FOUND && stmt->if_exists)) {
+        std::string msg = err_ctx.message.empty() ? "Failed to resolve object" : err_ctx.message;
+        error(stmt->span, msg);
+        return nullptr;
+    }
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeMoveObject(MoveObjectStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedMoveObjectStmt>();
+    resolved->span = stmt->span;
+    resolved->object_type = stmt->object_type;
+    resolved->if_exists = stmt->if_exists;
+    resolved->object_path = stmt->object_path;
+    resolved->target_schema = stmt->target_schema;
+    resolved->has_new_name = stmt->has_new_name;
+    resolved->new_name = stmt->new_name;
+    resolved->has_uuid = false;
+
+    core::ObjectPath obj_path = buildObjectPath(stmt->object_path, string_pool_);
+    core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+    core::ErrorContext err_ctx;
+    Status status = catalog_.resolveObjectPath(
+        obj_path,
+        toCatalogObjectType(stmt->object_type),
+        core::CatalogManager::ResolveOptions{},
+        resolved->object_uuid,
+        resolved_type,
+        &err_ctx);
+
+    if (status == Status::OK) {
+        resolved->has_uuid = true;
+    } else if (!(status == Status::NOT_FOUND && stmt->if_exists)) {
+        std::string msg = err_ctx.message.empty() ? "Failed to resolve object" : err_ctx.message;
+        error(stmt->span, msg);
+        return nullptr;
+    }
+
+    return resolved;
+}
+
 ResolvedStatement* SemanticAnalyzerV2::analyzeAlterTable(AlterTableStmt* stmt) {
     if (!stmt) {
         return nullptr;
     }
 
-    // For ALTER TABLE, we create the appropriate resolved statement type
-    // based on the action. For simplicity, we'll return a generic statement.
-    // A full implementation would have specific resolved types for each action.
+    auto resolve_rename = [&](DdlObjectType type,
+                              const SchemaPath& path,
+                              StringPool::StringId new_name) -> ResolvedStatement* {
+        auto* resolved = arena_.create<ResolvedRenameObjectStmt>();
+        resolved->span = stmt->span;
+        resolved->object_type = type;
+        resolved->if_exists = stmt->if_exists;
+        resolved->object_path = path;
+        resolved->new_name = new_name;
+        resolved->has_uuid = false;
 
-    auto table_ref = resolveTable(stmt->table_path, stmt->span);
-    if (!table_ref && !stmt->if_exists) {
-        return nullptr;
+        core::ObjectPath obj_path = buildObjectPath(path, string_pool_);
+        core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+        core::ErrorContext err_ctx;
+        Status status = catalog_.resolveObjectPath(
+            obj_path,
+            toCatalogObjectType(type),
+            core::CatalogManager::ResolveOptions{},
+            resolved->object_uuid,
+            resolved_type,
+            &err_ctx);
+
+        if (status == Status::OK) {
+            resolved->has_uuid = true;
+        } else if (!(status == Status::NOT_FOUND && stmt->if_exists)) {
+            std::string msg = err_ctx.message.empty() ? "Failed to resolve object" : err_ctx.message;
+            error(stmt->span, msg);
+            return nullptr;
+        }
+
+        return resolved;
+    };
+
+    auto resolve_move = [&](const SchemaPath& path,
+                            const SchemaPath& target_schema) -> ResolvedStatement* {
+        auto* resolved = arena_.create<ResolvedMoveObjectStmt>();
+        resolved->span = stmt->span;
+        resolved->object_type = DdlObjectType::TABLE;
+        resolved->if_exists = stmt->if_exists;
+        resolved->object_path = path;
+        resolved->target_schema = target_schema;
+        resolved->has_uuid = false;
+
+        core::ObjectPath obj_path = buildObjectPath(path, string_pool_);
+        core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+        core::ErrorContext err_ctx;
+        Status status = catalog_.resolveObjectPath(
+            obj_path,
+            toCatalogObjectType(DdlObjectType::TABLE),
+            core::CatalogManager::ResolveOptions{},
+            resolved->object_uuid,
+            resolved_type,
+            &err_ctx);
+
+        if (status == Status::OK) {
+            resolved->has_uuid = true;
+        } else if (!(status == Status::NOT_FOUND && stmt->if_exists)) {
+            std::string msg = err_ctx.message.empty() ? "Failed to resolve object" : err_ctx.message;
+            error(stmt->span, msg);
+            return nullptr;
+        }
+
+        return resolved;
+    };
+
+    switch (stmt->action) {
+        case AlterTableAction::RENAME_TABLE:
+            return resolve_rename(DdlObjectType::TABLE, stmt->table_path, stmt->new_name);
+        case AlterTableAction::RENAME_COLUMN: {
+            SchemaPath full_path = appendPathComponent(stmt->table_path, stmt->column_name, stmt->span);
+            return resolve_rename(DdlObjectType::COLUMN, full_path, stmt->new_name);
+        }
+        case AlterTableAction::RENAME_CONSTRAINT: {
+            SchemaPath full_path = appendPathComponent(stmt->table_path, stmt->constraint_name, stmt->span);
+            return resolve_rename(DdlObjectType::CONSTRAINT, full_path, stmt->new_name);
+        }
+        case AlterTableAction::SET_SCHEMA:
+            return resolve_move(stmt->table_path, stmt->target_schema);
+        default:
+            break;
     }
 
-    // For now, return nullptr as ALTER TABLE requires more complex handling
-    // depending on the action type
     warning(stmt->span, "ALTER TABLE semantic analysis not fully implemented");
     return nullptr;
 }
@@ -2548,7 +2932,7 @@ ResolvedType SemanticAnalyzerV2::resolveTypeName(const TypeName& type_name) {
         } else {
             // Try resolving as a domain
             core::ErrorContext ctx;
-            core::CatalogManager::DomainInfo dinfo;
+            core::DomainInfo dinfo;
             // Search current schema then search_path
             bool found = false;
             if (!isZeroUuidLocal(current_schema_) &&

@@ -186,6 +186,7 @@ private:
     // ==========================================================================
 
     StartTransactionStmt* parseStartTransaction();
+    PrepareTransactionStmt* parsePrepareTransaction();
     CommitStmt* parseCommit();
     RollbackStmt* parseRollback();
     SavepointStmt* parseSavepoint();

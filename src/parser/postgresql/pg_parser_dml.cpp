@@ -135,7 +135,7 @@ void Parser::parseSelectList() {
                     if (match(TokenType::STAR)) {
                         // table.*
                         emit(sblr::Opcode::EXTENDED_OPCODE);
-                        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SELECT_TABLE_STAR));
+                        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SELECT_TABLE_STAR));
                         emitString(first);
                         count++;
                         continue;
@@ -195,7 +195,7 @@ void Parser::parseFromClause() {
             // Subquery or joined table
             if (check(TokenType::KW_SELECT)) {
                 emit(sblr::Opcode::EXTENDED_OPCODE);
-                emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_SUBQUERY_SCALAR));
+                emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_SCALAR));
                 parseSubquery();
             } else {
                 // Parenthesized join - recurse
@@ -350,7 +350,7 @@ void Parser::parseGroupByClause() {
     // Check for ROLLUP, CUBE, GROUPING SETS
     if (matchKeyword(TokenType::KW_ROLLUP)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_GROUP_ROLLUP));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_GROUP_ROLLUP));
         consume(TokenType::LEFT_PAREN, "Expected (");
         do {
             parseExpression();
@@ -359,7 +359,7 @@ void Parser::parseGroupByClause() {
         consume(TokenType::RIGHT_PAREN, "Expected )");
     } else if (matchKeyword(TokenType::KW_CUBE)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_GROUP_CUBE));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_GROUP_CUBE));
         consume(TokenType::LEFT_PAREN, "Expected (");
         do {
             parseExpression();
@@ -369,7 +369,7 @@ void Parser::parseGroupByClause() {
     } else if (matchKeyword(TokenType::KW_GROUPING)) {
         if (matchKeyword(TokenType::KW_SETS)) {
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_GROUP_GROUPING_SETS));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_GROUP_GROUPING_SETS));
             consume(TokenType::LEFT_PAREN, "Expected (");
             // Parse grouping sets
             do {
@@ -731,13 +731,13 @@ void Parser::parseInsertStmt() {
 
 void Parser::parseOnConflictClause() {
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ON_CONFLICT));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT));
 
     // Conflict target (optional)
     if (match(TokenType::LEFT_PAREN)) {
         // Column list
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ON_CONFLICT_COLUMN));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT_COLUMN));
         emit(sblr::Opcode::BEGIN_LIST);
         size_t count_pos = bytecode_.size();
         emitU32(0);
@@ -757,13 +757,13 @@ void Parser::parseOnConflictClause() {
         // Optional WHERE for partial index
         if (matchKeyword(TokenType::KW_WHERE)) {
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ON_CONFLICT_WHERE));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT_WHERE));
             parseExpression();
         }
     } else if (matchKeyword(TokenType::KW_ON)) {
         consumeKeyword(TokenType::KW_CONSTRAINT, "Expected CONSTRAINT");
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ON_CONFLICT_CONSTRAINT));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT_CONSTRAINT));
         std::string constraint_name = parseIdentifier();
         emitString(constraint_name);
     }
@@ -773,10 +773,10 @@ void Parser::parseOnConflictClause() {
 
     if (matchKeyword(TokenType::KW_NOTHING)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ON_CONFLICT_DO_NOTHING));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT_DO_NOTHING));
     } else if (matchKeyword(TokenType::KW_UPDATE)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_ON_CONFLICT_DO_UPDATE));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT_DO_UPDATE));
         consumeKeyword(TokenType::KW_SET, "Expected SET");
 
         // Parse SET assignments
@@ -807,7 +807,7 @@ void Parser::parseOnConflictClause() {
 
 void Parser::parseReturningClause() {
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_RETURNING));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_RETURNING));
 
     if (match(TokenType::STAR)) {
         emit(sblr::Opcode::SELECT_STAR);
@@ -980,7 +980,7 @@ void Parser::parseMergeStmt() {
     consumeKeyword(TokenType::KW_INTO, "Expected INTO");
 
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_MERGE_START));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MERGE_START));
 
     // Target table
     std::string schema;
@@ -1004,7 +1004,7 @@ void Parser::parseMergeStmt() {
     // USING clause
     consumeKeyword(TokenType::KW_USING, "Expected USING");
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_MERGE_SOURCE));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MERGE_SOURCE));
 
     if (match(TokenType::LEFT_PAREN)) {
         // Subquery
@@ -1033,7 +1033,7 @@ void Parser::parseMergeStmt() {
     // ON clause
     consumeKeyword(TokenType::KW_ON, "Expected ON");
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_MERGE_ON));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MERGE_ON));
     parseExpression();
 
     // WHEN clauses
@@ -1054,7 +1054,7 @@ void Parser::parseMergeStmt() {
 
         if (is_matched) {
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_MERGE_WHEN_MATCHED));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MERGE_WHEN_MATCHED));
 
             if (matchKeyword(TokenType::KW_UPDATE)) {
                 emitByte(1);  // UPDATE action
@@ -1081,7 +1081,7 @@ void Parser::parseMergeStmt() {
             }
         } else {
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_MERGE_WHEN_NOT_MATCHED));
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MERGE_WHEN_NOT_MATCHED));
 
             if (matchKeyword(TokenType::KW_INSERT)) {
                 emitByte(1);  // INSERT action
@@ -1127,7 +1127,7 @@ void Parser::parseMergeStmt() {
     }
 
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_MERGE_END));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MERGE_END));
 }
 
 // ============================================================================
@@ -1138,7 +1138,7 @@ void Parser::parseWithClause() {
     consume(TokenType::KW_WITH, "Expected WITH");
 
     emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_WITH_CLAUSE));
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_WITH_CLAUSE));
 
     // RECURSIVE keyword
     bool is_recursive = matchKeyword(TokenType::KW_RECURSIVE);
@@ -1152,7 +1152,7 @@ void Parser::parseWithClause() {
 
     do {
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitByte(static_cast<uint8_t>(sblr::Opcode::EXT_CTE_DEF));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CTE_DEF));
 
         std::string cte_name = parseIdentifier();
         emitString(cte_name);

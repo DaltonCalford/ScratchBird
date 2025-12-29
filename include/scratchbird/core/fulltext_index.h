@@ -9,6 +9,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/tid.h"
 #include "scratchbird/core/tid_resolver.h"
+#include "scratchbird/core/index_gc_interface.h"
 #include <memory>
 #include <vector>
 
@@ -53,7 +54,7 @@ class Database;
  *   TSQuery query = TSQuery::fromString("cat & dog");
  *   std::vector<TID> results = index->search(query, current_xid, ctx);
  */
-class FullTextIndex
+class FullTextIndex : public IndexGCInterface
 {
 public:
     /**
@@ -188,6 +189,28 @@ public:
      * @return Pointer to the GIN index (owned by this object)
      */
     GinIndex* getGinIndex() { return gin_index_.get(); }
+
+    /**
+     * @brief Remove dead entries from the index (GC support)
+     *
+     * Plan 01 Task D.2: FullText delegates GC to underlying GIN index.
+     * FullText itself does not store posting lists; all data is in GIN.
+     *
+     * @param dead_tids Vector of confirmed dead TIDs from heap sweep
+     * @param entries_removed_out Output: number of entries removed
+     * @param pages_modified_out Output: number of pages modified
+     * @param ctx Error context
+     * @return Status code
+     */
+    Status removeDeadEntries(const std::vector<TID>& dead_tids,
+                            uint64_t* entries_removed_out = nullptr,
+                            uint64_t* pages_modified_out = nullptr,
+                            ErrorContext* ctx = nullptr) override;
+
+    /**
+     * @brief Get index type name for logging
+     */
+    const char* indexTypeName() const override { return "FullText"; }
 
 private:
     Database* db_;

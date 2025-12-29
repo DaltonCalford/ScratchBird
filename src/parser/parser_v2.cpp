@@ -5,7 +5,10 @@
  */
 
 #include "scratchbird/parser/parser_v2.h"
+#include <cctype>
+#include <cstring>
 #include <algorithm>
+#include <limits>
 
 namespace scratchbird::parser::v2 {
 
@@ -60,6 +63,7 @@ void Parser::synchronize() {
             case TokenType::KW_GRANT:
             case TokenType::KW_REVOKE:
             case TokenType::KW_BEGIN:
+            case TokenType::KW_PREPARE:
             case TokenType::KW_COMMIT:
             case TokenType::KW_ROLLBACK:
                 return;
@@ -169,6 +173,7 @@ Statement* Parser::parseStatementInternal() {
     // Transaction statements
     if (match(TokenType::KW_BEGIN))     return parseStartTransaction();
     if (match(TokenType::KW_START))     return parseStartTransaction();
+    if (match(TokenType::KW_PREPARE))   return parsePrepareTransaction();
     if (match(TokenType::KW_COMMIT))    return parseCommit();
     if (match(TokenType::KW_ROLLBACK))  return parseRollback();
     if (matchContextual("SAVEPOINT"))   return parseSavepoint();
@@ -942,7 +947,58 @@ Statement* Parser::parseAlter() {
     ParseModeGuard guard(state_, ParseMode::DDL);
 
     if (matchContextual("TABLE")) return parseAlterTable();
-    // TODO: ALTER INDEX, ALTER VIEW, ALTER SEQUENCE, etc.
+
+    auto parse_rename_move = [&](DdlObjectType object_type) -> Statement* {
+        SourceLocation start = currentLocation();
+
+        bool if_exists = false;
+        if (match(TokenType::KW_IF)) {
+            expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+            if_exists = true;
+        }
+
+        SchemaPath object_path = parseSchemaPath(state_);
+
+        if (matchContextual("RENAME")) {
+            expectContextual("TO", "Expected TO after RENAME");
+            auto* stmt = arena_.create<RenameObjectStmt>();
+            stmt->object_type = object_type;
+            stmt->if_exists = if_exists;
+            stmt->object_path = object_path;
+            stmt->new_name = expectIdentifier("Expected new name");
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+
+        if (match(TokenType::KW_SET)) {
+            if (matchContextual("SCHEMA")) {
+                auto* stmt = arena_.create<MoveObjectStmt>();
+                stmt->object_type = object_type;
+                stmt->if_exists = if_exists;
+                stmt->object_path = object_path;
+                stmt->target_schema = parseSchemaPath(state_);
+                stmt->span = makeSpan(start);
+                return stmt;
+            }
+        }
+
+        error("Expected RENAME TO or SET SCHEMA after object name");
+        return nullptr;
+    };
+
+    if (matchContextual("VIEW")) return parse_rename_move(DdlObjectType::VIEW);
+    if (matchContextual("INDEX")) return parse_rename_move(DdlObjectType::INDEX);
+    if (matchContextual("SEQUENCE")) return parse_rename_move(DdlObjectType::SEQUENCE);
+    if (matchContextual("DOMAIN")) return parse_rename_move(DdlObjectType::DOMAIN);
+    if (matchContextual("TRIGGER")) return parse_rename_move(DdlObjectType::TRIGGER);
+    if (matchContextual("FUNCTION")) return parse_rename_move(DdlObjectType::FUNCTION);
+    if (matchContextual("PROCEDURE")) return parse_rename_move(DdlObjectType::PROCEDURE);
+    if (matchContextual("PACKAGE")) return parse_rename_move(DdlObjectType::PACKAGE);
+    if (matchContextual("SCHEMA")) return parse_rename_move(DdlObjectType::SCHEMA);
+    if (matchContextual("TABLESPACE")) return parse_rename_move(DdlObjectType::TABLESPACE);
+    if (matchContextual("ROLE")) return parse_rename_move(DdlObjectType::ROLE);
+    if (matchContextual("USER")) return parse_rename_move(DdlObjectType::USER);
+    if (matchContextual("GROUP")) return parse_rename_move(DdlObjectType::GROUP);
 
     error("Expected object type after ALTER");
     return nullptr;
@@ -1019,6 +1075,11 @@ AlterTableStmt* Parser::parseAlterTable() {
             stmt->column_name = expectIdentifier("Expected column name");
             expectContextual("TO", "Expected TO after column name");
             stmt->new_name = expectIdentifier("Expected new column name");
+        } else if (matchContextual("CONSTRAINT")) {
+            stmt->action = AlterTableAction::RENAME_CONSTRAINT;
+            stmt->constraint_name = expectIdentifier("Expected constraint name");
+            expectContextual("TO", "Expected TO after constraint name");
+            stmt->new_name = expectIdentifier("Expected new constraint name");
         } else if (matchContextual("TO")) {
             stmt->action = AlterTableAction::RENAME_TABLE;
             stmt->new_name = expectIdentifier("Expected new table name");
@@ -1027,6 +1088,9 @@ AlterTableStmt* Parser::parseAlterTable() {
         if (matchContextual("TABLESPACE")) {
             stmt->action = AlterTableAction::SET_TABLESPACE;
             stmt->tablespace = parseSchemaPath(state_);
+        } else if (matchContextual("SCHEMA")) {
+            stmt->action = AlterTableAction::SET_SCHEMA;
+            stmt->target_schema = parseSchemaPath(state_);
         }
     } else if (matchContextual("ENABLE")) {
         expectContextual("ROW", "Expected ROW after ENABLE");
@@ -2506,10 +2570,186 @@ StartTransactionStmt* Parser::parseStartTransaction() {
         matchContextual("WORK");
     }
 
-    // Parse transaction characteristics
-    // ISOLATION LEVEL, READ ONLY/WRITE, DEFERRABLE
+    auto parseAutocommitMode = [&]() -> AutocommitMode {
+        if (match(TokenType::KW_ON) || matchContextual("ON")) {
+            return AutocommitMode::ON;
+        }
+        if (matchContextual("OFF")) {
+            return AutocommitMode::OFF;
+        }
+        if (check(TokenType::INTEGER_LITERAL)) {
+            int64_t value = current().value.int_value;
+            advance();
+            if (value == 0) {
+                return AutocommitMode::OFF;
+            }
+            if (value == 1) {
+                return AutocommitMode::ON;
+            }
+            error("AUTOCOMMIT expects 0/1 or ON/OFF");
+            return AutocommitMode::UNCHANGED;
+        }
+        error("Expected AUTOCOMMIT mode (ON/OFF/1/0)");
+        return AutocommitMode::UNCHANGED;
+    };
+
+    auto parseConflictClause =
+        [&](TransactionConflictAction& action, bool& has_error_code, int32_t& error_code) {
+            if (!matchContextual("CONFLICT")) {
+                error("Expected CONFLICT after ON");
+                return;
+            }
+
+            if (action != TransactionConflictAction::DEFAULT) {
+                error("ON CONFLICT specified more than once");
+            }
+
+            if (match(TokenType::KW_COMMIT)) {
+                action = TransactionConflictAction::COMMIT;
+            } else if (match(TokenType::KW_ROLLBACK)) {
+                action = TransactionConflictAction::ROLLBACK;
+            } else if (matchContextual("ERROR")) {
+                action = TransactionConflictAction::ERROR;
+                if (check(TokenType::INTEGER_LITERAL)) {
+                    int64_t value = current().value.int_value;
+                    advance();
+                    if (value < std::numeric_limits<int32_t>::min() ||
+                        value > std::numeric_limits<int32_t>::max()) {
+                        error("ON CONFLICT ERROR code out of range");
+                    } else {
+                        has_error_code = true;
+                        error_code = static_cast<int32_t>(value);
+                    }
+                }
+            } else if (matchContextual("KEEP")) {
+                action = TransactionConflictAction::KEEP;
+            } else {
+                error("Expected conflict action (COMMIT, ROLLBACK, ERROR, KEEP)");
+            }
+        };
+
+    auto applySnapshotIsolation = [&]() {
+        stmt->has_isolation_level = true;
+        if (matchContextual("TABLE")) {
+            expectContextual("STABILITY", "Expected STABILITY after SNAPSHOT TABLE");
+            stmt->isolation_level = IsolationLevel::SERIALIZABLE;
+        } else {
+            stmt->isolation_level = IsolationLevel::REPEATABLE_READ;
+        }
+    };
+
+    auto parseReadCommittedVariant = [&]() {
+        auto tokenMatches = [&](const Token& token, const char* keyword) -> bool {
+            std::string_view text = state_.lexer().getTokenText(token);
+            size_t len = std::strlen(keyword);
+            if (text.size() != len) {
+                return false;
+            }
+            for (size_t i = 0; i < len; ++i) {
+                char a = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
+                char b = static_cast<char>(std::tolower(static_cast<unsigned char>(keyword[i])));
+                if (a != b) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        if (stmt->has_read_committed_mode) {
+            error("READ COMMITTED mode specified more than once");
+            return;
+        }
+        if (matchContextual("READ")) {
+            if (matchContextual("CONSISTENCY")) {
+                stmt->has_read_committed_mode = true;
+                stmt->read_committed_mode = ReadCommittedMode::READ_CONSISTENCY;
+            } else {
+                error("Expected CONSISTENCY after READ COMMITTED READ");
+            }
+        } else if (matchContextual("RECORD_VERSION")) {
+            stmt->has_read_committed_mode = true;
+            stmt->read_committed_mode = ReadCommittedMode::RECORD_VERSION;
+        } else if (matchContextual("RECORD")) {
+            expectContextual("VERSION", "Expected VERSION after RECORD");
+            stmt->has_read_committed_mode = true;
+            stmt->read_committed_mode = ReadCommittedMode::RECORD_VERSION;
+        } else if (checkContextual("NO")) {
+            Token next = state_.lexer().peekToken();
+            if (next.type == TokenType::IDENTIFIER &&
+                (tokenMatches(next, "RECORD") || tokenMatches(next, "RECORD_VERSION"))) {
+                matchContextual("NO");
+                if (matchContextual("RECORD_VERSION")) {
+                    stmt->has_read_committed_mode = true;
+                    stmt->read_committed_mode = ReadCommittedMode::NO_RECORD_VERSION;
+                } else {
+                    expectContextual("RECORD", "Expected RECORD after NO");
+                    expectContextual("VERSION", "Expected VERSION after NO RECORD");
+                    stmt->has_read_committed_mode = true;
+                    stmt->read_committed_mode = ReadCommittedMode::NO_RECORD_VERSION;
+                }
+            }
+        }
+    };
+
+    auto parseReadCommittedVariant = [&]() {
+        auto tokenMatches = [&](const Token& token, const char* keyword) -> bool {
+            std::string_view text = state_.lexer().getTokenText(token);
+            size_t len = std::strlen(keyword);
+            if (text.size() != len) {
+                return false;
+            }
+            for (size_t i = 0; i < len; ++i) {
+                char a = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
+                char b = static_cast<char>(std::tolower(static_cast<unsigned char>(keyword[i])));
+                if (a != b) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        if (stmt->has_read_committed_mode) {
+            error("READ COMMITTED mode specified more than once");
+            return;
+        }
+        if (matchContextual("READ")) {
+            if (matchContextual("CONSISTENCY")) {
+                stmt->has_read_committed_mode = true;
+                stmt->read_committed_mode = ReadCommittedMode::READ_CONSISTENCY;
+            } else {
+                error("Expected CONSISTENCY after READ COMMITTED READ");
+            }
+        } else if (matchContextual("RECORD_VERSION")) {
+            stmt->has_read_committed_mode = true;
+            stmt->read_committed_mode = ReadCommittedMode::RECORD_VERSION;
+        } else if (matchContextual("RECORD")) {
+            expectContextual("VERSION", "Expected VERSION after RECORD");
+            stmt->has_read_committed_mode = true;
+            stmt->read_committed_mode = ReadCommittedMode::RECORD_VERSION;
+        } else if (checkContextual("NO")) {
+            Token next = state_.lexer().peekToken();
+            if (next.type == TokenType::IDENTIFIER &&
+                (tokenMatches(next, "RECORD") || tokenMatches(next, "RECORD_VERSION"))) {
+                matchContextual("NO");
+                if (matchContextual("RECORD_VERSION")) {
+                    stmt->has_read_committed_mode = true;
+                    stmt->read_committed_mode = ReadCommittedMode::NO_RECORD_VERSION;
+                } else {
+                    expectContextual("RECORD", "Expected RECORD after NO");
+                    expectContextual("VERSION", "Expected VERSION after NO RECORD");
+                    stmt->has_read_committed_mode = true;
+                    stmt->read_committed_mode = ReadCommittedMode::NO_RECORD_VERSION;
+                }
+            }
+        }
+    };
+
+    // Parse transaction characteristics (SQL-standard + Firebird legacy) in any order.
     while (!isAtEnd() && !check(TokenType::SEMICOLON)) {
-        if (matchContextual("ISOLATION")) {
+        if (match(TokenType::KW_ON)) {
+            parseConflictClause(stmt->conflict_action, stmt->has_conflict_error_code,
+                                stmt->conflict_error_code);
+        } else if (matchContextual("ISOLATION")) {
             expectContextual("LEVEL", "Expected LEVEL after ISOLATION");
 
             stmt->has_isolation_level = true;
@@ -2518,6 +2758,7 @@ StartTransactionStmt* Parser::parseStartTransaction() {
                     stmt->isolation_level = IsolationLevel::READ_UNCOMMITTED;
                 } else if (matchContextual("COMMITTED")) {
                     stmt->isolation_level = IsolationLevel::READ_COMMITTED;
+                    parseReadCommittedVariant();
                 } else {
                     error("Expected UNCOMMITTED or COMMITTED after READ");
                 }
@@ -2526,23 +2767,98 @@ StartTransactionStmt* Parser::parseStartTransaction() {
                 stmt->isolation_level = IsolationLevel::REPEATABLE_READ;
             } else if (matchContextual("SERIALIZABLE")) {
                 stmt->isolation_level = IsolationLevel::SERIALIZABLE;
+            } else if (matchContextual("SNAPSHOT")) {
+                applySnapshotIsolation();
             } else {
                 error("Expected isolation level");
             }
         } else if (matchContextual("READ")) {
-            stmt->has_access_mode = true;
             if (matchContextual("ONLY")) {
+                stmt->has_access_mode = true;
                 stmt->access_mode = TransactionAccess::READ_ONLY;
             } else if (matchContextual("WRITE")) {
+                stmt->has_access_mode = true;
                 stmt->access_mode = TransactionAccess::READ_WRITE;
+            } else if (matchContextual("COMMITTED")) {
+                stmt->has_isolation_level = true;
+                stmt->isolation_level = IsolationLevel::READ_COMMITTED;
+                parseReadCommittedVariant();
+            } else if (matchContextual("UNCOMMITTED")) {
+                stmt->has_isolation_level = true;
+                stmt->isolation_level = IsolationLevel::READ_UNCOMMITTED;
             } else {
-                error("Expected ONLY or WRITE after READ");
+                error("Expected ONLY, WRITE, COMMITTED, or UNCOMMITTED after READ");
             }
+        } else if (matchContextual("SNAPSHOT")) {
+            applySnapshotIsolation();
         } else if (matchContextual("DEFERRABLE")) {
             stmt->deferrable = true;
         } else if (match(TokenType::KW_NOT)) {
-            expectContextual("DEFERRABLE", "Expected DEFERRABLE after NOT");
-            stmt->not_deferrable = true;
+            if (matchContextual("DEFERRABLE")) {
+                stmt->not_deferrable = true;
+            } else if (matchContextual("WAIT")) {
+                stmt->has_wait_mode = true;
+                stmt->wait_mode = TransactionWaitMode::NO_WAIT;
+            } else {
+                error("Expected DEFERRABLE or WAIT after NOT");
+            }
+        } else if (matchContextual("WAIT")) {
+            stmt->has_wait_mode = true;
+            stmt->wait_mode = TransactionWaitMode::WAIT;
+        } else if (matchContextual("NO")) {
+            if (matchContextual("WAIT")) {
+                stmt->has_wait_mode = true;
+                stmt->wait_mode = TransactionWaitMode::NO_WAIT;
+            } else {
+                error("Expected WAIT after NO");
+            }
+        } else if (matchContextual("LOCK")) {
+            expectContextual("TIMEOUT", "Expected TIMEOUT after LOCK");
+            if (stmt->has_lock_timeout) {
+                error("LOCK TIMEOUT specified more than once");
+            }
+            if (!check(TokenType::INTEGER_LITERAL)) {
+                error("Expected integer literal after LOCK TIMEOUT");
+            } else {
+                int64_t value = current().value.int_value;
+                advance();
+                if (value < 0 || value > std::numeric_limits<uint32_t>::max()) {
+                    error("LOCK TIMEOUT out of range");
+                } else {
+                    stmt->has_lock_timeout = true;
+                    stmt->lock_timeout_seconds = static_cast<uint32_t>(value);
+                }
+            }
+        } else if (matchContextual("RESERVING")) {
+            // Table reservations are parsed into a simple list for later resolution.
+            do {
+                StringPool::StringId table_name =
+                    expectIdentifier("Expected table name after RESERVING");
+                expectContextual("FOR", "Expected FOR after RESERVING table name");
+
+                TableLockMode lock_mode = TableLockMode::SHARED;
+                if (matchContextual("SHARED")) {
+                    lock_mode = TableLockMode::SHARED;
+                } else if (matchContextual("PROTECTED")) {
+                    lock_mode = TableLockMode::PROTECTED;
+                } else {
+                    error("Expected SHARED or PROTECTED in RESERVING clause");
+                }
+
+                bool for_write = false;
+                if (matchContextual("READ")) {
+                    for_write = false;
+                } else if (matchContextual("WRITE")) {
+                    for_write = true;
+                } else {
+                    error("Expected READ or WRITE in RESERVING clause");
+                }
+
+                stmt->table_reservations.emplace_back(table_name, lock_mode, for_write);
+            } while (match(TokenType::COMMA));
+        } else if (matchContextual("AUTOCOMMIT")) {
+            stmt->has_autocommit = true;
+            stmt->autocommit_mode = parseAutocommitMode();
         } else {
             // Unknown characteristic, stop parsing
             break;
@@ -2550,6 +2866,24 @@ StartTransactionStmt* Parser::parseStartTransaction() {
 
         // Optional comma between characteristics
         match(TokenType::COMMA);
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+PrepareTransactionStmt* Parser::parsePrepareTransaction() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<PrepareTransactionStmt>();
+
+    // PREPARE TRANSACTION 'gid'
+    expectContextual("TRANSACTION", "Expected TRANSACTION after PREPARE");
+
+    if (!check(TokenType::STRING_LITERAL)) {
+        error("Expected string literal after PREPARE TRANSACTION");
+    } else {
+        stmt->gid = current().value.string_id;
+        advance();
     }
 
     stmt->span = makeSpan(start);
@@ -2564,6 +2898,18 @@ CommitStmt* Parser::parseCommit() {
     matchContextual("WORK");
     matchContextual("TRANSACTION");
 
+    if (matchContextual("PREPARED")) {
+        stmt->is_prepared = true;
+        if (!check(TokenType::STRING_LITERAL)) {
+            error("Expected string literal after COMMIT PREPARED");
+        } else {
+            stmt->prepared_gid = current().value.string_id;
+            advance();
+        }
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
     if (match(TokenType::KW_AND)) {
         if (matchContextual("NO")) {
             expectContextual("CHAIN", "Expected CHAIN after NO");
@@ -2572,6 +2918,10 @@ CommitStmt* Parser::parseCommit() {
             expectContextual("CHAIN", "Expected CHAIN after AND");
             stmt->and_chain = true;
         }
+    }
+
+    if (matchContextual("RETAINING")) {
+        stmt->retaining = true;
     }
 
     stmt->span = makeSpan(start);
@@ -2587,6 +2937,18 @@ RollbackStmt* Parser::parseRollback() {
     matchContextual("WORK");
     matchContextual("TRANSACTION");
 
+    if (matchContextual("PREPARED")) {
+        stmt->is_prepared = true;
+        if (!check(TokenType::STRING_LITERAL)) {
+            error("Expected string literal after ROLLBACK PREPARED");
+        } else {
+            stmt->prepared_gid = current().value.string_id;
+            advance();
+        }
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
     if (matchContextual("TO")) {
         matchContextual("SAVEPOINT");  // Optional SAVEPOINT keyword
         stmt->to_savepoint = true;
@@ -2599,6 +2961,10 @@ RollbackStmt* Parser::parseRollback() {
             expectContextual("CHAIN", "Expected CHAIN after AND");
             stmt->and_chain = true;
         }
+    }
+
+    if (matchContextual("RETAINING")) {
+        stmt->retaining = true;
     }
 
     stmt->span = makeSpan(start);
@@ -2662,6 +3028,74 @@ SetStmt* Parser::parseSet() {
         stmt->scope = SetStmt::Scope::LOCAL;
     }
 
+    auto parseAutocommitMode = [&]() -> AutocommitMode {
+        if (match(TokenType::KW_ON) || matchContextual("ON")) {
+            return AutocommitMode::ON;
+        }
+        if (matchContextual("OFF")) {
+            return AutocommitMode::OFF;
+        }
+        if (check(TokenType::INTEGER_LITERAL)) {
+            int64_t value = current().value.int_value;
+            advance();
+            if (value == 0) {
+                return AutocommitMode::OFF;
+            }
+            if (value == 1) {
+                return AutocommitMode::ON;
+            }
+            error("AUTOCOMMIT expects 0/1 or ON/OFF");
+            return AutocommitMode::UNCHANGED;
+        }
+        error("Expected AUTOCOMMIT mode (ON/OFF/1/0)");
+        return AutocommitMode::UNCHANGED;
+    };
+
+    auto parseConflictClause =
+        [&](TransactionConflictAction& action, bool& has_error_code, int32_t& error_code) {
+            if (!matchContextual("CONFLICT")) {
+                error("Expected CONFLICT after ON");
+                return;
+            }
+
+            if (action != TransactionConflictAction::DEFAULT) {
+                error("ON CONFLICT specified more than once");
+            }
+
+            if (match(TokenType::KW_COMMIT)) {
+                action = TransactionConflictAction::COMMIT;
+            } else if (match(TokenType::KW_ROLLBACK)) {
+                action = TransactionConflictAction::ROLLBACK;
+            } else if (matchContextual("ERROR")) {
+                action = TransactionConflictAction::ERROR;
+                if (check(TokenType::INTEGER_LITERAL)) {
+                    int64_t value = current().value.int_value;
+                    advance();
+                    if (value < std::numeric_limits<int32_t>::min() ||
+                        value > std::numeric_limits<int32_t>::max()) {
+                        error("ON CONFLICT ERROR code out of range");
+                    } else {
+                        has_error_code = true;
+                        error_code = static_cast<int32_t>(value);
+                    }
+                }
+            } else if (matchContextual("KEEP")) {
+                action = TransactionConflictAction::KEEP;
+            } else {
+                error("Expected conflict action (COMMIT, ROLLBACK, ERROR, KEEP)");
+            }
+        };
+
+    auto applySnapshotIsolation = [&]() {
+        stmt->has_isolation_level = true;
+        if (matchContextual("TABLE")) {
+            expectContextual("STABILITY", "Expected STABILITY after SNAPSHOT TABLE");
+            stmt->isolation_level = IsolationLevel::SERIALIZABLE;
+        } else {
+            stmt->isolation_level = IsolationLevel::REPEATABLE_READ;
+        }
+    };
+
     // Check for special SET variants
     if (matchContextual("TIME")) {
         expectContextual("ZONE", "Expected ZONE after TIME");
@@ -2676,12 +3110,29 @@ SetStmt* Parser::parseSet() {
         return stmt;
     }
 
+    if (matchContextual("AUTOCOMMIT")) {
+        stmt->set_type = SetStmt::SetType::AUTOCOMMIT;
+        stmt->has_autocommit = true;
+        stmt->autocommit_mode = parseAutocommitMode();
+
+        if (match(TokenType::KW_ON)) {
+            parseConflictClause(stmt->conflict_action, stmt->has_conflict_error_code,
+                                stmt->conflict_error_code);
+        }
+
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
     if (matchContextual("TRANSACTION")) {
         stmt->set_type = SetStmt::SetType::TRANSACTION;
 
         // Parse transaction characteristics (same as START TRANSACTION)
         while (!isAtEnd() && !check(TokenType::SEMICOLON)) {
-            if (matchContextual("ISOLATION")) {
+            if (match(TokenType::KW_ON)) {
+                parseConflictClause(stmt->conflict_action, stmt->has_conflict_error_code,
+                                    stmt->conflict_error_code);
+            } else if (matchContextual("ISOLATION")) {
                 expectContextual("LEVEL", "Expected LEVEL after ISOLATION");
 
                 stmt->has_isolation_level = true;
@@ -2690,6 +3141,7 @@ SetStmt* Parser::parseSet() {
                         stmt->isolation_level = IsolationLevel::READ_UNCOMMITTED;
                     } else if (matchContextual("COMMITTED")) {
                         stmt->isolation_level = IsolationLevel::READ_COMMITTED;
+                        parseReadCommittedVariant();
                     } else {
                         error("Expected UNCOMMITTED or COMMITTED after READ");
                     }
@@ -2698,23 +3150,98 @@ SetStmt* Parser::parseSet() {
                     stmt->isolation_level = IsolationLevel::REPEATABLE_READ;
                 } else if (matchContextual("SERIALIZABLE")) {
                     stmt->isolation_level = IsolationLevel::SERIALIZABLE;
+                } else if (matchContextual("SNAPSHOT")) {
+                    applySnapshotIsolation();
                 } else {
                     error("Expected isolation level");
                 }
             } else if (matchContextual("READ")) {
-                stmt->has_access_mode = true;
                 if (matchContextual("ONLY")) {
+                    stmt->has_access_mode = true;
                     stmt->access_mode = TransactionAccess::READ_ONLY;
                 } else if (matchContextual("WRITE")) {
+                    stmt->has_access_mode = true;
                     stmt->access_mode = TransactionAccess::READ_WRITE;
+                } else if (matchContextual("COMMITTED")) {
+                    stmt->has_isolation_level = true;
+                    stmt->isolation_level = IsolationLevel::READ_COMMITTED;
+                    parseReadCommittedVariant();
+                } else if (matchContextual("UNCOMMITTED")) {
+                    stmt->has_isolation_level = true;
+                    stmt->isolation_level = IsolationLevel::READ_UNCOMMITTED;
                 } else {
-                    error("Expected ONLY or WRITE after READ");
+                    error("Expected ONLY, WRITE, COMMITTED, or UNCOMMITTED after READ");
                 }
+            } else if (matchContextual("SNAPSHOT")) {
+                applySnapshotIsolation();
             } else if (matchContextual("DEFERRABLE")) {
                 stmt->deferrable = true;
             } else if (match(TokenType::KW_NOT)) {
-                expectContextual("DEFERRABLE", "Expected DEFERRABLE after NOT");
-                stmt->not_deferrable = true;
+                if (matchContextual("DEFERRABLE")) {
+                    stmt->not_deferrable = true;
+                } else if (matchContextual("WAIT")) {
+                    stmt->has_wait_mode = true;
+                    stmt->wait_mode = TransactionWaitMode::NO_WAIT;
+                } else {
+                    error("Expected DEFERRABLE or WAIT after NOT");
+                }
+            } else if (matchContextual("WAIT")) {
+                stmt->has_wait_mode = true;
+                stmt->wait_mode = TransactionWaitMode::WAIT;
+            } else if (matchContextual("NO")) {
+                if (matchContextual("WAIT")) {
+                    stmt->has_wait_mode = true;
+                    stmt->wait_mode = TransactionWaitMode::NO_WAIT;
+                } else {
+                    error("Expected WAIT after NO");
+                }
+            } else if (matchContextual("LOCK")) {
+                expectContextual("TIMEOUT", "Expected TIMEOUT after LOCK");
+                if (stmt->has_lock_timeout) {
+                    error("LOCK TIMEOUT specified more than once");
+                }
+                if (!check(TokenType::INTEGER_LITERAL)) {
+                    error("Expected integer literal after LOCK TIMEOUT");
+                } else {
+                    int64_t value = current().value.int_value;
+                    advance();
+                    if (value < 0 || value > std::numeric_limits<uint32_t>::max()) {
+                        error("LOCK TIMEOUT out of range");
+                    } else {
+                        stmt->has_lock_timeout = true;
+                        stmt->lock_timeout_seconds = static_cast<uint32_t>(value);
+                    }
+                }
+            } else if (matchContextual("RESERVING")) {
+                // Table reservations are parsed into a simple list for later resolution.
+                do {
+                    StringPool::StringId table_name =
+                        expectIdentifier("Expected table name after RESERVING");
+                    expectContextual("FOR", "Expected FOR after RESERVING table name");
+
+                    TableLockMode lock_mode = TableLockMode::SHARED;
+                    if (matchContextual("SHARED")) {
+                        lock_mode = TableLockMode::SHARED;
+                    } else if (matchContextual("PROTECTED")) {
+                        lock_mode = TableLockMode::PROTECTED;
+                    } else {
+                        error("Expected SHARED or PROTECTED in RESERVING clause");
+                    }
+
+                    bool for_write = false;
+                    if (matchContextual("READ")) {
+                        for_write = false;
+                    } else if (matchContextual("WRITE")) {
+                        for_write = true;
+                    } else {
+                        error("Expected READ or WRITE in RESERVING clause");
+                    }
+
+                    stmt->table_reservations.emplace_back(table_name, lock_mode, for_write);
+                } while (match(TokenType::COMMA));
+            } else if (matchContextual("AUTOCOMMIT")) {
+                stmt->has_autocommit = true;
+                stmt->autocommit_mode = parseAutocommitMode();
             } else {
                 break;
             }

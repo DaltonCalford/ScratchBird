@@ -6,6 +6,7 @@
  */
 
 #include "scratchbird/parser/postgresql/pg_parser.h"
+#include <cctype>
 #include <cstring>
 #include <algorithm>
 #include <stdexcept>
@@ -141,6 +142,26 @@ Token Parser::consumeKeyword(TokenType kw, const std::string& message) {
     return consume(kw, message);
 }
 
+bool Parser::matchIdentifierKeyword(const char* keyword) {
+    if (!check(TokenType::IDENTIFIER)) {
+        return false;
+    }
+    std::string_view text = lexer_.stringPool().get(current_token_.value.string_id);
+    size_t len = std::strlen(keyword);
+    if (text.size() != len) {
+        return false;
+    }
+    for (size_t i = 0; i < len; ++i) {
+        char a = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
+        char b = static_cast<char>(std::tolower(static_cast<unsigned char>(keyword[i])));
+        if (a != b) {
+            return false;
+        }
+    }
+    advance();
+    return true;
+}
+
 // ============================================================================
 // Error Handling
 // ============================================================================
@@ -167,6 +188,7 @@ void Parser::synchronize() {
             case TokenType::KW_ALTER:
             case TokenType::KW_DROP:
             case TokenType::KW_BEGIN:
+            case TokenType::KW_PREPARE:
             case TokenType::KW_COMMIT:
             case TokenType::KW_ROLLBACK:
             case TokenType::KW_SET:
@@ -329,6 +351,9 @@ void Parser::parseStatementInternal() {
             break;
         case TokenType::KW_BEGIN:
             parseBeginStmt();
+            break;
+        case TokenType::KW_PREPARE:
+            parsePrepareStmt();
             break;
         case TokenType::KW_COMMIT:
             parseCommitStmt();

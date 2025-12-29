@@ -180,4 +180,22 @@ GinIndex::Statistics FullTextIndex::getStatistics()
     return gin_index_->getStatistics();
 }
 
+Status FullTextIndex::removeDeadEntries(const std::vector<TID>& dead_tids,
+                                       uint64_t* entries_removed_out,
+                                       uint64_t* pages_modified_out,
+                                       ErrorContext* ctx)
+{
+    // Plan 01 Task D.2: FullText delegates GC to underlying GIN index
+    // FullText itself does not store posting lists; all data is in GIN
+
+    if (!gin_index_)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No underlying GIN index");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    // Delegate to GIN index's removeDeadEntries()
+    return gin_index_->removeDeadEntries(dead_tids, entries_removed_out, pages_modified_out, ctx);
+}
+
 } // namespace scratchbird::core

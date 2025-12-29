@@ -80,14 +80,17 @@ protected:
     }
 
     // Helper to check if bytecode contains an extended opcode
-    bool bytecodeContainsExtOpcode(const std::vector<uint8_t>& bc, uint8_t ext_op)
+    bool bytecodeContainsExtOpcode(const std::vector<uint8_t>& bc, ExtendedOpcode ext_op)
     {
-        for (size_t i = 0; i + 1 < bc.size(); i++)
+        for (size_t i = 0; i + 2 < bc.size(); i++)
         {
-            if (bc[i] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE) &&
-                bc[i + 1] == ext_op)
+            if (bc[i] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
             {
-                return true;
+                uint16_t op = sblr::readInt16(&bc[i + 1]);
+                if (op == static_cast<uint16_t>(ext_op))
+                {
+                    return true;
+                }
             }
         }
         return false;
@@ -116,7 +119,7 @@ TEST_F(ShowSetCommandsTest, ShowTableBytecode)
 {
     auto bc = generateBytecode("SHOW TABLE users");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_TABLE)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_TABLE));
 }
 
 // =============================================================================
@@ -133,7 +136,7 @@ TEST_F(ShowSetCommandsTest, ShowIndexBytecode)
 {
     auto bc = generateBytecode("SHOW INDEX idx_test");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_INDEX)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_INDEX));
 }
 
 // =============================================================================
@@ -150,7 +153,7 @@ TEST_F(ShowSetCommandsTest, ShowTriggerBytecode)
 {
     auto bc = generateBytecode("SHOW TRIGGER trg_test");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_TRIGGER)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_TRIGGER));
 }
 
 // =============================================================================
@@ -167,7 +170,7 @@ TEST_F(ShowSetCommandsTest, ShowProcedureBytecode)
 {
     auto bc = generateBytecode("SHOW PROCEDURE sp_test");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_PROCEDURE)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_PROCEDURE));
 }
 
 // =============================================================================
@@ -184,7 +187,7 @@ TEST_F(ShowSetCommandsTest, ShowFunctionBytecode)
 {
     auto bc = generateBytecode("SHOW FUNCTION fn_test");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_FUNCTION)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_FUNCTION));
 }
 
 // =============================================================================
@@ -201,7 +204,7 @@ TEST_F(ShowSetCommandsTest, ShowViewBytecode)
 {
     auto bc = generateBytecode("SHOW VIEW v_test");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_VIEW)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_VIEW));
 }
 
 // =============================================================================
@@ -218,7 +221,7 @@ TEST_F(ShowSetCommandsTest, ShowDomainBytecode)
 {
     auto bc = generateBytecode("SHOW DOMAIN d_test");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_DOMAIN)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_DOMAIN));
 }
 
 // =============================================================================
@@ -235,7 +238,7 @@ TEST_F(ShowSetCommandsTest, ShowGeneratorBytecode)
 {
     auto bc = generateBytecode("SHOW GENERATOR gen_test");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_GENERATOR)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_GENERATOR));
 }
 
 // =============================================================================
@@ -253,7 +256,7 @@ TEST_F(ShowSetCommandsTest, ShowSchemaBytecode)
 {
     auto bc = generateBytecode("SHOW SCHEMA");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_SCHEMA)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_SCHEMA));
 }
 
 // =============================================================================
@@ -270,7 +273,7 @@ TEST_F(ShowSetCommandsTest, ShowRoleBytecode)
 {
     auto bc = generateBytecode("SHOW ROLE test_role");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_ROLE)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_ROLE));
 }
 
 // =============================================================================
@@ -288,11 +291,11 @@ TEST_F(ShowSetCommandsTest, ShowGrantsBytecode)
 {
     auto bc = generateBytecode("SHOW GRANTS");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_GRANTS)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_GRANTS));
 
     bc = generateBytecode("SHOW GRANTS FOR users");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_GRANTS)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_GRANTS));
 }
 
 // =============================================================================
@@ -301,6 +304,7 @@ TEST_F(ShowSetCommandsTest, ShowGrantsBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowChecksParsing)
 {
+    EXPECT_TRUE(parseSucceeds("SHOW CHECKS"));
     EXPECT_TRUE(parseSucceeds("SHOW CHECKS users"));
     EXPECT_TRUE(parseSucceeds("SHOW CHECKS my_table"));
 }
@@ -309,7 +313,11 @@ TEST_F(ShowSetCommandsTest, ShowChecksBytecode)
 {
     auto bc = generateBytecode("SHOW CHECKS users");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_CHECKS)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_CHECKS));
+
+    bc = generateBytecode("SHOW CHECKS");
+    ASSERT_FALSE(bc.empty());
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_CHECKS));
 }
 
 // =============================================================================
@@ -326,7 +334,7 @@ TEST_F(ShowSetCommandsTest, ShowCollationsBytecode)
 {
     auto bc = generateBytecode("SHOW COLLATIONS");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_COLLATIONS)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_COLLATIONS));
 }
 
 // =============================================================================
@@ -343,7 +351,7 @@ TEST_F(ShowSetCommandsTest, ShowCommentsBytecode)
 {
     auto bc = generateBytecode("SHOW COMMENTS users");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_COMMENTS)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_COMMENTS));
 }
 
 // =============================================================================
@@ -360,7 +368,7 @@ TEST_F(ShowSetCommandsTest, ShowDependenciesBytecode)
 {
     auto bc = generateBytecode("SHOW DEPENDENCIES users");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_DEPENDENCIES)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_DEPENDENCIES));
 }
 
 // =============================================================================
@@ -377,7 +385,7 @@ TEST_F(ShowSetCommandsTest, ShowPackageBytecode)
 {
     auto bc = generateBytecode("SHOW PACKAGE pkg_test");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_PACKAGE)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_PACKAGE));
 }
 
 // =============================================================================
@@ -393,7 +401,7 @@ TEST_F(ShowSetCommandsTest, ShowSystemBytecode)
 {
     auto bc = generateBytecode("SHOW SYSTEM");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_SYSTEM)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_SYSTEM));
 }
 
 // =============================================================================
@@ -409,7 +417,7 @@ TEST_F(ShowSetCommandsTest, ShowSqlDialectBytecode)
 {
     auto bc = generateBytecode("SHOW SQL DIALECT");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_SQL_DIALECT)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_SQL_DIALECT));
 }
 
 // =============================================================================
@@ -425,7 +433,7 @@ TEST_F(ShowSetCommandsTest, ShowVersionBytecode)
 {
     auto bc = generateBytecode("SHOW VERSION");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_VERSION)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_VERSION));
 }
 
 // =============================================================================
@@ -441,7 +449,7 @@ TEST_F(ShowSetCommandsTest, ShowDatabaseBytecode)
 {
     auto bc = generateBytecode("SHOW DATABASE");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_DATABASE)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_DATABASE));
 }
 
 // =============================================================================
@@ -469,7 +477,7 @@ TEST_F(ShowSetCommandsTest, SetSqlDialectBytecode)
 {
     auto bc = generateBytecode("SET SQL DIALECT 3");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SET_SQL_DIALECT)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SET_SQL_DIALECT));
 }
 
 // =============================================================================
@@ -494,7 +502,7 @@ TEST_F(ShowSetCommandsTest, SetNamesBytecode)
 {
     auto bc = generateBytecode("SET NAMES UTF8");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SET_NAMES)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SET_NAMES));
 }
 
 // =============================================================================
@@ -522,7 +530,7 @@ TEST_F(ShowSetCommandsTest, SetLocalTimeoutBytecode)
 {
     auto bc = generateBytecode("SET LOCAL_TIMEOUT 30");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SET_LOCAL_TIMEOUT)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SET_LOCAL_TIMEOUT));
 }
 
 // =============================================================================
@@ -534,7 +542,7 @@ TEST_F(ShowSetCommandsTest, ShowTablesStillWorks)
     EXPECT_TRUE(parseSucceeds("SHOW TABLES"));
     auto bc = generateBytecode("SHOW TABLES");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_TABLES)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_TABLES));
 }
 
 TEST_F(ShowSetCommandsTest, ShowDatabasesStillWorks)
@@ -542,7 +550,7 @@ TEST_F(ShowSetCommandsTest, ShowDatabasesStillWorks)
     EXPECT_TRUE(parseSucceeds("SHOW DATABASES"));
     auto bc = generateBytecode("SHOW DATABASES");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_DATABASES)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_DATABASES));
 }
 
 TEST_F(ShowSetCommandsTest, ShowColumnsStillWorks)
@@ -550,7 +558,7 @@ TEST_F(ShowSetCommandsTest, ShowColumnsStillWorks)
     EXPECT_TRUE(parseSucceeds("SHOW COLUMNS FROM users"));
     auto bc = generateBytecode("SHOW COLUMNS FROM users");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_COLUMNS)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_COLUMNS));
 }
 
 TEST_F(ShowSetCommandsTest, ShowIndexesStillWorks)
@@ -558,7 +566,7 @@ TEST_F(ShowSetCommandsTest, ShowIndexesStillWorks)
     EXPECT_TRUE(parseSucceeds("SHOW INDEXES FROM users"));
     auto bc = generateBytecode("SHOW INDEXES FROM users");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_INDEXES)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_INDEXES));
 }
 
 TEST_F(ShowSetCommandsTest, ShowCreateTableStillWorks)
@@ -566,7 +574,7 @@ TEST_F(ShowSetCommandsTest, ShowCreateTableStillWorks)
     EXPECT_TRUE(parseSucceeds("SHOW CREATE TABLE users"));
     auto bc = generateBytecode("SHOW CREATE TABLE users");
     ASSERT_FALSE(bc.empty());
-    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, static_cast<uint8_t>(Opcode::EXT_SHOW_CREATE_TABLE)));
+    EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_CREATE_TABLE));
 }
 
 // =============================================================================

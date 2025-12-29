@@ -6,6 +6,30 @@ Implement deterministic UUID <-> path resolution and complete rename/move suppor
 ## Priority
 P0 (required for dependency tracking, security auditing, schema navigation, and catalog correctness).
 
+## Status (Current)
+Completed:
+- Resolver cache APIs implemented: getSchemaPath/createSchemaPath/resolveObjectPath/listResolvedObjects, plus object_resolver virtual view.
+- EXT_RENAME_OBJECT / EXT_MOVE_OBJECT handlers wired end-to-end (v2 generator + executor).
+- Parser integrations:
+  - ScratchBird v2: ALTER ... RENAME TO / SET SCHEMA across core object types.
+  - PostgreSQL: emits EXT_RENAME_OBJECT / EXT_MOVE_OBJECT.
+  - MySQL: RENAME TABLE and ALTER TABLE RENAME TO (schema-qualified maps to MOVE).
+  - Firebird: column rename via ALTER [COLUMN] <col> TO <new>, domain rename via ALTER DOMAIN TO.
+- SHOW LOCATION/RESOLVED/OBJECTS/SCHEMA_TREE use resolver output.
+- Catalog persistence + rename/move disk updates added for sequences, views, triggers, functions, procedures, synonyms, and foreign tables.
+
+Partial / Outstanding:
+- Resolver entries for non-persisted objects vanish on restart (resolver rebuild only sees persisted catalogs).
+- name_is_delimited persistence is implemented for sequences/views/triggers/functions/procedures; other object types still assume false on load.
+- getSchema(string) resolves dotted paths but normalizes components to upper; delimited identifier resolution needs explicit handling once persisted.
+- ALTER TABLE semantic analysis only covers rename/move; remaining actions still warn.
+- Executor and SHOW paths still default to PUBLIC in many places; resolver is not yet used broadly for name lookup.
+- Tests for resolver, rename/move, and restart rebuild coverage are still incomplete.
+
+Emulated parser constraints (by design):
+- Firebird parser is limited to Firebird-valid rename semantics (no SET SCHEMA / no object-level rename beyond domain and column).
+- MySQL parser is limited to RENAME TABLE / ALTER TABLE RENAME TO (no SET SCHEMA).
+
 ## References
 - `docs/specifications/DDL_SCHEMAS.md`
 - `docs/specifications/DDL_TABLES.md`
@@ -42,18 +66,14 @@ P0 (required for dependency tracking, security auditing, schema navigation, and 
 - SBLR encoding: bump SBLR_VERSION to 2; extended opcode encoding uses 16-bit opcodes after EXTENDED_OPCODE (0xFF); add EXT_RENAME_OBJECT and EXT_MOVE_OBJECT as 16-bit extended opcodes.
 
 ## Known Stub/Partial Areas (Must Be Replaced)
-- CatalogManager declarations exist but are not implemented:
-  - `include/scratchbird/core/catalog_manager.h`: resolveObjectPath, getSchemaPath, createSchemaPath
-- Semantic analyzer v2 does not implement ALTER TABLE analysis:
-  - `src/sblr/semantic_analyzer_v2.cpp`: analyzeAlterTable returns nullptr with warning
-- Parser v2 does not parse ALTER ... SET SCHEMA or ALTER VIEW/INDEX/SEQUENCE/etc:
-  - `src/parser/parser_v2.cpp` (ALTER TABLE only; missing SET SCHEMA and other object types)
+- Semantic analyzer v2 only handles ALTER TABLE rename/move; other actions still warn:
+  - `src/sblr/semantic_analyzer_v2.cpp`
 - Executor uses hard-coded "PUBLIC" schema and partial lookup paths:
-  - `src/sblr/executor.cpp` (many uses of getSchema("PUBLIC"), SHOW LOCATION/RESOLVED limited)
+  - `src/sblr/executor.cpp` (many uses of getSchema("PUBLIC"))
 - Name resolution gaps:
-  - `CatalogManager::getSchema(string)` ignores hierarchy
-  - `CatalogManager::getSequenceIdByName` ignores schema
-  - `CatalogManager::lookupObject` treats functions/procedures as global
+  - `CatalogManager::getSchema(string)` resolves hierarchy but uppercases components and ignores name_is_delimited
+  - Sequence names are globally unique; schema-scoped lookup still needed
+  - Resolver relies on caches that are incomplete for non-persisted objects
 
 ## Required Data/Schema Changes
 - No schema_path columns are added to sys.catalog.tables/sys.catalog.views/etc. Schema path is computed.

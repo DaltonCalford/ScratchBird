@@ -568,7 +568,25 @@ Status BrinIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
                                    uint64_t *pages_modified_out,
                                    ErrorContext *ctx)
 {
-    // Extract unique block numbers from TIDs
+    // Plan 01 Task D.3: BRIN GC implementation
+    //
+    // NOTE: The specification requires rescanning heap blocks to recompute min/max,
+    // but BRIN doesn't have heap access in the current architecture. Full
+    // resummarization would require adding heap access infrastructure.
+    //
+    // This implementation uses a conservative approach: mark affected ranges as
+    // DELETED. This is alpha-safe (won't return incorrect results) but may over-
+    // invalidate ranges. A future enhancement could add heap rescanning capability.
+
+    // Empty dead_tids is a no-op
+    if (dead_tids.empty())
+    {
+        if (entries_removed_out) *entries_removed_out = 0;
+        if (pages_modified_out) *pages_modified_out = 0;
+        return Status::OK;
+    }
+
+    // Step 1: Convert dead_tids into block numbers
     std::set<uint32_t> dead_blocks;
     for (const TID &tid : dead_tids)
     {
@@ -579,21 +597,97 @@ Status BrinIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
         }
     }
 
-    // For BRIN, we don't remove individual entries
-    // We would need to rescan affected ranges to recompute min/max
-    // For now, just report statistics
-
-    if (entries_removed_out)
+    if (dead_blocks.empty())
     {
-        *entries_removed_out = 0;
-    }
-    if (pages_modified_out)
-    {
-        *pages_modified_out = 0;
+        if (entries_removed_out) *entries_removed_out = 0;
+        if (pages_modified_out) *pages_modified_out = 0;
+        return Status::OK;
     }
 
-    LOG_DEBUG(GENERAL, "BRIN: removeDeadEntries called with %zu dead blocks",
-             dead_blocks.size());
+    // Get components
+    BufferPool *buffer_pool = db_->buffer_pool();
+    TransactionManager *txn_mgr = db_->transaction_manager();
+
+    if (!buffer_pool || !txn_mgr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Missing components");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint64_t current_xid = txn_mgr->getCurrentXid();
+    uint64_t ranges_removed = 0;
+    uint64_t pages_modified = 0;
+
+    // Step 2: Traverse all BRIN pages and mark affected ranges as DELETED
+    uint32_t current_page_id = index_info_.idx_root_page;
+
+    while (current_page_id != 0)
+    {
+        void *page_buffer = nullptr;
+        Status status = buffer_pool->pinPage(current_page_id, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            LOG_WARNING(GENERAL, "BRIN GC: Failed to pin page %u", current_page_id);
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to pin BRIN page during GC");
+            return Status::IO_ERROR;
+        }
+
+        SBBrinPage *page = static_cast<SBBrinPage*>(page_buffer);
+        uint8_t *page_data = reinterpret_cast<uint8_t*>(page_buffer) + sizeof(SBBrinPage);
+        uint32_t offset = 0;
+        bool page_modified = false;
+
+        // For each range in this page
+        for (uint16_t i = 0; i < page->brin_count; i++)
+        {
+            SBBrinRange *range = reinterpret_cast<SBBrinRange*>(page_data + offset);
+
+            // Check if any dead blocks fall within this range
+            bool range_affected = false;
+            for (uint32_t dead_block : dead_blocks)
+            {
+                if (dead_block >= range->brn_start_block && dead_block <= range->brn_end_block)
+                {
+                    range_affected = true;
+                    break;
+                }
+            }
+
+            if (range_affected && range->brn_xmax == 0)
+            {
+                // Mark range as deleted (conservative approach without heap rescan)
+                range->brn_xmax = current_xid;
+                range->brn_flags |= static_cast<uint16_t>(BrinRangeFlags::DELETED);
+
+                ranges_removed++;
+                page_modified = true;
+            }
+
+            // Calculate size of this range and advance offset
+            size_t range_size = sizeof(SBBrinRange) + range->brn_min_len + range->brn_max_len;
+            offset += range_size;
+        }
+
+        // Get next page in chain
+        uint32_t next_page_id = static_cast<uint32_t>(page->brin_right_sibling);
+
+        // Unpin page (mark dirty if modified)
+        if (page_modified)
+        {
+            pages_modified++;
+        }
+        buffer_pool->unpinPage(current_page_id, page_modified, ctx);
+
+        // Move to next page
+        current_page_id = next_page_id;
+    }
+
+    // Set output counters
+    if (entries_removed_out) *entries_removed_out = ranges_removed;
+    if (pages_modified_out) *pages_modified_out = pages_modified;
+
+    LOG_DEBUG(GENERAL, "BRIN GC: Marked %lu ranges deleted across %lu pages (conservative approach without heap rescan)",
+             ranges_removed, pages_modified);
 
     return Status::OK;
 }
