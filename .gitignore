@@ -95,6 +95,7 @@ venv/
 *.tmp
 *.swp
 *.swo
+*.kate-swp
 *~
 
 # Analysis and work-in-progress files in root
