@@ -2615,6 +2615,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return Status::INVALID_ARGUMENT;
         }
 
+        const std::string root_name = "root";
+        ID root_schema_id{};
+        bool has_root = false;
+
         std::unordered_map<std::pair<ID, std::string>, ID, PairHash<ID, std::string>> lookup;
         lookup.reserve(schema_cache_.size());
         for (const auto& [id, schema_info] : schema_cache_)
@@ -2623,24 +2627,61 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                                            schema_info.name_is_delimited);
             auto key = std::make_pair(schema_info.parent_schema_id, normalized);
             lookup[key] = schema_info.schema_id;
-        }
-
-        ID current;
-        for (const auto& component : components)
-        {
-            std::string normalized = IdentifierUtils::toUpper(component);
-            auto key = std::make_pair(current, normalized);
-            auto it = lookup.find(key);
-            if (it == lookup.end())
+            if (!has_root &&
+                isZeroUuidLocal(schema_info.parent_schema_id) &&
+                IdentifierUtils::namesMatch(root_name, false /*search_delimited*/,
+                                            schema_info.schema_name,
+                                            schema_info.name_is_delimited))
             {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                  ("Schema not found: " + schema_name).c_str());
-                return Status::INVALID_ARGUMENT;
+                root_schema_id = schema_info.schema_id;
+                has_root = true;
             }
-            current = it->second;
         }
 
-        auto it = schema_cache_.find(current);
+        auto resolve_from_start = [&](const ID& start, ID& resolved_out) -> bool {
+            ID current = start;
+            for (const auto& component : components)
+            {
+                std::string normalized = IdentifierUtils::toUpper(component);
+                auto key = std::make_pair(current, normalized);
+                auto it = lookup.find(key);
+                if (it == lookup.end())
+                {
+                    return false;
+                }
+                current = it->second;
+            }
+            resolved_out = current;
+            return true;
+        };
+
+        ID start;
+        if (has_root &&
+            !components.empty() &&
+            !IdentifierUtils::namesMatch(components.front(), false /*search_delimited*/,
+                                         root_name, false /*stored_delimited*/))
+        {
+            start = root_schema_id;
+        }
+        else
+        {
+            start = ID{};
+        }
+
+        ID resolved;
+        bool resolved_ok = resolve_from_start(start, resolved);
+        if (!resolved_ok && has_root && start == root_schema_id)
+        {
+            resolved_ok = resolve_from_start(ID{}, resolved);
+        }
+        if (!resolved_ok)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              ("Schema not found: " + schema_name).c_str());
+            return Status::INVALID_ARGUMENT;
+        }
+
+        auto it = schema_cache_.find(resolved);
         if (it == schema_cache_.end())
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
@@ -2743,7 +2784,29 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return Status::INVALID_ARGUMENT;
         }
 
-        ID current_parent;
+        const std::string root_name = "root";
+        ID root_schema_id{};
+        bool has_root = false;
+        for (const auto& [id, info] : schema_cache_)
+        {
+            if (!has_root &&
+                isZeroUuidLocal(info.parent_schema_id) &&
+                IdentifierUtils::namesMatch(root_name, false /*search_delimited*/,
+                                            info.schema_name, info.name_is_delimited))
+            {
+                root_schema_id = info.schema_id;
+                has_root = true;
+            }
+        }
+
+        ID current_parent{};
+        if (has_root &&
+            !components.empty() &&
+            !IdentifierUtils::namesMatch(components.front(), false /*search_delimited*/,
+                                         root_name, false /*stored_delimited*/))
+        {
+            current_parent = root_schema_id;
+        }
         for (const auto& component : components)
         {
             ID existing_id;
@@ -3687,17 +3750,72 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             dialect_tag = "scratchbird";
         }
 
+        const std::string root_name = "root";
+        ID root_schema_id{};
+        bool has_root = false;
+        auto root_key = std::make_pair(ID{}, normalizeResolverName(root_name, false));
+        auto root_it = schema_name_lookup_.find(root_key);
+        if (root_it != schema_name_lookup_.end())
+        {
+            root_schema_id = root_it->second;
+            has_root = true;
+        }
+
         auto resolve_schema_path = [&](PathType type,
                                        const std::vector<std::string>& components,
                                        ID& schema_id_out) -> Status {
-            ID current;
+            auto resolve_from_start = [&](const ID& start, ID& resolved_out) -> bool {
+                ID current = start;
+                for (const auto& component : components)
+                {
+                    std::string normalized = IdentifierUtils::toUpper(component);
+                    auto key = std::make_pair(current, normalized);
+                    auto it = schema_name_lookup_.find(key);
+                    if (it == schema_name_lookup_.end())
+                    {
+                        return false;
+                    }
+                    current = it->second;
+                }
+                resolved_out = current;
+                return true;
+            };
+
+            if (type == PathType::ABSOLUTE)
+            {
+                ID resolved;
+                bool tried_root = false;
+                ID start = ID{};
+                if (has_root &&
+                    !components.empty() &&
+                    !IdentifierUtils::namesMatch(components.front(), false /*search_delimited*/,
+                                                 root_name, false /*stored_delimited*/))
+                {
+                    start = root_schema_id;
+                    tried_root = true;
+                }
+
+                if (resolve_from_start(start, resolved))
+                {
+                    schema_id_out = resolved;
+                    return Status::OK;
+                }
+
+                if (tried_root && resolve_from_start(ID{}, resolved))
+                {
+                    schema_id_out = resolved;
+                    return Status::OK;
+                }
+
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema path not found");
+                return Status::NOT_FOUND;
+            }
+
+            ID start;
             switch (type)
             {
-                case PathType::ABSOLUTE:
-                    current = ID{};
-                    break;
                 case PathType::CURRENT:
-                    current = current_schema_id;
+                    start = current_schema_id;
                     break;
                 case PathType::PARENT:
                 {
@@ -3708,28 +3826,25 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                           "Current schema has no parent");
                         return Status::NOT_FOUND;
                     }
-                    current = it->second;
+                    start = it->second;
                     break;
                 }
                 case PathType::UNQUALIFIED:
-                    current = current_schema_id;
+                    start = current_schema_id;
+                    break;
+                case PathType::ABSOLUTE:
+                    start = ID{};
                     break;
             }
 
-            for (const auto& component : components)
+            ID resolved;
+            if (!resolve_from_start(start, resolved))
             {
-                std::string normalized = IdentifierUtils::toUpper(component);
-                auto key = std::make_pair(current, normalized);
-                auto it = schema_name_lookup_.find(key);
-                if (it == schema_name_lookup_.end())
-                {
-                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema path not found");
-                    return Status::NOT_FOUND;
-                }
-                current = it->second;
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema path not found");
+                return Status::NOT_FOUND;
             }
 
-            schema_id_out = current;
+            schema_id_out = resolved;
             return Status::OK;
         };
 
@@ -3925,6 +4040,23 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
             if (type == PathType::UNQUALIFIED && schema_components.empty())
             {
+                if (!isZeroUuidLocal(current_schema_id))
+                {
+                    search_in_schema(current_schema_id, found_id, found_type, matches);
+                    if (matches > 1 && !opts.allow_ambiguity)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::AMBIGUOUS_COLUMN,
+                                          "Ambiguous object name in current schema");
+                        return Status::AMBIGUOUS_COLUMN;
+                    }
+                    if (matches == 1)
+                    {
+                        id_out = found_id;
+                        type_out_local = found_type;
+                        return Status::OK;
+                    }
+                }
+
                 for (const auto& path_entry : search_path)
                 {
                     auto entry_components = splitSchemaPath(path_entry);
@@ -3945,11 +4077,6 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                           "Ambiguous object name in search path");
                         return Status::AMBIGUOUS_COLUMN;
                     }
-                }
-
-                if (matches == 0 && !isZeroUuidLocal(current_schema_id))
-                {
-                    search_in_schema(current_schema_id, found_id, found_type, matches);
                 }
             }
             else
@@ -12090,47 +12217,48 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
 
     // 2. Read existing columns from disk to check for duplicates and find max ordinal
     BufferPool *bp = db_->buffer_pool();
-    void *page_data;
-    Status status = bp->pinPage(columns_table_page_, &page_data, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
-
-    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
     uint16_t next_ordinal = 0;
     uint32_t existing_column_count = 0;
     bool name_exists = false;
+    uint32_t current_page_id = columns_table_page_;
 
-    for (uint16_t i = 0; i < heap_page.getItemCount(); ++i)
+    while (current_page_id != 0)
     {
-        const uint8_t *tuple_data;
-        uint32_t tuple_size;
-
-        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        void *page_data;
+        Status status = bp->pinPage(current_page_id, &page_data, ctx);
+        if (status != Status::OK)
         {
-            if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnRecord))
-            {
-                const auto *record = reinterpret_cast<const ColumnRecord *>(
-                    tuple_data + sizeof(TupleHeader));
+            return status;
+        }
 
-                if (record->table_id == table_id && record->is_valid == 1)
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+        uint32_t offset = sizeof(CatalogHeapPage);
+
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            const auto *record = reinterpret_cast<const ColumnRecord *>(
+                reinterpret_cast<const uint8_t *>(page_data) + offset);
+
+            if (record->table_id == table_id && record->is_valid == 1)
+            {
+                existing_column_count++;
+                if (record->ordinal >= next_ordinal)
                 {
-                    existing_column_count++;
-                    if (record->ordinal >= next_ordinal)
-                    {
-                        next_ordinal = record->ordinal + 1;
-                    }
-                    if (std::strcmp(record->column_name, column_info.column_name.c_str()) == 0)
-                    {
-                        name_exists = true;
-                    }
+                    next_ordinal = record->ordinal + 1;
+                }
+                if (std::strcmp(record->column_name, column_info.column_name.c_str()) == 0)
+                {
+                    name_exists = true;
                 }
             }
-        }
-    }
 
-    bp->unpinPage(columns_table_page_, false, ctx);
+            offset += sizeof(ColumnRecord);
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, false, ctx);
+        current_page_id = next_page;
+    }
 
     if (name_exists)
     {
@@ -12145,15 +12273,6 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
     new_column.ordinal = next_ordinal;
 
     // 4. Write ColumnRecord to disk
-    status = bp->pinPage(columns_table_page_, &page_data, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
-
-    HeapPage heap_page2(static_cast<uint8_t *>(page_data), db_->page_size());
-
-    // Create ColumnRecord
     ColumnRecord record = {};
     record.table_id = table_id;
     record.column_id = new_column.column_id;
@@ -12185,13 +12304,7 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
     record.created_time = std::chrono::system_clock::now().time_since_epoch().count();
     record.is_valid = 1;
 
-    // Insert tuple into heap page
-    const uint8_t *tuple_data = reinterpret_cast<const uint8_t *>(&record);
-    uint32_t tuple_size = sizeof(ColumnRecord);
-    uint16_t item_id_out;
-
-    status = heap_page2.insertTuple(tuple_data, tuple_size, 0 /* xmin */, &item_id_out, ctx);
-    bp->unpinPage(columns_table_page_, status == Status::OK, ctx);
+    Status status = writeRecordToHeapPage(columns_table_page_, record, ctx);
 
     if (status != Status::OK)
     {
@@ -12278,44 +12391,45 @@ Status CatalogManager::dropColumn(const ID &table_id, const std::string &column_
 
     // 2. Scan columns to find the target and count valid columns
     BufferPool *bp = db_->buffer_pool();
-    void *page_data;
-    Status status = bp->pinPage(columns_table_page_, &page_data, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
-
-    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
     ID column_id;
     bool found = false;
     size_t valid_column_count = 0;
+    uint32_t current_page_id = columns_table_page_;
 
-    for (uint16_t i = 0; i < heap_page.getItemCount(); ++i)
+    while (current_page_id != 0)
     {
-        const uint8_t *tuple_data;
-        uint32_t tuple_size;
-
-        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        void *page_data;
+        Status status = bp->pinPage(current_page_id, &page_data, ctx);
+        if (status != Status::OK)
         {
-            if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnRecord))
-            {
-                const auto *record = reinterpret_cast<const ColumnRecord *>(
-                    tuple_data + sizeof(TupleHeader));
+            return status;
+        }
 
-                if (record->table_id == table_id && record->is_valid == 1)
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+        uint32_t offset = sizeof(CatalogHeapPage);
+
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            const auto *record = reinterpret_cast<const ColumnRecord *>(
+                reinterpret_cast<const uint8_t *>(page_data) + offset);
+
+            if (record->table_id == table_id && record->is_valid == 1)
+            {
+                valid_column_count++;
+                if (std::strcmp(record->column_name, column_name.c_str()) == 0)
                 {
-                    valid_column_count++;
-                    if (std::strcmp(record->column_name, column_name.c_str()) == 0)
-                    {
-                        column_id = record->column_id;
-                        found = true;
-                    }
+                    column_id = record->column_id;
+                    found = true;
                 }
             }
-        }
-    }
 
-    bp->unpinPage(columns_table_page_, false, ctx);
+            offset += sizeof(ColumnRecord);
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, false, ctx);
+        current_page_id = next_page;
+    }
 
     if (!found)
     {
@@ -12339,7 +12453,7 @@ Status CatalogManager::dropColumn(const ID &table_id, const std::string &column_
     // 4. Check for dependent indexes
     std::vector<IndexInfo> dependent_indexes;
     std::vector<IndexInfo> all_indexes;
-    status = listIndexesForTable(table_id, all_indexes, ctx);
+    Status status = listIndexesForTable(table_id, all_indexes, ctx);
     if (status == Status::OK)
     {
         for (const auto &index : all_indexes)
@@ -12377,43 +12491,48 @@ Status CatalogManager::dropColumn(const ID &table_id, const std::string &column_
     }
 
     // 6. Soft delete the column record (mark is_valid = 0)
-    status = bp->pinPage(columns_table_page_, &page_data, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
-
-    HeapPage heap_page2(static_cast<uint8_t *>(page_data), db_->page_size());
-    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+    current_page_id = columns_table_page_;
     bool updated = false;
 
-    for (uint16_t i = 0; i < heap_page2.getItemCount(); ++i)
+    while (current_page_id != 0)
     {
-        const uint8_t *tuple_data;
-        uint32_t tuple_size;
-
-        if (heap_page2.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        void *page_data;
+        Status status = bp->pinPage(current_page_id, &page_data, ctx);
+        if (status != Status::OK)
         {
-            if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnRecord))
-            {
-                const ptrdiff_t offset =
-                    tuple_data - static_cast<const uint8_t *>(page_data);
-                uint8_t *mutable_tuple_data = mutable_page_data + offset;
-                auto *record = reinterpret_cast<ColumnRecord *>(mutable_tuple_data +
-                                                                 sizeof(TupleHeader));
-
-                if (record->table_id == table_id && record->column_id == column_id &&
-                    record->is_valid == 1)
-                {
-                    record->is_valid = 0; // Soft delete
-                    updated = true;
-                    break;
-                }
-            }
+            return status;
         }
-    }
 
-    bp->unpinPage(columns_table_page_, updated, ctx);
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        bool page_dirty = false;
+
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            auto *record = reinterpret_cast<ColumnRecord *>(
+                reinterpret_cast<uint8_t *>(page_data) + offset);
+
+            if (record->table_id == table_id && record->column_id == column_id &&
+                record->is_valid == 1)
+            {
+                record->is_valid = 0; // Soft delete
+                heap->header.generation++;
+                page_dirty = true;
+                updated = true;
+                break;
+            }
+
+            offset += sizeof(ColumnRecord);
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, page_dirty, ctx);
+        if (updated)
+        {
+            break;
+        }
+        current_page_id = next_page;
+    }
 
     if (!updated)
     {
@@ -12478,49 +12597,51 @@ Status CatalogManager::renameColumn(const ID &table_id, const std::string &old_n
 
     // 3. Scan columns to find old name and check new name doesn't exist
     BufferPool *bp = db_->buffer_pool();
-    void *page_data;
-    Status status = bp->pinPage(columns_table_page_, &page_data, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
-
-    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    Status status;
     ID column_id;
     bool found_old = false;
     bool new_name_exists = false;
+    uint32_t current_page_id = columns_table_page_;
 
-    for (uint16_t i = 0; i < heap_page.getItemCount(); ++i)
+    while (current_page_id != 0)
     {
-        const uint8_t *tuple_data;
-        uint32_t tuple_size;
-
-        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        void *page_data;
+        status = bp->pinPage(current_page_id, &page_data, ctx);
+        if (status != Status::OK)
         {
-            if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnRecord))
-            {
-                const auto *record = reinterpret_cast<const ColumnRecord *>(
-                    tuple_data + sizeof(TupleHeader));
+            return status;
+        }
 
-                if (record->table_id == table_id && record->is_valid == 1)
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+        uint32_t offset = sizeof(CatalogHeapPage);
+
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            const auto *record = reinterpret_cast<const ColumnRecord *>(
+                reinterpret_cast<const uint8_t *>(page_data) + offset);
+
+            if (record->table_id == table_id && record->is_valid == 1)
+            {
+                if (IdentifierUtils::namesMatch(old_name, false /*search_delimited*/,
+                                                record->column_name, false /*stored_delimited*/))
                 {
-                    if (IdentifierUtils::namesMatch(old_name, false /*search_delimited*/,
-                                                    record->column_name, false /*stored_delimited*/))
-                    {
-                        column_id = record->column_id;
-                        found_old = true;
-                    }
-                    if (IdentifierUtils::namesMatch(new_name, false /*search_delimited*/,
-                                                    record->column_name, false /*stored_delimited*/))
-                    {
-                        new_name_exists = true;
-                    }
+                    column_id = record->column_id;
+                    found_old = true;
+                }
+                if (IdentifierUtils::namesMatch(new_name, false /*search_delimited*/,
+                                                record->column_name, false /*stored_delimited*/))
+                {
+                    new_name_exists = true;
                 }
             }
-        }
-    }
 
-    bp->unpinPage(columns_table_page_, false, ctx);
+            offset += sizeof(ColumnRecord);
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, false, ctx);
+        current_page_id = next_page;
+    }
 
     if (!found_old)
     {
@@ -12537,48 +12658,53 @@ Status CatalogManager::renameColumn(const ID &table_id, const std::string &old_n
     }
 
     // 4. Update ColumnRecord on disk
-    status = bp->pinPage(columns_table_page_, &page_data, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
-
-    HeapPage heap_page2(static_cast<uint8_t *>(page_data), db_->page_size());
-    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+    current_page_id = columns_table_page_;
     bool updated = false;
 
-    for (uint16_t i = 0; i < heap_page2.getItemCount(); ++i)
+    while (current_page_id != 0)
     {
-        const uint8_t *tuple_data;
-        uint32_t tuple_size;
-
-        if (heap_page2.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        void *page_data;
+        status = bp->pinPage(current_page_id, &page_data, ctx);
+        if (status != Status::OK)
         {
-            if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnRecord))
-            {
-                const ptrdiff_t offset =
-                    tuple_data - static_cast<const uint8_t *>(page_data);
-                uint8_t *mutable_tuple_data = mutable_page_data + offset;
-                auto *record = reinterpret_cast<ColumnRecord *>(mutable_tuple_data +
-                                                                 sizeof(TupleHeader));
-
-                if (record->table_id == table_id && record->column_id == column_id &&
-                    record->is_valid == 1)
-                {
-                    // Update column name in-place
-                    std::memset(record->column_name, 0, sizeof(record->column_name));
-                    std::string truncated = UTF8Utils::truncateToBytes(
-                        new_name, sizeof(record->column_name));
-                    std::strncpy(record->column_name, truncated.c_str(),
-                                 sizeof(record->column_name) - 1);
-                    updated = true;
-                    break;
-                }
-            }
+            return status;
         }
-    }
 
-    bp->unpinPage(columns_table_page_, updated, ctx);
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        bool page_dirty = false;
+
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            auto *record = reinterpret_cast<ColumnRecord *>(
+                reinterpret_cast<uint8_t *>(page_data) + offset);
+
+            if (record->table_id == table_id && record->column_id == column_id &&
+                record->is_valid == 1)
+            {
+                // Update column name in-place
+                std::memset(record->column_name, 0, sizeof(record->column_name));
+                std::string truncated = UTF8Utils::truncateToBytes(
+                    new_name, sizeof(record->column_name));
+                std::strncpy(record->column_name, truncated.c_str(),
+                             sizeof(record->column_name) - 1);
+                heap->header.generation++;
+                page_dirty = true;
+                updated = true;
+                break;
+            }
+
+            offset += sizeof(ColumnRecord);
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, page_dirty, ctx);
+        if (updated)
+        {
+            break;
+        }
+        current_page_id = next_page;
+    }
 
     if (!updated)
     {
@@ -12604,45 +12730,50 @@ Status CatalogManager::renameColumn(const ID &table_id, const std::string &old_n
     if (column_permissions_table_page_ != 0)
     {
         BufferPool* bp_perm = db_->buffer_pool();
-        void* perm_page = nullptr;
-        Status perm_status = bp_perm->pinPage(column_permissions_table_page_, &perm_page, ctx);
-        if (perm_status == Status::OK)
+        uint32_t perm_page_id = column_permissions_table_page_;
+
+        while (perm_page_id != 0)
         {
-            HeapPage perm_heap(static_cast<uint8_t*>(perm_page), db_->page_size());
-            uint16_t item_count = perm_heap.getItemCount();
-            bool perm_updated = false;
-            auto* mutable_perm_data = static_cast<uint8_t*>(perm_page);
-
-            for (uint16_t i = 0; i < item_count; ++i)
+            void* perm_page = nullptr;
+            Status perm_status = bp_perm->pinPage(perm_page_id, &perm_page, ctx);
+            if (perm_status != Status::OK)
             {
-                const uint8_t* tuple_data = nullptr;
-                uint32_t tuple_size = 0;
-                if (perm_heap.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
-                {
-                    if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnPermissionRecord))
-                    {
-                        const ptrdiff_t offset =
-                            tuple_data - static_cast<const uint8_t*>(perm_page);
-                        auto* record = reinterpret_cast<ColumnPermissionRecord*>(
-                            mutable_perm_data + offset + sizeof(TupleHeader));
-
-                        if (record->is_valid == 1 &&
-                            record->table_id == table_id &&
-                            IdentifierUtils::namesMatch(old_name, false /*search_delimited*/,
-                                                        record->column_name, false /*stored_delimited*/))
-                        {
-                            std::string truncated = UTF8Utils::truncateToBytes(
-                                new_name, sizeof(record->column_name));
-                            std::memset(record->column_name, 0, sizeof(record->column_name));
-                            std::strncpy(record->column_name, truncated.c_str(),
-                                         sizeof(record->column_name) - 1);
-                            perm_updated = true;
-                        }
-                    }
-                }
+                break;
             }
 
-            bp_perm->unpinPage(column_permissions_table_page_, perm_updated, ctx);
+            auto* heap = reinterpret_cast<CatalogHeapPage*>(perm_page);
+            uint32_t offset = sizeof(CatalogHeapPage);
+            bool perm_updated = false;
+
+            for (uint32_t i = 0; i < heap->record_count; ++i)
+            {
+                auto* record = reinterpret_cast<ColumnPermissionRecord*>(
+                    reinterpret_cast<uint8_t*>(perm_page) + offset);
+
+                if (record->is_valid == 1 &&
+                    record->table_id == table_id &&
+                    IdentifierUtils::namesMatch(old_name, false /*search_delimited*/,
+                                                record->column_name, false /*stored_delimited*/))
+                {
+                    std::string truncated = UTF8Utils::truncateToBytes(
+                        new_name, sizeof(record->column_name));
+                    std::memset(record->column_name, 0, sizeof(record->column_name));
+                    std::strncpy(record->column_name, truncated.c_str(),
+                                 sizeof(record->column_name) - 1);
+                    perm_updated = true;
+                }
+
+                offset += sizeof(ColumnPermissionRecord);
+            }
+
+            if (perm_updated)
+            {
+                heap->header.generation++;
+            }
+
+            uint32_t next_page = heap->next_page;
+            bp_perm->unpinPage(perm_page_id, perm_updated, ctx);
+            perm_page_id = next_page;
         }
     }
 
@@ -14726,45 +14857,51 @@ Status CatalogManager::alterColumnType(const ID &table_id, const std::string &co
 
     // 2. Scan columns to find the target column
     BufferPool *bp = db_->buffer_pool();
-    void *page_data;
-    Status status = bp->pinPage(columns_table_page_, &page_data, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
-
-    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    Status status;
     ID column_id;
     DataType old_type = DataType::UNKNOWN;
     uint32_t old_precision = 0;
     bool found = false;
+    uint32_t current_page_id = columns_table_page_;
 
-    for (uint16_t i = 0; i < heap_page.getItemCount(); ++i)
+    while (current_page_id != 0)
     {
-        const uint8_t *tuple_data;
-        uint32_t tuple_size;
-
-        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        void *page_data;
+        status = bp->pinPage(current_page_id, &page_data, ctx);
+        if (status != Status::OK)
         {
-            if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnRecord))
-            {
-                const auto *record = reinterpret_cast<const ColumnRecord *>(
-                    tuple_data + sizeof(TupleHeader));
-
-                if (record->table_id == table_id && record->is_valid == 1 &&
-                    std::strcmp(record->column_name, column_name.c_str()) == 0)
-                {
-                    column_id = record->column_id;
-                    old_type = static_cast<DataType>(record->data_type);
-                    old_precision = record->type_precision;
-                    found = true;
-                    break;
-                }
-            }
+            return status;
         }
-    }
 
-    bp->unpinPage(columns_table_page_, false, ctx);
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+        uint32_t offset = sizeof(CatalogHeapPage);
+
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            const auto *record = reinterpret_cast<const ColumnRecord *>(
+                reinterpret_cast<const uint8_t *>(page_data) + offset);
+
+            if (record->table_id == table_id && record->is_valid == 1 &&
+                std::strcmp(record->column_name, column_name.c_str()) == 0)
+            {
+                column_id = record->column_id;
+                old_type = static_cast<DataType>(record->data_type);
+                old_precision = record->type_precision;
+                found = true;
+                break;
+            }
+
+            offset += sizeof(ColumnRecord);
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, false, ctx);
+        if (found)
+        {
+            break;
+        }
+        current_page_id = next_page;
+    }
 
     if (!found)
     {
@@ -14821,46 +14958,51 @@ Status CatalogManager::alterColumnType(const ID &table_id, const std::string &co
     }
 
     // 4. Update ColumnRecord on disk
-    status = bp->pinPage(columns_table_page_, &page_data, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
-
-    HeapPage heap_page2(static_cast<uint8_t *>(page_data), db_->page_size());
-    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+    current_page_id = columns_table_page_;
     bool updated = false;
 
-    for (uint16_t i = 0; i < heap_page2.getItemCount(); ++i)
+    while (current_page_id != 0)
     {
-        const uint8_t *tuple_data;
-        uint32_t tuple_size;
-
-        if (heap_page2.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        void *page_data;
+        status = bp->pinPage(current_page_id, &page_data, ctx);
+        if (status != Status::OK)
         {
-            if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnRecord))
-            {
-                const ptrdiff_t offset =
-                    tuple_data - static_cast<const uint8_t *>(page_data);
-                uint8_t *mutable_tuple_data = mutable_page_data + offset;
-                auto *record = reinterpret_cast<ColumnRecord *>(mutable_tuple_data +
-                                                                 sizeof(TupleHeader));
-
-                if (record->table_id == table_id && record->column_id == column_id &&
-                    record->is_valid == 1)
-                {
-                    // Update type information
-                    record->data_type = static_cast<uint16_t>(new_type);
-                    record->type_precision = new_precision;
-                    record->type_scale = new_scale;
-                    updated = true;
-                    break;
-                }
-            }
+            return status;
         }
-    }
 
-    bp->unpinPage(columns_table_page_, updated, ctx);
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        bool page_dirty = false;
+
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            auto *record = reinterpret_cast<ColumnRecord *>(
+                reinterpret_cast<uint8_t *>(page_data) + offset);
+
+            if (record->table_id == table_id && record->column_id == column_id &&
+                record->is_valid == 1)
+            {
+                // Update type information
+                record->data_type = static_cast<uint16_t>(new_type);
+                record->type_precision = new_precision;
+                record->type_scale = new_scale;
+                heap->header.generation++;
+                page_dirty = true;
+                updated = true;
+                break;
+            }
+
+            offset += sizeof(ColumnRecord);
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, page_dirty, ctx);
+        if (updated)
+        {
+            break;
+        }
+        current_page_id = next_page;
+    }
 
     if (!updated)
     {
@@ -17935,45 +18077,52 @@ auto CatalogManager::getObjectName(const ID& object_id, ObjectType type,
 
             BufferPool *bp = db_->buffer_pool();
             void *page_data;
-            Status status = bp->pinPage(columns_table_page_, &page_data, ctx);
-            if (status != Status::OK) {
-                return "<unknown>";
-            }
-
-            HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
-            uint16_t item_count = heap_page.getItemCount();
             std::string result = "<unknown>";
+            uint32_t current_page_id = columns_table_page_;
 
-            for (uint16_t i = 0; i < item_count; ++i)
+            while (current_page_id != 0)
             {
-                const uint8_t *tuple_data;
-                uint32_t tuple_size;
-                if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
-                {
-                    if (tuple_size >= sizeof(TupleHeader) + sizeof(ColumnRecord))
-                    {
-                        const auto *record = reinterpret_cast<const ColumnRecord *>(
-                            tuple_data + sizeof(TupleHeader));
-
-                        if (record->column_id == object_id && record->is_valid == 1)
-                        {
-                            std::string column_name(record->column_name);
-                            auto table_it = table_cache_.find(record->table_id);
-                            if (table_it != table_cache_.end())
-                            {
-                                result = table_it->second.table_name + "." + column_name;
-                            }
-                            else
-                            {
-                                result = column_name;
-                            }
-                            break;
-                        }
-                    }
+                Status status = bp->pinPage(current_page_id, &page_data, ctx);
+                if (status != Status::OK) {
+                    return "<unknown>";
                 }
-            }
 
-            bp->unpinPage(columns_table_page_, false, ctx);
+                auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+                uint32_t offset = sizeof(CatalogHeapPage);
+                bool found = false;
+
+                for (uint32_t i = 0; i < heap->record_count; ++i)
+                {
+                    const auto *record = reinterpret_cast<const ColumnRecord *>(
+                        reinterpret_cast<const uint8_t *>(page_data) + offset);
+
+                    if (record->column_id == object_id && record->is_valid == 1)
+                    {
+                        std::string column_name(record->column_name);
+                        auto table_it = table_cache_.find(record->table_id);
+                        if (table_it != table_cache_.end())
+                        {
+                            result = table_it->second.table_name + "." + column_name;
+                        }
+                        else
+                        {
+                            result = column_name;
+                        }
+                        found = true;
+                        break;
+                    }
+
+                    offset += sizeof(ColumnRecord);
+                }
+
+                uint32_t next_page = heap->next_page;
+                bp->unpinPage(current_page_id, false, ctx);
+                if (found)
+                {
+                    break;
+                }
+                current_page_id = next_page;
+            }
             return result;
         }
 

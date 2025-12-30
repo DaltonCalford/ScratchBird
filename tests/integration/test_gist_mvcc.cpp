@@ -549,6 +549,9 @@ TEST_F(GiSTMVCCTest, GarbageCollectionDeadEntries)
                                 opclass_, root_page, &ctx);
     ASSERT_NE(gist, nullptr);
 
+    std::vector<TID> dead_tids;
+    dead_tids.reserve(10);
+
     // Insert and delete 10 entries
     for (int i = 0; i < 10; i++)
     {
@@ -566,12 +569,15 @@ TEST_F(GiSTMVCCTest, GarbageCollectionDeadEntries)
         EXPECT_EQ(status, Status::OK);
         status = commitTxn(xid_delete, &ctx);
         ASSERT_EQ(status, Status::OK);
+        dead_tids.push_back(tid);
     }
 
     // Run garbage collection
-    uint64_t oldest_xid = txn_mgr_->getOldestActiveXid();
-    status = gist->removeDeadEntries(oldest_xid, &ctx);
+    uint64_t entries_removed = 0;
+    uint64_t pages_modified = 0;
+    status = gist->removeDeadEntries(dead_tids, &entries_removed, &pages_modified, &ctx);
     EXPECT_EQ(status, Status::OK);
+    EXPECT_GT(entries_removed, 0U);
 
     // Verify entries are removed (search should return 0)
     uint64_t xid_check = beginTxn(&ctx);
@@ -665,4 +671,3 @@ TEST_F(GiSTMVCCTest, OperatorClassFramework)
 }
 
 // ============================================================================
-

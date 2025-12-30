@@ -2691,59 +2691,6 @@ StartTransactionStmt* Parser::parseStartTransaction() {
         }
     };
 
-    auto parseReadCommittedVariant = [&]() {
-        auto tokenMatches = [&](const Token& token, const char* keyword) -> bool {
-            std::string_view text = state_.lexer().getTokenText(token);
-            size_t len = std::strlen(keyword);
-            if (text.size() != len) {
-                return false;
-            }
-            for (size_t i = 0; i < len; ++i) {
-                char a = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
-                char b = static_cast<char>(std::tolower(static_cast<unsigned char>(keyword[i])));
-                if (a != b) {
-                    return false;
-                }
-            }
-            return true;
-        };
-
-        if (stmt->has_read_committed_mode) {
-            error("READ COMMITTED mode specified more than once");
-            return;
-        }
-        if (matchContextual("READ")) {
-            if (matchContextual("CONSISTENCY")) {
-                stmt->has_read_committed_mode = true;
-                stmt->read_committed_mode = ReadCommittedMode::READ_CONSISTENCY;
-            } else {
-                error("Expected CONSISTENCY after READ COMMITTED READ");
-            }
-        } else if (matchContextual("RECORD_VERSION")) {
-            stmt->has_read_committed_mode = true;
-            stmt->read_committed_mode = ReadCommittedMode::RECORD_VERSION;
-        } else if (matchContextual("RECORD")) {
-            expectContextual("VERSION", "Expected VERSION after RECORD");
-            stmt->has_read_committed_mode = true;
-            stmt->read_committed_mode = ReadCommittedMode::RECORD_VERSION;
-        } else if (checkContextual("NO")) {
-            Token next = state_.lexer().peekToken();
-            if (next.type == TokenType::IDENTIFIER &&
-                (tokenMatches(next, "RECORD") || tokenMatches(next, "RECORD_VERSION"))) {
-                matchContextual("NO");
-                if (matchContextual("RECORD_VERSION")) {
-                    stmt->has_read_committed_mode = true;
-                    stmt->read_committed_mode = ReadCommittedMode::NO_RECORD_VERSION;
-                } else {
-                    expectContextual("RECORD", "Expected RECORD after NO");
-                    expectContextual("VERSION", "Expected VERSION after NO RECORD");
-                    stmt->has_read_committed_mode = true;
-                    stmt->read_committed_mode = ReadCommittedMode::NO_RECORD_VERSION;
-                }
-            }
-        }
-    };
-
     // Parse transaction characteristics (SQL-standard + Firebird legacy) in any order.
     while (!isAtEnd() && !check(TokenType::SEMICOLON)) {
         if (match(TokenType::KW_ON)) {
@@ -3093,6 +3040,59 @@ SetStmt* Parser::parseSet() {
             stmt->isolation_level = IsolationLevel::SERIALIZABLE;
         } else {
             stmt->isolation_level = IsolationLevel::REPEATABLE_READ;
+        }
+    };
+
+    auto parseReadCommittedVariant = [&]() {
+        auto tokenMatches = [&](const Token& token, const char* keyword) -> bool {
+            std::string_view text = state_.lexer().getTokenText(token);
+            size_t len = std::strlen(keyword);
+            if (text.size() != len) {
+                return false;
+            }
+            for (size_t i = 0; i < len; ++i) {
+                char a = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
+                char b = static_cast<char>(std::tolower(static_cast<unsigned char>(keyword[i])));
+                if (a != b) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        if (stmt->has_read_committed_mode) {
+            error("READ COMMITTED mode specified more than once");
+            return;
+        }
+        if (matchContextual("READ")) {
+            if (matchContextual("CONSISTENCY")) {
+                stmt->has_read_committed_mode = true;
+                stmt->read_committed_mode = ReadCommittedMode::READ_CONSISTENCY;
+            } else {
+                error("Expected CONSISTENCY after READ COMMITTED READ");
+            }
+        } else if (matchContextual("RECORD_VERSION")) {
+            stmt->has_read_committed_mode = true;
+            stmt->read_committed_mode = ReadCommittedMode::RECORD_VERSION;
+        } else if (matchContextual("RECORD")) {
+            expectContextual("VERSION", "Expected VERSION after RECORD");
+            stmt->has_read_committed_mode = true;
+            stmt->read_committed_mode = ReadCommittedMode::RECORD_VERSION;
+        } else if (checkContextual("NO")) {
+            Token next = state_.lexer().peekToken();
+            if (next.type == TokenType::IDENTIFIER &&
+                (tokenMatches(next, "RECORD") || tokenMatches(next, "RECORD_VERSION"))) {
+                matchContextual("NO");
+                if (matchContextual("RECORD_VERSION")) {
+                    stmt->has_read_committed_mode = true;
+                    stmt->read_committed_mode = ReadCommittedMode::NO_RECORD_VERSION;
+                } else {
+                    expectContextual("RECORD", "Expected RECORD after NO");
+                    expectContextual("VERSION", "Expected VERSION after NO RECORD");
+                    stmt->has_read_committed_mode = true;
+                    stmt->read_committed_mode = ReadCommittedMode::NO_RECORD_VERSION;
+                }
+            }
         }
     };
 

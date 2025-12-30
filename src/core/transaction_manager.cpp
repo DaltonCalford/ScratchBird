@@ -179,7 +179,7 @@ namespace scratchbird::core
             return Status::PAGE_CORRUPT;
         }
 
-        Status status = loadTipPage(tip_root_page_, ctx);
+        status = loadTipPage(tip_root_page_, ctx);
         if (status != Status::OK)
         {
             return status;

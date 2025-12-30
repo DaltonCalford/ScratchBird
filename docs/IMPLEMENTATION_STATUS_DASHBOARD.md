@@ -1,7 +1,7 @@
 # Implementation Status Dashboard
 
 **Last updated:** current session  
-**Tests:** all passing (`ctest --output-on-failure` from `build/`)
+**Tests:** `ctest --output-on-failure --test-dir build -LE sql` timed out after 1h; StoredCodeDependencyTest.DropFunctionFailsIfCalledByAnotherFunction and StoredCodeDependencyTest.DropProcedureFailsIfCalled hit 1500s timeouts; run incomplete.
 
 ## Phase Summary (history + todo)
 - **Alpha 1 – Engine/Core**  
@@ -20,6 +20,9 @@
 ## Outstanding Detail (Alpha 3 blockers)
 1) Full dependency life-cycle enforcement across all object types.  
 2) Dialect-specific adapter e2e coverage (Firebird, then MySQL, then PostgreSQL).  
+
+## Plan Progress (Active)
+- Plan 02 (UUID Resolution/Rename/Move): unqualified resolution now prefers current schema with unit coverage; table/column rename/move resolver tests added; outstanding: non-table rename/move tests, resolver rebuild coverage, resolver adoption beyond SHOW/diagnostics.
 
 ## Links
 - Roadmap: `OFFICIAL_ROADMAP.md`  

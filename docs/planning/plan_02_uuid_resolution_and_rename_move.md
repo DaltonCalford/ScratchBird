@@ -17,6 +17,9 @@ Completed:
   - Firebird: column rename via ALTER [COLUMN] <col> TO <new>, domain rename via ALTER DOMAIN TO.
 - SHOW LOCATION/RESOLVED/OBJECTS/SCHEMA_TREE use resolver output.
 - Catalog persistence + rename/move disk updates added for sequences, views, triggers, functions, procedures, synonyms, and foreign tables.
+- Unqualified name resolution now prefers current schema before search_path (aligned with schema path spec) with unit coverage.
+- Rename/move resolver tests for table/column paths (including restart rebuild) added.
+- Column rename scans catalog heap page chains (covered by CatalogRenameMoveTest.RenameColumnUpdatesResolver).
 
 Partial / Outstanding:
 - Resolver entries for non-persisted objects vanish on restart (resolver rebuild only sees persisted catalogs).
@@ -24,7 +27,7 @@ Partial / Outstanding:
 - getSchema(string) resolves dotted paths but normalizes components to upper; delimited identifier resolution needs explicit handling once persisted.
 - ALTER TABLE semantic analysis only covers rename/move; remaining actions still warn.
 - Executor and SHOW paths still default to PUBLIC in many places; resolver is not yet used broadly for name lookup.
-- Tests for resolver, rename/move, and restart rebuild coverage are still incomplete.
+- Rename/move tests for non-table object types and cross-type ambiguity are still missing.
 
 Emulated parser constraints (by design):
 - Firebird parser is limited to Firebird-valid rename semantics (no SET SCHEMA / no object-level rename beyond domain and column).

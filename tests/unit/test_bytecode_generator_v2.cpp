@@ -23,6 +23,7 @@
 using namespace scratchbird::parser::v2;
 using namespace scratchbird::core;
 using namespace scratchbird::sblr;
+namespace sblr = scratchbird::sblr;
 
 // Generate a unique database path per test to avoid conflicts in parallel execution
 static std::string generateUniqueDbPath() {
