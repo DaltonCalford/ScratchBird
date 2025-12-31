@@ -74,9 +74,9 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
 
     // Switch to emulated MySQL schema for this database if possible
     if (!default_db_set_) {
-        std::string schema_name = "remote.emulated.mysql." +
-            (database_name_.empty() ? std::string("default") : database_name_);
-        std::string use_stmt = "SET search_path TO \"" + schema_name + "\"";
+        std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
+        std::string schema_name = "remote.emulated.mysql.localhost." + db_name;
+        std::string use_stmt = "SET search_path TO '" + escapeLiteral(schema_name) + "'";
         client::ResultSet rs;
         auto set_status = client_->executeQuery(use_stmt, &rs, ctx);
         if (set_status == core::Status::OK) {
@@ -266,7 +266,8 @@ core::Status MySqlAdapter::compileQuery(const std::string& sql,
     }
 
     sblr::MySQLQueryCompiler compiler(database_.get());
-    compiler.setDefaultSchema("/remote/emulated/mysql/localhost/");
+    std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
+    compiler.setDefaultSchema("/remote/emulated/mysql/localhost/" + db_name + "/");
     auto result = compiler.compile(sql);
     if (!result.success()) {
         error_out = result.errors().empty() ? "Compilation failed" : result.errors().front();
@@ -1554,7 +1555,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
     }
 
     std::string db_name = database_name_.empty() ? "default" : database_name_;
-    std::string base_schema = "remote.emulated.mysql." + db_name;
+    std::string base_schema = "remote.emulated.mysql.localhost." + db_name;
     std::string info_schema = base_schema + ".information_schema";
 
     auto safeExec = [&](const std::string& sql) {
@@ -1562,46 +1563,50 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
         client_->executeQuery(sql, &rs, ctx);
     };
 
-    safeExec("CREATE SCHEMA IF NOT EXISTS \"" + info_schema + "\"");
-    safeExec("CREATE TABLE IF NOT EXISTS \"" + info_schema + "\".\"schemata\" ("
+    auto info_table = [&](const std::string& name) {
+        return info_schema + "." + name;
+    };
+
+    safeExec("CREATE SCHEMA IF NOT EXISTS " + info_schema);
+    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("schemata") + " ("
              "catalog_name TEXT, schema_name TEXT, default_character_set_name TEXT, default_collation_name TEXT)");
-    safeExec("CREATE TABLE IF NOT EXISTS \"" + info_schema + "\".\"tables\" ("
+    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("tables") + " ("
              "table_schema TEXT, table_name TEXT, table_type TEXT)");
-    safeExec("CREATE TABLE IF NOT EXISTS \"" + info_schema + "\".\"columns\" ("
+    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("columns") + " ("
              "table_schema TEXT, table_name TEXT, column_name TEXT, ordinal_position INT,"
              "data_type TEXT, is_nullable TEXT, character_maximum_length INT, numeric_precision INT, numeric_scale INT)");
-    safeExec("CREATE TABLE IF NOT EXISTS \"" + info_schema + "\".\"table_constraints\" ("
+    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("table_constraints") + " ("
              "constraint_schema TEXT, constraint_name TEXT, table_schema TEXT, table_name TEXT, constraint_type TEXT)");
-    safeExec("CREATE TABLE IF NOT EXISTS \"" + info_schema + "\".\"key_column_usage\" ("
+    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("key_column_usage") + " ("
              "constraint_schema TEXT, constraint_name TEXT, table_schema TEXT, table_name TEXT,"
              "column_name TEXT, ordinal_position INT)");
-    safeExec("CREATE TABLE IF NOT EXISTS \"" + info_schema + "\".\"referential_constraints\" ("
+    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("referential_constraints") + " ("
              "constraint_schema TEXT, constraint_name TEXT, unique_constraint_schema TEXT, unique_constraint_name TEXT,"
              "match_option TEXT, update_rule TEXT, delete_rule TEXT, table_name TEXT, referenced_table_name TEXT)");
-    safeExec("CREATE TABLE IF NOT EXISTS \"" + info_schema + "\".\"statistics\" ("
+    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("statistics") + " ("
              "table_schema TEXT, table_name TEXT, non_unique INT, index_schema TEXT, index_name TEXT, "
              "seq_in_index INT, column_name TEXT, collation TEXT, cardinality BIGINT, index_type TEXT)");
-    safeExec("CREATE TABLE IF NOT EXISTS \"" + info_schema + "\".\"routines\" ("
+    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("routines") + " ("
              "routine_schema TEXT, routine_name TEXT, routine_type TEXT, data_type TEXT)");
 
-    std::string delete_existing = "DELETE FROM \"" + info_schema + "\".\"schemata\" "
+    std::string delete_existing = "DELETE FROM " + info_table("schemata") + " "
                                   "WHERE schema_name = '" + escapeLiteral(db_name) + "'";
     safeExec(delete_existing);
-    std::string insert_schema = "INSERT INTO \"" + info_schema + "\".\"schemata\" "
+    std::string insert_schema = "INSERT INTO " + info_table("schemata") + " "
         "(catalog_name, schema_name, default_character_set_name, default_collation_name) VALUES "
         "('def','" + escapeLiteral(db_name) + "','utf8mb4','utf8mb4_general_ci')";
     safeExec(insert_schema);
 
     // Describe the bootstrap tables themselves
-    safeExec("DELETE FROM \"" + info_schema + "\".\"tables\" WHERE table_schema IN ('information_schema')");
-    safeExec("DELETE FROM \"" + info_schema + "\".\"columns\" WHERE table_schema IN ('information_schema')");
-    safeExec("DELETE FROM \"" + info_schema + "\".\"table_constraints\" WHERE constraint_schema IN ('information_schema')");
-    safeExec("DELETE FROM \"" + info_schema + "\".\"key_column_usage\" WHERE constraint_schema IN ('information_schema')");
-    safeExec("DELETE FROM \"" + info_schema + "\".\"referential_constraints\" WHERE constraint_schema IN ('information_schema')");
-    safeExec("DELETE FROM \"" + info_schema + "\".\"statistics\" WHERE table_schema IN ('information_schema')");
+    safeExec("DELETE FROM " + info_table("tables") + " WHERE table_schema IN ('information_schema')");
+    safeExec("DELETE FROM " + info_table("columns") + " WHERE table_schema IN ('information_schema')");
+    safeExec("DELETE FROM " + info_table("table_constraints") + " WHERE constraint_schema IN ('information_schema')");
+    safeExec("DELETE FROM " + info_table("key_column_usage") + " WHERE constraint_schema IN ('information_schema')");
+    safeExec("DELETE FROM " + info_table("referential_constraints") + " WHERE constraint_schema IN ('information_schema')");
+    safeExec("DELETE FROM " + info_table("statistics") + " WHERE table_schema IN ('information_schema')");
 
     auto insertTable = [&](const std::string& name) {
-        std::string sql = "INSERT INTO \"" + info_schema + "\".\"tables\" "
+        std::string sql = "INSERT INTO " + info_table("tables") + " "
                           "(table_schema, table_name, table_type) VALUES "
                           "('information_schema','" + escapeLiteral(name) + "','BASE TABLE')";
         safeExec(sql);
@@ -1610,7 +1615,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
     auto insertColumn = [&](const std::string& tbl, int pos, const std::string& col,
                             const std::string& type, const std::string& nullable,
                             int char_len = -1, int num_prec = -1, int num_scale = -1) {
-        std::string sql = "INSERT INTO \"" + info_schema + "\".\"columns\" "
+        std::string sql = "INSERT INTO " + info_table("columns") + " "
                           "(table_schema, table_name, column_name, ordinal_position, data_type, is_nullable, "
                           "character_maximum_length, numeric_precision, numeric_scale) VALUES "
                           "('information_schema','" + escapeLiteral(tbl) + "','" + escapeLiteral(col) + "'," +
@@ -1711,7 +1716,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
         }
     };
 
-    std::string insert_prefix_schemata = "INSERT INTO \"" + info_schema + "\".\"schemata\" "
+    std::string insert_prefix_schemata = "INSERT INTO " + info_table("schemata") + " "
         "(catalog_name, schema_name, default_character_set_name, default_collation_name) VALUES ";
     copyQuery("SELECT catalog_name, schema_name, default_character_set_name, default_collation_name "
               "FROM information_schema.schemata "
@@ -1724,7 +1729,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
         safeExec(sql);
     });
 
-    std::string insert_prefix_constraints = "INSERT INTO \"" + info_schema + "\".\"table_constraints\" "
+    std::string insert_prefix_constraints = "INSERT INTO " + info_table("table_constraints") + " "
         "(constraint_schema, constraint_name, table_schema, table_name, constraint_type) VALUES ";
     copyQuery("SELECT constraint_schema, constraint_name, table_schema, table_name, constraint_type "
               "FROM information_schema.table_constraints "
@@ -1741,7 +1746,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
         safeExec(sql);
     });
 
-    std::string insert_prefix_kcu = "INSERT INTO \"" + info_schema + "\".\"key_column_usage\" "
+    std::string insert_prefix_kcu = "INSERT INTO " + info_table("key_column_usage") + " "
         "(constraint_schema, constraint_name, table_schema, table_name, column_name, ordinal_position) VALUES ";
     copyQuery("SELECT constraint_schema, constraint_name, table_schema, table_name, column_name, ordinal_position "
               "FROM information_schema.key_column_usage "
@@ -1759,7 +1764,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
         safeExec(sql);
     });
 
-    std::string insert_prefix_ref = "INSERT INTO \"" + info_schema + "\".\"referential_constraints\" "
+    std::string insert_prefix_ref = "INSERT INTO " + info_table("referential_constraints") + " "
         "(constraint_schema, constraint_name, unique_constraint_schema, unique_constraint_name, "
         "match_option, update_rule, delete_rule, table_name, referenced_table_name) VALUES ";
     copyQuery("SELECT constraint_schema, constraint_name, unique_constraint_schema, unique_constraint_name, "
@@ -1782,7 +1787,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
         safeExec(sql);
     });
 
-    std::string insert_prefix_stats = "INSERT INTO \"" + info_schema + "\".\"statistics\" "
+    std::string insert_prefix_stats = "INSERT INTO " + info_table("statistics") + " "
         "(table_schema, table_name, non_unique, index_schema, index_name, seq_in_index, column_name, collation, cardinality, index_type) VALUES ";
     copyQuery("SELECT table_schema, table_name, non_unique, index_schema, index_name, seq_in_index, "
               "column_name, collation, cardinality, index_type "
@@ -1805,7 +1810,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
         safeExec(sql);
     });
 
-    std::string insert_prefix_routines = "INSERT INTO \"" + info_schema + "\".\"routines\" "
+    std::string insert_prefix_routines = "INSERT INTO " + info_table("routines") + " "
         "(routine_schema, routine_name, routine_type, data_type) VALUES ";
     copyQuery("SELECT routine_schema, routine_name, routine_type, data_type "
               "FROM information_schema.routines "
@@ -1821,7 +1826,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
         safeExec(sql);
     });
 
-    std::string insert_prefix_tables = "INSERT INTO \"" + info_schema + "\".\"tables\" "
+    std::string insert_prefix_tables = "INSERT INTO " + info_table("tables") + " "
         "(table_schema, table_name, table_type) VALUES ";
     copyQuery("SELECT table_schema, table_name, table_type "
               "FROM information_schema.tables "
@@ -1834,7 +1839,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
         safeExec(sql);
     });
 
-    std::string insert_prefix_columns = "INSERT INTO \"" + info_schema + "\".\"columns\" "
+    std::string insert_prefix_columns = "INSERT INTO " + info_table("columns") + " "
         "(table_schema, table_name, column_name, ordinal_position, data_type, is_nullable, "
         "character_maximum_length, numeric_precision, numeric_scale) VALUES ";
     copyQuery("SELECT table_schema, table_name, column_name, ordinal_position, data_type, "

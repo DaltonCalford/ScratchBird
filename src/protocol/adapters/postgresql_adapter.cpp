@@ -86,9 +86,9 @@ core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
 
     // Set search_path to emulated schema (if it exists or can be created)
     if (!search_path_set_) {
-        std::string schema_name = "remote.emulated.postgresql." +
-            (database_name_.empty() ? std::string("default") : database_name_);
-        std::string set_path = "SET search_path TO \"" + schema_name + "\"";
+        std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
+        std::string schema_name = "remote.emulated.postgresql.localhost." + db_name;
+        std::string set_path = "SET search_path TO '" + escapeLiteral(schema_name) + "'";
         client::ResultSet rs;
         auto set_status = client_->executeQuery(set_path, &rs, ctx);
         if (set_status == core::Status::OK) {
@@ -1052,22 +1052,30 @@ core::Status PostgresqlAdapter::ensurePostgresSystemCatalog(core::ErrorContext* 
         return core::Status::INVALID_ARGUMENT;
     }
 
-    std::string schema_name = "remote.emulated.postgresql";
-    if (!database_path_.empty()) {
+    std::string db_name = database_name_;
+    if (db_name.empty() && !database_path_.empty()) {
         auto stem = std::filesystem::path(database_path_).stem().string();
         if (!stem.empty()) {
-            schema_name += "." + stem;
+            db_name = stem;
         }
     }
+    if (db_name.empty()) {
+        db_name = "default";
+    }
+
+    std::string schema_name = "remote.emulated.postgresql.localhost." + db_name;
 
     core::CatalogManager::SchemaInfo schema_info;
     auto status = catalog->getSchema(schema_name, schema_info, ctx);
     if (status != core::Status::OK) {
-        if (status != core::Status::INVALID_ARGUMENT) {
+        if (status != core::Status::INVALID_ARGUMENT && status != core::Status::NOT_FOUND) {
             return status;
         }
         core::ID schema_id;
-        status = catalog->createSchema(schema_name, "system", schema_id, ctx);
+        status = catalog->createSchemaPath(schema_name,
+                                           core::CatalogManager::SchemaType::REMOTE_EMULATED,
+                                           schema_id,
+                                           ctx);
         if (status != core::Status::OK) {
             return status;
         }
@@ -1129,6 +1137,8 @@ core::Status PostgresqlAdapter::compileQuery(const std::string& sql,
     }
 
     sblr::PostgreSQLQueryCompiler compiler(database_.get());
+    std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
+    compiler.setDefaultSchema("/remote/emulated/postgresql/localhost/" + db_name + "/");
     if (pg_schema_id_ != core::ID{}) {
         compiler.setCurrentSchema(pg_schema_id_);
     }

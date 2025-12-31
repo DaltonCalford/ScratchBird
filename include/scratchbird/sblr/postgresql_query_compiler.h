@@ -109,6 +109,12 @@ public:
     void setCurrentSchema(const core::ID& schema_id) { current_schema_ = schema_id; }
 
     /**
+     * Get/set parser default schema path (slash-separated)
+     */
+    const std::string& defaultSchema() const { return default_schema_; }
+    void setDefaultSchema(const std::string& schema) { default_schema_ = schema; }
+
+    /**
      * Get/set search path
      */
     const std::vector<std::string>& searchPath() const { return search_path_; }
@@ -130,6 +136,7 @@ private:
     core::Database* db_ = nullptr;
     core::CatalogManager* catalog_ = nullptr;
     core::ID current_schema_;
+    std::string default_schema_ = "/remote/emulated/postgresql/localhost/";
     std::vector<std::string> search_path_ = {"public"};
     bool optimizations_enabled_ = true;
     bool stats_enabled_ = false;

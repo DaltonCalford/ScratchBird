@@ -56,7 +56,7 @@ PostgreSQLCompilationResult PostgreSQLQueryCompiler::compileInternal(const std::
     auto parse_start = std::chrono::steady_clock::now();
 
     // Create PostgreSQL parser
-    pg::Parser parser(sql);
+    pg::Parser parser(sql, db_, default_schema_);
     pg::ParseResult parse_result = parser.parseStatement();
 
     auto parse_end = std::chrono::steady_clock::now();

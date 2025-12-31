@@ -543,23 +543,30 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
         return core::Status::INVALID_ARGUMENT;
     }
 
-    auto schema_name = std::string("remote.emulated.firebird");
+    std::string db_name;
     if (!database_path_.empty()) {
         auto stem = std::filesystem::path(database_path_).stem().string();
         if (!stem.empty()) {
-            schema_name += "." + stem;
+            db_name = stem;
         }
     }
+    if (db_name.empty()) {
+        db_name = "default";
+    }
+    auto schema_name = std::string("remote.emulated.firebird.localhost.") + db_name;
     firebird_schema_name_ = schema_name;
 
     core::CatalogManager::SchemaInfo fb_schema;
     auto status = catalog->getSchema(schema_name, fb_schema, ctx);
     if (status != core::Status::OK) {
-        if (status != core::Status::INVALID_ARGUMENT) {
+        if (status != core::Status::INVALID_ARGUMENT && status != core::Status::NOT_FOUND) {
             return status;
         }
         core::ID schema_id;
-        status = catalog->createSchema(schema_name, "system", schema_id, ctx);
+        status = catalog->createSchemaPath(schema_name,
+                                           core::CatalogManager::SchemaType::REMOTE_EMULATED,
+                                           schema_id,
+                                           ctx);
         if (status != core::Status::OK) {
             return status;
         }
@@ -1164,7 +1171,18 @@ core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
         client_.reset();
     }
     if (status == core::Status::OK && !firebird_schema_name_.empty()) {
-        auto set_path_sql = "SET search_path TO \"" + firebird_schema_name_ + "\"";
+        auto escape_literal = [](const std::string& in) {
+            std::string out;
+            out.reserve(in.size());
+            for (char ch : in) {
+                if (ch == '\'') {
+                    out.push_back('\'');
+                }
+                out.push_back(ch);
+            }
+            return out;
+        };
+        auto set_path_sql = "SET search_path TO '" + escape_literal(firebird_schema_name_) + "'";
         auto set_status = client_->execute(set_path_sql, nullptr, ctx);
         if (set_status != core::Status::OK) {
             client_->disconnect();
