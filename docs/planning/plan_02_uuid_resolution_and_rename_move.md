@@ -20,14 +20,19 @@ Completed:
 - Unqualified name resolution now prefers current schema before search_path (aligned with schema path spec) with unit coverage.
 - Rename/move resolver tests for table/column paths (including restart rebuild) added.
 - Column rename scans catalog heap page chains (covered by CatalogRenameMoveTest.RenameColumnUpdatesResolver).
+- Rename/move resolver tests added for sequences, views, synonyms, foreign tables, functions, procedures, packages, UDRs, and exceptions; cross-type ambiguity resolution is now covered.
+- Rename/move resolver tests added for table-scoped index/trigger/constraint objects, with constraint rename persistence coverage.
+- Resolver rebuild after restart now covers table-scoped (index/trigger/constraint) and schema-scoped (synonym/foreign table/package/UDR/exception) objects.
+- Executor DROP/ALTER TABLE and CREATE/DROP INDEX now resolve schema via resolveSchemaIdForQualifiedName, with unit coverage for current-schema resolution.
+- name_is_delimited is now persisted for columns, constraints, synonyms, foreign tables, packages, UDRs, and exceptions; resolver rebuild uses the stored flags with persistence tests for column/constraint.
+- getSchema(string) now respects name_is_delimited during path resolution, with unit coverage for delimited schema names.
+- Executor CREATE/TRUNCATE TABLE now covered for current-schema resolution via unit tests.
+- ALTER TABLE semantic analysis now covers ADD/DROP/ALTER COLUMN plus SET TABLESPACE and ENABLE/DISABLE RLS (constraint operations still error).
+- Executor DML + SHOW table resolution now uses schema path resolution (no PUBLIC default).
+- Resolver path lookup now honors delimited schema/object names before case-folded lookup.
+- Tablespace records load on startup so resolver includes tablespaces after restart.
 
-Partial / Outstanding:
-- Resolver entries for non-persisted objects vanish on restart (resolver rebuild only sees persisted catalogs).
-- name_is_delimited persistence is implemented for sequences/views/triggers/functions/procedures; other object types still assume false on load.
-- getSchema(string) resolves dotted paths but normalizes components to upper; delimited identifier resolution needs explicit handling once persisted.
-- ALTER TABLE semantic analysis only covers rename/move; remaining actions still warn.
-- Executor and SHOW paths still default to PUBLIC in many places; resolver is not yet used broadly for name lookup.
-- Rename/move tests for non-table object types and cross-type ambiguity are still missing.
+Outstanding: None.
 
 Emulated parser constraints (by design):
 - Firebird parser is limited to Firebird-valid rename semantics (no SET SCHEMA / no object-level rename beyond domain and column).

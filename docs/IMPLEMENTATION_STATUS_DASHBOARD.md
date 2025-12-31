@@ -22,7 +22,7 @@
 2) Dialect-specific adapter e2e coverage (Firebird, then MySQL, then PostgreSQL).  
 
 ## Plan Progress (Active)
-- Plan 02 (UUID Resolution/Rename/Move): unqualified resolution now prefers current schema with unit coverage; table/column rename/move resolver tests added; outstanding: non-table rename/move tests, resolver rebuild coverage, resolver adoption beyond SHOW/diagnostics.
+- Plan 02 (UUID Resolution/Rename/Move): complete (resolver cache/view, rename/move across object types, resolver rebuild + test coverage).
 
 ## Links
 - Roadmap: `OFFICIAL_ROADMAP.md`  

@@ -34,6 +34,8 @@
 namespace scratchbird::core
 {
 
+using CatalogMutex = CatalogManager::CatalogMutex;
+
 namespace {
 std::vector<uint8_t> hexToBytesLocal(const std::string& hex_str);
 bool isReasonableSequenceName(const std::string& name);
@@ -197,14 +199,22 @@ std::pair<ID, std::string> makeViewNameKey(const ID& schema_id,
     return {schema_id, normalizeResolverName(name, name_is_delimited)};
 }
 
+std::pair<ID, std::string> makeConstraintNameKey(const ID& table_id,
+                                                 const std::string& name,
+                                                 bool name_is_delimited) {
+    return {table_id, normalizeResolverName(name, name_is_delimited)};
+}
+
 std::pair<ID, std::string> makeSynonymNameKey(const ID& schema_id,
-                                              const std::string& name) {
-    return {schema_id, normalizeResolverName(name, false)};
+                                              const std::string& name,
+                                              bool name_is_delimited) {
+    return {schema_id, normalizeResolverName(name, name_is_delimited)};
 }
 
 std::pair<ID, std::string> makeForeignTableNameKey(const ID& schema_id,
-                                                   const std::string& name) {
-    return {schema_id, normalizeResolverName(name, false)};
+                                                   const std::string& name,
+                                                   bool name_is_delimited) {
+    return {schema_id, normalizeResolverName(name, name_is_delimited)};
 }
 
 std::string makeForeignServerNameKey(const std::string& name) {
@@ -298,7 +308,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // Track 2: Prepared transactions (2PC)
         uint32_t prepared_transactions_page; // Page containing prepared transactions table
 
-        uint8_t reserved[3848];       // Padding for 4KB page (248 bytes used)
+        ID policy_toast_table_id;     // UUID for policy expression TOAST storage
+
+        uint8_t reserved[3832];       // Padding for 4KB page (264 bytes used)
     };
 
     // Schema record on disk
@@ -311,7 +323,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint16_t default_tablespace_id; // Default tablespace for new tables
         uint16_t permissions;           // Bitmask of schema permissions
         uint16_t default_charset;       // CharacterSet enum (0 = inherit from database)
-        uint16_t reserved;
+        uint8_t name_is_delimited;      // 1 if quoted identifier
+        uint8_t reserved;
         uint32_t default_collation_id;  // Collation ID (0 = inherit from database)
         uint32_t acl_oid;               // TOAST reference for ACL (access control list) - IMPLEMENTED
         // search_path_oid removed - search path is session-only, not stored per-schema
@@ -348,7 +361,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t rls_forced;            // Security Phase 3.4: Force RLS for table owners
         uint16_t tablespace_id;        // Tablespace ID (0 = default)
         uint16_t default_charset;      // CharacterSet enum (0 = inherit from schema)
-        uint16_t reserved1;            // Reserved for future use
+        uint8_t name_is_delimited;     // 1 if quoted identifier
+        uint8_t reserved1;             // Reserved for future use
         uint32_t default_collation_id; // Collation ID (0 = inherit from schema)
         uint32_t storage_params_oid;   // TOAST reference for storage parameters - IMPLEMENTED
         uint64_t created_time;
@@ -376,7 +390,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t is_generated;
         uint8_t storage_type;  // TOAST storage strategy
         uint8_t with_timezone; // For TIMESTAMP: 1 = WITH TIME ZONE, 0 = WITHOUT
-        uint8_t reserved2;
+        uint8_t name_is_delimited; // 1 if quoted identifier
         uint16_t charset;       // CharacterSet enum (0 = inherit from table)
         uint16_t timezone_hint; // Timezone ID for display (0 = use connection default)
         uint32_t collation_id;  // Collation ID (0 = inherit from table)
@@ -417,9 +431,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint32_t is_valid;
 
         // Plan 01 Task E: Shadow index rebuild + versioning
-        ID logical_index_id;       // Stable ID across rebuilds (table_id + index_name hash)
+        ID logical_index_id;       // Stable logical index UUID across rebuilds
         uint8_t state;             // 0=BUILDING, 1=ACTIVE, 2=RETIRED, 3=FAILED
-        uint8_t padding1[7];       // Alignment
+        uint8_t name_is_delimited; // 1 if quoted identifier
+        uint8_t padding1[6];       // Alignment
         uint64_t valid_from_xid;   // XID when new txns can use this index
         uint64_t retired_xid;      // XID after which no new txns use this index (0 = not retired)
         uint64_t build_started_time;
@@ -555,7 +570,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID column_ids[16];          // Columns involved in constraint (max 16)
         ID referenced_table_id;     // For foreign keys
         uint16_t referenced_column_count;
-        uint16_t reserved;
+        uint8_t name_is_delimited;  // 1 if quoted identifier
+        uint8_t reserved;
         ID referenced_column_ids[16]; // Referenced columns for FK
         uint32_t check_expr_oid;       // TOAST reference for check expression
         uint32_t exclusion_operator_oid; // TOAST reference for exclusion operator
@@ -905,7 +921,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         char library_path[1024];    // Path to shared library
         char entry_point[512];      // Function entry point name
         uint8_t udr_type;           // FUNCTION, PROCEDURE, TRIGGER
-        uint8_t reserved[7];        // Alignment
+        uint8_t name_is_delimited;  // 1 if quoted identifier
+        uint8_t reserved[6];        // Alignment
         uint32_t signature_oid;     // TOAST reference for signature definition
         uint64_t created_time;
         uint64_t last_modified_time;
@@ -926,7 +943,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
-        uint32_t padding;
+        uint8_t name_is_delimited;  // 1 if quoted identifier
+        uint8_t padding[3];
     };
 
     // Emulation type record on disk (Phase 4 - Emulation Tables)
@@ -986,7 +1004,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint32_t target_path_oid;  // TOAST reference for target path
         uint8_t target_type;       // ObjectType enum
         uint8_t is_public;         // 1 if PUBLIC synonym
-        uint8_t reserved[6];       // Alignment
+        uint8_t name_is_delimited; // 1 if quoted identifier
+        uint8_t reserved[5];       // Alignment
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
@@ -1026,7 +1045,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
-        uint32_t padding;
+        uint8_t name_is_delimited;  // 1 if quoted identifier
+        uint8_t padding[3];
     };
 
     // User mapping record on disk (Phase B - FDW)
@@ -1261,6 +1281,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     {
         // NOTE: Assumes mutex_ is already held by caller (load())
         DEBUG_LOG_DB("Initializing system catalog");
+
+        policy_toast_table_id_ = generateUuidV7();
+        system_user_id_ = generateUuidV7();
 
         // Write catalog root page
         Status status = writeCatalogRoot(ctx);
@@ -1716,7 +1739,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID mysql_id, postgres_id, mssql_id, firebird_id, public_id;
 
         // Level 0: root
-        status = createSchemaInternal("root", "system", root_id, ID(), ctx);
+        status = createSchemaInternal("root", "system", root_id, ID(), ctx, db_->uuid());
         if (status != Status::OK) return status;
 
         // Level 1: Top-level schemas under root
@@ -1787,7 +1810,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // 1. Create SYSTEM user (superuser, owner of all system objects)
         UserRecord system_user;
         memset(&system_user, 0, sizeof(UserRecord));
-        system_user.user_id = SecurityConstants::makeSystemUserID();
+        system_user.user_id = system_user_id_;
         strncpy(system_user.username, "SYSTEM", sizeof(system_user.username) - 1);
         system_user.password_hash_oid = 0;  // No password (cannot login directly)
         system_user.user_metadata_oid = 0;  // No metadata
@@ -1804,7 +1827,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             DEBUG_LOG_DB("Failed to create SYSTEM user: " << static_cast<int>(status));
             return status;
         }
-        DEBUG_LOG_DB("Created SYSTEM user with UUID: 00000000-0000-7000-8000-737973746d00");
+        DEBUG_LOG_DB("Created SYSTEM user with UUID: " << system_user.user_id.toString());
 
         // 2. Create PUBLIC role (all users are implicit members)
         RoleRecord public_role;
@@ -1863,17 +1886,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // ========================================================================
         DEBUG_LOG_DB("Initializing TOAST storage for RLS policy expressions");
 
-        // Generate a deterministic UUID for the policy TOAST table
-        // Use a well-known UUID so it's consistent across database instances
-        // Format: 00000000-0000-7000-8000-746f617374706f ("toastpo" in ASCII)
-        constexpr uint8_t POLICY_TOAST_UUID[16] = {
-            0x00, 0x00, 0x00, 0x00,  // time_low
-            0x00, 0x00,              // time_mid
-            0x70, 0x00,              // time_hi_and_version (version 7)
-            0x80, 0x00,              // clock_seq
-            0x74, 0x6f, 0x61, 0x73, 0x74, 0x70  // node: "toastp" in ASCII
-        };
-        std::memcpy(policy_toast_table_id_.bytes.data(), POLICY_TOAST_UUID, 16);
+        if (isZeroUuidLocal(policy_toast_table_id_))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                              "Policy TOAST table ID missing from catalog root");
+            LOG_ERROR(CATALOG, "Policy TOAST table ID missing from catalog root");
+            return Status::PAGE_CORRUPT;
+        }
 
         // Create ToastManager for policy expressions
         LOG_INFO(STORAGE, "CatalogManager::initializePolicyToast - Creating TOAST manager");
@@ -1904,7 +1923,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         // Use scoped block for mutex to allow TOAST init outside lock
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             DEBUG_LOG_DB("Loading system catalog");
 
             // Try to read catalog root
@@ -1931,6 +1950,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             {
                 // If we successfully read catalog root, load the data
                 bool backfilled_catalog_pages = false;
+
+                if (isZeroUuidLocal(policy_toast_table_id_))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                      "Catalog root missing policy TOAST table ID");
+                    return Status::PAGE_CORRUPT;
+                }
 
                 auto require_catalog_page = [&](uint32_t page_id, const char *name) -> Status {
                     if (page_id != 0)
@@ -2202,6 +2228,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     return status;
                 }
 
+                ID system_user_id = getSystemUserIdUnlocked(ctx);
+                if (isZeroUuidLocal(system_user_id))
+                {
+                    return ctx ? ctx->code : Status::PAGE_CORRUPT;
+                }
+
                 // Load tables
                 status = readTableRecords(ctx);
                 if (status != Status::OK)
@@ -2228,6 +2260,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
                 // Load indexes
                 status = readIndexRecords(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Load tablespaces
+                status = readTablespaceRecords(ctx);
                 if (status != Status::OK)
                 {
                     return status;
@@ -2382,7 +2421,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::createSchemaInternal(const std::string &schema_name,
                                               const std::string &owner, ID &schema_id,
                                               const ID &parent_schema_id,
-                                              ErrorContext *ctx) -> Status
+                                              ErrorContext *ctx,
+                                              const std::optional<ID> &forced_schema_id) -> Status
     {
         // Check if schema already exists under the same parent
         for (const auto& [id, info] : schema_cache_)
@@ -2402,10 +2442,33 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         // Create new schema
         SchemaInfo schema;
-        schema.schema_id = generateUuidV7();
+        if (forced_schema_id.has_value())
+        {
+            if (isZeroUuidLocal(*forced_schema_id))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Schema UUID cannot be zero");
+                return Status::INVALID_ARGUMENT;
+            }
+            if (schema_cache_.find(*forced_schema_id) != schema_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Schema UUID already exists");
+                return Status::INVALID_ARGUMENT;
+            }
+            schema.schema_id = *forced_schema_id;
+        }
+        else
+        {
+            schema.schema_id = generateUuidV7();
+        }
         schema.parent_schema_id = parent_schema_id;  // Schema hierarchy support
         schema.schema_name = schema_name;
-        schema.owner_id = resolveOwnerUUID(owner);  // Resolve owner name to UUID
+        schema.owner_id = resolveOwnerUUID(owner, ctx);  // Resolve owner name to UUID
+        if (isZeroUuidLocal(schema.owner_id))
+        {
+            return ctx ? ctx->code : Status::NOT_FOUND;
+        }
         schema.default_tablespace_id = 0;  // Default tablespace
         schema.permissions = 0x0FFF;       // Default permissions (read, write, create)
         schema.acl_oid = 0;                // No ACL initially
@@ -2443,48 +2506,84 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::createSchema(const std::string &schema_name, const std::string &owner,
                                       ID &schema_id, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return createSchemaInternal(schema_name, owner, schema_id, ID(), ctx);
+        std::lock_guard<CatalogMutex> lock(mutex_);
+        const std::string root_name = "root";
+        ID parent_schema_id{};
+        for (const auto& [id, info] : schema_cache_)
+        {
+            if (isZeroUuidLocal(info.parent_schema_id) &&
+                IdentifierUtils::namesMatch(root_name, false /*search_delimited*/,
+                                            info.schema_name, info.name_is_delimited))
+            {
+                parent_schema_id = info.schema_id;
+                break;
+            }
+        }
+        return createSchemaInternal(schema_name, owner, schema_id, parent_schema_id, ctx);
+    }
+
+    auto CatalogManager::getSystemUserId(ErrorContext* ctx) -> ID
+    {
+        std::lock_guard<CatalogMutex> lock(mutex_);
+        return getSystemUserIdUnlocked(ctx);
+    }
+
+    auto CatalogManager::getSystemUserIdUnlocked(ErrorContext* ctx) -> ID
+    {
+        if (!isZeroUuidLocal(system_user_id_))
+        {
+            return system_user_id_;
+        }
+
+        UserInfo user_info;
+        ErrorContext lookup_ctx;
+        Status status = getUserByNameUnlocked("SYSTEM", user_info, &lookup_ctx);
+        if (status != Status::OK)
+        {
+            status = getUserByNameUnlocked("system", user_info, &lookup_ctx);
+        }
+
+        if (status == Status::OK)
+        {
+            system_user_id_ = user_info.user_id;
+            return system_user_id_;
+        }
+
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                          "SYSTEM user missing from catalog");
+        LOG_ERROR(CATALOG, "SYSTEM user missing from catalog");
+        return ID{};
     }
 
     // Helper to resolve owner name to UUID (Phase 5.1 - Owner UUID References)
     // Resolve owner name to UUID (WP-2 CAT-3)
     // NOTE: This is called from methods that already hold mutex_, so it uses
     // getUserByNameUnlocked to avoid deadlock
-    auto CatalogManager::resolveOwnerUUID(const std::string &owner_name) -> ID
+    auto CatalogManager::resolveOwnerUUID(const std::string &owner_name, ErrorContext* ctx) -> ID
     {
-        // Well-known system UUID (fixed UUID for bootstrap/system objects)
-        // Uses UUIDv7 format with timestamp = 0 and random bits = "system" hash
-        // This ensures system objects have a consistent, recognizable owner ID
-        static const ID SYSTEM_UUID = []() {
-            ID uuid;
-            // Create deterministic UUID for "system" owner
-            // Format: 00000000-0000-7000-8000-737973746d00
-            // (737973746d = hex for "system" truncated)
-            uint8_t bytes[16] = {
-                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x70, 0x00,  // Version 7
-                0x80, 0x00, 0x73, 0x79, 0x73, 0x74, 0x6d, 0x00   // Variant + "system"
-            };
-            std::memcpy(&uuid, bytes, 16);
-            return uuid;
-        }();
-
-        if (owner_name == "system" || owner_name.empty())
+        if (owner_name.empty() ||
+            IdentifierUtils::toUpper(owner_name) == "SYSTEM")
         {
-            return SYSTEM_UUID;
+            ID system_id = getSystemUserIdUnlocked(ctx);
+            if (isZeroUuidLocal(system_id))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "SYSTEM user missing from catalog");
+            }
+            return system_id;
         }
 
         // Look up user in Users table (WP-2 CAT-3 implementation)
         // Use unlocked version since caller already holds mutex_
         UserInfo user_info;
-        ErrorContext ctx;
-        Status status = getUserByNameUnlocked(owner_name, user_info, &ctx);
+        ErrorContext lookup_ctx;
+        Status status = getUserByNameUnlocked(owner_name, user_info, &lookup_ctx);
         if (status == Status::OK)
         {
             return user_info.user_id;
         }
 
-        // User not found - return zero UUID (caller should handle appropriately)
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Owner not found");
         return ID();
     }
 
@@ -2591,7 +2690,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::getSchema(const ID &schema_id, SchemaInfo &info, ErrorContext *ctx)
         -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         auto it = schema_cache_.find(schema_id);
         if (it == schema_cache_.end())
         {
@@ -2607,7 +2706,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::getSchema(const std::string &schema_name, SchemaInfo &info,
                                    ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         auto components = splitSchemaPath(schema_name);
         if (components.empty())
         {
@@ -2619,14 +2718,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID root_schema_id{};
         bool has_root = false;
 
-        std::unordered_map<std::pair<ID, std::string>, ID, PairHash<ID, std::string>> lookup;
-        lookup.reserve(schema_cache_.size());
+        std::unordered_map<ID, std::vector<ID>, IDHash> children;
+        children.reserve(schema_cache_.size());
         for (const auto& [id, schema_info] : schema_cache_)
         {
-            std::string normalized = normalizeResolverName(schema_info.schema_name,
-                                                           schema_info.name_is_delimited);
-            auto key = std::make_pair(schema_info.parent_schema_id, normalized);
-            lookup[key] = schema_info.schema_id;
+            children[schema_info.parent_schema_id].push_back(schema_info.schema_id);
             if (!has_root &&
                 isZeroUuidLocal(schema_info.parent_schema_id) &&
                 IdentifierUtils::namesMatch(root_name, false /*search_delimited*/,
@@ -2642,14 +2738,28 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             ID current = start;
             for (const auto& component : components)
             {
-                std::string normalized = IdentifierUtils::toUpper(component);
-                auto key = std::make_pair(current, normalized);
-                auto it = lookup.find(key);
-                if (it == lookup.end())
+                auto child_it = children.find(current);
+                if (child_it == children.end())
                 {
                     return false;
                 }
-                current = it->second;
+                bool found = false;
+                for (const auto& child_id : child_it->second)
+                {
+                    const auto& child_info = schema_cache_.at(child_id);
+                    if (IdentifierUtils::namesMatch(component, false /*search_delimited*/,
+                                                    child_info.schema_name,
+                                                    child_info.name_is_delimited))
+                    {
+                        current = child_id;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    return false;
+                }
             }
             resolved_out = current;
             return true;
@@ -2695,7 +2805,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
     auto CatalogManager::listSchemas(std::vector<SchemaInfo> &schemas, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         schemas.clear();
         schemas.reserve(schema_cache_.size());
 
@@ -2714,7 +2824,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::getSchemaPath(const ID& schema_id, std::string& path_out,
                                        ErrorContext* ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         path_out.clear();
 
         if (isZeroUuidLocal(schema_id))
@@ -2774,7 +2884,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                           ID& leaf_schema_id_out,
                                           ErrorContext* ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         leaf_schema_id_out = ID{};
 
         auto components = splitSchemaPath(path);
@@ -2858,7 +2968,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         std::vector<TablespaceInfo> tablespaces;
 
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             schemas.reserve(schema_cache_.size());
             for (const auto& [id, info] : schema_cache_)
             {
@@ -2899,7 +3009,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 {
                     continue;
                 }
-                sequences.push_back({seq_id, state->schema_id, state->name, false});
+                sequences.push_back({seq_id, state->schema_id, state->name,
+                                     state->name_is_delimited});
             }
         }
 
@@ -3319,7 +3430,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             obj.object_name = pkg.package_name;
             obj.schema_path = schema_path;
             obj.full_path = make_full_path(schema_path, pkg.package_name);
-            st = add_resolved(obj, pkg.schema_id, false);
+            st = add_resolved(obj, pkg.schema_id, pkg.name_is_delimited);
             if (st != Status::OK)
             {
                 return st;
@@ -3342,7 +3453,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             obj.object_name = udr.udr_name;
             obj.schema_path = schema_path;
             obj.full_path = make_full_path(schema_path, udr.udr_name);
-            st = add_resolved(obj, udr.schema_id, false);
+            st = add_resolved(obj, udr.schema_id, udr.name_is_delimited);
             if (st != Status::OK)
             {
                 return st;
@@ -3365,7 +3476,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             obj.object_name = ex.name;
             obj.schema_path = schema_path;
             obj.full_path = make_full_path(schema_path, ex.name);
-            st = add_resolved(obj, ex.schema_id, false);
+            st = add_resolved(obj, ex.schema_id, ex.name_is_delimited);
             if (st != Status::OK)
             {
                 return st;
@@ -3388,7 +3499,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             obj.object_name = syn.synonym_name;
             obj.schema_path = schema_path;
             obj.full_path = make_full_path(schema_path, syn.synonym_name);
-            st = add_resolved(obj, syn.schema_id, false);
+            st = add_resolved(obj, syn.schema_id, syn.name_is_delimited);
             if (st != Status::OK)
             {
                 return st;
@@ -3411,7 +3522,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             obj.object_name = ft.table_name;
             obj.schema_path = schema_path;
             obj.full_path = make_full_path(schema_path, ft.table_name);
-            st = add_resolved(obj, ft.schema_id, false);
+            st = add_resolved(obj, ft.schema_id, ft.name_is_delimited);
             if (st != Status::OK)
             {
                 return st;
@@ -3588,7 +3699,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             obj.object_name = con.constraint_name;
             obj.schema_path = schema_path;
             obj.full_path = make_table_scoped_path(schema_path, table.table_name, con.constraint_name);
-            st = add_resolved(obj, table.table_id, false);
+            st = add_resolved(obj, table.table_id, con.name_is_delimited);
             if (st != Status::OK)
             {
                 return st;
@@ -3749,6 +3860,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         {
             dialect_tag = "scratchbird";
         }
+        bool allow_search_path = opts.allow_search_path && !path.no_search_path;
 
         const std::string root_name = "root";
         ID root_schema_id{};
@@ -3761,6 +3873,32 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             has_root = true;
         }
 
+        auto find_schema_child = [&](const ID& parent,
+                                     const std::string& component,
+                                     ID& child_out) -> bool {
+            auto exact_key = std::make_pair(parent, component);
+            auto exact_it = schema_name_lookup_.find(exact_key);
+            if (exact_it != schema_name_lookup_.end())
+            {
+                child_out = exact_it->second;
+                return true;
+            }
+
+            std::string upper = IdentifierUtils::toUpper(component);
+            if (upper != component)
+            {
+                auto upper_key = std::make_pair(parent, upper);
+                auto upper_it = schema_name_lookup_.find(upper_key);
+                if (upper_it != schema_name_lookup_.end())
+                {
+                    child_out = upper_it->second;
+                    return true;
+                }
+            }
+
+            return false;
+        };
+
         auto resolve_schema_path = [&](PathType type,
                                        const std::vector<std::string>& components,
                                        ID& schema_id_out) -> Status {
@@ -3768,14 +3906,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 ID current = start;
                 for (const auto& component : components)
                 {
-                    std::string normalized = IdentifierUtils::toUpper(component);
-                    auto key = std::make_pair(current, normalized);
-                    auto it = schema_name_lookup_.find(key);
-                    if (it == schema_name_lookup_.end())
+                    ID next_id{};
+                    if (!find_schema_child(current, component, next_id))
                     {
                         return false;
                     }
-                    current = it->second;
+                    current = next_id;
                 }
                 resolved_out = current;
                 return true;
@@ -3878,20 +4014,29 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         auto lookup_by_name = [&](const ID& scope_id, ObjectType type,
                                   const std::string& name,
-                                  bool name_is_delimited,
                                   ID& id_out) -> bool {
             ResolverKey key;
             key.scope_id = scope_id;
             key.object_type = type;
-            key.normalized_name = normalizeResolverName(name, name_is_delimited);
-            key.name_is_delimited = name_is_delimited;
+            key.name_is_delimited = true;
+            key.normalized_name = normalizeResolverName(name, true);
             auto it = resolver_by_name_.find(key);
-            if (it == resolver_by_name_.end())
+            if (it != resolver_by_name_.end())
             {
-                return false;
+                id_out = it->second;
+                return true;
             }
-            id_out = it->second;
-            return true;
+
+            key.name_is_delimited = false;
+            key.normalized_name = normalizeResolverName(name, false);
+            it = resolver_by_name_.find(key);
+            if (it != resolver_by_name_.end())
+            {
+                id_out = it->second;
+                return true;
+            }
+
+            return false;
         };
 
         auto resolve_domain = [&](const std::string& name, ID& id_out) -> Status {
@@ -3965,7 +4110,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             {
                 return resolve_domain(name, id_out);
             }
-            if (lookup_by_name(ID{}, type, name, false, id_out))
+            if (lookup_by_name(ID{}, type, name, id_out))
             {
                 return Status::OK;
             }
@@ -3989,8 +4134,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             }
 
             auto search_in_schema = [&](const ID& schema_id, ID& found_id,
-                                        ObjectType& found_type,
-                                        int& matches) {
+                        ObjectType& found_type,
+                        int& matches) {
                 if (type_filter == ObjectType::UNKNOWN)
                 {
                     const std::array<ObjectType, 10> types = {
@@ -4008,7 +4153,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     for (auto t : types)
                     {
                         ID candidate;
-                        if (lookup_by_name(schema_id, t, object_name, false, candidate))
+                        if (lookup_by_name(schema_id, t, object_name, candidate))
                         {
                             if (matches == 0)
                             {
@@ -4022,7 +4167,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 else
                 {
                     ID candidate;
-                    if (lookup_by_name(schema_id, type_filter, object_name, false, candidate))
+                    if (lookup_by_name(schema_id, type_filter, object_name, candidate))
                     {
                         if (matches == 0)
                         {
@@ -4057,25 +4202,37 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     }
                 }
 
-                for (const auto& path_entry : search_path)
+                if (!allow_search_path)
                 {
-                    auto entry_components = splitSchemaPath(path_entry);
-                    ID schema_id;
-                    Status res = resolve_schema_path(PathType::ABSOLUTE, entry_components, schema_id);
-                    if (res == Status::NOT_FOUND)
+                    if (isZeroUuidLocal(current_schema_id))
                     {
-                        continue;
+                        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                                          "Current schema not set");
+                        return Status::NOT_FOUND;
                     }
-                    if (res != Status::OK)
+                }
+                else
+                {
+                    for (const auto& path_entry : search_path)
                     {
-                        return res;
-                    }
-                    search_in_schema(schema_id, found_id, found_type, matches);
-                    if (matches > 1 && !opts.allow_ambiguity)
-                    {
-                        SET_ERROR_CONTEXT(ctx, Status::AMBIGUOUS_COLUMN,
-                                          "Ambiguous object name in search path");
-                        return Status::AMBIGUOUS_COLUMN;
+                        auto entry_components = splitSchemaPath(path_entry);
+                        ID schema_id;
+                        Status res = resolve_schema_path(PathType::ABSOLUTE, entry_components, schema_id);
+                        if (res == Status::NOT_FOUND)
+                        {
+                            continue;
+                        }
+                        if (res != Status::OK)
+                        {
+                            return res;
+                        }
+                        search_in_schema(schema_id, found_id, found_type, matches);
+                        if (matches > 1 && !opts.allow_ambiguity)
+                        {
+                            SET_ERROR_CONTEXT(ctx, Status::AMBIGUOUS_COLUMN,
+                                              "Ambiguous object name in search path");
+                            return Status::AMBIGUOUS_COLUMN;
+                        }
                     }
                 }
             }
@@ -4132,7 +4289,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             auto search_in_table = [&](ObjectType t, ID& found_id, ObjectType& found_type,
                                        int& matches) {
                 ID candidate;
-                if (lookup_by_name(table_id, t, object_name, false, candidate))
+                if (lookup_by_name(table_id, t, object_name, candidate))
                 {
                     if (matches == 0)
                     {
@@ -4233,6 +4390,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         }
 
         std::vector<std::pair<ID, ObjectType>> matches;
+        bool ambiguous = false;
 
         if (components.size() >= 2)
         {
@@ -4243,6 +4401,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             if (res == Status::OK)
             {
                 matches.emplace_back(id_out, type_local);
+            }
+            else if (res == Status::AMBIGUOUS_COLUMN)
+            {
+                ambiguous = true;
             }
         }
 
@@ -4255,6 +4417,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             {
                 matches.emplace_back(id_out, type_local);
             }
+            else if (res == Status::AMBIGUOUS_COLUMN)
+            {
+                ambiguous = true;
+            }
         }
 
         if (!components.empty())
@@ -4263,11 +4429,22 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                  ObjectType::GROUP, ObjectType::TABLESPACE})
             {
                 ID id_out;
-                if (resolve_global(components.back(), t, id_out) == Status::OK)
+                Status res = resolve_global(components.back(), t, id_out);
+                if (res == Status::OK)
                 {
                     matches.emplace_back(id_out, t);
                 }
+                else if (res == Status::AMBIGUOUS_COLUMN)
+                {
+                    ambiguous = true;
+                }
             }
+        }
+
+        if (ambiguous && !opts.allow_ambiguity)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::AMBIGUOUS_COLUMN, "Ambiguous object name");
+            return Status::AMBIGUOUS_COLUMN;
         }
 
         if (matches.empty())
@@ -4295,7 +4472,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         std::unordered_set<ID, IDHash> table_ids;
 
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             auto schema_it = schema_cache_.find(schema_id);
             if (schema_it == schema_cache_.end())
             {
@@ -4333,7 +4510,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         } counts;
 
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             for (const auto &[id, table] : table_cache_) {
                 if (table.schema_id == schema_id) {
                     counts.tables++;
@@ -4438,7 +4615,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         }
 
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             Status status = deleteSchemaRecord(schema_id, ctx);
             if (status != Status::OK)
             {
@@ -4506,7 +4683,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                      uint16_t tablespace_id, // Phase 2 Task 2.3
                                      ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // Acquire ALL locks in consistent order to prevent deadlock
+        // Lock order: mutex_, sequence_cache_mutex_, dependency_cache_mutex_
+        std::scoped_lock lock(mutex_, sequence_cache_mutex_, dependency_cache_mutex_);
         // Verify schema exists
         if (schema_cache_.find(schema_id) == schema_cache_.end())
         {
@@ -4545,7 +4724,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         table.table_id = generateUuidV7();
         table.schema_id = schema_id;
         table.table_name = table_name;
-        table.owner_id = resolveOwnerUUID("system");  // Phase 6 TODO: Get from session context
+        table.owner_id = resolveOwnerUUID("system", ctx);  // Phase 6 TODO: Get from session context
+        if (isZeroUuidLocal(table.owner_id))
+        {
+            return ctx ? ctx->code : Status::PAGE_CORRUPT;
+        }
         table.root_page = root_page;
         table.column_count = columns.size();
         table.row_count = 0;
@@ -4598,7 +4781,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 continue;
             }
             ID dep_id;
-            status = createDependency(
+            // Use internal version that assumes locks already held
+            status = createDependencyInternal(
                 col.column_id, ObjectType::COLUMN,
                 col.domain_id, ObjectType::DOMAIN,
                 DependencyType::NORMAL,
@@ -4624,19 +4808,21 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         std::unordered_set<ID, IDHash> sequence_ids;
         for (const auto& name : seq_names) {
             ID seq_id;
-            if (getSequenceIdByName(schema_id, name, seq_id, ctx) == Status::OK) {
+            // Use internal versions that assume locks already held
+            if (getSequenceIdByNameInternal(schema_id, name, seq_id, ctx) == Status::OK) {
                 sequence_ids.insert(seq_id);
                 continue;
             }
             SequenceInfo sinfo;
-            if (getSequence(schema_id, name, sinfo, ctx) == Status::OK) {
+            if (getSequenceInternal(schema_id, name, sinfo, ctx) == Status::OK) {
                 sequence_ids.insert(sinfo.sequence_id);
             }
         }
 
         for (const auto& seq_id : sequence_ids) {
             ID dep_id;
-            status = createDependency(
+            // Use internal version that assumes locks already held
+            status = createDependencyInternal(
                 col.column_id, ObjectType::COLUMN,
                 seq_id, ObjectType::SEQUENCE,
                 DependencyType::NORMAL,
@@ -4660,7 +4846,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         for (const auto& seq_id : identity_sequence_ids) {
             ID dep_id = ID{};
-            status = createDependency(
+            // Use internal version that assumes locks already held
+            status = createDependencyInternal(
                 table.table_id, ObjectType::TABLE,
                 seq_id, ObjectType::SEQUENCE,
                 DependencyType::NORMAL,
@@ -4673,7 +4860,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             }
 
             ID auto_dep_id = ID{};
-            status = createDependency(
+            // Use internal version that assumes locks already held
+            status = createDependencyInternal(
                 seq_id, ObjectType::SEQUENCE,
                 table.table_id, ObjectType::TABLE,
                 DependencyType::AUTO,
@@ -4702,7 +4890,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
     auto CatalogManager::getTable(const ID &table_id, TableInfo &info, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         auto it = table_cache_.find(table_id);
         if (it == table_cache_.end())
         {
@@ -4718,7 +4906,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::getTable(const ID &schema_id, const std::string &table_name,
                                   TableInfo &info, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         // Use case-insensitive lookup: search name (assumed unquoted) matches
         // stored names using Firebird SQL rules
         for (const auto &[id, table_info] : table_cache_)
@@ -4740,7 +4928,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::listTables(const ID &schema_id, std::vector<TableInfo> &tables,
                                     ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         tables.clear();
 
         for (const auto &[id, info] : table_cache_)
@@ -4761,7 +4949,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::getColumns(const ID &table_id, std::vector<ColumnInfo> &columns,
                                     ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         auto it = column_cache_.find(table_id);
         if (it == column_cache_.end())
         {
@@ -4870,7 +5058,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::getColumn(const ID &table_id, const std::string &column_name,
                                    ColumnInfo &info, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         return getColumnInternal(table_id, column_name, info, ctx);
     }
 
@@ -4881,7 +5069,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                      ErrorContext *ctx)
         -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         // Verify table exists
         if (table_cache_.find(table_id) == table_cache_.end())
         {
@@ -4932,7 +5120,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         index.index_id = generateUuidV7();
         index.table_id = table_id;
         index.index_name = index_name;
-        index.owner_id = resolveOwnerUUID("system");  // Phase 6 TODO: Get from session context
+        index.owner_id = resolveOwnerUUID("system", ctx);  // Phase 6 TODO: Get from session context
+        if (isZeroUuidLocal(index.owner_id))
+        {
+            return ctx ? ctx->code : Status::PAGE_CORRUPT;
+        }
         index.root_page = root_page;
         index.tablespace_id = tablespace_id; // Phase 2 Task 2.3: Use specified tablespace
         index.index_type = index_type;
@@ -4944,7 +5136,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                  .count();
 
         // Plan 01 Task E: Set logical_index_id and shadow index fields
-        index.logical_index_id = generateLogicalIndexId(table_id, index_name);
+        index.logical_index_id = generateLogicalIndexIdUnlocked(table_id, index_name);
         index.state = static_cast<uint8_t>(IndexState::ACTIVE); // Default: immediately active
         index.valid_from_xid = 0; // Available to all transactions
         index.retired_xid = 0; // Not retired
@@ -5030,7 +5222,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                      ErrorContext *ctx)
         -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         // Verify table exists
         if (table_cache_.find(table_id) == table_cache_.end())
@@ -5104,7 +5296,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         index.index_id = generateUuidV7();
         index.table_id = table_id;
         index.index_name = index_name;
-        index.owner_id = resolveOwnerUUID("system");  // Phase 6 TODO: Get from session context
+        index.owner_id = resolveOwnerUUID("system", ctx);  // Phase 6 TODO: Get from session context
+        if (isZeroUuidLocal(index.owner_id))
+        {
+            return ctx ? ctx->code : Status::PAGE_CORRUPT;
+        }
         index.root_page = root_page;
         index.tablespace_id = tablespace_id;
         index.index_type = index_type;
@@ -5116,7 +5312,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                  .count();
 
         // Plan 01 Task E: Set logical_index_id and shadow index fields
-        index.logical_index_id = generateLogicalIndexId(table_id, index_name);
+        index.logical_index_id = generateLogicalIndexIdUnlocked(table_id, index_name);
         index.state = static_cast<uint8_t>(IndexState::ACTIVE); // Default: immediately active
         index.valid_from_xid = 0; // Available to all transactions
         index.retired_xid = 0; // Not retired
@@ -5204,7 +5400,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
     auto CatalogManager::getIndex(const ID &index_id, IndexInfo &info, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         auto it = index_cache_.find(index_id);
         if (it == index_cache_.end())
         {
@@ -5220,7 +5416,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::getIndex(const ID &table_id, const std::string &index_name,
                                   IndexInfo &info, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         for (const auto &[id, index_info] : index_cache_)
         {
             // Use case-insensitive comparison per Firebird SQL rules
@@ -5241,7 +5437,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::listIndexesForTable(const ID &table_id, std::vector<IndexInfo> &indexes,
                                              ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         indexes.clear();
 
         for (const auto &[id, info] : index_cache_)
@@ -5358,6 +5554,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         root->migration_history_page = migration_history_table_page_;
         root->dormant_transactions_page = dormant_transactions_table_page_;
         root->prepared_transactions_page = prepared_transactions_table_page_;
+        root->policy_toast_table_id = policy_toast_table_id_;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, true, ctx);
     }
@@ -5448,6 +5645,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         migration_history_table_page_ = root->migration_history_page;
         dormant_transactions_table_page_ = root->dormant_transactions_page;
         prepared_transactions_table_page_ = root->prepared_transactions_page;
+        policy_toast_table_id_ = root->policy_toast_table_id;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, false, ctx);
     }
@@ -5940,6 +6138,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         record.default_tablespace_id = schema.default_tablespace_id;
         record.permissions = schema.permissions;
         record.default_charset = schema.default_charset;
+        record.name_is_delimited = schema.name_is_delimited ? 1 : 0;
         record.default_collation_id = schema.default_collation_id;
         record.acl_oid = schema.acl_oid;
         // search_path_oid removed - session-only concept
@@ -5961,6 +6160,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.schema_id = record.schema_id;
             info.parent_schema_id = record.parent_schema_id;
             info.schema_name = record.schema_name;
+            info.name_is_delimited = record.name_is_delimited != 0;
             info.owner_id = record.owner_id;  // UUID-based owner reference
             info.default_tablespace_id = record.default_tablespace_id;
             info.permissions = record.permissions;
@@ -6008,6 +6208,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         record.rls_forced = table.rls_forced ? 1 : 0;    // Security Phase 3.4
         record.tablespace_id = table.tablespace_id;
         record.default_charset = table.default_charset;
+        record.name_is_delimited = table.name_is_delimited ? 1 : 0;
         record.default_collation_id = table.default_collation_id;
         record.storage_params_oid = table.storage_params_oid;
         record.created_time = table.created_time;
@@ -6176,6 +6377,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.rls_forced = record.rls_forced != 0;    // Security Phase 3.4
             info.tablespace_id = record.tablespace_id;
             info.default_charset = record.default_charset;
+            info.name_is_delimited = record.name_is_delimited != 0;
             info.default_collation_id = record.default_collation_id;
             info.storage_params_oid = record.storage_params_oid;
             info.created_time = record.created_time;
@@ -6224,6 +6426,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             record.is_generated = col.is_generated ? 1 : 0;
             record.storage_type = col.storage_type;
             record.with_timezone = col.with_timezone ? 1 : 0;
+            record.name_is_delimited = col.name_is_delimited ? 1 : 0;
             record.charset = col.charset;
             record.timezone_hint = col.timezone_hint;
             record.collation_id = col.collation_id;
@@ -6269,6 +6472,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.is_generated = record.is_generated != 0;
             info.storage_type = record.storage_type;
             info.with_timezone = record.with_timezone != 0;
+            info.name_is_delimited = record.name_is_delimited != 0;
             info.charset = record.charset;
             info.timezone_hint = record.timezone_hint;
             info.collation_id = record.collation_id;
@@ -6327,6 +6531,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // Plan 01 Task E: Shadow index rebuild + versioning fields
         record.logical_index_id = index.logical_index_id;
         record.state = index.state;
+        record.name_is_delimited = index.name_is_delimited ? 1 : 0;
         record.valid_from_xid = index.valid_from_xid;
         record.retired_xid = index.retired_xid;
         record.build_started_time = index.build_started_time;
@@ -6356,6 +6561,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             // Plan 01 Task E: Shadow index rebuild + versioning fields
             info.logical_index_id = record.logical_index_id;
             info.state = record.state;
+            info.name_is_delimited = record.name_is_delimited != 0;
             info.valid_from_xid = record.valid_from_xid;
             info.retired_xid = record.retired_xid;
             info.build_started_time = record.build_started_time;
@@ -6370,7 +6576,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
     auto CatalogManager::createTimezone(const TimezoneInfo &tz_info, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         // Convert TimezoneInfo to TimezoneRecord
         TimezoneRecord record{};
@@ -6402,7 +6608,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::updateTimezone(uint16_t timezone_id, const TimezoneInfo &tz_info,
                                         ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         // Step 1: Find existing timezone record
         auto predicate = [timezone_id](const TimezoneRecord &rec)
@@ -6455,7 +6661,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::getTimezone(uint16_t timezone_id, TimezoneInfo &info, ErrorContext *ctx)
         -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         auto predicate = [timezone_id](const TimezoneRecord &rec)
         { return rec.timezone_id == timezone_id && rec.is_valid; };
@@ -6491,7 +6697,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::getTimezoneByName(const std::string &name, TimezoneInfo &info,
                                            ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         auto predicate = [&name](const TimezoneRecord &rec)
         { return std::string(rec.name) == name && rec.is_valid; };
@@ -6527,7 +6733,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::listTimezones(std::vector<TimezoneInfo> &timezones, ErrorContext *ctx)
         -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         auto converter = [](const TimezoneRecord &rec, TimezoneInfo &info)
         {
@@ -6555,7 +6761,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
     auto CatalogManager::deleteTimezone(uint16_t timezone_id, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         auto predicate = [timezone_id](const TimezoneRecord &rec)
         { return rec.timezone_id == timezone_id && rec.is_valid; };
@@ -6867,7 +7073,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
     auto CatalogManager::createCharset(const CharsetInfo &cs_info, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         CharsetRecord rec;
         memset(&rec, 0, sizeof(rec));
@@ -6889,7 +7095,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::updateCharset(uint16_t charset_id, const CharsetInfo &cs_info,
                                        ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         // Step 1: Find existing charset record
         auto predicate = [charset_id](const CharsetRecord &rec)
@@ -6936,7 +7142,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         -> Status
     {
         // P0-8: Implemented charset retrieval using findRecordInHeapPage
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         auto predicate = [charset_id](const CharsetRecord &rec)
         { return rec.charset_id == charset_id && rec.is_valid; };
@@ -6966,7 +7172,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                           ErrorContext *ctx) -> Status
     {
         // P0-8: Implemented charset retrieval by name using findRecordInHeapPage
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         auto predicate = [&name](const CharsetRecord &rec)
         { return std::string(rec.name) == name && rec.is_valid; };
@@ -6996,7 +7202,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         -> Status
     {
         // P0-8: Implemented charset listing using scanHeapPage
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         auto converter = [](const CharsetRecord &rec, CharsetInfo &info)
         {
@@ -7017,7 +7223,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
     auto CatalogManager::deleteCharset(uint16_t charset_id, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         // Step 1: Check for dependent collations
         std::vector<CollationCatalogInfo> dependent_collations;
@@ -7083,7 +7289,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::createCollation(const CollationCatalogInfo &col_info, ErrorContext *ctx)
         -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         CollationRecord rec;
         memset(&rec, 0, sizeof(rec));
@@ -7107,7 +7313,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                          const CollationCatalogInfo &col_info, ErrorContext *ctx)
         -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         // Step 1: Find existing collation record
         auto predicate = [collation_id](const CollationRecord &rec)
@@ -7155,7 +7361,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                       ErrorContext *ctx) -> Status
     {
         // P0-8: Implemented collation retrieval using findRecordInHeapPage
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         auto predicate = [collation_id](const CollationRecord &rec)
         { return rec.collation_id == collation_id && rec.is_valid; };
@@ -7187,7 +7393,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                             ErrorContext *ctx) -> Status
     {
         // P0-8: Implemented collation retrieval by name using findRecordInHeapPage
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         auto predicate = [&name](const CollationRecord &rec)
         { return std::string(rec.name) == name && rec.is_valid; };
@@ -7219,7 +7425,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                         ErrorContext *ctx) -> Status
     {
         // P0-8: Implemented collation listing using scanHeapPage
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         auto converter = [](const CollationRecord &rec, CollationCatalogInfo &info)
         {
@@ -7244,7 +7450,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                                   std::vector<CollationCatalogInfo> &collations,
                                                   ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         // Filter for collations with matching charset_id
         auto filter = [charset_id](const CollationRecord &rec)
@@ -7274,7 +7480,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
     auto CatalogManager::deleteCollation(uint32_t collation_id, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         // Find the collation record
         auto predicate = [collation_id](const CollationRecord &rec)
@@ -7443,7 +7649,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                           uint32_t prealloc_pages, uint16_t &tablespace_id,
                                           ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         // Validate tablespace name
         if (tablespace_name.empty() || tablespace_name.length() > 63)
@@ -7563,7 +7769,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::dropTablespace(const std::string &tablespace_name, bool force,
                                         ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         // Find tablespace by name
         uint16_t ts_id = 0;
@@ -7674,7 +7880,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::getTablespace(uint16_t tablespace_id, TablespaceInfo &info,
                                        ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         auto it = tablespace_cache_.find(tablespace_id);
         if (it == tablespace_cache_.end())
@@ -7691,7 +7897,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::getTablespaceByName(const std::string &tablespace_name,
                                              TablespaceInfo &info, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         for (const auto &[id, ts_info] : tablespace_cache_)
         {
@@ -7710,7 +7916,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::listTablespaces(std::vector<TablespaceInfo> &tablespaces,
                                          ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         tablespaces.clear();
         tablespaces.reserve(tablespace_cache_.size());
@@ -7728,7 +7934,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                           bool autoextend_enabled, uint32_t autoextend_size_mb,
                                           uint32_t max_size_mb, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         // Find tablespace by name
         uint16_t ts_id = 0;
@@ -7807,7 +8013,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::renameTablespace(const std::string &old_name,
                                           const std::string &new_name, ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         // Validate new name
         if (new_name.empty() || new_name.length() > 63)
@@ -7898,7 +8104,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                                uint64_t free_size_mb, uint64_t last_extended_time,
                                                ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         // Find tablespace in cache
         auto it = tablespace_cache_.find(tablespace_id);
@@ -7965,7 +8171,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     {
         LOG_INFO(CATALOG, "attachTablespace: Attaching tablespace from '%s'", file_path.c_str());
 
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         // ===== STEP 1: Validate file path exists and is readable =====
 
@@ -8170,7 +8376,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         LOG_INFO(CATALOG, "detachTablespace: Detaching tablespace '%s' (force=%d)",
                 tablespace_name.c_str(), force);
 
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         // ===== STEP 1: Validate tablespace exists =====
 
@@ -8335,7 +8541,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
      */
     auto CatalogManager::compactCatalog(ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         LOG_INFO(CATALOG, "Starting catalog garbage collection (compaction)");
 
@@ -9031,7 +9237,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         }
 
         // ===== STEP 1: Acquire lock and validate table exists =====
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         auto table_it = table_cache_.find(table_id);
         if (table_it == table_cache_.end())
@@ -9574,7 +9780,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint16_t target_tablespace_id,
         ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         std::lock_guard<std::mutex> migration_lock(migration_mutex_);
 
         // 1. Get table info
@@ -9714,7 +9920,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         state.phase = new_phase;
 
         // Update table info phase as well
-        std::lock_guard<std::mutex> table_lock(mutex_);
+        std::lock_guard<CatalogMutex> table_lock(mutex_);
         auto table_it = table_cache_.find(state.table_id);
         if (table_it != table_cache_.end()) {
             table_it->second.migration_phase = static_cast<uint8_t>(new_phase);
@@ -9727,7 +9933,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         const ID &migration_id,
         ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         std::lock_guard<std::mutex> migration_lock(migration_mutex_);
 
         auto it = migration_cache_.find(migration_id);
@@ -10102,7 +10308,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // Get storage table name
         std::string storage_table_name;
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             auto it = table_cache_.find(storage_table_id);
             if (it != table_cache_.end()) {
                 storage_table_name = it->second.table_name;
@@ -10128,7 +10334,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         const ID &table_id,
         ErrorContext *ctx) -> std::vector<IndexInfo>
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
         std::vector<IndexInfo> indexes;
 
@@ -10161,7 +10367,7 @@ Status CatalogManager::executeOnlineMigrationCopyingPhase(
     LOG_INFO(CATALOG, "executeOnlineMigrationCopyingPhase: Starting COPYING phase");
 
     // ===== STEP 1: Get migration state =====
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     auto it = migration_cache_.find(migration_id);
     if (it == migration_cache_.end())
@@ -10191,14 +10397,14 @@ Status CatalogManager::executeOnlineMigrationCopyingPhase(
              "<migration>", source_ts, target_ts);
 
     // Release lock for long-running operations
-    mutex_.unlock();
+    lock.unlock();
 
     // ===== STEP 2: Enumerate all heap pages =====
     std::vector<GPID> source_pages;
     Status status = enumerateTablePages(table_id, source_pages, ctx);
     if (status != Status::OK)
     {
-        mutex_.lock();
+        lock.lock();
         SET_ERROR_CONTEXT(ctx, status, "Failed to enumerate table pages");
         LOG_ERROR(CATALOG, "Failed to enumerate pages for table");
         return status;
@@ -10208,10 +10414,10 @@ Status CatalogManager::executeOnlineMigrationCopyingPhase(
     LOG_INFO(CATALOG, "Found %u heap pages to copy", total_pages);
 
     // Update total_pages in state
-    mutex_.lock();
+    lock.lock();
     state.total_pages = total_pages;
     state.pages_copied = 0;
-    mutex_.unlock();
+    lock.unlock();
 
     // ===== STEP 3: TID mapping and progress tracking =====
     std::unordered_map<uint64_t, uint64_t> tid_mapping;
@@ -10303,15 +10509,15 @@ Status CatalogManager::executeOnlineMigrationCopyingPhase(
         // Update state periodically
         if (pages_copied % 100 == 0)
         {
-            mutex_.lock();
+            lock.lock();
             state.pages_copied = pages_copied;
             state.total_bytes_copied = bytes_copied;
-            mutex_.unlock();
+            lock.unlock();
         }
     }
 
     // ===== STEP 5: Update final state =====
-    mutex_.lock();
+    lock.lock();
     state.pages_copied = pages_copied;
     state.total_bytes_copied = bytes_copied;
 
@@ -10339,7 +10545,7 @@ Status CatalogManager::executeOnlineMigrationCatchUpPhase(
              max_iterations, dirty_threshold);
 
     // ===== STEP 1: Get migration state =====
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     auto it = migration_cache_.find(migration_id);
     if (it == migration_cache_.end())
@@ -10369,7 +10575,7 @@ Status CatalogManager::executeOnlineMigrationCatchUpPhase(
              "<migration>", source_ts, target_ts);
 
     // Release lock for long-running operations
-    mutex_.unlock();
+    lock.unlock();
 
     // ===== STEP 2: TID mapping =====
     std::unordered_map<uint64_t, uint64_t> tid_mapping;
@@ -10486,13 +10692,13 @@ Status CatalogManager::executeOnlineMigrationCatchUpPhase(
         }
 
         // Update statistics
-        mutex_.lock();
+        lock.lock();
         state.catch_up_iterations = iteration + 1;
-        mutex_.unlock();
+        lock.unlock();
     }
 
     // ===== STEP 4: Update final state =====
-    mutex_.lock();
+    lock.lock();
     state.catch_up_iterations = iteration;
     state.final_dirty_page_count = dirty_count;
 
@@ -10529,7 +10735,7 @@ Status CatalogManager::executeOnlineMigrationSwapPhase(
     LOG_INFO(CATALOG, "executeOnlineMigrationSwapPhase: Starting SWAP phase");
 
     // ===== STEP 1: Get migration state =====
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     auto it = migration_cache_.find(migration_id);
     if (it == migration_cache_.end())
@@ -10559,7 +10765,7 @@ Status CatalogManager::executeOnlineMigrationSwapPhase(
              "<migration>", source_ts, target_ts);
 
     // Release lock for long-running operations
-    mutex_.unlock();
+    lock.unlock();
 
     // ===== STEP 2: Get TID mappings from TIDResolver =====
     std::unordered_map<uint64_t, uint64_t> tid_mapping =
@@ -10580,14 +10786,14 @@ Status CatalogManager::executeOnlineMigrationSwapPhase(
     LOG_INFO(CATALOG, "Successfully updated all indexes with new TIDs");
 
     // ===== STEP 4: Atomically update catalog =====
-    mutex_.lock();
+    lock.lock();
 
     // Get table info
     TableInfo table_info;
     status = getTable(table_id, table_info, ctx);
     if (status != Status::OK)
     {
-        mutex_.unlock();
+        lock.unlock();
         SET_ERROR_CONTEXT(ctx, status, "Failed to get table info");
         LOG_ERROR(CATALOG, "Failed to get table info during SWAP");
         return status;
@@ -10610,7 +10816,7 @@ Status CatalogManager::executeOnlineMigrationSwapPhase(
     LOG_INFO(CATALOG, "Updated catalog: table '%s' now in tablespace %u (was %u)",
              table_info.table_name.c_str(), target_ts, old_tablespace);
 
-    mutex_.unlock();
+    lock.unlock();
 
     // ===== STEP 5: Free old pages in source tablespace =====
     // Get all source pages to free
@@ -10668,7 +10874,7 @@ Status CatalogManager::executeOnlineMigrationSwapPhase(
     LOG_INFO(CATALOG, "Cleared TIDResolver state for table");
 
     // ===== STEP 7: Mark migration complete =====
-    mutex_.lock();
+    lock.lock();
 
     state.phase = MigrationPhase::MIGRATION_COMPLETE;
     state.end_time = std::chrono::system_clock::now().time_since_epoch().count();
@@ -10685,7 +10891,7 @@ Status CatalogManager::executeOnlineMigrationSwapPhase(
     // Remove from migration cache (migration is complete)
     migration_cache_.erase(migration_id);
 
-    mutex_.unlock();
+    lock.unlock();
 
     return Status::OK;
 }
@@ -10700,7 +10906,7 @@ Status CatalogManager::cancelOnlineMigration(
     LOG_INFO(CATALOG, "cancelOnlineMigration: Cancelling migration");
 
     // ===== STEP 1: Get migration state =====
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     auto it = migration_cache_.find(migration_id);
     if (it == migration_cache_.end())
@@ -10757,7 +10963,7 @@ Status CatalogManager::cancelOnlineMigration(
     LOG_INFO(CATALOG, "Marked migration as ABORTED");
 
     // Release lock for long-running operations
-    mutex_.unlock();
+    lock.unlock();
 
     // ===== STEP 4: Enumerate target pages for cleanup =====
     std::vector<GPID> target_pages;
@@ -10813,7 +11019,7 @@ Status CatalogManager::cancelOnlineMigration(
     LOG_INFO(CATALOG, "Cleared TIDResolver state");
 
     // ===== STEP 7: Clear table migration flags =====
-    mutex_.lock();
+    lock.lock();
 
     TableInfo table_info;
     status = getTable(table_id, table_info, ctx);
@@ -10839,7 +11045,7 @@ Status CatalogManager::cancelOnlineMigration(
     // ===== STEP 8: Remove from migration cache =====
     migration_cache_.erase(migration_id);
 
-    mutex_.unlock();
+    lock.unlock();
 
     LOG_INFO(CATALOG, "Migration cancelled successfully");
     LOG_INFO(CATALOG, "Rollback statistics:");
@@ -10946,9 +11152,10 @@ auto CatalogManager::createTrigger(const TriggerInfo &trigger, ErrorContext *ctx
     return Status::OK;
 }
 
-auto CatalogManager::dropTrigger(const std::string &trigger_name, ErrorContext *ctx) -> Status
+// Internal helper (assumes trigger_mutex_ and dependency_cache_mutex_ already held)
+auto CatalogManager::dropTriggerInternal(const std::string &trigger_name, ErrorContext *ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(trigger_mutex_);
+    // NO LOCK - caller must hold trigger_mutex_ and dependency_cache_mutex_
 
     // Look up trigger
     auto it = trigger_name_to_id_.find(trigger_name);
@@ -10957,7 +11164,7 @@ auto CatalogManager::dropTrigger(const std::string &trigger_name, ErrorContext *
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger does not exist");
         return Status::NOT_FOUND;
     }
-    
+
     ID trigger_id = it->second;
     const auto& trigger_info = trigger_cache_[trigger_id];
 
@@ -10971,7 +11178,7 @@ auto CatalogManager::dropTrigger(const std::string &trigger_name, ErrorContext *
     {
         return persist_status;
     }
-    
+
     // Remove from table_triggers index
     auto range = table_triggers_.equal_range(trigger_info.table_id);
     for (auto tit = range.first; tit != range.second; ++tit)
@@ -10982,23 +11189,30 @@ auto CatalogManager::dropTrigger(const std::string &trigger_name, ErrorContext *
             break;
         }
     }
-    
+
     // Remove from caches
     trigger_cache_.erase(trigger_id);
     trigger_name_to_id_.erase(trigger_name);
 
-    // Remove dependency links for this trigger
-    clearDependenciesFor(trigger_id, ctx);
-    
+    // Remove dependency links for this trigger (use internal version)
+    clearDependenciesForInternal(trigger_id, ctx);
+
     LOG_INFO(CATALOG, "Dropped trigger '%s'", trigger_name.c_str());
-    
+
     return Status::OK;
 }
 
-auto CatalogManager::getTrigger(const ID &trigger_id, TriggerInfo &info, ErrorContext *ctx)
+auto CatalogManager::dropTrigger(const std::string &trigger_name, ErrorContext *ctx) -> Status
+{
+    std::scoped_lock lock(trigger_mutex_, dependency_cache_mutex_);
+    return dropTriggerInternal(trigger_name, ctx);
+}
+
+// Internal helper (assumes trigger_mutex_ already held)
+auto CatalogManager::getTriggerInternal(const ID &trigger_id, TriggerInfo &info, ErrorContext *ctx)
     -> Status
 {
-    std::lock_guard<std::mutex> lock(trigger_mutex_);
+    // NO LOCK - caller must hold trigger_mutex_
 
     auto it = trigger_cache_.find(trigger_id);
     if (it == trigger_cache_.end())
@@ -11006,9 +11220,16 @@ auto CatalogManager::getTrigger(const ID &trigger_id, TriggerInfo &info, ErrorCo
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger not found");
         return Status::NOT_FOUND;
     }
-    
+
     info = it->second;
     return Status::OK;
+}
+
+auto CatalogManager::getTrigger(const ID &trigger_id, TriggerInfo &info, ErrorContext *ctx)
+    -> Status
+{
+    std::lock_guard<std::mutex> lock(trigger_mutex_);
+    return getTriggerInternal(trigger_id, info, ctx);
 }
 
 auto CatalogManager::getTriggerByName(const std::string &trigger_name, TriggerInfo &info,
@@ -11557,7 +11778,9 @@ auto CatalogManager::getProcedure(const std::string &name, ProcedureInfo &info_o
 auto CatalogManager::dropFunction(const std::string &name, bool if_exists,
                                   ErrorContext *ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(psql_mutex_);
+    // Acquire BOTH locks in consistent order to prevent deadlock
+    // Lock order: psql_mutex_ first, then dependency_cache_mutex_
+    std::scoped_lock lock(psql_mutex_, dependency_cache_mutex_);
 
     auto it = functions_.find(name);
     if (it == functions_.end())
@@ -11575,16 +11798,17 @@ auto CatalogManager::dropFunction(const std::string &name, bool if_exists,
     const FunctionInfo& func = it->second;
 
     // Check for dependents (views, triggers, other functions that call this function)
+    // Use internal version that assumes locks already held
     std::vector<DependencyInfo> dependents;
-    Status status = getDependents(func.function_id, dependents, ctx);
-    if (status != Status::OK) {
-        return status;
-    }
+    getDependentsInternal(func.function_id, dependents);
 
     // Functions don't own other objects, so all dependents are blocking
     if (!dependents.empty()) {
+        std::vector<DependencyName> resolved;
+        // Use internal version that assumes locks already held
+        resolveDependencyNamesInternal(dependents, resolved, ctx);
         std::string error_msg = buildDependencyErrorMessage(
-            name, ObjectType::FUNCTION, dependents, ctx);
+            name, ObjectType::FUNCTION, resolved);
         SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
         return Status::CONSTRAINT_VIOLATION;
     }
@@ -11608,7 +11832,8 @@ auto CatalogManager::dropFunction(const std::string &name, bool if_exists,
     }
 
     // Clear dependencies (what this function references)
-    clearDependenciesFor(func.function_id, ctx);
+    // Use internal version that assumes locks already held
+    clearDependenciesForInternal(func.function_id, ctx);
 
     functions_.erase(it);
     LOG_INFO(CATALOG, "Function '%s' dropped", name.c_str());
@@ -11619,7 +11844,9 @@ auto CatalogManager::dropFunction(const std::string &name, bool if_exists,
 auto CatalogManager::dropProcedure(const std::string &name, bool if_exists,
                                    ErrorContext *ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(psql_mutex_);
+    // Acquire BOTH locks in consistent order to prevent deadlock
+    // Lock order: psql_mutex_ first, then dependency_cache_mutex_
+    std::scoped_lock lock(psql_mutex_, dependency_cache_mutex_);
 
     auto it = procedures_.find(name);
     if (it == procedures_.end())
@@ -11637,16 +11864,17 @@ auto CatalogManager::dropProcedure(const std::string &name, bool if_exists,
     const ProcedureInfo& proc = it->second;
 
     // Check for dependents (triggers, other procedures/functions that call this procedure)
+    // Use internal version that assumes locks already held
     std::vector<DependencyInfo> dependents;
-    Status status = getDependents(proc.procedure_id, dependents, ctx);
-    if (status != Status::OK) {
-        return status;
-    }
+    getDependentsInternal(proc.procedure_id, dependents);
 
     // Procedures don't own other objects, so all dependents are blocking
     if (!dependents.empty()) {
+        std::vector<DependencyName> resolved;
+        // Use internal version that assumes locks already held
+        resolveDependencyNamesInternal(dependents, resolved, ctx);
         std::string error_msg = buildDependencyErrorMessage(
-            name, ObjectType::PROCEDURE, dependents, ctx);
+            name, ObjectType::PROCEDURE, resolved);
         SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
         return Status::CONSTRAINT_VIOLATION;
     }
@@ -11670,7 +11898,8 @@ auto CatalogManager::dropProcedure(const std::string &name, bool if_exists,
     }
 
     // Clear dependencies (what this procedure references)
-    clearDependenciesFor(proc.procedure_id, ctx);
+    // Use internal version that assumes locks already held
+    clearDependenciesForInternal(proc.procedure_id, ctx);
 
     procedures_.erase(it);
     LOG_INFO(CATALOG, "Procedure '%s' dropped", name.c_str());
@@ -11764,7 +11993,9 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
     // - BLOCK: views, functions, parent-side FKs that reference table
     // - No CASCADE support (removed - conservative policy)
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    // Acquire ALL locks in consistent order to prevent deadlock
+    // Lock order: mutex_, sequence_cache_mutex_, trigger_mutex_, foreign_keys_cache_mutex_, constraints_cache_mutex_, dependency_cache_mutex_
+    std::scoped_lock lock(mutex_, sequence_cache_mutex_, trigger_mutex_, foreign_keys_cache_mutex_, constraints_cache_mutex_, dependency_cache_mutex_);
 
     // 1. Check if table exists in cache
     auto table_it = table_cache_.find(table_id);
@@ -11777,19 +12008,21 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
     const TableInfo &table_info = table_it->second;
 
     // 2. Check for dependencies using dependency API
+    // Use internal version that assumes locks already held
     std::vector<DependencyInfo> all_deps;
-    Status status = getDependents(table_id, all_deps, ctx);
-    if (status != Status::OK) {
-        return status;
-    }
+    getDependentsInternal(table_id, all_deps);
 
     // 3. Filter owned vs blocking dependencies
     auto filtered = filterDependencies(table_id, ObjectType::TABLE, all_deps, ctx);
 
     // 4. If blocking dependencies exist, fail with detailed error
     if (!filtered.blocking.empty()) {
+        std::string table_name = table_info.table_name;
+        std::vector<DependencyName> resolved;
+        // Use internal version that assumes locks already held
+        resolveDependencyNamesInternal(filtered.blocking, resolved, ctx);
         std::string error_msg = buildDependencyErrorMessage(
-            table_info.table_name, ObjectType::TABLE, filtered.blocking, ctx);
+            table_name, ObjectType::TABLE, resolved);
         SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
         return Status::CONSTRAINT_VIOLATION;
     }
@@ -11821,12 +12054,14 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
     }
 
     // Drop in proper order: triggers first, then indexes, then constraints
+    Status status;
     for (const auto& dep : owned_triggers) {
         // Get trigger name (dropTrigger requires name, not ID)
+        // Use internal versions that assume locks already held
         TriggerInfo trig_info;
-        status = getTrigger(dep.dependent_object_id, trig_info, ctx);
+        status = getTriggerInternal(dep.dependent_object_id, trig_info, ctx);
         if (status == Status::OK) {
-            status = dropTrigger(trig_info.trigger_name, ctx);
+            status = dropTriggerInternal(trig_info.trigger_name, ctx);
         }
         if (status != Status::OK) {
             LOG_ERROR(CATALOG, "Failed to drop trigger during table drop");
@@ -11844,7 +12079,8 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
 
     for (const auto& dep : owned_constraints) {
         // Drop constraint (includes FKs, checks, unique, etc.)
-        status = dropConstraint(dep.dependent_object_id, ctx);
+        // Use internal version that assumes locks already held
+        status = dropConstraintInternal(dep.dependent_object_id, ctx);
         if (status != Status::OK) {
             LOG_ERROR(CATALOG, "Failed to drop constraint during table drop");
             return status;
@@ -11854,29 +12090,28 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
     if (!owned_sequences.empty()) {
         // Remove table->sequence dependencies so sequence drops are not blocked.
         std::vector<DependencyInfo> table_deps;
-        Status deps_status = getDependenciesFor(table_id, table_deps, ctx);
-        if (deps_status == Status::OK) {
-            for (const auto& dep : table_deps) {
-                if (dep.dependent_type == ObjectType::TABLE &&
-                    dep.referenced_type == ObjectType::SEQUENCE) {
-                    deleteDependency(dep.dependency_id, ctx);
-                }
+        // Use internal version that assumes locks already held
+        getDependenciesForInternal(table_id, table_deps);
+        for (const auto& dep : table_deps) {
+            if (dep.dependent_type == ObjectType::TABLE &&
+                dep.referenced_type == ObjectType::SEQUENCE) {
+                // Use internal version that assumes locks already held
+                deleteDependencyInternal(dep.dependency_id, ctx);
             }
         }
     }
 
     for (const auto& dep : owned_sequences) {
         std::vector<DependencyInfo> seq_dependents;
-        Status dep_status = getDependents(dep.dependent_object_id, seq_dependents, ctx);
-        if (dep_status != Status::OK) {
-            return dep_status;
-        }
+        // Use internal version that assumes locks already held
+        getDependentsInternal(dep.dependent_object_id, seq_dependents);
         if (!seq_dependents.empty()) {
             LOG_INFO(CATALOG, "Skipping sequence drop; sequence has other dependents");
             continue;
         }
 
-        status = dropSequence(dep.dependent_object_id, false, ctx);
+        // Use internal version that assumes locks already held
+        status = dropSequenceInternal(dep.dependent_object_id, ctx);
         if (status != Status::OK) {
             LOG_ERROR(CATALOG, "Failed to drop sequence during table drop");
             return status;
@@ -11899,11 +12134,8 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
     }
 
     for (const auto& col : table_columns) {
-        Status dep_status = clearDependenciesFor(col.column_id, ctx);
-        if (dep_status != Status::OK) {
-            LOG_ERROR(CATALOG, "Failed to clear dependencies for column during table drop");
-            return dep_status;
-        }
+        // Use internal version that assumes locks already held
+        clearDependenciesForInternal(col.column_id, ctx);
     }
 
     // 6. Soft delete the table record (mark is_valid = 0)
@@ -11914,11 +12146,8 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
     }
 
     // 7. Clear dependencies (remove this table from dependency graph)
-    status = clearDependenciesFor(table_id, ctx);
-    if (status != Status::OK) {
-        LOG_ERROR(CATALOG, "Failed to clear dependencies for table");
-        // Continue anyway - table is already deleted
-    }
+    // Use internal version that assumes locks already held
+    clearDependenciesForInternal(table_id, ctx);
 
     // 8. Remove from cache
     table_cache_.erase(table_it);
@@ -11947,7 +12176,8 @@ Status CatalogManager::dropIndexInternal(const ID &index_id, ErrorContext *ctx)
     }
 
     // Phase 2: Clear dependency tracking for this index
-    clearDependenciesFor(index_id, ctx);
+    // Use internal version that assumes locks already held
+    clearDependenciesForInternal(index_id, ctx);
 
     // 3. Remove from cache
     // Note: Any cached index objects will be released when the cache entry is removed
@@ -11961,7 +12191,7 @@ Status CatalogManager::dropIndex(const ID &index_id, ErrorContext *ctx)
     // DROP INDEX implementation (ALPHA Phase 1 - DDL Modifications)
     // Implements soft delete with MGA compliance
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
     return dropIndexInternal(index_id, ctx);
 }
 
@@ -11969,23 +12199,28 @@ Status CatalogManager::dropIndex(const ID &index_id, ErrorContext *ctx)
 // Plan 01 Task E: Shadow Index Rebuild + Versioning
 // ============================================================================
 
+ID CatalogManager::generateLogicalIndexIdUnlocked(const ID &table_id, const std::string &index_name)
+{
+    for (const auto &[index_id, index_info] : index_cache_)
+    {
+        if (index_info.table_id != table_id)
+        {
+            continue;
+        }
+        if (IdentifierUtils::namesMatch(index_name, false /*search_delimited*/,
+                                        index_info.index_name, index_info.name_is_delimited))
+        {
+            return index_info.logical_index_id;
+        }
+    }
+
+    return generateUuidV7();
+}
+
 ID CatalogManager::generateLogicalIndexId(const ID &table_id, const std::string &index_name)
 {
-    // Generate stable logical index ID by hashing table_id + index_name
-    // This ensures the same logical ID across rebuilds
-
-    std::string combined = table_id.toString() + ":" + index_name;
-
-    // Use std::hash to generate a hash value
-    std::hash<std::string> hasher;
-    size_t hash_value = hasher(combined);
-
-    // Convert hash to ID (UUID format)
-    // Use the hash value to generate a deterministic UUID
-    ID logical_id;
-    std::memcpy(&logical_id, &hash_value, std::min(sizeof(hash_value), sizeof(ID)));
-
-    return logical_id;
+    std::unique_lock<CatalogMutex> lock(mutex_);
+    return generateLogicalIndexIdUnlocked(table_id, index_name);
 }
 
 Status CatalogManager::getVisibleIndexVersion(const ID &table_id, const std::string &index_name,
@@ -11996,9 +12231,9 @@ Status CatalogManager::getVisibleIndexVersion(const ID &table_id, const std::str
     // Per Plan 01: version where state == ACTIVE, valid_from_xid <= txn_xid,
     // and (retired_xid == 0 or txn_xid < retired_xid)
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
-    ID logical_id = generateLogicalIndexId(table_id, index_name);
+    ID logical_id = generateLogicalIndexIdUnlocked(table_id, index_name);
 
     // Find all index versions with matching logical_index_id
     std::vector<IndexInfo> candidates;
@@ -12042,7 +12277,7 @@ Status CatalogManager::createShadowIndex(const ID &existing_index_id, ID &shadow
     // Create a shadow index for rebuild
     // The shadow starts in BUILDING state and becomes visible only after promotion
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     // Get the existing index from cache
     auto it = index_cache_.find(existing_index_id);
@@ -12088,7 +12323,7 @@ Status CatalogManager::promoteShadowIndex(const ID &shadow_index_id, ErrorContex
 {
     // Promote shadow index to ACTIVE and retire old versions
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     // Get shadow index from cache
     auto it = index_cache_.find(shadow_index_id);
@@ -12157,7 +12392,7 @@ Status CatalogManager::gcRetiredIndexes(uint64_t *indexes_removed_out, ErrorCont
     // Garbage collect retired index versions
     // Safe to delete when retired_xid < OIT (Oldest Interesting Transaction)
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     uint64_t oit = db_->transaction_manager()->getOldestXid();
     uint64_t removed_count = 0;
@@ -12203,7 +12438,7 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
     // ADD COLUMN implementation (ALPHA Phase 1)
     // Adds a new column to an existing table with MGA compliance
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     // 1. Check if table exists in cache
     auto table_it = table_cache_.find(table_id);
@@ -12246,7 +12481,10 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
                 {
                     next_ordinal = record->ordinal + 1;
                 }
-                if (std::strcmp(record->column_name, column_info.column_name.c_str()) == 0)
+                if (IdentifierUtils::namesConflict(column_info.column_name,
+                                                   column_info.name_is_delimited,
+                                                   record->column_name,
+                                                   record->name_is_delimited != 0))
                 {
                     name_exists = true;
                 }
@@ -12291,6 +12529,7 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
     record.is_generated = new_column.is_generated ? 1 : 0;
     record.storage_type = static_cast<uint8_t>(new_column.storage_type);
     record.with_timezone = new_column.with_timezone ? 1 : 0;
+    record.name_is_delimited = new_column.name_is_delimited ? 1 : 0;
     record.charset = new_column.charset;
     record.timezone_hint = new_column.timezone_hint;
     record.collation_id = new_column.collation_id;
@@ -12379,7 +12618,7 @@ Status CatalogManager::dropColumn(const ID &table_id, const std::string &column_
     // DROP COLUMN implementation (ALPHA Phase 1)
     // Soft deletes column with MGA compliance and CASCADE support
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // 1. Check if table exists in cache
     auto table_it = table_cache_.find(table_id);
@@ -12416,7 +12655,9 @@ Status CatalogManager::dropColumn(const ID &table_id, const std::string &column_
             if (record->table_id == table_id && record->is_valid == 1)
             {
                 valid_column_count++;
-                if (std::strcmp(record->column_name, column_name.c_str()) == 0)
+                if (IdentifierUtils::namesMatch(column_name, false /*search_delimited*/,
+                                                record->column_name,
+                                                record->name_is_delimited != 0))
                 {
                     column_id = record->column_id;
                     found = true;
@@ -12562,7 +12803,7 @@ Status CatalogManager::renameColumn(const ID &table_id, const std::string &old_n
     // RENAME COLUMN implementation (ALPHA Phase 1)
     // Updates column name in-place with MGA compliance
 
-    std::unique_lock<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     // 1. Check if table exists in cache
     auto table_it = table_cache_.find(table_id);
@@ -12623,13 +12864,15 @@ Status CatalogManager::renameColumn(const ID &table_id, const std::string &old_n
             if (record->table_id == table_id && record->is_valid == 1)
             {
                 if (IdentifierUtils::namesMatch(old_name, false /*search_delimited*/,
-                                                record->column_name, false /*stored_delimited*/))
+                                                record->column_name,
+                                                record->name_is_delimited != 0))
                 {
                     column_id = record->column_id;
                     found_old = true;
                 }
                 if (IdentifierUtils::namesMatch(new_name, false /*search_delimited*/,
-                                                record->column_name, false /*stored_delimited*/))
+                                                record->column_name,
+                                                record->name_is_delimited != 0))
                 {
                     new_name_exists = true;
                 }
@@ -12904,7 +13147,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
                 return validation;
             }
 
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             auto it = schema_cache_.find(object_id);
             if (it == schema_cache_.end())
             {
@@ -12941,6 +13184,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
             record.default_tablespace_id = schema.default_tablespace_id;
             record.permissions = schema.permissions;
             record.default_charset = schema.default_charset;
+            record.name_is_delimited = schema.name_is_delimited ? 1 : 0;
             record.default_collation_id = schema.default_collation_id;
             record.acl_oid = schema.acl_oid;
             record.created_time = schema.created_time;
@@ -13019,6 +13263,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
             record.rls_forced = table.rls_forced ? 1 : 0;
             record.tablespace_id = table.tablespace_id;
             record.default_charset = table.default_charset;
+            record.name_is_delimited = table.name_is_delimited ? 1 : 0;
             record.default_collation_id = table.default_collation_id;
             record.storage_params_oid = table.storage_params_oid;
             record.created_time = table.created_time;
@@ -13050,7 +13295,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
             ID table_id{};
             std::string old_name;
             {
-                std::lock_guard<std::mutex> lock(mutex_);
+                std::lock_guard<CatalogMutex> lock(mutex_);
                 for (const auto& [tid, columns] : column_cache_)
                 {
                     for (const auto& col : columns)
@@ -13086,7 +13331,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
                 return validation;
             }
 
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             auto it = index_cache_.find(object_id);
             if (it == index_cache_.end())
             {
@@ -13112,7 +13357,6 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
             IndexInfo old_info = it->second;
             IndexInfo& index = it->second;
             index.index_name = new_name;
-            index.logical_index_id = generateLogicalIndexId(index.table_id, new_name);
 
             IndexRecord record{};
             record.index_id = index.index_id;
@@ -13133,6 +13377,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
             record.is_valid = 1;
             record.logical_index_id = index.logical_index_id;
             record.state = index.state;
+            record.name_is_delimited = index.name_is_delimited ? 1 : 0;
             record.valid_from_xid = index.valid_from_xid;
             record.retired_xid = index.retired_xid;
             record.build_started_time = index.build_started_time;
@@ -13159,7 +13404,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
                 return validation;
             }
 
-            std::lock_guard<std::mutex> lock(constraints_cache_mutex_);
+            std::scoped_lock lock(mutex_, constraints_cache_mutex_);
             auto it = constraints_cache_.find(object_id);
             if (it == constraints_cache_.end())
             {
@@ -13168,7 +13413,24 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
             }
 
             auto table_id = it->second.table_id;
-            auto key = std::make_pair(table_id, new_name);
+            for (const auto& [id, info] : constraints_cache_)
+            {
+                if (id == object_id || info.table_id != table_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesConflict(new_name, it->second.name_is_delimited,
+                                                   info.constraint_name,
+                                                   info.name_is_delimited))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
+                                      "Constraint name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            auto key = makeConstraintNameKey(table_id, new_name,
+                                             it->second.name_is_delimited);
             auto name_it = constraint_name_lookup_.find(key);
             if (name_it != constraint_name_lookup_.end() && name_it->second != object_id)
             {
@@ -13176,11 +13438,22 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
                 return Status::FILE_EXISTS;
             }
 
-            auto old_key = std::make_pair(table_id, it->second.constraint_name);
+            std::string old_name = it->second.constraint_name;
+            auto old_key = makeConstraintNameKey(table_id, old_name,
+                                                 it->second.name_is_delimited);
             constraint_name_lookup_.erase(old_key);
             constraint_name_lookup_[key] = object_id;
-
             it->second.constraint_name = new_name;
+
+            Status persist_status = updateConstraintRecord(it->second, ctx);
+            if (persist_status != Status::OK)
+            {
+                it->second.constraint_name = old_name;
+                constraint_name_lookup_.erase(key);
+                constraint_name_lookup_[old_key] = object_id;
+                return persist_status;
+            }
+
             return Status::OK;
         }
 
@@ -13559,7 +13832,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
                 return validation;
             }
 
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             auto predicate = [&object_id](const PackageRecord& rec) {
                 return rec.package_id == object_id && rec.is_valid == 1;
             };
@@ -13573,7 +13846,10 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
             auto conflict_pred = [&](const PackageRecord& rec) {
                 return rec.is_valid == 1 &&
                        rec.schema_id == result.record.schema_id &&
-                       std::strcmp(rec.package_name, new_name.c_str()) == 0;
+                       IdentifierUtils::namesConflict(new_name,
+                                                      result.record.name_is_delimited != 0,
+                                                      rec.package_name,
+                                                      rec.name_is_delimited != 0);
             };
             auto conflict = findRecordInHeapPage<PackageRecord>(packages_table_page_, conflict_pred, ctx);
             if (conflict.status == Status::OK && conflict.record.package_id != object_id)
@@ -13600,7 +13876,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
                 return validation;
             }
 
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             auto predicate = [&object_id](const UDRRecord& rec) {
                 return rec.udr_id == object_id && rec.is_valid == 1;
             };
@@ -13614,7 +13890,10 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
             auto conflict_pred = [&](const UDRRecord& rec) {
                 return rec.is_valid == 1 &&
                        rec.schema_id == result.record.schema_id &&
-                       std::strcmp(rec.udr_name, new_name.c_str()) == 0;
+                       IdentifierUtils::namesConflict(new_name,
+                                                      result.record.name_is_delimited != 0,
+                                                      rec.udr_name,
+                                                      rec.name_is_delimited != 0);
             };
             auto conflict = findRecordInHeapPage<UDRRecord>(udr_table_page_, conflict_pred, ctx);
             if (conflict.status == Status::OK && conflict.record.udr_id != object_id)
@@ -13641,7 +13920,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
                 return validation;
             }
 
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             auto it = exception_cache_.find(object_id);
             if (it == exception_cache_.end())
             {
@@ -13656,8 +13935,8 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
                 {
                     continue;
                 }
-                if (IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
-                                                   info.name, false /*existing_is_delimited*/))
+                if (IdentifierUtils::namesConflict(new_name, it->second.name_is_delimited,
+                                                   info.name, info.name_is_delimited))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Exception name already exists");
                     return Status::FILE_EXISTS;
@@ -13709,7 +13988,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
                 return validation;
             }
 
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             auto predicate = [&object_id](const UserRecord& rec) {
                 return rec.user_id == object_id && rec.is_valid == 1;
             };
@@ -13751,7 +14030,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
         {
             std::string old_name;
             {
-                std::lock_guard<std::mutex> lock(mutex_);
+                std::lock_guard<CatalogMutex> lock(mutex_);
                 for (const auto& [id, info] : tablespace_cache_)
                 {
                     if (info.tablespace_uuid == object_id)
@@ -13794,8 +14073,8 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
                 {
                     continue;
                 }
-                if (IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
-                                                   info.synonym_name, false /*existing_is_delimited*/))
+                if (IdentifierUtils::namesConflict(new_name, it->second.name_is_delimited,
+                                                   info.synonym_name, info.name_is_delimited))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Synonym name already exists");
                     return Status::FILE_EXISTS;
@@ -13803,17 +14082,20 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
             }
 
             SynonymInfo old_info = it->second;
-            auto old_key = makeSynonymNameKey(schema_id, old_info.synonym_name);
+            auto old_key = makeSynonymNameKey(schema_id, old_info.synonym_name,
+                                              old_info.name_is_delimited);
 
             it->second.synonym_name = new_name;
             it->second.last_modified_time = now;
             synonym_name_lookup_.erase(old_key);
-            synonym_name_lookup_[makeSynonymNameKey(schema_id, new_name)] = object_id;
+            synonym_name_lookup_[makeSynonymNameKey(schema_id, new_name,
+                                                    old_info.name_is_delimited)] = object_id;
 
             Status persist_status = updateSynonymRecord(it->second, ctx);
             if (persist_status != Status::OK)
             {
-                synonym_name_lookup_.erase(makeSynonymNameKey(schema_id, new_name));
+                synonym_name_lookup_.erase(makeSynonymNameKey(schema_id, new_name,
+                                                             old_info.name_is_delimited));
                 synonym_name_lookup_[old_key] = old_info.synonym_id;
                 it->second = old_info;
             }
@@ -13843,8 +14125,8 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
                 {
                     continue;
                 }
-                if (IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
-                                                   info.table_name, false /*existing_is_delimited*/))
+                if (IdentifierUtils::namesConflict(new_name, it->second.name_is_delimited,
+                                                   info.table_name, info.name_is_delimited))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Foreign table name already exists");
                     return Status::FILE_EXISTS;
@@ -13852,17 +14134,20 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
             }
 
             ForeignTableInfo old_info = it->second;
-            auto old_key = makeForeignTableNameKey(schema_id, old_info.table_name);
+            auto old_key = makeForeignTableNameKey(schema_id, old_info.table_name,
+                                                   old_info.name_is_delimited);
 
             it->second.table_name = new_name;
             it->second.last_modified_time = now;
             foreign_table_name_lookup_.erase(old_key);
-            foreign_table_name_lookup_[makeForeignTableNameKey(schema_id, new_name)] = object_id;
+            foreign_table_name_lookup_[makeForeignTableNameKey(schema_id, new_name,
+                                                              old_info.name_is_delimited)] = object_id;
 
             Status persist_status = updateForeignTableRecord(it->second, ctx);
             if (persist_status != Status::OK)
             {
-                foreign_table_name_lookup_.erase(makeForeignTableNameKey(schema_id, new_name));
+                foreign_table_name_lookup_.erase(makeForeignTableNameKey(schema_id, new_name,
+                                                                         old_info.name_is_delimited));
                 foreign_table_name_lookup_[old_key] = old_info.foreign_table_id;
                 it->second = old_info;
             }
@@ -14063,7 +14348,7 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
     {
         case ObjectType::SCHEMA:
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             auto it = schema_cache_.find(object_id);
             if (it == schema_cache_.end())
             {
@@ -14132,6 +14417,7 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
             record.default_tablespace_id = schema.default_tablespace_id;
             record.permissions = schema.permissions;
             record.default_charset = schema.default_charset;
+            record.name_is_delimited = schema.name_is_delimited ? 1 : 0;
             record.default_collation_id = schema.default_collation_id;
             record.acl_oid = schema.acl_oid;
             record.created_time = schema.created_time;
@@ -14218,6 +14504,7 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
             record.rls_forced = table.rls_forced ? 1 : 0;
             record.tablespace_id = table.tablespace_id;
             record.default_charset = table.default_charset;
+            record.name_is_delimited = table.name_is_delimited ? 1 : 0;
             record.default_collation_id = table.default_collation_id;
             record.storage_params_oid = table.storage_params_oid;
             record.created_time = table.created_time;
@@ -14536,7 +14823,7 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
 
         case ObjectType::PACKAGE:
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             if (isZeroUuidLocal(target_schema_id) ||
                 schema_cache_.find(target_schema_id) == schema_cache_.end())
             {
@@ -14564,7 +14851,10 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
             auto conflict_pred = [&](const PackageRecord& rec) {
                 return rec.is_valid == 1 &&
                        rec.schema_id == target_schema_id &&
-                       std::strcmp(rec.package_name, desired_name.c_str()) == 0;
+                       IdentifierUtils::namesConflict(desired_name,
+                                                      result.record.name_is_delimited != 0,
+                                                      rec.package_name,
+                                                      rec.name_is_delimited != 0);
             };
             auto conflict = findRecordInHeapPage<PackageRecord>(packages_table_page_, conflict_pred, ctx);
             if (conflict.status == Status::OK && conflict.record.package_id != object_id)
@@ -14586,7 +14876,7 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
 
         case ObjectType::UDR:
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             if (isZeroUuidLocal(target_schema_id) ||
                 schema_cache_.find(target_schema_id) == schema_cache_.end())
             {
@@ -14614,7 +14904,10 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
             auto conflict_pred = [&](const UDRRecord& rec) {
                 return rec.is_valid == 1 &&
                        rec.schema_id == target_schema_id &&
-                       std::strcmp(rec.udr_name, desired_name.c_str()) == 0;
+                       IdentifierUtils::namesConflict(desired_name,
+                                                      result.record.name_is_delimited != 0,
+                                                      rec.udr_name,
+                                                      rec.name_is_delimited != 0);
             };
             auto conflict = findRecordInHeapPage<UDRRecord>(udr_table_page_, conflict_pred, ctx);
             if (conflict.status == Status::OK && conflict.record.udr_id != object_id)
@@ -14636,7 +14929,7 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
 
         case ObjectType::EXCEPTION:
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             if (isZeroUuidLocal(target_schema_id) ||
                 schema_cache_.find(target_schema_id) == schema_cache_.end())
             {
@@ -14664,8 +14957,8 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
                 {
                     continue;
                 }
-                if (IdentifierUtils::namesConflict(desired_name, false /*new_is_delimited*/,
-                                                   info.name, false /*existing_is_delimited*/))
+                if (IdentifierUtils::namesConflict(desired_name, it->second.name_is_delimited,
+                                                   info.name, info.name_is_delimited))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Exception name already exists");
                     return Status::FILE_EXISTS;
@@ -14734,8 +15027,8 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
                 {
                     continue;
                 }
-                if (IdentifierUtils::namesConflict(desired_name, false /*new_is_delimited*/,
-                                                   info.synonym_name, false /*existing_is_delimited*/))
+                if (IdentifierUtils::namesConflict(desired_name, it->second.name_is_delimited,
+                                                   info.synonym_name, info.name_is_delimited))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Synonym name already exists");
                     return Status::FILE_EXISTS;
@@ -14743,18 +15036,21 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
             }
 
             SynonymInfo old_info = it->second;
-            auto old_key = makeSynonymNameKey(old_info.schema_id, old_info.synonym_name);
+            auto old_key = makeSynonymNameKey(old_info.schema_id, old_info.synonym_name,
+                                              old_info.name_is_delimited);
 
             it->second.schema_id = target_schema_id;
             it->second.synonym_name = desired_name;
             it->second.last_modified_time = now;
             synonym_name_lookup_.erase(old_key);
-            synonym_name_lookup_[makeSynonymNameKey(target_schema_id, desired_name)] = object_id;
+            synonym_name_lookup_[makeSynonymNameKey(target_schema_id, desired_name,
+                                                    old_info.name_is_delimited)] = object_id;
 
             Status persist_status = updateSynonymRecord(it->second, ctx);
             if (persist_status != Status::OK)
             {
-                synonym_name_lookup_.erase(makeSynonymNameKey(target_schema_id, desired_name));
+                synonym_name_lookup_.erase(makeSynonymNameKey(target_schema_id, desired_name,
+                                                             old_info.name_is_delimited));
                 synonym_name_lookup_[old_key] = old_info.synonym_id;
                 it->second = old_info;
             }
@@ -14791,8 +15087,8 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
                 {
                     continue;
                 }
-                if (IdentifierUtils::namesConflict(desired_name, false /*new_is_delimited*/,
-                                                   info.table_name, false /*existing_is_delimited*/))
+                if (IdentifierUtils::namesConflict(desired_name, it->second.name_is_delimited,
+                                                   info.table_name, info.name_is_delimited))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Foreign table name already exists");
                     return Status::FILE_EXISTS;
@@ -14800,18 +15096,22 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
             }
 
             ForeignTableInfo old_info = it->second;
-            auto old_key = makeForeignTableNameKey(old_info.schema_id, old_info.table_name);
+            auto old_key = makeForeignTableNameKey(old_info.schema_id, old_info.table_name,
+                                                   old_info.name_is_delimited);
 
             it->second.schema_id = target_schema_id;
             it->second.table_name = desired_name;
             it->second.last_modified_time = now;
             foreign_table_name_lookup_.erase(old_key);
-            foreign_table_name_lookup_[makeForeignTableNameKey(target_schema_id, desired_name)] = object_id;
+            foreign_table_name_lookup_[makeForeignTableNameKey(target_schema_id, desired_name,
+                                                               old_info.name_is_delimited)] = object_id;
 
             Status persist_status = updateForeignTableRecord(it->second, ctx);
             if (persist_status != Status::OK)
             {
-                foreign_table_name_lookup_.erase(makeForeignTableNameKey(target_schema_id, desired_name));
+                foreign_table_name_lookup_.erase(makeForeignTableNameKey(target_schema_id,
+                                                                         desired_name,
+                                                                         old_info.name_is_delimited));
                 foreign_table_name_lookup_[old_key] = old_info.foreign_table_id;
                 it->second = old_info;
             }
@@ -14845,7 +15145,7 @@ Status CatalogManager::alterColumnType(const ID &table_id, const std::string &co
     // ALTER COLUMN TYPE implementation (ALPHA Phase 1)
     // Phase 1: Only allows compatible type changes (no data conversion)
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // 1. Check if table exists in cache
     auto table_it = table_cache_.find(table_id);
@@ -14882,7 +15182,9 @@ Status CatalogManager::alterColumnType(const ID &table_id, const std::string &co
                 reinterpret_cast<const uint8_t *>(page_data) + offset);
 
             if (record->table_id == table_id && record->is_valid == 1 &&
-                std::strcmp(record->column_name, column_name.c_str()) == 0)
+                IdentifierUtils::namesMatch(column_name, false /*search_delimited*/,
+                                            record->column_name,
+                                            record->name_is_delimited != 0))
             {
                 column_id = record->column_id;
                 old_type = static_cast<DataType>(record->data_type);
@@ -15233,7 +15535,7 @@ auto CatalogManager::createSequence(const ID& schema_id, const std::string& name
             continue;
         }
         if (IdentifierUtils::namesConflict(name, false /*new_is_delimited*/,
-                                           state->name, false /*existing_is_delimited*/))
+                                           state->name, state->name_is_delimited))
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                               ("Sequence already exists: " + name).c_str());
@@ -15250,7 +15552,11 @@ auto CatalogManager::createSequence(const ID& schema_id, const std::string& name
     state->schema_id = schema_id;  // WP-2 CAT-M1: Track schema for cascade drop
     state->name = name;  // Store name for cleanup
     state->name_is_delimited = false;
-    state->owner_id = resolveOwnerUUID("system");  // Phase 6 TODO: use session owner
+    state->owner_id = resolveOwnerUUID("system", ctx);  // Phase 6 TODO: use session owner
+    if (isZeroUuidLocal(state->owner_id))
+    {
+        return ctx ? ctx->code : Status::PAGE_CORRUPT;
+    }
     state->current_value.store(start_value);
     state->increment_by = increment_by;
     state->min_value = min_value;
@@ -15389,33 +15695,29 @@ auto CatalogManager::alterSequence(const ID& sequence_id, const std::optional<in
     return Status::OK;
 }
 
-auto CatalogManager::dropSequence(const ID& sequence_id, bool cascade, ErrorContext* ctx) -> Status
+auto CatalogManager::dropSequenceInternal(const ID& sequence_id, ErrorContext* ctx) -> Status
 {
-    (void)cascade;  // RESTRICT-only policy
-    std::string seq_name;
-    ID seq_schema_id{};
-    bool seq_name_is_delimited = false;
-    {
-        std::lock_guard<std::mutex> cache_lock(sequence_cache_mutex_);
-        auto it = sequence_cache_.find(sequence_id);
-        if (it == sequence_cache_.end()) {
-            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
-            return Status::NOT_FOUND;
-        }
-        seq_name = it->second->name;
-        seq_schema_id = it->second->schema_id;
-        seq_name_is_delimited = it->second->name_is_delimited;
-    }
+    // NO LOCK - caller must hold sequence_cache_mutex_ and dependency_cache_mutex_
 
-    std::vector<DependencyInfo> deps;
-    Status status = getDependents(sequence_id, deps, ctx);
-    if (status != Status::OK) {
-        return status;
+    // Look up sequence info (assumes sequence_cache_mutex_ held)
+    auto it = sequence_cache_.find(sequence_id);
+    if (it == sequence_cache_.end()) {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
+        return Status::NOT_FOUND;
     }
+    std::string seq_name = it->second->name;
+    ID seq_schema_id = it->second->schema_id;
+    bool seq_name_is_delimited = it->second->name_is_delimited;
+
+    // Check dependencies (assumes dependency_cache_mutex_ held)
+    std::vector<DependencyInfo> deps;
+    getDependentsInternal(sequence_id, deps);
 
     if (!deps.empty()) {
+        std::vector<DependencyName> resolved;
+        resolveDependencyNamesInternal(deps, resolved, ctx);
         std::string error_msg = buildDependencyErrorMessage(
-            seq_name, ObjectType::SEQUENCE, deps, ctx);
+            seq_name, ObjectType::SEQUENCE, resolved);
         bool has_column = false;
         for (const auto& dep : deps) {
             if (dep.dependent_type == ObjectType::COLUMN) {
@@ -15431,57 +15733,59 @@ auto CatalogManager::dropSequence(const ID& sequence_id, bool cascade, ErrorCont
         return Status::CONSTRAINT_VIOLATION;
     }
 
-    // Mark record invalid on disk (MGA delete) before evicting caches.
+    // Mark record invalid on disk (MGA delete) before evicting caches
     auto predicate = [&sequence_id](const SequenceRecord& rec) {
         return rec.sequence_id == sequence_id && rec.is_valid == 1;
     };
     Status persist_status = deleteRecordFromHeapPage<SequenceRecord>(
         sequences_table_page_, predicate, ctx);
-    if (persist_status != Status::OK)
-    {
+    if (persist_status != Status::OK) {
         return persist_status;
     }
 
-    {
-        std::lock_guard<std::mutex> cache_lock(sequence_cache_mutex_);
-        auto it = sequence_cache_.find(sequence_id);
-        if (it == sequence_cache_.end()) {
-            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
-            return Status::NOT_FOUND;
-        }
-        sequence_cache_.erase(it);
-    }
+    // Remove from cache (assumes sequence_cache_mutex_ held)
+    sequence_cache_.erase(it);
 
+    // Remove from name lookup (needs sequence_name_mutex_)
     {
         std::lock_guard<std::mutex> name_lock(sequence_name_mutex_);
         sequence_name_to_id_.erase(makeSequenceNameKey(seq_schema_id, seq_name,
                                                        seq_name_is_delimited));
     }
 
-    status = clearDependenciesFor(sequence_id, ctx);
-    if (status != Status::OK) {
-        LOG_ERROR(CATALOG, "Failed to clear dependencies for sequence");
-    }
+    // Clear dependencies (assumes dependency_cache_mutex_ held)
+    clearDependenciesForInternal(sequence_id, ctx);
 
     LOG_INFO(CATALOG, "Dropped sequence '%s' successfully", seq_name.c_str());
 
     return Status::OK;
 }
 
-auto CatalogManager::getSequence(const ID& schema_id, const std::string& name,
-                                  SequenceInfo& info_out, ErrorContext* ctx) -> Status
+auto CatalogManager::dropSequence(const ID& sequence_id, bool cascade, ErrorContext* ctx) -> Status
 {
-    // P0-7: Implemented sequence retrieval from in-memory cache
+    (void)cascade;  // RESTRICT-only policy
 
-    // Look up sequence ID by name
+    // Acquire BOTH locks in consistent order to prevent deadlock
+    // Lock order: sequence_cache_mutex_ first, then dependency_cache_mutex_
+    std::scoped_lock lock(sequence_cache_mutex_, dependency_cache_mutex_);
+
+    return dropSequenceInternal(sequence_id, ctx);
+}
+
+// Internal helper (assumes sequence_cache_mutex_ already held)
+auto CatalogManager::getSequenceInternal(const ID& schema_id, const std::string& name,
+                                          SequenceInfo& info_out, ErrorContext* ctx) -> Status
+{
+    // NO LOCK - caller must hold sequence_cache_mutex_
+
+    // Look up sequence ID by name (use internal version)
     ID sequence_id;
-    Status status = getSequenceIdByName(schema_id, name, sequence_id, ctx);
+    Status status = getSequenceIdByNameInternal(schema_id, name, sequence_id, ctx);
     if (status != Status::OK) {
         return status;
     }
 
-    // Find sequence in cache
-    std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+    // Find sequence in cache (no lock needed - caller holds it)
     auto it = sequence_cache_.find(sequence_id);
     if (it == sequence_cache_.end()) {
         std::string msg = "Sequence not found in cache: " + name;
@@ -15491,7 +15795,7 @@ auto CatalogManager::getSequence(const ID& schema_id, const std::string& name,
 
     auto state = it->second;
 
-    // Lock config mutex for consistent reads
+    // Lock config mutex for consistent reads (this is a per-sequence lock, not the cache mutex)
     std::lock_guard<std::mutex> config_lock(state->config_mutex);
 
     if (!isZeroUuidLocal(schema_id) && state->schema_id != schema_id)
@@ -15518,6 +15822,13 @@ auto CatalogManager::getSequence(const ID& schema_id, const std::string& name,
     LOG_DEBUG(CATALOG, "Retrieved sequence '%s' with ID %s", name.c_str(), "<sequence_id>");
 
     return Status::OK;
+}
+
+auto CatalogManager::getSequence(const ID& schema_id, const std::string& name,
+                                  SequenceInfo& info_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+    return getSequenceInternal(schema_id, name, info_out, ctx);
 }
 
 auto CatalogManager::sequenceNextVal(const ID& sequence_id, int64_t& value_out,
@@ -15678,10 +15989,11 @@ auto CatalogManager::sequenceSetVal(const ID& sequence_id, int64_t value, bool i
     return Status::OK;
 }
 
-auto CatalogManager::getSequenceIdByName(const ID& schema_id, const std::string& name,
-                                         ID& id_out, ErrorContext* ctx) -> Status
+// Internal helper (assumes sequence_cache_mutex_ already held)
+auto CatalogManager::getSequenceIdByNameInternal(const ID& schema_id, const std::string& name,
+                                                  ID& id_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+    // NO LOCK - caller must hold sequence_cache_mutex_
 
     for (const auto& [seq_id, state] : sequence_cache_)
     {
@@ -15704,6 +16016,13 @@ auto CatalogManager::getSequenceIdByName(const ID& schema_id, const std::string&
     std::string msg = "Sequence not found: " + name;
     SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, msg.c_str());
     return Status::NOT_FOUND;
+}
+
+auto CatalogManager::getSequenceIdByName(const ID& schema_id, const std::string& name,
+                                         ID& id_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+    return getSequenceIdByNameInternal(schema_id, name, id_out, ctx);
 }
 
 auto CatalogManager::getSequenceIdByName(const std::string& name, ID& id_out,
@@ -15801,7 +16120,11 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
     view.view_id = generateUuidV7();
     view.schema_id = schema_id;
     view.name = name;
-    view.owner_id = resolveOwnerUUID("system");  // Phase 6 TODO: Get from session context
+    view.owner_id = resolveOwnerUUID("system", ctx);  // Phase 6 TODO: Get from session context
+    if (isZeroUuidLocal(view.owner_id))
+    {
+        return ctx ? ctx->code : Status::PAGE_CORRUPT;
+    }
     view.definition = definition;
     view.check_option = check_option;
     view.materialized = materialized;  // ALPHA Phase 1 - Materialized Views
@@ -15862,8 +16185,10 @@ auto CatalogManager::dropView(const ID& view_id, bool cascade, ErrorContext* ctx
 
     // 4. If blocking dependencies exist, fail with detailed error (RESTRICT-only policy)
     if (!filtered.blocking.empty()) {
+        std::vector<DependencyName> resolved;
+        resolveDependencyNames(filtered.blocking, resolved, ctx);
         std::string error_msg = buildDependencyErrorMessage(
-            view_name, ObjectType::VIEW, filtered.blocking, ctx);
+            view_name, ObjectType::VIEW, resolved);
         SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
         return Status::CONSTRAINT_VIOLATION;
     }
@@ -16338,7 +16663,7 @@ auto CatalogManager::createSynonym(const ID& schema_id, const std::string& synon
             continue;
         }
         if (IdentifierUtils::namesConflict(synonym_name, false /*new_is_delimited*/,
-                                           info.synonym_name, false /*existing_is_delimited*/))
+                                           info.synonym_name, info.name_is_delimited))
         {
             SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Synonym name already exists");
             return Status::FILE_EXISTS;
@@ -16351,13 +16676,18 @@ auto CatalogManager::createSynonym(const ID& schema_id, const std::string& synon
     synonym.synonym_name = synonym_name;
     synonym.target_path = target_path;
     synonym.target_type = target_type;
-    synonym.owner_id = resolveOwnerUUID("system");
+    synonym.owner_id = resolveOwnerUUID("system", ctx);
+    if (isZeroUuidLocal(synonym.owner_id))
+    {
+        return ctx ? ctx->code : Status::PAGE_CORRUPT;
+    }
     synonym.is_public = is_public;
     synonym.created_time = now;
     synonym.last_modified_time = now;
 
     synonym_cache_[synonym.synonym_id] = synonym;
-    synonym_name_lookup_[makeSynonymNameKey(schema_id, synonym_name)] = synonym.synonym_id;
+    synonym_name_lookup_[makeSynonymNameKey(schema_id, synonym_name,
+                                            synonym.name_is_delimited)] = synonym.synonym_id;
     if (is_public)
     {
         public_synonyms_.push_back(synonym.synonym_id);
@@ -16367,7 +16697,8 @@ auto CatalogManager::createSynonym(const ID& schema_id, const std::string& synon
     if (persist_status != Status::OK)
     {
         synonym_cache_.erase(synonym.synonym_id);
-        synonym_name_lookup_.erase(makeSynonymNameKey(schema_id, synonym_name));
+        synonym_name_lookup_.erase(makeSynonymNameKey(schema_id, synonym_name,
+                                                     synonym.name_is_delimited));
         if (is_public)
         {
             public_synonyms_.erase(std::remove(public_synonyms_.begin(),
@@ -16405,7 +16736,7 @@ auto CatalogManager::getSynonymByName(const ID& schema_id, const std::string& sy
 
     if (!isZeroUuidLocal(schema_id))
     {
-        auto key = makeSynonymNameKey(schema_id, synonym_name);
+        auto key = makeSynonymNameKey(schema_id, synonym_name, false /*search_delimited*/);
         auto it = synonym_name_lookup_.find(key);
         if (it != synonym_name_lookup_.end())
         {
@@ -16423,7 +16754,7 @@ auto CatalogManager::getSynonymByName(const ID& schema_id, const std::string& sy
             continue;
         }
         if (IdentifierUtils::namesMatch(synonym_name, false /*search_delimited*/,
-                                        info.synonym_name, false /*stored_delimited*/))
+                                        info.synonym_name, info.name_is_delimited))
         {
             if (found)
             {
@@ -16471,7 +16802,8 @@ auto CatalogManager::dropSynonym(const ID& synonym_id, ErrorContext* ctx) -> Sta
 
     std::lock_guard<std::mutex> lock(synonym_cache_mutex_);
     synonym_cache_.erase(synonym_id);
-    synonym_name_lookup_.erase(makeSynonymNameKey(info.schema_id, info.synonym_name));
+    synonym_name_lookup_.erase(makeSynonymNameKey(info.schema_id, info.synonym_name,
+                                                 info.name_is_delimited));
     if (info.is_public)
     {
         public_synonyms_.erase(std::remove(public_synonyms_.begin(),
@@ -16566,7 +16898,7 @@ auto CatalogManager::createForeignTable(const ID& schema_id, const std::string& 
             continue;
         }
         if (IdentifierUtils::namesConflict(table_name, false /*new_is_delimited*/,
-                                           info.table_name, false /*existing_is_delimited*/))
+                                           info.table_name, info.name_is_delimited))
         {
             SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Foreign table name already exists");
             return Status::FILE_EXISTS;
@@ -16581,19 +16913,25 @@ auto CatalogManager::createForeignTable(const ID& schema_id, const std::string& 
     table.remote_schema = remote_schema;
     table.remote_table = remote_table;
     table.column_mapping = column_mapping;
-    table.owner_id = resolveOwnerUUID("system");
+    table.owner_id = resolveOwnerUUID("system", ctx);
+    if (isZeroUuidLocal(table.owner_id))
+    {
+        return ctx ? ctx->code : Status::PAGE_CORRUPT;
+    }
     table.created_time = now;
     table.last_modified_time = now;
 
     foreign_table_cache_[table.foreign_table_id] = table;
-    foreign_table_name_lookup_[makeForeignTableNameKey(schema_id, table_name)] =
+    foreign_table_name_lookup_[makeForeignTableNameKey(schema_id, table_name,
+                                                      table.name_is_delimited)] =
         table.foreign_table_id;
 
     Status persist_status = writeForeignTableRecord(table, ctx);
     if (persist_status != Status::OK)
     {
         foreign_table_cache_.erase(table.foreign_table_id);
-        foreign_table_name_lookup_.erase(makeForeignTableNameKey(schema_id, table_name));
+        foreign_table_name_lookup_.erase(makeForeignTableNameKey(schema_id, table_name,
+                                                                table.name_is_delimited));
         return persist_status;
     }
 
@@ -16643,7 +16981,7 @@ auto CatalogManager::dropForeignTable(const ID& foreign_table_id, ErrorContext* 
     std::lock_guard<std::mutex> lock(foreign_table_cache_mutex_);
     foreign_table_cache_.erase(foreign_table_id);
     foreign_table_name_lookup_.erase(
-        makeForeignTableNameKey(info.schema_id, info.table_name));
+        makeForeignTableNameKey(info.schema_id, info.table_name, info.name_is_delimited));
     return Status::OK;
 }
 
@@ -16704,7 +17042,11 @@ auto CatalogManager::createForeignServer(const std::string& server_name,
     server.host = host;
     server.port = port;
     server.connection_options = connection_options;
-    server.owner_id = resolveOwnerUUID("system");
+    server.owner_id = resolveOwnerUUID("system", ctx);
+    if (isZeroUuidLocal(server.owner_id))
+    {
+        return ctx ? ctx->code : Status::PAGE_CORRUPT;
+    }
     server.is_active = true;
     server.created_time = now;
     server.last_modified_time = now;
@@ -17599,12 +17941,12 @@ auto CatalogManager::listUDRModules(const ID& engine_id,
 // Dependency Operations (Phase 5.2 - Dependencies Table)
 // ========================================================================
 
-auto CatalogManager::createDependency(const ID& dependent_object_id, ObjectType dependent_type,
-                                     const ID& referenced_object_id, ObjectType referenced_type,
-                                     DependencyType dep_type, ID& dependency_id,
-                                     ErrorContext* ctx) -> Status
+auto CatalogManager::createDependencyInternal(const ID& dependent_object_id, ObjectType dependent_type,
+                                             const ID& referenced_object_id, ObjectType referenced_type,
+                                             DependencyType dep_type, ID& dependency_id,
+                                             ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(dependency_cache_mutex_);
+    // NO LOCK - caller must hold dependency_cache_mutex_
 
     // Generate new dependency ID
     dependency_id = generateUuidV7();
@@ -17659,9 +18001,21 @@ auto CatalogManager::createDependency(const ID& dependent_object_id, ObjectType 
     return Status::OK;
 }
 
-auto CatalogManager::deleteDependency(const ID& dependency_id, ErrorContext* ctx) -> Status
+auto CatalogManager::createDependency(const ID& dependent_object_id, ObjectType dependent_type,
+                                     const ID& referenced_object_id, ObjectType referenced_type,
+                                     DependencyType dep_type, ID& dependency_id,
+                                     ErrorContext* ctx) -> Status
 {
     std::lock_guard<std::mutex> lock(dependency_cache_mutex_);
+    return createDependencyInternal(dependent_object_id, dependent_type,
+                                   referenced_object_id, referenced_type,
+                                   dep_type, dependency_id, ctx);
+}
+
+// Internal helper (assumes dependency_cache_mutex_ already held)
+auto CatalogManager::deleteDependencyInternal(const ID& dependency_id, ErrorContext* ctx) -> Status
+{
+    // NO LOCK - caller must hold dependency_cache_mutex_
 
     auto it = dependency_cache_.find(dependency_id);
     if (it == dependency_cache_.end()) {
@@ -17708,12 +18062,16 @@ auto CatalogManager::deleteDependency(const ID& dependency_id, ErrorContext* ctx
     return Status::OK;
 }
 
-auto CatalogManager::getDependenciesFor(const ID& object_id,
-                                       std::vector<DependencyInfo>& dependencies_out,
-                                       ErrorContext* ctx) -> Status
+auto CatalogManager::deleteDependency(const ID& dependency_id, ErrorContext* ctx) -> Status
 {
     std::lock_guard<std::mutex> lock(dependency_cache_mutex_);
+    return deleteDependencyInternal(dependency_id, ctx);
+}
 
+void CatalogManager::getDependenciesForInternal(const ID& object_id,
+                                               std::vector<DependencyInfo>& dependencies_out)
+{
+    // NO LOCK - caller must hold dependency_cache_mutex_
     dependencies_out.clear();
 
     // Find all dependencies where this object is the dependent
@@ -17722,7 +18080,14 @@ auto CatalogManager::getDependenciesFor(const ID& object_id,
             dependencies_out.push_back(dep_info);
         }
     }
+}
 
+auto CatalogManager::getDependenciesFor(const ID& object_id,
+                                       std::vector<DependencyInfo>& dependencies_out,
+                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(dependency_cache_mutex_);
+    getDependenciesForInternal(object_id, dependencies_out);
     return Status::OK;
 }
 
@@ -17758,6 +18123,21 @@ auto CatalogManager::listDependencies(std::vector<DependencyInfo>& dependencies_
 
     (void)ctx;
     return Status::OK;
+}
+
+// Internal helper - assumes dependency_cache_mutex_ already held by caller
+void CatalogManager::getDependentsInternal(const ID& object_id,
+                                            std::vector<DependencyInfo>& dependents_out)
+{
+    // NO LOCK - caller must hold dependency_cache_mutex_
+    dependents_out.clear();
+
+    // Find all dependencies where this object is referenced
+    for (const auto& [dep_id, dep_info] : dependency_cache_) {
+        if (dep_info.referenced_object_id == object_id) {
+            dependents_out.push_back(dep_info);
+        }
+    }
 }
 
 auto CatalogManager::hasDependents(const ID& object_id, bool& has_dependents,
@@ -17875,6 +18255,32 @@ auto CatalogManager::clearDependenciesFor(const ID& dependent_object_id,
     }
 
     return Status::OK;
+}
+
+// Internal helper - assumes dependency_cache_mutex_ already held by caller
+void CatalogManager::clearDependenciesForInternal(const ID& dependent_object_id,
+                                                   ErrorContext* ctx)
+{
+    // NO LOCK - caller must hold dependency_cache_mutex_
+
+    std::vector<ID> to_delete;
+    for (const auto& [dep_id, dep_info] : dependency_cache_) {
+        if (dep_info.dependent_object_id == dependent_object_id) {
+            to_delete.push_back(dep_id);
+        }
+    }
+
+    for (const auto& dep_id : to_delete) {
+        dependency_cache_.erase(dep_id);
+        for (auto it = object_to_dependencies_.begin(); it != object_to_dependencies_.end(); ) {
+            if (it->second == dep_id) {
+                it = object_to_dependencies_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        deleteDependencyRecord(dep_id, ctx);
+    }
 }
 
 namespace {
@@ -18064,13 +18470,13 @@ auto CatalogManager::getObjectName(const ID& object_id, ObjectType type,
 {
     switch (type) {
         case ObjectType::TABLE: {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             auto it = table_cache_.find(object_id);
             return it != table_cache_.end() ? it->second.table_name : "<unknown>";
         }
 
         case ObjectType::COLUMN: {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             if (columns_table_page_ == 0) {
                 return "<unknown>";
             }
@@ -18139,7 +18545,7 @@ auto CatalogManager::getObjectName(const ID& object_id, ObjectType type,
         }
 
         case ObjectType::INDEX: {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             auto it = index_cache_.find(object_id);
             return it != index_cache_.end() ? it->second.index_name : "<unknown>";
         }
@@ -18203,7 +18609,251 @@ auto CatalogManager::getObjectName(const ID& object_id, ObjectType type,
         }
 
         case ObjectType::SCHEMA: {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
+            auto it = schema_cache_.find(object_id);
+            return it != schema_cache_.end() ? it->second.schema_name : "<unknown>";
+        }
+
+        case ObjectType::DOMAIN: {
+            DomainInfo info;
+            if (db_->domain_manager()->getDomain(object_id, info, ctx) == Status::OK) {
+                return info.domain_name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::CONSTRAINT: {
+            ConstraintInfo info;
+            if (getConstraint(object_id, info, ctx) == Status::OK) {
+                return info.constraint_name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::PACKAGE: {
+            PackageInfo info;
+            if (getPackage(object_id, info, ctx) == Status::OK) {
+                return info.package_name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::UDR: {
+            UDRInfo info;
+            if (getUDR(object_id, info, ctx) == Status::OK) {
+                return info.udr_name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::EXCEPTION: {
+            ExceptionInfo info;
+            if (getException(object_id, info, ctx) == Status::OK) {
+                return info.name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::USER: {
+            UserInfo info;
+            if (getUser(object_id, info, ctx) == Status::OK) {
+                return info.username;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::ROLE: {
+            RoleInfo info;
+            if (getRole(object_id, info, ctx) == Status::OK) {
+                return info.role_name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::GROUP: {
+            GroupInfo info;
+            if (getGroup(object_id, info, ctx) == Status::OK) {
+                return info.group_name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::EMULATION_TYPE: {
+            EmulationTypeInfo info;
+            if (getEmulationType(object_id, info, ctx) == Status::OK) {
+                return info.emulation_name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::EMULATION_SERVER: {
+            EmulationServerInfo info;
+            if (getEmulationServer(object_id, info, ctx) == Status::OK) {
+                return info.server_name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::EMULATED_DATABASE: {
+            EmulatedDatabaseInfo info;
+            if (getEmulatedDatabase(object_id, info, ctx) == Status::OK) {
+                return info.database_name;
+            }
+            return "<unknown>";
+        }
+
+        default:
+            return "<unknown type: " + objectTypeToString(type) + ">";
+    }
+}
+
+// Internal helper - assumes appropriate locks already held by caller
+auto CatalogManager::getObjectNameInternal(const ID& object_id, ObjectType type,
+                                           ErrorContext* ctx) -> std::string
+{
+    // NO LOCKS - caller must hold appropriate mutexes for the object type being queried
+    switch (type) {
+        case ObjectType::TABLE: {
+            // Assumes mutex_ held
+            auto it = table_cache_.find(object_id);
+            return it != table_cache_.end() ? it->second.table_name : "<unknown>";
+        }
+
+        case ObjectType::COLUMN: {
+            // Assumes mutex_ held
+            if (columns_table_page_ == 0) {
+                return "<unknown>";
+            }
+
+            BufferPool *bp = db_->buffer_pool();
+            void *page_data;
+            std::string result = "<unknown>";
+            uint32_t current_page_id = columns_table_page_;
+
+            while (current_page_id != 0)
+            {
+                Status status = bp->pinPage(current_page_id, &page_data, ctx);
+                if (status != Status::OK) {
+                    return "<unknown>";
+                }
+
+                auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+                uint32_t offset = sizeof(CatalogHeapPage);
+                bool found = false;
+
+                for (uint32_t i = 0; i < heap->record_count; ++i)
+                {
+                    const auto *record = reinterpret_cast<const ColumnRecord *>(
+                        reinterpret_cast<const uint8_t *>(page_data) + offset);
+
+                    if (record->column_id == object_id && record->is_valid == 1)
+                    {
+                        std::string column_name(record->column_name);
+                        auto table_it = table_cache_.find(record->table_id);
+                        if (table_it != table_cache_.end())
+                        {
+                            result = table_it->second.table_name + "." + column_name;
+                        }
+                        else
+                        {
+                            result = column_name;
+                        }
+                        found = true;
+                        break;
+                    }
+
+                    offset += sizeof(ColumnRecord);
+                }
+
+                uint32_t next_page = heap->next_page;
+                bp->unpinPage(current_page_id, false, ctx);
+                if (found)
+                {
+                    break;
+                }
+                current_page_id = next_page;
+            }
+            return result;
+        }
+
+        case ObjectType::VIEW: {
+            // Assumes view_cache_mutex_ held
+            auto it = view_cache_.find(object_id);
+            return it != view_cache_.end() ? it->second.name : "<unknown>";
+        }
+
+        case ObjectType::SYNONYM: {
+            // Assumes synonym_cache_mutex_ held
+            auto it = synonym_cache_.find(object_id);
+            return it != synonym_cache_.end() ? it->second.synonym_name : "<unknown>";
+        }
+
+        case ObjectType::INDEX: {
+            // Assumes mutex_ held
+            auto it = index_cache_.find(object_id);
+            return it != index_cache_.end() ? it->second.index_name : "<unknown>";
+        }
+
+        case ObjectType::SEQUENCE: {
+            // Assumes sequence_cache_mutex_ held
+            auto it = sequence_cache_.find(object_id);
+            return it != sequence_cache_.end() ? it->second->name : "<unknown>";
+        }
+
+        case ObjectType::FOREIGN_TABLE: {
+            // Assumes foreign_table_cache_mutex_ held
+            auto it = foreign_table_cache_.find(object_id);
+            return it != foreign_table_cache_.end() ? it->second.table_name : "<unknown>";
+        }
+
+        case ObjectType::FOREIGN_SERVER: {
+            // Assumes foreign_server_cache_mutex_ held
+            auto it = foreign_server_cache_.find(object_id);
+            return it != foreign_server_cache_.end() ? it->second.server_name : "<unknown>";
+        }
+
+        case ObjectType::SERVER_REGISTRY: {
+            // Assumes server_registry_cache_mutex_ held
+            auto it = server_registry_cache_.find(object_id);
+            return it != server_registry_cache_.end() ? it->second.server_name : "<unknown>";
+        }
+
+        case ObjectType::UDR_ENGINE: {
+            // Assumes udr_engine_cache_mutex_ held
+            auto it = udr_engine_cache_.find(object_id);
+            return it != udr_engine_cache_.end() ? it->second.engine_name : "<unknown>";
+        }
+
+        case ObjectType::UDR_MODULE: {
+            // Assumes udr_module_cache_mutex_ held
+            auto it = udr_module_cache_.find(object_id);
+            return it != udr_module_cache_.end() ? it->second.module_name : "<unknown>";
+        }
+
+        case ObjectType::FUNCTION: {
+            // Assumes psql_mutex_ held
+            for (const auto& [name, info] : functions_) {
+                if (info.function_id == object_id) return name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::PROCEDURE: {
+            // Assumes psql_mutex_ held
+            for (const auto& [name, info] : procedures_) {
+                if (info.procedure_id == object_id) return name;
+            }
+            return "<unknown>";
+        }
+
+        case ObjectType::TRIGGER: {
+            // Assumes trigger_mutex_ held
+            auto it = trigger_cache_.find(object_id);
+            return it != trigger_cache_.end() ? it->second.trigger_name : "<unknown>";
+        }
+
+        case ObjectType::SCHEMA: {
+            // Assumes mutex_ held
             auto it = schema_cache_.find(object_id);
             return it != schema_cache_.end() ? it->second.schema_name : "<unknown>";
         }
@@ -18363,19 +19013,52 @@ auto CatalogManager::filterDependencies(const ID& owner_id, ObjectType owner_typ
     return result;
 }
 
+void CatalogManager::resolveDependencyNames(const std::vector<DependencyInfo>& deps,
+                                            std::vector<DependencyName>& names_out,
+                                            ErrorContext* ctx)
+{
+    names_out.clear();
+    names_out.reserve(deps.size());
+
+    for (const auto& dep : deps) {
+        DependencyName resolved;
+        resolved.dependent_type = dep.dependent_type;
+        resolved.dependent_name = getObjectName(dep.dependent_object_id,
+                                                dep.dependent_type,
+                                                ctx);
+        names_out.push_back(std::move(resolved));
+    }
+}
+
+// Internal helper - assumes appropriate locks already held by caller
+void CatalogManager::resolveDependencyNamesInternal(const std::vector<DependencyInfo>& deps,
+                                                     std::vector<DependencyName>& names_out,
+                                                     ErrorContext* ctx)
+{
+    // NO LOCK - caller must hold appropriate mutexes for the object types being queried
+    names_out.clear();
+    names_out.reserve(deps.size());
+
+    for (const auto& dep : deps) {
+        DependencyName resolved;
+        resolved.dependent_type = dep.dependent_type;
+        resolved.dependent_name = getObjectNameInternal(dep.dependent_object_id,
+                                                        dep.dependent_type,
+                                                        ctx);
+        names_out.push_back(std::move(resolved));
+    }
+}
+
 auto CatalogManager::buildDependencyErrorMessage(
     const std::string& object_name,
     ObjectType object_type,
-    const std::vector<DependencyInfo>& blocking_deps,
-    ErrorContext* ctx) -> std::string
+    const std::vector<DependencyName>& blocking_deps) -> std::string
 {
     // Group dependencies by type for better readability
     std::map<ObjectType, std::vector<std::string>> grouped;
 
     for (const auto& dep : blocking_deps) {
-        std::string dep_name = getObjectName(dep.dependent_object_id,
-                                            dep.dependent_type, ctx);
-        grouped[dep.dependent_type].push_back(dep_name);
+        grouped[dep.dependent_type].push_back(dep.dependent_name);
     }
 
     // Build error message
@@ -18422,7 +19105,11 @@ auto CatalogManager::setComment(const ID& object_id, ObjectType object_type,
     comment.comment_id = generateUuidV7();  // Generate new ID each time
     comment.object_id = object_id;
     comment.object_type = object_type;
-    comment.owner_id = resolveOwnerUUID("system");  // Phase 6 TODO: Get from session
+    comment.owner_id = resolveOwnerUUID("system", ctx);  // Phase 6 TODO: Get from session
+    if (isZeroUuidLocal(comment.owner_id))
+    {
+        return ctx ? ctx->code : Status::PAGE_CORRUPT;
+    }
     comment.comment_text = comment_text;
     comment.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
                                std::chrono::system_clock::now().time_since_epoch()).count();
@@ -18913,7 +19600,11 @@ auto CatalogManager::writeTriggerRecord(const TriggerInfo &trigger, ErrorContext
                                                        sizeof(record.trigger_name));
     std::memset(record.trigger_name, 0, sizeof(record.trigger_name));
     std::strncpy(record.trigger_name, truncated.c_str(), sizeof(record.trigger_name) - 1);
-    record.owner_id = resolveOwnerUUID("system");
+    record.owner_id = resolveOwnerUUID("system", ctx);
+    if (isZeroUuidLocal(record.owner_id))
+    {
+        return ctx ? ctx->code : Status::PAGE_CORRUPT;
+    }
     record.scope = 0;
     record.name_is_delimited = trigger.name_is_delimited ? 1 : 0;
     record.trigger_timing = static_cast<uint8_t>(trigger.timing);
@@ -19644,6 +20335,7 @@ auto CatalogManager::writeConstraintRecord(const ConstraintInfo &constraint,
     record.column_count = static_cast<uint16_t>(constraint.column_names.size());
     record.referenced_table_id = constraint.referenced_table_id;
     record.referenced_column_count = static_cast<uint16_t>(constraint.referenced_columns.size());
+    record.name_is_delimited = constraint.name_is_delimited ? 1 : 0;
     record.created_time = constraint.created_time;
     record.validated_time = constraint.validated_time;
     record.is_valid = 1;
@@ -19740,6 +20432,7 @@ auto CatalogManager::updateConstraintRecord(const ConstraintInfo &constraint,
     record.column_count = static_cast<uint16_t>(constraint.column_names.size());
     record.referenced_table_id = constraint.referenced_table_id;
     record.referenced_column_count = static_cast<uint16_t>(constraint.referenced_columns.size());
+    record.name_is_delimited = constraint.name_is_delimited ? 1 : 0;
     record.created_time = constraint.created_time;
     record.validated_time = constraint.validated_time;
     record.is_valid = 1;
@@ -19841,6 +20534,7 @@ auto CatalogManager::readConstraintRecords(ErrorContext *ctx) -> Status
         info.constraint_id = record.constraint_id;
         info.table_id = record.table_id;
         info.constraint_name = record.constraint_name;
+        info.name_is_delimited = record.name_is_delimited != 0;
         info.owner_id = record.owner_id;
         info.constraint_type = static_cast<ConstraintType>(record.constraint_type);
         info.is_deferrable = record.is_deferrable != 0;
@@ -19938,7 +20632,8 @@ auto CatalogManager::readConstraintRecords(ErrorContext *ctx) -> Status
     {
         constraints_cache_[info.constraint_id] = info;
         table_constraints_.insert({info.table_id, info.constraint_id});
-        constraint_name_lookup_[std::make_pair(info.table_id, info.constraint_name)] =
+        constraint_name_lookup_[
+            makeConstraintNameKey(info.table_id, info.constraint_name, info.name_is_delimited)] =
             info.constraint_id;
     }
 
@@ -19972,6 +20667,7 @@ auto CatalogManager::writeSynonymRecord(const SynonymInfo &synonym, ErrorContext
     record.owner_id = synonym.owner_id;
     record.target_type = static_cast<uint8_t>(synonym.target_type);
     record.is_public = synonym.is_public ? 1 : 0;
+    record.name_is_delimited = synonym.name_is_delimited ? 1 : 0;
     record.created_time = synonym.created_time;
     record.last_modified_time = synonym.last_modified_time;
     record.is_valid = 1;
@@ -19998,6 +20694,7 @@ auto CatalogManager::updateSynonymRecord(const SynonymInfo &synonym, ErrorContex
     record.owner_id = synonym.owner_id;
     record.target_type = static_cast<uint8_t>(synonym.target_type);
     record.is_public = synonym.is_public ? 1 : 0;
+    record.name_is_delimited = synonym.name_is_delimited ? 1 : 0;
     record.created_time = synonym.created_time;
     record.last_modified_time = synonym.last_modified_time;
     record.is_valid = 1;
@@ -20031,6 +20728,7 @@ auto CatalogManager::readSynonymRecords(ErrorContext *ctx) -> Status
         info.synonym_id = record.synonym_id;
         info.schema_id = record.schema_id;
         info.synonym_name = record.synonym_name;
+        info.name_is_delimited = record.name_is_delimited != 0;
         info.owner_id = record.owner_id;
         info.target_type = static_cast<ObjectType>(record.target_type);
         info.is_public = record.is_public != 0;
@@ -20054,7 +20752,8 @@ auto CatalogManager::readSynonymRecords(ErrorContext *ctx) -> Status
     for (const auto &info : synonyms)
     {
         synonym_cache_[info.synonym_id] = info;
-        synonym_name_lookup_[makeSynonymNameKey(info.schema_id, info.synonym_name)] = info.synonym_id;
+        synonym_name_lookup_[makeSynonymNameKey(info.schema_id, info.synonym_name,
+                                                info.name_is_delimited)] = info.synonym_id;
         if (info.is_public)
         {
             public_synonyms_.push_back(info.synonym_id);
@@ -20127,6 +20826,7 @@ auto CatalogManager::writeForeignTableRecord(const ForeignTableInfo &table, Erro
     record.created_time = table.created_time;
     record.last_modified_time = table.last_modified_time;
     record.is_valid = 1;
+    record.name_is_delimited = table.name_is_delimited ? 1 : 0;
 
     uint64_t xmin = 0;
     if (!table.column_mapping.empty())
@@ -20163,6 +20863,7 @@ auto CatalogManager::updateForeignTableRecord(const ForeignTableInfo &table, Err
     record.created_time = table.created_time;
     record.last_modified_time = table.last_modified_time;
     record.is_valid = 1;
+    record.name_is_delimited = table.name_is_delimited ? 1 : 0;
 
     uint64_t xmin = 0;
     if (!table.column_mapping.empty())
@@ -20196,6 +20897,7 @@ auto CatalogManager::readForeignTableRecords(ErrorContext *ctx) -> Status
         info.foreign_table_id = record.foreign_table_id;
         info.schema_id = record.schema_id;
         info.table_name = record.table_name;
+        info.name_is_delimited = record.name_is_delimited != 0;
         info.foreign_server_id = record.foreign_server_id;
         info.remote_schema = record.remote_schema;
         info.remote_table = record.remote_table;
@@ -20220,7 +20922,8 @@ auto CatalogManager::readForeignTableRecords(ErrorContext *ctx) -> Status
     for (const auto &info : tables)
     {
         foreign_table_cache_[info.foreign_table_id] = info;
-        foreign_table_name_lookup_[makeForeignTableNameKey(info.schema_id, info.table_name)] =
+        foreign_table_name_lookup_[makeForeignTableNameKey(info.schema_id, info.table_name,
+                                                          info.name_is_delimited)] =
             info.foreign_table_id;
     }
 
@@ -21000,7 +21703,7 @@ auto CatalogManager::createUser(const std::string& username, const std::string& 
                                 const ID& default_schema_id, bool is_superuser,
                                 ID& user_id_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     // Validate username length
     Status status = UTF8Utils::validateStorageCapacity(username,
@@ -21015,9 +21718,9 @@ auto CatalogManager::createUser(const std::string& username, const std::string& 
     // Check if username already exists
     UserInfo existing_user;
     // Note: getUserByName also locks mutex, so we temporarily unlock here
-    mutex_.unlock();
+    lock.unlock();
     status = getUserByName(username, existing_user, ctx);
-    mutex_.lock();
+    lock.lock();
 
     if (status == Status::OK)
     {
@@ -21075,7 +21778,7 @@ auto CatalogManager::createUser(const std::string& username, const std::string& 
 auto CatalogManager::getUser(const ID& user_id, UserInfo& user_out,
                              ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&user_id](const UserRecord& rec) {
         return rec.is_valid && rec.user_id == user_id;
@@ -21158,7 +21861,7 @@ auto CatalogManager::getUserByNameUnlocked(const std::string& username, UserInfo
 auto CatalogManager::getUserByName(const std::string& username, UserInfo& user_out,
                                    ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
     return getUserByNameUnlocked(username, user_out, ctx);
 }
 
@@ -21166,7 +21869,7 @@ auto CatalogManager::updateUser(const ID& user_id, const std::string& password_h
                                 const ID& default_schema_id, bool is_active, bool is_superuser,
                                 ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Find the user record
     auto predicate = [&user_id](const UserRecord& rec) {
@@ -21217,7 +21920,7 @@ auto CatalogManager::updateUser(const ID& user_id, const std::string& password_h
 
 auto CatalogManager::deleteUser(const ID& user_id, bool cascade, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Security Phase 3.0: CASCADE implementation
     if (cascade)
@@ -21314,7 +22017,7 @@ auto CatalogManager::deleteUser(const ID& user_id, bool cascade, ErrorContext* c
 auto CatalogManager::listUsers(std::vector<UserInfo>& users_out,
                                ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     users_out.clear();
 
@@ -21354,7 +22057,7 @@ auto CatalogManager::listUsers(std::vector<UserInfo>& users_out,
 auto CatalogManager::createRole(const std::string& role_name, const ID& owner_id,
                                 ID& role_id_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     // Validate role name length
     Status status = UTF8Utils::validateStorageCapacity(role_name,
@@ -21368,9 +22071,9 @@ auto CatalogManager::createRole(const std::string& role_name, const ID& owner_id
 
     // Check if role already exists
     RoleInfo existing_role;
-    mutex_.unlock();
+    lock.unlock();
     status = getRoleByName(role_name, existing_role, ctx);
-    mutex_.lock();
+    lock.lock();
 
     if (status == Status::OK)
     {
@@ -21414,7 +22117,7 @@ auto CatalogManager::createRole(const std::string& role_name, const ID& owner_id
 auto CatalogManager::getRole(const ID& role_id, RoleInfo& role_out,
                              ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&role_id](const RoleRecord& rec) {
         return rec.is_valid && rec.role_id == role_id;
@@ -21450,7 +22153,7 @@ auto CatalogManager::getRole(const ID& role_id, RoleInfo& role_out,
 auto CatalogManager::getRoleByName(const std::string& role_name, RoleInfo& role_out,
                                    ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&role_name](const RoleRecord& rec) {
         return rec.is_valid && (std::string(rec.role_name) == role_name);
@@ -21485,7 +22188,7 @@ auto CatalogManager::getRoleByName(const std::string& role_name, RoleInfo& role_
 
 auto CatalogManager::deleteRole(const ID& role_id, bool cascade, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Security Phase 3.0: CASCADE implementation
     if (cascade)
@@ -21560,7 +22263,7 @@ auto CatalogManager::deleteRole(const ID& role_id, bool cascade, ErrorContext* c
 auto CatalogManager::listRoles(std::vector<RoleInfo>& roles_out,
                                ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     roles_out.clear();
 
@@ -21586,7 +22289,7 @@ auto CatalogManager::updateRole(const ID& role_id, const std::optional<std::stri
                                 const std::optional<bool>& is_active,
                                 ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     // Find existing role
     RoleInfo existing;
@@ -21612,9 +22315,9 @@ auto CatalogManager::updateRole(const ID& role_id, const std::optional<std::stri
         if (new_name.value() != existing.role_name)
         {
             RoleInfo conflict;
-            mutex_.unlock();
+            lock.unlock();
             Status conflict_check = getRoleByName(new_name.value(), conflict, ctx);
-            mutex_.lock();
+            lock.lock();
             if (conflict_check == Status::OK)
             {
                 SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Role name already exists");
@@ -21697,7 +22400,7 @@ auto CatalogManager::updateRole(const ID& role_id, const std::optional<std::stri
 auto CatalogManager::grantRole(const ID& role_id, const ID& user_id, const ID& granted_by,
                                bool with_admin_option, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Check if membership already exists
     auto predicate = [&role_id, &user_id](const RoleMembershipRecord& rec) {
@@ -21792,7 +22495,7 @@ auto CatalogManager::grantRole(const ID& role_id, const ID& user_id, const ID& g
 auto CatalogManager::revokeRole(const ID& role_id, const ID& user_id,
                                 ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Find and delete membership
     auto predicate = [&role_id, &user_id](const RoleMembershipRecord& rec) {
@@ -21814,7 +22517,7 @@ auto CatalogManager::revokeRole(const ID& role_id, const ID& user_id,
 auto CatalogManager::getUserRoles(const ID& user_id, std::vector<RoleMembershipInfo>& roles_out,
                                   ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     roles_out.clear();
 
@@ -21838,7 +22541,7 @@ auto CatalogManager::getUserRoles(const ID& user_id, std::vector<RoleMembershipI
 auto CatalogManager::getRoleMembers(const ID& role_id, std::vector<RoleMembershipInfo>& members_out,
                                     ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     members_out.clear();
 
@@ -21865,7 +22568,7 @@ auto CatalogManager::createGroup(const std::string& group_name, GroupType group_
                                  const std::string& external_id, ID& group_id_out,
                                  ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     // Validate group name length
     Status status = UTF8Utils::validateStorageCapacity(group_name,
@@ -21879,9 +22582,9 @@ auto CatalogManager::createGroup(const std::string& group_name, GroupType group_
 
     // Check if group already exists
     GroupInfo existing_group;
-    mutex_.unlock();
+    lock.unlock();
     status = getGroupByName(group_name, existing_group, ctx);
-    mutex_.lock();
+    lock.lock();
 
     if (status == Status::OK)
     {
@@ -21930,7 +22633,7 @@ auto CatalogManager::createGroup(const std::string& group_name, GroupType group_
 auto CatalogManager::getGroup(const ID& group_id, GroupInfo& group_out,
                               ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&group_id](const GroupRecord& rec) {
         return rec.is_valid && rec.group_id == group_id;
@@ -21966,7 +22669,7 @@ auto CatalogManager::getGroup(const ID& group_id, GroupInfo& group_out,
 auto CatalogManager::getGroupByName(const std::string& group_name, GroupInfo& group_out,
                                     ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&group_name](const GroupRecord& rec) {
         return rec.is_valid && (std::string(rec.group_name) == group_name);
@@ -22001,7 +22704,7 @@ auto CatalogManager::getGroupByName(const std::string& group_name, GroupInfo& gr
 
 auto CatalogManager::deleteGroup(const ID& group_id, bool cascade, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Security Phase 3.0: CASCADE implementation
     if (cascade)
@@ -22089,7 +22792,7 @@ auto CatalogManager::deleteGroup(const ID& group_id, bool cascade, ErrorContext*
 auto CatalogManager::listGroups(std::vector<GroupInfo>& groups_out,
                                 ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     groups_out.clear();
 
@@ -22127,7 +22830,7 @@ auto CatalogManager::createGroupMapping(const std::string& external_group_name,
                                         const ID& internal_group_id, ID& mapping_id_out,
                                         ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Validate external group name length
     if (external_group_name.empty() || external_group_name.length() > 511)
@@ -22173,7 +22876,7 @@ auto CatalogManager::createGroupMapping(const std::string& external_group_name,
 auto CatalogManager::getGroupMapping(const ID& mapping_id, GroupMappingInfo& mapping_out,
                                      ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto filter = [&mapping_id](const GroupMappingRecord& rec) {
         return rec.mapping_id == mapping_id && rec.is_valid == 1;
@@ -22211,7 +22914,7 @@ auto CatalogManager::getGroupMappingByName(const std::string& external_group_nam
                                            GroupMappingInfo& mapping_out,
                                            ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto filter = [&external_group_name, auth_method](const GroupMappingRecord& rec) {
         return std::strcmp(rec.external_group_name, external_group_name.c_str()) == 0 &&
@@ -22249,7 +22952,7 @@ auto CatalogManager::getGroupMappingByName(const std::string& external_group_nam
 auto CatalogManager::listGroupMappings(std::vector<GroupMappingInfo>& mappings_out,
                                        ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     mappings_out.clear();
 
@@ -22272,7 +22975,7 @@ auto CatalogManager::listGroupMappingsForGroup(const ID& internal_group_id,
                                                std::vector<GroupMappingInfo>& mappings_out,
                                                ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     mappings_out.clear();
 
@@ -22295,7 +22998,7 @@ auto CatalogManager::listGroupMappingsForGroup(const ID& internal_group_id,
 
 auto CatalogManager::deleteGroupMapping(const ID& mapping_id, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Find and soft-delete the mapping
     BufferPool* bp = db_->buffer_pool();
@@ -22349,7 +23052,7 @@ auto CatalogManager::deleteGroupMapping(const ID& mapping_id, ErrorContext* ctx)
 auto CatalogManager::deleteGroupMappingsForGroup(const ID& internal_group_id,
                                                  ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Find and soft-delete all mappings for this group
     BufferPool* bp = db_->buffer_pool();
@@ -22399,7 +23102,7 @@ auto CatalogManager::updateGroup(const ID& group_id, const std::optional<std::st
                                  const std::optional<std::string>& new_metadata,
                                  ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     // Find existing group
     GroupInfo existing;
@@ -22425,9 +23128,9 @@ auto CatalogManager::updateGroup(const ID& group_id, const std::optional<std::st
         if (new_name.value() != existing.group_name)
         {
             GroupInfo conflict;
-            mutex_.unlock();
+            lock.unlock();
             Status conflict_check = getGroupByName(new_name.value(), conflict, ctx);
-            mutex_.lock();
+            lock.lock();
             if (conflict_check == Status::OK)
             {
                 SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Group name already exists");
@@ -22527,7 +23230,7 @@ auto CatalogManager::updateGroup(const ID& group_id, const std::optional<std::st
 auto CatalogManager::addGroupMember(const ID& group_id, const ID& member_id, bool is_group,
                                     const ID& granted_by, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Check if membership already exists
     auto predicate = [&group_id, &member_id](const GroupMembershipRecord& rec) {
@@ -22568,7 +23271,7 @@ auto CatalogManager::addGroupMember(const ID& group_id, const ID& member_id, boo
 auto CatalogManager::removeGroupMember(const ID& group_id, const ID& member_id,
                                        ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Find and delete membership
     auto predicate = [&group_id, &member_id](const GroupMembershipRecord& rec) {
@@ -22590,7 +23293,7 @@ auto CatalogManager::removeGroupMember(const ID& group_id, const ID& member_id,
 auto CatalogManager::getGroupMembers(const ID& group_id, std::vector<ID>& members_out,
                                      ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     members_out.clear();
 
@@ -22626,7 +23329,7 @@ auto CatalogManager::getGroupMembers(const ID& group_id, std::vector<ID>& member
 auto CatalogManager::getUserGroups(const ID& user_id, std::vector<ID>& groups_out,
                                    ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     groups_out.clear();
 
@@ -22923,7 +23626,7 @@ auto CatalogManager::getSessionTimeoutConfig(SessionTimeoutConfig& config_out,
 auto CatalogManager::createDormantTransaction(DormantTransactionInfo& info,
                                               ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     if (isZeroUuidLocal(info.dormant_id))
     {
@@ -23067,7 +23770,7 @@ auto CatalogManager::createDormantTransaction(DormantTransactionInfo& info,
 auto CatalogManager::getDormantTransaction(const ID& dormant_id, DormantTransactionInfo& info_out,
                                            ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     if (dormant_transactions_table_page_ == 0)
     {
@@ -23136,7 +23839,7 @@ auto CatalogManager::getDormantTransaction(const ID& dormant_id, DormantTransact
 auto CatalogManager::updateDormantTransaction(const DormantTransactionInfo& info,
                                               ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     if (dormant_transactions_table_page_ == 0)
     {
@@ -23245,7 +23948,7 @@ auto CatalogManager::updateDormantTransaction(const DormantTransactionInfo& info
 auto CatalogManager::deleteDormantTransaction(const ID& dormant_id,
                                               ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     if (dormant_transactions_table_page_ == 0)
     {
@@ -23294,7 +23997,7 @@ auto CatalogManager::deleteDormantTransaction(const ID& dormant_id,
 auto CatalogManager::listDormantTransactions(std::vector<DormantTransactionInfo>& dormants_out,
                                              ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     dormants_out.clear();
 
@@ -23361,7 +24064,7 @@ auto CatalogManager::listDormantTransactions(std::vector<DormantTransactionInfo>
 auto CatalogManager::createPreparedTransaction(PreparedTransactionInfo& info,
                                                ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     if (info.gid.empty())
     {
@@ -23452,7 +24155,7 @@ auto CatalogManager::getPreparedTransactionByGid(const std::string& gid,
                                                  PreparedTransactionInfo& info_out,
                                                  ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     if (prepared_transactions_table_page_ == 0)
     {
@@ -23491,7 +24194,7 @@ auto CatalogManager::getPreparedTransactionByGid(const std::string& gid,
 auto CatalogManager::deletePreparedTransaction(const std::string& gid,
                                                ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     if (prepared_transactions_table_page_ == 0)
     {
@@ -23544,7 +24247,7 @@ auto CatalogManager::deletePreparedTransaction(const std::string& gid,
 auto CatalogManager::listPreparedTransactions(std::vector<PreparedTransactionInfo>& prepared_out,
                                               ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     prepared_out.clear();
 
@@ -23658,7 +24361,7 @@ auto CatalogManager::grantPermission(const ID& object_id, PermissionObjectType o
                                      uint32_t privileges, bool grant_option,
                                      const ID& grantor_id, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Check if permission already exists - if so, merge privileges
     auto predicate = [&](const PermissionRecord& rec) {
@@ -23721,7 +24424,7 @@ auto CatalogManager::revokePermission(const ID& object_id, PermissionObjectType 
                                       const ID& grantee_id, GranteeType grantee_type,
                                       uint32_t privileges, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Find permission record
     auto predicate = [&](const PermissionRecord& rec) {
@@ -23791,7 +24494,7 @@ auto CatalogManager::revokePermissionCascade(const ID& object_id, PermissionObje
 
     // Scan all permissions to find cascade targets
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         for (uint16_t i = 0; i < 100; ++i)  // Reasonable limit
         {
             auto result = findRecordInHeapPage<PermissionRecord>(permissions_table_page_, find_cascade, ctx);
@@ -23846,7 +24549,7 @@ auto CatalogManager::hasPermission(const ID& user_id, const ID& object_id,
                                    PermissionObjectType object_type, Privilege privilege,
                                    bool& has_perm_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     has_perm_out = false;
 
@@ -23956,7 +24659,7 @@ auto CatalogManager::getObjectPermissions(const ID& object_id, PermissionObjectT
                                           std::vector<PermissionInfo>& permissions_out,
                                           ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     permissions_out.clear();
 
@@ -23983,7 +24686,7 @@ auto CatalogManager::getObjectPermissions(const ID& object_id, PermissionObjectT
 auto CatalogManager::getUserPermissions(const ID& user_id, std::vector<PermissionInfo>& permissions_out,
                                         ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     permissions_out.clear();
 
@@ -24012,7 +24715,7 @@ auto CatalogManager::getUserPermissions(const ID& user_id, std::vector<Permissio
 auto CatalogManager::listPermissions(std::vector<PermissionInfo>& permissions_out,
                                      ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     permissions_out.clear();
 
@@ -24045,7 +24748,7 @@ auto CatalogManager::grantColumnPermission(const ID& table_id, const std::string
                                           uint32_t privileges, bool grant_option,
                                           const ID& grantor_id, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Check if permission already exists for this column - if so, merge privileges
     auto predicate = [&](const ColumnPermissionRecord& rec) {
@@ -24112,7 +24815,7 @@ auto CatalogManager::revokeColumnPermission(const ID& table_id, const std::strin
                                            const ID& grantee_id, GranteeType grantee_type,
                                            uint32_t privileges, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Find column permission record
     auto predicate = [&](const ColumnPermissionRecord& rec) {
@@ -24157,7 +24860,7 @@ auto CatalogManager::hasColumnPermission(const ID& user_id, const ID& table_id,
                                         const std::string& column_name, Privilege privilege,
                                         bool& has_perm_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     has_perm_out = false;
 
@@ -24255,7 +24958,7 @@ auto CatalogManager::getAccessibleColumns(const ID& user_id, const ID& table_id,
                                          Privilege privilege, std::vector<std::string>& columns_out,
                                          ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     columns_out.clear();
 
@@ -24296,7 +24999,7 @@ auto CatalogManager::getColumnPermissions(const ID& table_id,
                                          std::vector<ColumnPermissionInfo>& perms_out,
                                          ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     perms_out.clear();
 
@@ -24329,7 +25032,7 @@ auto CatalogManager::createPolicy(const ID& table_id, const std::string& policy_
                                  const std::string& using_expr, const std::string& with_check_expr,
                                  ID& policy_id_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Check if policy with this name already exists on this table
     auto predicate = [&](const PolicyRecord& rec) {
@@ -24446,7 +25149,7 @@ auto CatalogManager::createPolicy(const ID& table_id, const std::string& policy_
 auto CatalogManager::dropPolicy(const ID& table_id, const std::string& policy_name,
                                ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Find policy record
     auto predicate = [&](const PolicyRecord& rec) {
@@ -24515,7 +25218,7 @@ auto CatalogManager::dropPolicy(const ID& table_id, const std::string& policy_na
 auto CatalogManager::getPolicy(const ID& table_id, const std::string& policy_name,
                               PolicyInfo& policy_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Find policy record on disk
     auto predicate = [&](const PolicyRecord& rec) {
@@ -24593,7 +25296,7 @@ auto CatalogManager::getTablePolicies(const ID& table_id, PolicyType type,
                                      std::vector<PolicyInfo>& policies_out,
                                      ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     policies_out.clear();
 
@@ -24657,7 +25360,7 @@ auto CatalogManager::getPoliciesForUser(const ID& table_id, const ID& user_id,
     // Get effective roles for the user
     std::vector<ID> effective_roles;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         getEffectiveRoles(user_id, effective_roles, ctx);
     }
 
@@ -24716,7 +25419,7 @@ void CatalogManager::clearPolicyCache()
 auto CatalogManager::setTableRLS(const ID& table_id, bool enabled, bool forced,
                                 ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Find table record
     auto predicate = [&](const TableRecord& rec) {
@@ -24751,7 +25454,7 @@ auto CatalogManager::setTableRLS(const ID& table_id, bool enabled, bool forced,
 auto CatalogManager::getTableRLS(const ID& table_id, bool& enabled_out, bool& forced_out,
                                 ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Find table record
     auto predicate = [&](const TableRecord& rec) {
@@ -24780,7 +25483,7 @@ auto CatalogManager::grantObjectPermission(const ID& object_id, ObjectType objec
                                           uint32_t permissions, bool grant_option,
                                           ID& permission_id_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Check if permission already exists for this object+grantee combination
     auto predicate = [&](const ObjectPermissionRecord& rec) {
@@ -24847,7 +25550,11 @@ auto CatalogManager::grantObjectPermission(const ID& object_id, ObjectType objec
     }
     else
     {
-        perm_rec.grantor_id = SecurityConstants::makeSystemUserID();
+        perm_rec.grantor_id = getSystemUserIdUnlocked(ctx);
+        if (isZeroUuidLocal(perm_rec.grantor_id))
+        {
+            return ctx ? ctx->code : Status::PAGE_CORRUPT;
+        }
     }
 
     perm_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
@@ -24887,7 +25594,7 @@ auto CatalogManager::grantObjectPermission(const ID& object_id, ObjectType objec
 auto CatalogManager::revokeObjectPermission(const ID& object_id, const ID& grantee_id,
                                            ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     // Find permission record
     auto predicate = [&](const ObjectPermissionRecord& rec) {
@@ -24937,7 +25644,7 @@ auto CatalogManager::hasObjectPermission(const ID& object_id, const ID& user_id,
     std::vector<ID> effective_roles;
     std::vector<ID> effective_groups;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         getEffectiveRoles(user_id, effective_roles, ctx);
         getEffectiveGroups(user_id, effective_groups, ctx);
     }
@@ -25000,7 +25707,7 @@ auto CatalogManager::hasObjectPermission(const ID& object_id, const ID& user_id,
     }
 
     // Cache miss - load from disk
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&](const ObjectPermissionRecord& rec) {
         return rec.is_valid && rec.object_id == object_id;
@@ -25041,7 +25748,7 @@ auto CatalogManager::getObjectPermissions(const ID& object_id,
                                          std::vector<ObjectPermissionInfo>& perms_out,
                                          ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     perms_out.clear();
 
@@ -25082,7 +25789,9 @@ auto CatalogManager::createForeignKey(const std::string& fk_name,
                                      bool initially_deferred,
                                      ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(foreign_keys_cache_mutex_);
+    // Acquire locks in consistent order to prevent deadlock
+    // Lock order: foreign_keys_cache_mutex_, dependency_cache_mutex_
+    std::scoped_lock lock(foreign_keys_cache_mutex_, dependency_cache_mutex_);
 
     // Validate inputs
     if (fk_name.empty())
@@ -25129,8 +25838,9 @@ auto CatalogManager::createForeignKey(const std::string& fk_name,
 
     // Phase 2: Create dependency links
     // FK is owned by child table (child-side dependency - auto-drop)
+    // Use internal version - locks already held
     ID child_dep_id;
-    Status dep_status = createDependency(
+    Status dep_status = createDependencyInternal(
         fk_id_out, ObjectType::CONSTRAINT,  // FK is dependent
         child_table_id, ObjectType::TABLE,   // On child table
         DependencyType::AUTO,                // Auto-drop when child table dropped
@@ -25147,8 +25857,9 @@ auto CatalogManager::createForeignKey(const std::string& fk_name,
     }
 
     // FK references parent table (parent-side dependency - blocks drop)
+    // Use internal version - locks already held
     ID parent_dep_id;
-    dep_status = createDependency(
+    dep_status = createDependencyInternal(
         fk_id_out, ObjectType::CONSTRAINT,   // FK is dependent
         parent_table_id, ObjectType::TABLE,  // On parent table
         DependencyType::NORMAL,              // Blocks parent table drop
@@ -25157,7 +25868,8 @@ auto CatalogManager::createForeignKey(const std::string& fk_name,
     );
     if (dep_status != Status::OK) {
         // Rollback both dependency and cache changes
-        deleteDependency(child_dep_id, ctx);
+        // Use internal version - locks already held
+        deleteDependencyInternal(child_dep_id, ctx);
         foreign_keys_cache_.erase(fk_id_out);
         auto child_range = table_child_fks_.equal_range(child_table_id);
         for (auto it = child_range.first; it != child_range.second; ) {
@@ -25221,8 +25933,9 @@ auto CatalogManager::createForeignKey(const std::string& fk_name,
         if (status != Status::OK)
         {
             // Rollback dependencies first
-            deleteDependency(child_dep_id, ctx);
-            deleteDependency(parent_dep_id, ctx);
+            // Use internal version - locks already held
+            deleteDependencyInternal(child_dep_id, ctx);
+            deleteDependencyInternal(parent_dep_id, ctx);
 
             // Rollback cache changes
             foreign_keys_cache_.erase(fk_id_out);
@@ -25312,10 +26025,11 @@ auto CatalogManager::getForeignKey(const ID& fk_id,
     return Status::OK;
 }
 
-auto CatalogManager::dropForeignKey(const ID& fk_id,
-                                   ErrorContext* ctx) -> Status
+// Internal helper (assumes foreign_keys_cache_mutex_ and dependency_cache_mutex_ already held)
+auto CatalogManager::dropForeignKeyInternal(const ID& fk_id,
+                                             ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(foreign_keys_cache_mutex_);
+    // NO LOCK - caller must hold foreign_keys_cache_mutex_ and dependency_cache_mutex_
 
     auto it = foreign_keys_cache_.find(fk_id);
     if (it == foreign_keys_cache_.end())
@@ -25326,12 +26040,12 @@ auto CatalogManager::dropForeignKey(const ID& fk_id,
 
     const ForeignKeyInfo& fk = it->second;
 
-    // Phase 2: Delete dependency links using stored IDs
+    // Phase 2: Delete dependency links using stored IDs (use internal version)
     if (fk.child_dependency_id != ID{}) {
-        deleteDependency(fk.child_dependency_id, ctx);
+        deleteDependencyInternal(fk.child_dependency_id, ctx);
     }
     if (fk.parent_dependency_id != ID{}) {
-        deleteDependency(fk.parent_dependency_id, ctx);
+        deleteDependencyInternal(fk.parent_dependency_id, ctx);
     }
 
     // Remove from index maps
@@ -25389,6 +26103,13 @@ auto CatalogManager::dropForeignKey(const ID& fk_id,
     return Status::OK;
 }
 
+auto CatalogManager::dropForeignKey(const ID& fk_id,
+                                   ErrorContext* ctx) -> Status
+{
+    std::scoped_lock lock(foreign_keys_cache_mutex_, dependency_cache_mutex_);
+    return dropForeignKeyInternal(fk_id, ctx);
+}
+
 auto CatalogManager::setForeignKeyEnabled(const ID& fk_id, bool enabled,
                                          ErrorContext* ctx) -> Status
 {
@@ -25444,7 +26165,7 @@ auto CatalogManager::findColumnsByDomain(const ID& domain_id,
     // Get list of all table IDs first (with lock)
     std::vector<ID> table_ids;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         for (const auto& [table_id, table_info] : table_cache_)
         {
             table_ids.push_back(table_id);
@@ -25491,7 +26212,7 @@ auto CatalogManager::createUDR(const ID& schema_id, const std::string& udr_name,
                                UDRType udr_type, const std::string& signature,
                                ID& udr_id_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     // Validate schema exists
     if (schema_cache_.find(schema_id) == schema_cache_.end())
@@ -25511,9 +26232,9 @@ auto CatalogManager::createUDR(const ID& schema_id, const std::string& udr_name,
 
     // Check if UDR already exists
     UDRInfo existing;
-    mutex_.unlock();
+    lock.unlock();
     status = getUDRByName(schema_id, udr_name, existing, ctx);
-    mutex_.lock();
+    lock.lock();
     if (status == Status::OK)
     {
         SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "UDR already exists");
@@ -25538,7 +26259,11 @@ auto CatalogManager::createUDR(const ID& schema_id, const std::string& udr_name,
     truncated = UTF8Utils::truncateToBytes(entry_point, sizeof(udr_rec.entry_point));
     strncpy(udr_rec.entry_point, truncated.c_str(), sizeof(udr_rec.entry_point) - 1);
 
-    udr_rec.owner_id = SecurityConstants::makeSystemUserID();
+    udr_rec.owner_id = getSystemUserIdUnlocked(ctx);
+    if (isZeroUuidLocal(udr_rec.owner_id))
+    {
+        return ctx ? ctx->code : Status::PAGE_CORRUPT;
+    }
     udr_rec.udr_type = static_cast<uint8_t>(udr_type);
     udr_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
     udr_rec.last_modified_time = udr_rec.created_time;
@@ -25565,7 +26290,7 @@ auto CatalogManager::createUDR(const ID& schema_id, const std::string& udr_name,
 
 auto CatalogManager::getUDR(const ID& udr_id, UDRInfo& info_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&udr_id](const UDRRecord& rec) {
         return rec.udr_id == udr_id && rec.is_valid == 1;
@@ -25581,6 +26306,7 @@ auto CatalogManager::getUDR(const ID& udr_id, UDRInfo& info_out, ErrorContext* c
     info_out.udr_id = result.record.udr_id;
     info_out.schema_id = result.record.schema_id;
     info_out.udr_name = std::string(result.record.udr_name);
+    info_out.name_is_delimited = result.record.name_is_delimited != 0;
     info_out.owner_id = result.record.owner_id;
     info_out.library_path = std::string(result.record.library_path);
     info_out.entry_point = std::string(result.record.entry_point);
@@ -25600,11 +26326,13 @@ auto CatalogManager::getUDR(const ID& udr_id, UDRInfo& info_out, ErrorContext* c
 auto CatalogManager::getUDRByName(const ID& schema_id, const std::string& udr_name,
                                   UDRInfo& info_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&schema_id, &udr_name](const UDRRecord& rec) {
         return rec.schema_id == schema_id &&
-               strcmp(rec.udr_name, udr_name.c_str()) == 0 &&
+               IdentifierUtils::namesMatch(udr_name, false /*search_delimited*/,
+                                           rec.udr_name,
+                                           rec.name_is_delimited != 0) &&
                rec.is_valid == 1;
     };
 
@@ -25618,6 +26346,7 @@ auto CatalogManager::getUDRByName(const ID& schema_id, const std::string& udr_na
     info_out.udr_id = result.record.udr_id;
     info_out.schema_id = result.record.schema_id;
     info_out.udr_name = std::string(result.record.udr_name);
+    info_out.name_is_delimited = result.record.name_is_delimited != 0;
     info_out.owner_id = result.record.owner_id;
     info_out.library_path = std::string(result.record.library_path);
     info_out.entry_point = std::string(result.record.entry_point);
@@ -25640,7 +26369,7 @@ auto CatalogManager::updateUDR(const ID& udr_id,
                                const std::optional<std::string>& new_signature,
                                ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     BufferPool *bp = db_->buffer_pool();
     void *page_data;
@@ -25714,13 +26443,15 @@ auto CatalogManager::dropUDR(const ID& udr_id, bool cascade, ErrorContext* ctx) 
     }
 
     if (!deps.empty()) {
+        std::vector<DependencyName> resolved;
+        resolveDependencyNames(deps, resolved, ctx);
         std::string error_msg = buildDependencyErrorMessage(
-            existing.udr_name, ObjectType::UDR, deps, ctx);
+            existing.udr_name, ObjectType::UDR, resolved);
         SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
         return Status::CONSTRAINT_VIOLATION;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     BufferPool *bp = db_->buffer_pool();
     void *page_data;
@@ -25771,7 +26502,7 @@ auto CatalogManager::dropUDR(const ID& udr_id, bool cascade, ErrorContext* ctx) 
 auto CatalogManager::listUDRs(const ID& schema_id, std::vector<UDRInfo>& udrs_out,
                               ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
     udrs_out.clear();
 
     auto filter = [&schema_id](const UDRRecord& rec) {
@@ -25781,6 +26512,7 @@ auto CatalogManager::listUDRs(const ID& schema_id, std::vector<UDRInfo>& udrs_ou
         info.udr_id = rec.udr_id;
         info.schema_id = rec.schema_id;
         info.udr_name = std::string(rec.udr_name);
+        info.name_is_delimited = rec.name_is_delimited != 0;
         info.owner_id = rec.owner_id;
         info.library_path = std::string(rec.library_path);
         info.entry_point = std::string(rec.entry_point);
@@ -25803,7 +26535,7 @@ auto CatalogManager::createPackage(const ID& schema_id, const std::string& packa
                                    const std::string& package_header, const std::string& package_body,
                                    ID& package_id_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     if (schema_cache_.find(schema_id) == schema_cache_.end())
     {
@@ -25820,9 +26552,9 @@ auto CatalogManager::createPackage(const ID& schema_id, const std::string& packa
     }
 
     PackageInfo existing;
-    mutex_.unlock();
+    lock.unlock();
     status = getPackageByName(schema_id, package_name, existing, ctx);
-    mutex_.lock();
+    lock.lock();
     if (status == Status::OK)
     {
         SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Package already exists");
@@ -25839,7 +26571,11 @@ auto CatalogManager::createPackage(const ID& schema_id, const std::string& packa
     std::string truncated = UTF8Utils::truncateToBytes(package_name, sizeof(pkg_rec.package_name));
     strncpy(pkg_rec.package_name, truncated.c_str(), sizeof(pkg_rec.package_name) - 1);
 
-    pkg_rec.owner_id = SecurityConstants::makeSystemUserID();
+    pkg_rec.owner_id = getSystemUserIdUnlocked(ctx);
+    if (isZeroUuidLocal(pkg_rec.owner_id))
+    {
+        return ctx ? ctx->code : Status::PAGE_CORRUPT;
+    }
     pkg_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
     pkg_rec.last_modified_time = pkg_rec.created_time;
     pkg_rec.is_valid = 1;
@@ -25868,7 +26604,7 @@ auto CatalogManager::createPackage(const ID& schema_id, const std::string& packa
 
 auto CatalogManager::getPackage(const ID& package_id, PackageInfo& info_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&package_id](const PackageRecord& rec) {
         return rec.package_id == package_id && rec.is_valid == 1;
@@ -25884,6 +26620,7 @@ auto CatalogManager::getPackage(const ID& package_id, PackageInfo& info_out, Err
     info_out.package_id = result.record.package_id;
     info_out.schema_id = result.record.schema_id;
     info_out.package_name = std::string(result.record.package_name);
+    info_out.name_is_delimited = result.record.name_is_delimited != 0;
     info_out.owner_id = result.record.owner_id;
     info_out.created_time = result.record.created_time;
     info_out.last_modified_time = result.record.last_modified_time;
@@ -25900,11 +26637,13 @@ auto CatalogManager::getPackage(const ID& package_id, PackageInfo& info_out, Err
 auto CatalogManager::getPackageByName(const ID& schema_id, const std::string& package_name,
                                       PackageInfo& info_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&schema_id, &package_name](const PackageRecord& rec) {
         return rec.schema_id == schema_id &&
-               strcmp(rec.package_name, package_name.c_str()) == 0 &&
+               IdentifierUtils::namesMatch(package_name, false /*search_delimited*/,
+                                           rec.package_name,
+                                           rec.name_is_delimited != 0) &&
                rec.is_valid == 1;
     };
 
@@ -25918,6 +26657,7 @@ auto CatalogManager::getPackageByName(const ID& schema_id, const std::string& pa
     info_out.package_id = result.record.package_id;
     info_out.schema_id = result.record.schema_id;
     info_out.package_name = std::string(result.record.package_name);
+    info_out.name_is_delimited = result.record.name_is_delimited != 0;
     info_out.owner_id = result.record.owner_id;
     info_out.created_time = result.record.created_time;
     info_out.last_modified_time = result.record.last_modified_time;
@@ -25936,7 +26676,7 @@ auto CatalogManager::updatePackage(const ID& package_id,
                                    const std::optional<std::string>& new_body,
                                    ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     BufferPool *bp = db_->buffer_pool();
     void *page_data;
@@ -25994,13 +26734,15 @@ auto CatalogManager::dropPackage(const ID& package_id, bool cascade, ErrorContex
     }
 
     if (!deps.empty()) {
+        std::vector<DependencyName> resolved;
+        resolveDependencyNames(deps, resolved, ctx);
         std::string error_msg = buildDependencyErrorMessage(
-            existing.package_name, ObjectType::PACKAGE, deps, ctx);
+            existing.package_name, ObjectType::PACKAGE, resolved);
         SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
         return Status::CONSTRAINT_VIOLATION;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     BufferPool *bp = db_->buffer_pool();
     void *page_data;
@@ -26051,7 +26793,7 @@ auto CatalogManager::dropPackage(const ID& package_id, bool cascade, ErrorContex
     auto CatalogManager::listPackages(const ID& schema_id, std::vector<PackageInfo>& packages_out,
                                       ErrorContext* ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<CatalogMutex> lock(mutex_);
         packages_out.clear();
 
     auto filter = [&schema_id](const PackageRecord& rec) {
@@ -26061,6 +26803,7 @@ auto CatalogManager::dropPackage(const ID& package_id, bool cascade, ErrorContex
         info.package_id = rec.package_id;
         info.schema_id = rec.schema_id;
         info.package_name = std::string(rec.package_name);
+        info.name_is_delimited = rec.name_is_delimited != 0;
         info.owner_id = rec.owner_id;
         info.created_time = rec.created_time;
         info.last_modified_time = rec.last_modified_time;
@@ -26083,7 +26826,7 @@ Status CatalogManager::createException(const ID& schema_id, const std::string& n
                                        const std::string& message, ID& exception_id_out,
                                        ErrorContext* ctx)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     if (schema_cache_.find(schema_id) == schema_cache_.end())
     {
@@ -26098,10 +26841,15 @@ Status CatalogManager::createException(const ID& schema_id, const std::string& n
     rec.schema_id = schema_id;
     std::string truncated = UTF8Utils::truncateToBytes(name, sizeof(rec.name));
     strncpy(rec.name, truncated.c_str(), sizeof(rec.name) - 1);
-    rec.owner_id = SecurityConstants::makeSystemUserID();
+    rec.owner_id = getSystemUserIdUnlocked(ctx);
+    if (isZeroUuidLocal(rec.owner_id))
+    {
+        return ctx ? ctx->code : Status::PAGE_CORRUPT;
+    }
     rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
     rec.last_modified_time = rec.created_time;
     rec.is_valid = 1;
+    rec.name_is_delimited = 0;
 
     // Store message in TOAST
     if (!message.empty()) {
@@ -26120,6 +26868,7 @@ Status CatalogManager::createException(const ID& schema_id, const std::string& n
         rec.exception_id,
         rec.schema_id,
         std::string(rec.name),
+        rec.name_is_delimited != 0,
         message,
         rec.owner_id,
         rec.created_time,
@@ -26133,7 +26882,7 @@ Status CatalogManager::createException(const ID& schema_id, const std::string& n
 Status CatalogManager::getException(const ID& exception_id, ExceptionInfo& info_out,
                                     ErrorContext* ctx)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto it = exception_cache_.find(exception_id);
     if (it != exception_cache_.end()) {
@@ -26155,6 +26904,7 @@ Status CatalogManager::getException(const ID& exception_id, ExceptionInfo& info_
     info.exception_id = result.record.exception_id;
     info.schema_id = result.record.schema_id;
     info.name = std::string(result.record.name);
+    info.name_is_delimited = result.record.name_is_delimited != 0;
     info.owner_id = result.record.owner_id;
     info.created_time = result.record.created_time;
     info.last_modified_time = result.record.last_modified_time;
@@ -26172,10 +26922,14 @@ Status CatalogManager::getException(const ID& exception_id, ExceptionInfo& info_
 Status CatalogManager::getExceptionByName(const ID& schema_id, const std::string& name,
                                           ExceptionInfo& info_out, ErrorContext* ctx)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&schema_id, &name](const ExceptionRecord& rec) {
-        return rec.schema_id == schema_id && strcmp(rec.name, name.c_str()) == 0 && rec.is_valid == 1;
+        return rec.schema_id == schema_id &&
+               IdentifierUtils::namesMatch(name, false /*search_delimited*/,
+                                           rec.name,
+                                           rec.name_is_delimited != 0) &&
+               rec.is_valid == 1;
     };
 
     auto result = findRecordInHeapPage<ExceptionRecord>(exceptions_table_page_, predicate, ctx);
@@ -26202,13 +26956,15 @@ Status CatalogManager::dropException(const ID& exception_id, bool /*cascade*/, E
     }
 
     if (!deps.empty()) {
+        std::vector<DependencyName> resolved;
+        resolveDependencyNames(deps, resolved, ctx);
         std::string error_msg = buildDependencyErrorMessage(
-            existing.name, ObjectType::EXCEPTION, deps, ctx);
+            existing.name, ObjectType::EXCEPTION, resolved);
         SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, error_msg.c_str());
         return Status::CONSTRAINT_VIOLATION;
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     BufferPool* bp = db_->buffer_pool();
     void* page_data;
@@ -26259,7 +27015,7 @@ Status CatalogManager::dropException(const ID& exception_id, bool /*cascade*/, E
 Status CatalogManager::listExceptions(const ID& schema_id, std::vector<ExceptionInfo>& exceptions_out,
                                       ErrorContext* ctx)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
     exceptions_out.clear();
 
     auto filter = [&schema_id](const ExceptionRecord& rec) {
@@ -26269,6 +27025,7 @@ Status CatalogManager::listExceptions(const ID& schema_id, std::vector<Exception
         info.exception_id = rec.exception_id;
         info.schema_id = rec.schema_id;
         info.name = std::string(rec.name);
+        info.name_is_delimited = rec.name_is_delimited != 0;
         info.owner_id = rec.owner_id;
         info.created_time = rec.created_time;
         info.last_modified_time = rec.last_modified_time;
@@ -26375,12 +27132,12 @@ auto CatalogManager::createEmulationType(const std::string& emulation_name,
                                          const std::string& mapping_rules,
                                          ID& emulation_type_id_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     EmulationTypeInfo existing;
-    mutex_.unlock();
+    lock.unlock();
     Status status = getEmulationTypeByName(emulation_name, existing, ctx);
-    mutex_.lock();
+    lock.lock();
     if (status == Status::OK)
     {
         SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Emulation type already exists");
@@ -26418,7 +27175,7 @@ auto CatalogManager::createEmulationType(const std::string& emulation_name,
 auto CatalogManager::getEmulationType(const ID& emulation_type_id, EmulationTypeInfo& info_out,
                                       ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&emulation_type_id](const EmulationTypeRecord& rec) {
         return rec.emulation_type_id == emulation_type_id && rec.is_valid == 1;
@@ -26447,7 +27204,7 @@ auto CatalogManager::getEmulationType(const ID& emulation_type_id, EmulationType
 auto CatalogManager::getEmulationTypeByName(const std::string& emulation_name,
                                             EmulationTypeInfo& info_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&emulation_name](const EmulationTypeRecord& rec) {
         return strcmp(rec.emulation_name, emulation_name.c_str()) == 0 && rec.is_valid == 1;
@@ -26477,7 +27234,7 @@ auto CatalogManager::updateEmulationType(const ID& emulation_type_id,
                                          const std::optional<std::string>& new_mapping_rules,
                                          ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     BufferPool *bp = db_->buffer_pool();
     void *page_data;
@@ -26521,13 +27278,13 @@ auto CatalogManager::updateEmulationType(const ID& emulation_type_id,
 
 auto CatalogManager::dropEmulationType(const ID& emulation_type_id, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     // Check for dependent emulation servers (WP-2 CAT-M8)
     std::vector<EmulationServerInfo> servers;
-    mutex_.unlock();
+    lock.unlock();
     Status check_status = listEmulationServers(servers, ctx);
-    mutex_.lock();
+    lock.lock();
     if (check_status == Status::OK)
     {
         for (const auto& server : servers)
@@ -26580,7 +27337,7 @@ auto CatalogManager::dropEmulationType(const ID& emulation_type_id, ErrorContext
 auto CatalogManager::listEmulationTypes(std::vector<EmulationTypeInfo>& types_out,
                                         ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
     types_out.clear();
 
     auto filter = [](const EmulationTypeRecord& rec) { return rec.is_valid == 1; };
@@ -26608,7 +27365,7 @@ auto CatalogManager::createEmulationServer(const std::string& server_name,
                                            const std::string& server_config,
                                            ID& server_id_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     Status status = UTF8Utils::validateStorageCapacity(server_name,
         CatalogConstants::MAX_IDENTIFIER_CHARS, CatalogConstants::MAX_IDENTIFIER_BYTES);
@@ -26619,9 +27376,9 @@ auto CatalogManager::createEmulationServer(const std::string& server_name,
     }
 
     EmulationServerInfo existing;
-    mutex_.unlock();
+    lock.unlock();
     status = getEmulationServerByName(server_name, existing, ctx);
-    mutex_.lock();
+    lock.lock();
     if (status == Status::OK)
     {
         SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Emulation server already exists");
@@ -26636,7 +27393,11 @@ auto CatalogManager::createEmulationServer(const std::string& server_name,
     std::string truncated = UTF8Utils::truncateToBytes(server_name, sizeof(rec.server_name));
     strncpy(rec.server_name, truncated.c_str(), sizeof(rec.server_name) - 1);
     rec.emulation_type_id = emulation_type_id;
-    rec.owner_id = SecurityConstants::makeSystemUserID();
+    rec.owner_id = getSystemUserIdUnlocked(ctx);
+    if (isZeroUuidLocal(rec.owner_id))
+    {
+        return ctx ? ctx->code : Status::PAGE_CORRUPT;
+    }
     rec.is_active = 1;
     rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
     rec.last_modified_time = rec.created_time;
@@ -26662,7 +27423,7 @@ auto CatalogManager::createEmulationServer(const std::string& server_name,
 auto CatalogManager::getEmulationServer(const ID& server_id, EmulationServerInfo& info_out,
                                         ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&server_id](const EmulationServerRecord& rec) {
         return rec.server_id == server_id && rec.is_valid == 1;
@@ -26693,7 +27454,7 @@ auto CatalogManager::getEmulationServer(const ID& server_id, EmulationServerInfo
 auto CatalogManager::getEmulationServerByName(const std::string& server_name,
                                               EmulationServerInfo& info_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&server_name](const EmulationServerRecord& rec) {
         return strcmp(rec.server_name, server_name.c_str()) == 0 && rec.is_valid == 1;
@@ -26726,7 +27487,7 @@ auto CatalogManager::updateEmulationServer(const ID& server_id,
                                            const std::optional<bool>& is_active,
                                            ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     BufferPool *bp = db_->buffer_pool();
     void *page_data;
@@ -26773,13 +27534,13 @@ auto CatalogManager::updateEmulationServer(const ID& server_id,
 
 auto CatalogManager::dropEmulationServer(const ID& server_id, bool cascade, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     // Check for dependent emulated databases (WP-2 CAT-M8)
     std::vector<EmulatedDatabaseInfo> databases;
-    mutex_.unlock();
+    lock.unlock();
     Status check_status = listEmulatedDatabases(server_id, databases, ctx);
-    mutex_.lock();
+    lock.lock();
 
     if (check_status == Status::OK && !databases.empty())
     {
@@ -26788,9 +27549,9 @@ auto CatalogManager::dropEmulationServer(const ID& server_id, bool cascade, Erro
             // Cascade: drop all emulated databases on this server
             for (const auto& db : databases)
             {
-                mutex_.unlock();
+                lock.unlock();
                 Status drop_status = dropEmulatedDatabase(db.emulated_db_id, ctx);
-                mutex_.lock();
+                lock.lock();
                 if (drop_status != Status::OK && drop_status != Status::NOT_FOUND)
                 {
                     return drop_status;
@@ -26844,7 +27605,7 @@ auto CatalogManager::dropEmulationServer(const ID& server_id, bool cascade, Erro
 auto CatalogManager::listEmulationServers(std::vector<EmulationServerInfo>& servers_out,
                                           ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
     servers_out.clear();
 
     auto filter = [](const EmulationServerRecord& rec) { return rec.is_valid == 1; };
@@ -26874,7 +27635,7 @@ auto CatalogManager::createEmulatedDatabase(const std::string& database_name,
                                             const std::string& db_metadata,
                                             ID& emulated_db_id_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<CatalogMutex> lock(mutex_);
 
     Status status = UTF8Utils::validateStorageCapacity(database_name,
         CatalogConstants::MAX_IDENTIFIER_CHARS, CatalogConstants::MAX_IDENTIFIER_BYTES);
@@ -26885,9 +27646,9 @@ auto CatalogManager::createEmulatedDatabase(const std::string& database_name,
     }
 
     EmulatedDatabaseInfo existing;
-    mutex_.unlock();
+    lock.unlock();
     status = getEmulatedDatabaseByName(server_id, database_name, existing, ctx);
-    mutex_.lock();
+    lock.lock();
     if (status == Status::OK)
     {
         SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Emulated database already exists");
@@ -26903,7 +27664,11 @@ auto CatalogManager::createEmulatedDatabase(const std::string& database_name,
     strncpy(rec.database_name, truncated.c_str(), sizeof(rec.database_name) - 1);
     rec.server_id = server_id;
     rec.schema_id = schema_id;
-    rec.owner_id = SecurityConstants::makeSystemUserID();
+    rec.owner_id = getSystemUserIdUnlocked(ctx);
+    if (isZeroUuidLocal(rec.owner_id))
+    {
+        return ctx ? ctx->code : Status::PAGE_CORRUPT;
+    }
     rec.is_active = 1;
     rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
     rec.last_modified_time = rec.created_time;
@@ -26929,7 +27694,7 @@ auto CatalogManager::createEmulatedDatabase(const std::string& database_name,
 auto CatalogManager::getEmulatedDatabase(const ID& emulated_db_id, EmulatedDatabaseInfo& info_out,
                                          ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&emulated_db_id](const EmulatedDatabaseRecord& rec) {
         return rec.emulated_db_id == emulated_db_id && rec.is_valid == 1;
@@ -26961,7 +27726,7 @@ auto CatalogManager::getEmulatedDatabase(const ID& emulated_db_id, EmulatedDatab
 auto CatalogManager::getEmulatedDatabaseByName(const ID& server_id, const std::string& database_name,
                                                EmulatedDatabaseInfo& info_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     auto predicate = [&server_id, &database_name](const EmulatedDatabaseRecord& rec) {
         return rec.server_id == server_id &&
@@ -26997,7 +27762,7 @@ auto CatalogManager::updateEmulatedDatabase(const ID& emulated_db_id,
                                             const std::optional<bool>& is_active,
                                             ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     BufferPool *bp = db_->buffer_pool();
     void *page_data;
@@ -27044,7 +27809,7 @@ auto CatalogManager::updateEmulatedDatabase(const ID& emulated_db_id,
 
 auto CatalogManager::dropEmulatedDatabase(const ID& emulated_db_id, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
 
     BufferPool *bp = db_->buffer_pool();
     void *page_data;
@@ -27086,7 +27851,7 @@ auto CatalogManager::listEmulatedDatabases(const ID& server_id,
                                            std::vector<EmulatedDatabaseInfo>& databases_out,
                                            ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard<CatalogMutex> lock(mutex_);
     databases_out.clear();
 
     auto filter = [&server_id](const EmulatedDatabaseRecord& rec) {
