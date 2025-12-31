@@ -138,6 +138,8 @@ private:
 
     // ALTER statements
     AlterTableStmt* parseAlterTable();
+    AlterSchemaStmt* parseAlterSchema();
+    AlterDatabaseStmt* parseAlterDatabase();
 
     // DROP statements
     DropTableStmt* parseDropTable();

@@ -1264,6 +1264,19 @@ namespace scratchbird
             EXT_ALTER_DATABASE = 0x010D,  // ALTER DATABASE (emulated)
         };
 
+        enum class AlterSchemaAction : uint8_t
+        {
+            RENAME = 1,
+            SET_OWNER = 2,
+            SET_PATH = 3
+        };
+
+        enum class AlterDatabaseAction : uint8_t
+        {
+            RENAME = 1,
+            SET_OWNER = 2
+        };
+
         /**
          * IndexType - Index type identifiers for EXT_INDEX_TYPE opcode
          *

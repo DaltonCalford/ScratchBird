@@ -92,10 +92,14 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateCreateSchema(create_schema);
     } else if (auto* drop_schema = dynamic_cast<ResolvedDropSchemaStmt*>(stmt)) {
         generateDropSchema(drop_schema);
+    } else if (auto* alter_schema = dynamic_cast<ResolvedAlterSchemaStmt*>(stmt)) {
+        generateAlterSchema(alter_schema);
     } else if (auto* create_database = dynamic_cast<ResolvedCreateDatabaseStmt*>(stmt)) {
         generateCreateDatabase(create_database);
     } else if (auto* drop_database = dynamic_cast<ResolvedDropDatabaseStmt*>(stmt)) {
         generateDropDatabase(drop_database);
+    } else if (auto* alter_database = dynamic_cast<ResolvedAlterDatabaseStmt*>(stmt)) {
+        generateAlterDatabase(alter_database);
     } else if (auto* alter_table = dynamic_cast<ResolvedAlterTableStmt*>(stmt)) {
         generateAlterTable(alter_table);
     } else if (auto* rename_obj = dynamic_cast<ResolvedRenameObjectStmt*>(stmt)) {
@@ -635,6 +639,63 @@ void BytecodeGeneratorV2::generateDropDatabase(ResolvedDropDatabaseStmt* stmt) {
     if (stmt->force) flags |= 0x02;
     current_result_->writeByte(flags);
     current_result_->writeString(schemaPathToString(stmt->database_path, string_pool_));
+}
+
+void BytecodeGeneratorV2::generateAlterSchema(ResolvedAlterSchemaStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_SCHEMA));
+    current_result_->writeByte(static_cast<uint8_t>(stmt->action));
+    current_result_->writeString(schemaPathToString(stmt->schema_path, string_pool_));
+
+    switch (stmt->action) {
+        case AlterSchemaAction::RENAME:
+            if (stmt->new_name != StringPool::INVALID_ID) {
+                writeStringId(stmt->new_name);
+            } else {
+                current_result_->writeString("");
+            }
+            break;
+        case AlterSchemaAction::SET_OWNER:
+            if (stmt->owner != StringPool::INVALID_ID) {
+                writeStringId(stmt->owner);
+            } else {
+                current_result_->writeString("");
+            }
+            break;
+        case AlterSchemaAction::SET_PATH:
+            current_result_->writeString(schemaPathToString(stmt->new_path, string_pool_));
+            break;
+        default:
+            current_result_->writeString("");
+            break;
+    }
+}
+
+void BytecodeGeneratorV2::generateAlterDatabase(ResolvedAlterDatabaseStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_DATABASE));
+    current_result_->writeByte(static_cast<uint8_t>(stmt->action));
+    current_result_->writeString(schemaPathToString(stmt->database_path, string_pool_));
+
+    switch (stmt->action) {
+        case AlterDatabaseAction::RENAME:
+            if (stmt->new_name != StringPool::INVALID_ID) {
+                writeStringId(stmt->new_name);
+            } else {
+                current_result_->writeString("");
+            }
+            break;
+        case AlterDatabaseAction::SET_OWNER:
+            if (stmt->owner != StringPool::INVALID_ID) {
+                writeStringId(stmt->owner);
+            } else {
+                current_result_->writeString("");
+            }
+            break;
+        default:
+            current_result_->writeString("");
+            break;
+    }
 }
 
 void BytecodeGeneratorV2::generateAlterTable(ResolvedAlterTableStmt* stmt) {

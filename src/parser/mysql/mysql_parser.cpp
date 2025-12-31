@@ -2056,6 +2056,44 @@ void Parser::parseRenameStmt() {
 
 void Parser::parseAlterStmt() {
     advance();  // Consume ALTER
+    if (matchKeyword(TokenType::KW_DATABASE) || matchKeyword(TokenType::KW_SCHEMA)) {
+        std::string db_name = parseIdentifier();
+
+        auto emit_alter_database = [&](sblr::AlterDatabaseAction action,
+                                       std::string_view payload) {
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_DATABASE));
+            emitByte(static_cast<uint8_t>(action));
+
+            std::string db_path = default_schema_;
+            if (!db_path.empty() && db_path.back() != '/') {
+                db_path.push_back('/');
+            }
+            db_path += db_name;
+            db_path.push_back('/');
+            emitString(db_path);
+            emitString(payload);
+        };
+
+        if (matchKeyword(TokenType::KW_RENAME)) {
+            consumeKeyword(TokenType::KW_TO, "Expected TO after RENAME");
+            std::string new_name = parseIdentifier();
+            emit_alter_database(sblr::AlterDatabaseAction::RENAME, new_name);
+            return;
+        }
+
+        if (matchKeyword(TokenType::KW_OWNER)) {
+            consumeKeyword(TokenType::KW_TO, "Expected TO after OWNER");
+            std::string owner = parseIdentifier();
+            emit_alter_database(sblr::AlterDatabaseAction::SET_OWNER, owner);
+            return;
+        }
+
+        error("ALTER DATABASE supports only RENAME TO or OWNER TO in MySQL parser");
+        synchronize();
+        return;
+    }
+
     consumeKeyword(TokenType::KW_TABLE, "Expected TABLE after ALTER");
 
     auto emit_string16 = [&](std::string_view str) {

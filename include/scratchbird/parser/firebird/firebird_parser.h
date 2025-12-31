@@ -191,6 +191,9 @@ private:
     // DDL - DROP variants
     Statement* parseDropDatabase();
 
+    // DDL - ALTER variants
+    Statement* parseAlterDatabase();
+
     // DML Statements
     Statement* parseSelectStatement();
     Statement* parseInsertStatement();

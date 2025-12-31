@@ -1484,6 +1484,9 @@ Statement* Parser::parseAlterStatement() {
     if (matchKeyword(TokenType::KW_TABLE)) {
         return parseAlterTableImpl();
     }
+    if (matchKeyword(TokenType::KW_DATABASE)) {
+        return parseAlterDatabase();
+    }
     if (matchKeyword(TokenType::KW_DOMAIN)) {
         return parseAlterDomainImpl();
     }
@@ -1560,6 +1563,49 @@ Statement* Parser::parseDropDatabase() {
     }
 
     stmt->database_path = buildEmulatedDatabasePath(string_pool_, db_name);
+    return stmt;
+}
+
+Statement* Parser::parseAlterDatabase() {
+    auto* stmt = allocate<ast::AlterDatabaseStmt>();
+    stmt->span = toV2Span(current_token_.span);
+
+    std::string db_path_text;
+    if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {
+        auto id = internFromLexer(current_token_.value.string_id);
+        db_path_text = std::string(string_pool_.get(id));
+        advance();
+    } else if (check(TokenType::IDENTIFIER)) {
+        auto id = parseIdentifier();
+        db_path_text = std::string(string_pool_.get(id));
+    } else {
+        error("Expected database path after ALTER DATABASE");
+        return stmt;
+    }
+
+    std::string db_name = deriveFirebirdDatabaseName(db_path_text);
+    if (db_name.empty()) {
+        error("Database name is empty");
+        return stmt;
+    }
+
+    stmt->database_path = buildEmulatedDatabasePath(string_pool_, db_name);
+
+    if (matchKeyword(TokenType::KW_RENAME)) {
+        consume(TokenType::KW_TO, "Expected TO after RENAME");
+        stmt->action = ast::AlterDatabaseAction::RENAME;
+        stmt->new_name = parseIdentifier();
+        return stmt;
+    }
+
+    if (matchKeyword(TokenType::KW_OWNER)) {
+        consume(TokenType::KW_TO, "Expected TO after OWNER");
+        stmt->action = ast::AlterDatabaseAction::SET_OWNER;
+        stmt->owner = parseIdentifier();
+        return stmt;
+    }
+
+    error("ALTER DATABASE supports only RENAME TO or OWNER TO in Firebird parser");
     return stmt;
 }
 
@@ -2355,6 +2401,7 @@ Statement* Parser::parseCommit() {
     // Check for RETAIN (Firebird-specific, similar to AND CHAIN)
     if (matchKeyword(TokenType::KW_RETAIN)) {
         stmt->retaining = true;  // COMMIT RETAINING
+        stmt->and_chain = true;  // Semantically equivalent to AND CHAIN
     }
     return stmt;
 }
@@ -2373,6 +2420,7 @@ Statement* Parser::parseRollback() {
     // Check for RETAIN (Firebird-specific, similar to AND CHAIN)
     if (matchKeyword(TokenType::KW_RETAIN)) {
         stmt->retaining = true;  // ROLLBACK RETAINING
+        stmt->and_chain = true;  // Semantically equivalent to AND CHAIN
     }
     return stmt;
 }

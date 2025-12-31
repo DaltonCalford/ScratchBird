@@ -348,8 +348,10 @@ namespace scratchbird
             void executeMoveObject();
             void executeCreateSchema();
             void executeDropSchema();
+            void executeAlterSchema();
             void executeCreateDatabase();
             void executeDropDatabase();
+            void executeAlterDatabase();
             void executeTruncateTable();           // ALPHA Phase 1 - DDL Modifications (TRUNCATE TABLE ASYNC)
             void executeDropTablespace();          // Phase 2 Task 2.1
             void executeAttachTablespace();        // Phase 6 Task 6.1

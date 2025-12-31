@@ -1378,6 +1378,25 @@ void Parser::parseAlterStmt() {
         return split_path(schema);
     };
 
+    auto build_schema_path_string = [&](const std::string& schema_name) {
+        std::string schema_path = default_schema_;
+        if (!schema_path.empty() && schema_path.back() != '/') {
+            schema_path.push_back('/');
+        }
+        schema_path += schema_name;
+        return schema_path;
+    };
+
+    auto build_database_path_string = [&](const std::string& db_name) {
+        std::string db_path = default_schema_;
+        if (!db_path.empty() && db_path.back() != '/') {
+            db_path.push_back('/');
+        }
+        db_path += db_name;
+        db_path.push_back('/');
+        return db_path;
+    };
+
     auto emit_object_path = [&](const std::vector<std::string>& components) {
         emitByte(static_cast<uint8_t>(core::PathType::ABSOLUTE));
         if (components.size() > std::numeric_limits<uint8_t>::max()) {
@@ -1621,7 +1640,54 @@ void Parser::parseAlterStmt() {
     }
 
     if (matchKeyword(TokenType::KW_SCHEMA)) {
-        parse_rename_move(core::CatalogManager::ObjectType::SCHEMA);
+        std::string schema_name = parseIdentifier();
+        if (matchKeyword(TokenType::KW_RENAME)) {
+            consumeKeyword(TokenType::KW_TO, "Expected TO");
+            std::string new_name = parseIdentifier();
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_SCHEMA));
+            emitByte(static_cast<uint8_t>(sblr::AlterSchemaAction::RENAME));
+            emitString(build_schema_path_string(schema_name));
+            emitString(new_name);
+            return;
+        }
+        if (matchKeyword(TokenType::KW_OWNER)) {
+            consumeKeyword(TokenType::KW_TO, "Expected TO");
+            std::string owner = parseIdentifier();
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_SCHEMA));
+            emitByte(static_cast<uint8_t>(sblr::AlterSchemaAction::SET_OWNER));
+            emitString(build_schema_path_string(schema_name));
+            emitString(owner);
+            return;
+        }
+        error("Expected RENAME TO or OWNER TO after schema name");
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_DATABASE)) {
+        std::string db_name = parseIdentifier();
+        if (matchKeyword(TokenType::KW_RENAME)) {
+            consumeKeyword(TokenType::KW_TO, "Expected TO");
+            std::string new_name = parseIdentifier();
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_DATABASE));
+            emitByte(static_cast<uint8_t>(sblr::AlterDatabaseAction::RENAME));
+            emitString(build_database_path_string(db_name));
+            emitString(new_name);
+            return;
+        }
+        if (matchKeyword(TokenType::KW_OWNER)) {
+            consumeKeyword(TokenType::KW_TO, "Expected TO");
+            std::string owner = parseIdentifier();
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_DATABASE));
+            emitByte(static_cast<uint8_t>(sblr::AlterDatabaseAction::SET_OWNER));
+            emitString(build_database_path_string(db_name));
+            emitString(owner);
+            return;
+        }
+        error("Expected RENAME TO or OWNER TO after database name");
         return;
     }
 

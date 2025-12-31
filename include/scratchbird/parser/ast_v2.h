@@ -56,8 +56,10 @@ enum class ASTKind : uint16_t {
     CreateSequenceStmt,
     CreateSchemaStmt,
     DropSchemaStmt,
+    AlterSchemaStmt,
     CreateDatabaseStmt,
     DropDatabaseStmt,
+    AlterDatabaseStmt,
     CreateFunctionStmt,
     CreateProcedureStmt,
     CreateTriggerStmt,
@@ -532,6 +534,46 @@ public:
     bool if_exists = false;
     SchemaPath database_path;
     bool force = false;
+};
+
+/**
+ * ALTER SCHEMA statement
+ */
+enum class AlterSchemaAction : uint8_t {
+    RENAME = 1,
+    SET_OWNER = 2,
+    SET_PATH = 3,
+};
+
+class AlterSchemaStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::AlterSchemaStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    AlterSchemaAction action = AlterSchemaAction::RENAME;
+    SchemaPath schema_path;
+    StringPool::StringId new_name = StringPool::INVALID_ID;
+    StringPool::StringId owner = StringPool::INVALID_ID;
+    SchemaPath new_path;
+};
+
+/**
+ * ALTER DATABASE statement
+ */
+enum class AlterDatabaseAction : uint8_t {
+    RENAME = 1,
+    SET_OWNER = 2,
+};
+
+class AlterDatabaseStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::AlterDatabaseStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    AlterDatabaseAction action = AlterDatabaseAction::RENAME;
+    SchemaPath database_path;
+    StringPool::StringId new_name = StringPool::INVALID_ID;
+    StringPool::StringId owner = StringPool::INVALID_ID;
 };
 
 /**
@@ -2196,8 +2238,10 @@ public:
     virtual void visit(CreateSequenceStmt* stmt) = 0;
     virtual void visit(CreateSchemaStmt* stmt) = 0;
     virtual void visit(DropSchemaStmt* stmt) = 0;
+    virtual void visit(AlterSchemaStmt* stmt) = 0;
     virtual void visit(CreateDatabaseStmt* stmt) = 0;
     virtual void visit(DropDatabaseStmt* stmt) = 0;
+    virtual void visit(AlterDatabaseStmt* stmt) = 0;
     virtual void visit(AlterTableStmt* stmt) = 0;
     virtual void visit(RenameObjectStmt* stmt) = 0;
     virtual void visit(MoveObjectStmt* stmt) = 0;

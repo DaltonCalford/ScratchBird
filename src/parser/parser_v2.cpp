@@ -1016,6 +1016,8 @@ Statement* Parser::parseAlter() {
     ParseModeGuard guard(state_, ParseMode::DDL);
 
     if (matchContextual("TABLE")) return parseAlterTable();
+    if (matchContextual("SCHEMA")) return parseAlterSchema();
+    if (matchContextual("DATABASE")) return parseAlterDatabase();
 
     auto parse_rename_move = [&](DdlObjectType object_type) -> Statement* {
         SourceLocation start = currentLocation();
@@ -1063,7 +1065,6 @@ Statement* Parser::parseAlter() {
     if (matchContextual("FUNCTION")) return parse_rename_move(DdlObjectType::FUNCTION);
     if (matchContextual("PROCEDURE")) return parse_rename_move(DdlObjectType::PROCEDURE);
     if (matchContextual("PACKAGE")) return parse_rename_move(DdlObjectType::PACKAGE);
-    if (matchContextual("SCHEMA")) return parse_rename_move(DdlObjectType::SCHEMA);
     if (matchContextual("TABLESPACE")) return parse_rename_move(DdlObjectType::TABLESPACE);
     if (matchContextual("ROLE")) return parse_rename_move(DdlObjectType::ROLE);
     if (matchContextual("USER")) return parse_rename_move(DdlObjectType::USER);
@@ -1071,6 +1072,64 @@ Statement* Parser::parseAlter() {
 
     error("Expected object type after ALTER");
     return nullptr;
+}
+
+AlterSchemaStmt* Parser::parseAlterSchema() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<AlterSchemaStmt>();
+    stmt->schema_path = parseSchemaPath(state_);
+    if (stmt->schema_path.isEmpty()) {
+        error("Expected schema name");
+    }
+
+    if (matchContextual("RENAME")) {
+        expectContextual("TO", "Expected TO after RENAME");
+        stmt->action = AlterSchemaAction::RENAME;
+        stmt->new_name = expectIdentifier("Expected new schema name");
+    } else if (matchContextual("OWNER")) {
+        expectContextual("TO", "Expected TO after OWNER");
+        stmt->action = AlterSchemaAction::SET_OWNER;
+        stmt->owner = expectIdentifier("Expected owner name");
+    } else if (matchContextual("SET")) {
+        if (matchContextual("PATH")) {
+            stmt->action = AlterSchemaAction::SET_PATH;
+            stmt->new_path = parseSchemaPath(state_);
+            error("ALTER SCHEMA SET PATH is not supported yet");
+        } else {
+            error("Expected PATH after SET");
+        }
+    } else {
+        error("Expected RENAME TO or OWNER TO after schema name");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+AlterDatabaseStmt* Parser::parseAlterDatabase() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<AlterDatabaseStmt>();
+    stmt->database_path = parseSchemaPath(state_);
+    if (stmt->database_path.isEmpty()) {
+        error("Expected database name");
+    }
+
+    if (matchContextual("RENAME")) {
+        expectContextual("TO", "Expected TO after RENAME");
+        stmt->action = AlterDatabaseAction::RENAME;
+        stmt->new_name = expectIdentifier("Expected new database name");
+    } else if (matchContextual("OWNER")) {
+        expectContextual("TO", "Expected TO after OWNER");
+        stmt->action = AlterDatabaseAction::SET_OWNER;
+        stmt->owner = expectIdentifier("Expected owner name");
+    } else {
+        error("Expected RENAME TO or OWNER TO after database name");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
 }
 
 AlterTableStmt* Parser::parseAlterTable() {

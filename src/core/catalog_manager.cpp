@@ -4633,6 +4633,65 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         return Status::OK;
     }
 
+    auto CatalogManager::updateSchemaOwner(const ID& schema_id, const std::string& owner,
+                                           ErrorContext* ctx) -> Status
+    {
+        if (owner.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Owner cannot be empty");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+
+        std::lock_guard<CatalogMutex> lock(mutex_);
+        auto it = schema_cache_.find(schema_id);
+        if (it == schema_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found");
+            return Status::NOT_FOUND;
+        }
+
+        ID owner_id = resolveOwnerUUID(owner, ctx);
+        if (isZeroUuidLocal(owner_id))
+        {
+            return ctx ? ctx->code : Status::NOT_FOUND;
+        }
+
+        SchemaInfo old_info = it->second;
+        SchemaInfo& schema = it->second;
+        schema.owner_id = owner_id;
+        schema.last_modified_time = now;
+
+        SchemaRecord record{};
+        record.schema_id = schema.schema_id;
+        record.parent_schema_id = schema.parent_schema_id;
+        std::memcpy(record.schema_name, schema.schema_name.c_str(), schema.schema_name.size());
+        record.schema_name[schema.schema_name.size()] = '\0';
+        record.owner_id = schema.owner_id;
+        record.default_tablespace_id = schema.default_tablespace_id;
+        record.permissions = schema.permissions;
+        record.default_charset = schema.default_charset;
+        record.name_is_delimited = schema.name_is_delimited ? 1 : 0;
+        record.default_collation_id = schema.default_collation_id;
+        record.acl_oid = schema.acl_oid;
+        record.created_time = schema.created_time;
+        record.last_modified_time = schema.last_modified_time;
+        record.is_valid = 1;
+
+        auto predicate = [&schema_id](const SchemaRecord& rec) {
+            return rec.schema_id == schema_id && rec.is_valid == 1;
+        };
+        Status status = updateRecordInHeapPage(schemas_table_page_, predicate, record, ctx);
+        if (status != Status::OK)
+        {
+            it->second = old_info;
+            return status;
+        }
+
+        return Status::OK;
+    }
+
     // Helper to delete schema record (mark is_valid = 0)
     auto CatalogManager::deleteSchemaRecord(const ID &schema_id, ErrorContext *ctx) -> Status
     {
@@ -27796,6 +27855,162 @@ auto CatalogManager::updateEmulatedDatabase(const ID& emulated_db_id,
                     if (is_active.has_value())
                         record->is_active = is_active.value() ? 1 : 0;
                     record->last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    bp->unpinPage(emulated_dbs_table_page_, found, ctx);
+    return found ? Status::OK : Status::NOT_FOUND;
+}
+
+auto CatalogManager::renameEmulatedDatabase(const ID& emulated_db_id,
+                                            const std::string& new_name,
+                                            ErrorContext* ctx) -> Status
+{
+    if (new_name.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database name cannot be empty");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    Status status = UTF8Utils::validateStorageCapacity(new_name,
+        CatalogConstants::MAX_IDENTIFIER_CHARS, CatalogConstants::MAX_IDENTIFIER_BYTES);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Database name too long or invalid UTF-8");
+        return status;
+    }
+
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    status = bp->pinPage(emulated_dbs_table_page_, &page_data, ctx);
+    if (status != Status::OK) return status;
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+    EmulatedDatabaseRecord* target_record = nullptr;
+    ID server_id{};
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(EmulatedDatabaseRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                auto *record = reinterpret_cast<EmulatedDatabaseRecord *>(
+                    mutable_page_data + offset + sizeof(TupleHeader));
+
+                if (record->emulated_db_id == emulated_db_id && record->is_valid == 1)
+                {
+                    target_record = record;
+                    server_id = record->server_id;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!target_record)
+    {
+        bp->unpinPage(emulated_dbs_table_page_, false, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Emulated database not found");
+        return Status::NOT_FOUND;
+    }
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(EmulatedDatabaseRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                auto *record = reinterpret_cast<EmulatedDatabaseRecord *>(
+                    mutable_page_data + offset + sizeof(TupleHeader));
+
+                if (record->is_valid == 1 && record->server_id == server_id &&
+                    record->emulated_db_id != emulated_db_id)
+                {
+                    if (IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
+                                                       record->database_name, false /*stored*/))
+                    {
+                        bp->unpinPage(emulated_dbs_table_page_, false, ctx);
+                        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
+                                          "Emulated database already exists");
+                        return Status::FILE_EXISTS;
+                    }
+                }
+            }
+        }
+    }
+
+    std::string truncated = UTF8Utils::truncateToBytes(new_name, sizeof(target_record->database_name));
+    std::memset(target_record->database_name, 0, sizeof(target_record->database_name));
+    std::strncpy(target_record->database_name, truncated.c_str(),
+                 sizeof(target_record->database_name) - 1);
+    target_record->last_modified_time =
+        std::chrono::system_clock::now().time_since_epoch().count();
+
+    bp->unpinPage(emulated_dbs_table_page_, true, ctx);
+    return Status::OK;
+}
+
+auto CatalogManager::updateEmulatedDatabaseOwner(const ID& emulated_db_id,
+                                                 const std::string& owner,
+                                                 ErrorContext* ctx) -> Status
+{
+    if (owner.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Owner cannot be empty");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    ID owner_id = resolveOwnerUUID(owner, ctx);
+    if (isZeroUuidLocal(owner_id))
+    {
+        return ctx ? ctx->code : Status::NOT_FOUND;
+    }
+
+    BufferPool *bp = db_->buffer_pool();
+    void *page_data;
+    Status status = bp->pinPage(emulated_dbs_table_page_, &page_data, ctx);
+    if (status != Status::OK) return status;
+
+    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
+    uint16_t item_count = heap_page.getItemCount();
+    bool found = false;
+    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
+
+    for (uint16_t i = 0; i < item_count; ++i)
+    {
+        const uint8_t *tuple_data;
+        uint32_t tuple_size;
+        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+        {
+            if (tuple_size >= sizeof(TupleHeader) + sizeof(EmulatedDatabaseRecord))
+            {
+                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
+                auto *record = reinterpret_cast<EmulatedDatabaseRecord *>(
+                    mutable_page_data + offset + sizeof(TupleHeader));
+
+                if (record->emulated_db_id == emulated_db_id && record->is_valid == 1)
+                {
+                    record->owner_id = owner_id;
+                    record->last_modified_time =
+                        std::chrono::system_clock::now().time_since_epoch().count();
                     found = true;
                     break;
                 }

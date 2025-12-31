@@ -1487,6 +1487,9 @@ namespace scratchbird::core
         auto dropSchema(const ID &schema_id, bool cascade = false,
                         ErrorContext *ctx = nullptr) -> Status;
 
+        auto updateSchemaOwner(const ID& schema_id, const std::string& owner,
+                               ErrorContext* ctx = nullptr) -> Status;
+
         // Table operations
         auto createTable(const ID &schema_id, const std::string &table_name,
                          const std::vector<ColumnInfo> &columns, ID &table_id,
@@ -1912,6 +1915,12 @@ namespace scratchbird::core
                                     const std::optional<std::string>& new_metadata,
                                     const std::optional<bool>& is_active,
                                     ErrorContext* ctx = nullptr) -> Status;
+
+        auto renameEmulatedDatabase(const ID& emulated_db_id, const std::string& new_name,
+                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto updateEmulatedDatabaseOwner(const ID& emulated_db_id, const std::string& owner,
+                                         ErrorContext* ctx = nullptr) -> Status;
 
         auto dropEmulatedDatabase(const ID& emulated_db_id,
                                   ErrorContext* ctx = nullptr) -> Status;

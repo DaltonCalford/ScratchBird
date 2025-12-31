@@ -162,8 +162,10 @@ private:
     void generateCreateView(ResolvedCreateViewStmt* stmt);
     void generateCreateSchema(ResolvedCreateSchemaStmt* stmt);
     void generateDropSchema(ResolvedDropSchemaStmt* stmt);
+    void generateAlterSchema(ResolvedAlterSchemaStmt* stmt);
     void generateCreateDatabase(ResolvedCreateDatabaseStmt* stmt);
     void generateDropDatabase(ResolvedDropDatabaseStmt* stmt);
+    void generateAlterDatabase(ResolvedAlterDatabaseStmt* stmt);
     void generateAlterTable(ResolvedAlterTableStmt* stmt);
     void generateRenameObject(ResolvedRenameObjectStmt* stmt);
     void generateMoveObject(ResolvedMoveObjectStmt* stmt);

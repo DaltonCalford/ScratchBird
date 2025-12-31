@@ -1465,6 +1465,11 @@ namespace scratchbird
                             executeDropSchema();
                             result = ExecutionResult();
                         }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_SCHEMA))
+                        {
+                            executeAlterSchema();
+                            result = ExecutionResult();
+                        }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_DATABASE))
                         {
                             executeCreateDatabase();
@@ -1473,6 +1478,11 @@ namespace scratchbird
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_DATABASE))
                         {
                             executeDropDatabase();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_DATABASE))
+                        {
+                            executeAlterDatabase();
                             result = ExecutionResult();
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SET_AUTOCOMMIT))
@@ -4279,6 +4289,86 @@ namespace scratchbird
             }
         }
 
+        void Executor::executeAlterSchema()
+        {
+            uint8_t action = readByte();
+            std::string schema_path = readString();
+
+            core::ObjectPath path;
+            core::ErrorContext ctx;
+            auto status = buildObjectPathFromName(schema_path, path, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Invalid schema path";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            core::CatalogManager::ResolveOptions opts;
+            opts.allow_search_path = false;
+            core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+            core::ID schema_id{};
+            status = db_->catalog_manager()->resolveObjectPath(
+                path, core::CatalogManager::ObjectType::SCHEMA, opts,
+                schema_id, resolved_type, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Schema not found";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            switch (static_cast<sblr::AlterSchemaAction>(action))
+            {
+                case sblr::AlterSchemaAction::RENAME:
+                {
+                    std::string new_name = readString();
+                    status = db_->catalog_manager()->renameObject(
+                        core::CatalogManager::ObjectType::SCHEMA, schema_id, new_name, &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "ALTER SCHEMA RENAME failed";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    break;
+                }
+                case sblr::AlterSchemaAction::SET_OWNER:
+                {
+                    std::string owner = readString();
+                    status = db_->catalog_manager()->updateSchemaOwner(schema_id, owner, &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "ALTER SCHEMA OWNER failed";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    break;
+                }
+                case sblr::AlterSchemaAction::SET_PATH:
+                {
+                    (void)readString();
+                    error("ALTER SCHEMA SET PATH is not supported");
+                    break;
+                }
+                default:
+                    error("Unsupported ALTER SCHEMA action");
+                    break;
+            }
+        }
+
         void Executor::executeCreateDatabase()
         {
             uint8_t flags = readByte();
@@ -4502,6 +4592,122 @@ namespace scratchbird
             }
         }
 
+        void Executor::executeAlterDatabase()
+        {
+            uint8_t action = readByte();
+            std::string db_path = readString();
+
+            std::string normalized_path;
+            std::string dialect;
+            std::string server;
+            std::string db_name;
+            core::ErrorContext ctx;
+            auto status = extractEmulatedDatabaseComponents(
+                db_path, normalized_path, dialect, server, db_name, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Invalid emulated database path";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            core::CatalogManager::EmulationServerInfo server_info;
+            status = db_->catalog_manager()->getEmulationServerByName(server, server_info, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Emulation server not found";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            core::CatalogManager::EmulatedDatabaseInfo db_info;
+            status = db_->catalog_manager()->getEmulatedDatabaseByName(
+                server_info.server_id, db_name, db_info, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Emulated database not found";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            switch (static_cast<sblr::AlterDatabaseAction>(action))
+            {
+                case sblr::AlterDatabaseAction::RENAME:
+                {
+                    std::string new_name = readString();
+                    status = db_->catalog_manager()->renameObject(
+                        core::CatalogManager::ObjectType::SCHEMA, db_info.schema_id,
+                        new_name, &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "ALTER DATABASE RENAME failed";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        error(err_msg);
+                    }
+
+                    status = db_->catalog_manager()->renameEmulatedDatabase(
+                        db_info.emulated_db_id, new_name, &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        core::ErrorContext revert_ctx;
+                        db_->catalog_manager()->renameObject(
+                            core::CatalogManager::ObjectType::SCHEMA, db_info.schema_id,
+                            db_name, &revert_ctx);
+
+                        std::string err_msg = "ALTER DATABASE RENAME failed";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    break;
+                }
+                case sblr::AlterDatabaseAction::SET_OWNER:
+                {
+                    std::string owner = readString();
+                    status = db_->catalog_manager()->updateSchemaOwner(
+                        db_info.schema_id, owner, &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "ALTER DATABASE OWNER failed";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        error(err_msg);
+                    }
+
+                    status = db_->catalog_manager()->updateEmulatedDatabaseOwner(
+                        db_info.emulated_db_id, owner, &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "ALTER DATABASE OWNER failed";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    break;
+                }
+                default:
+                    error("Unsupported ALTER DATABASE action");
+                    break;
+            }
+        }
 
         void Executor::executeTruncateTable()
         {

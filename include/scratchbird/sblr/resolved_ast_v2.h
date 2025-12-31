@@ -676,6 +676,27 @@ struct ResolvedDropDatabaseStmt : public ResolvedStatement {
 };
 
 /**
+ * Resolved ALTER SCHEMA statement
+ */
+struct ResolvedAlterSchemaStmt : public ResolvedStatement {
+    AlterSchemaAction action = AlterSchemaAction::RENAME;
+    SchemaPath schema_path;
+    StringPool::StringId new_name = StringPool::INVALID_ID;
+    StringPool::StringId owner = StringPool::INVALID_ID;
+    SchemaPath new_path;
+};
+
+/**
+ * Resolved ALTER DATABASE statement
+ */
+struct ResolvedAlterDatabaseStmt : public ResolvedStatement {
+    AlterDatabaseAction action = AlterDatabaseAction::RENAME;
+    SchemaPath database_path;
+    StringPool::StringId new_name = StringPool::INVALID_ID;
+    StringPool::StringId owner = StringPool::INVALID_ID;
+};
+
+/**
  * Resolved ALTER TABLE statement
  */
 struct ResolvedAlterTableStmt : public ResolvedStatement {

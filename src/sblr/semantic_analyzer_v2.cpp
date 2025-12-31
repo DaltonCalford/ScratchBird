@@ -1017,10 +1017,14 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeCreateSchema(static_cast<CreateSchemaStmt*>(stmt));
         case ASTKind::DropSchemaStmt:
             return analyzeDropSchema(static_cast<DropSchemaStmt*>(stmt));
+        case ASTKind::AlterSchemaStmt:
+            return analyzeAlterSchema(static_cast<AlterSchemaStmt*>(stmt));
         case ASTKind::CreateDatabaseStmt:
             return analyzeCreateDatabase(static_cast<CreateDatabaseStmt*>(stmt));
         case ASTKind::DropDatabaseStmt:
             return analyzeDropDatabase(static_cast<DropDatabaseStmt*>(stmt));
+        case ASTKind::AlterDatabaseStmt:
+            return analyzeAlterDatabase(static_cast<AlterDatabaseStmt*>(stmt));
         case ASTKind::AlterTableStmt:
             return analyzeAlterTable(static_cast<AlterTableStmt*>(stmt));
         case ASTKind::RenameObjectStmt:
@@ -1426,6 +1430,37 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeDropDatabase(DropDatabaseStmt* stm
     resolved->if_exists = stmt->if_exists;
     resolved->force = stmt->force;
     resolved->database_path = stmt->database_path;
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeAlterSchema(AlterSchemaStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedAlterSchemaStmt>();
+    resolved->span = stmt->span;
+    resolved->action = stmt->action;
+    resolved->schema_path = stmt->schema_path;
+    resolved->new_name = stmt->new_name;
+    resolved->owner = stmt->owner;
+    resolved->new_path = stmt->new_path;
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeAlterDatabase(AlterDatabaseStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedAlterDatabaseStmt>();
+    resolved->span = stmt->span;
+    resolved->action = stmt->action;
+    resolved->database_path = stmt->database_path;
+    resolved->new_name = stmt->new_name;
+    resolved->owner = stmt->owner;
 
     return resolved;
 }
