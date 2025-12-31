@@ -6,6 +6,9 @@ Upgrade SBLR to version 2, switch extended opcode encoding to 16-bit, update all
 ## Priority
 P0 (required for rename/move opcodes and future opcode growth).
 
+## Last Updated
+2025-12-31
+
 ## Status (Current)
 Completed:
 - SBLR_VERSION set to 2 and enforced in executor.
@@ -19,6 +22,7 @@ Completed:
 - Added READ_COMMITTED_MODE payload flag and encoding (READ CONSISTENCY / RECORD VERSION / NO RECORD VERSION).
 - Executor now handles PREPARE/COMMIT/ROLLBACK PREPARED and TransactionManager persists prepared transactions.
 - Added executor tests for autocommit transitions and 2PC prepare/commit/rollback flows.
+- Extended opcodes added for schema/database DDL (CREATE/DROP/ALTER SCHEMA/DATABASE) and emitted by v2 generator + PostgreSQL/MySQL parsers.
 
 Partial / Outstanding:
 - Transaction payload v2 emission is complete for ScratchBird v2; PostgreSQL/MySQL emitters still only write isolation/access/deferrable (and MySQL SET AUTOCOMMIT only).

@@ -6,6 +6,12 @@ Implement the security architecture draft: AuthKey, session binding, immutable t
 ## Priority
 P0 (security baseline for server/cluster modes).
 
+## Status (Current)
+Not started. This document is the implementation specification; no code changes have been applied yet.
+
+## Last Updated
+2025-12-31
+
 ## References
 - `docs/specifications/draft_security_architecture_specification.md`
 - `docs/specifications/SECURITY_SYSTEM_SPECIFICATION.md`
