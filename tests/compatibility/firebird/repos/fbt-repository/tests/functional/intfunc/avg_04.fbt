@@ -1,0 +1,30 @@
+{
+'id': 'functional.intfunc.avg.04',
+'qmid': 'functional.intfunc.avg.avg_04',
+'tracker_id': '',
+'title': 'AVG - Test for INTEGER',
+'description': """Round up (17/3 = 5,66666666666667)
+But it's from INTEGER columns, so 5 is expected.
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+INSERT
+Basic SELECT""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL);
+INSERT INTO test VALUES(5);
+INSERT INTO test VALUES(6);
+INSERT INTO test VALUES(6);""",
+ 'test_type': 'ISQL',
+ 'test_script': 'SELECT AVG(id) FROM test;',
+ 'expected_stdout': """                  AVG
+=====================
+
+                    5"""
+}
+]
+}

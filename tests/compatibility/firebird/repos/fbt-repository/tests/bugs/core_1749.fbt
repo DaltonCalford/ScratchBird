@@ -1,0 +1,31 @@
+{
+'id': 'bugs.core_1749',
+'qmid': None,
+'tracker_id': 'CORE-1749',
+'title': "DDL statement with AUTODDL ON won't show statistics",
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """set stat on;
+
+create generator A;
+
+set autoddl off;
+
+create generator B;
+commit;
+
+""",
+ 'expected_stdout': """STATS
+STATS
+STATS
+""",
+ 'substitutions': [('^Current memory.*',''),('^Delta memory.*',''),('^Max memory.*',''),('^Elapsed time.*',''),('^Buffers.*',''),('^Reads.*',''),('^Writes.*',''),('^Elapsed time.*',''),('^Cpu.*',''),('^Fetches.*','STATS')]
+}
+]
+}

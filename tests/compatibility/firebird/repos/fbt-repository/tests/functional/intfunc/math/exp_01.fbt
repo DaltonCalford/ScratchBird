@@ -1,0 +1,20 @@
+{
+'id': 'functional.intfunc.math.exp_01',
+'qmid': 'functional.intfunc.math.exp_01',
+'tracker_id': '',
+'title': 'test for EXP( <number> )',
+'description': 'Returns the exponential e to the argument.',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """
+select EXP( 3) from rdb$database;
+""",
+ 'expected_stdout': """                          EXP
+      =======================
+            20.08553692318767"""
+}
+]
+}

@@ -1,0 +1,19 @@
+{
+'id': 'functional.intfunc.math.abs_01',
+'qmid': 'functional.intfunc.math.abs_01',
+'tracker_id': '',
+'title': 'New Built-in Functions, Firebird 2.1 : ABS( <number> )',
+'description': 'test of ABS( <number> ) function Returns the absolute value of a number.',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'select ABS( -1 ) from rdb$database;',
+ 'expected_stdout': """                  ABS
+=====================
+                    1
+"""
+}
+]
+}

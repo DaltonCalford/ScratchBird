@@ -1,0 +1,173 @@
+{
+'id': 'bugs.core_5776',
+'qmid': None,
+'tracker_id': 'CORE-5776',
+'title': '"Input parameter mismatch" error after altering external function into PSQL function',
+'description':
+  """
+    ::::: NB ::::
+    Could not check actual result of fbtest execution, done only using ISQL and copy its result here.
+    Checked on WI-T4.0.0.927, Win 64x.
+
+     *** FOR FB 3.X ONLY ***
+        Test uses UDF 'sright' declared in ib_udf.sql script which for sure present in every FB snapshot.
+        After this, we try to create PSQL function with the same signature.
+
+    *** FOR FB 4.X AND ABOVE  ***
+        Added separate code for running on FB 4.0.x: use udf_compat!UC_frac from UDR engine, and then alter it
+        by changing to PSQL with the same signature.
+
+        UDF usage is deprecated in FB 4+, see: ".../doc/README.incompatibilities.3to4.txt".
+        Functions div, frac, dow, sdow, getExactTimestampUTC and isLeapYear got safe replacement 
+        in UDR library "udf_compat", see it in folder: ../plugins/udr/
+
+        3.0.5.33086: OK, 1.406s.
+        4.0.0.1172: OK, 6.047s.
+        4.0.0.1340: OK, 21.078s.
+        4.0.0.1378: OK, 10.391s.
+  """,
+'min_versions': '3.0.4',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set term ^;
+    execute block as
+    begin
+        execute statement 'drop function sright';
+        when any do begin end
+    end
+    ^
+    set term ;^
+    commit;
+
+    declare external function sright
+      varchar(100) by descriptor, 
+      smallint,
+      varchar(100) by descriptor returns parameter 3
+      entry_point 'right' module_name 'fbudf';
+    commit;
+
+
+    select rdb$return_argument from rdb$functions
+      where rdb$function_name = 'SRIGHT'; 
+
+    select rdb$argument_position, rdb$argument_name from rdb$function_arguments
+     where rdb$function_name = 'SRIGHT'; 
+
+    ------------------------------------------------
+
+    commit;
+
+    set term ^;
+    alter function sright (str varchar(100), len int)  returns varchar(100)
+    as
+    begin
+      return right(str, len);
+    end^
+    set term ;^
+    commit;
+
+    select sright('function', 2) from rdb$database; 
+
+
+    select rdb$return_argument from rdb$functions
+      where rdb$function_name = 'SRIGHT'; 
+
+    select rdb$argument_position, rdb$argument_name from rdb$function_arguments
+     where rdb$function_name = 'SRIGHT'; 
+  """,
+  'expected_stdout':
+  """
+    RDB$RETURN_ARGUMENT             3
+
+    RDB$ARGUMENT_POSITION           1
+    RDB$ARGUMENT_NAME               <null>
+
+    RDB$ARGUMENT_POSITION           2
+    RDB$ARGUMENT_NAME               <null>
+
+    RDB$ARGUMENT_POSITION           3
+    RDB$ARGUMENT_NAME               <null>
+
+    SRIGHT                          on
+
+    RDB$RETURN_ARGUMENT             0
+
+    RDB$ARGUMENT_POSITION           0
+    RDB$ARGUMENT_NAME               <null>
+
+    RDB$ARGUMENT_POSITION           1
+    RDB$ARGUMENT_NAME               STR                                                                                                                                                                                                                                                         
+
+    RDB$ARGUMENT_POSITION           2
+    RDB$ARGUMENT_NAME               LEN                                                                                                                                                                                                                                                         
+  """,
+  'expected_stderr':
+  """
+  """
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+
+    set term ^;
+    create or alter function the_frac( val double precision ) returns double precision as
+    begin 
+        return 1. / log10( val - cast(val as int) )  ; 
+    end
+    ^ 
+    set term ;^
+    commit;
+
+    select the_frac( pi() ) as the_frac_0 from rdb$database;
+    commit;
+
+    alter function the_frac(
+        val double precision
+    ) returns double precision
+        external name 'udf_compat!UC_frac'
+        engine udr;
+    commit;
+
+    select the_frac( -pi() ) as the_frac_1 from rdb$database;
+    commit;
+
+    -----------------------------
+
+    set term ^;
+    alter function the_frac( val double precision ) returns double precision as
+    begin 
+        return 1. / exp( -(val - cast(val as int)) )  ; 
+    end
+    ^ 
+    set term ;^
+    commit;
+
+    select the_frac( -pi() ) as the_frac_2 from rdb$database;
+    commit;
+
+  """,
+ 'expected_stdout': 
+  """
+    THE_FRAC_0                      -1.177912798268244
+    THE_FRAC_1                      -0.1415926535897931
+    THE_FRAC_2                      0.8679747508826116
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

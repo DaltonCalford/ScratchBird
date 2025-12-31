@@ -1,0 +1,118 @@
+{
+'id': 'bugs.core_6116',
+'qmid': None,
+'tracker_id': 'CORE-6116',
+'title': 'The Metadata script extracted using ISQL of a database restored from a Firebird 2.5.9 Backup is invalid/incorrect when table has COMPUTED BY field',
+'description':
+ """
+    Test uses backup of preliminary created database in FB 2.5.9, DDL is the same as in the ticket.
+    This .fbk is restored and we launch ISQL -X in order to get metadata. Then we check that two 
+    in this script with "COMPUTED BY" phrase contain non zero number as width of this field:
+    1) line that belongs to CREATE TABLE statement:
+       FULL_NAME VARCHAR(100) ... COMPUTED BY ...
+    2) line with ALTER COLUMN statement:
+       ALTER FULL_NAME TYPE VARCHAR(100) ... COMPUTED BY ...
+
+    Confirmed bug on: 4.0.0.1723; 3.0.5.33225: found "VARCHAR(0)" in above mentioned lines.
+    Checked on: 4.0.0.1737; 3.0.6.33236 - works fine.
+ """,
+'min_versions': '3.0.6',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core6116-25.fbk',
+ 'test_type': 'Python',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """\
+import os
+import time
+import subprocess
+import re
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_conn.close()
+
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for f in f_names_list:
+       if type(f) == file:
+          del_name = f.name
+       elif type(f) == str:
+          del_name = f
+       else:
+          print('Unrecognized type of element:', f, ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+    
+#--------------------------------------------
+
+
+f_metadata_sql=open( os.path.join(context['temp_directory'],'tmp_meta_6116.sql'), 'w')
+subprocess.call([ context['isql_path'], '-x', dsn ], stdout=f_metadata_sql, stderr=subprocess.STDOUT)
+flush_and_close( f_metadata_sql )
+
+# FULL_NAME VARCHAR(0) CHARACTER SET WIN1252 COMPUTED BY
+comp_field_initial_ptn = re.compile( 'FULL_NAME\s+VARCHAR\(\d+\).*COMPUTED BY', re.IGNORECASE )
+comp_field_altered_ptn = re.compile( 'ALTER\s+FULL_NAME\s+TYPE\s+VARCHAR\(\d+\).*COMPUTED BY', re.IGNORECASE )
+
+# CREATE TABLE statement must contain line:
+#     FULL_NAME VARCHAR(100) CHARACTER SET WIN1252 COMPUTED BY (CAST(NULL AS VARCHAR(1) CHARACTER SET WIN1252) COLLATE WIN_PTBR),
+# ALTER FULL_NAME statement must contain line:
+#     ALTER FULL_NAME TYPE VARCHAR(100) CHARACTER SET WIN1252 COMPUTED BY ((first_name || ' ' || last_name || ' (' || user_name || ')') collate win_ptbr);
+
+
+# This should be empty:
+with open( f_metadata_sql.name,'r') as f:
+    for line in f:
+        if comp_field_initial_ptn.search(line):
+            words = line.replace('(',' ').replace(')',' ').split() # ['FULL_NAME', 'VARCHAR', '0', ... , 'COMPUTED', 'BY']
+            print( 'Length in "CREATE TABLE" statement: ' + words[2] )
+
+        if comp_field_altered_ptn.search(line):
+            words = line.replace('(',' ').replace(')',' ').split() # ['ALTER', 'FULL_NAME', 'TYPE', 'VARCHAR', '0', ... , 'COMPUTED', 'BY']
+            print( 'Length in "ALTER COLUMN" statement: ' + words[4] )
+
+# cleanup:
+##########
+time.sleep(1)
+cleanup( (f_metadata_sql,) )
+
+  """,
+ 'expected_stdout': 
+  """
+    Length in "CREATE TABLE" statement: 100
+    Length in "ALTER COLUMN" statement: 100
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

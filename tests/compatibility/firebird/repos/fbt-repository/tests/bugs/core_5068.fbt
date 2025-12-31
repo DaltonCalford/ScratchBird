@@ -1,0 +1,122 @@
+{
+'id': 'bugs.core_5068',
+'qmid': '',
+'tracker_id': 'CORE-5068',
+'title': 'gbak with invalid parameter crashes FB',
+'description':
+ """
+   Confirmed crash on 2.5.5.26952, but only when use 'gbak' utility (with services call).
+   As of fbsvcmgr, it works correct and reports error: Unknown switch "res_user_all_space".
+   Output when use gbak is:
+   gbak:unknown switch "USER_ALL_SPACE"
+   gbak: ERROR:Unable to complete network request to host "localhost".
+   gbak: ERROR:    Error reading data from the connection.
+   gbak:Exiting before completion due to errors
+
+   Checked on WI-V2.5.6.26962 -  works OK.
+   No test needed for 3.0 thus only stub code present here in 'firebird_version': '3.0' section.
+ """,
+'min_versions': '2.5.5',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import time
+import subprocess
+
+db_conn.close()
+
+tmpsrc='$(DATABASE_LOCATION)bugs.core_5068.fdb'
+tmpbkp='$(DATABASE_LOCATION)tmp_core_5068_25.fbk'
+tmpres='$(DATABASE_LOCATION)tmp_core_5068_25.tmp'
+
+f_backup=open( os.path.join(context['temp_directory'],'tmp_backup_5068_25.log'), 'w')
+subprocess.call(["fbsvcmgr","localhost:service_mgr",\
+                                  "user","SYSDBA","password","masterkey",\
+                                  "action_backup", \
+                                  "dbname",   tmpsrc, \
+                                  "bkp_file", tmpbkp, \
+                                  "verbose"], \
+                                  stdout=f_backup, stderr=subprocess.STDOUT)
+f_backup.close()
+
+f_restore_log=open( os.path.join(context['temp_directory'],'tmp_restore_5068_25.log'), 'w')
+f_restore_err=open( os.path.join(context['temp_directory'],'tmp_restore_5068_25.err'), 'w')
+
+if os.path.isfile(tmpres):
+    os.remove(tmpres)
+
+# Failed on 2.5.5.26952 - FB crash:
+
+subprocess.call( [ "gbak", "-c", "-v", \
+                   "-user", "SYSDBA", "-password", "masterkey", \
+                   "-se", "localhost:service_mgr", \
+                   "-user_all_space", \
+                   tmpbkp,  \
+                   tmpres], \
+                 stdout=f_restore_log, \
+                 stderr=f_restore_err \
+                )
+
+f_restore_log.close()
+f_restore_err.close()
+
+with open(f_restore_log.name, 'r') as f:
+    for line in f:
+        print( "STDOUT: "+line )
+f.close()
+
+with open(f_restore_err.name, 'r') as f:
+    for line in f:
+        print( "STDERR: "+line )
+f.close()
+
+#####################################################################
+# Cleanup:
+
+# do NOT remove this pause otherwise some of logs will not be enable for deletion and test will finish with 
+# Exception raised while executing Python test script. exception: WindowsError: 32
+time.sleep(1)
+
+if os.path.isfile(tmpbkp):
+    os.remove(tmpbkp)
+if os.path.isfile(tmpres):
+    os.remove(tmpres)
+if os.path.isfile(f_backup.name):
+    os.remove(f_backup.name)
+if os.path.isfile(f_restore_log.name):
+    os.remove(f_restore_log.name)
+if os.path.isfile(f_restore_err.name):
+    os.remove(f_restore_err.name)
+  """,
+ 'expected_stdout': 
+  """
+    STDERR: gbak: ERROR:unknown switch "USER_ALL_SPACE"
+    STDERR: gbak: ERROR: Exiting before completion due to errors
+    STDERR: gbak:Exiting before completion due to errors
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions': [('[ ]+',' '),('[\t]*',' ')]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

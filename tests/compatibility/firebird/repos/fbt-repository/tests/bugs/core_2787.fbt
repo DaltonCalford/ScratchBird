@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_2787',
+'qmid': '',
+'tracker_id': 'CORE-2787',
+'title': 'Make rdb$system_flag not null',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set count on;
+    set list on;
+
+    select rf.rdb$relation_name as rel_name, rf.rdb$null_flag as nullable
+    from rdb$relation_fields rf
+    where 
+        upper(rf.rdb$field_name) = upper('rdb$system_flag')
+        and rdb$null_flag = 1;
+
+  """,
+ 'expected_stdout':
+  """
+    Records affected: 0
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

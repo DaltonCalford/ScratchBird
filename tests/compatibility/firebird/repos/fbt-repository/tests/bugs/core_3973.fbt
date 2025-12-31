@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_3973',
+'qmid': None,
+'tracker_id': 'CORE-3973',
+'title': 'Original table name and column name and owner missing from SQLDA for aliased column in grouped query',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set planonly;
+    set sqlda_display on;
+    select rdb$relation_id as r_id, rdb$character_set_name
+    from rdb$database
+    group by rdb$relation_id, rdb$character_set_name; 
+  """,
+ 'expected_stdout':
+  """
+    :  name: RDB$RELATION_ID  alias: R_ID
+    : table: RDB$DATABASE  owner: SYSDBA
+    :  name: RDB$CHARACTER_SET_NAME  alias: RDB$CHARACTER_SET_NAME
+    : table: RDB$DATABASE  owner: SYSDBA
+  """,
+  'substitutions':[('^((?!name|table).)*$','')]
+}
+]
+}

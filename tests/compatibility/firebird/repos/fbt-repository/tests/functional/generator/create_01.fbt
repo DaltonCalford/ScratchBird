@@ -1,0 +1,90 @@
+{
+'id': 'functional.generator.create.01',
+'qmid': 'functional.generator.create.create_generator_01',
+'tracker_id': '',
+'title': 'Run CREATE GENERATOR and query related data from RDB$GENERATORS.',
+'description':
+ """
+   Run 'CREATE GENERATOR' statement and obtain data about it from system table (rdb$generators).
+   07-aug-2020: we have to separate test for 3.0 and 4.0 because INITIAL value of new sequence
+   in FB 4.x now differs from "old good zero" (this is so since CORE-6084 was fixed).
+
+   See also: doc/README.incompatibilities.3to4.txt
+ """,
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create generator test;
+    commit;
+    set list on;
+    select * from rdb$generators where rdb$generator_name=upper('test');  
+  """,
+ 'expected_stdout': 
+  """
+    RDB$GENERATOR_NAME              TEST
+    RDB$GENERATOR_ID                10
+    RDB$SYSTEM_FLAG                 0
+    RDB$DESCRIPTION                 <null>
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create generator test;
+    commit;
+    set list on;
+    select * from rdb$generators where rdb$generator_name=upper('test');  
+  """,
+ 'expected_stdout': 
+  """
+    RDB$GENERATOR_NAME              TEST
+    RDB$GENERATOR_ID                12
+    RDB$SYSTEM_FLAG                 0
+    RDB$DESCRIPTION                 <null>
+    RDB$SECURITY_CLASS              SQL$366
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$INITIAL_VALUE               0
+    RDB$GENERATOR_INCREMENT         1
+  """,
+  'substitutions': [
+    ('RDB\$SECURITY_CLASS[ ]+SQL\$.*',''),
+    ('RDB\$GENERATOR_ID.*', '')
+  ]
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create generator test;
+    commit;
+    set list on;
+    select * from rdb$generators where rdb$generator_name=upper('test');  
+  """,
+ 'expected_stdout': 
+  """
+    RDB$GENERATOR_NAME              TEST
+    RDB$GENERATOR_ID                12
+    RDB$SYSTEM_FLAG                 0
+    RDB$DESCRIPTION                 <null>
+    RDB$SECURITY_CLASS              SQL$366
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$INITIAL_VALUE               1
+    RDB$GENERATOR_INCREMENT         1
+  """,
+  'substitutions': [
+    ('RDB\$SECURITY_CLASS[ ]+SQL\$.*',''),
+    ('RDB\$GENERATOR_ID.*', '')
+  ]
+}
+]
+}

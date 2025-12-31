@@ -1,0 +1,74 @@
+{
+'id': 'functional.basic.db.10',
+'qmid': 'functional.basic.db.db_10',
+'tracker_id': '',
+'title': 'Empty DB - RDB$FORMATS',
+'description': 'Check for correct content of RDB$FORMATS in empty database.',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    set count on;
+    set blob all;
+    select * from rdb$formats
+    order by
+        rdb$relation_id
+        ,rdb$format
+    ;
+  """,
+  'expected_stdout':
+  """
+    Records affected: 0
+  """
+}
+
+, # ---------------------- 5.x, since 5.0.0.905 ----------------
+
+{
+ 'firebird_version': '5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    set count on;
+    set blob all;
+    select * from rdb$formats
+    order by
+        rdb$relation_id
+        ,rdb$format
+    ;
+  """,
+  'expected_stdout':
+  """
+    RDB$RELATION_ID                 4
+    RDB$FORMAT                      1
+    RDB$DESCRIPTOR                  8:0
+    Fields:
+    id offset type           length sub_type flags
+    --- ------ -------------- ------ -------- -----
+    0      4  1 CHAR           252        4  0x00
+    1    256  1 CHAR           252        4  0x00
+    2    508  8 SHORT            2        0  0x00
+    3    510  8 SHORT            2        0  0x00
+    4    512 17 BLOB             8        1  0x00
+    5    520  8 SHORT            2        0  0x00
+    6    522  8 SHORT            2        0  0x00
+    7    524  8 SHORT            2        0  0x00
+    8    526  1 CHAR           252        4  0x00
+    9    778  8 SHORT            2        0  0x00
+    10    784 17 BLOB             8        2  0x00
+    11    792 17 BLOB             8        1  0x00
+    12    800 12 DOUBLE           8        0  0x00
+    13    808 17 BLOB             8        2  0x00
+    14    816 17 BLOB             8        1  0x00
+    Records affected: 1
+  """,
+  'substitutions': [('RDB$DESCRIPTOR.*', 'RDB$DESCRIPTOR')]
+}
+]
+}

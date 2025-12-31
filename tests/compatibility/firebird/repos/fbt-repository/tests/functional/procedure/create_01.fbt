@@ -1,0 +1,54 @@
+{
+'id': 'functional.procedure.create.01',
+'qmid': 'functional.procedure.create.create_procedure_01',
+'tracker_id': '',
+'title': 'CREATE PROCEDURE',
+'description': """CREATE PROCEDURE
+
+Dependencies:
+CREATE DATABASE""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE PROCEDURE test AS
+BEGIN
+  POST_EVENT 'Test';
+END ^
+SET TERM ;^
+commit;
+SHOW PROCEDURE test;""",
+ 'expected_stdout': """Procedure text:
+=============================================================================
+
+BEGIN
+  POST_EVENT 'Test';
+END
+=============================================================================
+Parameters:
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE PROCEDURE test AS
+BEGIN
+  POST_EVENT 'Test';
+END ^
+SET TERM ;^
+commit;
+SHOW PROCEDURE test;""",
+ 'expected_stdout': """Procedure text:
+=============================================================================
+BEGIN
+  POST_EVENT 'Test';
+END
+=============================================================================
+"""
+}
+]
+}

@@ -1,0 +1,47 @@
+{
+'id': 'bugs.core_2977',
+'qmid': None,
+'tracker_id': 'CORE-2977',
+'title': 'FB 2.1 incorrectly works with indexed fields of type DATE in OLD ODS (9.1)',
+'description':
+ """
+   08.04.2021: number of DAY in the date representation becomes padded with '0' (NB: dialect 1 is used here!)
+   Expected output was changed according to this after discuss with Adriano.
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'sql_dialect': 1,
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test(id int, opdate timestamp);
+    insert into test values(1, '31.12.2000');
+    insert into test values(2, '01.01.2001');
+    insert into test values(3, '02.01.2001');
+    insert into test values(4, '03.01.2001');
+    commit;
+
+    create index test_opdate on test(opdate);
+    commit;
+
+    set list on;
+    -- FOllowing query will have PLAN (TEST INDEX (TEST_OPDATE))
+    select * from test where opdate <= '1/1/2001';
+  """,
+ 'expected_stdout': 
+  """
+    ID                              1
+    OPDATE                          31-DEC-2000
+
+    ID                              2
+    OPDATE                          01-JAN-2001
+  """
+}
+]
+}

@@ -1,0 +1,71 @@
+{
+'id': 'bugs.core_0480',
+'qmid': 'bugs.core_480-21',
+'tracker_id': 'CORE-480',
+'title': 'Foreign key relation VARCHAR <-> INT',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """create table T1 (PK1 INTEGER, COL VARCHAR(10));
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """create table T2 (PK2 INTEGER, FK1 VARCHAR(10), COL VARCHAR(10),
+foreign key (FK1) references T1 (PK1));
+
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+unsuccessful metadata update
+-could not find UNIQUE or PRIMARY KEY constraint in table T1 with specified columns
+"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """create table T1 (PK1 INTEGER, COL VARCHAR(10));
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """create table T2 (PK2 INTEGER, FK1 VARCHAR(10), COL VARCHAR(10),
+foreign key (FK1) references T1 (PK1));
+
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-could not find UNIQUE or PRIMARY KEY constraint in table T1 with specified columns
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """create table T1 (PK1 INTEGER, COL VARCHAR(10));
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """create table T2 (PK2 INTEGER, FK1 VARCHAR(10), COL VARCHAR(10),
+foreign key (FK1) references T1 (PK1));
+
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+unsuccessful metadata update
+-could not find UNIQUE INDEX with specified columns
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """create table T1 (PK1 INTEGER, COL VARCHAR(10));
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """create table T2 (PK2 INTEGER, FK1 VARCHAR(10), COL VARCHAR(10),
+foreign key (FK1) references T1 (PK1));
+
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-CREATE TABLE T2 failed
+-could not find UNIQUE or PRIMARY KEY constraint in table T1 with specified columns
+"""
+}
+]
+}

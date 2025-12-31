@@ -1,0 +1,89 @@
+{
+'id': 'bugs.core_1165',
+'qmid': 'bugs.core_1165-250',
+'tracker_id': 'CORE-1165',
+'title': 'WHEN <list of exceptions> tracks only the dependency on the first exception in PSQL',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """recreate exception e1 'e1' ;
+recreate exception e2 'e2' ;
+
+set term ^;
+
+create procedure p as
+begin
+  begin end
+  when exception e1, exception e2 do
+  begin
+  end
+end^
+
+set term ;^
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """show depend p;
+
+recreate exception e1 'e1';
+recreate exception e2 'e2';
+""",
+ 'expected_stdout': """[P:Procedure]
+E2:Exception, E1:Exception
++++
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-cannot delete
+-EXCEPTION E1
+-there are 1 dependencies
+Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-cannot delete
+-EXCEPTION E2
+-there are 1 dependencies
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """recreate exception e1 'e1' ;
+recreate exception e2 'e2' ;
+
+set term ^;
+
+create procedure p as
+begin
+  begin end
+  when exception e1, exception e2 do
+  begin
+  end
+end^
+
+set term ;^
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """show depend p;
+
+recreate exception e1 'e1';
+recreate exception e2 'e2';
+""",
+ 'expected_stdout': """[P:Procedure]
+E2:Exception, E1:Exception
++++
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+unsuccessful metadata update
+-cannot delete
+-EXCEPTION E1
+-there are 1 dependencies
+Statement failed, SQLCODE = -607
+unsuccessful metadata update
+-cannot delete
+-EXCEPTION E2
+-there are 1 dependencies
+"""
+}
+]
+}

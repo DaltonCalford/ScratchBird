@@ -1,0 +1,41 @@
+{
+'id': 'bugs.gh_7064',
+'qmid': None,
+'tracker_id': '',
+'title': "Linear regression functions aren't implemented correctly",
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/7064
+
+    Confirmed bug on 5.0.0.336 (Windows only), 4.0.1.2672 (both Windows and Linux).
+    Results were: 5.538881418962480e-316; 8.320318437577263e-317;  6.902055141081681e-310
+    Checked on: 5.0.0.338, 4.0.1.2682 - all fine.
+ """,
+'min_versions': '4.0.1',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set heading off;
+    select regr_avgx(a, b)
+    from (
+      select 1, 1 from RDB$DATABASE union all
+      select 2, 1 from RDB$DATABASE union all
+      select 3, 2 from RDB$DATABASE union all
+      select 4, 2 from RDB$DATABASE
+    ) t (a, b);
+
+  """,                                                      
+ 'expected_stdout': 
+  """
+    1.500000000000000
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

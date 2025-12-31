@@ -1,0 +1,27 @@
+{
+'id': 'functional.index.create.02',
+'qmid': 'functional.index.create.create_index_02',
+'tracker_id': '',
+'title': 'CREATE UNIQUE INDEX',
+'description': """CREATE UNIQUE INDEX
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+SHOW INDEX
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE t( a INTEGER);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE UNIQUE INDEX test ON t(a);
+SHOW INDEX test;""",
+ 'expected_stdout': """TEST UNIQUE INDEX ON T(A)
+"""
+}
+]
+}

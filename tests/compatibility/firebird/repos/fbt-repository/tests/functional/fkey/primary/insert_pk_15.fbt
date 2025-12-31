@@ -1,0 +1,98 @@
+{
+'id': 'functional.fkey.primary.insert_pk_15',
+'qmid': 'functional.fkey.primary.ins_15',
+'tracker_id': '',
+'title': 'Check correct work fix with foreign key',
+'description': """Check foreign key work.
+Master transaction inserts record into master_table but DOES NOT commit.
+Detail transaction inserts record in detail_table and tries to COMMIT.
+Expected: referential integrity error.""",
+'min_versions': '2.5',
+'versions': [
+{
+ 'firebird_version': '2.5.6',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    recreate table t_detl(id int);
+    commit;
+    recreate table t_main(
+         id int constraint t_main_pk primary key using index t_main_pk
+    );
+    commit;
+    recreate table t_detl(
+        id int constraint t_detl_pk primary key using index t_detl_pk,
+        master_pk_id int constraint fk_tdetl_tmain references t_main(id) using index fk_tdetl_tmain
+    );
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    commit;
+    set transaction no wait;
+    set term ^;
+    execute block as
+    begin
+        insert into t_main(id) values(1);
+        in autonomous transaction do
+        insert into t_detl(id, master_pk_id) values(100, 1);
+    end
+    ^
+    set term ;^
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 40001
+    lock conflict on no wait transaction
+    -violation of FOREIGN KEY constraint "FK_TDETL_TMAIN" on table "T_DETL"
+    -Foreign key reference target does not exist
+    -Problematic key value is ("MASTER_PK_ID" = 1)
+    -At block line: 5, col: 9
+  """,
+  'substitutions': [ ('-At block line: [\d]+, col: [\d]+', '-At block line') ]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    recreate table t_detl(id int);
+    commit;
+    recreate table t_main(
+         id int constraint t_main_pk primary key using index t_main_pk
+    );
+    commit;
+    recreate table t_detl(
+        id int constraint t_detl_pk primary key using index t_detl_pk,
+        master_pk_id int constraint fk_tdetl_tmain references t_main(id) using index fk_tdetl_tmain
+    );
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    commit;
+    set transaction no wait;
+    set term ^;
+    execute block as
+    begin
+        insert into t_main(id) values(1);
+        in autonomous transaction do
+        insert into t_detl(id, master_pk_id) values(100, 1);
+    end
+    ^
+    set term ;^
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 23000
+    violation of FOREIGN KEY constraint "FK_TDETL_TMAIN" on table "T_DETL"
+    -Foreign key reference target does not exist
+    -Problematic key value is ("MASTER_PK_ID" = 1)
+    -At block line: 5, col: 9
+  """,
+  'substitutions': [ ('-At block line: [\d]+, col: [\d]+', '-At block line') ]
+}
+]
+}

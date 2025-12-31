@@ -1,0 +1,51 @@
+{
+'id': 'bugs.core_2578',
+'qmid': None,
+'tracker_id': 'CORE-2578',
+'title': 'select rdb$db_key from a view with a more than 1 table joined, results in conversion error',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.1.4',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE TABLE_A (
+    F_A INTEGER,
+    F_B INTEGER
+);
+
+CREATE TABLE TABLE_B(
+    F_A INTEGER,
+    F_C INTEGER
+);
+
+CREATE VIEW VIEW_A(
+    K1,
+    K2,
+    F_A,
+    F_B,
+    F_C)
+AS
+select A.rdb$db_key, B.rdb$db_key, A.F_A, A.F_B, B.F_C from table_A A
+left join table_B B on A.F_A = B.F_A;
+
+commit;
+
+insert into TABLE_A (F_A,F_B) values (1,1) ;
+insert into TABLE_B (F_A,F_C) values (1,1) ;
+commit;
+
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select rdb$db_key from VIEW_A order by 1 ;
+""",
+ 'expected_stdout': """
+DB_KEY
+================================
+81000000010000008000000001000000
+
+"""
+}
+]
+}

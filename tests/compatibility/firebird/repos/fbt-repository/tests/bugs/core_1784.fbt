@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_1784',
+'qmid': None,
+'tracker_id': 'CORE-1784',
+'title': 'Error with EXECUTE PROCEDURE inside EXECUTE STATEMENT',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """set term ^ ;
+create procedure p1 returns (n1 integer, n2 integer)
+as
+begin
+    n1 = 111;
+    n2 = 222;
+end ^
+
+set term ; ^
+
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """set term ^ ;
+
+execute block returns (n1 integer, n2 integer)
+as
+begin
+  execute statement
+    'execute procedure p1' into n1, n2;
+  suspend;
+end^
+
+set term ; ^
+""",
+ 'expected_stdout': """
+          N1           N2
+============ ============
+         111          222
+
+"""
+}
+]
+}

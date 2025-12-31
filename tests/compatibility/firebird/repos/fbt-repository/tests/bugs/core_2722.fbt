@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_2722',
+'qmid': None,
+'tracker_id': 'CORE-2722',
+'title': 'Storage of malformed blob is allowed when copying from a blob with NONE/OCTETS charset',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table t (b1 blob sub_type text, b2 blob sub_type text character set utf8);
+
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """-- This is correct and raise "Malformed string" error
+insert into t (b2) values (x'F0');
+
+insert into t (b1) values (x'F0');
+
+-- This should raise second "Malformed string" error
+update t set b2 = b1;
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 22000
+Malformed string
+Statement failed, SQLSTATE = 22000
+Malformed string
+"""
+}
+]
+}

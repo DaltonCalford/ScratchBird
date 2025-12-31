@@ -1,0 +1,26 @@
+{
+'id': 'functional.intfunc.cast.19',
+'qmid': 'functional.intfunc.cast.cast_19',
+'tracker_id': '',
+'title': 'CAST TIME -> VARCHAR',
+'description': """CAST TIME -> VARCHAR
+Be careful about date/time format on FB server !
+Universal format is not defined or not documented.
+
+Dependencies:
+CREATE DATABASE
+CAST CHAR -> TIME
+Basic SELECT""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': "SELECT CAST(CAST('13:28:45' AS TIME) AS VARCHAR(32)) FROM rdb$Database;",
+ 'expected_stdout': """CAST
+================================
+
+13:28:45.0000"""
+}
+]
+}

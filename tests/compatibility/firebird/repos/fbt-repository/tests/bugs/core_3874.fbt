@@ -1,0 +1,31 @@
+{
+'id': 'bugs.core_3874',
+'qmid': None,
+'tracker_id': 'CORE-3874',
+'title': 'Computed column appears in non-existant rows of left join',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5.3',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE TEST_TABLE
+(
+  ID INTEGER,
+  COMPUTED_COL VARCHAR(6) COMPUTED BY ('FAILED')
+);
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT t.COMPUTED_COL
+FROM RDB$DATABASE r
+LEFT JOIN TEST_TABLE t
+ON r.RDB$RELATION_ID = t.ID;
+""",
+ 'expected_stdout': """COMPUTED_COL
+============
+<null>
+"""
+}
+]
+}

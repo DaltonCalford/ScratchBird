@@ -1,0 +1,55 @@
+{
+'id': 'bugs.core_2796',
+'qmid': None,
+'tracker_id': 'CORE-2796',
+'title': 'DB_KEY is always zero for external tables',
+'description':
+ """
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table ext_test external file '$(DATABASE_LOCATION)c2796.dat' (col char(24), lf char(1));
+    set list on;
+    set term ^;
+    execute block returns (ms_diff bigint)
+    as
+        declare dbkey char(8) character set octets;
+        declare v_dts1 timestamp;
+    begin
+        v_dts1=cast('now' as timestamp);
+        insert into ext_test values( :v_dts1-rand()*100, ascii_char(10));
+        insert into ext_test values( :v_dts1-rand()*100, ascii_char(10));
+        insert into ext_test values( :v_dts1-rand()*100, ascii_char(10));
+        insert into ext_test values( :v_dts1,            ascii_char(10));
+        insert into ext_test values( :v_dts1-rand()*100, ascii_char(10));
+    
+        select rdb$db_key from ext_test order by col desc rows 1 into :dbkey;
+    
+        for
+            select datediff(millisecond from cast(col as timestamp) to :v_dts1)
+            from ext_test
+            where rdb$db_key = :dbkey
+            into ms_diff
+        do
+            suspend;
+    end 
+    ^
+    set term ;^
+  """,
+ 'expected_stdout': 
+  """
+    MS_DIFF                         0
+  """
+}
+]
+}

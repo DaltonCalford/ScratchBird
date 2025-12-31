@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_1926',
+'qmid': 'bugs.core_1926',
+'tracker_id': 'CORE-1926',
+'title': 'MON$DATABASE returns outdated transaction counters',
+'description': 'Fields MON$NEXT_TRANSACTION etc contain incorrect (outdated) numbers on Classic if there are other active attachments.',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1.2',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': """c = db_conn.cursor()
+c.execute('SELECT 1 FROM RDB$DATABASE')
+con_detail = kdb.connect(dsn=dsn.encode(),user=user_name.encode(),password=user_password.encode())
+con_detail.begin()
+c = con_detail.cursor()
+c.execute("select MON$NEXT_TRANSACTION from MON$DATABASE")
+for row in c:
+ i = row[0]
+con_detail.commit()
+c.execute("select MON$NEXT_TRANSACTION from MON$DATABASE")
+for row in c:
+ j = row[0]
+print (j-i)
+con_detail.commit()
+""",
+ 'expected_stdout': """1
+"""
+}
+]
+}

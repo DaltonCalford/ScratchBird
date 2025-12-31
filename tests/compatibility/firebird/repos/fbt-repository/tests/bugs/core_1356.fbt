@@ -1,0 +1,47 @@
+{
+'id': 'bugs.core_1356',
+'qmid': None,
+'tracker_id': 'CORE-1356',
+'title': 'TYPE OF COLUMN in PSQL',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create or alter procedure sp_ins_person as begin end;
+    commit;
+    recreate table person (
+      id integer,
+      name varchar(40)
+    );
+    commit;
+
+    set term ^;
+    create or alter procedure sp_ins_person (
+      id type of column person.id,
+      name type of column person.name
+    ) as
+        declare variable new_id type of column person.id;
+    begin
+      insert into person (id, name) values (:id, :name) returning id into :new_id;
+    end^
+    set term ;^
+    commit;
+    --show procedure sp_ins_person;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

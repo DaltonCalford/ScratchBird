@@ -1,0 +1,31 @@
+{
+'id': 'bugs.core_2008',
+'qmid': 'bugs.core_2008',
+'tracker_id': 'CORE-2008',
+'title': 'NOT NULL procedure parameters',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1.2',
+ 'platform': 'All',
+ 'init_script':
+  """
+    create or alter procedure test_procedure(id int not null) as begin end;
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    select rdb$parameter_name p_name, rdb$null_flag n_flag
+    from rdb$procedure_parameters
+    where rdb$procedure_name=upper('test_procedure');
+  """,
+ 'expected_stdout':
+  """
+    P_NAME                          ID
+    N_FLAG                          1
+  """
+}
+]
+}

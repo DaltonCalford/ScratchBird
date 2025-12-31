@@ -1,0 +1,54 @@
+{
+'id': 'bugs.core_1793',
+'qmid': 'bugs.core_1793',
+'tracker_id': 'CORE-1793',
+'title': 'AV at prepare of query with unused parametrized CTE',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+SET PLANONLY ON;
+WITH
+  X AS (SELECT R.RDB$RELATION_NAME FROM RDB$RELATIONS R WHERE R.RDB$RELATION_ID = ?),
+  Y AS (SELECT R.RDB$RELATION_NAME FROM RDB$RELATIONS R WHERE R.RDB$RELATION_ID = ?)
+SELECT * FROM Y;
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -104
+Dynamic SQL Error
+-SQL error code = -104
+-CTE "X" is not used in query
+"""
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Updated 06.01.2018:
+    --  25SC, build 2.5.8.27089: OK, 0.297s.
+    --  30SS, build 3.0.3.32861: OK, 1.578s.
+    --  40SS, build 4.0.0.840: OK, 1.390s.
+    recreate table test(x int);
+    commit;
+    set planonly;
+    with
+        x as (select x.x from test x),
+        y as (select y.x from test y)
+    select * from y;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN (Y Y NATURAL)
+  """,
+ 'expected_stderr': 
+  """
+    SQL warning code = -104
+    -CTE "X" is not used in query
+  """
+}
+]
+}

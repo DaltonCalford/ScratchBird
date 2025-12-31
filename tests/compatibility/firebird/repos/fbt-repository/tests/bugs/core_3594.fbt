@@ -1,0 +1,72 @@
+{
+'id': 'bugs.core_3594',
+'qmid': None,
+'tracker_id': 'CORE-3594',
+'title': 'Include expected and actual string lenght into error message for sqlcode -802',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create or alter procedure sp_overflowed_1 as begin end;
+    set term ^;
+    create or alter procedure sp_detailed_info returns(msg varchar(60)) as
+    begin
+        msg = '....:....1....:....2....:....3....:....4....:....5....:....6';
+        suspend;
+    end
+    ^
+    
+    create or alter procedure sp_overflowed_1 returns(msg varchar(50)) as
+    begin
+        execute procedure sp_detailed_info returning_values msg;
+        suspend;
+    end
+    
+    ^
+    create or alter procedure sp_overflowed_2 returns(msg varchar(59)) as
+    begin
+        msg = '....:....1....:....2....:....3....:....4....:....5....:....6';
+        suspend;
+    end
+    ^
+    set term ;^
+    commit;
+    
+    set heading off;
+    select * from sp_overflowed_1;
+    select * from sp_overflowed_2;
+
+    -- On 2.5.x info about expected and actual length is absent:
+    -- Statement failed, SQLSTATE = 22001
+    -- arithmetic exception, numeric overflow, or string truncation
+    -- -string right truncation
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 22001
+    arithmetic exception, numeric overflow, or string truncation
+    -string right truncation
+    -expected length 50, actual 60
+    -At procedure 'SP_OVERFLOWED_1' line: 3, col: 5
+    
+    Statement failed, SQLSTATE = 22001
+    arithmetic exception, numeric overflow, or string truncation
+    -string right truncation
+    -expected length 59, actual 60
+    -At procedure 'SP_OVERFLOWED_2' line: 3, col: 5
+  """,
+  'substitutions':[('line: .*','line'),('col: .*','col')]
+}
+]
+}

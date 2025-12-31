@@ -1,0 +1,74 @@
+{
+'id': 'bugs.core_1090',
+'qmid': 'bugs.core_1090-250',
+'tracker_id': 'CORE-1090',
+'title': 'Error msg "Could not find UNIQUE INDEX" when in fact one is present',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """create table t (i integer not null);
+create unique index ti on t(i);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """show table t;
+show index ti;
+
+create table t2 (i integer references t(i));
+""",
+ 'expected_stdout': """I                               INTEGER Not Null
+TI UNIQUE INDEX ON T(I)
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-could not find UNIQUE or PRIMARY KEY constraint in table T with specified columns
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """create table t (i integer not null);
+create unique index ti on t(i);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """show table t;
+show index ti;
+
+create table t2 (i integer references t(i));
+""",
+ 'expected_stdout': """I                               INTEGER Not Null
+TI UNIQUE INDEX ON T(I)
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+unsuccessful metadata update
+-could not find UNIQUE or PRIMARY KEY constraint in table T with specified columns
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """create table t (i integer not null);
+create unique index ti on t(i);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """show table t;
+show index ti;
+
+create table t2 (i integer references t(i));
+""",
+ 'expected_stdout': """I                               INTEGER Not Null
+TI UNIQUE INDEX ON T(I)
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-CREATE TABLE T2 failed
+-could not find UNIQUE or PRIMARY KEY constraint in table T with specified columns
+"""
+}
+]
+}

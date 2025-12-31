@@ -1,0 +1,30 @@
+{
+'id': 'bugs.core_2651',
+'qmid': None,
+'tracker_id': 'CORE-2651',
+'title': 'Incorrect "string right truncation" error with NONE column and multibyte connection charset',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table TEST_NONE
+(VARCHAR_1 VARCHAR(1) CHARACTER SET NONE);
+
+insert into test_none values (ascii_char(1));
+""",
+ 'test_type': 'Python',
+ 'test_script': """con = kdb.connect(dsn=dsn,user=user_name,password=user_password,charset='CP943C')
+c = con.cursor()
+try:
+    c.execute("select * from TEST_NONE")
+except:
+    print("Test FAILED")
+finally:
+    con.close()
+"""
+}
+]
+}

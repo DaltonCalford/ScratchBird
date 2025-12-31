@@ -1,0 +1,39 @@
+{
+'id': 'bugs.core_3899',
+'qmid': None,
+'tracker_id': 'CORE-3899',
+'title': 'row_number(), rank() and dense_rank() return BIGINT datatype in dialect 1',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'sql_dialect': 1,
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set sqlda_display on;
+    set planonly;
+    select row_number()over() rno, rank()over() rnk, dense_rank()over() drk 
+    from rdb$database;
+    -- NB: on dialect-3 output is:
+    -- sqltype: 580 INT64 ...
+  """,
+ 'expected_stdout': 
+  """
+    01: sqltype: 480 DOUBLE scale: 0 subtype: 0 len: 8
+      :  name: ROW_NUMBER  alias: RNO
+    02: sqltype: 480 DOUBLE scale: 0 subtype: 0 len: 8
+      :  name: RANK  alias: RNK
+    03: sqltype: 480 DOUBLE scale: 0 subtype: 0 len: 8
+      :  name: DENSE_RANK  alias: DRK
+  """,
+  'substitutions':[('^((?!sqltype:|name:).)*$',''),('[ ]+',' '),('[\t]*',' ')]
+}
+]
+}

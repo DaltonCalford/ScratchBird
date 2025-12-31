@@ -1,0 +1,44 @@
+{
+'id': 'bugs.core_2227',
+'qmid': None,
+'tracker_id': 'CORE-2227',
+'title': 'Problem with column names with Accents and triggers',
+'description':
+ """
+	28.02.2021
+	Changed connection charset to UTF8 otherwise on Linux this test leads to 'ERROR' with issuing:
+	====
+        ISQL_STDERR
+        Expected end of statement, encountered EOF
+    ====
+    Checked again on:
+    1) Windows: 4.0.0.2372; 3.0.8.33416
+    2) Linux:   4.0.0.2377
+ """,
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.1.2',
+ 'platform': 'All',
+ 'database_character_set': 'ISO8859_1',
+ 'connection_character_set': 'UTF8',
+ 'init_script':
+ """
+   RECREATE TABLE TESTING (
+      "CÓDIGO" INTEGER
+  );
+ """,
+ 'test_type': 'ISQL',
+ 'test_script':
+ """
+    SET TERM ^;
+    CREATE TRIGGER TESTING_I FOR TESTING
+    ACTIVE BEFORE INSERT POSITION 0
+    AS
+    BEGIN
+      NEW."CÓDIGO" = 1;
+    END ^
+  """
+}
+]
+}

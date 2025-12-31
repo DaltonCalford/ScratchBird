@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_4381',
+'qmid': None,
+'tracker_id': 'CORE-4381',
+'title': 'Incorrect line/column information in runtime errors',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+set term ^;
+
+
+
+create or alter procedure p1 returns (x integer) as
+begin
+                           select 
+                                                 'a' 
+                           from rdb$database 
+                                             into x;
+end
+^
+
+execute procedure p1
+^
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 22018
+    conversion error from string "a"
+    -At procedure 'P1' line: 3, col: 28
+  """
+}
+]
+}

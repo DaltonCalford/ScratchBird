@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_3761',
+'qmid': None,
+'tracker_id': 'CORE-3761',
+'title': 'Conversion error when using a blob as an argument for the EXCEPTION statement',
+'description': '',
+'min_versions': '2.5',
+'versions': [
+{
+ 'firebird_version': '2.5.6',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    CREATE EXCEPTION CHECK_EXCEPTION 'Check exception';
+    COMMIT;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    SET TERM ^;
+    EXECUTE BLOCK AS
+    BEGIN
+        EXCEPTION CHECK_EXCEPTION CAST ('WORD' AS BLOB SUB_TYPE TEXT);
+    END^^
+    SET TERM ;^
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = HY000
+    exception 1
+    -CHECK_EXCEPTION
+    -WORD
+    -At block line: 4, col: 2
+  """,
+  'substitutions': [
+      ('-At block line: [\d]+, col: [\d]+', '-At block line')
+  ]
+
+}
+]
+}

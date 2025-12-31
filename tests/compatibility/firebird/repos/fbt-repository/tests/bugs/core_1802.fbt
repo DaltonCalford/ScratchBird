@@ -1,0 +1,37 @@
+{
+'id': 'bugs.core_1802',
+'qmid': 'bugs.core_1802',
+'tracker_id': 'CORE-1802',
+'title': 'Maximum key size using PXW_CSY collation',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE TABLE TAB21(
+  ID INTEGER,
+  A VARCHAR(499) CHARACTER SET WIN1250 COLLATE PXW_CSY,
+  CONSTRAINT CU UNIQUE(A) );
+COMMIT;
+SHOW INDEX CU;
+""",
+ 'expected_stdout': """CU UNIQUE INDEX ON TAB21(A)
+"""
+},
+{
+ 'firebird_version': '2.5.3',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE TABLE TAB21(
+  ID INTEGER,
+  A VARCHAR(490) CHARACTER SET WIN1250 COLLATE PXW_CSY,
+  CONSTRAINT CU UNIQUE(A) );
+COMMIT;
+SHOW INDEX CU;
+""",
+ 'expected_stdout': """CU UNIQUE INDEX ON TAB21(A)
+"""
+}
+]
+}

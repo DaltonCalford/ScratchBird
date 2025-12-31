@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_3314',
+'qmid': None,
+'tracker_id': 'CORE-3314',
+'title': 'Dependencies are not removed after dropping the procedure and the table it depends on in the same transaction',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table t (a int);
+SET TERM !!;
+create procedure p as begin delete from t; end!!
+SET TERM !!;
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT 1 FROM  RDB$DEPENDENCIES WHERE RDB$DEPENDED_ON_NAME='T';
+drop procedure p;
+drop table t;
+commit;
+SELECT 1 FROM  RDB$DEPENDENCIES WHERE RDB$DEPENDED_ON_NAME='T';
+""",
+ 'expected_stdout': """Database:  localhost:C:\Users\win7\Firebird_tests\fbt-repository\tmp\bugs.core_3314.fdb, User: SYSDBA
+SQL>
+    CONSTANT
+============
+           1
+
+SQL> SQL> SQL> SQL> SQL>"""
+}
+]
+}

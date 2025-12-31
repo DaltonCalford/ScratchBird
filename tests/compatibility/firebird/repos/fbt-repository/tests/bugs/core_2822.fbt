@@ -1,0 +1,28 @@
+{
+'id': 'bugs.core_2822',
+'qmid': None,
+'tracker_id': 'CORE-2822',
+'title': 'Error "no current row for fetch operation" when subquery includes a non-trivial derived table',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.1.4',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select *
+from rdb$relations r natural join rdb$relation_fields rf
+where 1 = (
+  select 1
+  from (
+    select 1 from rdb$database
+    union
+    select 1
+    from rdb$fields f
+    where f.rdb$field_name = rf.rdb$field_source
+  ) as f (id) ) ;
+"""
+}
+]
+}

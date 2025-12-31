@@ -1,0 +1,55 @@
+{
+'id': 'bugs.core_6345',
+'qmid': None,
+'tracker_id': 'CORE-6345',
+'title': "Server crashes on overflow of division result",
+'description':
+ """
+    Confirmed bug on 4.0.0.2076, 3.0.6.33322
+    Checked on 4.0.0.2078, 3.0.6.33326 - all OK.
+    (intermediate snapshots with timestamps: 26.06.20 06:36, 07:26)
+
+    27.07.2021: separated code for FB 4.x+ because of fix #6874
+    ("Literal 65536 (interpreted as int) can not be multiplied by itself w/o cast if result more than 2^63-1"):
+    no more error with SQLSTATE = 22003 after this fix.
+    Checked on 5.0.0.113, 4.0.1.2539.
+ """,
+'min_versions': '3.0.6',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set heading off;
+    select -922337203685477.5808/-1.0 from rdb$database; 
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 22003
+    Integer overflow.  The result of an integer operation caused the most significant bit of the result to carry.
+  """
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set heading off;
+    select -922337203685477.5808/-1.0 from rdb$database; 
+  """,
+ 'expected_stdout':
+  """
+    922337203685477.58080
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

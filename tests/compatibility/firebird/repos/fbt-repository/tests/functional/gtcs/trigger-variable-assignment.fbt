@@ -1,0 +1,45 @@
+{
+'id': 'functional.gtcs.trigger-variable-assignment',
+'qmid': None,
+'tracker_id': '',
+'title': 'GTCS/tests/CF_ISQL_21. Variable in the AFTER-trigger must be allowed for assignment OLD value in it.',
+'description':
+ """
+	::: NB ::: 
+	### Name of original test has no any relation with actual task of this test: ###
+    https://github.com/FirebirdSQL/fbtcs/blob/master/GTCS/tests/CF_ISQL_21.script
+
+    AP,2005 - can't assign old.* fields in triggers
+
+    Checked on: 4.0.0.1803 SS; 3.0.6.33265 SS; 2.5.9.27149 SC.
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create table u(a int);
+    set term ^;
+    create trigger trg_u_aid for u after insert or update or delete as 
+        declare i int;
+    begin
+        i = old.a; 
+    end^
+    commit^
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[('=', ''),('[ \t]+', ' ')]
+}
+]
+}

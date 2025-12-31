@@ -1,0 +1,36 @@
+{
+'id': 'bugs.core_4782',
+'qmid': None,
+'tracker_id': 'CORE-4782',
+'title': 'Command `SHOW TABLE` fails when the table contains field with unicode collationin its DDL',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    -- NB: it was connection charset = UTF8 that causes error, title of ticket should be changed.
+    create view v_test as select d.rdb$relation_id from rdb$database d;
+    commit;
+    show view v_test;
+  """,
+ 'expected_stdout':
+  """
+    RDB$RELATION_ID                 (RDB$RELATION_ID) SMALLINT Nullable
+    View Source:
+    ==== ======
+    select d.rdb$relation_id from rdb$database d
+  """,
+  'substitutions': [('=.*','')]
+}
+]
+}

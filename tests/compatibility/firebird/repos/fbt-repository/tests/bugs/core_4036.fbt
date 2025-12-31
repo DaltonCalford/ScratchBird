@@ -1,0 +1,25 @@
+{
+'id': 'bugs.core_4036',
+'qmid': None,
+'tracker_id': 'CORE-4036',
+'title': 'Bugcheck or database corruption when attempting to store long incompressible data into a table',
+'description': '',
+'min_versions': '2.1.6',
+'versions': [
+{
+ 'firebird_version': '2.1.6',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table tw(s01 varchar(32600), s02 varchar(32600));
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """insert into tw select rpad('',32600, gen_uuid()),rpad('',32600, gen_uuid()) from rdb$database;
+commit;
+set heading off;
+SELECT count(*) from tw;
+""",
+ 'expected_stdout': """1
+"""
+}
+]
+}

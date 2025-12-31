@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_3806',
+'qmid': None,
+'tracker_id': 'CORE-3806',
+'title': 'Wrong data returned if a sub-query or a computed field refers to the base table in the ORDER BY clause',
+'description': '',
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5.2',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table t (col1 int, col2 int, col3 int);
+insert into t values (100, 200, 300);
+insert into t values (101, 201, 301);
+insert into t values (102, 202, 302);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """alter table t drop col1;
+select col2, col3 from t as t1;
+select col2, col3 from t as t1 where exists (select * from t as t2 order by t1.col2 );
+""",
+ 'expected_stdout': """SQL>
+        COL2         COL3
+============ ============
+         200          300
+         201          301
+         202          302
+
+SQL>
+        COL2         COL3
+============ ============
+         200          300
+         201          301
+         202          302
+
+SQL>"""
+}
+]
+}

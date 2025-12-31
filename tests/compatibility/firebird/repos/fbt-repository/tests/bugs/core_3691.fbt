@@ -1,0 +1,39 @@
+{
+'id': 'bugs.core_3691',
+'qmid': None,
+'tracker_id': 'CORE-3691',
+'title': 'Missing constraint name in foreign key error message in FB 2.1.4',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    --  Note. Info about problematic key exists since 2.5.3
+    recreate table tmain(id int primary key using index tmain_pk);
+    commit;
+    insert into tmain values(1);
+    commit;
+    recreate table tdetl(id int primary key using index tdetl_pk, pid int);
+    commit;
+    insert into tdetl values(1,2);
+    commit;
+    alter table tdetl add constraint tdetl_fk foreign key(pid) references tmain(id);
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 23000
+    violation of FOREIGN KEY constraint "TDETL_FK" on table "TDETL"
+    -Foreign key reference target does not exist
+    -Problematic key value is ("PID" = 2)
+  """
+}
+]
+}

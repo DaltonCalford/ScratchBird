@@ -1,0 +1,172 @@
+{
+'id': 'bugs.core_5926',
+'qmid': None,
+'tracker_id': 'CORE-5926',
+'title': "Attempt to create mapping with non-ascii user name which is encoded in SINGLE-BYTE codepage leads to '-Malformed string'",
+'description':
+ """
+    Reproduced 'malformed string' error on: 3.0.4.33053, 4.0.0.1172.
+
+    03-mar-2021. Re-implemented in order to have ability to run this test on Linux.
+    Test encodes to UTF8 all needed statements (SET NAMES; CONNECT; DDL and DML) and stores this text in .sql file.
+    NOTE: 'SET NAMES' contain character set that must be used for reproducing problem (WIN1252 in this test).
+    Then ISQL is launched in separate (child) process which performs all necessary actions (using required charset).
+    Result will be redirected to log(s) which will be opened further via codecs.open(...encoding='cp1252').
+    Finally, its content will be converted to UTF8 for showing in expected_stdout.
+
+    NB: different data are used for FB 3.x and 4.x because DDL in 4.x allows to store names with length up to 63 character.
+    See variables 'mapping_name' and 'non_ascii_user_name'.
+    FB 3.x restricts max_length of DB object name with value = 31 (bytes, not character!).
+
+    Checked on:
+        * Windows: 4.0.0.2377, 3.0.8.33420
+        * Linux:   4.0.0.2377, 3.0.8.33415
+ """,
+'min_versions': '3.0.4',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'database_character_set': 'WIN1252',
+ 'connection_character_set': 'UTF8',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+import os
+import codecs
+import subprocess
+import time
+engine = db_conn.engine_version
+db_conn.close()
+
+# 03.03.2021 REMOVING OS-VARIABLE ISC_USER IS MANDATORY HERE!
+# This variable could be set by other .fbts which was performed before current within batch mode (i.e. when fbt_run is called from <rundaily>)
+# NB: os.unsetenv('ISC_USER') actually does NOT affect on content of os.environ dictionary, see: https://docs.python.org/2/library/os.html
+# We have to remove OS variable either by os.environ.pop() or using 'del os.environ[...]', but in any case this must be enclosed into try/exc:
+try:
+    del os.environ["ISC_USER"]
+except KeyError as e:
+    pass
+
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f,
+    # first do f.flush(), and
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+if engine < 4:
+	# Maximal length of user name in FB 3.x is 31 (charset unicode_fss).
+	#mapping_name = 'áâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ'
+    mapping_name  = 'áâãäåæçèéêëìíîï1'
+    # mapping_name  = 'áâãäåæçèéêëìíîïð'
+    non_ascii_user_name = 'ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞ'
+    ascii_only_user_name = 'ABCDEFGHIJKLMNOPQRSTUWYXYZ12345'
+else:
+	# Maximal length of user name in FB 4.x is 63 (charset utf8).
+	#
+    mapping_name = 'áâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿŒ'
+    non_ascii_user_name = 'ÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿŒœŠšŸŽžƒ'
+    ascii_only_user_name = 'ABCDEFGHIJKLMNOPQRSTUWYXYZ12345ABCDEFGHIJKLMNOPQRSTUWYXYZ123456'
+
+# plugin_for_mapping = 'win_sspi'
+plugin_for_mapping = 'Srp'
+
+sql_txt='''\
+    set bail on;
+    set names win1252;
+    connect '%(dsn)s' user '%(user_name)s' password '%(user_password)s';
+
+    create or alter mapping "%(mapping_name)s" using plugin %(plugin_for_mapping)s from user '%(non_ascii_user_name)s' to user "%(ascii_only_user_name)s"; 
+    commit;
+    -- show mapping;
+    set count on;
+    set list on;
+    select 
+         rdb$map_using
+        ,rdb$map_db
+        ,rdb$map_from_type
+        ,rdb$map_to_type
+        -- ,rdb$map_plugin
+        -- 03.03.2021: do NOT show because it differs for FB 3.x and 4.x: ,rdb$map_from
+        -- 03.03.2021: do NOT show because it differs for FB 3.x and 4.x: ,rdb$map_to 
+    from rdb$auth_mapping
+    where
+        upper(rdb$map_name) = upper('%(mapping_name)s')
+        and rdb$map_plugin = upper('%(plugin_for_mapping)s')
+        and rdb$map_from = '%(non_ascii_user_name)s'
+        and rdb$map_to containing '%(ascii_only_user_name)s'
+    ;
+    commit;
+''' % dict(globals(), **locals())
+
+f_run_sql = open( os.path.join(context['temp_directory'], 'tmp_5926_win1252.sql'), 'w' )
+f_run_sql.write( sql_txt.decode('utf8').encode('cp1252') )
+flush_and_close( f_run_sql )
+
+# result: file tmp_5926_win1252.sql is encoded in win1252
+
+f_run_log = open( os.path.splitext(f_run_sql.name)[0]+'.log', 'w')
+subprocess.call( [ context['isql_path'], '-q', '-i', f_run_sql.name ],
+                 stdout = f_run_log,
+                 stderr = subprocess.STDOUT
+               )
+flush_and_close( f_run_log ) # result: output will be encoded in win1252
+
+with codecs.open(f_run_log.name, 'r', encoding='cp1252' ) as f:
+    result_in_win1252 = f.readlines()
+
+for i in result_in_win1252:
+    print( i.encode('utf8') )
+
+# cleanup:
+###########
+cleanup( (f_run_sql, f_run_log) )
+
+  
+  """,
+ 'expected_stdout':
+  """
+    RDB$MAP_USING                   P
+    RDB$MAP_DB                      <null>
+    RDB$MAP_FROM_TYPE               USER
+    RDB$MAP_TO_TYPE                 0
+
+    Records affected: 1
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

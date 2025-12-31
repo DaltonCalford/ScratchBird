@@ -1,0 +1,67 @@
+{
+'id': 'bugs.core_1379',
+'qmid': 'bugs.core_1379',
+'tracker_id': '',
+'title': 'Invalid parameter type when using it in CHAR_LENGTH function',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set term ^;
+    execute block returns(r int) as
+    begin
+        execute statement ('select 1 from rdb$database where char_length(?) = 0') (1) into r;
+        suspend;
+    end
+    ^
+    execute block returns(r int) as
+    begin
+        execute statement ('select 1 from rdb$database where char_length(?) = 0') ('') into r;
+        suspend;
+    end
+    ^
+    execute block returns(r int) as
+        declare c varchar(1) = '';
+    begin
+        execute statement ('select 1 from rdb$database where char_length(?) = 0') (c) into r;
+        suspend;
+    end
+    ^
+    set term ;^
+    -- 05.05.2015: 
+    -- 1) changed min version to 2.5 (according to ticket header info; output in 2.5 and 3.0 now fully matches)
+    -- 2) removed STDOUT (for the first ES);
+    -- 3) changed expected STDERR: all three ES must now raise exception 'Data type unknown'.
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = HY004
+    Dynamic SQL Error
+    -SQL error code = -804
+    -Data type unknown
+    -At block line: 3, col: 9
+
+    Statement failed, SQLSTATE = HY004
+    Dynamic SQL Error
+    -SQL error code = -804
+    -Data type unknown
+    -At block line: 3, col: 9
+
+    Statement failed, SQLSTATE = HY004
+    Dynamic SQL Error
+    -SQL error code = -804
+    -Data type unknown
+    -At block line: 3, col: 9
+  """,
+  'substitutions':[ 
+    ('-At block line: [\d]+, col: [\d]+', '-At block line')
+  ]
+}
+]
+}

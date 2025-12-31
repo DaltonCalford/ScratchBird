@@ -1,0 +1,59 @@
+{
+'id': 'bugs.core_1592',
+'qmid': None,
+'tracker_id': 'CORE-1592',
+'title': 'Altering procedure parameters can lead to unrestorable database',
+'description':
+ """
+   Checked on 4.0.0.1193 - works OK (DOES raise error during compilation).
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set bail on;
+    set list on;
+    set term ^;
+    create or alter procedure p2 as begin end
+    ^
+    commit
+    ^
+    create or alter procedure p1 returns ( x1 integer ) as begin
+    x1 = 10; suspend;
+    end 
+    ^
+    create or alter procedure p2 returns ( x1 integer ) as begin
+    for select x1 from p1 into :x1 do suspend;
+    end
+    ^
+
+    -- This should FAIL and terminate script execution:
+    alter procedure p1 returns ( x2 integer ) as begin
+    x2 = 10; suspend;
+    end
+    ^
+    set term ;^
+    commit;
+
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -cannot delete
+    -PARAMETER P1.X1
+    -there are 1 dependencies
+  """
+}
+]
+}

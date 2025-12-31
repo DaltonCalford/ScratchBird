@@ -1,0 +1,29 @@
+{
+'id': 'bugs.core_3820',
+'qmid': None,
+'tracker_id': 'CORE-3820',
+'title': 'RDB$TYPES contain duplicate character sets',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    select rdb$field_name, rdb$type_name, count(rdb$type_name)
+    from rdb$types
+    group by rdb$field_name, rdb$type_name
+    having count(rdb$type_name) > 1;
+  """,
+ 'expected_stdout':
+  """
+  """
+}
+]
+}

@@ -1,0 +1,37 @@
+{
+'id': 'bugs.core_1377',
+'qmid': 'bugs.core_1377',
+'tracker_id': '',
+'title': 'Add an ability to change role without reconnecting to database.',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create role r1377a;
+    create role r1377b;
+    commit;
+    grant r1377a to sysdba;
+    grant r1377b to sysdba;
+    commit;
+    set list on;
+    set role r1377a;
+    select current_user, current_role from rdb$database;
+    set role r1377b;
+    select current_user, current_role from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    USER                            SYSDBA
+    ROLE                            R1377A
+    
+    USER                            SYSDBA
+    ROLE                            R1377B
+  """
+}
+]
+}

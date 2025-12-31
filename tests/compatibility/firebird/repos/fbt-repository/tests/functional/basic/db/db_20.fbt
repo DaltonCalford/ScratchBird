@@ -1,0 +1,280 @@
+{
+'id': 'functional.basic.db.20',
+'qmid': 'functional.basic.db.db_20',
+'tracker_id': '',
+'title': 'New database: content of RDB$PROCEDURES',
+'description': 
+ """
+   Check for correct content of RDB$PROCEDURES in a new database.
+   15.01.2019. Split 'firebird_version' because 4.0 now has SP in new database.
+ """,
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+     set count on; 
+     set list on;
+     set blob all; 
+     select p.* 
+     from rdb$procedures p
+     order by p.rdb$procedure_id;
+  """,
+ 'expected_stdout':
+  """
+     Records affected: 0
+  """,
+ 'expected_stderr': 
+  """
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+     set count on; 
+     set list on;
+     set blob all; 
+     select p.* 
+     from rdb$procedures p
+     order by p.rdb$procedure_id;
+  """,
+ 'expected_stdout':
+  """
+     Records affected: 0
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+, # ------------------------- 4.x --------------------
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+     set count on; 
+     set list on;
+     set blob all; 
+     select p.* 
+     from rdb$procedures p
+     order by p.rdb$procedure_id;
+  """,
+ 'expected_stdout':
+  """
+    RDB$PROCEDURE_NAME              TRANSITIONS                                                                                                                                                                                                                                                 
+    RDB$PROCEDURE_ID                1
+    RDB$PROCEDURE_INPUTS            3
+    RDB$PROCEDURE_OUTPUTS           5
+    RDB$DESCRIPTION                 <null>
+    RDB$PROCEDURE_SOURCE            <null>
+    RDB$PROCEDURE_BLR               <null>
+    RDB$SECURITY_CLASS              <null>
+    RDB$OWNER_NAME                  SYSDBA                                                                                                                                                                                                                                                      
+    RDB$RUNTIME                     <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$PROCEDURE_TYPE              1
+    RDB$VALID_BLR                   1
+    RDB$DEBUG_INFO                  <null>
+    RDB$ENGINE_NAME                 SYSTEM                                                                                                                                                                                                                                                      
+    RDB$ENTRYPOINT                  <null>
+    RDB$PACKAGE_NAME                RDB$TIME_ZONE_UTIL                                                                                                                                                                                                                                          
+    RDB$PRIVATE_FLAG                0
+    RDB$SQL_SECURITY                <null>
+
+    Records affected: 1
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+, # ------------------------- 5.x --------------------
+{
+ 'firebird_version': '5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+     set count on; 
+     set list on;
+     set blob all; 
+     select p.* 
+     from rdb$procedures p
+     order by p.rdb$procedure_id;
+  """,
+ 'expected_stdout':
+  """
+    RDB$PROCEDURE_NAME              TRANSITIONS                                                                                                                                                                                                                                                 
+    RDB$PROCEDURE_ID                1
+    RDB$PROCEDURE_INPUTS            3
+    RDB$PROCEDURE_OUTPUTS           5
+    RDB$DESCRIPTION                 <null>
+    RDB$PROCEDURE_SOURCE            <null>
+    RDB$PROCEDURE_BLR               <null>
+    RDB$SECURITY_CLASS              <null>
+    RDB$OWNER_NAME                  SYSDBA                                                                                                                                                                                                                                                      
+    RDB$RUNTIME                     <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$PROCEDURE_TYPE              1
+    RDB$VALID_BLR                   1
+    RDB$DEBUG_INFO                  <null>
+    RDB$ENGINE_NAME                 SYSTEM                                                                                                                                                                                                                                                      
+    RDB$ENTRYPOINT                  <null>
+    RDB$PACKAGE_NAME                RDB$TIME_ZONE_UTIL                                                                                                                                                                                                                                          
+    RDB$PRIVATE_FLAG                0
+    RDB$SQL_SECURITY                <null>
+
+    RDB$PROCEDURE_NAME              CANCEL_SESSION                                                                                                                                                                                                                                              
+    RDB$PROCEDURE_ID                2
+    RDB$PROCEDURE_INPUTS            1
+    RDB$PROCEDURE_OUTPUTS           0
+    RDB$DESCRIPTION                 <null>
+    RDB$PROCEDURE_SOURCE            <null>
+    RDB$PROCEDURE_BLR               <null>
+    RDB$SECURITY_CLASS              <null>
+    RDB$OWNER_NAME                  SYSDBA                                                                                                                                                                                                                                                      
+    RDB$RUNTIME                     <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$PROCEDURE_TYPE              2
+    RDB$VALID_BLR                   1
+    RDB$DEBUG_INFO                  <null>
+    RDB$ENGINE_NAME                 SYSTEM                                                                                                                                                                                                                                                      
+    RDB$ENTRYPOINT                  <null>
+    RDB$PACKAGE_NAME                RDB$PROFILER                                                                                                                                                                                                                                                
+    RDB$PRIVATE_FLAG                0
+    RDB$SQL_SECURITY                <null>
+
+    RDB$PROCEDURE_NAME              DISCARD                                                                                                                                                                                                                                                     
+    RDB$PROCEDURE_ID                3
+    RDB$PROCEDURE_INPUTS            1
+    RDB$PROCEDURE_OUTPUTS           0
+    RDB$DESCRIPTION                 <null>
+    RDB$PROCEDURE_SOURCE            <null>
+    RDB$PROCEDURE_BLR               <null>
+    RDB$SECURITY_CLASS              <null>
+    RDB$OWNER_NAME                  SYSDBA                                                                                                                                                                                                                                                      
+    RDB$RUNTIME                     <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$PROCEDURE_TYPE              2
+    RDB$VALID_BLR                   1
+    RDB$DEBUG_INFO                  <null>
+    RDB$ENGINE_NAME                 SYSTEM                                                                                                                                                                                                                                                      
+    RDB$ENTRYPOINT                  <null>
+    RDB$PACKAGE_NAME                RDB$PROFILER                                                                                                                                                                                                                                                
+    RDB$PRIVATE_FLAG                0
+    RDB$SQL_SECURITY                <null>
+
+    RDB$PROCEDURE_NAME              FINISH_SESSION                                                                                                                                                                                                                                              
+    RDB$PROCEDURE_ID                4
+    RDB$PROCEDURE_INPUTS            2
+    RDB$PROCEDURE_OUTPUTS           0
+    RDB$DESCRIPTION                 <null>
+    RDB$PROCEDURE_SOURCE            <null>
+    RDB$PROCEDURE_BLR               <null>
+    RDB$SECURITY_CLASS              <null>
+    RDB$OWNER_NAME                  SYSDBA                                                                                                                                                                                                                                                      
+    RDB$RUNTIME                     <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$PROCEDURE_TYPE              2
+    RDB$VALID_BLR                   1
+    RDB$DEBUG_INFO                  <null>
+    RDB$ENGINE_NAME                 SYSTEM                                                                                                                                                                                                                                                      
+    RDB$ENTRYPOINT                  <null>
+    RDB$PACKAGE_NAME                RDB$PROFILER                                                                                                                                                                                                                                                
+    RDB$PRIVATE_FLAG                0
+    RDB$SQL_SECURITY                <null>
+
+    RDB$PROCEDURE_NAME              FLUSH                                                                                                                                                                                                                                                       
+    RDB$PROCEDURE_ID                5
+    RDB$PROCEDURE_INPUTS            1
+    RDB$PROCEDURE_OUTPUTS           0
+    RDB$DESCRIPTION                 <null>
+    RDB$PROCEDURE_SOURCE            <null>
+    RDB$PROCEDURE_BLR               <null>
+    RDB$SECURITY_CLASS              <null>
+    RDB$OWNER_NAME                  SYSDBA                                                                                                                                                                                                                                                      
+    RDB$RUNTIME                     <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$PROCEDURE_TYPE              2
+    RDB$VALID_BLR                   1
+    RDB$DEBUG_INFO                  <null>
+    RDB$ENGINE_NAME                 SYSTEM                                                                                                                                                                                                                                                      
+    RDB$ENTRYPOINT                  <null>
+    RDB$PACKAGE_NAME                RDB$PROFILER                                                                                                                                                                                                                                                
+    RDB$PRIVATE_FLAG                0
+    RDB$SQL_SECURITY                <null>
+
+    RDB$PROCEDURE_NAME              PAUSE_SESSION                                                                                                                                                                                                                                               
+    RDB$PROCEDURE_ID                6
+    RDB$PROCEDURE_INPUTS            2
+    RDB$PROCEDURE_OUTPUTS           0
+    RDB$DESCRIPTION                 <null>
+    RDB$PROCEDURE_SOURCE            <null>
+    RDB$PROCEDURE_BLR               <null>
+    RDB$SECURITY_CLASS              <null>
+    RDB$OWNER_NAME                  SYSDBA                                                                                                                                                                                                                                                      
+    RDB$RUNTIME                     <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$PROCEDURE_TYPE              2
+    RDB$VALID_BLR                   1
+    RDB$DEBUG_INFO                  <null>
+    RDB$ENGINE_NAME                 SYSTEM                                                                                                                                                                                                                                                      
+    RDB$ENTRYPOINT                  <null>
+    RDB$PACKAGE_NAME                RDB$PROFILER                                                                                                                                                                                                                                                
+    RDB$PRIVATE_FLAG                0
+    RDB$SQL_SECURITY                <null>
+
+    RDB$PROCEDURE_NAME              RESUME_SESSION                                                                                                                                                                                                                                              
+    RDB$PROCEDURE_ID                7
+    RDB$PROCEDURE_INPUTS            1
+    RDB$PROCEDURE_OUTPUTS           0
+    RDB$DESCRIPTION                 <null>
+    RDB$PROCEDURE_SOURCE            <null>
+    RDB$PROCEDURE_BLR               <null>
+    RDB$SECURITY_CLASS              <null>
+    RDB$OWNER_NAME                  SYSDBA                                                                                                                                                                                                                                                      
+    RDB$RUNTIME                     <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$PROCEDURE_TYPE              2
+    RDB$VALID_BLR                   1
+    RDB$DEBUG_INFO                  <null>
+    RDB$ENGINE_NAME                 SYSTEM                                                                                                                                                                                                                                                      
+    RDB$ENTRYPOINT                  <null>
+    RDB$PACKAGE_NAME                RDB$PROFILER                                                                                                                                                                                                                                                
+    RDB$PRIVATE_FLAG                0
+    RDB$SQL_SECURITY                <null>
+
+    RDB$PROCEDURE_NAME              SET_FLUSH_INTERVAL                                                                                                                                                                                                                                          
+    RDB$PROCEDURE_ID                8
+    RDB$PROCEDURE_INPUTS            2
+    RDB$PROCEDURE_OUTPUTS           0
+    RDB$DESCRIPTION                 <null>
+    RDB$PROCEDURE_SOURCE            <null>
+    RDB$PROCEDURE_BLR               <null>
+    RDB$SECURITY_CLASS              <null>
+    RDB$OWNER_NAME                  SYSDBA                                                                                                                                                                                                                                                      
+    RDB$RUNTIME                     <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$PROCEDURE_TYPE              2
+    RDB$VALID_BLR                   1
+    RDB$DEBUG_INFO                  <null>
+    RDB$ENGINE_NAME                 SYSTEM                                                                                                                                                                                                                                                      
+    RDB$ENTRYPOINT                  <null>
+    RDB$PACKAGE_NAME                RDB$PROFILER                                                                                                                                                                                                                                                
+    RDB$PRIVATE_FLAG                0
+    RDB$SQL_SECURITY                <null>
+
+
+    Records affected: 8
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

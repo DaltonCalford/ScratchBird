@@ -1,0 +1,47 @@
+{
+'id': 'bugs.core_0625',
+'qmid': None,
+'tracker_id': 'CORE-0625',
+'title': 'Token unknown in simple SELECT with GROUP BY and ORDER BY',
+'description': 'getting SQL error code = -104, Token unknown count.',
+'min_versions': '2.1.7',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    recreate table customers(cust_id int primary key using index customers_pk, country int);
+    commit;
+    
+    insert into customers
+    select r.rdb$relation_id, rand()*10
+    from rdb$relations r;
+    commit;
+    
+    create index customers_country on customers(country);
+    commit;
+    
+    set planonly;
+    --set explain on;
+    select country, count(country)
+    from customers
+    group by country
+    order by count(country);
+    -- NB: PLAN up to 2.5 contains TWO parenthesis:
+    -- PLAN SORT ((CUSTOMERS ORDER CUSTOMERS_COUNTRY))
+    --           ^^                                 ^^
+  """,
+ 'expected_stdout':
+  """
+    PLAN SORT CUSTOMERS ORDER CUSTOMERS_COUNTRY
+  """,
+  'substitutions':[('\(+',''), ('\)+','')]
+}
+]
+}

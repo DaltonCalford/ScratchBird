@@ -1,0 +1,47 @@
+{
+'id': 'bugs.core_1453',
+'qmid': None,
+'tracker_id': 'CORE-1443',
+'title': 'Allow usage of functions in LIST delimiter parameter',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE T1 (ID INTEGER, NAME CHAR(20));
+COMMIT;
+INSERT INTO T1 (ID,NAME) VALUES (1,'ORANGE');
+INSERT INTO T1 (ID,NAME) VALUES (1,'APPLE');
+INSERT INTO T1 (ID,NAME) VALUES (1,'LEMON');
+INSERT INTO T1 (ID,NAME) VALUES (2,'ORANGE');
+INSERT INTO T1 (ID,NAME) VALUES (2,'APPLE');
+INSERT INTO T1 (ID,NAME) VALUES (2,'PEAR');
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select ID,  LIST( trim(NAME), ASCII_CHAR(35) )
+from T1
+group by 1;
+""",
+ 'expected_stdout': """Database:  localhost:C:\Users\win7\Firebird_tests\fbt-repository\tmp\bugs.core_1453.fdb, User: SYSDBA
+SQL> CON> CON>
+          ID              LIST
+============ =================
+           1               0:1
+==============================================================================
+LIST:
+ORANGE#LEMON#APPLE
+==============================================================================
+           2               0:2
+==============================================================================
+LIST:
+PEAR#ORANGE#APPLE
+==============================================================================
+
+SQL>"""
+}
+]
+}

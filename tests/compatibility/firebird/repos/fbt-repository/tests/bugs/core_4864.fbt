@@ -1,0 +1,159 @@
+{
+'id': 'bugs.core_4864',
+'qmid': None,
+'tracker_id': 'CORE-4864',
+'title': ' CREATE DATABASE fail with ISQL',
+'description': 
+ """
+   Test obtains full path to $fb_home via FBSVCMGR info_get_env.
+   Then it makes copy of file 'databases.conf' that is in $fb_home directory because 
+   following lines will be added to that 'databases.conf':
+   ===
+   tmp_alias_4864 = ...
+   {
+     SecurityDatabase = tmp_alias_4864
+   }
+   ===
+   Then we run ISQL and give to it command to create database which definition 
+   should be taken from 'databases.conf', as it was explained in the ticket by Alex:
+   ===
+   create database 'tmp_alias_4864' user 'SYSDBA';
+   ===
+   Finally, mon$attachment is queried and some info is extracted from it in order
+   to be sure that we really got proper result.
+   .............................................
+   ::: NB :::
+   It is impossible to check ability to create new user in new database that was made by such way: 
+   plugin 'Srp' is required that currently is replaced before any test with 'Legacy' one.
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script':"""\
+
+import os
+import time
+import shutil
+import subprocess
+from subprocess import Popen
+from fdb import services
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb'):
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+svc = services.connect(host='localhost')
+fb_home=svc.get_home_directory()
+svc.close()
+
+dbconf = os.path.join(fb_home,'databases.conf')
+dbcbak = os.path.join(fb_home,'databases.bak')
+shutil.copy2( dbconf, dbcbak )
+
+tmp_fdb = os.path.join(context['temp_directory'],'tmp_4864.fdb')
+
+cleanup( (tmp_fdb,) )
+
+f_dbconf=open(dbconf,'a')
+f_dbconf.seek(0, 2)
+f_dbconf.write("\\n\\n# Created temply by fbtest, CORE-4864. Should be removed auto.")
+f_dbconf.write("\\n\\ntmp_alias_4864 = " + tmp_fdb )
+f_dbconf.write("\\n{\\n  SecurityDatabase = tmp_alias_4864 \\n}\\n")
+f_dbconf.close()
+
+isql_script='''
+    create database 'tmp_alias_4864' user 'SYSDBA';
+    set list on;
+    select
+       d.mon$sec_database
+      ,a.mon$attachment_name
+      ,a.mon$user
+      ,a.mon$remote_protocol
+      ,a.mon$remote_address
+      ,a.mon$remote_process
+      ,a.mon$auth_method
+    from mon$database d cross join mon$attachments a
+    where a.mon$attachment_id = current_connection;
+    commit;
+    drop database;
+    quit;
+'''
+
+f_isql_cmd=open( os.path.join(context['temp_directory'],'tmp_create_4864.sql'), 'w')
+f_isql_cmd.write( isql_script )
+flush_and_close( f_isql_cmd )
+
+f_isql_log=open( os.path.join(context['temp_directory'],'tmp_create_4864.log'), 'w')
+subprocess.call([context['isql_path'],"-q","-i",f_isql_cmd.name], stdout=f_isql_log, stderr=subprocess.STDOUT)
+flush_and_close( f_isql_log )
+
+shutil.move(dbcbak, dbconf)
+
+with open( f_isql_log.name,'r') as f:
+    print(f.read())
+
+#####################################################################
+# Cleanup:
+
+# do NOT remove this pause otherwise some of logs will not be enable for deletion and test will finish with 
+# Exception raised while executing Python test script. exception: WindowsError: 32
+time.sleep(1)
+cleanup( (f_isql_log, f_isql_cmd, tmp_fdb) )
+
+  """,
+ 'expected_stdout':
+  """
+    MON$SEC_DATABASE                Self   
+    MON$ATTACHMENT_NAME             tmp_alias_4864
+    MON$USER                        SYSDBA                                                                                       
+    MON$REMOTE_PROTOCOL             <null>
+    MON$REMOTE_ADDRESS              <null>
+    MON$REMOTE_PROCESS              <null>
+    MON$AUTH_METHOD                 User name in DPB
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

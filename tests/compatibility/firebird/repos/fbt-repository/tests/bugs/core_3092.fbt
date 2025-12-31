@@ -1,0 +1,70 @@
+{
+'id': 'bugs.core_3092',
+'qmid': None,
+'tracker_id': 'CORE-3092',
+'title': 'ROW_COUNT is not cleared before the singleton INSERT statement',
+'description': '',
+'min_versions': '2.1.5',
+'versions': [
+{
+ 'firebird_version': '2.1.5',
+ 'platform': 'All',
+ 'init_script':
+  """
+	CREATE TABLE DELME (
+		A INTEGER,
+		B INTEGER
+	);
+	COMMIT;
+	INSERT INTO DELME (A, B)
+			   VALUES (1, 11);
+	INSERT INTO DELME (A, B)
+			   VALUES (2, 22);
+	INSERT INTO DELME (A, B)
+			   VALUES (3, 33);
+	COMMIT;
+	SET TERM ^;
+	create procedure uui
+	returns (
+		result varchar(250))
+	as
+	begin
+	  result = '';
+
+	  update delme set
+		b = 111
+		where a = 1;
+	  result = result||'update-1 '||row_count||'; ';
+
+	  update delme set
+		b = 222
+		where a = 2;
+	  result = result||'update-2 '||row_count||'; ';
+
+	  insert into delme(a,b)
+		values(4,44);
+	  result = result||'insert-1 '||row_count||'; ';
+	end
+	^
+	SET TERM ^;
+	COMMIT;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    execute procedure uui;
+  """,
+ 'expected_stdout':
+  """
+	RESULT                          update-1 1; update-2 1; insert-1 1;  
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[
+    ('[ \t]+', ' '),
+  ]
+}
+]
+}

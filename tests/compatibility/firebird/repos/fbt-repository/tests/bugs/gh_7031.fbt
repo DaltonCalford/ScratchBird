@@ -1,0 +1,176 @@
+{
+'id': 'bugs.gh_7031',
+'qmid': None,
+'tracker_id': '',
+'title': 'gbak -b failed with "invalid transaction handle (expecting explicit transaction start)"',
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/7031
+
+    Confirmed bug on 3.0.8.33524, 4.0.0.2642, 5.0.0.271:
+    backup not completed (.fbk file was not created), got following:
+        * in the STDERR of gbak (only in FB 3.0.8; NOT in FB 4.0 and 5.0):
+            gbak: ERROR:invalid transaction handle (expecting explicit transaction start)
+            gbak:Exiting before completion due to errors
+        * in firebird.log (for all: 3.0.8, 4.0, 5.0):
+            internal Firebird consistency check (page in use during flush (210), file: cch.cpp line: NNN)
+    Checked on 3.0.8.33525
+ """,
+'min_versions': '3.0.8',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script':
+  """
+import os
+import subprocess
+import time
+import difflib
+import re
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+this_fdb=db_conn.database_name
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f,
+    # first do f.flush(), and
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          print('type(f_names_list[i])=',type(f_names_list[i]))
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+def svc_get_fb_log( f_fb_log ):
+
+  global subprocess
+
+  subprocess.call([ context['fbsvcmgr_path'],
+                    "localhost:service_mgr",
+                    'action_get_fb_log'
+                  ],
+                   stdout=f_fb_log, stderr=subprocess.STDOUT
+                 )
+  return
+
+#--------------------------------------------
+
+test_fdb=os.path.join(context['temp_directory'],'tmp_gh_7031.source.fdb')
+test_fbk=os.path.join(context['temp_directory'],'tmp_gh_7031.fbk')
+test_res=os.path.join(context['temp_directory'],'tmp_gh_7031.restored')
+
+cleanup( (test_fdb, test_fbk, test_res) )
+con = fdb.create_database( dsn = test_fdb, page_size = 4096)
+con.close()
+
+subprocess.call( [ context['gfix_path'], test_fdb, '-w','async' ] )
+
+######################
+con = fdb.connect( dsn = test_fdb )
+tx0 = con.trans()
+tx0.begin()
+
+tx_init = tx0.transaction_id
+tx_per_TIP = (con.page_size - 20) * 4
+
+tx_last = (tx_init/tx_per_TIP + 1) * tx_per_TIP - 1;
+
+for i in range(tx_init, tx_last):
+    txi = con.trans()
+    txi.begin()
+    txi.commit()
+
+tx0.rollback()
+con.close()
+
+######################
+
+f_fblog_before=open( os.path.join(context['temp_directory'],'tmp_7031_fblog_before.txt'), 'w')
+svc_get_fb_log( f_fblog_before )
+flush_and_close( f_fblog_before )
+
+
+f_gbak_log=open( os.path.join(context['temp_directory'],'tmp_gbak_7031.log'), 'w')
+f_gbak_err=open( os.path.join(context['temp_directory'],'tmp_gbak_7031.err'), 'w')
+subprocess.call( [context['gbak_path'], "-b", test_fdb, test_fbk],
+                  stdout = f_gbak_log,
+                  stderr = f_gbak_err
+                )
+flush_and_close( f_gbak_log )
+flush_and_close( f_gbak_err )
+
+
+f_fblog_after=open( os.path.join(context['temp_directory'],'tmp_7031_fblog_after.txt'), 'w')
+svc_get_fb_log( f_fblog_after )
+flush_and_close( f_fblog_after )
+
+# Compare firebird.log versions BEFORE and AFTER this test:
+######################
+
+oldfb=open(f_fblog_before.name, 'r')
+newfb=open(f_fblog_after.name, 'r')
+
+difftext = ''.join(difflib.unified_diff(
+    oldfb.readlines(), 
+    newfb.readlines()
+  ))
+oldfb.close()
+newfb.close()
+
+f_diff_txt=open( os.path.join(context['temp_directory'],'tmp_7031_fblog_diff.txt'), 'w')
+f_diff_txt.write(difftext)
+flush_and_close( f_diff_txt )
+
+with open( f_gbak_err.name,'r') as f:
+    for line in f:
+        if line:
+            print('UNEXPECTED BACKUP STDERR: ' +  (' '.join(line.split()).upper()) )
+
+with open( f_diff_txt.name,'r') as f:
+    for line in f:
+        if line.startswith('+'):
+            print('UNEXPECTED FIREBIRD.LOG: ' +  (' '.join(line.split()).upper()) )
+
+cleanup( (test_fdb, test_fbk, test_res, f_gbak_log, f_gbak_err, f_diff_txt, f_fblog_before, f_fblog_after ) )
+
+  """,                                                      
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """,
+ 'substitutions': [ ('[ \t]+', ' ') ]
+}
+]
+}

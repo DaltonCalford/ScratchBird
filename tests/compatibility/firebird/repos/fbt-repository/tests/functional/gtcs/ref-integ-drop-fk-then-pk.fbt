@@ -1,0 +1,99 @@
+{
+'id': 'functional.gtcs.ref-integ-drop-fk-then-pk',
+'qmid': None,
+'tracker_id': '',
+'title': 'GTCS/tests/REF_INT.1.ISQL ; ref-integ-drop-fk-then-pk. Outcome must be SUCCESS if first we drop FK and after this PK constraint.',
+'description':
+ """
+	Original test see in:
+        https://github.com/FirebirdSQL/fbtcs/blob/master/GTCS/tests/REF_INT.1.ISQL.script
+    Checked on: 4.0.0.1806 SS; 3.0.6.33272 CS; 2.5.9.27149 SC.
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import sys
+import subprocess
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_conn.close()
+
+with open( os.path.join(context['files_location'],'gtcs-ref-integ.sql'), 'r') as f:
+    sql_init = f.read()
+
+sql_addi=\
+'''
+    alter table employee drop constraint ref_key;
+    alter table department drop constraint dept_key;
+    set count on;
+    -- Folowing two statements should PASS:
+    insert into department( dept_no, dept_name) values (1, 'k1');
+    insert into employee( emp_no, last_name, dept_no) values (12, 'e12', -1);
+'''
+
+runProgram('isql', [ dsn], os.linesep.join( (sql_init, sql_addi) ) )
+  """,
+ 'expected_stdout':
+  """
+    Records affected: 1
+    Records affected: 1
+  """,
+ 'expected_stderr':
+  """
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import sys
+import subprocess
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_conn.close()
+
+with open( os.path.join(context['files_location'],'gtcs-ref-integ.sql'), 'r') as f:
+    sql_init = f.read()
+
+sql_addi=\
+'''
+    alter table employee drop constraint ref_key;
+    alter table department drop constraint dept_key;
+    set count on;
+    -- Folowing two statements should PASS:
+    insert into department( dept_no, dept_name) values (1, 'k1');
+    insert into employee( emp_no, last_name, dept_no) values (12, 'e12', -1); -- should FAIL
+'''
+
+runProgram('isql', [ dsn], os.linesep.join( (sql_init, sql_addi) ) )
+  """,
+ 'expected_stdout':
+  """
+    Records affected: 1
+    Records affected: 1
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

@@ -1,0 +1,28 @@
+{
+'id': 'bugs.core_6521',
+'qmid': '',
+'tracker_id': 'CORE-6521',
+'title': "CAST of Infinity values to FLOAT doesn't work",
+'description':
+  """
+    Confirmed bug on 4.0.0.2394, 3.0.8.33426
+    Checked on intermediate builds 4.0.0.2401 (03-apr-2021 09:36), 3.0.8.33435 (03-apr-2021 09:35) -- all OK.
+  """,
+'min_versions': '3.0.8',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set heading off;
+    select cast(log(1, 1.5) as float) from rdb$database;
+  """,
+ 'expected_stdout':
+  """
+    Infinity
+  """
+}
+]
+}

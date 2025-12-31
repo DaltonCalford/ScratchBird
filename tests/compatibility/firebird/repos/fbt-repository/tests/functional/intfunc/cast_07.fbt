@@ -1,0 +1,36 @@
+{
+'id': 'functional.intfunc.cast.07',
+'qmid': 'functional.intfunc.cast.cast_07',
+'tracker_id': '',
+'title': 'CAST CHAR -> INTEGER',
+'description': """CAST CHAR -> INTEGER
+
+Dependencies:
+CREATE DATABASE
+Basic SELECT
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': "SELECT CAST('1.5001' AS INTEGER) FROM rdb$Database;",
+ 'expected_stdout': """        CAST
+============
+
+           1
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': "SELECT CAST('1.5001' AS INTEGER) FROM rdb$Database;",
+ 'expected_stdout': """CAST
+============
+           2
+
+"""
+}
+]
+}

@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_2265',
+'qmid': None,
+'tracker_id': 'CORE-2265',
+'title': "Grouping by function doesn't work properly",
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table t (col1 date, col2 int);
+commit;
+
+insert into t values ('2011-01-01', 1);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select extract(year from col1), sum(col2)
+from t
+group by extract(year from col1);
+
+select extract(year from col1), sum(col2)
+from t
+group by 1;
+""",
+ 'expected_stdout': """
+EXTRACT                   SUM
+======= =====================
+   2011                     1
+
+
+EXTRACT                   SUM
+======= =====================
+   2011                     1
+
+"""
+}
+]
+}

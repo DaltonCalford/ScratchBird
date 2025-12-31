@@ -1,0 +1,46 @@
+{
+'id': 'bugs.core_0190',
+'qmid': None,
+'tracker_id': 'CORE-0190',
+'title': "trigger with except-s on view with union",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create table a (id integer);
+
+    create view v1 (vid) as
+    select id from a
+    union all
+    select id from a;
+
+    create exception exa 'foo!..';
+    create exception exb 'bar!..';
+    commit;
+
+    set term ^;
+    create trigger tv1 for v1 active before update as
+    begin
+        if (new.vid = 0) then
+            exception exa;
+        else
+            exception exb;
+    end
+    ^
+    set term ;^
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

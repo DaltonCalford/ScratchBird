@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_1550',
+'qmid': 'bugs.core_1550',
+'tracker_id': '',
+'title': 'Unnecessary index scan happens when the same index is mapped to both WHERE and ORDER BY clauses',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test(id int);
+    commit;
+    insert into test(id) select r.rdb$relation_id from rdb$relations r;
+    commit;
+    create index test_id on test(id);
+    commit;
+
+    set planonly;
+    select *
+    from test
+    where id < 10
+    order by id;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN (TEST ORDER TEST_ID)
+  """
+}
+]
+}

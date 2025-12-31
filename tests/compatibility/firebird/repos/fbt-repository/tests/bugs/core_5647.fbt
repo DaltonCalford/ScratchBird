@@ -1,0 +1,158 @@
+{
+'id': 'bugs.core_5647',
+'qmid': '',
+'tracker_id': 'CORE-5647',
+'title': 'Increase number of formats/versions of views from 255 to 32K',
+'description': 
+ """ 
+   FB40SS, build 4.0.0.789: OK, 3.828s (SS, CS).
+   Older version issued:
+        Statement failed, SQLSTATE = 54000
+        unsuccessful metadata update
+        -TABLE VW1
+        -too many versions
+   NB: we have to change FW to OFF in order to increase speed of this test run thus use test_type = Python.
+
+   05.05.2021.
+   Reduced min_version to 3.0.8 after this feature was backported to FB 3.x, see:
+   https://github.com/FirebirdSQL/firebird/commit/14eac8b76bb4d2fb339e5387dd86927961e77d46
+
+   Re-implemented in order to generate SQL script with more than 2K changes of view format
+   (see 'FORMAT_CHANGES_LIMIT': this value must be multiplied for 2 in order to get actual number of format changes)
+
+   Checked on intermediate build 3.0.8.33465, timestamp: 05.05.2021 11:26.
+   Duration: 4.0.0.2465 ~17s; 3.0.8.33465: ~24s
+   21.05.2021: changed connection protocol to local, time reduced from 19 to 15 seconds.
+ """,
+'min_versions': '3.0.8',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': """
+
+import os
+import subprocess
+import time
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+db_name = db_conn.database_name
+db_conn.close()
+runProgram('gfix',[dsn,'-w','async'])
+
+# Max limit for number of *pairs* of SQL statements that change format.
+# Actual number of format changes is: FORMAT_CHANGES_LIMIT*2 - 1.
+#########################
+FORMAT_CHANGES_LIMIT=1025
+#########################
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+
+script='''
+    set bail on;
+    create sequence g;
+    -- set autoddl off;
+    commit;
+'''
+
+for i in range(0,FORMAT_CHANGES_LIMIT):
+  script = '\\n'.join(
+                       (  script
+                         ,('out '+os.devnull+';' if i== 0 else '')
+                         ,'create or alter view vw1 (dump1) as select 1 from rdb$database; set term #; execute block as declare c int; begin c = gen_id(g,1); end# set term ;#'
+                         ,'create or alter view vw1 (dump1, dump2) as select 1, 2 from rdb$database; set term #; execute block as declare c int; begin c = gen_id(g,1); end# set term ;#'
+                       )
+                     )
+
+script = '\\n'.join(
+                     (  script
+                       ,'out;'
+                       ,'rollback;'
+                       ,'set list on;'
+                       ,'select gen_id(g,0)-1 altered_times from rdb$database;'
+                     )
+                   )
+
+'''
+Auxiliary query to see format details (may be useful for debug purpoces):
+    set blobdisplay 6;
+    select f.rdb$descriptor
+    from rdb$formats f
+    join rdb$relations r using (rdb$relation_id)
+    where r.rdb$relation_name = upper('v_test')
+'''
+
+f_isql_cmd=open(os.path.join(context['temp_directory'],'tmp_core_5647.sql'), 'w')
+f_isql_cmd.write(script)
+flush_and_close( f_isql_cmd )
+
+f_isql_log=open(os.path.join(context['temp_directory'],'tmp_core_5647.log'),'w')
+f_isql_err=open(os.path.join(context['temp_directory'],'tmp_core_5647.err'),'w')
+
+subprocess.call([ context['isql_path'], db_name, "-i", f_isql_cmd.name],stdout = f_isql_log, stderr = f_isql_err)
+
+flush_and_close( f_isql_log )
+flush_and_close( f_isql_err )
+
+with open(f_isql_err.name,'r') as f:
+    for line in f:
+        if line.split():
+            print('UNEXPECTED STDERR: ' + line.strip())
+
+with open(f_isql_log.name,'r') as f:
+    for line in f:
+        if line.split():
+            print(line.strip())
+
+# cleanup:
+##########
+time.sleep(1)
+cleanup((f_isql_cmd, f_isql_log, f_isql_err))
+  """,
+ 'expected_stdout': 
+  """
+    ALTERED_TIMES                   2049
+  """,
+ 'expected_stderr': 
+  """
+  """
+},
+]
+}

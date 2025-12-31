@@ -1,0 +1,25 @@
+{
+'id': 'bugs.core_2081',
+'qmid': None,
+'tracker_id': 'CORE-2081',
+'title': 'RDB$DB_KEY in subselect expression incorrectly returns NULL',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select a.rdb$db_key, (select b.rdb$db_key from rdb$database b)
+  from rdb$database a;
+""",
+ 'expected_stdout': """
+DB_KEY           DB_KEY
+================ ================
+0100000001000000 0100000001000000
+
+"""
+}
+]
+}

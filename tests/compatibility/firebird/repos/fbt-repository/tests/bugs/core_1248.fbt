@@ -1,0 +1,24 @@
+{
+'id': 'bugs.core_1248',
+'qmid': '',
+'tracker_id': 'CORE-1248',
+'title': ' Incorrect timestamp arithmetic when one of operands is negative number',
+'description': '',
+'min_versions': '3.0.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+  set heading off;
+  select cast('04.05.2007' as timestamp) - (-7) from rdb$database;
+  """,
+ 'expected_stdout':
+  """
+    2007-05-11 00:00:00.0000
+  """
+}
+]
+}

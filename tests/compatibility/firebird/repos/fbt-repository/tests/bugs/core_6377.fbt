@@ -1,0 +1,111 @@
+{
+'id': 'bugs.core_6377',
+'qmid': '',
+'tracker_id': '',
+'title': "Unable to restore database with tables using GENERATED ALWAYS AS IDENTITY columns (ERROR:OVERRIDING SYSTEM VALUE should be used)",
+'description': 
+ """
+    Confirmed on 4.0.0.2126, got in STDERR when restore:
+      gbak: ERROR:OVERRIDING SYSTEM VALUE should be used to override the value of an identity column defined as 'GENERATED ALWAYS' in table/view IDENTITY_ALWAYS
+      gbak: ERROR:gds_$compile_request failed
+      gbak:Exiting before completion due to errors
+
+    Checked on 4.0.0.2170 SS/CS -- all fine.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+    create table identity_always(id bigint generated always as identity constraint pk_identity_always primary key);
+    insert into identity_always default values; 
+    commit;
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import sys
+import subprocess
+from subprocess import PIPE
+from fdb import services
+import time
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for f in f_names_list:
+       if type(f) == file:
+          del_name = f.name
+       elif type(f) == str:
+          del_name = f
+       else:
+          print('Unrecognized type of element:', f, ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+    
+#--------------------------------------------
+
+# https://docs.python.org/2/library/subprocess.html#replacing-shell-pipeline
+
+tmp_restdb = os.path.join(context['temp_directory'],'tmp_6377_rest.fdb')
+cleanup( (tmp_restdb,) )
+
+f_br_err=open( os.path.join(context['temp_directory'],'tmp_6377_br.err'), 'w')
+p_sender = subprocess.Popen( [ context['gbak_path'], '-b', dsn, 'stdout' ], stdout=PIPE)
+p_getter = subprocess.Popen( [ context['gbak_path'], '-rep', 'stdin',  'localhost:' + tmp_restdb ], stdin = p_sender.stdout, stdout = PIPE, stderr = f_br_err)
+p_sender.stdout.close()
+p_getter_stdout, p_getter_stderr = p_getter.communicate()
+
+flush_and_close(f_br_err)
+
+# This must PASS without errors:
+runProgram('isql', [ 'localhost:' + tmp_restdb ], 'insert into identity_always default values;')
+
+# CHECK RESULTS
+###############
+with open(f_br_err.name,'r') as g:
+    for line in g:
+        if line:
+            print( 'UNEXPECTED STDERR IN ' + g.name + ':' +  line)
+
+# Cleanup.
+##########
+time.sleep(1)
+cleanup( (f_br_err,tmp_restdb ) )
+
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+  """
+},
+]
+}

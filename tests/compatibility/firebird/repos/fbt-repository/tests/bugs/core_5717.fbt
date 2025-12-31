@@ -1,0 +1,56 @@
+{
+'id': 'bugs.core_5717',
+'qmid': None,
+'tracker_id': 'CORE-5717',
+'title': "Reject non-constant date/time/timestamp literals",
+'description':
+ """
+    Checked on 4.0.0.1479: OK, 1.631s.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set heading off;
+    select date '2018-01-01' from rdb$database;
+    select time '10:00:00' from rdb$database;
+    select timestamp '2018-01-01 10:00:00' from rdb$database;
+    select DATE 'TODAY' from rdb$database;
+    select DATE 'TOMORROW' from rdb$database;
+    select DATE 'YESTERDAY' from rdb$database;
+    select TIME 'NOW' from rdb$database;
+    select TIMESTAMP 'NOW' from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    2018-01-01  
+    10:00:00.0000 
+    2018-01-01 10:00:00.0000  
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 22018
+    conversion error from string "TODAY"
+
+    Statement failed, SQLSTATE = 22018
+    conversion error from string "TOMORROW"
+
+    Statement failed, SQLSTATE = 22018
+    conversion error from string "YESTERDAY"
+
+    Statement failed, SQLSTATE = 22018
+    conversion error from string "NOW"
+
+    Statement failed, SQLSTATE = 22018
+    conversion error from string "NOW"
+  """
+}
+]
+}

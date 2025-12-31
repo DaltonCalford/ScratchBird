@@ -1,0 +1,43 @@
+{
+'id': 'bugs.core_1056',
+'qmid': 'bugs.core_1056',
+'tracker_id': 'CORE-1056',
+'title': 'A query could produce different results, depending on the presence of an index',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """create table t (c varchar(10) character set win1250 collate pxw_csy);
+insert into t values ('ch');
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """set plan on;
+
+select * from t where c starting with 'c';
+commit;
+
+create index t_c on t (c);
+commit;
+
+select * from t where c starting with 'c';
+""",
+ 'expected_stdout': """
+PLAN (T NATURAL)
+
+C
+==========
+ch
+
+
+PLAN (T INDEX (T_C))
+
+C
+==========
+ch
+
+"""
+}
+]
+}

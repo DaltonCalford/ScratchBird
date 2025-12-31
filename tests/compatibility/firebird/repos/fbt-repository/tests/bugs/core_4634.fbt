@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_4634',
+'qmid': None,
+'tracker_id': 'CORE-4634',
+'title': 'Regression: ORDER BY via an index + WHERE clause: error "no current record for fetch operation"',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'employee-ods12.fbk',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    -- Confirmed for WI-T3.0.0.31374 Firebird 3.0 Beta 1:
+    -- Statement failed, SQLSTATE = 22000
+    -- no current record for fetch operation
+    set list on;
+    select *
+    from sales
+    where (order_status like '1%' or order_status like '%1%')
+    order by order_status
+    rows 1;
+  """
+}
+]
+}

@@ -1,0 +1,45 @@
+{
+'id': 'functional.gtcs.computed-fields-15',
+'qmid': None,
+'tracker_id': '',
+'title': 'computed-fields-15',
+'description':
+ """
+	Original test see in:
+        https://github.com/FirebirdSQL/fbtcs/blob/master/GTCS/tests/CF_ISQL_15.script
+	SQL script for creating test database ('gtcs_sp1.fbk') and fill it with some data:
+        https://github.com/FirebirdSQL/fbtcs/blob/master/GTCS/tests/PROCS_QA_INIT_ISQL.script
+    Checked on: 4.0.0.1803 SS; 3.0.6.33265 SS; 2.5.9.27149 SC.
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set heading off;
+    /*-----------------------------------------------------------------------------*/
+    /* Create a table with computed field which is defined using non-existing UDF. */
+    /*-----------------------------------------------------------------------------*/
+    create table t0 (a integer, af computed by ( non_exist_udf(a) ));
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE 39000
+    Dynamic SQL Error
+    -SQL error code -804
+    -Function unknown
+    -NON_EXIST_UDF
+  """,
+  'substitutions':[ ('^((?!Statement failed|SQL error code).)*$',''), (' = ', ' '), ('[ \t]+', ' ') ]
+}
+]
+}

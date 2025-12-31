@@ -1,0 +1,80 @@
+{
+'id': 'functional.gtcs.external-file-06-d',
+'qmid': None,
+'tracker_id': '',
+'title': 'GTCS/tests/external-file-06-d. Test for external table with field of DOUBLE PRECISION datatype',
+'description':
+ """
+	Original test see in:
+        https://github.com/FirebirdSQL/fbtcs/blob/master/GTCS/tests/EXT_REL_0_6_D.script
+    Checked on: 4.0.0.2240; 3.0.7.33380
+
+    03-mar-2021.
+    Added substitution for zero value ('F02') as result of evaluating exp(-745.1332192):
+    on Windows number of digits in decimal representation more than on Linux for 1.
+
+    02-JUL-2022
+    Removed 'exp(-745.13***)' from here, it is irrelevant task. 
+    Moreover, result of this evaluation depends on CPU that is used on current box, and also it can differ on FB 3.x vs 4.x.
+
+    Checked on 4.0.0.2796, 5.0.0.565
+
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import sys
+import subprocess
+import time
+
+tmp_file = os.path.join(context['temp_directory'],'tmp_ext_06_d.tmp')
+if os.path.isfile( tmp_file):
+     os.remove( tmp_file )
+
+this_fdb = db_conn.database_name
+
+sql_cmd=\
+'''
+    connect 'localhost:%(this_fdb)s' user '%(user_name)s' password '%(user_password)s';
+    create domain dm_dp double precision;
+    create table ext_table external file '%(tmp_file)s' (f01 dm_dp);
+    commit;
+    insert into ext_table (f01) values( pi() ); -- first 18 digits are: 3.141592653589793238
+    commit;
+    set list on;
+    set count on;
+    select * from ext_table;
+''' % dict(globals(), **locals())
+
+runProgram('isql', [ '-q' ], sql_cmd)
+
+f_sql_chk = open( os.path.join(context['temp_directory'],'tmp_ext_06_d.sql'), 'w')
+f_sql_chk.write(sql_cmd)
+f_sql_chk.close()
+
+time.sleep(1)
+
+os.remove(f_sql_chk.name)
+os.remove( tmp_file )
+
+  """,
+ 'expected_stdout':
+  """
+    F01                             3.141592653589793
+    Records affected: 1
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

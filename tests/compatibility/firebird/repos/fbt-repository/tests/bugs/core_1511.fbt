@@ -1,0 +1,29 @@
+{
+'id': 'bugs.core_1511',
+'qmid': None,
+'tracker_id': 'CORE-1511',
+'title': 'POSITION(string_exp1, string_exp2 [, start])',
+'description': '',
+'min_versions': '2.1.0',
+'versions': [
+{
+ 'firebird_version': '2.1.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT position ('be', 'To be or not to be')
+,position ('be', 'To be or not to be', 4)
+,position ('be', 'To be or not to be', 8)
+,position ('be', 'To be or not to be', 18)
+FROM RDB$DATABASE;""",
+ 'expected_stdout': """Database:  localhost:C:\fbtest2\tmp\bugs.core_1511.fdb, User: SYSDBA
+SQL> CON> CON> CON> CON>
+    POSITION     POSITION     POSITION     POSITION
+============ ============ ============ ============
+           4            4           17            0
+
+SQL>"""
+}
+]
+}

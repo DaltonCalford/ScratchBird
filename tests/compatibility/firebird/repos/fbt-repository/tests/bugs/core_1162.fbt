@@ -1,0 +1,86 @@
+{
+'id': 'bugs.core_1162',
+'qmid': 'bugs.core_1162-250',
+'tracker_id': 'CORE-1162',
+'title': 'Problem altering numeric field type',
+'description': """create table tab ( a numeric(4,2) );
+
+insert into tab values (99.99);
+
+select * from tab;
+
+A
+=======
+  99.99
+
+alter table tab alter a type numeric(4,3);
+
+select * from tab;
+
+Statement failed, SQLCODE = -802
+arithmetic exception, numeric overflow, or string truncation
+
+Btw. the database is not "corrupted" too badly - you can revert the change back by alter table tab alter a type numeric(4,2);
+and the engine is clever enough to convert data from stored format to requested one directly, not through all intermediate format versions.""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """create table tab ( a numeric(4,2) );
+insert into tab values (99.99);
+alter table tab alter a type numeric(4,3);
+select * from tab;
+""",
+ 'expected_stdout': """A
+=======
+  99.99
+
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-New scale specified for column A must be at most 2.
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """create table tab ( a numeric(4,2) );
+insert into tab values (99.99);
+alter table tab alter a type numeric(4,3);
+select * from tab;
+""",
+ 'expected_stdout': """A
+=======
+  99.99
+
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+unsuccessful metadata update
+-New scale specified for column A must be at most 2.
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """create table tab ( a numeric(4,2) );
+insert into tab values (99.99);
+alter table tab alter a type numeric(4,3);
+select * from tab;
+""",
+ 'expected_stdout': """A
+=======
+  99.99
+
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-ALTER TABLE TAB failed
+-New scale specified for column A must be at most 2.
+"""
+}
+]
+}

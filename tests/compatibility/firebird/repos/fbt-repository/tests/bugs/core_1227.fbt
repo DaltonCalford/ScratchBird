@@ -1,0 +1,64 @@
+{
+'id': 'bugs.core_1227',
+'qmid': 'bugs.core_1227',
+'tracker_id': 'CORE-1227',
+'title': 'LIST() function seems not work if used twice or more in a query',
+'description': """f I try to use the LIST() function twice or more in a query the following error occurs:
+
+Undefined name.
+Dynamic SQL Error.
+SQL error code = -204.
+Implementation limit exceeded.
+Block size exceeds implementation restriction.""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE TESTTABLE (ID integer, FIELD1 char(5), FIELD2 char(20));
+INSERT INTO TESTTABLE VALUES (1,'aaaaa','bbbbbbbbb');
+INSERT INTO TESTTABLE VALUES (1,'ccccc','ddddddddd');
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT LIST(FIELD1), LIST(FIELD2) FROM TESTTABLE GROUP BY ID;
+""",
+ 'expected_stdout': """LIST              LIST
+================= =================
+              0:2               0:1
+==============================================================================
+LIST:
+aaaaa,ccccc
+==============================================================================
+==============================================================================
+LIST:
+bbbbbbbbb           ,ddddddddd
+==============================================================================
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE TESTTABLE (ID integer, FIELD1 char(5), FIELD2 char(20));
+INSERT INTO TESTTABLE VALUES (1,'aaaaa','bbbbbbbbb');
+INSERT INTO TESTTABLE VALUES (1,'ccccc','ddddddddd');
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT LIST(FIELD1), LIST(FIELD2) FROM TESTTABLE GROUP BY ID;
+""",
+ 'expected_stdout': """             LIST              LIST
+================= =================
+              0:1               0:2
+==============================================================================
+LIST:
+aaaaa,ccccc
+==============================================================================
+==============================================================================
+LIST:
+bbbbbbbbb           ,ddddddddd
+==============================================================================
+
+"""
+}
+]
+}

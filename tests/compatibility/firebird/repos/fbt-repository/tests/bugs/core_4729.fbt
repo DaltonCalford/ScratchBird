@@ -1,0 +1,48 @@
+{
+'id': 'bugs.core_4729',
+'qmid': None,
+'tracker_id': 'CORE-4729',
+'title': 'Add a flag to mon$database helping to decide what type of security database is used - default, self or other',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set wng off;
+    set list on;
+
+    create or alter user ozzy password 'osb';
+    revoke all on all from ozzy;
+    commit;
+
+    -- Check that info can be seen by SYSDBA:
+    select current_user,mon$sec_database from mon$database;
+    commit;
+
+    -- Check that info can be seen by non-privileged user:
+    connect '$(DSN)' user ozzy password 'osb';
+    select current_user,mon$sec_database from mon$database;
+    commit;
+
+    connect '$(DSN)' user 'SYSDBA' password 'masterkey';
+    drop user ozzy;
+    commit;
+  """,
+ 'expected_stdout':
+  """
+    USER                            SYSDBA
+    MON$SEC_DATABASE                Default
+    USER                            OZZY
+    MON$SEC_DATABASE                Default
+  """
+}
+]
+}

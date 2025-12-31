@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_4173',
+'qmid': None,
+'tracker_id': 'CORE-4173',
+'title': 'Setting generator value twice in single transaction will set it to zero',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set autoddl off;
+    set list on;
+    create generator g;
+    commit;
+    set generator g to 111;
+    commit;
+    select gen_id(g,0) value_on_step_1 from rdb$database;
+    set generator g to 222;
+    set generator g to 333;
+    select gen_id(g,0) value_on_step_2 from rdb$database;
+    commit;
+    select gen_id(g,0) value_on_step_3 from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    VALUE_ON_STEP_1                 111
+    VALUE_ON_STEP_2                 333
+    VALUE_ON_STEP_3                 333
+  """
+}
+]
+}

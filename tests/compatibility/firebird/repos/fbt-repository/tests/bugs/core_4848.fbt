@@ -1,0 +1,103 @@
+{
+'id': 'bugs.core_4848',
+'qmid': None,
+'tracker_id': 'CORE-4848',
+'title': 'MERGE ... WHEN NOT MATCHED ... RETURNING returns wrong (non-null) values when no insert is performed',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    recreate table t1 (n1 integer, n2 integer);
+    
+    -- Case 1:
+    merge into t1
+    using (
+        select 1 x
+        from rdb$database
+        where 1 = 0
+    ) on 1 = 1
+    when not matched then
+        insert values (1, 11)
+        returning n1, n2;
+    
+    -- Case 2:
+    merge into t1
+    using (
+        select 1 x
+        from rdb$database
+        where 1 = 1
+    ) on 1 = 0
+    when not matched and 1 = 0 then
+        insert values (1, 11)
+        returning n1, n2;
+  """,
+ 'expected_stdout': 
+  """
+    N1                              <null>
+    N2                              <null>
+
+    N1                              <null>
+    N2                              <null>
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+
+, #--------------------  FB 5.x --------------
+
+{
+ 'firebird_version': '5.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set count on;
+    recreate table t1 (n1 integer, n2 integer);
+
+    -- Case 1:
+    merge into t1
+    using (
+        select 1 x
+        from rdb$database
+        where 1 = 0
+    ) on 1 = 1
+    when not matched then
+        insert values (1, 11)
+        returning n1, n2;
+    
+    -- Case 2:
+    merge into t1
+    using (
+        select 1 x
+        from rdb$database
+        where 1 = 1
+    ) on 1 = 0
+    when not matched and 1 = 0 then
+        insert values (1, 11)
+        returning n1, n2;
+  """,
+ 'expected_stdout': 
+  """
+    Records affected: 0
+    Records affected: 0
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

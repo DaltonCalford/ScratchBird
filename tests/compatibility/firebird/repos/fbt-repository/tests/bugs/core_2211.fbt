@@ -1,0 +1,55 @@
+{
+'id': 'bugs.core_2211',
+'qmid': None,
+'tracker_id': 'CORE-2211',
+'title': "Offset value for SUBSTRING from BLOB more than 32767 makes exception",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    recreate table test(b blob);
+    commit;
+    insert into test values('');
+    commit;
+    
+    set list on;
+    set blob all;
+    
+    set term ^;
+    execute block as
+      declare bsize int = 1000000;
+      declare vclen int = 32760;
+    begin
+      while (bsize > 0) do
+      begin
+        update test set b  = b || rpad('', :vclen, uuid_to_char(gen_uuid()));
+        bsize = bsize - vclen;
+      end
+      --update test set b = b || b;
+      update test set b = b || rpad('', :vclen, '#');
+    end
+    ^
+    set term ;^
+    select char_length(b) from test;
+    select substring(b from char_length(b)-1 for 1) from test;
+    rollback;
+  """,
+ 'expected_stdout':
+  """
+    CHAR_LENGTH                     1048320
+    SUBSTRING                       0:43
+    #
+  """,
+  'substitutions':[('SUBSTRING.*','')]
+}
+]
+}

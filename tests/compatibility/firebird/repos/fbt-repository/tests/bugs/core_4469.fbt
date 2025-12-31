@@ -1,0 +1,58 @@
+{
+'id': 'bugs.core_4469',
+'qmid': None,
+'tracker_id': 'CORE-4469',
+'title': 'Add field in SEC$USERS reflecting whether a user has RDB$ADMIN role in security database',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    
+    drop user boss1;
+    drop user boss2;
+    commit;
+    
+    create user boss1 password '123' grant admin role;
+    commit;
+    select SEC$ADMIN is_admin_boss1 from sec$users where sec$user_name = upper('boss1'); 
+    
+    
+    create user boss2 password '456';
+    commit;
+    select SEC$ADMIN is_admin_boss2a from sec$users where sec$user_name = upper('boss2'); 
+    
+    alter user boss2 grant admin role;
+    commit;
+    select SEC$ADMIN is_admin_boss2b from sec$users where sec$user_name = upper('boss2'); 
+    
+    alter user boss2 revoke admin role;
+    commit;
+    select SEC$ADMIN is_admin_boss2c from sec$users where sec$user_name = upper('boss2'); 
+    
+    drop user boss1;
+    drop user boss2;
+    commit;
+  """,
+  'expected_stdout': 
+  """
+    IS_ADMIN_BOSS1                  <true>
+    IS_ADMIN_BOSS2A                 <false>
+    IS_ADMIN_BOSS2B                 <true>
+    IS_ADMIN_BOSS2C                 <false>
+  """,
+  'expected_stderr': 
+  """
+  """,
+  'substitutions': [
+    ('Statement failed, SQLSTATE = HY000',''),
+    ('record not found for user:.*','')
+  ]
+}
+]
+}

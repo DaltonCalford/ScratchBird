@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_2022',
+'qmid': None,
+'tracker_id': 'CORE-2022',
+'title': '"EXECUTE BLOCK" statement does not support "CREATE USER"',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """set term ^ ;
+execute block
+as
+begin
+EXECUTE statement 'create user test1 password ''test1''';
+EXECUTE statement 'create user test2 password ''test2''';
+end ^
+
+commit ^
+
+execute block
+as
+begin
+EXECUTE statement 'drop user test1';
+EXECUTE statement 'drop user test2';
+end ^
+
+commit ^
+"""
+}
+]
+}

@@ -1,0 +1,29 @@
+{
+'id': 'bugs.core_1436',
+'qmid': 'bugs.core_1436',
+'tracker_id': 'CORE-1436',
+'title': "Outer joins don't work properly with the MON$ tables",
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    select db.MON$FORCED_WRITES fw
+    from mon$attachments att
+    left join mon$database db on db.mon$creation_date = att.mon$timestamp
+    rows 1;
+    -- select db.mon$database_name
+    --  from mon$attachments att
+    --  left join mon$database db on db.mon$creation_date = att.mon$timestamp;
+  """,
+ 'expected_stdout':
+  """
+    FW                              <null>
+  """
+}
+]
+}

@@ -1,0 +1,75 @@
+{
+'id': 'bugs.core_1343',
+'qmid': None,
+'tracker_id': 'CORE-1343',
+'title': 'Bug with a simple case and a subquery',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """--works fine (searched case with a subquery)
+
+SELECT
+  CASE
+    WHEN (SELECT 'A' FROM RDB$DATABASE) = 'A' THEN
+      'Y'
+    WHEN (SELECT 'A' FROM RDB$DATABASE) = 'B' THEN
+      'B'
+    ELSE
+      'N'
+  END
+FROM RDB$DATABASE;
+
+--works fine (simple case without a subquery)
+SELECT
+  CASE 'A'
+    WHEN 'A' THEN
+      'Y'
+    WHEN 'B' THEN
+      'N'
+    ELSE
+      'U'
+    END
+FROM RDB$DATABASE;
+
+--don't work (simple case with a subquery)
+SELECT
+  CASE (SELECT 'A' FROM RDB$DATABASE)
+    WHEN 'A' THEN
+      'Y'
+    WHEN 'B' THEN
+      'N'
+    ELSE
+      'U'
+   END
+FROM RDB$DATABASE;
+
+/*
+Invalid token.
+invalid request BLR at offset 110.
+context already in use (BLR error).
+*/
+""",
+ 'expected_stdout': """
+CASE
+======
+Y
+
+
+CASE
+======
+Y
+
+
+CASE
+======
+Y
+
+"""
+}
+]
+}

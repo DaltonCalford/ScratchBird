@@ -1,0 +1,170 @@
+{
+'id': 'bugs.core_5855',
+'qmid': None,
+'tracker_id': 'CORE-5855',
+'title': 'Latest builds of Firebird 4.0 cannot backup DB with generators which contains space in the names',
+'description':
+ """
+    Confirmed bug on 4.0.0.1036, got in STDERR:
+        Dynamic SQL Error
+        -SQL error code = -104
+        -Token unknown - line 1, column 28
+        -sequence
+    No error on 4.0.0.1040.
+    Decided to apply test also against Firebird 3.x
+    ::: NB:::
+    As of nowadays, it  is still possible to create sequence with name = single space character.
+    See note in ticket, 26/Jun/18 07:58 AM.
+ """,
+'min_versions': '3.0.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+    create sequence "new sequence" start with 123 increment by -456;
+    commit;
+    comment on sequence "new sequence" is 'foo rio bar';
+    commit;
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import sys
+import subprocess
+import time
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+thisdb=db_conn.database_name
+tmpbkp='$(DATABASE_LOCATION)tmp_core_5855.fbk'
+tmpres='$(DATABASE_LOCATION)tmp_core_5855.tmp'
+
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+fn_bkp_log=open( os.path.join(context['temp_directory'],'tmp_5855_backup.log'), 'w')
+fn_bkp_err=open( os.path.join(context['temp_directory'],'tmp_5855_backup.err'), 'w')
+subprocess.call([context['fbsvcmgr_path'],"localhost:service_mgr",
+                 "action_backup", "dbname", thisdb, "verbose", "bkp_file", tmpbkp ],
+                stdout=fn_bkp_log, stderr=fn_bkp_err)
+flush_and_close( fn_bkp_log )
+flush_and_close( fn_bkp_err )
+
+backup_error_flag=0
+with open(fn_bkp_err.name,'r') as f:
+    for line in f:
+        backup_error_flag=1
+        print('UNEXPECTED STDERR DURING BACKUP '+fn_bkp_err.name+': '+line)
+
+cleanup( (fn_bkp_err, fn_bkp_log ) )
+
+if backup_error_flag==0:
+    fn_res_log=open( os.path.join(context['temp_directory'],'tmp_5855_restore.log'), 'w')
+    fn_res_err=open( os.path.join(context['temp_directory'],'tmp_5855_restore.err'), 'w')
+    subprocess.call([context['fbsvcmgr_path'],"localhost:service_mgr",
+                     "action_restore", "res_replace", "verbose", "bkp_file", tmpbkp, "dbname", tmpres ],
+                    stdout=fn_res_log, stderr=fn_res_err)
+    flush_and_close( fn_res_log )
+    flush_and_close( fn_res_err )
+
+    sql_text='''
+        set list on; 
+        set blob all; 
+        set list on;
+        select 
+            rdb$generator_name as seq_name, 
+            rdb$initial_value as seq_init, 
+            rdb$generator_increment as seq_incr, 
+            rdb$description as blob_id
+        from rdb$generators 
+        where rdb$system_flag is distinct from 1;
+    '''
+
+    fn_sql_chk=open( os.path.join(context['temp_directory'],'tmp_5855_check.sql'), 'w')
+    fn_sql_chk.write(sql_text)
+    flush_and_close( fn_sql_chk )
+
+    fn_sql_log=open( os.path.join(context['temp_directory'],'tmp_5855_check.log'), 'w')
+    fn_sql_err=open( os.path.join(context['temp_directory'],'tmp_5855_check.err'), 'w')
+    subprocess.call( [ context['isql_path'], 'localhost:'+tmpres, "-i", fn_sql_chk.name ],
+                     stdout=fn_sql_log, stderr=fn_sql_err
+                   )
+
+    flush_and_close( fn_sql_log )
+    flush_and_close( fn_sql_err )
+    
+    for fe in ( fn_res_err, fn_sql_err ):
+        with open(fe.name,'r') as f:
+            for line in f:
+                print('UNEXPECTED STDERR IN '+fe.name+': '+line)
+    
+
+    with open(fn_res_log.name,'r') as f:
+        for line in f:
+            # gbak: ERROR:
+            if 'ERROR:' in line:
+                print('UNEXPECTED ERROR IN '+fg.name+': '+line)
+
+    with open(fn_sql_log.name,'r') as f:
+        for line in f:
+            print(line)
+    
+    # cleanup:
+    ##########
+    time.sleep(1)
+    cleanup( (fn_res_err, fn_sql_err, fn_res_log, fn_sql_log, fn_sql_chk ) )
+    
+#############################################################
+
+cleanup( (tmpbkp, tmpres) )
+
+  """,
+  'expected_stdout':
+  """
+    SEQ_NAME                        new sequence
+    SEQ_INIT                        123
+    SEQ_INCR                        -456
+    foo rio bar
+  """,
+  'expected_stderr':
+  """
+  """,
+  'substitutions':[('BLOB_ID.*','')]
+}
+]
+}

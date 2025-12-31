@@ -1,0 +1,56 @@
+{
+'id': 'bugs.core_3997',
+'qmid': None,
+'tracker_id': 'CORE-3997',
+'title': 'Join using RDB$DB_KEY produce NATURAL plan',
+'description':
+ """
+    Confirmed on WI-V2.5.1.26351, it issues:
+    PLAN JOIN (T_KEY NATURAL, T NATURAL)
+ """,
+'min_versions': '2.5.7',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    recreate table t (f integer);
+    recreate table t_key (k char(8) character set octets);
+    commit;
+
+    set term ^;
+    execute block as
+      declare i int = 10000;
+    begin
+     While (i>0) do
+      begin
+       insert into t values (:i);
+       i = i-1;
+      end
+    end^
+    set term ;^
+    commit;
+
+    insert into t_key select rdb$db_key from t where f=1;
+    commit;
+
+    set planonly;
+    select f 
+    from t join t_key on 
+    t.rdb$db_key=t_key.k;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN JOIN (T_KEY NATURAL, T INDEX ())
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

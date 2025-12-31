@@ -1,0 +1,26 @@
+{
+'id': 'functional.tabloid.arithmetic-cast-float-to-int-as-round',
+'qmid': None,
+'tracker_id': '',
+'title': 'Result of CAST for numbers is implementation defined',
+'description': 'See also: sql.ru/forum/actualutils.aspx?action=gotomsg&tid=1062610&msg=15214333',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set list on; select cast( sqrt(24) as smallint) casted_sqrt from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    CASTED_SQRT                     5
+  """
+}
+]
+}

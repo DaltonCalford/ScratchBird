@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_5565',
+'qmid': None,
+'tracker_id': 'CORE-5565',
+'title': 'No integer division possible in dialect 1',
+'description':
+ """
+   Reproduced fail on build 4.0.0.651.
+   Build 4.0.0.680: OK, 1.046s
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set wng off;
+    set sql dialect 1;
+    commit;
+    connect '$(DSN)' user 'SYSDBA' password 'masterkey';
+    set term ^;
+    execute block as
+        declare c int;
+    begin
+        select 1/1 as x from rdb$database into c;
+    end
+    ^
+    set term ;^
+  """,
+  'expected_stdout':
+  """
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

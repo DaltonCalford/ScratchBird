@@ -1,0 +1,26 @@
+{
+'id': 'functional.table.alter.01',
+'qmid': 'functional.table.alter.alter_table_01',
+'tracker_id': '',
+'title': 'ALTER TABLE - ADD column',
+'description': """ALTER TABLE - ADD column
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER TABLE test ADD text varchar(32);
+SHOW TABLE test;""",
+ 'expected_stdout': """ID                              INTEGER Nullable
+TEXT                            VARCHAR(32) Nullable
+"""
+}
+]
+}

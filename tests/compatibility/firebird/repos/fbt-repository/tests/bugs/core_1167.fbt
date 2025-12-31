@@ -1,0 +1,24 @@
+{
+'id': 'bugs.core_1167',
+'qmid': 'bugs.core_1167',
+'tracker_id': 'CORE-1167',
+'title': 'CHARACTER SET GBK is not installed',
+'description': """Default character set is GBK
+Create Table T1(ID integer, FName Varchar(20); -- OK
+Commit; ---Error Message: CHARACTER SET GBK is not installed""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'database_character_set': 'GBK',
+ 'test_type': 'ISQL',
+ 'test_script': """Create Table T1(ID integer, FName Varchar(20) CHARACTER SET GBK);
+COMMIT;
+SHOW TABLE T1;
+""",
+ 'expected_stdout': """ID                              INTEGER Nullable
+FNAME                           VARCHAR(20) Nullable
+"""
+}
+]
+}

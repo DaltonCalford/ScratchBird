@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_4108',
+'qmid': None,
+'tracker_id': 'CORE-4108',
+'title': 'Regression: Server crashes when executing sql query "delete from mytable order by id desc rows 2"',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create table mytable (
+        id integer not null primary key,
+        name varchar(30)
+    );
+
+    insert into mytable(id, name)
+    select 1, 'a' from rdb$database
+    union all
+    select 2, 'b' from rdb$database
+    union all
+    select 3, 'c' from rdb$database;
+    
+    delete from mytable order by id desc rows 2;
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

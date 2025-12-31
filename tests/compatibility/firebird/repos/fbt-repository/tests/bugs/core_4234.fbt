@@ -1,0 +1,56 @@
+{
+'id': 'bugs.core_4234',
+'qmid': None,
+'tracker_id': 'CORE-4234',
+'title': 'Error with IF (subfunc()) when subfunc returns a boolean',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set term ^;
+    execute block returns (c integer) as
+        declare variable b boolean;
+        declare function f1() returns boolean as
+        begin
+            return true;
+        end
+    begin
+        c = 0;
+        b = f1();
+        if (b) then c = 1;
+        suspend;
+    end
+    ^
+    
+    execute block returns (c integer) as
+        declare variable b boolean;
+        declare function f1() returns boolean as
+        begin
+            return true;
+        end
+    begin
+        c = 0;
+        b = f1();
+        if (f1()) then c = 2;
+        suspend;
+    end
+    ^ 
+  """,
+ 'expected_stdout': 
+  """
+    C                               1
+    C                               2
+  """
+}
+]
+}

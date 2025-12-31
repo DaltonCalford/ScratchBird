@@ -1,0 +1,148 @@
+{
+'id': 'bugs.core_4802',
+'qmid': '',
+'tracker_id': 'CORE-4802',
+'title': 'Regression: GRANT UPDATE(<some_column>) on <T> acts like grant update on ALL columns of <T>',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set wng off;
+
+    recreate table test(fld_for_seniors varchar(70), fld_for_juniors varchar(70));
+    commit;
+
+    create or alter user BIG_BROTHER password '123' revoke admin role;
+    create or alter user SENIOR_MNGR password '456' revoke admin role;
+    create or alter user JUNIOR_MNGR password '789' revoke admin role;
+    create role FLD_FOR_SENIORS_UPDATER;
+    create role FLD_FOR_JUNIORS_UPDATER;
+    commit;
+
+    revoke all on all from BIG_BROTHER;
+    revoke all on all from SENIOR_MNGR;
+    revoke all on all from JUNIOR_MNGR;
+
+    -- Statement failed, SQLSTATE = 28000
+    -- unsuccessful metadata update
+    -- -REVOKE failed
+    -- -SQL role FLD_FOR_SENIORS_UPDATER does not exist
+    -- -in security database
+    -- revoke all on all from role FLD_FOR_SENIORS_UPDATER;
+    -- revoke all on all from role FLD_FOR_JUNIORS_UPDATER;
+    commit;
+    grant select on test to PUBLIC;
+
+    grant update(fld_for_seniors) on test to BIG_BROTHER;
+    commit;
+
+    grant update(fld_for_seniors) on test to FLD_FOR_SENIORS_UPDATER;
+    grant update(fld_for_juniors) on test to FLD_FOR_JUNIORS_UPDATER;
+
+    grant FLD_FOR_SENIORS_UPDATER to SENIOR_MNGR;
+    grant FLD_FOR_JUNIORS_UPDATER to JUNIOR_MNGR;
+    commit;
+
+    show grants;
+
+    insert into test values( 'created by '||upper(current_user), 'created by '||lower(current_user) );
+    commit;
+    set list on;
+
+    --set echo on;
+
+    connect '$(DSN)' user 'BIG_BROTHER' password '123';
+    select current_user, current_role from rdb$database;
+    update test set fld_for_seniors = 'updated by '||upper(current_user)||', role: '||upper(current_role);
+    select * from test;
+
+    update test set fld_for_juniors = 'updated by '||lower(current_user)||', role: '||lower(current_role);
+    select * from test;
+    commit;
+    ---------------------------------------------------------------
+
+    connect '$(DSN)' user 'SENIOR_MNGR' password '456' role 'FLD_FOR_SENIORS_UPDATER';
+    select current_user, current_role from rdb$database;
+    update test set fld_for_seniors = 'updated by '||upper(current_user)||', role: '||upper(current_role);
+    select * from test;
+
+    update test set fld_for_juniors ='updated by '||lower(current_user)||', role: '||lower(current_role);
+    select * from test;
+    commit;
+    ---------------------------------------------------------------
+
+    connect '$(DSN)' user 'JUNIOR_MNGR' password '789' role 'FLD_FOR_JUNIORS_UPDATER';
+    select current_user, current_role from rdb$database;
+    update test set fld_for_seniors = 'updated by '||upper(current_user)||', role: '||upper(current_role);
+    select * from test;
+
+    update test set fld_for_juniors ='updated by '||lower(current_user)||', role: '||lower(current_role);
+    select * from test;
+    commit;
+    ---------------------------------------------------------------
+
+    connect '$(DSN)' user 'SYSDBA' password 'masterkey';
+    drop role FLD_FOR_SENIORS_UPDATER;
+    drop role FLD_FOR_JUNIORS_UPDATER;
+    drop user BIG_BROTHER;
+    drop user SENIOR_MNGR;
+    drop user JUNIOR_MNGR;
+    commit;
+  """,
+ 'expected_stdout':
+  """
+    /* Grant permissions for this database */
+    GRANT UPDATE (FLD_FOR_SENIORS) ON TEST TO USER BIG_BROTHER
+    GRANT UPDATE (FLD_FOR_JUNIORS) ON TEST TO ROLE FLD_FOR_JUNIORS_UPDATER
+    GRANT UPDATE (FLD_FOR_SENIORS) ON TEST TO ROLE FLD_FOR_SENIORS_UPDATER
+    GRANT SELECT ON TEST TO PUBLIC
+    GRANT FLD_FOR_JUNIORS_UPDATER TO JUNIOR_MNGR
+    GRANT FLD_FOR_SENIORS_UPDATER TO SENIOR_MNGR
+
+    USER                            BIG_BROTHER
+    ROLE                            NONE
+    FLD_FOR_SENIORS                 updated by BIG_BROTHER, role: NONE
+    FLD_FOR_JUNIORS                 created by sysdba
+    FLD_FOR_SENIORS                 updated by BIG_BROTHER, role: NONE
+    FLD_FOR_JUNIORS                 created by sysdba
+
+    USER                            SENIOR_MNGR
+    ROLE                            FLD_FOR_SENIORS_UPDATER
+    FLD_FOR_SENIORS                 updated by SENIOR_MNGR, role: FLD_FOR_SENIORS_UPDATER
+    FLD_FOR_JUNIORS                 created by sysdba
+    FLD_FOR_SENIORS                 updated by SENIOR_MNGR, role: FLD_FOR_SENIORS_UPDATER
+    FLD_FOR_JUNIORS                 created by sysdba
+
+    USER                            JUNIOR_MNGR
+    ROLE                            FLD_FOR_JUNIORS_UPDATER
+    FLD_FOR_SENIORS                 updated by SENIOR_MNGR, role: FLD_FOR_SENIORS_UPDATER
+    FLD_FOR_JUNIORS                 created by sysdba
+    FLD_FOR_SENIORS                 updated by SENIOR_MNGR, role: FLD_FOR_SENIORS_UPDATER
+    FLD_FOR_JUNIORS                 updated by junior_mngr, role: fld_for_juniors_updater
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 28000
+    no permission for UPDATE access to COLUMN TEST.FLD_FOR_JUNIORS
+
+    Statement failed, SQLSTATE = 28000
+    no permission for UPDATE access to COLUMN TEST.FLD_FOR_JUNIORS
+
+    Statement failed, SQLSTATE = 28000
+    no permission for UPDATE access to COLUMN TEST.FLD_FOR_SENIORS
+  """,
+  'substitutions':[
+     ('GRANT.*TMP.*',''),
+     ('-Effective user is.*', '')
+   ]
+}
+]
+}

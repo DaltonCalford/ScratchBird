@@ -1,0 +1,39 @@
+{
+'id': 'bugs.core_1774',
+'qmid': None,
+'tracker_id': 'CORE-1774',
+'title': 'Problem with COLLATE ES_ES_CI_AI',
+'description': '',
+'min_versions': '2.0.7',
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'database_character_set': 'ISO8859_1',
+ 'connection_character_set': 'ISO8859_1',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table table_a (
+        field_a varchar(100) character set iso8859_1 collate es_es_ci_ai
+    );
+    commit;
+    insert into table_a (field_a) values ('Hace buena noche');
+    insert into table_a (field_a) values ('Voy a hacer de comer');
+    insert into table_a (field_a) values ('The web is hacked');
+    commit;
+    
+    set list on;
+    select * from table_a where field_a like '%HACK%';
+  """,
+ 'expected_stdout': 
+  """
+    FIELD_A                         The web is hacked
+  """
+}
+]
+}

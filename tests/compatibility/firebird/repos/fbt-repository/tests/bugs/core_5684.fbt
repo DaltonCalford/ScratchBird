@@ -1,0 +1,37 @@
+{
+'id': 'bugs.core_5684',
+'qmid': None,
+'tracker_id': 'CORE-5684',
+'title': 'Error "no current record for fetch operation" is raised while deleting record from MON$ATTACHMENTS using ORDER BY clause',
+'description':
+ """
+    Checked on:
+        2.5.8.27088: OK, 1.344s.
+        3.0.3.32856: OK, 1.453s.
+        4.0.0.834: OK, 1.750s.
+ """,
+'min_versions': '2.5.8',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    commit; 
+    set count on;
+    delete from mon$attachments order by mon$attachment_id rows 1; 
+  """,
+ 'expected_stdout': 
+  """
+    Records affected: 1
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

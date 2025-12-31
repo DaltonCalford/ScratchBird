@@ -1,0 +1,181 @@
+{
+'id': 'bugs.core_5840',
+'qmid': None,
+'tracker_id': 'CORE-5840',
+'title': "Ignor of reference privilege",
+'description':
+ """
+   Checked on:
+        4.0.0.1000 SS
+        3.0.4.32985 SS
+ """,
+'min_versions': '3.0.4',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set wng off;
+
+    create or alter user tmp$c5840 password '123';
+    revoke all on all from tmp$c5840;
+    grant create table to tmp$c5840;
+    commit;
+
+    create table test1(
+        id int not null primary key using index test1_pk, 
+        pid int
+    );
+    commit;
+
+    create table test3(id int primary key, pid int, constraint test3_fk foreign key(pid) references test1(id) using index test3_fk);
+    commit;
+
+    connect '$(DSN)' user 'tmp$c5840' password '123';
+
+    -- this should FAIL, table must not be created at all:
+    create table test2(
+        id int primary key, 
+        pid int, 
+        constraint test2_fk foreign key(pid) references test1(id) using index test2_fk
+    );
+    commit;
+
+    --set echo on;
+    alter table test3 drop constraint test3_fk; -- this WAS allowed (error!)
+    commit;
+
+    alter table test1 add constraint test1_fk foreign key(pid) references test1(id) using index test1_fk;
+    commit;
+
+    alter table test1 drop constraint test1_fk; -- this was prohibited BEFORE this ticket; we only check this again here
+    commit;
+
+    set echo off;
+
+    set list on;
+    select rdb$relation_name from rdb$relations where rdb$system_flag is distinct from 1;
+    commit;
+
+    -- cleanup:
+    connect '$(DSN)' user 'SYSDBA' password 'masterkey'; -- mandatory!
+    drop user tmp$c5840;
+    commit;
+  """,
+  'expected_stdout':
+  """
+    RDB$RELATION_NAME               TEST1
+    RDB$RELATION_NAME               TEST3
+  """,
+  'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 28000
+    unsuccessful metadata update
+    -CREATE TABLE TEST2 failed
+    -no permission for REFERENCES access to TABLE TEST1
+
+    Statement failed, SQLSTATE = 28000
+    unsuccessful metadata update
+    -ALTER TABLE TEST3 failed
+    -no permission for ALTER access to TABLE TEST3
+
+    Statement failed, SQLSTATE = 28000
+    unsuccessful metadata update
+    -ALTER TABLE TEST1 failed
+    -no permission for ALTER access to TABLE TEST1
+
+    Statement failed, SQLSTATE = 28000
+    unsuccessful metadata update
+    -ALTER TABLE TEST1 failed
+    -no permission for ALTER access to TABLE TEST1
+  """
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set wng off;
+
+    create or alter user tmp$c5840 password '123';
+    revoke all on all from tmp$c5840;
+    grant create table to tmp$c5840;
+    commit;
+
+    create table test1(
+        id int not null primary key using index test1_pk, 
+        pid int
+    );
+    commit;
+
+    create table test3(id int primary key, pid int, constraint test3_fk foreign key(pid) references test1(id) using index test3_fk);
+    commit;
+
+    connect '$(DSN)' user 'tmp$c5840' password '123';
+
+    -- this should FAIL, table must not be created at all:
+    create table test2(
+        id int primary key, 
+        pid int, 
+        constraint test2_fk foreign key(pid) references test1(id) using index test2_fk
+    );
+    commit;
+
+    --set echo on;
+    alter table test3 drop constraint test3_fk; -- this WAS allowed (error!)
+    commit;
+
+    alter table test1 add constraint test1_fk foreign key(pid) references test1(id) using index test1_fk;
+    commit;
+
+    alter table test1 drop constraint test1_fk; -- this was prohibited BEFORE this ticket; we only check this again here
+    commit;
+
+    set echo off;
+
+    set list on;
+    select rdb$relation_name from rdb$relations where rdb$system_flag is distinct from 1;
+    commit;
+
+    -- cleanup:
+    connect '$(DSN)' user 'SYSDBA' password 'masterkey'; -- mandatory!
+    drop user tmp$c5840;
+    commit;
+  """,
+  'expected_stdout':
+  """
+    RDB$RELATION_NAME               TEST1
+    RDB$RELATION_NAME               TEST3
+  """,
+  'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 28000
+    unsuccessful metadata update
+    -CREATE TABLE TEST2 failed
+    -no permission for REFERENCES access to TABLE TEST1
+    -Effective user is TMP$C5840
+
+    Statement failed, SQLSTATE = 28000
+    unsuccessful metadata update
+    -ALTER TABLE TEST3 failed
+    -no permission for ALTER access to TABLE TEST3
+    -Effective user is TMP$C5840
+
+    Statement failed, SQLSTATE = 28000
+    unsuccessful metadata update
+    -ALTER TABLE TEST1 failed
+    -no permission for ALTER access to TABLE TEST1
+    -Effective user is TMP$C5840
+
+    Statement failed, SQLSTATE = 28000
+    unsuccessful metadata update
+    -ALTER TABLE TEST1 failed
+    -no permission for ALTER access to TABLE TEST1
+    -Effective user is TMP$C5840
+  """
+}
+]
+}

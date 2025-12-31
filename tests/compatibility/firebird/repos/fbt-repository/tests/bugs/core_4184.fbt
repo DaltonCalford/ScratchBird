@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_4184',
+'qmid': None,
+'tracker_id': 'CORE-4184',
+'title': 'Executing empty EXECUTE BLOCK with NotNull output parameter raised error',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    execute block
+    returns (id integer not null)
+    as
+    begin
+    end;
+    -- Output in 2.5.0 ... 2.5.4:
+    --          ID
+    --============
+    --Statement failed, SQLSTATE = 42000
+    --validation error for variable ID, value "*** null ***"
+  """,
+ 'expected_stdout': 
+  """
+  """
+}
+]
+}

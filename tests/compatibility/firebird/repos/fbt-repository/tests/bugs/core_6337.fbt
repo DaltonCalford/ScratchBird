@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_6337',
+'qmid': None,
+'tracker_id': 'CORE-6337',
+'title': "SubType information is lost when calculating arithmetic expressions",
+'description':
+ """
+    Confirmed bug on 4.0.0.2035.
+    Checked on 4.0.0.2068 - works fine.
+    25.06.2020, 4.0.0.2076: changed types in SQLDA from numeric to int128 // after discuss with Alex about CORE-6342.
+ """,
+'min_versions': '4.0.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set sqlda_display on;
+    set list on;
+    select cast(1 as numeric(18,2)) * cast(1 as numeric(18,2)) from rdb$database;
+  """,
+ 'expected_stdout':
+  """
+    01: sqltype: 32752 INT128 scale: -4 subtype: 1 len: 16
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[ ('^((?!sqltype).)*$',''), ('[ \t]+',' ') ]
+}
+]
+}

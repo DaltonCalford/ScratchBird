@@ -1,0 +1,192 @@
+{
+'id': 'bugs.core_4318',
+'qmid': None,
+'tracker_id': 'CORE-4318',
+'title': 'Regression: Predicates involving PSQL variables/parameters are not pushed inside the aggregation',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    recreate table t2 (
+      id integer not null,
+      t1_id integer
+    );
+    commit;
+    
+    recreate table t1 (
+      id integer not null
+    );
+    commit;
+    
+    set term ^;
+    
+    execute block
+    as
+    declare variable i integer = 0;
+    begin
+      while (i < 1000) do begin
+        i = i + 1;
+    
+        insert into t2(id, t1_id) values(:i, mod(:i, 10));
+    
+        merge into t1 using (
+          select mod(:i, 10) as f from rdb$database
+        ) src on t1.id = src.f
+        when not matched then
+           insert (id) values(src.f);
+    
+      end -- while (i < 1000) do begin
+    
+    end^
+    set term ;^
+    commit;
+    
+    alter table t1 add constraint pk_t1 primary key (id);
+    alter table t2 add constraint pk_t2 primary key (id);
+    alter table t2 add constraint fk_t2_ref_t1 foreign key (t1_id) references t1(id);
+    commit;
+  """,
+ 'test_script':
+  """
+    set explain on;
+    set planonly;
+    
+    set term ^;
+    execute block
+    returns (
+      s integer
+    )
+    as
+    declare variable v integer = 1;
+    begin
+      with t as (
+        select t1_id as t1_id, sum(id) as s
+        from t2
+        group by 1
+      )
+      select s
+      from t
+      where t1_id = :v
+      into :s;
+    
+      suspend;
+    end
+    ^
+    set term ;^
+    -- In 3.0.0.30837 plan was:
+    -- Select Expression
+    --    -> Singularity Check
+    --        -> Filter
+    --            -> Aggregate
+    --                -> Table "T T2" Access By ID
+    --                    -> Index "FK_T2_REF_T1" Scan 
+    -- (i.e. there was NO "Filter" between "Aggregate" and "Table "T T2" Access By ID")
+  """,
+ 'expected_stdout': 
+  """
+    Select Expression
+        -> Singularity Check
+            -> Filter
+                -> Aggregate
+                    -> Filter
+                        -> Table "T2" as "T T2" Access By ID
+                            -> Index "FK_T2_REF_T1" Range Scan (full match)
+  """
+}
+
+, # ---------------------------- 5.x, since 5.0.0.905 -------------------------------
+
+{
+ 'firebird_version': '5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    recreate table t2 (
+      id integer not null,
+      t1_id integer
+    );
+    commit;
+    
+    recreate table t1 (
+      id integer not null
+    );
+    commit;
+    
+    set term ^;
+    
+    execute block
+    as
+    declare variable i integer = 0;
+    begin
+      while (i < 1000) do begin
+        i = i + 1;
+    
+        insert into t2(id, t1_id) values(:i, mod(:i, 10));
+    
+        merge into t1 using (
+          select mod(:i, 10) as f from rdb$database
+        ) src on t1.id = src.f
+        when not matched then
+           insert (id) values(src.f);
+    
+      end -- while (i < 1000) do begin
+    
+    end^
+    set term ;^
+    commit;
+    
+    alter table t1 add constraint pk_t1 primary key (id);
+    alter table t2 add constraint pk_t2 primary key (id);
+    alter table t2 add constraint fk_t2_ref_t1 foreign key (t1_id) references t1(id);
+    commit;
+  """,
+ 'test_script':
+  """
+    set explain on;
+    set planonly;
+    
+    set term ^;
+    execute block
+    returns (
+      s integer
+    )
+    as
+    declare variable v integer = 1;
+    begin
+      with t as (
+        select t1_id as t1_id, sum(id) as s
+        from t2
+        group by 1
+      )
+      select s
+      from t
+      where t1_id = :v
+      into :s;
+    
+      suspend;
+    end
+    ^
+    set term ;^
+  """,
+ 'expected_stdout': 
+  """
+    Select Expression (line 1115, column 2227)
+        -> Singularity Check
+            -> Filter
+                -> Aggregate
+                    -> Filter
+                        -> Table "T2" as "T T2" Access By ID
+                            -> Index "FK_T2_REF_T1" Range Scan (full match)
+
+  """,
+  'substitutions': [('line(:)? \d+, col(umn)?(:)? \d+', '')]
+}
+
+]
+}

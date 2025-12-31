@@ -1,0 +1,61 @@
+{
+'id': 'bugs.core_6034',
+'qmid': None,
+'tracker_id': 'CORE-6034',
+'title': "The original time zone should be set to the current time zone at routine invocation",
+'description':
+ """
+    Confirmed bug on 4.0.0.1457: FAILED.
+    Checked on 4.0.0.1479: OK, 1.377s.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set term ^;
+    execute block returns (ts1 varchar(100), ts2 varchar(100))
+    as
+        declare procedure p0 returns (t1 timestamp with time zone, t2 timestamp with time zone) as
+        begin
+            set time zone 'America/New_York';
+            t1 = current_timestamp;
+            set time zone local;
+            t2 = current_timestamp;
+        end
+
+        declare procedure p1 returns (t1 timestamp with time zone, t2 timestamp with time zone) as
+        begin
+            set time zone 'America/Los_Angeles';
+            execute procedure p0 returning_values t1, t2;
+        end
+        declare t1 timestamp with time zone;
+        declare t2 timestamp with time zone;
+    begin
+        -- Initial time zone: 'America/Sao_Paulo';
+        execute procedure p1 returning_values t1, t2;
+        ts1 = substring( cast(t1 as varchar(100)) from 26 );
+        ts2 = substring( cast(t2 as varchar(100)) from 26 );
+        suspend;
+    end
+    ^
+    set term ;^
+  """,
+ 'expected_stdout': 
+  """
+    TS1                             America/New_York
+    TS2                             America/Los_Angeles
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

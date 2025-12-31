@@ -1,0 +1,6 @@
+{
+ 'id': 'dotname',
+ 'kind': 'user',
+ 'user_name': 'john.smith',
+ 'user_password': 'john'
+}

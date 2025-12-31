@@ -1,0 +1,23 @@
+{
+'id': 'functional.intfunc.math.power_01',
+'qmid': 'functional.intfunc.math.power_01',
+'tracker_id': '',
+'title': 'test for POWER  function',
+'description': """ POWER( <number>, <number> )
+
+ POWER(X, Y) returns X to the power of Y.
+""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """ select power(2, 3) from rdb$database;
+
+""",
+ 'expected_stdout': """                        POWER
+      =======================
+            8.000000000000000"""
+}
+]
+}

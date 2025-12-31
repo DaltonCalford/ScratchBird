@@ -1,0 +1,24 @@
+{
+'id': 'bugs.core_1371',
+'qmid': 'bugs.core_1371',
+'tracker_id': 'CORE-1371',
+'title': 'Execute block fails within execute statement',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.0.2',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """set term ^;
+create procedure P
+as
+begin
+  execute statement 'execute block as begin end';
+end ^
+
+set term ;^
+commit;
+"""
+}
+]
+}

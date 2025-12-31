@@ -1,0 +1,62 @@
+{
+'id': 'bugs.core_5853',
+'qmid': None,
+'tracker_id': 'CORE-5853',
+'title': "Forward-compatible expressions LOCALTIME and LOCALTIMESTAMP",
+'description':
+ """
+    2.5.9.27115: OK, 0.375s.
+    3.0.4.33019: OK, 0.937s.
+    ::: NOTE :::
+    Test for 4.0 currently is EXCLUDED because changes not yet merged in master.
+ """,
+'min_versions': '2.5.9',
+'versions': [
+{
+ 'firebird_version': '2.5.9',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set planonly;
+    select current_time, current_timestamp from rdb$database;
+    select localtime from rdb$database;
+    select localtimestamp from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN (RDB$DATABASE NATURAL)
+    PLAN (RDB$DATABASE NATURAL)
+    PLAN (RDB$DATABASE NATURAL)
+  """,
+ 'expected_stderr': 
+  """
+  """
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set planonly;
+    select current_time, current_timestamp from rdb$database;
+    --select localtime from rdb$database;
+    --select localtimestamp from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN (RDB$DATABASE NATURAL)
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -1,0 +1,396 @@
+{
+'id': 'bugs.core_0908',
+'qmid': 'bugs.core_908',
+'tracker_id': 'CORE-908',
+'title': 'Garbage in plan output of complex statement',
+'description': """This is unfortunate case. The fix for 2.1 went through several "adjustments" and we've get lost in changes. The result is that this was not properly fixed in 2.1 line (server doesn't crash, but don't returns the truncated plan as supposed either). Now when 2.1 line is at 2.1.3 we can hope for proper fix in 2.1.4. It should work as intended in 2.5 line.""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """set term ^;
+
+create procedure big_plan
+  returns (x integer)
+as
+begin
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+/*  select 1 from rdb$relations into :x; */
+  suspend;
+end ^
+set term ;^
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """set plan on;
+select * from big_plan ;
+""",
+ 'expected_stdout': """PLAN (RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE
+
+           X
+============
+           1
+
+"""
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': """set term ^;
+
+create procedure big_plan
+  returns (x integer)
+as
+begin
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+/*  select 1 from rdb$relations into :x; */
+  suspend;
+end ^
+set term ;^
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """set plan on;
+select * from big_plan ;
+""",
+ 'expected_stdout': """
+PLAN (RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)(RDB$DATABASE NATURAL)
+
+           X
+============
+           1
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """set term ^;
+
+create procedure big_plan
+  returns (x integer)
+as
+begin
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+  select 1 from rdb$database into :x;
+/*  select 1 from rdb$relations into :x; */
+  suspend;
+end ^
+set term ;^
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """set plan on;
+select * from big_plan ;
+""",
+ 'expected_stdout': """PLAN (BIG_PLAN NATURAL)
+X
+============
+1
+"""
+}
+]
+}

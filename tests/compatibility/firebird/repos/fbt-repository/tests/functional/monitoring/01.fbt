@@ -1,0 +1,23 @@
+{
+'id': 'functional.monitoring.01',
+'qmid': 'functional.monitoring.monitoring_01',
+'tracker_id': '',
+'title': 'Get isolation level of the current transaction',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT MON$ISOLATION_MODE
+        FROM MON$TRANSACTIONS
+        WHERE MON$TRANSACTION_ID = CURRENT_TRANSACTION;""",
+ 'expected_stdout': """
+MON$ISOLATION_MODE
+==================
+                 1
+
+"""
+}
+]
+}

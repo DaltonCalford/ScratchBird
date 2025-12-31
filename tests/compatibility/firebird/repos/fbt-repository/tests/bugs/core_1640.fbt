@@ -1,0 +1,68 @@
+{
+'id': 'bugs.core_1640',
+'qmid': None,
+'tracker_id': 'CORE-1640',
+'title': 'Create or Alter view',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """create table users (
+    id integer,
+    name varchar(20),
+    passwd varchar(20)
+);
+
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """create or alter view v_users as
+    select name from users;
+commit;
+show view v_users;
+create or alter view v_users (id, name, passwd ) as
+    select id, name, passwd  from users;
+commit;
+show view v_users;
+create or alter view v_users_name as
+    select name from v_users;
+commit;
+create or alter view v_users (id, name ) as
+    select id, name from users;
+commit;
+show view v_users;
+show view v_users_name;
+
+
+""",
+ 'expected_stdout': """Database:  localhost:C:\fbtest2\tmp\bugs.core_1640.fdb, User: SYSDBA
+SQL> CON> SQL> SQL> NAME                            VARCHAR(20) Nullable
+View Source:
+==== ======
+
+    select name from users
+SQL> CON> SQL> SQL> ID                              INTEGER Nullable
+NAME                            VARCHAR(20) Nullable
+PASSWD                          VARCHAR(20) Nullable
+View Source:
+==== ======
+
+    select id, name, passwd  from users
+SQL> CON> SQL> SQL> CON> SQL> SQL> ID                              INTEGER Nullable
+NAME                            VARCHAR(20) Nullable
+View Source:
+==== ======
+
+    select id, name from users
+SQL> NAME                            VARCHAR(20) Nullable
+View Source:
+==== ======
+
+    select name from v_users
+SQL> SQL> SQL>"""
+}
+]
+}

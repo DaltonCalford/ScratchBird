@@ -1,0 +1,72 @@
+{
+'id': 'functional.view.create.08',
+'qmid': 'functional.view.create.create_view_08',
+'tracker_id': '',
+'title': 'CREATE VIEW - updateable WITH CHECK OPTION',
+'description': """CREATE VIEW - updateable WITH CHECK OPTION
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE tb(id INT);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE VIEW test (id) AS SELECT id FROM tb WHERE id<10 WITH CHECK OPTION;
+INSERT INTO test VALUES(10);""",
+ 'expected_stderr': """Statement failed, SQLCODE = -297
+
+Operation violates CHECK constraint  on view or table TEST
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE tb(id INT);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE VIEW test (id) AS SELECT id FROM tb WHERE id<10 WITH CHECK OPTION;
+INSERT INTO test VALUES(10);""",
+ 'expected_stderr': """Statement failed, SQLCODE = -297
+
+Operation violates CHECK constraint  on view or table TEST
+-At trigger 'CHECK_2'
+""",
+ 'substitutions': [('-At trigger.*','')]
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE tb(id INT);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE VIEW test (id) AS SELECT id FROM tb WHERE id<10 WITH CHECK OPTION;
+INSERT INTO test VALUES(10);""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 23000
+
+Operation violates CHECK constraint  on view or table TEST
+-At trigger 'CHECK_2'
+""",
+ 'substitutions': [('-At trigger.*','')]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE tb(id INT);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE VIEW test (id) AS SELECT id FROM tb WHERE id<10 WITH CHECK OPTION;
+INSERT INTO test VALUES(10);""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 23000
+Operation violates CHECK constraint  on view or table TEST
+-At trigger 'CHECK_1'
+""",
+ 'substitutions': [('-At trigger.*','')]
+}
+]
+}

@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_1255',
+'qmid': 'bugs.core_1255',
+'tracker_id': 'CORE-1255',
+'title': 'String truncation error when concatenating _UTF8 string onto extract(year result',
+'description': """The query
+
+SELECT ((EXTRACT(YEAR FROM CAST('2007-01-01' AS DATE)) || _UTF8'')) col FROM rdb$database GROUP BY 1;
+
+Produces the error
+Statement failed, SQLCODE = -802
+arithmetic exception, numeric overflow, or string truncation""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT ((EXTRACT(YEAR FROM CAST('2007-01-01' AS DATE)) || _UTF8'')) col FROM rdb$database GROUP BY 1;
+""",
+ 'expected_stdout': """COL
+========================
+2007
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT ((EXTRACT(YEAR FROM CAST('2007-01-01' AS DATE)) || _UTF8'')) col FROM rdb$database GROUP BY 1;
+""",
+ 'expected_stdout': """COL
+======
+2007
+
+"""
+}
+]
+}

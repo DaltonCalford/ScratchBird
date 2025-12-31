@@ -1,0 +1,29 @@
+{
+'id': 'functional.domain.create.19',
+'qmid': 'functional.domain.create.create_domain_19',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - VARCHAR - ARRAY',
+'description': 'Array domain creation based on VARCHAR datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test VARCHAR(32765)[40000];
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            ARRAY OF [1:40000]
+                                VARCHAR(32765) Nullable
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test VARCHAR(32765)[40000];
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            ARRAY OF [40000]
+                                VARCHAR(32765) Nullable
+"""
+}
+]
+}

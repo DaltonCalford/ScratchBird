@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_3310',
+'qmid': None,
+'tracker_id': 'CORE-3310',
+'title': 'RDB$GET_CONTEXT and between in view',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'employee-ods12.fbk',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create or alter view v_test
+    as
+    select s.po_number
+    from sales s
+    where 
+      cast(coalesce(rdb$get_context('USER_SESSION', 'SELECTED_DATE'), '12.12.1993') as timestamp) 
+      between 
+      s.order_date and s.date_needed
+    ;
+    set list on;
+    select * from v_test v order by v.po_number rows 1;
+  """,
+ 'expected_stdout': 
+  """
+    PO_NUMBER                       V9320630
+  """
+}
+]
+}

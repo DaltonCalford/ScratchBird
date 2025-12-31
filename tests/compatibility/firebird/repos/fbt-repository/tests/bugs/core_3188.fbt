@@ -1,0 +1,172 @@
+{
+'id': 'bugs.core_3188',
+'qmid': None,
+'tracker_id': 'CORE-3188',
+'title': 'page 0 is of wrong type (expected 6, found 1)',
+'description': 
+ """
+    Confirmed on WI-V2.5.0.26074
+      exception:
+      DatabaseError:
+      Error while commiting transaction:
+      - SQLCODE: -902
+      - database file appears corrupt (...)
+      - wrong page type
+      - page 0 is of wrong type (expected 6, found 1)
+      -902
+      335544335
+
+    REFACTORED 24-mar-2022.
+    We must check diff-file of firebird.log for the presence of only those phrases that
+    indicate *real* problem (AV/crash/bugcheck/corruption) -- see var. problem_pattern.
+    Any other messages, e.g. "DEBUG_...:" must be ignored.
+    Checked on:
+        50sS, build 5.0.0.437 : 2.811s.
+        50Cs, build 5.0.0.426 : 1.837s.
+        40sS, build 4.0.1.2731 : 1.850s.
+        40Cs, build 4.0.2.2737 : 3.138s.
+        30sS, build 3.0.8.33535 : 1.495s.
+        30sC, build 3.0.4.33054 : 1.501s.
+
+ """,
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import re
+import difflib
+import time
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+engine = str(db_conn.engine_version)
+#db_cur = db_conn.cursor()
+#db_cur.execute('select mon$server_pid from mon$attachments where mon$attachment_id = %d' % db_conn.attachment_id )
+#srv_pid_init = db_cur.fetchone()[0]
+#db_cur.close()
+db_conn.close()
+
+#---------------------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb'):
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if os.path.isfile( f_names_list[i]):
+            os.remove( f_names_list[i] )
+            if os.path.isfile( f_names_list[i]):
+                print('ERROR: can not remove file ' + f_names_list[i])
+
+#--------------------------------------------
+
+def svc_get_fb_log( engine, f_fb_log ):
+
+  import subprocess
+
+  # ::: NB ::: Service call for receive firebird.log works properly only since FB 2.5.2!
+
+  if engine.startswith('2.5'):
+      get_firebird_log_key='action_get_ib_log'
+  else:
+      get_firebird_log_key='action_get_fb_log'
+
+  subprocess.call([ context['fbsvcmgr_path']
+                    ,"localhost:service_mgr"
+                    ,"user", "SYSDBA","password", "masterkey" # need in old FB 2.5.x, even when ISC_* exist!
+                    ,get_firebird_log_key
+                  ],
+                  stdout=f_fb_log, stderr=subprocess.STDOUT
+                 )
+  return
+
+#--------------------------------------------
+
+
+# Start two attachments:
+con1 = fdb.connect(dsn=dsn)
+con2 = fdb.connect(dsn=dsn)
+
+# Session-1:
+c1 = con1.cursor()
+
+
+f_fblog_before=open( os.path.join(context['temp_directory'],'tmp_3188_fblog_before.txt'), 'w')
+svc_get_fb_log( engine, f_fblog_before )
+flush_and_close( f_fblog_before )
+
+c1.execute("create table test(id int primary key)")
+con1.commit()
+
+# Session-2:
+
+c2 = con2.cursor()
+c2.execute('drop table test')
+con2.commit()
+
+con1.close()
+con2.close()
+
+f_fblog_after=open( os.path.join(context['temp_directory'],'tmp_3188_fblog_after.txt'), 'w')
+svc_get_fb_log( engine, f_fblog_after )
+flush_and_close( f_fblog_after )
+
+# Now we can compare two versions of firebird.log and check their difference.
+
+oldfb=open(f_fblog_before.name, 'r')
+newfb=open(f_fblog_after.name, 'r')
+
+difftext = ''.join(difflib.unified_diff(
+    oldfb.readlines(), 
+    newfb.readlines()
+  ))
+oldfb.close()
+newfb.close()
+
+f_diff_txt=open( os.path.join(context['temp_directory'],'tmp_3188_diff.txt'), 'w')
+f_diff_txt.write(difftext)
+flush_and_close( f_diff_txt )
+
+problem_pattern = re.compile( '(Shutting down the server with \d+ active connection)|(Access violation)|(terminated abnormally)|(bugcheck)|(appears corrupt)|(invalid request BLR)|(compile_request failed)|(consistency check)' )
+
+# Difference of firebird.log should NOT contain text which matches to problem_patterns:
+with open( f_diff_txt.name,'r') as f:
+    for line in f:
+        if line.strip() and problem_pattern.search(line):
+            print('UNEXPECTED MESSAGE IN FIREBIRD.LOG: ' + line.strip())
+
+
+###############################
+# Cleanup.
+cleanup( [i.name for i in (f_fblog_before, f_fblog_after, f_diff_txt)] )
+
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}
+

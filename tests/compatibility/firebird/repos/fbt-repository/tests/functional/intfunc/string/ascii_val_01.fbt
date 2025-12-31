@@ -1,0 +1,74 @@
+{
+'id': 'functional.intfunc.string.ascii_val_01',
+'qmid': 'functional.intfunc.string.ascii_val_01',
+'tracker_id': '',
+'title': 'New Built-in Functions, Firebird 2.1 : ASCII_VAL( <string> )',
+'description': """test of ASCII_VAL
+
+Returns the ASCII code of the first character of the specified string.
+
+   1.
+
+      Returns 0 if the string is empty
+   2.
+
+      Throws an error if the first character is multi-byte
+
+""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'Python',
+ 'test_script': """c = db_conn.cursor()
+try:
+  c.execute("select ascii_val( 'A' ) from rdb$database")
+  print (c.fetchall())
+except Exception,e:
+  print ("Test Failed for ascii_val( 'A' )")
+  print (e)
+else:
+  pass
+try:
+  c.execute("select ascii_val( 'Ã' ) from rdb$database")
+  print (c.fetchall())
+except:
+  pass
+else:
+  print ("Test Failed for ascii_val( 'Ã' )")
+try:
+  c.execute("select ascii_val(cast('A' as BLOB)) from rdb$database")
+  print (c.fetchall())
+except Exception,e:
+  print ("Test Failed for ascii_val(CAST('A' AS BLOB))")
+  print (e)
+else:
+  pass
+try:
+  c.execute("select ascii_val(NULL) from rdb$database")
+  print (c.fetchall())
+except Exception,e:
+  print ("Test Failed for ascii_val(NULL)")
+  print (e)
+else:
+  pass
+try:
+  c.execute("select ascii_val('') from rdb$database")
+  print (c.fetchall())
+except Exception,e:
+  print ("Test Failed for ascii_val('')")
+  print (e)
+else:
+  pass
+""",
+ 'expected_stdout': """[(65,)]
+[(65,)]
+[(None,)]
+[(0,)]
+"""
+}
+]
+}

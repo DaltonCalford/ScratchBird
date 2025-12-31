@@ -1,0 +1,76 @@
+{
+'id': 'bugs.core_2300',
+'qmid': None,
+'tracker_id': 'CORE-2300',
+'title': 'Unexpected error "arithmetic exception, numeric overflow, or string truncation" while evaluating SUBSTRING the second time',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """set term ^ ;
+create procedure p
+  returns ( res varchar(10) )
+as begin
+  res = null;
+  suspend;
+  res = '0123456789';
+  suspend;
+end ^
+set term ; ^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """select substring(res from 1 for 5) from p order by 1; -- success
+select substring(res from 1 for 5) from p order by 1; -- error
+""",
+ 'expected_stdout': """
+SUBSTRING
+==========
+<null>
+01234
+
+
+SUBSTRING
+==========
+<null>
+01234
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """set term ^ ;
+create procedure p
+  returns ( res varchar(10) )
+as begin
+  res = null;
+  suspend;
+  res = '0123456789';
+  suspend;
+end ^
+set term ; ^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """select substring(res from 1 for 5) from p order by 1; -- success
+select substring(res from 1 for 5) from p order by 1; -- error
+""",
+ 'expected_stdout': """
+SUBSTRING
+=========
+<null>
+01234
+
+
+SUBSTRING
+=========
+<null>
+01234
+
+"""
+}
+]
+}

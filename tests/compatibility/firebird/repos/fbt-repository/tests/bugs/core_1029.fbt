@@ -1,0 +1,49 @@
+{
+'id': 'bugs.core_1029',
+'qmid': 'bugs.core_1029',
+'tracker_id': 'CORE-1029',
+'title': 'Bad plan in outer joins with IS NULL clauses (dependent on order of predicates)',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.0.1',
+ 'platform': 'All',
+ 'init_script': """create table tb1 (id int, col int) ;
+create index tbi1 on tb1 (id) ;
+create index tbi2 on tb1 (col) ;
+
+insert into tb1 values (1, 1) ;
+insert into tb1 values (2, 2) ;
+insert into tb1 values (1, null) ;
+
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """set plan on;
+
+select * from tb1 a
+  left join tb1 b on a.id = b.id
+  where a.col is null and a.col+0 is null;
+
+select * from tb1 a
+  left join tb1 b on a.id = b.id
+  where a.col+0 is null and a.col is null;
+""",
+ 'expected_stdout': """PLAN JOIN (A INDEX (TBI2), B INDEX (TBI1))
+
+          ID          COL           ID          COL
+============ ============ ============ ============
+           1       <null>            1            1
+           1       <null>            1       <null>
+
+PLAN JOIN (A INDEX (TBI2), B INDEX (TBI1))
+
+          ID          COL           ID          COL
+============ ============ ============ ============
+           1       <null>            1            1
+           1       <null>            1       <null>
+
+"""
+}
+]
+}

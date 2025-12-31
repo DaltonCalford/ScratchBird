@@ -1,0 +1,67 @@
+{
+'id': 'bugs.core_4233',
+'qmid': None,
+'tracker_id': 'CORE-4233',
+'title': 'In PSQL modules with declared cursors engine could assign value to the wrong variable',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5.3',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+    set term ^;
+    create or alter procedure hidden_vars
+      returns (out_a int, out_b1 int, out_b2 int)
+    as
+    declare a int;
+    declare c cursor for
+      (select 
+          coalesce( (select count(*) from rdb$relations), -1) 
+          -- Aliasing of expression results in derived tables is mandatory in 3.0
+          -- otherwise get error about metadata updating:
+          -- -no column name specified for column number 1 in derived table 
+          -- <missing arg #2 - possibly status vector overflow>
+          as tabs_cnt -- <<<<<<<<<<<<<<< nb <<<<<<<<<<<
+          from rdb$database
+      );
+    declare b int = 0;
+    begin
+      out_b1 = b;
+    
+      open c;
+      fetch c into :a;
+      close c;
+    
+      out_a = a;
+      out_b2 = b;
+      b = b + 1;
+      suspend;
+    end ^
+    set term ; ^
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    select out_b1, out_b2 from hidden_vars;
+    select out_b1, out_b2 from hidden_vars;
+    select out_b1, out_b2 from hidden_vars;
+  """,
+ 'expected_stdout': 
+  """      OUT_B1       OUT_B2
+============ ============
+           0            0
+      OUT_B1       OUT_B2
+============ ============
+           0            0
+      OUT_B1       OUT_B2
+============ ============
+           0            0
+  """,
+  'substitutions': [('=.*','')]
+}
+]
+}

@@ -1,0 +1,48 @@
+{
+'id': 'bugs.core_5957',
+'qmid': None,
+'tracker_id': 'CORE-5957',
+'title': 'Bug in SIMILAR TO when adding numeric quantifier as bound for repetetion of expression leads to empty resultset',
+'description':
+ """
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set heading off;
+    set count on;
+    select 1 from rdb$database where 'SLEEP' similar to '(DELAY|SLEEP|PAUSE){1}'; -- 2.5 fails here
+    select 2 from rdb$database where 'SLEEP' similar to '(DELAY|SLEEP|PAUSE){1,}';  -- 2.5 fails here
+    select 3 from rdb$database where 'SLEEP' similar to '(DELAY|SLEEP|PAUSE)+'; 
+    select 4 from rdb$database where 'SLEEP' similar to '(DELAY|SLEEP|PAUSE)*'; 
+  """,
+ 'expected_stdout': 
+  """
+    1
+    Records affected: 1
+
+    2
+    Records affected: 1
+
+    3
+    Records affected: 1
+
+    4
+    Records affected: 1
+
+  """,
+ 'expected_stderr': 
+  """
+  """
+
+}
+]
+}

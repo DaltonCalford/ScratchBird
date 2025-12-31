@@ -1,0 +1,56 @@
+{
+'id': 'bugs.core_3754',
+'qmid': None,
+'tracker_id': 'CORE-3754',
+'title': 'SIMILAR TO works wrongly',
+'description': 'See also: sql.ru/forum/actualutils.aspx?action=gotomsg&tid=1026749&msg=14380584',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    recreate table test_a(id integer, cnt integer);
+    commit;
+  """,
+ 'test_script': 
+  """
+    set heading off;
+    select iif( '1' similar to '(1|2){0,}', 1, 0)as result from rdb$database
+    union all
+    select iif( '1' similar to '(1|2){0,1}', 1, 0)from rdb$database
+    union all
+    select iif( '1' similar to '(1|2){1}', 1, 0)from rdb$database
+    union all
+    select iif( '123' similar to '(1|12[3]?){1}', 1, 0)from rdb$database
+    union all
+    select iif( '123' similar to '(1|12[3]?)+', 1, 0) from rdb$database
+    union all
+    select iif( 'qwertyqwertyqwe' similar to '(%qwe%){2,}', 1, 0) from rdb$database
+    union all
+    select iif( 'qwertyqwertyqwe' similar to '(%(qwe)%){2,}', 1, 0) from rdb$database
+    union all
+    select iif( 'qqqqqqqqqqqqqqq' similar to '(%q%){2,}', 1, 0) from rdb$database
+    ;
+    -- BTW: result in WI-T3.0.0.31681 matches to Postgress 9.3, checked 24.02.2015
+  """,
+ 'expected_stdout': 
+  """
+    1 
+    1 
+    1 
+    1 
+    1 
+    1 
+    1 
+    1 
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

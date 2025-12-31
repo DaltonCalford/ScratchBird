@@ -1,0 +1,54 @@
+{
+'id': 'bugs.core_2317',
+'qmid': None,
+'tracker_id': 'CORE-2317',
+'title': 'select * from (select cast(.... returns null',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script':
+  """
+	CREATE TABLE PROC(
+	  PROC Char(10) NOT NULL,
+	  TPRO Char(10) NOT NULL,
+	  ACTO Varchar(200) NOT NULL,
+	  CONSTRAINT PROC_PK PRIMARY KEY (PROC)
+	);
+
+	CREATE TABLE TPRO(
+	  TPRO Char(10) NOT NULL,
+	  CONSTRAINT TPRO_PK PRIMARY KEY (TPRO)
+	);
+
+	CREATE VIEW PROC1 (PROC, ACTO)
+	AS SELECT "PROC"."PROC","PROC"."ACTO" FROM "PROC" left outer join "TPRO" on "PROC"."TPRO"="TPRO"."TPRO";
+
+	insert into proc values ('1R1oK3qxdM', '1', '2');
+	insert into tpro values ('1');
+	commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+ """
+	set list on;
+	-- returns NULL
+	select * from (select cast("ACTO" as character(100)) as "D_COL1" from "PROC1" where "PROC"='1R1oK3qxdM') AA;
+	-- returns the correct value
+	select * from (select cast("ACTO" as character(100)) as "D_COL1" from "PROC" where "PROC"='1R1oK3qxdM') AA;
+	select * from (select "ACTO" as "D_COL1" from "PROC1" where "PROC"='1R1oK3qxdM') AA;
+  """,
+ 'expected_stdout':
+  """
+	D_COL1                          2
+	D_COL1                          2
+	D_COL1                          2  
+  """,
+  'substitutions':[
+    ('[ \t]+', ' '),
+  ]
+}
+]
+}

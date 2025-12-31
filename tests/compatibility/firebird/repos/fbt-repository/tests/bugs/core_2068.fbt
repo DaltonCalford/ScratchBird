@@ -1,0 +1,50 @@
+{
+'id': 'bugs.core_2068',
+'qmid': None,
+'tracker_id': 'CORE-2068',
+'title': 'Comparision with IN and subquery with RDB$DB_KEY returns wrong result',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table t1 (n integer);
+
+insert into t1 values (1);
+insert into t1 values (2);
+insert into t1 values (3);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select a.*
+ from t1 a
+ where a.rdb$db_key = (
+ select b.rdb$db_key
+ from t1 b
+ where n = 1
+);
+
+select a.*
+ from t1 a
+ where a.rdb$db_key in (
+ select b.rdb$db_key
+ from t1 b
+ where n = 1
+);
+""",
+ 'expected_stdout': """
+           N
+============
+           1
+
+
+           N
+============
+           1
+
+"""
+}
+]
+}

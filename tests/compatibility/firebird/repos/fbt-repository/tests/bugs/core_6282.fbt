@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_6282',
+'qmid': None,
+'tracker_id': 'CORE-6282',
+'title': 'Change type of MON$ATTACHMENTS.MON$IDLE_TIMER and MON$STATEMENTS.MON$STATEMENT_TIMER to TIMESTAMP WITH TIME ZONE',
+'description':
+ """
+    Checked on 4.0.0.1881.
+ """,
+'versions': [
+{
+ 'firebird_version': '4.0.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set sqlda_display on;
+    set list on;
+    select a.mon$idle_timer, s.mon$statement_timer from mon$attachments a join mon$statements s using(mon$attachment_id) rows 0;
+  """,
+ 'expected_stdout':
+  """
+    01: sqltype: 32754 TIMESTAMP WITH TIME ZONE Nullable scale: 0 subtype: 0 len: 12
+    02: sqltype: 32754 TIMESTAMP WITH TIME ZONE Nullable scale: 0 subtype: 0 len: 12
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions': [ ('^((?!(sqltype)).)*$',''), ('[ \t]+',' ') ]
+}
+]
+}

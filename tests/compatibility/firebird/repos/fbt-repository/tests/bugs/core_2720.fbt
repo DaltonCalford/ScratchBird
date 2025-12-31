@@ -1,0 +1,55 @@
+{
+'id': 'bugs.core_2720',
+'qmid': None,
+'tracker_id': 'CORE-2720',
+'title': 'Wrong evaluation result with divide and unary plus\minus operations',
+'description':
+  """
+  27.07.2021: changed output form using SET LIST ON, added subst. to remove dependency on the number of inner spaces.
+  Checked on:
+    5.0.0.113 SS: 0.976s.
+    5.0.0.88 SS: 0.959s.
+    4.0.1.2539 SS: 0.943s.
+    3.0.8.33476 SS: 1.741s.
+    2.5.9.27152 SC: 0.278s.
+  """,
+'min_versions': '2.0.6',
+'versions': [
+{
+ 'firebird_version': '2.0.6',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    select
+        36/4/3    div_01
+       ,36/-4/3   div_02
+       ,36/+4/3   div_03
+       ,36/+-4/3  div_04
+       ,36/-+4/3  div_05
+       ,36/- -4/3 div_06
+       ,36/++4/3  div_07
+       ,- -36/- -4/- -3 div_08
+       ,- -36/- -3/- -4 div_09
+       ,- +36/+ -3/+ -4 div_10
+    from rdb$database;
+  """,
+ 'expected_stdout':
+  """
+    DIV_01 3
+    DIV_02 -3
+    DIV_03 3
+    DIV_04 -3
+    DIV_05 -3
+    DIV_06 3
+    DIV_07 3
+    DIV_08 3
+    DIV_09 3
+    DIV_10 -3
+  """,
+ 'substitutions':[ ('[ \t]+',' ') ]
+}
+]
+}

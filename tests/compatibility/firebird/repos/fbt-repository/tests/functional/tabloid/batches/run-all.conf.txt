@@ -1,0 +1,57 @@
+dba_user=SYSDBA
+dba_pswd=masterkey
+logdir=e:\temp\logs.qa
+
+# List of FB sevices which we use here for test runs:
+fblst=fb40_tmp,fb30_tmp
+
+# List of architectures to be checked:
+fbars=SS,CS
+
+# List of auth protocols to be checked:
+auths=Srp,Legacy_Auth
+
+
+# 4DEBUG only:
+# ------------
+#fblst=fb30_tmp
+#fbars=SS
+#auths=Srp,Legacy_Auth
+#DEBUG_SKIP_RUN_FBT=1
+#DEBUG_SINGLE_FBT=bugs.core_4998
+
+svnup=1
+usedb=1
+
+svnbin="C:\Program Files (x86)\Subversion\bin\svn.exe"
+mteebin=E:\QA\fbt-repo\mtee.exe
+zipbin=E:\QA\fbt-repo\7za.exe
+zipext=7z
+pyp=C:\Python27
+
+config_cachemax=9999999
+
+config_SS_tempcachelimit=268435456
+config_Cs_tempcachelimit=67108864
+
+config_Cs_pages=384
+config_sC_pages=384
+config_SS_pages=10000
+
+config_SRP_auth_srv=Srp
+config_SRP_auth_cli=Srp,Win_Sspi
+config_SRP_wire_zip=true
+config_SRP_wire_enc=Required
+config_SRP_user_mgr=Srp
+
+config_LEG_auth_srv=Legacy_Auth,Srp
+config_LEG_auth_cli=Legacy_Auth,Srp,Win_Sspi
+config_LEG_wire_zip=false
+config_LEG_wire_enc=Disabled
+config_LEG_user_mgr=Legacy_UserManager
+
+config_all_ExtFile_acc=Full
+
+# 4.x: default value for UDF access is NONE!
+config_all_UDF_acc=Restrict UDF
+

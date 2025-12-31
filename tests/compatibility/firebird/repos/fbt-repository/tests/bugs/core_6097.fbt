@@ -1,0 +1,76 @@
+{
+'id': 'bugs.core_6097',
+'qmid': None,
+'tracker_id': 'CORE-6097',
+'title': 'Connection does not see itself in the MON$ATTACHMENTS when Domain/Username (using SSPI) is 31 bytes long',
+'description': 
+ """
+    Could not reproduce bug on WI-V3.0.4.33054, discussed this with dimitr and alex.
+	Problem can appear randomly when some byte in memory contains value not equal to 0x0.
+	Test creates user with name of 31 octets (15 non-ascii, plus 1 ascii character: "Ковалевский_Олег");
+
+	04-JUL-2022.
+    Remplemented: use Python only to operate with non-ascii user creation and connect. Allow to be run on Linux also.
+    AVOID usage of ISQL because on Windows it has permanent problems with non-ascii user names.
+    Checked on 3.0.10.33605, 4.0.2.2796, 5.0.0.573.
+ """,
+'min_versions': '3.0.5',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+
+import os
+
+A_USER = 'Ковалевский_Олег'
+A_PSWD = '123'
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+db_conn.close()
+
+con, cur = None, None
+try:
+    con = fdb.connect( dsn, charset = 'utf8', utf8params = True )
+    cur = con.cursor()
+    sttm = 'create or alter user "' + A_USER + '" password ' + "'" + A_PSWD + "'"
+    cur.execute(sttm)
+    con.commit()
+    cur.execute( "select count(*) from sec$users where sec$user_name = '" + A_USER + "'")
+    for r in cur:
+       print(r[0])
+    con.close()
+
+    con = fdb.connect( dsn, user = A_USER, password = A_PSWD, charset = 'utf8', utf8params = True)
+    cur = con.cursor()
+    cur.execute('select count(*) from mon$attachments where mon$attachment_id = current_connection')
+    for r in cur:
+        print(r[0])
+
+except Exception, e:
+    print(e[0])
+finally:
+    if con:
+        if cur:
+            cur.close()
+        con.close()
+
+  """,
+ 'expected_stdout': 
+  """
+    1
+    1
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -1,0 +1,172 @@
+{
+'id': 'functional.basic.db.12',
+'qmid': 'functional.basic.db.db_12',
+'tracker_id': '',
+'title': 'New DB - RDB$FUNCTIONS',
+'description': 
+ """
+    Check for correct content of RDB$FUNCTIONS in a new database.
+    Checked on:
+        2.5.9.27126: OK, 1.734s.
+        3.0.5.33086: OK, 1.250s.
+        4.0.0.1378: OK, 5.422s.
+ """,
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set count on;
+    select *
+    from rdb$functions rf
+    order by rf.rdb$function_name, rdb$module_name, rdb$entrypoint;
+  """,
+ 'expected_stdout': 
+ """
+    RDB$FUNCTION_NAME               RDB$GET_CONTEXT
+    RDB$FUNCTION_TYPE               <null>
+    RDB$QUERY_NAME                  <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$MODULE_NAME                 system_module
+    RDB$ENTRYPOINT                  get_context
+    RDB$RETURN_ARGUMENT             0
+    RDB$SYSTEM_FLAG                 1
+
+    RDB$FUNCTION_NAME               RDB$SET_CONTEXT
+    RDB$FUNCTION_TYPE               <null>
+    RDB$QUERY_NAME                  <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$MODULE_NAME                 system_module
+    RDB$ENTRYPOINT                  set_context
+    RDB$RETURN_ARGUMENT             0
+    RDB$SYSTEM_FLAG                 1
+
+    Records affected: 2
+ """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set count on;
+    select *
+    from rdb$functions rf
+    order by rdb$engine_name, rf.rdb$package_name, rf.rdb$function_name, rdb$module_name, rdb$entrypoint;
+  """,
+ 'expected_stdout': 
+ """
+    Records affected: 0
+ """
+}
+, # -------------------------------------- 4.x ---------------------------------
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set count on;
+    select *
+    from rdb$functions rf
+    order by rdb$engine_name, rf.rdb$package_name, rf.rdb$function_name, rdb$module_name, rdb$entrypoint;
+  """,
+ 'expected_stdout': 
+ """
+    RDB$FUNCTION_NAME               DATABASE_VERSION                                                                                                                                                                                                                                            
+    RDB$FUNCTION_TYPE               <null>
+    RDB$QUERY_NAME                  <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$MODULE_NAME                 <null>
+    RDB$ENTRYPOINT                  <null>
+    RDB$RETURN_ARGUMENT             0
+    RDB$SYSTEM_FLAG                 1
+    RDB$ENGINE_NAME                 SYSTEM                                                                                                                                                                                                                                                      
+    RDB$PACKAGE_NAME                RDB$TIME_ZONE_UTIL                                                                                                                                                                                                                                          
+    RDB$PRIVATE_FLAG                0
+    RDB$FUNCTION_SOURCE             <null>
+    RDB$FUNCTION_ID                 1
+    RDB$FUNCTION_BLR                <null>
+    RDB$VALID_BLR                   1
+    RDB$DEBUG_INFO                  <null>
+    RDB$SECURITY_CLASS              <null>
+    RDB$OWNER_NAME                  SYSDBA                                                                                                                                                                                                                                                      
+    RDB$LEGACY_FLAG                 <null>
+    RDB$DETERMINISTIC_FLAG          <null>
+    RDB$SQL_SECURITY                <null>
+
+    Records affected: 1
+ """
+}
+, # -------------------------------------- 5.x ---------------------------------
+{
+ 'firebird_version': '5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set count on;
+    select *
+    from rdb$functions rf
+    order by rdb$engine_name, rf.rdb$package_name, rf.rdb$function_name, rdb$module_name, rdb$entrypoint;
+  """,
+ 'expected_stdout': 
+ """
+    RDB$FUNCTION_NAME               START_SESSION                                                                                                                                                                                                                                               
+    RDB$FUNCTION_TYPE               <null>
+    RDB$QUERY_NAME                  <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$MODULE_NAME                 <null>
+    RDB$ENTRYPOINT                  <null>
+    RDB$RETURN_ARGUMENT             0
+    RDB$SYSTEM_FLAG                 1
+    RDB$ENGINE_NAME                 SYSTEM                                                                                                                                                                                                                                                      
+    RDB$PACKAGE_NAME                RDB$PROFILER                                                                                                                                                                                                                                                
+    RDB$PRIVATE_FLAG                0
+    RDB$FUNCTION_SOURCE             <null>
+    RDB$FUNCTION_ID                 2
+    RDB$FUNCTION_BLR                <null>
+    RDB$VALID_BLR                   1
+    RDB$DEBUG_INFO                  <null>
+    RDB$SECURITY_CLASS              <null>
+    RDB$OWNER_NAME                  SYSDBA                                                                                                                                                                                                                                                      
+    RDB$LEGACY_FLAG                 <null>
+    RDB$DETERMINISTIC_FLAG          <null>
+    RDB$SQL_SECURITY                <null>
+
+    RDB$FUNCTION_NAME               DATABASE_VERSION                                                                                                                                                                                                                                            
+    RDB$FUNCTION_TYPE               <null>
+    RDB$QUERY_NAME                  <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$MODULE_NAME                 <null>
+    RDB$ENTRYPOINT                  <null>
+    RDB$RETURN_ARGUMENT             0
+    RDB$SYSTEM_FLAG                 1
+    RDB$ENGINE_NAME                 SYSTEM                                                                                                                                                                                                                                                      
+    RDB$PACKAGE_NAME                RDB$TIME_ZONE_UTIL                                                                                                                                                                                                                                          
+    RDB$PRIVATE_FLAG                0
+    RDB$FUNCTION_SOURCE             <null>
+    RDB$FUNCTION_ID                 1
+    RDB$FUNCTION_BLR                <null>
+    RDB$VALID_BLR                   1
+    RDB$DEBUG_INFO                  <null>
+    RDB$SECURITY_CLASS              <null>
+    RDB$OWNER_NAME                  SYSDBA                                                                                                                                                                                                                                                      
+    RDB$LEGACY_FLAG                 <null>
+    RDB$DETERMINISTIC_FLAG          <null>
+    RDB$SQL_SECURITY                <null>
+
+
+    Records affected: 2
+ """
+}
+]
+}

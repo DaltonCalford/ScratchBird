@@ -1,0 +1,103 @@
+{
+'id': 'bugs.core_3064',
+'qmid': None,
+'tracker_id': 'CORE-3064',
+'title': 'Using both the procedure name and alias inside an explicit plan crashes the server',
+'description':
+  """
+    30.09.2022. Since 5.0.0.760 no error messages, check only expected_stdout.
+  """,
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    set term ^ ;
+    create or alter procedure get_dates (
+        adate_from date,
+        adate_to date )
+    returns (
+        out_date date )
+    as
+      declare variable d date;
+    begin
+      d = adate_from;
+      while (d<=adate_to) do
+        begin
+          out_date = d;
+          suspend;
+          d = d + 1;
+        end
+    end^
+    set term ; ^
+    commit;
+  """,
+ 'test_script':
+  """
+    set planonly;
+    select * from get_dates( 'yesterday', 'today' ) PLAN (GET_DATES NATURAL);
+    select * from get_dates( 'yesterday', 'today' ) p PLAN (P NATURAL);
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+Statement failed, SQLSTATE = 42S02
+Dynamic SQL Error
+-SQL error code = -104
+-Invalid command
+-there is no alias or table named GET_DATES at this scope level
+Statement failed, SQLSTATE = HY000
+invalid request BLR at offset 50
+-BLR syntax error: expected TABLE at offset 51, encountered 132
+  """,
+ 'substitutions': [("""offset .*""",'')]
+}
+,# --------------------------  5.x --------------------------------
+{
+ 'firebird_version': '5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    set term ^ ;
+    create or alter procedure get_dates (
+        adate_from date,
+        adate_to date )
+    returns (
+        out_date date )
+    as
+      declare variable d date;
+    begin
+      d = adate_from;
+      while (d<=adate_to) do
+        begin
+          out_date = d;
+          suspend;
+          d = d + 1;
+        end
+    end^
+    set term ; ^
+    commit;
+  """,
+ 'test_script':
+  """
+    set planonly;
+    select * from get_dates( 'yesterday', 'today' ) PLAN (GET_DATES NATURAL);
+    select * from get_dates( 'yesterday', 'today' ) p PLAN (P NATURAL);
+  """,
+ 'expected_stdout': 
+  """
+    PLAN (GET_DATES NATURAL)
+    PLAN (P NATURAL)
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

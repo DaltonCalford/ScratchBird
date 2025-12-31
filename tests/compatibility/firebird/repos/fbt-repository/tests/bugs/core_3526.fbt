@@ -1,0 +1,46 @@
+{
+'id': 'bugs.core_3526',
+'qmid': None,
+'tracker_id': 'CORE-3526',
+'title': "Support for WHEN SQLSTATE",
+'description':
+ """
+    Checked on:
+         3.0.4.32939: OK, 1.266s.
+         4.0.0.943: OK, 1.484s.
+ """,
+'min_versions': '3.0.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set term ^;
+    execute block returns(msg varchar(1000)) as
+        declare c smallint = 32767;
+    begin
+        msg='';
+        begin
+            c = c+1;
+        when SQLSTATE '22003' do
+            begin
+               msg = 'got exception with sqlstate = ' || sqlstate || '; ' ;
+            end
+        end
+        suspend;
+    end
+    ^
+  """,
+  'expected_stdout':
+  """
+    MSG                             got exception with sqlstate = 22003;
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

@@ -1,0 +1,43 @@
+{
+'id': 'bugs.core_3423',
+'qmid': '',
+'tracker_id': 'CORE-3423',
+'title': "[FB3] Wrong RDB$PARAMETER_MECHANISM",
+'description': '',
+'min_versions': '2.1.7',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^;
+    create or alter procedure sp_test(IN_ARG INTEGER) returns (OUT_ARG INTEGER) as
+    begin
+        OUT_ARG=IN_ARG;
+    end
+    ^
+    set term ;^
+    commit;
+    
+    set list on;
+    -- NB: engine treats nulls and zeroes as the same value, so it is enough to check that
+    -- parameter mechanism is either null or zero only:
+    select 
+      pp.rdb$parameter_name p_name
+     ,iif( coalesce(pp.rdb$parameter_mechanism,0) = 0, 'ZERO_OR_NULL', 'BAD_VALUE' ) p_mechanism
+    from rdb$procedure_parameters pp
+    where pp.rdb$procedure_name = upper('SP_TEST');
+  """,
+ 'expected_stdout': 
+  """
+    P_NAME                          IN_ARG
+    P_MECHANISM                     ZERO_OR_NULL
+
+    P_NAME                          OUT_ARG
+    P_MECHANISM                     ZERO_OR_NULL
+  """
+}
+]
+}

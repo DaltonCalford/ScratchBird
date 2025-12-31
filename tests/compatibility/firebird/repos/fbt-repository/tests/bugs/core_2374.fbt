@@ -1,0 +1,46 @@
+{
+'id': 'bugs.core_2374',
+'qmid': None,
+'tracker_id': 'CORE-2374',
+'title': 'ALTER TRIGGER / PROCEDURE wrong error message',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set term ^;
+    alter procedure test1 as
+    begin
+      if (a = b) then
+       b = 1;
+    end
+    ^
+    alter trigger trg1 as
+    begin
+      if (a = b) then
+       b = 1;
+    end
+    ^
+    set term ;^
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -ALTER PROCEDURE TEST1 failed
+    -Procedure TEST1 not found
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -ALTER TRIGGER TRG1 failed
+    -Trigger TRG1 not found
+  """
+}
+]
+}

@@ -1,0 +1,49 @@
+{
+'id': 'bugs.core_3992',
+'qmid': None,
+'tracker_id': 'CORE-3992',
+'title': 'No records in the table rdb$dependencies for ddl trigger',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table ddl_log (
+        id integer,
+        ddl_event varchar(25),
+        sql blob sub_type text
+    );
+    
+    set term ^;
+    create or alter trigger ddl_log_trigger after any ddl statement
+    as
+    begin
+      insert into ddl_log(sql, ddl_event)
+        values (rdb$get_context('DDL_TRIGGER', 'SQL_TEXT'),
+                rdb$get_context('DDL_TRIGGER', 'DDL_EVENT') );
+    end
+    ^
+    set term ;^
+    commit;
+    
+    set list on;
+    
+    select sign(count(*)) "is_any_rows_there ?"
+    from rdb$dependencies d
+    where upper('ddl_log_trigger') in (d.rdb$dependent_name, d.rdb$depended_on_name);
+  """,
+ 'expected_stdout':
+  """
+    is_any_rows_there ?             1
+  """
+}
+]
+}

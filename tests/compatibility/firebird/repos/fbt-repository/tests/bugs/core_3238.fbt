@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_3238',
+'qmid': None,
+'tracker_id': 'CORE-3238',
+'title': 'Makes GEN_UUID return a compliant RFC-4122 UUID',
+'description': '',
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    set term ^;
+    execute block returns(err_cnt int) as
+      declare n int = 100000;
+      declare s varchar(36);
+    begin
+      err_cnt = 0;
+      while( n > 0 ) do
+      begin
+        s = uuid_to_char( gen_uuid() );
+        if ( NOT (substring(s from 15 for 1)='4' and substring(s from 20 for 1) in ('8','9','A','B')) )
+          then err_cnt = err_cnt + 1;
+        n = n - 1;
+      end
+      suspend;
+    end
+    ^ set term ;^
+  """,
+ 'expected_stdout': 
+  """
+    ERR_CNT                         0
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

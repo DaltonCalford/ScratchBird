@@ -1,0 +1,53 @@
+{
+'id': 'bugs.core_1040',
+'qmid': 'bugs.core_1040',
+'tracker_id': 'CORE-1040',
+'title': 'Wrong single-segment ascending index on character field with NULL and empty string values',
+'description': """Wrong single-segment ascending index on character field with NULL and empty string values
+""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.0.1',
+ 'platform': 'All',
+ 'init_script': """recreate table t (str varchar(10));
+commit;
+
+insert into t values ('');
+insert into t values (null);
+commit;
+
+create index t_i on t (str);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': 'select count(*) from t where str is null;',
+ 'expected_stdout': """COUNT
+============
+           1
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """recreate table t (str varchar(10));
+commit;
+
+insert into t values ('');
+insert into t values (null);
+commit;
+
+create index t_i on t (str);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': 'select count(*) from t where str is null;',
+ 'expected_stdout': """                COUNT
+=====================
+                    1
+
+"""
+}
+]
+}

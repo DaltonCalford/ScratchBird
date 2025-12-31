@@ -1,0 +1,47 @@
+{
+'id': 'bugs.gh_6825',
+'qmid': None,
+'tracker_id': '',
+'title': 'Correct error message for DROP VIEW',
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/6825
+
+    Confirmed issue on 5.0.0.56, 4.0.0.2468.
+    Checked on 5.0.0.60, 4.0.0.2502, 3.0.8.33470 -- all OK.
+ """,
+'min_versions': '3.0.8',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    recreate view v1 as select 1 x from rdb$database;
+    create or alter user tmp$gh_6825 password '123' using plugin Srp;
+    commit;
+    connect '$(DSN)' user tmp$gh_6825 password '123';
+    drop view v1;
+    commit;
+    connect '$(DSN)' user sysdba password 'masterkey';
+    drop user tmp$gh_6825 using plugin Srp;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 28000
+    unsuccessful metadata update
+    -DROP VIEW V1 failed
+    -no permission for DROP access to VIEW V1
+    -Effective user is TMP$GH_6825
+  """,
+  'substitutions': [
+     ('(-)?Effective user is.*', '')
+   ]
+}
+]
+}

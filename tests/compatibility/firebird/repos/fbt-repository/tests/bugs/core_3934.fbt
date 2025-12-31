@@ -1,0 +1,299 @@
+{
+'id': 'bugs.core_3934',
+'qmid': None,
+'tracker_id': 'CORE-3934',
+'title': "Value of log_sweep parameter in trace configuration is ignored by trace plugin (assumed always true)",
+'description': 
+ """
+    Test check TWO cases: 
+    1) whether log_sweep = true actually lead to logging of sweep events
+    2) whether log_sweep = fales actually prevents from logging of any sweep events (which is ticket issue).
+    Checked on (23.08.2020):
+        4.0.0.2173 SS: 19.215s.
+        4.0.0.2173 CS: 20.203s.
+        3.0.7.33357 SS: 18.329s.
+        3.0.7.33357 CS: 19.876s.
+        2.5.9.27152 SS: 17.876s.
+        2.5.9.27152 CS: 18.017s.
+ """,
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': 
+  """\
+import os
+import time
+import subprocess
+from subprocess import Popen
+import re
+
+engine = str(db_conn.engine_version)
+db_conn.close()
+
+#################### ::: NOTE :::  #######################
+# Increase value of 'MIN_DELAY_AFTER_TRACE_START'        #
+# if test will fail with difference which means that     #
+# ALL needed rows that did not appear in actual stdout.  #
+# This mean that trace log remained EMPTY during test,   #
+# which in turn could occured because of too small delay #
+# between trace start and moment when single attachment  #
+# to 'ready-for-sweep' database was done.                #
+##########################################################
+MIN_DELAY_AFTER_TRACE_START = 5
+
+# Minimal delay after we finish connection to database
+# (that fires SWEEP) and before issuing command to stop trace
+###############################
+MIN_DELAY_BEFORE_TRACE_STOP = 2
+
+# Minimal delay for trace log be flushed on disk after
+# we issue command 'fbsvcmgr action_trace_stop':
+###############################
+MIN_DELAY_AFTER_TRACE_STOP = 1
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+#-----------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    os.fsync(file_handle.fileno())
+
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if os.path.isfile( f_names_list[i]):
+            os.remove( f_names_list[i] )
+            if os.path.isfile( f_names_list[i]):
+                print('ERROR: can not remove file ' + f_names_list[i])
+
+#--------------------------------------------
+
+def make_trace_config( engine, is_sweep_logged, trccfg_name ):
+
+    txt25 = \
+    '''
+        <database %%[\\\\\\\\/]bugs.core_3934.fdb>
+          enabled true
+          log_initfini false
+          time_threshold 0 
+          log_connections true
+          log_sweep %(is_sweep_logged)s
+        </database>
+    ''' % locals()
+
+    # NOTES ABOUT TRACE CONFIG FOR 3.0:
+    # 1) Header contains `database` clause in different format vs FB 2.5: its data must be enclosed with '{' '}'
+    # 2) Name and value must be separated by EQUALITY sign ('=') in FB-3 trace.conf, otherwise we get runtime error:
+    #    element "<. . .>" have no attribute value set
+
+    txt30 = \
+    '''
+        database=%%[\\\\\\\\/]bugs.core_3934.fdb
+        {
+          enabled = true
+          log_initfini = false
+          time_threshold = 0
+          log_connections = true
+          log_sweep = %(is_sweep_logged)s
+        }
+    ''' % locals()
+
+    trccfg=open( trccfg_name, 'w')
+    if engine.startswith('2.5'):
+        trccfg.write(txt25)
+    else:
+        trccfg.write(txt30)
+    trccfg.close()
+
+    return
+
+#--------------------------------------------
+
+def stop_trace_session():
+
+    # Save active trace session info into file for further parsing it and obtain session_id back (for stop):
+    global os
+    global subprocess
+
+
+    f_trclst=open( os.path.join(context['temp_directory'],'tmp_trace_3934.lst'), 'w')
+    subprocess.call([context['fbsvcmgr_path'], "localhost:service_mgr", "action_trace_list"],
+                     stdout=f_trclst,
+                     stderr=subprocess.STDOUT
+                   )
+    f_trclst.close()
+    
+    trcssn=0
+    with open( f_trclst.name,'r') as f:
+        for line in f:
+            if 'Session ID' in line:
+                trcssn=line.split()[2]
+                break
+    
+    # Result: `trcssn` is ID of active trace session. Now we have to terminate it:
+    f_trclst=open(f_trclst.name,'a')
+    f_trclst.seek(0,2)
+    subprocess.call([context['fbsvcmgr_path'], "localhost:service_mgr", "action_trace_stop", "trc_id",trcssn],
+                     stdout=f_trclst, stderr=subprocess.STDOUT
+                   )
+    f_trclst.close()
+
+    os.remove(f_trclst.name)
+
+    return
+
+
+###############################################################################
+###                                                                         ###
+###             C A S E - 1:     l o g _ s w e e p   =   t r u e            ###
+###                                                                         ###
+###############################################################################
+
+# Make trace config with ENABLING sweep logging and syntax that appropriates current engine:
+trccfg_swp_enable=os.path.join(context['temp_directory'],'tmp_trace_3934_swp_enable.cfg')
+make_trace_config( engine, 'true', trccfg_swp_enable )
+
+#####################################################
+# Starting trace session in new child process (async.):
+f_trclog_swp_enable=open( os.path.join(context['temp_directory'],'tmp_trace_3934_swp_enable.log'), 'w')
+p_trace=Popen( [ context['fbsvcmgr_path'], "localhost:service_mgr",
+                 "action_trace_start",
+                 "trc_cfg", trccfg_swp_enable
+               ],
+               stdout=f_trclog_swp_enable,
+               stderr=subprocess.STDOUT
+             )
+
+# Wait _AT_LEAST_ 4..5 seconds in 2.5 because trace session is initialized not instantly.
+# If this delay is less then 2 second then trace log will be EMPTY (got on 2.5 SS and Cs).
+time.sleep( MIN_DELAY_AFTER_TRACE_START )
+
+
+##################################
+###    r u n    s w e e p      ###
+##################################
+runProgram('gfix', ['-sweep', dsn])
+
+
+# do NOT remove this otherwise trace log can contain only message about its start before being closed!
+time.sleep(MIN_DELAY_BEFORE_TRACE_STOP)
+
+#####################################################
+# Getting ID of launched trace session and STOP it:
+
+stop_trace_session()
+time.sleep(MIN_DELAY_AFTER_TRACE_STOP)
+
+# Terminate child process of launched trace session (though it should already be killed):
+p_trace.terminate()
+flush_and_close( f_trclog_swp_enable )
+
+
+###############################################################################
+###                                                                         ###
+###             C A S E - 2:     l o g _ s w e e p   =   f al s e           ###
+###                                                                         ###
+###############################################################################
+
+# Make trace config with DISABLING sweep logging and syntax that appropriates current engine:
+trccfg_swp_disable=os.path.join(context['temp_directory'],'tmp_trace_3934_swp_disable.cfg')
+make_trace_config( engine, 'false', trccfg_swp_disable )
+
+#####################################################
+# Starting trace session in new child process (async.):
+f_trclog_swp_disable=open( os.path.join(context['temp_directory'],'tmp_trace_3934_swp_disable.log'), 'w')
+p_trace=Popen( [context['fbsvcmgr_path'], "localhost:service_mgr",
+                "action_trace_start",
+                 "trc_cfg", trccfg_swp_disable
+               ],
+               stdout=f_trclog_swp_disable,
+               stderr=subprocess.STDOUT
+             )
+
+# Wait _AT_LEAST_ 4..5 seconds in 2.5 because trace session is initialized not instantly.
+# If this delay is less then 2 second then trace log will be EMPTY (got on 2.5 SS and Cs).
+
+time.sleep( MIN_DELAY_AFTER_TRACE_START )
+
+##################################
+###    r u n    s w e e p      ###
+##################################
+runProgram('gfix', ['-sweep', dsn])
+
+# do NOT remove this otherwise trace log can contain only message about its start before being closed!
+time.sleep(MIN_DELAY_BEFORE_TRACE_STOP)
+
+#####################################################
+# Getting ID of launched trace session and STOP it:
+stop_trace_session()
+time.sleep(MIN_DELAY_AFTER_TRACE_STOP)
+
+# Terminate child process of launched trace session (though it should already be killed):
+p_trace.terminate()
+flush_and_close( f_trclog_swp_disable )
+                     
+
+#############
+# O U T P U T
+#############
+# case-1
+# -------
+p=re.compile('\s+sweep_(start|progress|finish)(\s+|$)', re.IGNORECASE)
+sweep_found_when_enabled = False
+with open( f_trclog_swp_enable.name,'r') as f:
+    for line in f:
+        if p.search(line):
+           sweep_found_when_enabled = True
+           break
+# Expected result: sweep_found_when_enabled = True, i.e. trace log cotains SWEEP-related text.
+if not sweep_found_when_enabled:
+    print('UNEXPECTED MISSING OF SWEEP-RELATED TEXT.')
+else:
+    print('Result is expected when log_sweep = true')
+#-------------------------------------------------------
+
+# case-2
+# -------
+# Although this log is not empty, it must NOT contain any info about sweep, 
+sweep_missed_when_disabled = True
+with open( f_trclog_swp_disable.name,'r') as f:
+    for line in f:
+        if p.search(line):
+            sweep_missed_when_disabled = False
+            break
+if not sweep_missed_when_disabled:
+    print('UNEXPECTED PRESENCE OF SWEEP-RELATED TEXT')
+else:
+    print('Result is expected when log_sweep = false')
+#-------------------------------------------------------
+
+###############################
+# Cleanup.
+time.sleep(1)
+f_list = [x.name for x in (f_trclog_swp_enable, f_trclog_swp_disable )] + [trccfg_swp_enable, trccfg_swp_disable]
+cleanup( f_list )
+
+  """,
+ 'expected_stdout':
+  """
+    Result is expected when log_sweep = true
+    Result is expected when log_sweep = false
+  """
+}
+]
+}

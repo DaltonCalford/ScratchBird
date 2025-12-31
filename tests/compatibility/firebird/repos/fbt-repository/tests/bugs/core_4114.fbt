@@ -1,0 +1,42 @@
+{
+'id': 'bugs.core_4114',
+'qmid': None,
+'tracker_id': 'CORE-4114',
+'title': "SIMILAR TO does not work with x-prefixed literals",
+'description':
+ """
+    Checked on:
+    2.5.9.27115: OK, 1.390s.
+    3.0.4.32972: OK, 3.594s.
+    4.0.0.1201: OK, 2.875s.
+ """,
+'min_versions': '2.5',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select
+      iif(' ' similar to '[[:WHITESPACE:]]', 'T', 'F') as f1,
+      iif(_win1252 x'20' similar to '[[:WHITESPACE:]]', 'T', 'F') as f2,
+      iif(_win1252 x'20' similar to '%', 'T', 'F') as f3
+    from RDB$DATABASE ;
+  """,
+ 'expected_stdout': 
+  """
+    F1                              T
+    F2                              T
+    F3                              T
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

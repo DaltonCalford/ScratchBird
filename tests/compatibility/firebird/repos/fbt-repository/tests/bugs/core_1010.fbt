@@ -1,0 +1,164 @@
+{
+'id': 'bugs.core_1010',
+'qmid': 'bugs.core_1010-21',
+'tracker_id': 'CORE-1010',
+'title': 'Local buffer overrun in DYN_error() that takes down the server',
+'description': 'We have a local buffer overrun in DYN_error(), while copying tdbb_status_vector to local_status. It seems to be the first time (DYN errors + stack trace facility) when 20 status words are not enough to store the complete error info.',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE EXCEPTION RDB$TEST 'Test';
+
+commit;
+
+set term ^ ;
+
+CREATE OR ALTER TRIGGER RDB$PROCEDURES_BIU FOR RDB$PROCEDURES
+ACTIVE AFTER UPDATE OR DELETE POSITION 0
+as
+begin
+    EXCEPTION RDB$TEST;
+end^
+
+commit^
+
+create or alter procedure proctest
+ returns (result integer)
+as
+begin
+  result = 0;
+  suspend;
+end^
+
+set term ; ^
+
+commit;
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+unsuccessful metadata update
+-STORE RDB$PROCEDURES failed
+-exception 1
+-RDB$TEST
+-Test
+"""
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE EXCEPTION RDB$TEST 'Test';
+
+commit;
+
+set term ^ ;
+
+CREATE OR ALTER TRIGGER RDB$PROCEDURES_BIU FOR RDB$PROCEDURES
+ACTIVE AFTER UPDATE OR DELETE POSITION 0
+as
+begin
+    EXCEPTION RDB$TEST;
+end^
+
+commit^
+
+create or alter procedure proctest
+ returns (result integer)
+as
+begin
+  result = 0;
+  suspend;
+end^
+
+set term ; ^
+
+commit;
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-STORE RDB$PROCEDURES failed
+-exception 1
+-RDB$TEST
+-<Missing arg #1 - possibly status vector overflow>
+"""
+},
+{
+ 'firebird_version': '2.0.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE EXCEPTION RDB$TEST 'Test';
+
+commit;
+
+set term ^ ;
+
+CREATE OR ALTER TRIGGER RDB$PROCEDURES_BIU FOR RDB$PROCEDURES
+ACTIVE AFTER UPDATE OR DELETE POSITION 0
+as
+begin
+    EXCEPTION RDB$TEST;
+end^
+
+commit^
+
+create or alter procedure proctest
+ returns (result integer)
+as
+begin
+  result = 0;
+  suspend;
+end^
+
+set term ; ^
+
+commit;
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+unsuccessful metadata update
+-STORE RDB$USER_PRIVILEGES failed defining a table
+-exception 1
+-RDB$TEST
+-Test
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Removed old code: all attempts to create triggers on SYSTEM tables now are prohibited, even for SYSDBA.
+    create exception ex_test '!!!';
+    commit;
+    
+    set term ^ ;
+    create or alter trigger rdb$procedures_biu for rdb$procedures
+    active after update or delete position 0
+    as
+    begin
+        exception ex_test;
+    end
+    ^
+    commit^
+    
+    create or alter procedure proctest returns (result integer) as
+    begin
+        result = 0;
+        suspend;
+    end^
+    set term ; ^
+    commit;
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 28000
+    unsuccessful metadata update
+    -CREATE OR ALTER TRIGGER RDB$PROCEDURES_BIU failed
+    -no permission for ALTER access to TABLE RDB$PROCEDURES
+  """,
+  'substitutions': [('line:.*',''),('col:.*','')]
+}
+]
+}

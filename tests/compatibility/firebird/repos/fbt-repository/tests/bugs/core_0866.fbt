@@ -1,0 +1,63 @@
+{
+'id': 'bugs.core_0866',
+'qmid': 'bugs.core_866',
+'tracker_id': 'CORE-866',
+'title': 'Removing a NOT NULL constraint is not visible until reconnect',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE TEST (
+    ID INTEGER NOT NULL,
+    COL VARCHAR(20) NOT NULL
+);
+
+INSERT INTO TEST (ID, COL) VALUES (1, 'TEST');
+
+COMMIT WORK;
+
+
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """UPDATE RDB$RELATION_FIELDS
+  SET RDB$NULL_FLAG = NULL
+  WHERE (RDB$FIELD_NAME = 'COL') and (RDB$RELATION_NAME = 'TEST');
+
+COMMIT WORK;
+
+UPDATE TEST SET COL = NULL WHERE ID = 1;
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    recreate table test (
+        id integer not null,
+        col varchar(20) not null
+    );
+    insert into test (id, col) values (1, 'data');
+    commit;
+  """,
+ 'test_script':
+  """
+    update rdb$relation_fields
+      set rdb$null_flag = null
+      where (rdb$field_name = upper('col')) and (rdb$relation_name = upper('test'));
+    commit;
+
+    update test set col = null where id = 1;
+  """,
+  'expected_stderr':
+   """
+    Statement failed, SQLSTATE = 42000
+    UPDATE operation is not allowed for system table RDB$RELATION_FIELDS
+    Statement failed, SQLSTATE = 23000
+    validation error for column "TEST"."COL", value "*** null ***"
+   """
+}
+]
+}

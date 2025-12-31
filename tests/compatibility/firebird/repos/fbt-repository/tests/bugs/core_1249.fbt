@@ -1,0 +1,50 @@
+{
+'id': 'bugs.core_1249',
+'qmid': 'bugs.core_1249',
+'tracker_id': 'CORE-1249',
+'title': "Full shutdown mode doesn't work on Classic if there are other connections to the database",
+'description': "This bug affects only Windows CS, but we'll test all platforms and architectures anyway.",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.0.2',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+cur1 = db_conn.cursor()
+#cur1.execute('select 1 from rdb$database')
+runProgram('gfix',[dsn,'-user',user_name,'-pas',user_password,'-shut','full','-force','0'])
+
+try:
+    cur1.execute('select 1 from rdb$database')
+    print ('BUG! Operation allowed after shutdown!')
+except Exception, e:
+    print("OK: operation not allowed.")
+    print( ' '.join( ( 'Exception', ('DOES' if 'shutdown' in e[0] else 'does NOT'), 'contain text about shutdown.') ) )
+    if 'shutdown' not in e[0]:
+        print(e[0])
+
+#    Error while starting transaction:
+#    - SQLCODE: -902
+#    - connection shutdown
+#    - Database is shutdown. <<<<<<<<<<<<<<<<<<<< NEW message in 4.0
+#
+# Following messages can appear now after 'connection shutdown' (letter from dimitr, 08-may-2017 20:41):
+#   isc_att_shut_killed: Killed by database administrator
+#   isc_att_shut_idle: Idle timeout expired
+#   isc_att_shut_db_down: Database is shutdown
+#   isc_att_shut_engine: Engine is shutdown
+
+runProgram('gfix',[dsn,'-user',user_name,'-pas',user_password,'-online'])
+
+# 'substitutions': [('^.*shutdown','shutdown')]
+""",
+ 'expected_stdout': 
+  """
+    OK: operation not allowed.
+    Exception DOES contain text about shutdown.
+  """
+}
+]
+}

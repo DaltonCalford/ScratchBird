@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_1428',
+'qmid': 'bugs.core_1428',
+'tracker_id': 'CORE-1428',
+'title': 'Incorrect timestamp substraction in 3 dialect when result is negative number',
+'description':
+ """
+ 27.07.2021: changed output form using SET LIST ON, added subst. to remove dependency on the number of inner spaces.
+ Checked on:
+    5.0.0.113 SS: 1.025s.
+    5.0.0.88 SS: 1.028s.
+    4.0.1.2539 SS: 0.942s.
+    3.0.8.33476 SS: 2.076s.
+ """,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+	select (cast('2007-08-22 00:00:00.0019' as timestamp) - cast('2007-08-22 00:00:00.0000' as timestamp)) *86400*10000 as dts_01 from rdb$database;
+	select (cast('2007-08-22 00:00:00.0000' as timestamp) - cast('2007-08-22 00:00:00.0019' as timestamp)) *86400*10000 as dts_02 from rdb$database;
+  """,
+ 'expected_stdout':
+  """
+	DTS_01 19.008000000
+	DTS_02 -19.008000000  
+  """,
+  'substitutions':[ ('[ \t]+',' ') ]
+}
+]
+}

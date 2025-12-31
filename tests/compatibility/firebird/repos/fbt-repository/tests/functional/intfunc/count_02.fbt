@@ -1,0 +1,61 @@
+{
+'id': 'functional.intfunc.count.02',
+'qmid': 'functional.intfunc.count.count_02',
+'tracker_id': '',
+'title': 'COUNT',
+'description': """Count of Not Null values and count of rows and count of distinct values
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+INSERT
+Basic SELECT
+""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER);
+INSERT INTO test VALUES(0);
+INSERT INTO test VALUES(0);
+INSERT INTO test VALUES(null);
+INSERT INTO test VALUES(null);
+INSERT INTO test VALUES(null);
+INSERT INTO test VALUES(1);
+INSERT INTO test VALUES(1);
+INSERT INTO test VALUES(1);
+INSERT INTO test VALUES(1);
+""",
+ 'test_type': 'ISQL',
+ 'test_script': 'SELECT COUNT(*), COUNT(ID), COUNT(DISTINCT ID) FROM test;',
+ 'expected_stdout': """       COUNT        COUNT        COUNT
+============ ============ ============
+
+           9            6            2
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER);
+INSERT INTO test VALUES(0);
+INSERT INTO test VALUES(0);
+INSERT INTO test VALUES(null);
+INSERT INTO test VALUES(null);
+INSERT INTO test VALUES(null);
+INSERT INTO test VALUES(1);
+INSERT INTO test VALUES(1);
+INSERT INTO test VALUES(1);
+INSERT INTO test VALUES(1);
+""",
+ 'test_type': 'ISQL',
+ 'test_script': 'SELECT COUNT(*), COUNT(ID), COUNT(DISTINCT ID) FROM test;',
+ 'expected_stdout': """                COUNT                 COUNT                 COUNT
+===================== ===================== =====================
+                    9                     6                     2
+
+"""
+}
+]
+}

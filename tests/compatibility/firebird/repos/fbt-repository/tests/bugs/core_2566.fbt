@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_2566',
+'qmid': '',
+'tracker_id': 'CORE-2566',
+'title': 'internal error [335544384]',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    create table tab_partner (
+        id_partner integer not null,
+        stav char(1) not null,
+        id_bankucet integer
+    );
+
+    create table typ_stav (hodnota char(1) not null);
+
+    create view x_partner (id_partner, stav) as
+    select p.id_partner, p.stav
+    from tab_partner p
+    left join typ_stav tss on p.stav=tss.hodnota
+    ;
+
+    insert into tab_partner(id_partner, stav, id_bankucet) values(0, 'A', null);
+
+    select *
+    from x_partner;
+  """,
+ 'expected_stdout':
+  """
+    ID_PARTNER                      0
+    STAV                            A
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

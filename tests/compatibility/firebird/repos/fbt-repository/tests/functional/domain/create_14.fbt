@@ -1,0 +1,29 @@
+{
+'id': 'functional.domain.create.14',
+'qmid': 'functional.domain.create.create_domain_14',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - NUMERIC ARRAY',
+'description': 'Array domain creation based on NUMERIC datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test NUMERIC(18,18)[32768];
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            ARRAY OF [1:32768]
+                                NUMERIC(18, 18) Nullable
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test NUMERIC(18,18)[32768];
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            ARRAY OF [32768]
+                                NUMERIC(18, 18) Nullable
+"""
+}
+]
+}

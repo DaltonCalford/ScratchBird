@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_4477',
+'qmid': None,
+'tracker_id': 'CORE-4477',
+'title': "Field RDB$MAP_TO_TYPE is not present in RDB$TYPES",
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    select rdb$field_name,rdb$type,rdb$type_name,rdb$system_flag from rdb$types where upper(rdb$field_name) = upper('rdb$map_to_type') order by rdb$type;
+  """,
+ 'expected_stdout': 
+  """
+   RDB$FIELD_NAME                  RDB$MAP_TO_TYPE                                                                              
+   RDB$TYPE                        0
+   RDB$TYPE_NAME                   USER                                                                                         
+   RDB$SYSTEM_FLAG                 1
+
+   RDB$FIELD_NAME                  RDB$MAP_TO_TYPE                                                                              
+   RDB$TYPE                        1
+   RDB$TYPE_NAME                   ROLE                                                                                         
+   RDB$SYSTEM_FLAG                 1
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

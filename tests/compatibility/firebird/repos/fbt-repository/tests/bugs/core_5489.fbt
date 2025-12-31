@@ -1,0 +1,312 @@
+{
+'id': 'bugs.core_5489',
+'qmid': None,
+'tracker_id': 'CORE-5489',
+'title': "Bad performance for NULLs filtering inside a navigational index scan",
+'description': 
+ """
+   See prototype and explanations for this test in CORE_5435.fbt
+   Confirmed improvement:
+
+   3.0.2.32643, 4.0.0.563:
+   **********
+       PLAN (TEST ORDER TEST_F01_ID)
+       1 records fetched
+          1143 ms, 2375 read(s), 602376 fetch(es) ---------------- poor :(
+       Table                              Natural     Index
+       ****************************************************
+       TEST                                          300000                                                            
+   **********
+
+  
+   3.0.2.32708, 4.0.0.572:
+   **********
+        PLAN (TEST ORDER TEST_F01_ID)
+        0 ms, 22 read(s), 63 fetch(es) --------------------------- cool :)
+       Table                              Natural     Index
+       ****************************************************
+       TEST                                              20                                                            
+   **********
+
+ """,
+'min_versions': '3.0.2',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '8192',
+ 'test_type': 'Python',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+import os
+import subprocess
+import time
+from fdb import services
+from subprocess import Popen
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+# Obtain engine version:
+engine = str(db_conn.engine_version) # convert to text because 'float' object has no attribute 'startswith'
+db_file = db_conn.database_name
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+FETCHES_THRESHOLD = 80
+
+# Change FW to OFF in order to speed up initial data filling:
+##################
+
+fn_nul = open(os.devnull, 'w')
+
+subprocess.call([ context['fbsvcmgr_path'], "localhost:service_mgr",
+                  "action_properties", "prp_write_mode", "prp_wm_async",
+                  "dbname", db_file ],
+                  stdout = fn_nul,
+                  stderr = subprocess.STDOUT
+               )
+
+fn_nul.close()
+
+#####################
+# Prepare table: add data.
+
+sql_init=\
+'''
+  recreate table test
+  (
+      id int not null,
+      f01 int,
+      f02 int
+  );
+
+  set term ^;
+  create or alter procedure sp_add_init_data(a_rows_to_add int)
+  as
+      declare n int;
+      declare i int = 0;
+  begin
+      n = a_rows_to_add;
+      while ( i < n ) do
+      begin
+          insert into test(id, f01, f02) values( :i, nullif(mod(:i, :n/20), 0), iif( mod(:i,3)<2, 0, 1) )
+          returning :i+1 into i;
+      end
+  end
+  ^
+  set term ^;
+  commit;
+
+  execute procedure sp_add_init_data( 300000 );
+  commit;
+
+  create index test_f01_id on test(f01, id);
+  create index test_f02_only on test(f02); 
+  commit;
+'''
+
+sql_cmd=open(os.path.join(context['temp_directory'],'tmp_core_5489.sql'), 'w')
+sql_cmd.write(sql_init)
+flush_and_close( sql_cmd )
+
+sql_log=open(os.path.join(context['temp_directory'],'tmp_core_5489.log'),'w')
+sql_err=open(os.path.join(context['temp_directory'],'tmp_core_5489.err'),'w')
+
+subprocess.call([context['isql_path'], dsn, "-i", sql_cmd.name],stdout=sql_log, stderr=sql_err)
+
+flush_and_close( sql_log )
+flush_and_close( sql_err )
+
+#########################
+
+# ::: NB ::: Trace config file format in 3.0 differs from 2.5 one:
+# 1) header section must be enclosed in "[" and "]",
+# 2) parameter-value pairs must be separated with '=' sign:
+#    services
+#    {
+#      parameter =  value
+#    }
+
+if engine.startswith('2.5'):
+    txt = '''# Generated auto, do not edit!
+      <database %[\\\\\\\\/]security?.fdb>
+          enabled false
+      </database>
+
+      <database %[\\\\\\\\/]bugs.core_5489.fdb>
+          enabled true
+          time_threshold 0
+          log_statement_finish true
+          print_plan true
+          print_perf true
+      </database>
+    '''
+else:
+    txt = '''# Generated auto, do not edit!
+      database=%[\\\\\\\\/]security?.fdb
+      {
+          enabled = false
+      }
+      database=%[\\\\\\\\/]bugs.core_5489.fdb
+      {
+          enabled = true
+          time_threshold = 0
+          log_statement_finish = true
+          print_plan = true
+          print_perf = true
+      }
+    '''
+
+f_trc_cfg=open( os.path.join(context['temp_directory'],'tmp_trace_5489.cfg'), 'w')
+f_trc_cfg.write(txt)
+flush_and_close( f_trc_cfg )
+
+# ##############################################################
+# S T A R T   T R A C E   i n   S E P A R A T E    P R O C E S S
+# ##############################################################
+
+f_trc_log=open( os.path.join(context['temp_directory'],'tmp_trace_5489.log'), "w")
+f_trc_err=open( os.path.join(context['temp_directory'],'tmp_trace_5489.err'), "w")
+
+p_trace = Popen( [ context['fbsvcmgr_path'], 'localhost:service_mgr', 'action_trace_start' , 'trc_cfg', f_trc_cfg.name],stdout=f_trc_log,stderr=f_trc_err)
+
+time.sleep(1)
+
+sql_run=\
+'''
+  set list on;
+  --show version;
+  select count(*) cnt_check 
+  from (
+      select *
+      from test               
+      where f01               -- ###################################################################
+            IS NULL           -- <<< ::: NB ::: we check here 'f01 is NULL', exactly as ticket says.
+            and f02=0         -- ###################################################################
+      order by f01, id
+  )
+  ;
+'''
+
+sql_cmd=open(os.path.join(context['temp_directory'],'tmp_core_5489.sql'), 'w')
+sql_cmd.write(sql_run)
+flush_and_close( sql_cmd )
+
+sql_log=open(os.path.join(context['temp_directory'],'tmp_core_5489.log'),'w')
+sql_err=open(os.path.join(context['temp_directory'],'tmp_core_5489.err'),'w')
+
+subprocess.call([context['isql_path'], dsn, "-i", sql_cmd.name],stdout=sql_log, stderr=sql_err)
+
+flush_and_close( sql_log )
+flush_and_close( sql_err )
+
+# ####################################################
+# G E T  A C T I V E   T R A C E   S E S S I O N   I D
+# ####################################################
+# Save active trace session info into file for further parsing it and obtain session_id back (for stop):
+
+f_trc_lst = open( os.path.join(context['temp_directory'],'tmp_trace_5489.lst'), 'w')
+subprocess.call([context['fbsvcmgr_path'], 'localhost:service_mgr', 'action_trace_list'], stdout=f_trc_lst)
+flush_and_close( f_trc_lst )
+
+# !!! DO NOT REMOVE THIS LINE !!!
+time.sleep(1)
+
+trcssn=0
+with open( f_trc_lst.name,'r') as f:
+    for line in f:
+        i=1
+        if 'Session ID' in line:
+            for word in line.split():
+                if i==3:
+                    trcssn=word
+                i=i+1
+            break
+# Result: `trcssn` is ID of active trace session. Now we have to terminate it:
+
+# ####################################################
+# S E N D   R E Q U E S T    T R A C E   T O   S T O P
+# ####################################################
+if trcssn>0:
+    fn_nul = open(os.devnull, 'w')
+    subprocess.call([context['fbsvcmgr_path'], 'localhost:service_mgr', 'action_trace_stop','trc_id', trcssn], stdout=fn_nul)
+    fn_nul.close()
+    # DO NOT REMOVE THIS LINE:
+    time.sleep(1)
+
+p_trace.terminate()
+flush_and_close( f_trc_log )
+flush_and_close( f_trc_err )
+
+
+run_with_plan=''
+num_of_fetches=99999999
+
+with open( f_trc_log.name,'r') as f:
+  for line in f:
+    if line.lower().startswith('plan ('):
+        run_with_plan = line.upper()
+    if 'fetch(es)' in line:
+       words = line.split()
+       for k in range(len(words)):
+         if words[k].startswith('fetch'):
+           num_of_fetches = int( words[k-1] )
+
+print(run_with_plan)
+print(  'Number of fetches: acceptable.' 
+        if num_of_fetches < FETCHES_THRESHOLD else 
+        'Too much fetches %(num_of_fetches)s -- more than threshold = %(FETCHES_THRESHOLD)s' % locals()
+     )
+
+# CLEANUP
+#########
+time.sleep(1)
+cleanup( (f_trc_cfg, f_trc_lst, f_trc_log, f_trc_err, sql_log, sql_err, sql_cmd) )
+  """,
+ 'expected_stdout': 
+  """
+    PLAN (TEST ORDER TEST_F01_ID)
+    Number of fetches: acceptable.
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

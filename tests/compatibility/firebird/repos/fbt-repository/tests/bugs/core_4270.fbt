@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_4270',
+'qmid': None,
+'tracker_id': 'CORE-4270',
+'title': 'Error in case of subquery with windowed function + where <field> IN(select ...)',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    recreate table t0(q int); commit;
+    create index t0_q on t0(q);
+    commit;
+    insert into t0(q) values (1);
+    commit;
+  """,
+ 'test_script': 
+  """
+    set list on;
+    select a.qx
+    from
+    (
+     select qx
+     from
+     (
+         select 1 qx
+               ,count(*)over() as c
+         from t0
+         where t0.q in (select 1 from rdb$database)
+     ) r
+    ) a
+    join t0 b on a.qx = b.q;
+  """,
+ 'expected_stdout': 
+  """
+  QX                              1
+  """
+}
+]
+}

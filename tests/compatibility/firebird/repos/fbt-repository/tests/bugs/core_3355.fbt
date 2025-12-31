@@ -1,0 +1,73 @@
+{
+'id': 'bugs.core_3355',
+'qmid': None,
+'tracker_id': 'CORE-3355',
+'title': 'Wrong comparsion of DATE and TIMESTAMP if index is used',
+'description': '',
+'min_versions': '2.1.5',
+'versions': [
+{
+ 'firebird_version': '2.1.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table tdate (id integer not null primary key, val date);
+create index tdateix1 on tdate (val);
+commit;
+insert into tdate values (0, '1997-12-31');
+insert into tdate values (1, '1998-01-01');
+insert into tdate values (2, '1998-01-02');
+insert into tdate values (3, '1998-01-03');
+insert into tdate values (4, '1998-01-04');
+insert into tdate values (5, '1998-01-05');
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select count(*) from tdate where val >= timestamp'1998-01-04 12:00:00.0000';
+select count(*) from tdate where val < timestamp'1998-01-04 12:00:00.0000';
+""",
+ 'expected_stdout': """Database:  localhost:C:btest2	mpugs.core_3355.fdb, User: SYSDBA
+SQL>
+       COUNT
+============
+           1
+
+SQL>
+       COUNT
+============
+           5
+
+SQL>"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table tdate (id integer not null primary key, val date);
+create index tdateix1 on tdate (val);
+commit;
+insert into tdate values (0, '1997-12-31');
+insert into tdate values (1, '1998-01-01');
+insert into tdate values (2, '1998-01-02');
+insert into tdate values (3, '1998-01-03');
+insert into tdate values (4, '1998-01-04');
+insert into tdate values (5, '1998-01-05');
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select count(*) from tdate where val >= timestamp'1998-01-04 12:00:00.0000';
+select count(*) from tdate where val < timestamp'1998-01-04 12:00:00.0000';
+""",
+ 'expected_stdout': """
+                COUNT
+=====================
+                    1
+
+
+                COUNT
+=====================
+                    5
+
+"""
+}
+]
+}

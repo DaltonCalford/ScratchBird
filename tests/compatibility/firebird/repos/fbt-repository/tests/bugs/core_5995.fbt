@@ -1,0 +1,177 @@
+{
+'id': 'bugs.core_5995',
+'qmid': None,
+'tracker_id': 'CORE-5995',
+'title': 'Creator user name is empty in user trace sessions',
+'description': 
+ """
+    We create trivial config for trace, start session and stop it.
+    Trace list must contain string: '  user: SYSDBA ' (without apostrophes).
+    We search this by string using pattern matching: such line MUST contain at least two words
+    (it was just 'user:' before this bug was fixed).
+    Confirmed bug on: 3.0.2.32658, 3.0.4.33054, 3.0.5.33097
+    Checked on:
+         4.0.0.1421: OK, 5.186s.
+         3.0.5.33106: OK, 4.070s.
+ """,
+'min_versions': '3.0.5',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script':"""\
+
+import os
+import re
+import time
+import subprocess
+from subprocess import Popen
+from fdb import services
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+fdb_file=db_conn.database_name
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+#####################################################################
+# Prepare config for trace session that will be launched by call of FBSVCMGR:
+
+txt = '''\
+    database = %[\\\\\\\\/]bugs.core_5995.fdb
+    {
+        enabled = true
+        time_threshold = 0 
+        log_initfini = false
+        log_statement_finish = true
+    }
+'''
+trc_cfg=open( os.path.join(context['temp_directory'],'tmp_trace_5995.cfg'), 'w')
+trc_cfg.write(txt)
+flush_and_close( trc_cfg )
+
+#####################################################################
+# Async. launch of trace session using FBSVCMGR action_trace_start:
+
+trc_log=open( os.path.join(context['temp_directory'],'tmp_trace_5995.log'), 'w')
+# Execute a child program in a new process, redirecting STDERR to the same target as of STDOUT:
+p_svcmgr = Popen( [ context['fbsvcmgr_path'], "localhost:service_mgr",
+                    "action_trace_start",
+                    "trc_cfg", trc_cfg.name
+                  ],
+                  stdout=trc_log, 
+                  stderr=subprocess.STDOUT
+                )
+
+# Wait! Trace session is initialized not instantly!
+time.sleep(1)
+
+#####################################################################
+
+# Determine active trace session ID (for further stop):
+trc_lst=open( os.path.join(context['temp_directory'],'tmp_trace_5995.lst'), 'w')
+subprocess.call([context['fbsvcmgr_path'], "localhost:service_mgr",
+                 "action_trace_list"],
+                 stdout=trc_lst, stderr=subprocess.STDOUT
+               )
+flush_and_close( trc_lst )
+
+# Session ID: 5 
+#   user:   
+#   date:  2015-08-27 15:24:14 
+#   flags: active, trace 
+
+usr_pattern = re.compile('user[:]{0,1}\s+\S+', re.IGNORECASE)
+sid_pattern = re.compile('Session\s+ID[:]{0,1}\s+\d+', re.IGNORECASE)
+
+trcssn=0
+trcusr=''
+with open( trc_lst.name,'r') as f:
+    for line in f:
+        if sid_pattern.search( line ) and len( line.split() ) == 3:
+            trcssn = line.split()[2]
+
+        if usr_pattern.search(line) and len( line.split() ) >= 2:
+            trcusr = line.split()[1]
+
+        if  trcssn and trcusr:
+            break
+
+# Result: `trcssn` is ID of active trace session. 
+# We have to terminate trace session that is running on server BEFORE we termitane process `p_svcmgr`
+if trcssn==0:
+    print("Error parsing trace session ID.")
+else:
+
+    #####################################################################
+    # Stop trace session:
+    #####################################################################
+
+    trc_lst=open(trc_lst.name, "a")
+    trc_lst.seek(0,2)
+    print( 'Trace was started by: ' + trcusr )
+
+    subprocess.call( [ context['fbsvcmgr_path'], "localhost:service_mgr",
+                       "action_trace_stop",
+                       "trc_id",trcssn
+                     ],
+                     stdout=trc_lst, 
+                     stderr=subprocess.STDOUT
+                   )
+    flush_and_close( trc_lst )
+    p_svcmgr.terminate()
+
+flush_and_close( trc_log )
+
+# cleanup:
+##########
+time.sleep(1)
+cleanup( (trc_lst, trc_cfg, trc_log) )
+  """,
+ 'expected_stdout':
+  """
+    Trace was started by: SYSDBA
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

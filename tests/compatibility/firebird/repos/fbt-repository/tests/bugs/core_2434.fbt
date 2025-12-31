@@ -1,0 +1,47 @@
+{
+'id': 'bugs.core_2434',
+'qmid': None,
+'tracker_id': 'CORE-2434',
+'title': 'CREATE USER command: Invalid error message',
+'description': 'Attempt to create user with empty password should raise error with message related to this problem',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create user tmp$c2434 password '';
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -Password should not be empty string
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create user tmp$c2434 password '';
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE USER TMP$C2434 failed
+    -Password should not be empty string
+  """
+}
+]
+}

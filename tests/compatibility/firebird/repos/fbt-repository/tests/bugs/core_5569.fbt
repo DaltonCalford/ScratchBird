@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_5569',
+'qmid': None,
+'tracker_id': 'CORE-5569',
+'title': 'ISQL incorrectly pads UNICODE_FSS/UTF8 columns when they use a collation',
+'description':
+ """
+    30SS, build 3.0.3.32738: OK, 0.766s.
+    40SS, build 4.0.0.680: OK, 0.859s.
+ """,
+'min_versions': '3.0.3',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list OFF; -- for this test we have to check table-wise view rather than list
+    select 
+        _utf8 '1234567890' collate unicode as f_with_collate, 
+        _utf8 '1234567890' as f_without_collate,
+        '|' as d
+    from rdb$database;
+
+  """,
+  'expected_stdout':
+  """
+    F_WITH_COLLATE F_WITHOUT_COLLATE D
+    ============== ================= ======
+    1234567890     1234567890        |
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

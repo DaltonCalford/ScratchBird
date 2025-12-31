@@ -1,0 +1,66 @@
+{
+'id': 'bugs.core_3360',
+'qmid': None,
+'tracker_id': 'CORE-3360',
+'title': 'update ... returning ... raises -551 (no perm to update) for a column present only in the returning clause',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    set wng off;
+
+    -- Drop old account with name = 'tmp$c3360' if it remains from prevoius run:
+    set term ^;
+    execute block as
+    begin
+        begin
+        execute statement 'drop user tmp$c3360' with autonomous transaction;
+            when any do begin end
+        end
+    end^
+    set term ;^
+    commit;
+
+    create user tmp$c3360 password '123';
+    commit;
+    revoke all on all from tmp$c3360;
+    commit;
+    
+    recreate table test(id int, readonly_x int, readonly_y int, writeable_column int); 
+    commit;
+
+    insert into test(id, readonly_x, readonly_y, writeable_column) values(1, 100, 200, 300); 
+    commit;
+
+    grant select on test to tmp$c3360;
+    grant update (writeable_column) on test to tmp$c3360;
+    commit;  
+
+    connect '$(DSN)' user 'TMP$C3360' password '123';
+
+    update test set writeable_column = readonly_x - readonly_y where id = 1 returning writeable_column;
+    commit;
+
+    connect '$(DSN)' user 'SYSDBA' password 'masterkey';
+    drop user tmp$c3360;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+    WRITEABLE_COLUMN                -100
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

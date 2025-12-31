@@ -1,0 +1,49 @@
+{
+'id': 'bugs.core_3502',
+'qmid': None,
+'tracker_id': 'CORE-3502',
+'title': 'DROP VIEW ignores the existing non-column dependencies',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    set autoddl on;
+    commit;
+    create or alter procedure p as begin end;
+    commit;
+    
+    create or alter view v (id) as select rdb$relation_id from rdb$database;
+    commit;
+    
+    set term ^;
+    create or alter procedure p as
+      declare id int;
+    begin
+      select id from v rows 1 into id;
+    end^
+    set term ;^
+    commit;
+  """,
+ 'test_script':
+  """
+    execute procedure p;
+    commit;
+    drop view v;
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -cannot delete
+    -COLUMN V.ID
+    -there are 1 dependencies
+  """
+}
+]
+}

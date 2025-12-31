@@ -1,0 +1,65 @@
+{
+'id': 'functional.trigger.alter.05',
+'qmid': 'functional.trigger.alter.alter_trigger_05',
+'tracker_id': '',
+'title': 'ALTER TRIGGER - BEFORE UPDATE',
+'description': """ALTER TRIGGER - BEFORE UPDATE
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+CREATE TRIGGER
+SHOW TRIGGER
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL CONSTRAINT unq UNIQUE,
+                   text VARCHAR(32));
+SET TERM ^;
+CREATE TRIGGER tg FOR test AFTER INSERT
+AS
+BEGIN
+  new.id=1;
+END ^
+SET TERM ;^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER TRIGGER tg BEFORE UPDATE;
+SHOW TRIGGER tg;""",
+ 'expected_stdout': """Triggers on Table TEST:
+TG, Sequence: 0, Type: BEFORE UPDATE, Active
+AS
+BEGIN
+  new.id=1;
+END
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL CONSTRAINT unq UNIQUE,
+                   text VARCHAR(32));
+SET TERM ^;
+CREATE TRIGGER tg FOR test AFTER INSERT
+AS
+BEGIN
+END ^
+SET TERM ;^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER TRIGGER tg BEFORE UPDATE;
+SHOW TRIGGER tg;""",
+ 'expected_stdout': """Triggers on Table TEST:
+TG, Sequence: 0, Type: BEFORE UPDATE, Active
+AS
+BEGIN
+END
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+""",
+  'substitutions':[('\+.*',''),('\=.*',''),('Trigger text.*','')]
+}
+]
+}

@@ -1,0 +1,23 @@
+{
+'id': 'bugs.core_3493',
+'qmid': None,
+'tracker_id': 'CORE-3493',
+'title': "Adding a value to a timestamp below '16.11.1858 00:00:01' throws 'value exceeds the range for valid timestamp'",
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT CAST('01.01.0200 12:00:00' as timestamp) + 1 from rdb$database;
+""",
+ 'expected_stdout': """SQL>
+                      ADD
+=========================
+0200-01-02 12:00:00.0000
+"""
+}
+]
+}

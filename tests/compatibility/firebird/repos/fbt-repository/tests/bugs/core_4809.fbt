@@ -1,0 +1,186 @@
+{
+'id': 'bugs.core_4809',
+'qmid': None,
+'tracker_id': 'CORE-4809',
+'title': 'HASH/MERGE JOIN is not used for more than two streams if they are joined via USING/NATURAL clauses and join is based on DBKEY concatenations',
+'description':
+  """
+    Test verifies only FB 3.0+
+    For 2.5.x see CORE-4822.
+
+    04-apr-2022
+    Data sources with equal cardinality now present in the HASH plan in order they are specified in the query; before *reverse* order was used.
+    Because of this, one needed to add SUBSTITUTIONS which lead only to check 'PLAN HASH' text in the plans, regardless on order of data sources.
+  """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'sql_dialect': 3,
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table tk(x int primary key using index tk_x);
+    commit;
+    insert into tk(x)
+    with recursive r as (select 0 i from rdb$database union all select r.i+1 from r where r.i<99)
+    select r1.i*100+r0.i from r r1, r r0;
+    commit;
+    set statistics index tk_x;
+    commit;
+    
+    recreate table tf(id_key int primary key using index tf_id_key);
+    commit;
+    insert into tf(id_key)
+    with recursive r as (select 0 i from rdb$database union all select r.i+1 from r where r.i<99)
+    select r1.i*100+r0.i from r r1, r r0;
+    commit;
+    set statistics index tf_id_key;
+    commit;
+    
+    set planonly;
+    
+    -- 1. Join using RDB$DB_KEY based expressions:
+    
+    ----------- test `traditional` join form -----------------
+    
+    select count(*)
+    from (select rdb$db_key||'' a from tk) datasource_a
+    join (select rdb$db_key||'' a from tk) datasource_b on datasource_a.a = datasource_b.a;
+    
+    
+    select count(*)
+    from (select rdb$db_key||'' a from tk) datasource_a
+    join (select rdb$db_key||'' a from tk) datasource_b on datasource_a.a = datasource_b.a
+    join (select rdb$db_key||'' a from tk) datasource_c on datasource_b.a = datasource_c.a;
+    
+    
+    select count(*)
+    from (select rdb$db_key||'' a from tk) datasource_a
+    join (select rdb$db_key||'' a from tk) datasource_b on datasource_a.a = datasource_b.a
+    join (select rdb$db_key||'' a from tk) datasource_c on datasource_b.a = datasource_c.a
+    join (select rdb$db_key||'' a from tk) datasource_d on datasource_c.a = datasource_d.a;
+    
+    ----------- test join on named columns form -----------------
+    
+    select count(*)
+    from (select rdb$db_key||'' a from tk) datasource_a
+    join (select rdb$db_key||'' a from tk) datasource_b using(a);
+    
+    select count(*)
+    from (select rdb$db_key||'' a from tk) datasource_a
+    join (select rdb$db_key||'' a from tk) datasource_b using(a)
+    join (select rdb$db_key||'' a from tk) datasource_c using(a);
+    
+    select count(*)
+    from (select rdb$db_key||'' a from tk) datasource_a
+    join (select rdb$db_key||'' a from tk) datasource_b using(a)
+    join (select rdb$db_key||'' a from tk) datasource_c using(a)
+    join (select rdb$db_key||'' a from tk) datasource_d using(a);
+    
+    ----------- test natural join form -----------------
+    
+    select count(*)
+    from (select rdb$db_key||'' a from tk) datasource_a
+    natural join (select rdb$db_key||'' a from tk) datasource_b;
+    
+    select count(*)
+    from (select rdb$db_key||'' a from tk) datasource_a
+    natural join (select rdb$db_key||'' a from tk) datasource_b
+    natural join (select rdb$db_key||'' a from tk) datasource_c;
+    
+    select count(*)
+    from (select rdb$db_key||'' a from tk) datasource_a
+    natural join (select rdb$db_key||'' a from tk) datasource_b
+    natural join (select rdb$db_key||'' a from tk) datasource_c
+    natural join (select rdb$db_key||'' a from tk) datasource_d;
+    
+    -------------------------------------------------
+    
+    -- 2. Join using COMMON FIELD based expressions:
+    -- (all following statements produced 'PLAN HASH' before fix also; 
+    --  here we verify them only for sure that evething remains OK).
+    
+    ----------- test `traditional` join form -----------------
+    
+    select count(*)
+    from (select id_key||'' a from tf) datasource_a
+    join (select id_key||'' a from tf) datasource_b on datasource_a.a = datasource_b.a;
+    
+    
+    select count(*)
+    from (select id_key||'' a from tf) datasource_a
+    join (select id_key||'' a from tf) datasource_b on datasource_a.a = datasource_b.a
+    join (select id_key||'' a from tf) datasource_c on datasource_b.a = datasource_c.a;
+    
+    
+    select count(*)
+    from (select id_key||'' a from tf) datasource_a
+    join (select id_key||'' a from tf) datasource_b on datasource_a.a = datasource_b.a
+    join (select id_key||'' a from tf) datasource_c on datasource_b.a = datasource_c.a
+    join (select id_key||'' a from tf) datasource_d on datasource_c.a = datasource_d.a;
+    
+    ----------- test join on named columns form -----------------
+    
+    select count(*)
+    from (select id_key||'' a from tf) datasource_a
+    join (select id_key||'' a from tf) datasource_b using(a);
+    
+    select count(*)
+    from (select id_key||'' a from tf) datasource_a
+    join (select id_key||'' a from tf) datasource_b using(a)
+    join (select id_key||'' a from tf) datasource_c using(a);
+    
+    select count(*)
+    from (select id_key||'' a from tf) datasource_a
+    join (select id_key||'' a from tf) datasource_b using(a)
+    join (select id_key||'' a from tf) datasource_c using(a)
+    join (select id_key||'' a from tf) datasource_d using(a);
+    
+    ----------- test natural join form -----------------
+    
+    select count(*)
+    from (select id_key||'' a from tf) datasource_a
+    natural join (select id_key||'' a from tf) datasource_b;
+    
+    select count(*)
+    from (select id_key||'' a from tf) datasource_a
+    natural join (select id_key||'' a from tf) datasource_b
+    natural join (select id_key||'' a from tf) datasource_c;
+    
+    select count(*)
+    from (select id_key||'' a from tf) datasource_a
+    natural join (select id_key||'' a from tf) datasource_b
+    natural join (select id_key||'' a from tf) datasource_c
+    natural join (select id_key||'' a from tf) datasource_d;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN HASH (DATASOURCE_B TK NATURAL, DATASOURCE_A TK NATURAL)
+    PLAN HASH (HASH (DATASOURCE_C TK NATURAL, DATASOURCE_B TK NATURAL), DATASOURCE_A TK NATURAL)
+    PLAN HASH (HASH (HASH (DATASOURCE_D TK NATURAL, DATASOURCE_C TK NATURAL), DATASOURCE_B TK NATURAL), DATASOURCE_A TK NATURAL)
+    PLAN HASH (DATASOURCE_B TK NATURAL, DATASOURCE_A TK NATURAL)
+    PLAN HASH (DATASOURCE_C TK NATURAL, HASH (DATASOURCE_B TK NATURAL, DATASOURCE_A TK NATURAL))
+    PLAN HASH (DATASOURCE_D TK NATURAL, HASH (DATASOURCE_C TK NATURAL, HASH (DATASOURCE_B TK NATURAL, DATASOURCE_A TK NATURAL)))
+    PLAN HASH (DATASOURCE_B TK NATURAL, DATASOURCE_A TK NATURAL)
+    PLAN HASH (DATASOURCE_C TK NATURAL, HASH (DATASOURCE_B TK NATURAL, DATASOURCE_A TK NATURAL))
+    PLAN HASH (DATASOURCE_D TK NATURAL, HASH (DATASOURCE_C TK NATURAL, HASH (DATASOURCE_B TK NATURAL, DATASOURCE_A TK NATURAL)))
+    PLAN HASH (DATASOURCE_B TF NATURAL, DATASOURCE_A TF NATURAL)
+    PLAN HASH (HASH (DATASOURCE_C TF NATURAL, DATASOURCE_B TF NATURAL), DATASOURCE_A TF NATURAL)
+    PLAN HASH (HASH (HASH (DATASOURCE_D TF NATURAL, DATASOURCE_C TF NATURAL), DATASOURCE_B TF NATURAL), DATASOURCE_A TF NATURAL)
+    PLAN HASH (DATASOURCE_B TF NATURAL, DATASOURCE_A TF NATURAL)
+    PLAN HASH (DATASOURCE_C TF NATURAL, HASH (DATASOURCE_B TF NATURAL, DATASOURCE_A TF NATURAL))
+    PLAN HASH (DATASOURCE_D TF NATURAL, HASH (DATASOURCE_C TF NATURAL, HASH (DATASOURCE_B TF NATURAL, DATASOURCE_A TF NATURAL)))
+    PLAN HASH (DATASOURCE_B TF NATURAL, DATASOURCE_A TF NATURAL)
+    PLAN HASH (DATASOURCE_C TF NATURAL, HASH (DATASOURCE_B TF NATURAL, DATASOURCE_A TF NATURAL))
+    PLAN HASH (DATASOURCE_D TF NATURAL, HASH (DATASOURCE_C TF NATURAL, HASH (DATASOURCE_B TF NATURAL, DATASOURCE_A TF NATURAL)))
+  """,
+  'substitutions':[('PLAN HASH \(.*', 'PLAN HASH')]
+}
+]
+}

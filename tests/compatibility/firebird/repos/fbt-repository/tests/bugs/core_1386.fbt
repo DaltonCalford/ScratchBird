@@ -1,0 +1,31 @@
+{
+'id': 'bugs.core_1386',
+'qmid': 'bugs.core_1386',
+'tracker_id': 'CORE-1386',
+'title': 'Generated columns',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE TABLE TAB1 (COL1 INTEGER, COL2 GENERATED ALWAYS AS (COL1 +1), COL3 INTEGER GENERATED ALWAYS AS (COL1 +1));
+COMMIT;
+SHOW TABLE TAB1;
+INSERT INTO TAB1 (COL1) VALUES (1);
+COMMIT;
+SELECT * FROM TAB1;
+
+""",
+ 'expected_stdout': """COL1                            INTEGER Nullable
+COL2                            Computed by: (COL1 +1)
+COL3                            Computed by: (COL1 +1)
+
+        COL1                  COL2         COL3
+============ ===================== ============
+           1                     2            2
+
+"""
+}
+]
+}

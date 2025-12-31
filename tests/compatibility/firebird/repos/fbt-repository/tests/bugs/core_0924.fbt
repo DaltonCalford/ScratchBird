@@ -1,0 +1,75 @@
+{
+'id': 'bugs.core_0924',
+'qmid': 'bugs.core_924-250',
+'tracker_id': 'CORE-924',
+'title': 'An attempt to select DB_KEY from a procedure crashes the server',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE T1 (ID1 INTEGER NOT NULL);
+SET TERM ^;
+CREATE PROCEDURE AP
+returns (output1 INTEGER)
+AS
+BEGIN
+ FOR SELECT ID1 FROM T1 INTO :output1
+ DO
+  BEGIN
+   SUSPEND;
+  END
+END ^
+SET TERM ;^
+COMMIT;
+INSERT INTO T1 VALUES (1);
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT RDB$DB_KEY from AP;
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42S22
+Dynamic SQL Error
+-SQL error code = -206
+-Column unknown
+-DB_KEY
+-At line 1, column 8
+""",
+  'substitutions': [('line\s[0-9]+,','line x'),
+                    ('column\s[0-9]+','column y')
+  ]
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE T1 (ID1 INTEGER NOT NULL);
+SET TERM ^;
+CREATE PROCEDURE AP
+returns (output1 INTEGER)
+AS
+BEGIN
+ FOR SELECT ID1 FROM T1 INTO :output1
+ DO
+  BEGIN
+   SUSPEND;
+  END
+END ^
+SET TERM ;^
+COMMIT;
+INSERT INTO T1 VALUES (1);
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT RDB$DB_KEY from AP;
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+Dynamic SQL Error
+-SQL error code = -607
+-Cannot SELECT RDB$DB_KEY from a stored procedure.
+""",
+  'substitutions': [('line\s[0-9]+,','line x'),
+                    ('column\s[0-9]+','column y')
+  ]
+}
+]
+}

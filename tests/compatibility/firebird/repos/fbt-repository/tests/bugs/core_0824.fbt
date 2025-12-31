@@ -1,0 +1,55 @@
+{
+'id': 'bugs.core_0824',
+'qmid': None,
+'tracker_id': 'CORE-824',
+'title': 'accent ignoring collation for unicode',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT IIF('eeaauoeeeaauo' = 'ÉÈÀÂÛÔÊéèàâûô' COLLATE UNICODE_CI_AI ,'true','false'),'true','''eeaauoeeeaauo'' = ''ÉÈÀÂÛÔÊéèàâûô'' COLLATE UNICODE_CI_AI' FROM RDB$DATABASE;
+SELECT IIF('EEAAUOEEEAAUO' = 'ÉÈÀÂÛÔÊéèàâûô' COLLATE UNICODE_CI_AI ,'true','false'),'true','''EEAAUOEEEAAUO'' = ''ÉÈÀÂÛÔÊéèàâûô'' COLLATE UNICODE_CI_AI' FROM RDB$DATABASE;
+""",
+ 'expected_stdout': """Database:  localhost:C:btest2	mpugs.core_0824.fdb, User: SYSDBA
+SQL>
+CASE                 CONSTANT         CONSTANT
+==================== ================ ===============================================================================
+true                 true             'eeaauoeeeaauo' = 'ÉÈÀÂÛÔÊéèàâûô' COLLATE UNICODE_CI_AI
+
+SQL>
+CASE                 CONSTANT         CONSTANT
+==================== ================ ===============================================================================
+true                 true             'EEAAUOEEEAAUO' = 'ÉÈÀÂÛÔÊéèàâûô' COLLATE UNICODE_CI_AI
+
+SQL> SQL>"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT IIF('eeaauoeeeaauo' = 'ÉÈÀÂÛÔÊéèàâûô' COLLATE UNICODE_CI_AI ,'true','false'),'true','''eeaauoeeeaauo'' = ''ÉÈÀÂÛÔÊéèàâûô'' COLLATE UNICODE_CI_AI' FROM RDB$DATABASE;
+SELECT IIF('EEAAUOEEEAAUO' = 'ÉÈÀÂÛÔÊéèàâûô' COLLATE UNICODE_CI_AI ,'true','false'),'true','''EEAAUOEEEAAUO'' = ''ÉÈÀÂÛÔÊéèàâûô'' COLLATE UNICODE_CI_AI' FROM RDB$DATABASE;
+""",
+ 'expected_stdout': """
+CASE   CONSTANT CONSTANT
+====== ======== =======================================================
+true   true     'eeaauoeeeaauo' = 'ÉÈÀÂÛÔÊéèàâûô' COLLATE UNICODE_CI_AI
+
+
+CASE   CONSTANT CONSTANT
+====== ======== =======================================================
+true   true     'EEAAUOEEEAAUO' = 'ÉÈÀÂÛÔÊéèàâûô' COLLATE UNICODE_CI_AI
+
+"""
+}
+]
+}

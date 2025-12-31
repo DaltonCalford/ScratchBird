@@ -1,0 +1,169 @@
+{
+'id': 'bugs.core_2251',
+'qmid': None,
+'tracker_id': 'CORE-2251',
+'title': "gbak doesn't return error code",
+'description': 
+ """
+    Inaccessible folder is defined here as $tmp + GUID (i.e. it 100% not yet exists).
+    We have to check allof kind for inaccessible file:
+        * .fbk when trying to make backup of existing database;
+        * .fdb when trying to restore from existing .fbk;
+        * .log - for any of these operation
+    We are NOT interested when all of these files are in accessible folder(s).
+
+    Query to obtain set of interested combinations (all of them should have retcode = 1):
+        with
+        a as (
+            select 'backup' as action from rdb$database union all
+            select 'restore' from rdb$database
+        )
+        ,s as (
+            select 'inaccessible' as path_to_source_file from rdb$database union all
+            select 'accessible' from rdb$database
+        )
+        ,t as (
+            select 'inaccessible' as path_to_target_file from rdb$database union all
+            select 'accessible' from rdb$database
+        )
+        ,g as (
+            select 'inaccessible' as path_to_action_log from rdb$database union all
+            select 'accessible' from rdb$database
+        )
+        select * from a,s,t,g
+        where NOT (s.path_to_source_file = 'accessible' and t.path_to_target_file = 'accessible' and g.path_to_action_log = 'accessible')
+        order by 1,2,3,4;
+
+    Confirmed wrong results on: 4.0.0.1714 SC; 4.0.0.1715 CS;  3.0.5.33221 SC; 3.0.5.33225 CS
+    Checked on:
+        4.0.0.1726 SS: 3.759s.
+        3.0.5.33232 SS: 1.671s.
+ """,
+'min_versions': '3.0.5',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script':"""\
+
+import os
+import sys
+import uuid
+import subprocess
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+correct_fdb=db_conn.database_name
+db_conn.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if os.path.isfile( f_names_list[i]):
+            os.remove( f_names_list[i] )
+
+#--------------------------------------------
+
+inaccessible_dir = os.path.join(context['temp_directory'], str(uuid.uuid4()) )
+
+invalid_fdb=os.path.join(inaccessible_dir,'tmp_2251.fdb')
+
+invalid_fbk=os.path.join(inaccessible_dir,'tmp_2251.fbk')
+correct_fbk=os.path.join(context['temp_directory'],'tmp_2251.fbk')
+
+invalid_res=os.path.join(inaccessible_dir,'tmp_2251.tmp')
+correct_res=os.path.join(context['temp_directory'],'tmp_2251.tmp')
+
+invalid_log=os.path.join(inaccessible_dir,'tmp_2251.log')
+correct_log=os.path.join(context['temp_directory'],'tmp_2251.log')
+
+##########################################################################################
+
+f_null_log = open(os.devnull,"w")
+gbak_retcode = subprocess.call( [context['gbak_path'], '-b', '-se', 'localhost:service_mgr', correct_fdb, correct_fbk, '-y', invalid_log ], stdout=f_null_log, stderr=subprocess.STDOUT)
+print( 'backup  source_fdb=accessible          target_fbk=accessible          log_file=inaccessible:'.ljust(100), gbak_retcode )
+
+cleanup( (correct_log,) )
+gbak_retcode = subprocess.call( [context['gbak_path'], '-b', '-se', 'localhost:service_mgr', correct_fdb, invalid_fbk, '-y', correct_log ], stdout=f_null_log, stderr=subprocess.STDOUT)
+print('backup  source_fdb=accessible          target_fbk=inaccessible        log_file=accessible:'.ljust(100), gbak_retcode)
+
+gbak_retcode = subprocess.call( [context['gbak_path'], '-b', '-se', 'localhost:service_mgr', correct_fdb, invalid_fbk, '-y', invalid_log ], stdout=f_null_log, stderr=subprocess.STDOUT)
+print('backup  source_fdb=accessible          target_fbk=inaccessible        log_file=inaccessible:'.ljust(100), gbak_retcode)
+
+cleanup( (correct_log,) )
+gbak_retcode = subprocess.call( [context['gbak_path'], '-b', '-se', 'localhost:service_mgr', invalid_fdb, correct_fbk, '-y', correct_log ], stdout=f_null_log, stderr=subprocess.STDOUT)
+print('backup  source_fdb=inaccessible        target_fbk=accessible          log_file=accessible:'.ljust(100), gbak_retcode)
+
+gbak_retcode = subprocess.call( [context['gbak_path'], '-b', '-se', 'localhost:service_mgr', invalid_fdb, correct_fbk, '-y', invalid_log ], stdout=f_null_log, stderr=subprocess.STDOUT)
+print('backup  source_fdb=inaccessible        target_fbk=accessible          log_file=inaccessible:'.ljust(100), gbak_retcode)
+
+cleanup( (correct_log,) )
+gbak_retcode = subprocess.call( [context['gbak_path'], '-b', '-se', 'localhost:service_mgr', invalid_fdb, invalid_fbk, '-y', correct_log ], stdout=f_null_log, stderr=subprocess.STDOUT)
+print('backup  source_fdb=inaccessible        target_fbk=inaccessible        log_file=accessible:'.ljust(100), gbak_retcode)
+
+gbak_retcode = subprocess.call( [context['gbak_path'], '-b', '-se', 'localhost:service_mgr', invalid_fdb, invalid_fbk, '-y', invalid_log ], stdout=f_null_log, stderr=subprocess.STDOUT)
+print('backup  source_fdb=inaccessible        target_fbk=inaccessible        log_file=inaccessible:'.ljust(100), gbak_retcode)
+
+######################################################################################
+runProgram('gbak', [ '-b', '-se', 'localhost:service_mgr', correct_fdb, correct_fbk] )
+######################################################################################
+
+gbak_retcode = subprocess.call( [context['gbak_path'], '-rep', '-se', 'localhost:service_mgr', correct_fbk, correct_fdb, '-y', invalid_log ], stdout=f_null_log, stderr=subprocess.STDOUT)
+print( 'restore source_fbk=accessible          target_fdb=accessible          log_file=inaccessible:'.ljust(100), gbak_retcode )
+
+cleanup( (correct_log,) )
+gbak_retcode = subprocess.call( [context['gbak_path'], '-rep', '-se', 'localhost:service_mgr', correct_fbk, invalid_fdb, '-y', correct_log ], stdout=f_null_log, stderr=subprocess.STDOUT)
+print( 'restore source_fbk=accessible          target_fdb=inaccessible        log_file=accessible:'.ljust(100), gbak_retcode )
+
+gbak_retcode = subprocess.call( [context['gbak_path'], '-rep', '-se', 'localhost:service_mgr', correct_fbk, invalid_fdb, '-y', invalid_log ], stdout=f_null_log, stderr=subprocess.STDOUT)
+print( 'restore source_fbk=accessible          target_fdb=inaccessible        log_file=inaccessible:'.ljust(100), gbak_retcode )
+
+cleanup( (correct_log,) )
+gbak_retcode = subprocess.call( [context['gbak_path'], '-rep', '-se', 'localhost:service_mgr', invalid_fbk, correct_fdb, '-y', correct_log ], stdout=f_null_log, stderr=subprocess.STDOUT)
+print( 'restore source_fbk=inaccessible        target_fdb=accessible          log_file=accessible:'.ljust(100), gbak_retcode )
+
+gbak_retcode = subprocess.call( [context['gbak_path'], '-rep', '-se', 'localhost:service_mgr', invalid_fbk, correct_fdb, '-y', invalid_log ], stdout=f_null_log, stderr=subprocess.STDOUT)
+print( 'restore source_fbk=inaccessible        target_fdb=accessible          log_file=inaccessible:'.ljust(100), gbak_retcode )
+
+cleanup( (correct_log,) )
+gbak_retcode = subprocess.call( [context['gbak_path'], '-rep', '-se', 'localhost:service_mgr', invalid_fbk, invalid_fdb, '-y', correct_log ], stdout=f_null_log, stderr=subprocess.STDOUT)
+print( 'restore source_fbk=inaccessible        target_fdb=inaccessible        log_file=accessible:'.ljust(100), gbak_retcode )
+
+gbak_retcode = subprocess.call( [context['gbak_path'], '-rep', '-se', 'localhost:service_mgr', invalid_fbk, invalid_fdb, '-y', invalid_log ], stdout=f_null_log, stderr=subprocess.STDOUT)
+print( 'restore source_fbk=inaccessible        target_fdb=inaccessible        log_file=inaccessible:'.ljust(100), gbak_retcode )
+
+f_null_log.close()
+
+cleanup( (correct_log,correct_fbk,) )
+
+  """,
+ 'expected_stdout':
+  """
+    backup  source_fdb=accessible          target_fbk=accessible          log_file=inaccessible:         1
+    backup  source_fdb=accessible          target_fbk=inaccessible        log_file=accessible:           1
+    backup  source_fdb=accessible          target_fbk=inaccessible        log_file=inaccessible:         1
+    backup  source_fdb=inaccessible        target_fbk=accessible          log_file=accessible:           1
+    backup  source_fdb=inaccessible        target_fbk=accessible          log_file=inaccessible:         1
+    backup  source_fdb=inaccessible        target_fbk=inaccessible        log_file=accessible:           1
+    backup  source_fdb=inaccessible        target_fbk=inaccessible        log_file=inaccessible:         1
+    restore source_fbk=accessible          target_fdb=accessible          log_file=inaccessible:         1
+    restore source_fbk=accessible          target_fdb=inaccessible        log_file=accessible:           1
+    restore source_fbk=accessible          target_fdb=inaccessible        log_file=inaccessible:         1
+    restore source_fbk=inaccessible        target_fdb=accessible          log_file=accessible:           1
+    restore source_fbk=inaccessible        target_fdb=accessible          log_file=inaccessible:         1
+    restore source_fbk=inaccessible        target_fdb=inaccessible        log_file=accessible:           1
+    restore source_fbk=inaccessible        target_fdb=inaccessible        log_file=inaccessible:         1
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[ ('\t+', ' ') ]
+}
+]
+}

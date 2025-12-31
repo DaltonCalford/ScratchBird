@@ -1,0 +1,63 @@
+{
+'id': 'functional.dml.merge.02',
+'qmid': '',
+'tracker_id': '',
+'title': 'merge STATEMENT can have only one RETURNING which must be after all WHEN sub-statements.',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+
+    recreate table ta(id int primary key, x int, y int);
+    recreate table tb(id int primary key, x int, y int);
+    commit;
+    
+    insert into ta(id, x, y) values(1, 10, 100);
+    insert into tb(id, x, y) values(1, 10, 100);
+    commit;
+
+    -- [ 1 ] must PASS:
+    merge into tb t
+    using ta s on s.id = t.id
+    when NOT matched then insert values(-s.id, -s.x, -s.y) ------------------------- (a)
+    when matched then
+        delete
+        returning old.id as deleted_id, old.x as deleted_x, old.y as deleted_y ----- (b)
+    ;
+    rollback;
+
+    -- [ 2 ] must FAIL with
+    -- Statement failed, SQLSTATE = 42000 / ... / -Token unknown / -when
+
+    merge into tb t
+    using ta s on s.id = t.id
+    when matched then delete returning old.id, old.x, old.y ----------------------- (b)
+    when NOT matched then insert values(-s.id, -s.x, -s.y) ------------------------ (a)
+    ;
+  """,
+ 'expected_stdout':
+  """
+    DELETED_ID                      1
+    DELETED_X                       10
+    DELETED_Y                       100
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    Dynamic SQL Error
+    -SQL error code = -104
+    -Token unknown - line 4, column 5
+    -when
+  """,
+  'substitutions': [('-Token unknown .*', ''), ('[ \t]+',' ')]
+}
+]
+}

@@ -1,0 +1,24 @@
+{
+'id': 'bugs.core_2389',
+'qmid': None,
+'tracker_id': 'CORE-2389',
+'title': 'Wrong matching of SIMILAR TO expression with brackets',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select 1 from rdb$database where 'x/t' SIMILAR TO '%[/]t';
+""",
+ 'expected_stdout': """
+    CONSTANT
+============
+           1
+
+"""
+}
+]
+}

@@ -1,0 +1,43 @@
+{
+'id': 'bugs.core_5309',
+'qmid': None,
+'tracker_id': 'CORE-5309',
+'title': 'Backup created under FB2.5 can be restored in FB3.0.0.32419 but not under current snapshot (FB3.0.1.32556)',
+'description':
+ """
+    Test does trivial attempt to restore database which was given by ticket starter as attached file.
+    No further actions required. STDOUR and STDERR must be empty.
+
+    Confirmed on 4.0.0.258, got:
+        GBAK_STDERR:
+        gbak: ERROR:arithmetic exception, numeric overflow, or string truncation
+        gbak: ERROR:    string right truncation
+        gbak: ERROR:    expected length 67, actual 201
+        gbak: ERROR:gds_$send failed
+        gbak:Exiting before completion due to errors
+
+   All works fine on 3.0.1.32568 and 4.0.0.313.
+ """,
+'min_versions': '3.0.1',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core5309.fbk',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

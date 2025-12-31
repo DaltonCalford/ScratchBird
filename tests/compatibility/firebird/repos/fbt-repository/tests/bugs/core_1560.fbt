@@ -1,0 +1,22 @@
+{
+'id': 'bugs.core_1560',
+'qmid': 'bugs.core_1560',
+'tracker_id': '',
+'title': 'NULLIF crashes when first parameter is constant empty string',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select nullif('','') from rdb$database;
+""",
+ 'expected_stdout': """
+CASE
+======
+<null>
+
+"""
+}
+]
+}

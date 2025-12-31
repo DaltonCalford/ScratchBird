@@ -1,0 +1,27 @@
+{
+'id': 'bugs.core_1677',
+'qmid': 'bugs.core_1677',
+'tracker_id': 'CORE-1677',
+'title': 'Floor & ceiling functions give wrong results with exact numeric arguments',
+'description': """Floor & ceiling functions give wrong results with exact numeric arguments
+select floor(cast(1500 as numeric(18,5))) from rdb$database -> -4827 (wrong)
+select floor(cast(1500 as numeric(18,4))) from rdb$database -> 1500 (correct)
+select ceiling(cast(1500 as numeric(18,5))) from rdb$database -> -4826 (wrong)
+
+Actually, any precision higher than 6 gives a wrong result.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select floor(cast(1500 as numeric(18,5))) F1,floor(cast(1500 as numeric(18,4))) F2, ceiling(cast(1500 as numeric(18,5))) F3 from rdb$database;
+""",
+ 'expected_stdout': """
+                   F1                    F2                    F3
+===================== ===================== =====================
+                 1500                  1500                  1500
+
+"""
+}
+]
+}

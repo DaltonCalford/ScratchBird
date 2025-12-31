@@ -1,0 +1,159 @@
+{
+'id': 'bugs.core_4789',
+'qmid': None,
+'tracker_id': 'CORE-4789',
+'title': 'Prohibit ability to cast timestamps that out of valid range to varchar',
+'description': 'This test is also related to CORE-2174',
+'min_versions': '2.5.5',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- FB 2.5 does not alow to use BIGINT as arguments in dateadd() function, so this test was simplified vs test for 3.0
+    -- Checks for boundary values:
+    
+    set list on;
+    set term ^;
+    execute block as
+    begin
+      rdb$set_context('USER_SESSION','MAX_DIFF_IN_HR', datediff(hour from timestamp '01.01.0001 00:00:00.000' to timestamp '31.12.9999 23:59:59.999' ));
+    end
+    ^ set term ;^
+    
+    -- Jump forward exactly to 31.12.9999 23:59:00
+    select cast( dateadd( rdb$get_context('USER_SESSION','MAX_DIFF_IN_HR') hour to timestamp '01.01.0001 00:00:00.000') as varchar(32)) text_dts4
+    from rdb$database;
+    
+    -- Jump forward beyond 31.12.9999 23:59:00
+    select cast( dateadd( 1+cast(rdb$get_context('USER_SESSION','MAX_DIFF_IN_HR') as bigint) hour to timestamp '01.01.0001 00:00:00.000') as varchar(32)) text_dts5
+    from rdb$database;
+    
+    -- Jump backward exactly to 01.01.0001 00:00:00.000
+    select cast( dateadd( -cast(rdb$get_context('USER_SESSION','MAX_DIFF_IN_HR') as bigint) hour to timestamp '31.12.9999 23:59:59.999') as varchar(32)) text_dts6
+    from rdb$database;
+    
+    -- Jump backward beyond 01.01.0001 00:00:00.000
+    select cast( dateadd( -cast(rdb$get_context('USER_SESSION','MAX_DIFF_IN_HR') as bigint)-1 hour to timestamp '31.12.9999 23:59:59.999') as varchar(32)) text_dts7
+    from rdb$database;
+    
+    
+    -- Check postfix ( http://sourceforge.net/p/firebird/code/61564 ):
+    select 
+         cast( dateadd( 1 second to cast('00:00:00' as time) ) as varchar(15))     text_tm1
+        ,cast( dateadd( 86400 second to cast('00:00:00' as time) ) as varchar(15)) text_tm2
+        ,cast( dateadd(-1 second to cast('00:00:00' as time) ) as varchar(15))     text_tm3
+        ,cast( dateadd(-86400 second to cast('00:00:00' as time) ) as varchar(15)) text_tm4
+    from rdb$database rows 1;
+  """,
+ 'expected_stdout': 
+  """
+    TEXT_DTS4                       9999-12-31 23:00:00.0000
+    TEXT_DTS6                       0001-01-01 00:59:59.9990
+    TEXT_TM1                        00:00:01.0000
+    TEXT_TM2                        00:00:00.0000
+    TEXT_TM3                        23:59:59.0000
+    TEXT_TM4                        00:00:00.0000
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 22008
+    value exceeds the range for valid timestamps
+    Statement failed, SQLSTATE = 22008
+    value exceeds the range for valid timestamps
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    --set echo on;
+    
+    -- Initial checks (from tracker stat post):
+    
+    select cast(dateadd( 87649415 hour to timestamp '01.01.0001 00:00:00.0000') as varchar(32)) text_dts_1
+    from rdb$database;
+    
+    select cast(dateadd(  87649415000 hour to timestamp '01.01.0001 00:00:00.0000') as varchar(32))  text_dts_2a
+    from rdb$database; 
+    
+    select cast(dateadd( -87649415000 hour to timestamp '31.12.9999 23:59:59.9999') as varchar(32))  text_dts_2b
+    from rdb$database; 
+    
+    
+    select cast(dateadd(  8764941500000 hour to timestamp '01.01.0001 00:00:00.0000') as varchar(32))  text_dts_3a
+    from rdb$database; 
+    
+    select cast(dateadd( -8764941500000 hour to timestamp '31.12.9999 23:59:59.9999') as varchar(32))  text_dts_3b
+    from rdb$database; 
+    
+    -- Additional checks for boundary values:
+    set term ^;
+    execute block as
+    begin
+      rdb$set_context('USER_SESSION','MAX_DIFF_IN_MS', datediff(millisecond from timestamp '01.01.0001 00:00:00.000' to timestamp '31.12.9999 23:59:59.999' ));
+    end
+    ^ set term ;^
+    
+    
+    -- Jump forward exactly to 31.12.9999 23:59:59.999
+    select cast( dateadd( rdb$get_context('USER_SESSION','MAX_DIFF_IN_MS') millisecond to timestamp '01.01.0001 00:00:00.000') as varchar(32)) text_dts4
+    from rdb$database;
+    
+    -- Jump forward beyond 31.12.9999 23:59:59.999  (i.e. to 01.01.10000 00:00:00.001):
+    select cast( dateadd( 1+cast(rdb$get_context('USER_SESSION','MAX_DIFF_IN_MS') as bigint) millisecond to timestamp '01.01.0001 00:00:00.000') as varchar(32)) text_dts5
+    from rdb$database;
+    
+    -- Jump backward exactly to 01.01.0001 00:00:00.000
+    select cast( dateadd( -cast(rdb$get_context('USER_SESSION','MAX_DIFF_IN_MS') as bigint) millisecond to timestamp '31.12.9999 23:59:59.999') as varchar(32)) text_dts6
+    from rdb$database;
+    
+    -- Jump backward beyond 01.01.0001 00:00:00.000 (i.e. to 01.01.0000 23:59:59.999):
+    select cast( dateadd( -cast(rdb$get_context('USER_SESSION','MAX_DIFF_IN_MS') as bigint)-1 millisecond to timestamp '31.12.9999 23:59:59.999') as varchar(32)) text_dts7
+    from rdb$database;
+    
+    
+    -- Check postfix ( http://sourceforge.net/p/firebird/code/61565 ):
+    select 
+         cast( dateadd( 1 second to cast('00:00:00' as time) ) as varchar(15))     text_tm1
+        ,cast( dateadd( 86400 second to cast('00:00:00' as time) ) as varchar(15)) text_tm2
+        ,cast( dateadd(-1 second to cast('00:00:00' as time) ) as varchar(15))     text_tm3
+        ,cast( dateadd(-86400 second to cast('00:00:00' as time) ) as varchar(15)) text_tm4
+    from rdb$database rows 1;
+  """,
+ 'expected_stdout': 
+  """
+    TEXT_DTS_1                      9999-12-31 23:00:00.0000
+    TEXT_DTS4                       9999-12-31 23:59:59.9990
+    TEXT_DTS6                       0001-01-01 00:00:00.0000
+    TEXT_TM1                        00:00:01.0000
+    TEXT_TM2                        00:00:00.0000
+    TEXT_TM3                        23:59:59.0000
+    TEXT_TM4                        00:00:00.0000
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 22008
+    value exceeds the range for valid timestamps
+    Statement failed, SQLSTATE = 22008
+    value exceeds the range for valid timestamps
+    Statement failed, SQLSTATE = 22008
+    value exceeds the range for valid timestamps
+    Statement failed, SQLSTATE = 22008
+    value exceeds the range for valid timestamps
+    Statement failed, SQLSTATE = 22008
+    value exceeds the range for valid timestamps
+    Statement failed, SQLSTATE = 22008
+    value exceeds the range for valid timestamps
+  """
+}
+]
+}
+

@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_3801',
+'qmid': None,
+'tracker_id': 'CORE-3801',
+'title': 'Warnings could be put twice in status-vector',
+'description': '',
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'sql_dialect': 1,
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^ ;
+    execute block as
+        declare d date;
+    begin
+        d = "now";
+    end
+    ^ 
+  """,
+ 'expected_stderr': 
+  """
+    SQL warning code = 301
+    -DATE data type is now called TIMESTAMP
+  """
+}
+]
+}

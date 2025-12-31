@@ -1,0 +1,348 @@
+{
+'id': 'functional.syspriv.grant_revoke_any_ddl_right',
+'tracker_id': '',
+'title': 'Check ability to grant right for issuing CREATE/ALTER/DROP statements.',
+'description':
+ """
+    Test creates user with name 'john_smith_ddl_grantor' and grants to him system privilege
+    to allow another user to run any DDL statement, and also to revoke all privileges from
+    this user. Name of another user (who will perform DDL): 'mike_adams_ddl_grantee'.
+
+    After this, we connect as 'john_smith_ddl_grantor' and give all kinds of DDL rights
+    for CREATE, ALTER and DROP objects to user 'mike_adams_ddl_grantee'.
+
+    We then connect to database as 'mike_adams_ddl_grantee' and try to create all kind of
+    database objects, then alter and drop them. No errors must occur here.
+
+    Finally, we make connect as 'john_smith_ddl_grantor' and revoke from 'mike_adams_ddl_grantee'
+    all grants. User'mike_adams_ddl_grantee' then makes connect and tries to CREATE any kind
+    of DB objects. All of them must NOT be created and exception SQLSTATE = 42000 must raise.
+
+
+    Checked on 5.0.0.139; 4.0.1.2568
+ """,
+'min_versions': '4.0.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set wng off;
+    set bail on;
+    set list on;
+
+
+    create or alter user john_smith_ddl_grantor password '123' revoke admin role;
+    create or alter user mike_adams_ddl_grantee password '456' revoke admin role;
+    commit;
+
+    set term ^;
+    execute block as
+    begin
+      execute statement 'drop role r_for_grant_revoke_any_ddl_right';
+      when any do begin end
+    end^
+    set term ;^
+    commit;
+
+    -- Add/change/delete non-system records in RDB$TYPES
+    create role r_for_grant_revoke_any_ddl_right set system privileges to GRANT_REVOKE_ANY_DDL_RIGHT;
+    commit;
+    grant default r_for_grant_revoke_any_ddl_right to user john_smith_ddl_grantor;
+    commit;
+
+    connect '$(DSN)' user john_smith_ddl_grantor password '123';
+    select current_user as who_am_i,r.rdb$role_name,rdb$role_in_use(r.rdb$role_name),r.rdb$system_privileges
+    from mon$database m cross join rdb$roles r;
+    commit;
+
+    -- ### NOTE ###
+    -- We give this system privilege being connected as 'john_smith_ddl_grantor', NOT as SYSDBA!
+    grant alter any character set to mike_adams_ddl_grantee;
+
+    grant create collation to mike_adams_ddl_grantee;
+    grant alter any collation to mike_adams_ddl_grantee;
+    grant drop any collation to mike_adams_ddl_grantee;
+    
+    grant create exception to mike_adams_ddl_grantee;
+    grant alter any exception to mike_adams_ddl_grantee;
+    grant drop any exception to mike_adams_ddl_grantee;
+
+    grant create generator to mike_adams_ddl_grantee;
+    grant alter any generator to mike_adams_ddl_grantee;
+    grant drop any generator to mike_adams_ddl_grantee;
+
+    grant create domain to mike_adams_ddl_grantee;
+    grant alter any domain to mike_adams_ddl_grantee;
+    grant drop any domain to mike_adams_ddl_grantee;
+
+    grant create role to mike_adams_ddl_grantee;
+    grant alter any role to mike_adams_ddl_grantee;
+    grant drop any role to mike_adams_ddl_grantee;
+
+    -- DDL operations for managing triggers and indices re-use table privileges.
+    -- Ability to add COMMENT on some object requires ALTER ANY privilege for this kind of objects.
+    grant create table to mike_adams_ddl_grantee;
+    grant alter any table to mike_adams_ddl_grantee;
+    grant drop any table to mike_adams_ddl_grantee;
+
+    grant create view to mike_adams_ddl_grantee;
+    grant alter any view to mike_adams_ddl_grantee;
+    grant drop any view to mike_adams_ddl_grantee;
+
+    grant create procedure to mike_adams_ddl_grantee;
+    grant alter any procedure to mike_adams_ddl_grantee;
+    grant drop any procedure to mike_adams_ddl_grantee;
+
+    grant create function to mike_adams_ddl_grantee;
+    grant alter any function to mike_adams_ddl_grantee;
+    grant drop any function to mike_adams_ddl_grantee;
+    
+    grant create package to mike_adams_ddl_grantee;
+    grant alter any package to mike_adams_ddl_grantee;
+    grant drop any package to mike_adams_ddl_grantee;
+
+    commit;
+
+    -- this should give output with rdb$grantor = 'SYSDBA' despite that actual grantor was 'john_smith_ddl_grantor':
+    select * from rdb$user_privileges where rdb$relation_name=upper('test_u01') and rdb$user=upper('mike_adams_ddl_grantee');
+    commit;
+
+    connect '$(DSN)' user mike_adams_ddl_grantee password '456';
+    --############################################################################
+    --###   v e r i f y    r i g h t    t o     C R E A T E    o b j e c t s   ###
+    --############################################################################
+    create collation coll_test for utf8 from unicode case insensitive;
+    create exception exc_test 'Invalud value: @1';
+    create sequence gen_test;
+    create domain dm_test as int;
+    create role r_test;
+    create table table_test(id int, pid int, x int, constraint mtest_pk primary key(id), constraint m_test_fk foreign key(pid) references table_test(id));
+    create index table_test_x_asc on table_test(x);
+    create trigger table_test_trg for table_test before insert sql security invoker as begin end;
+    create view v_table_test as select * from table_test;
+    set term ^;
+    create procedure sp_test(a_id int) returns(x int) as
+    begin
+        suspend;
+    end
+    ^
+    create function fn_test returns int as
+    begin
+        return 1;
+    end
+    ^
+    create package pg_test as
+    begin
+       procedure pg_sp1(a_id int);
+       function pg_fn1 returns int;
+    end
+    ^
+    create package body pg_test as
+    begin
+       procedure pg_sp1(a_id int) as
+       begin
+       end
+
+       function pg_fn1 returns int as
+       begin
+           return 1;
+       end
+    end
+    ^
+    set term ;^
+    commit;
+
+    --###################################################################################
+    --###   v e r i f y    r i g h t    t o     A L T E R   A N Y     o b j e c t s   ###
+    --###################################################################################
+    alter character set iso8859_1 set default collation pt_br;
+    alter exception exc_test 'You have to change value from @1 to @2';
+    alter sequence gen_test restart with -9223372036854775808 increment by 2147483647;
+    alter domain dm_test type bigint set default 2147483647 set not null add check(value > 0);
+    
+    alter table table_test drop constraint m_test_fk;
+    create descending index table_test_x_desc on table_test(x);
+    comment on table table_test is 'New comment for this table.';
+    set term ^;
+    alter trigger table_test_trg inactive after insert or update or delete sql security definer as
+        declare c bigint;
+    begin
+        c = gen_id(gen_test,1);
+    end
+    ^
+    alter view v_table_test as select x.id from rdb$database r left join table_test x on 1=1
+    ^
+
+    alter procedure sp_test(a_id int) returns(x int, z bigint) as
+    begin
+        suspend;
+    end
+    ^
+    alter function fn_test returns bigint as
+    begin
+        return -9223372036854775808;
+    end
+    ^
+    alter package pg_test as
+    begin
+       procedure pg_sp1(a_id bigint) returns(z bigint);
+       function pg_fn1(a_id bigint) returns bigint;
+    end
+    ^
+    recreate package body pg_test as
+    begin
+       procedure pg_sp1(a_id bigint) returns(z bigint) as
+       begin
+           z = a_id * 2;
+           suspend;
+       end
+
+       function pg_fn1(a_id bigint) returns bigint as
+       begin
+           return a_id * 3;
+       end
+    end
+    ^
+    set term ;^
+    commit;
+
+    --################################################################################
+    --###   v e r i f y    r i g h t    t o    D R O P    A N Y    o b j e c t s   ###
+    --################################################################################
+    drop package body pg_test;
+    drop package pg_test;
+    drop procedure sp_test;
+    drop function fn_test;
+    drop view v_table_test;
+    drop index table_test_x_asc;
+    drop trigger table_test_trg;
+    drop table table_test;
+    drop domain dm_test;
+    drop sequence gen_test;
+    drop exception exc_test;
+    drop collation coll_test;
+    commit;
+
+
+    --######################################################
+    --###   r e v o k e    a l l    p r i v i l e g e s  ###
+    --######################################################
+    connect '$(DSN)' user john_smith_ddl_grantor password '123';
+    revoke all on all from mike_adams_ddl_grantee;
+    commit;
+
+    set bail off;
+    
+    connect '$(DSN)' user mike_adams_ddl_grantee password '456';
+    
+    --###########################################################################
+    --###   v e r i f y    t h a t     N O    r i g h t s    r e m a i n s    ###
+    --###########################################################################
+    -- ALL FOLLOWING STATEMENTS MUST FAIL NOW BECAUSE CURRENT USER
+    -- HAS NO RIGHTS TO CREATE/ALTER/DROP ANY OBJECTS:
+    create collation coll_test2 for utf8 from unicode case insensitive; -- must FAIL!
+    create exception exc_test2 'Invalud value: @1';
+    create sequence gen_test2;
+    create domain dm_test2 as int;
+    create role r_test2;
+    create table table_test2(id int, pid int, x int, constraint mtest_pk primary key(id), constraint m_test_fk foreign key(pid) references table_test(id));
+    create view v_table_test2 as select 1 from rdb$database;
+    
+    set term ^;
+    create procedure sp_test2 as begin end
+    ^
+    create function fn_test2 returns boolean as begin return false; end
+    ^
+    create package pg_test2 as begin
+        procedure pg_sp2;
+    end
+    ^
+    create package body pg_test2 as begin
+        procedure pg_sp2 as begin end
+    end
+    ^
+    set term ;^
+    commit;
+
+    set bail on;
+
+    connect '$(DSN)' user sysdba password 'masterkey';
+    drop user john_smith_ddl_grantor;
+    drop user mike_adams_ddl_grantee;
+    commit;
+  """,
+  'expected_stdout':
+  """
+    WHO_AM_I                        JOHN_SMITH_DDL_GRANTOR
+    RDB$ROLE_NAME                   RDB$ADMIN
+    RDB$ROLE_IN_USE                 <false>
+    RDB$SYSTEM_PRIVILEGES           FFFFFFFFFFFFFFFF
+    WHO_AM_I                        JOHN_SMITH_DDL_GRANTOR
+    RDB$ROLE_NAME                   R_FOR_GRANT_REVOKE_ANY_DDL_RIGHT
+    RDB$ROLE_IN_USE                 <true>
+    RDB$SYSTEM_PRIVILEGES           0000400000000000
+  """,
+  'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE COLLATION COLL_TEST2 failed
+    -No permission for CREATE COLLATION operation
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE EXCEPTION EXC_TEST2 failed
+    -No permission for CREATE EXCEPTION operation
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE SEQUENCE GEN_TEST2 failed
+    -No permission for CREATE GENERATOR operation
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE DOMAIN DM_TEST2 failed
+    -No permission for CREATE DOMAIN operation
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE ROLE R_TEST2 failed
+    -No permission for CREATE ROLE operation
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE TABLE TABLE_TEST2 failed
+    -No permission for CREATE TABLE operation
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE VIEW V_TABLE_TEST2 failed
+    -No permission for CREATE VIEW operation
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE PROCEDURE SP_TEST2 failed
+    -No permission for CREATE PROCEDURE operation
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE FUNCTION FN_TEST2 failed
+    -No permission for CREATE FUNCTION operation
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE PACKAGE PG_TEST2 failed
+    -No permission for CREATE PACKAGE operation
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE PACKAGE BODY PG_TEST2 failed
+    -No permission for CREATE PACKAGE operation
+  """
+}
+]
+}
+

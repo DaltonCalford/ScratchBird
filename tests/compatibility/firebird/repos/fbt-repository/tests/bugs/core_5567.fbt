@@ -1,0 +1,68 @@
+{
+'id': 'bugs.core_5567',
+'qmid': None,
+'tracker_id': 'CORE-5567',
+'title': 'Direct system table modifications are not completely prohibited',
+'description':
+ """
+    30SS, build 3.0.3.32738: OK, 0.828s.
+    40SS, build 4.0.0.680: OK, 0.938s.
+ """,
+'min_versions': '3.0.3',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^;
+    execute block as
+    begin
+      execute statement 'drop domain dm_test';
+      when any do begin end
+    end
+    ^
+    set term ;^
+    commit;
+
+    create domain dm_test numeric(18, 2);
+    commit;
+
+    set term ^;
+    execute block as
+        declare procedure hack as
+        begin
+            update rdb$fields set rdb$field_scale = -3 where rdb$field_name = upper('dm_test');
+        end
+    begin
+        execute procedure hack;
+    end
+    ^
+    set term ;^
+    commit;
+
+    set list on;
+    select ff.rdb$field_scale domain_precision
+    from rdb$fields ff
+    where ff.rdb$field_name = upper('dm_test')
+    ;
+
+  """,
+  'expected_stdout':
+  """
+    DOMAIN_PRECISION                -2
+  """,
+  'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    UPDATE operation is not allowed for system table RDB$FIELDS
+    -At sub procedure 'HACK'
+  """,
+  'substitutions':[
+      ('line: [\d]+, col: [\d]+', ''),
+      ('.*At block.*', '')
+  ]
+}
+]
+}

@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_4074',
+'qmid': None,
+'tracker_id': 'CORE-4074',
+'title': 'Computed by columns and position function',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+    recreate table test01 (
+      f01 computed by ( 'fabio ' || position('x','schunig') ),
+      f02 numeric(8,2) default 0
+    );
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    show table test01;
+    -- ::: NB ::: On WI-V2.5.4.26856, 26-mar-2015, output is:
+    -- F01                             Computed by: ( 'fabio ' || position('x','schunig') ),
+    --   f02 numeric(8,2) default 0
+    -- )
+    -- F02                             NUMERIC(8, 2) Nullable )
+    -- (i.e. it DOES contain "strange" last line)
+  """,
+ 'expected_stdout':
+  """
+    F01                             Computed by: ( 'fabio ' || position('x','schunig') )
+    F02                             NUMERIC(8, 2) Nullable default 0
+  """
+}
+]
+}

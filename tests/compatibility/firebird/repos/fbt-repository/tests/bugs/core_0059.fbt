@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_0059',
+'qmid': None,
+'tracker_id': 'CORE-0059',
+'title': "Automatic not null in PK columns incomplete",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test (a int, b float, c varchar(10), primary key (a, b, c));
+    commit;
+    insert into test(a) values(null);
+    insert into test(a,b) values(1,null);
+    insert into test(a,b,c) values(1,1,null);
+    insert into test default values;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 23000
+    validation error for column "TEST"."A", value "*** null ***"
+    Statement failed, SQLSTATE = 23000
+    validation error for column "TEST"."B", value "*** null ***"
+    Statement failed, SQLSTATE = 23000
+    validation error for column "TEST"."C", value "*** null ***"
+    Statement failed, SQLSTATE = 23000
+    validation error for column "TEST"."A", value "*** null ***"
+  """
+}
+]
+}

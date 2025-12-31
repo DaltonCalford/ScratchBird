@@ -1,0 +1,53 @@
+{
+'id': 'bugs.core_2431',
+'qmid': None,
+'tracker_id': 'CORE-2431',
+'title': 'String values in error messages are not converted to connection charset',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core2431.fbk',
+ 'connection_character_set': 'WIN1251',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    select c.rdb$character_set_name as connection_cset
+    from mon$attachments a
+    join rdb$character_sets c on a.mon$character_set_id = c.rdb$character_set_id
+    where a.mon$attachment_id = current_connection;
+
+    set term ^;
+    execute block as
+    begin
+      exception ex_bad_remainder using (-8);
+    end
+    ^
+    set term ;^
+    commit;
+  """,
+  'expected_stdout': 
+  """
+    CONNECTION_CSET                 WIN1251 
+  """,  
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = HY000
+    exception 1
+    -EX_BAD_REMAINDER
+    -Новый остаток изделия будет отрицательным: -8
+    -At block line: 3, col: 7
+  """,
+  'substitutions':[ 
+    ('-At block line: [\d]+, col: [\d]+', '-At block line')
+  ]
+}
+]
+}

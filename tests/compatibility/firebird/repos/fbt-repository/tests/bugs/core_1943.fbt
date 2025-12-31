@@ -1,0 +1,24 @@
+{
+'id': 'bugs.core_1943',
+'qmid': None,
+'tracker_id': 'CORE-1943',
+'title': 'GROUP BY RAND() returns infinite rows',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select first 10 1 from rdb$database a group by rand();
+""",
+ 'expected_stdout': """
+    CONSTANT
+============
+           1
+
+"""
+}
+]
+}

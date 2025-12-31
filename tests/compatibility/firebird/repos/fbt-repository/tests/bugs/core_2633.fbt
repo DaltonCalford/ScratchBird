@@ -1,0 +1,114 @@
+{
+'id': 'bugs.core_2633',
+'qmid': None,
+'tracker_id': 'CORE-2633',
+'title': 'SELECT WITH LOCK with no fields are accessed clears the data',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE T (A VARCHAR(20), B INTEGER);
+INSERT INTO T(A,B) VALUES('aaaa',1);
+INSERT INTO T(A,B) VALUES('bbbb',2);
+INSERT INTO T(A,B) VALUES('cccc',3);
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT * FROM T;
+
+SET TERM ^;
+EXECUTE BLOCK AS
+DECLARE I INTEGER;
+BEGIN
+  FOR SELECT 1 FROM T WITH LOCK INTO :I DO I=I;
+END^
+SET TERM ;^
+
+SELECT * FROM T;
+
+ROLLBACK;
+
+SELECT * FROM T;
+""",
+ 'expected_stdout': """
+A                                                                                           B
+=============================================================================== ============
+aaaa                                                                                        1
+bbbb                                                                                        2
+cccc                                                                                        3
+
+
+A                                                                                           B
+=============================================================================== ============
+aaaa                                                                                        1
+bbbb                                                                                        2
+cccc                                                                                        3
+
+
+A                                                                                           B
+=============================================================================== ============
+aaaa                                                                                        1
+bbbb                                                                                        2
+cccc                                                                                        3
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE T (A VARCHAR(20), B INTEGER);
+INSERT INTO T(A,B) VALUES('aaaa',1);
+INSERT INTO T(A,B) VALUES('bbbb',2);
+INSERT INTO T(A,B) VALUES('cccc',3);
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT * FROM T;
+
+SET TERM ^;
+EXECUTE BLOCK AS
+DECLARE I INTEGER;
+BEGIN
+  FOR SELECT 1 FROM T WITH LOCK INTO :I DO I=I;
+END^
+SET TERM ;^
+
+SELECT * FROM T;
+
+ROLLBACK;
+
+SELECT * FROM T;
+""",
+ 'expected_stdout': """
+A                               B
+==================== ============
+aaaa                            1
+bbbb                            2
+cccc                            3
+
+
+A                               B
+==================== ============
+aaaa                            1
+bbbb                            2
+cccc                            3
+
+
+A                               B
+==================== ============
+aaaa                            1
+bbbb                            2
+cccc                            3
+
+"""
+}
+]
+}

@@ -1,0 +1,121 @@
+{
+'id': 'bugs.core_6211',
+'qmid': None,
+'tracker_id': 'CORE-6211',
+'title': 'Command "ISQL -X" can not extract ROLE name when use multi-byte charset for connection (4.x only is affected)',
+'description':
+ """
+    Checked on 4.0.0.1713: 1.219s. 
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'Python',
+ 'test_script':"""\
+import os
+import time
+import difflib
+import subprocess
+from fdb import services
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+this_db = db_conn.database_name
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for f in f_names_list:
+       if type(f) == file:
+          del_name = f.name
+       elif type(f) == str:
+          del_name = f
+       else:
+          print('Unrecognized type of element:', f, ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+    
+#--------------------------------------------
+
+
+sql_ddl=\
+'''
+    set bail on;
+	create role  Nachalnik4ukotkiNachalnik4ukotkiNachalnik4ukotkiNachalnik4ukotk;  -- ASCII only
+	create role "НачальникЧукоткиНачальникЧукоткиНачальникЧукоткиНачальникЧукотк"; -- Cyrillic, two bytes per character 
+	create role "‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰"; -- U+2030 PER MILLE SIGN, three bytes per character: E2 80 B0
+	create role "🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀"; -- U+1F680 ROCKET, four bytes per character: F0 9F 9A 80
+	commit; 
+	set list on;
+	set count on;
+	select rdb$role_name as r_name from rdb$roles where rdb$system_flag is distinct from 1;
+'''
+
+f_init_ddl=open( os.path.join(context['temp_directory'],'tmp_6211_init_ddl.sql'), 'w', buffering = 0)
+f_init_ddl.write(sql_ddl)
+flush_and_close( f_init_ddl )
+
+f_init_log = open( os.path.join(context['temp_directory'],'tmp_6211_init_ddl.log'), 'w', buffering = 0)
+f_init_err = open( os.path.join(context['temp_directory'],'tmp_6211_init_ddl.err'), 'w', buffering = 0)
+subprocess.call( [ context['isql_path'], dsn, '-ch', 'utf8', '-i', f_init_ddl.name ], stdout = f_init_log,stderr = f_init_err)
+flush_and_close( f_init_log )
+flush_and_close( f_init_err )
+
+f_meta_log1 = open( os.path.join(context['temp_directory'],'tmp_6211_extracted_meta.sql'), 'w', buffering = 0)
+f_meta_err1 = open( os.path.join(context['temp_directory'],'tmp_6211_extracted_meta.err'), 'w', buffering = 0)
+subprocess.call( [ context['isql_path'], dsn, '-x', '-ch', 'utf8' ], stdout = f_meta_log1, stderr = f_meta_err1)
+flush_and_close( f_meta_log1 )
+flush_and_close( f_meta_err1 )
+
+f_list=(f_init_err, f_meta_err1,)
+for i in range(len(f_list)):
+	f_name=f_list[i].name
+	if os.path.getsize(f_name) > 0:
+	   with open( f_name,'r') as f:
+		   for line in f:
+			   print("Unexpected STDERR, file "+f_name+": "+line)
+
+with open( f_meta_log1.name,'r') as f:
+    for line in f:
+	    if 'CREATE ROLE' in line:
+			print(line)
+
+# cleanup:
+##########
+time.sleep(1)
+cleanup( ( f_init_ddl, f_init_log, f_init_err, f_meta_err1, f_meta_log1, f_meta_err1 )  )
+  """,
+ 'expected_stdout': 
+  """
+	CREATE ROLE NACHALNIK4UKOTKINACHALNIK4UKOTKINACHALNIK4UKOTKINACHALNIK4UKOTK;
+	CREATE ROLE "НачальникЧукоткиНачальникЧукоткиНачальникЧукоткиНачальникЧукотк";
+	CREATE ROLE "‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰‰";
+	CREATE ROLE "🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀";
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

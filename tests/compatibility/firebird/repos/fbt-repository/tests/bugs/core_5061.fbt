@@ -1,0 +1,136 @@
+{
+'id': 'bugs.core_5061',
+'qmid': '',
+'tracker_id': 'CORE-5061',
+'title': 'ISQL plan output is unexpectedly truncated after a query is simplified to become shorter',
+'description':
+ """
+   Start of discussion: letter to dimitr, 30-dec-2015 13:57; its subject refers to core-4708.
+   It was found that explained plan produced by ISQL is unexpectedly ends on WI-V3.0.0.32256.
+   This testuses that query, but instead of verifying plan text itself (which can be changed in the future) 
+   it is sufficient to check only that plan does NOT contain lines with ellipsis or 'truncated' or 'error'.
+   This mean that 'expected_stdout' section must be EMPTY. Otherwise expected_stdout will contain info 
+   about error or invalid plan.
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import subprocess
+import time
+
+sql_text='''\
+    set list on;
+    set explain on;
+    set planonly;
+    set blob all;
+    with recursive
+    r1 as (
+      select 1 as i from rdb$database
+      union all
+      select r.i+1 from r1 r where r.i < 2
+    )
+    --select count(*) from r1;
+
+    ,r2 as (
+      select first 1 row_number() over() i 
+      from r1 ra
+      full join r1 rb on rb.i=ra.i 
+      group by ra.i 
+      having count(*)>0 
+
+      union all
+
+      select rx.i+1 from r2 rx
+      where rx.i+1 <= 2
+    )
+    --select count(*) from r2
+    ,r3 as (
+      select first 1 row_number() over() i 
+      from r2 ra
+      full join r2 rb on rb.i=ra.i 
+      group by ra.i 
+      having count(*)>0 
+
+      union all
+
+      select rx.i+1 from r3 rx
+      where rx.i+1 <= 2
+    )
+    --select count(*) from r3
+    ,r4 as (
+      select first 1 row_number() over() i 
+      from r3 ra
+      full join r3 rb on rb.i=ra.i 
+      group by ra.i 
+      having count(*)>0 
+
+      union all
+
+      select rx.i+1 from r4 rx
+      where rx.i+1 <= 2
+    )
+    /*
+    ,rn as (
+      select row_number() over() i 
+      from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id 
+      group by r.rdb$relation_id 
+      having count(*)>0 
+      order by r.rdb$relation_id 
+      rows 1 to 1
+    )
+    -- */
+    select 
+        char_length(mon$explained_plan)
+       ,( select count(*) from (select i from r4) )
+    from mon$statements
+
+    union all select 1,row_number()over() from rdb$database where exists(select 1, row_number()over() from rdb$database group by 1 having True rows 1)
+    union all select 1,row_number()over() from rdb$database where exists(select 1, row_number()over() from rdb$database group by 1 having True rows 1)
+    ;
+'''
+
+sqltxt=open( os.path.join(context['temp_directory'],'tmp_sql_5061.sql'), 'w')
+sqltxt.write(sql_text)
+sqltxt.close()
+
+sqllog=open( os.path.join(context['temp_directory'],'tmp_sql_5061.log'), 'w')
+subprocess.call( [ context['isql_path'], dsn,'-user',user_name,'-pas',user_password,'-q', '-i', sqltxt.name],
+                 stdout=sqllog,
+                 stderr=subprocess.STDOUT
+               )
+sqllog.close()
+
+# Check content of files: 1st shuld contain name of temply created user, 2nd should be with error during get FB log:
+
+i=0
+with open( sqllog.name,'r') as f:
+  for line in f:
+    i+=1
+    if '...' in line or 'truncated' in line or 'error' in line:
+      print("Plan is truncated or empty. Found at line "+str(i))
+      break
+
+# Do not remove this pause: on Windows closing of handles can take some (small) time. 
+# Otherwise Windows(32) access error can raise here.
+time.sleep(1)
+
+if os.path.isfile(sqltxt.name):
+    os.remove(sqltxt.name)
+if os.path.isfile(sqllog.name):
+    os.remove(sqllog.name)
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

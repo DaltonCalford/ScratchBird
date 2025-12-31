@@ -1,0 +1,24 @@
+{
+'id': 'functional.intfunc.math.maxvalue_01',
+'qmid': 'functional.intfunc.math.maxvalue_01',
+'tracker_id': '',
+'title': 'test for MAXVALUE  function',
+'description': """ MAXVALUE( <value> [, <value> ...] )
+
+ Returns the maximum value of a list of values.
+""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """ select maxvalue(54, 87, 10) from rdb$database;
+
+""",
+ 'expected_stdout': """          MAXVALUE
+      ============
+                87
+"""
+}
+]
+}

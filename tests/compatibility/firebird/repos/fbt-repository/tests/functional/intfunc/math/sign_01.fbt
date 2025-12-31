@@ -1,0 +1,33 @@
+{
+'id': 'functional.intfunc.math.sign_01',
+'qmid': 'functional.intfunc.math.sign_01',
+'tracker_id': '',
+'title': 'test for SIGN function',
+'description': """
+SIGN( <number> )
+
+ Returns 1, 0, or -1 depending on whether the input value is positive, zero or negative, respectively.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """ select SIGN(-9) from rdb$database;
+ select SIGN(8) from rdb$database;
+ select SIGN(0) from rdb$database;""",
+ 'expected_stdout': """         SIGN
+      =======
+           -1
+
+
+         SIGN
+      =======
+            1
+
+
+         SIGN
+      =======
+            0"""
+}
+]
+}

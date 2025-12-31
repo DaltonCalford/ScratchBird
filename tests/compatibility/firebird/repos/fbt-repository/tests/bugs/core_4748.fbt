@@ -1,0 +1,29 @@
+{
+'id': 'bugs.core_4748',
+'qmid': '',
+'tracker_id': 'CORE-4748',
+'title': 'Can not restore in FB 3.0 SuperServer from .fbk which source .fdb was created on 2.5.4 and moved to READ-ONLY before backed up',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core_4748_read_only_25.fbk',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    select mon$read_only as restored_ro from mon$database;
+  """,
+ 'expected_stdout': 
+  """
+    RESTORED_RO                     1
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

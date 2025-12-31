@@ -1,0 +1,60 @@
+{
+'id': 'bugs.core_2678',
+'qmid': None,
+'tracker_id': 'CORE-2678',
+'title': 'Full outer join cannot use available indices (very slow execution)',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create table td_data1 (
+      c1 varchar(20) character set win1251 not null collate win1251,
+      c2 integer not null,
+      c3 date not null,
+      d1 float not null
+    );
+    create index idx_td_data1 on td_data1(c1,c2,c3);
+    commit;
+    
+    create table td_data2 (
+      c1 varchar(20) character set win1251 not null collate win1251,
+      c2 integer not null,
+      c3 date not null,
+      d2 float not null
+    );
+    create index idx_td_data2 on td_data2(c1,c2,c3);
+    commit;
+    
+    set planonly;
+    select
+        d1.c1, d2.c1,
+        d1.c2, d2.c2,
+        d1.c3, d2.c3,
+        coalesce(sum(d1.d1), 0) t1,
+        coalesce(sum(d2.d2), 0) t2
+    from td_data1 d1
+    full join td_data2 d2
+        on
+            d2.c1 = d1.c1
+            and d2.c2 = d1.c2
+            and d2.c3 = d1.c3
+    group by
+        d1.c1, d2.c1,
+        d1.c2, d2.c2,
+        d1.c3, d2.c3;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN SORT (JOIN (JOIN (D2 NATURAL, D1 INDEX (IDX_TD_DATA1)), JOIN (D1 NATURAL, D2 INDEX (IDX_TD_DATA2))))
+  """
+}
+]
+}

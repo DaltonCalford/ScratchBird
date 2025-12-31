@@ -1,0 +1,62 @@
+{
+'id': 'bugs.core_5884',
+'qmid': None,
+'tracker_id': 'CORE-5884',
+'title': "Initial global mapping from srp plugin does not work",
+'description':
+ """
+   Confirmed bug on: 3.0.4.33020, 4.0.0.1143 ('TEST2' was shown instead of 'GTOST').
+   Checked on:
+     FB30SS, build 3.0.4.33021: OK, 2.312s.
+ """,
+'min_versions': '3.0.4',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    create or alter user tmp$c5884_1 password '123' using plugin Srp;
+    create or alter user tmp$c5884_2 password '456' using plugin Srp;
+    commit;
+
+    create or alter mapping lmap using plugin srp from user tmp$c5884_1 to user ltost;
+    create or alter global mapping gmap using plugin srp from user tmp$c5884_2 to user gtost; 
+    commit;
+
+    connect '$(DSN)' user tmp$c5884_1 password '123';
+    select current_user as whoami from rdb$database;
+    commit;
+
+    connect '$(DSN)' user tmp$c5884_2 password '456';
+    select current_user as whoami from rdb$database;
+    commit;
+
+    connect '$(DSN)' user sysdba password 'masterkey';
+    commit;
+
+
+    drop global mapping gmap;
+    drop mapping lmap;
+    commit;
+
+    drop user tmp$c5884_1 using plugin Srp;
+    drop user tmp$c5884_2 using plugin Srp;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+    WHOAMI                          LTOST
+    WHOAMI                          GTOST
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

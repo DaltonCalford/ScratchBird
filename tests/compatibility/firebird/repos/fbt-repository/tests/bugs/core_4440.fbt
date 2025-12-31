@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_4440',
+'qmid': '',
+'tracker_id': 'CORE-4440',
+'title': 'isql crash without connect when execute command "show version"',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    show version;
+    set list on;
+    select current_user from rdb$database;
+  """,
+ 'expected_stdout':
+  """
+    USER                            SYSDBA
+  """,
+ 'expected_stderr':
+  """
+  """,
+ 'substitutions':[('^((?!SYSDBA).)*$','')] 
+}
+]
+}

@@ -1,0 +1,61 @@
+{
+'id': 'bugs.core_4570',
+'qmid': None,
+'tracker_id': 'CORE-4570',
+'title': 'Wrong error at ALTER PACKAGE',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set term ^;
+    create package p1
+    as
+    begin
+      function f(x int) returns int;
+    end
+    ^
+    create package body p1
+    as
+    begin
+      function f1(x int) returns int;
+    
+      function f(x int) returns int
+      as
+      begin
+        return f1(x) * x;
+      end
+    
+      function f1(x int) returns int
+      as
+      begin
+         return 1;
+      end
+    end
+    ^
+    commit
+    ^
+    
+    alter package p1
+    as
+    begin
+      function f(x int) returns int;
+      function g(x int) returns int;
+    end
+    ^
+    commit 
+    ^
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

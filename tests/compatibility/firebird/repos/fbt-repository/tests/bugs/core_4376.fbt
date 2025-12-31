@@ -1,0 +1,85 @@
+{
+'id': 'bugs.core_4376',
+'qmid': None,
+'tracker_id': 'CORE-4376',
+'title': 'Preparation of erroneous DDL statement does not show the main command failed',
+'description':
+ """
+   Checked on 4.0.0.2416; 3.0.0.32483
+ """,
+'min_versions': '3.0.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test1(id int, name varchar(30)); 
+    commit; 
+
+    set term ^; 
+    create or alter procedure sp_test(a_id int) returns (o_name varchar(30)) as 
+    begin 
+        select text from test where id = :a_id into o_name; 
+        suspend; 
+    end 
+    ^ 
+
+    create or alter package pkg_test as 
+    begin 
+      procedure sp_test1a(a_id int) returns (o_name varchar(30)); 
+      procedure sp_test1b(a_id int) returns (o_name varchar(30)); 
+      procedure sp_test1c(a_id int) returns (o_name varchar(30)); 
+    end 
+    ^ 
+
+    recreate package body pkg_test as 
+    begin 
+
+      procedure sp_test1a(a_id int) returns (o_name varchar(30)) as 
+      begin 
+        select name from test1 where id = :a_id into o_name; 
+        suspend; 
+      end 
+
+      procedure sp_test1b(a_id int) returns (o_name varchar(30)) as 
+      begin 
+        select non_existent_field from test1 where id = :a_id into o_name; 
+        suspend; 
+      end 
+       
+      procedure sp_test1c(a_id int) returns (o_name varchar(30)) as 
+      begin 
+        select name from non_existent_table where id = :a_id into o_name; 
+        suspend; 
+      end 
+    end 
+    ^ 
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42S02
+    unsuccessful metadata update
+    -CREATE OR ALTER PROCEDURE SP_TEST failed
+    -Dynamic SQL Error
+    -SQL error code = -204
+    -Table unknown
+    -TEST
+    -At line 3, column 26
+    Statement failed, SQLSTATE = 42S22
+    unsuccessful metadata update
+    -RECREATE PACKAGE BODY PKG_TEST failed
+    -Dynamic SQL Error
+    -SQL error code = -206
+    -Column unknown
+    -NON_EXISTENT_FIELD
+    -At line 12, column 16
+  """,
+  'substitutions':[('-At line[:]{0,1}[\s]+[\d]+,[\s]+column[:]{0,1}[\s]+[\d]+', '')]
+}
+]
+}

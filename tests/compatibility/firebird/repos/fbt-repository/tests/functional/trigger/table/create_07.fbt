@@ -1,0 +1,61 @@
+{
+'id': 'functional.trigger.create.07',
+'qmid': 'functional.trigger.create.create_trigger_07',
+'tracker_id': '',
+'title': 'CREATE TRIGGER INACTIVE AFTER DELETE',
+'description': """CREATE TRIGGER INACTIVE AFTER DELETE
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE tb(id INT);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE TRIGGER test FOR tb INACTIVE AFTER DELETE AS
+BEGIN
+  old.id=1;
+END^
+SET TERM ;^
+SHOW TRIGGER test;""",
+ 'expected_stdout': """Triggers on Table TB:
+TEST, Sequence: 0, Type: AFTER DELETE, Inactive
+AS
+BEGIN
+  old.id=1;
+END
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    CREATE TABLE tb(id INT);
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    SET TERM ^;
+    CREATE TRIGGER test FOR tb INACTIVE AFTER DELETE AS
+    BEGIN
+    END^
+    SET TERM ;^
+    SHOW TRIGGER test;""",
+     'expected_stdout': """Triggers on Table TB:
+    TEST, Sequence: 0, Type: AFTER DELETE, Inactive
+    AS
+    BEGIN
+    END
+  """,
+  'substitutions':[('\+.*',''),('\=.*',''),('Trigger text.*','')]
+}
+]
+}

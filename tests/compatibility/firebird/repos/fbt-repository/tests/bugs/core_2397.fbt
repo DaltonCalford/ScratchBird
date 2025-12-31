@@ -1,0 +1,36 @@
+{
+'id': 'bugs.core_2397',
+'qmid': None,
+'tracker_id': 'CORE-2397',
+'title': 'If you drop two different indexes within the same transaction, you get database corruption',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.1.3',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table test(id int, title varchar(50));
+commit;
+create index test1 on test computed by (id +1);
+create index test2 on test computed by (id +2);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET AUTODDL OFF;
+drop index test1;
+drop index test2;
+commit;
+insert into test values(1,'test');
+commit;
+SELECT id from test;
+""",
+ 'expected_stdout': """
+          ID
+============
+           1
+
+"""
+}
+]
+}

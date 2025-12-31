@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_1395',
+'qmid': 'bugs.core_1395-250',
+'tracker_id': 'CORE-1395',
+'title': "Few problems with domains's check constraints",
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE TEST ( ID INTEGER );
+CREATE DOMAIN TEST_DOMAIN AS INTEGER CHECK (EXISTS(SELECT * FROM TEST WHERE ID=VALUE));
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """DROP TABLE TEST;
+COMMIT;
+
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-cannot delete
+-COLUMN TEST.ID
+-there are 1 dependencies
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE TEST ( ID INTEGER );
+CREATE DOMAIN TEST_DOMAIN AS INTEGER CHECK (EXISTS(SELECT * FROM TEST WHERE ID=VALUE));
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """DROP TABLE TEST;
+COMMIT;
+
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+unsuccessful metadata update
+-cannot delete
+-COLUMN ID
+-there are 1 dependencies
+"""
+}
+]
+}

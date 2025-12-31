@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_4839',
+'qmid': None,
+'tracker_id': 'CORE-4839',
+'title': 'SHOW GRANTS does not display info about exceptions which were granted to user',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    create or alter user tmp$c4839 password '123';
+    recreate exception exc_foo 'Houston we have a problem: next sequence value is @1';
+    recreate sequence gen_bar start with 9223372036854775807 increment by 2147483647;
+    commit;
+
+    grant usage on exception exc_foo to tmp$c4839; -- this wasn`t shown before rev. 61822 (build 3.0.0.31881), 2015-06-14 11:35
+    grant usage on sequence gen_bar to tmp$c4839;
+    commit; 
+    show grants;
+    commit;
+    drop user tmp$c4839;
+    commit;
+  """,
+ 'expected_stdout':
+  """
+    /* Grant permissions for this database */
+    GRANT USAGE ON SEQUENCE GEN_BAR TO USER TMP$C4839
+    GRANT USAGE ON EXCEPTION EXC_FOO TO USER TMP$C4839
+  """
+}
+]
+}

@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_0952',
+'qmid': 'bugs.core_952',
+'tracker_id': 'CORE-952',
+'title': 'AV when blob is used in expression index',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.0.1',
+ 'platform': 'All',
+ 'init_script': """create table T (
+     ID integer not null,
+     N1 blob sub_type 1 segment size 80,
+     N2 varchar(10)
+);
+commit;
+
+insert into T (ID, N1, N2) values (1, 'www', 'qwer');
+commit;
+
+alter table T add constraint PK_T primary key (ID);
+create index T_IDX on T computed by (cast(substring(N1 from 1 for 100) as varchar(100)));
+commit;
+
+update T set T.N2 = 'asdf' where T.ID = 1;
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT ID,N2 FROM T;
+""",
+ 'expected_stdout': """ID N2
+============ ==========
+           1 asdf
+
+"""
+}
+]
+}

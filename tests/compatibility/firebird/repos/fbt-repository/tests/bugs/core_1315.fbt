@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_1315',
+'qmid': 'bugs.core_1315',
+'tracker_id': 'CORE-1315',
+'title': 'Data type unknown',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': """cur = db_conn.cursor()
+try:
+  statement = cur.prep('select coalesce(?,1) from RDB$DATABASE')
+except Exception,e:
+  print ('Failed!',e)
+else:
+  cur.execute(statement,[2])
+  printData(cur)
+  print()
+  cur.execute(statement,[None])
+  printData(cur)
+""",
+ 'expected_stdout': """COALESCE
+-----------
+2
+
+COALESCE
+-----------
+1
+"""
+}
+]
+}

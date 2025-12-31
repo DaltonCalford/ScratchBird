@@ -1,0 +1,43 @@
+{
+'id': 'bugs.core_1837',
+'qmid': None,
+'tracker_id': 'CORE-1837',
+'title': 'Procedure text is stored truncated in system tables if any variable have default value',
+'description': '',
+'min_versions': '2.1.7',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set term ^;
+    create procedure sp_test
+    as
+    declare x int = 0;
+    begin
+      exit;
+    end ^
+    commit ^
+
+    set list on ^
+    set blob all ^
+    select p.rdb$procedure_source from rdb$procedures p where p.rdb$procedure_name = upper('sp_test') ^
+  """,
+ 'expected_stdout':
+  """
+    RDB$PROCEDURE_SOURCE            1a:0
+    declare x int = 0;
+    begin
+      exit;
+    end
+  """,
+  'substitutions': [('RDB\$PROCEDURE_SOURCE.*','')]
+}
+]
+}

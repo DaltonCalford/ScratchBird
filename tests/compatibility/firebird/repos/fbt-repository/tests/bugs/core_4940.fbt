@@ -1,0 +1,49 @@
+{
+'id': 'bugs.core_4940',
+'qmid': '',
+'tracker_id': 'CORE-4940',
+'title': 'Add label about deterministic flag for stored function in SHOW and extract commands',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- 1. Specify 'deterministic' flag - it should be reflected in SHOW command:
+    set term ^;
+    create or alter function fn_infinity returns bigint deterministic as
+    begin
+        return 9223372036854775807;
+    end
+    ^
+    set term ;^
+    commit;
+    
+    show function fn_infinity;
+    
+    -- 2. Remove 'deterministic' flag - it also should be reflected in SHOW command:
+    set term ^;
+    alter function fn_infinity returns bigint as
+    begin
+        return 9223372036854775807;
+    end
+    ^
+    set term ;^
+    commit;
+    
+    show function fn_infinity;
+  """,
+ 'expected_stdout': 
+  """
+    Deterministic function
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions': [('^((?!Deterministic|deterministic).)*$','')]
+}
+]
+}

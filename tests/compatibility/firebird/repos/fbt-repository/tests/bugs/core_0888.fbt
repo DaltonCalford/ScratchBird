@@ -1,0 +1,26 @@
+{
+'id': 'bugs.core_0888',
+'qmid': 'bugs.core_888',
+'tracker_id': 'CORE-888',
+'title': 'DDL - object in use',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.0.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^ ;
+CREATE PROCEDURE TestProc
+AS
+BEGIN
+   EXIT;
+END ^
+SET TERM ; ^
+
+EXECUTE PROCEDURE TestProc;
+
+DROP PROCEDURE TestProc;
+"""
+}
+]
+}

@@ -1,0 +1,35 @@
+{
+'id': 'bugs.gh_6804',
+'qmid': None,
+'tracker_id': '',
+'title': "assertion in tomcrypt when key length for rc4 too small",
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/6804
+
+    Confirmed crahs on 4.0.0.2453.
+    Checked on 4.0.0.2479; 5.0.0.20 -- all OK.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set blob all;
+    set list on;
+    select encrypt('abc' using rc4 key 'qq') from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 22023
+    Invalid key length 2, need >4
+  """
+}
+]
+}

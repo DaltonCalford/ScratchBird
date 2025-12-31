@@ -1,0 +1,26 @@
+{
+'id': 'functional.dml.delete.02',
+'qmid': 'functional.dml.delete.delete_02',
+'tracker_id': '',
+'title': 'DELETE with WHERE',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE tb(id INT);
+INSERT INTO tb VALUES(10);
+INSERT INTO tb VALUES(10);
+INSERT INTO tb VALUES(20);
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """DELETE FROM tb WHERE id>10;
+SELECT * FROM tb;""",
+ 'expected_stdout': """          ID
+============
+
+          10
+          10"""
+}
+]
+}

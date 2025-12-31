@@ -1,0 +1,67 @@
+{
+'id': 'bugs.core_3052',
+'qmid': None,
+'tracker_id': 'CORE-3052',
+'title': 'Wrong resultset',
+'description': 'Empty rowset when selecting from table with compound index on PXW_HUNDC-collated fields',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'WIN1250',
+ 'connection_character_set': 'WIN1250',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    -- NB: do NOT downgrate minimal version to 2.5 - at least for 2.5.4.26857
+    -- following queries return zero rows.
+
+    create domain xvar10n as varchar(160) character set WIN1250 not null collate PXW_HUNDC;
+    create domain xint as int;
+    commit;
+
+    create table tmp_test (
+        m1 xvar10n
+       ,m2 xvar10n
+       ,val xint
+    );
+    commit;
+
+    alter table tmp_test add constraint tmp_test_uk1 unique (m1, m2);
+    commit;
+
+    insert into tmp_test (m1, m2, val) values ('A', 'C1', 1);
+    insert into tmp_test (m1, m2, val) values ('A', 'C2', 2);
+    insert into tmp_test (m1, m2, val) values ('A', 'D2', 3);
+    insert into tmp_test (m1, m2, val) values ('A', 'M3', 3);
+
+    set list on;
+    select *
+    from tmp_test te
+    where te.m1 = 'A' and te.m2 like 'C%';
+
+    select *
+    from tmp_test te
+    where te.m1 = 'A' and te.m2 like 'D%';
+  """,
+ 'expected_stdout': 
+  """
+    M1                              A
+    M2                              C1
+    VAL                             1
+
+    M1                              A
+    M2                              C2
+    VAL                             2
+
+    M1                              A
+    M2                              D2
+    VAL                             3
+  """
+}
+]
+}

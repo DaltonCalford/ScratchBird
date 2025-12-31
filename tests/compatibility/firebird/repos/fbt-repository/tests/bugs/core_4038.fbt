@@ -1,0 +1,26 @@
+{
+'id': 'bugs.core_4038',
+'qmid': None,
+'tracker_id': 'CORE-4038',
+'title': 'Broken optimization for the stored dbkeys',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5.3',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table t (dbkey char(8) character set octets);
+create index it on t (dbkey);
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLANONLY;
+select * from t as t1
+  left join t as t2 on t2.dbkey = t1.rdb$db_key;
+
+""",
+ 'expected_stdout': """PLAN JOIN (T1 NATURAL, T2 INDEX (IT))
+"""
+}
+]
+}

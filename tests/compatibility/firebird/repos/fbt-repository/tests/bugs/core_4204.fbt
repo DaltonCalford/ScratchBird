@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_4204',
+'qmid': None,
+'tracker_id': 'CORE-4204',
+'title': ' Error when compiling the procedure containing the statement if (x = (select ...))',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set term ^;
+    create or alter procedure Test_C
+    as
+      declare variable X varchar(16);
+    begin
+    
+      if (x = (select '123' from Rdb$Database)) then
+      begin
+        exit;
+      end
+    end 
+    ^
+    set term ;^
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

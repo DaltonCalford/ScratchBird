@@ -1,0 +1,54 @@
+{
+'id': 'bugs.core_5773',
+'qmid': None,
+'tracker_id': 'CORE-5773',
+'title': "PSQL cursor doesn't see inserted record",
+'description':
+  """
+      Confirmed wrong result on 3.0.4.32924
+      Works fine on 3.0.4.32939: OK, 1.453s.
+  """,
+'min_versions': '3.0.4',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set count on;
+    create or alter procedure sp_test as begin end;
+    recreate table test (id bigint);
+    commit;
+
+    set term ^;
+    create or alter procedure sp_test returns (
+        rowcount integer
+    ) as
+        declare id bigint;
+        declare c_ins cursor for (
+            select id from test
+        );
+    begin
+        insert into test(id) values(1);
+        open c_ins;
+            fetch c_ins into :id;
+            rowcount = row_count;
+            suspend;
+        close c_ins;
+    end^
+    set term ;^
+    select * from sp_test;
+  """,
+  'expected_stdout':
+  """
+    ROWCOUNT                        1
+    Records affected: 1
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

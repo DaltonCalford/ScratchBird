@@ -1,0 +1,125 @@
+{
+'id': 'bugs.core_4460',
+'qmid': None,
+'tracker_id': 'CORE-4460',
+'title': 'Expressions containing some built-in functions may be badly optimized',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set planonly;
+    select * from (
+       select rdb$relation_name from rdb$relations
+       union
+       select rdb$field_name from rdb$fields
+    ) as dt (name) where dt.name=''
+    ;
+    select * from (
+      select rdb$relation_name from rdb$relations
+      union
+      select rdb$field_name from rdb$fields
+    ) as dt (name) where dt.name = left('', 0)
+    ;
+    
+    select * from (
+      select rdb$relation_name from rdb$relations
+      union
+      select rdb$field_name from rdb$fields
+    ) as dt (name) where dt.name = minvalue('', '')
+    ;
+    
+    select * from (
+      select rdb$relation_name from rdb$relations
+      union
+      select rdb$field_name from rdb$fields
+    ) as dt (name) where dt.name = rpad('', 0, '')
+    ;
+    --    Confirmed ineffective plans in WI-V2.5.2.26540 for 2nd...4th queries:
+    --    PLAN (DT RDB$RELATIONS INDEX (RDB$INDEX_0))
+    --    PLAN (DT RDB$FIELDS INDEX (RDB$INDEX_2))
+    --    
+    --    PLAN (DT RDB$RELATIONS NATURAL)
+    --    PLAN (DT RDB$FIELDS NATURAL)
+    --    
+    --    PLAN (DT RDB$RELATIONS NATURAL)
+    --    PLAN (DT RDB$FIELDS NATURAL)
+    --    
+    --    PLAN (DT RDB$RELATIONS NATURAL)
+    --    PLAN (DT RDB$FIELDS NATURAL)
+
+  """,
+ 'expected_stdout': 
+  """
+    PLAN (DT RDB$RELATIONS INDEX (RDB$INDEX_0))
+    PLAN (DT RDB$FIELDS INDEX (RDB$INDEX_2))
+    PLAN (DT RDB$RELATIONS INDEX (RDB$INDEX_0))
+    PLAN (DT RDB$FIELDS INDEX (RDB$INDEX_2))
+    PLAN (DT RDB$RELATIONS INDEX (RDB$INDEX_0))
+    PLAN (DT RDB$FIELDS INDEX (RDB$INDEX_2))
+    PLAN (DT RDB$RELATIONS INDEX (RDB$INDEX_0))
+    PLAN (DT RDB$FIELDS INDEX (RDB$INDEX_2))
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions':[('RDB\$INDEX_[0-9]+','RDB\$INDEX_')]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set planonly;
+    select * from (
+       select rdb$relation_name from rdb$relations
+       union
+       select rdb$field_name from rdb$fields
+    ) as dt (name) where dt.name=''
+    ;
+    select * from (
+      select rdb$relation_name from rdb$relations
+      union
+      select rdb$field_name from rdb$fields
+    ) as dt (name) where dt.name = left('', 0)
+    ;
+    
+    select * from (
+      select rdb$relation_name from rdb$relations
+      union
+      select rdb$field_name from rdb$fields
+    ) as dt (name) where dt.name = minvalue('', '')
+    ;
+    
+    select * from (
+      select rdb$relation_name from rdb$relations
+      union
+      select rdb$field_name from rdb$fields
+    ) as dt (name) where dt.name = rpad('', 0, '')
+    ;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN SORT (DT RDB$RELATIONS INDEX (RDB$INDEX_0), DT RDB$FIELDS INDEX (RDB$INDEX_2))
+    PLAN SORT (DT RDB$RELATIONS INDEX (RDB$INDEX_0), DT RDB$FIELDS INDEX (RDB$INDEX_2))
+    PLAN SORT (DT RDB$RELATIONS INDEX (RDB$INDEX_0), DT RDB$FIELDS INDEX (RDB$INDEX_2))
+    PLAN SORT (DT RDB$RELATIONS INDEX (RDB$INDEX_0), DT RDB$FIELDS INDEX (RDB$INDEX_2))
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions':[('RDB\$INDEX_[0-9]+','RDB\$INDEX_')]
+}
+]
+}

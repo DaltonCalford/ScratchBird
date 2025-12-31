@@ -1,0 +1,89 @@
+{
+'id': 'functional.arno.derived_tables.08',
+'qmid': 'functional.arno.derived_tables.derived_tables_08',
+'tracker_id': '',
+'title': 'Derived table 8 outer reference',
+'description': 'Outer reference inside derived table to other relations in from clause is not allowed.',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE Table_10 (
+  ID INTEGER NOT NULL,
+  DESCRIPTION VARCHAR(10)
+);
+
+COMMIT;
+
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (0, NULL);
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (1, 'one');
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (2, 'two');
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (3, 'three');
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (4, 'four');
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (5, 'five');
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (6, 'six');
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (7, 'seven');
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (8, 'eight');
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (9, 'nine');
+
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT
+  dt.*
+FROM
+  Table_10 t10
+  FULL JOIN (SELECT * FROM Table_10 t2 WHERE t2.ID = t10.ID) dt ON (1 = 1);
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -206
+Dynamic SQL Error
+-SQL error code = -206
+-Column unknown
+-T10.ID
+-At line 5, column 58
+
+"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE Table_10 (
+  ID INTEGER NOT NULL,
+  DESCRIPTION VARCHAR(10)
+);
+
+COMMIT;
+
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (0, NULL);
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (1, 'one');
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (2, 'two');
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (3, 'three');
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (4, 'four');
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (5, 'five');
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (6, 'six');
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (7, 'seven');
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (8, 'eight');
+INSERT INTO Table_10 (ID, DESCRIPTION) VALUES (9, 'nine');
+
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT
+  dt.*
+FROM
+  Table_10 t10
+  FULL JOIN (SELECT * FROM Table_10 t2 WHERE t2.ID = t10.ID) dt ON (1 = 1);
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42S22
+Dynamic SQL Error
+-SQL error code = -206
+-Column unknown
+-T10.ID
+-At line 5, column 58
+
+""",
+ 'substitutions': [('column.*','')]
+}
+]
+}

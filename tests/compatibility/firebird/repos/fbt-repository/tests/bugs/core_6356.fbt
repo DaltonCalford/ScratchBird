@@ -1,0 +1,55 @@
+{
+'id': 'bugs.core_6356',
+'qmid': None,
+'tracker_id': 'CORE-6356',
+'title': "ROUND() does not allow second argument >=1 when its first argument is more than MAX_BIGINT / 10",
+'description':
+ """
+    Checked on 4.0.0.2091 - all OK.
+    (intermediate snapshot with timestamp: 08.07.20 15:10)
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set heading off;
+    select round( 9223372036854775807, 1) from rdb$database; 
+    select round( 170141183460469231731687303715884105727, 1) from rdb$database; 
+
+
+    select round( -9223372036854775808, 1) from rdb$database; 
+    select round( -170141183460469231731687303715884105728, 1) from rdb$database; 
+
+    select round( 9223372036854775807, 127) from rdb$database; 
+    select round( 170141183460469231731687303715884105727, 127) from rdb$database; 
+
+    select round( -9223372036854775808, -128) from rdb$database; 
+    select round( -170141183460469231731687303715884105728, -128) from rdb$database; 
+
+    select round( -9223372036854775808, 127) from rdb$database; 
+    select round( -170141183460469231731687303715884105728, 127) from rdb$database; 
+
+  """,
+ 'expected_stdout':
+  """
+    9223372036854775807
+    170141183460469231731687303715884105727
+    -9223372036854775808
+    -170141183460469231731687303715884105728
+    9223372036854775807
+    170141183460469231731687303715884105727
+    0
+    0
+    -9223372036854775808
+    -170141183460469231731687303715884105728
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

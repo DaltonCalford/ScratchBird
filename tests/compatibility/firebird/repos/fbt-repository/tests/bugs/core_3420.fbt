@@ -1,0 +1,42 @@
+{
+'id': 'bugs.core_3420',
+'qmid': None,
+'tracker_id': 'CORE-3420',
+'title': 'BOOLEAN not present in system table RDB$TYPES',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set list on;
+    select
+        rdb$field_name,
+        rdb$type,
+        rdb$type_name,
+        rdb$system_flag
+    from rdb$types t
+    where upper(t.rdb$type_name) = upper('boolean')
+    order by t.rdb$field_name;
+  """,
+ 'expected_stdout':
+  """
+    RDB$FIELD_NAME                  RDB$FIELD_TYPE
+    RDB$TYPE                        23
+    RDB$TYPE_NAME                   BOOLEAN
+    RDB$SYSTEM_FLAG                 1
+    RDB$FIELD_NAME                  RDB$FUNCTION_TYPE
+    RDB$TYPE                        1
+    RDB$TYPE_NAME                   BOOLEAN
+    RDB$SYSTEM_FLAG                 1
+  """
+}
+]
+}

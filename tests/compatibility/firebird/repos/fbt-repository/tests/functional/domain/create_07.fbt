@@ -1,0 +1,18 @@
+{
+'id': 'functional.domain.create.07',
+'qmid': 'functional.domain.create.create_domain_07',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - DATE',
+'description': 'Simple domain creation based DATE datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test DATE;
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            DATE Nullable
+"""
+}
+]
+}

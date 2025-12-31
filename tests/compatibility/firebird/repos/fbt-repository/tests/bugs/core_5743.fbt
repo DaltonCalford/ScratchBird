@@ -1,0 +1,58 @@
+{
+'id': 'bugs.core_5743',
+'qmid': None,
+'tracker_id': 'CORE-5743',
+'title': 'Conversion error when both GROUP/ORDER BY expressions and WHERE expressions contain literals',
+'description':
+ """
+    Confirmed bug on: 3.0.3.32901, 4.0.0.875.
+    Minimal requirements for reproduce: 1) boolean field with reference in WHERE clause;  2) indexed integer field.
+    Checked on:
+        3.0.4.32912: OK, 1.296s.
+        4.0.0.800: OK, 2.171s.
+        4.0.0.890: OK, 1.906s.
+ """,
+'min_versions': '3.0.4',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create table journal_caisse (
+         annule  boolean
+        ,periode int
+    );    
+    create index journal_caisse_idx on journal_caisse (periode);
+    set planonly;
+    select 1 as type_mvt
+    from journal_caisse
+    where 
+        annule is false
+        and 
+        (periode = ?)
+    group by 1
+    ;
+
+    -- sample from CORE-5749:
+    select 'my constant ' as dsc, count( * )
+    from rdb$relations a
+    where a.rdb$system_flag = 99
+    group by 1
+    ;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN SORT (JOURNAL_CAISSE INDEX (JOURNAL_CAISSE_IDX))
+    PLAN SORT (A NATURAL)
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

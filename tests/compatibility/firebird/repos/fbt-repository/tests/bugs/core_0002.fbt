@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_0002',
+'qmid': None,
+'tracker_id': 'CORE-0002',
+'title': 'Incorrect value returned with execute statement calculation',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    create table t1 (
+        campo1 numeric(15,2),
+        campo2 numeric(15,2)
+    );
+    commit;
+    set term ^;
+    create procedure teste
+    returns (
+        retorno numeric(15,2))
+    as
+    begin
+      execute statement 'select first 1 (campo1*campo2) from t1' into :retorno;
+      suspend;
+    end
+    ^
+    set term ;^
+    commit;
+
+    insert into t1 (campo1, campo2) values (10.5, 5.5);
+    commit;
+
+    select * from teste;
+  """,
+ 'expected_stdout': 
+  """
+    RETORNO                         57.75
+  """
+}
+]
+}

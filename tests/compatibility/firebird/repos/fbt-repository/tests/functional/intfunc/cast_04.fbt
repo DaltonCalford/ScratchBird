@@ -1,0 +1,26 @@
+{
+'id': 'functional.intfunc.cast.04',
+'qmid': 'functional.intfunc.cast.cast_04',
+'tracker_id': '',
+'title': 'CAST Numeric -> Numeric (Round down)',
+'description': """CAST Numeric -> Numeric
+Round down
+
+Dependencies:
+CREATE DATABASE
+Basic SELECT
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'SELECT CAST(1.24999 AS NUMERIC(2,1)) FROM rdb$Database;',
+ 'expected_stdout': """   CAST
+=======
+
+    1.2
+"""
+}
+]
+}

@@ -1,0 +1,205 @@
+{
+'id': 'bugs.core_3860',
+'qmid': None,
+'tracker_id': 'CORE-3860',
+'title': "Trace API: Faulty database filter crashes server",
+'description': 
+ """
+    Confirmed crash on 2.5.1.26351, got on console:
+    ===
+        Unable to complete network request to host "localhost".
+        -Error reading data from the connection.
+    ===
+    For 2.5.x we prepare trace config with invalid pattern for database section, launch trace and do trivial query to some database table.
+    Trace STDOUT (beside "Trace session ID 5 started") should contain several blocks like this:
+    ===
+        Error creating trace session for service manager attachment:
+        error while parsing trace configuration
+        	line 8: expected closing element, got "database"
+    ====
+    We create array of patterns for each of these messages and search in it each line of trace STDOUT. 
+    Every line should be found in this patterns array, otherwise this is UNEXPECTED case.
+    Finally, if every line will be found then we have no unexpected result and 'expected_stdout' should be EMPTY.
+    Checked on:
+        2.5.8.27067: OK, 7.000s.
+        2.5.9.27107: OK, 6.438s.
+    For 3.0+ we just remain test body empty (there is nothing to check because of changed trace config format).
+ """,
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+import os
+import re
+import subprocess
+import time
+from fdb import services
+from subprocess import Popen
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+# Obtain engine version:
+engine = str(db_conn.engine_version) # convert to text because 'float' object has no attribute 'startswith'
+
+fb_home = services.connect(host='localhost', user= user_name, password= user_password).get_home_directory()
+
+if engine.startswith('2.5'):
+  fb_home = fb_home + 'bin'+os.sep
+
+txt = '''<...enter database regex string here...>
+    enabled true
+    time_threshold 0
+    log_transactions true
+    log_statement_prepare true
+    log_statement_start true
+    log_statement_finish true
+    print_perf true
+</database>
+'''
+
+f_trc_cfg=open( os.path.join(context['temp_directory'],'tmp_trace_3860.cfg'), 'w')
+f_trc_cfg.write(txt)
+f_trc_cfg.close()
+
+# ##############################################################
+# S T A R T   T R A C E   i n   S E P A R A T E    P R O C E S S
+# ##############################################################
+
+f_trc_log=open( os.path.join(context['temp_directory'],'tmp_trace_3860.log'), "w")
+f_trc_err=open( os.path.join(context['temp_directory'],'tmp_trace_3860.err'), "w")
+
+p_trace = Popen( [ fb_home+'fbsvcmgr', 'localhost:service_mgr', 'action_trace_start' , 'trc_cfg', f_trc_cfg.name],stdout=f_trc_log,stderr=f_trc_err)
+
+# this delay need for trace start and finish its output about invalid section in its config file:
+time.sleep(3)
+
+# ####################################################
+# G E T  A C T I V E   T R A C E   S E S S I O N   I D
+# ####################################################
+# Save active trace session info into file for further parsing it and obtain session_id back (for stop):
+
+f_trc_lst = open( os.path.join(context['temp_directory'],'tmp_trace_3860.lst'), 'w')
+subprocess.call([fb_home+'fbsvcmgr', 'localhost:service_mgr', 'action_trace_list'], stdout=f_trc_lst)
+f_trc_lst.close()
+
+# !!! DO NOT REMOVE THIS LINE !!!
+time.sleep(1)
+
+trcssn=0
+with open( f_trc_lst.name,'r') as f:
+    for line in f:
+        i=1
+        if 'Session ID' in line:
+            for word in line.split():
+                if i==3:
+                    trcssn=word
+                i=i+1
+            break
+f.close()
+# Result: `trcssn` is ID of active trace session. Now we have to terminate it:
+
+
+#.............................................................................
+cur=db_conn.cursor()
+cur.execute('select count(*) from rdb$types')
+for r in cur:
+     n = r[0]
+db_conn.commit()
+#.............................................................................
+
+
+# ####################################################
+# S E N D   R E Q U E S T    T R A C E   T O   S T O P
+# ####################################################
+if trcssn>0:
+    fn_nul = open(os.devnull, 'w')
+    subprocess.call([fb_home+'fbsvcmgr', 'localhost:service_mgr', 'action_trace_stop','trc_id', trcssn], stdout=fn_nul)
+    fn_nul.close()
+    # DO NOT REMOVE THIS LINE:
+    time.sleep(2)
+
+
+p_trace.terminate()
+f_trc_log.close()
+f_trc_err.close()
+
+#<...enter database regex string here...>
+#    enabled true
+#    time_threshold 0
+#    log_transactions true
+#    log_statement_prepare true
+#    log_statement_start true
+#    log_statement_finish true
+#    print_perf true
+#</database>
+
+#Trace session ID 5 started
+#Error creating trace session for service manager attachment:
+#error while parsing trace configuration
+#	line 8: expected closing element, got "database"
+
+allowed_patterns = (
+     re.compile('Trace\s+session\s+ID\s+\d+\s+started\.*', re.IGNORECASE)
+    ,re.compile('error\s+creating\s+trace\s+session\.*', re.IGNORECASE)
+    ,re.compile('error\s+while\s+parsing\s+trace\s+configuration\.*', re.IGNORECASE)
+    ,re.compile('[.*]*expected\s+closing\s+element\.*', re.IGNORECASE)
+)
+
+global ls
+ls=''
+with open( f_trc_log.name,'r') as f:
+  #lines = f.readlines()
+  #for i, line in enumerate(lines):
+  for line in f:
+    if line.rstrip().split():
+      ls=line
+      match2some = ( p.search(ls) for p in allowed_patterns )
+      if max(match2some) == None:
+          print('UNEXPECTED TRACE STDOUT: ' + line)
+
+with open( f_trc_err.name,'r') as f:
+  for line in f:
+    if line.rstrip().split():
+        print('UNEXPECTED TRACE STDERR: ' + line)
+
+
+# CLEANUP
+#########
+f_list=(f_trc_cfg, f_trc_log, f_trc_err, f_trc_lst)
+for i in range(len(f_list)):
+   if os.path.isfile(f_list[i].name):
+       os.remove(f_list[i].name)
+
+
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+  """,
+  'expected_stdout':
+  """
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

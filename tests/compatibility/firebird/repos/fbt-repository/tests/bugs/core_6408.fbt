@@ -1,0 +1,56 @@
+{
+'id': 'bugs.core_6408',
+'qmid': None,
+'tracker_id': 'CORE-6408',
+'title': 'RETURNING clause in MERGE cannot reference column in aliased target table using qualified reference (alias.column) if DELETE action present',
+'description':
+ """
+   Confirmed problem on 4.0.0.2225 ("-SQL error code = -206 / -Column unknown / -D.VAL"
+   Checked on 4.0.0.2240 - all fine.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+
+    recreate table dummy2 (
+      id integer constraint pk_dummy2 primary key,
+      val varchar(50)
+    );
+    commit;
+    insert into dummy2 (id) values (1);
+    commit;
+
+    merge into dummy2 as d
+      using (select 1, 'ab' from rdb$database) as src(id, val)
+      on d.id = src.id
+      when matched and d.id = 2 then delete
+      when matched then update set d.val = src.val
+      returning
+           d.val ----  this was not allowed before fix ("Statement failed, SQLSTATE = 42S22 ... Column unknown")
+          ,new.val
+          ,old.val
+          ,src.val
+    ;
+  """,
+ 'expected_stdout': 
+  """
+    VAL                             ab
+    CONSTANT                        ab
+    VAL                             <null>
+    VAL                             ab
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

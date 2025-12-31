@@ -1,0 +1,36 @@
+{
+'id': 'bugs.core_4068',
+'qmid': None,
+'tracker_id': 'CORE-4068',
+'title': 'create package fails on creating header as soon as there is at least 1 procedure name',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^;
+    create or alter package fb$out
+    as
+    begin
+    procedure enable;
+    end
+    ^
+    set term ;^
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

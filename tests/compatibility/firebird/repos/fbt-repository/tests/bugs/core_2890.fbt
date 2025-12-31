@@ -1,0 +1,153 @@
+{
+'id': 'bugs.core_2890',
+'qmid': None,
+'tracker_id': 'CORE-2890',
+'title': 'SQLSTATE should also be available as a PSQL context variable like GDSCODE/SQLCODE',
+'description':
+ """
+   ::: NOTE :::
+   Despite of ticket's issue that it was fixed to 2.5.1, test script from here will output
+   NOT ALL rows in WI-V2.5.1.26351 (official 2.5.1 release):
+
+    RES_SQLCODE                     -901
+    RES_GDSCODE                     335544345
+    RES_SQLSTATE                    40001
+
+    RES_SQLCODE                     -802
+    RES_GDSCODE                     335544321
+    RES_SQLSTATE                    22012
+
+    These data:
+      RES_SQLCODE                     -803
+      RES_GDSCODE                     335544665
+      RES_SQLSTATE                    23000
+    -- will not be displayed.
+   For this reason it was decided to specify min_version = 2.5.2 rather than 2.5.1
+ """,
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'database': 'Restore',
+ 'backup_file': 'core2890.fbk',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+    -- NB
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    commit;
+    set transaction no wait;
+    
+    update test set id = -id where id = 2;
+
+    set list on;
+
+    set term ^;
+    execute block returns(res_sqlcode int, res_gdscode int, res_sqlstate char(5)) as
+    begin
+        for
+            select res_sqlcode, res_gdscode, res_sqlstate
+            from sp_test('I')
+            into res_sqlcode, res_gdscode, res_sqlstate
+        do
+           suspend;
+        -------------------------------------
+        for
+            select res_sqlcode, res_gdscode, res_sqlstate
+            from sp_test('D')
+            into res_sqlcode, res_gdscode, res_sqlstate
+        do
+           suspend;
+        -------------------------------------
+        for
+            select res_sqlcode, res_gdscode, res_sqlstate
+            from sp_test('U')
+            into res_sqlcode, res_gdscode, res_sqlstate
+        do
+           suspend;
+    end
+    ^
+    set term ;^
+  """,
+ 'expected_stdout': 
+  """
+    RES_SQLCODE                     -803
+    RES_GDSCODE                     335544665
+    RES_SQLSTATE                    23000
+
+    RES_SQLCODE                     -901
+    RES_GDSCODE                     335544345
+    RES_SQLSTATE                    40001
+
+    RES_SQLCODE                     -802
+    RES_GDSCODE                     335544321
+    RES_SQLSTATE                    22012
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'database': 'Restore',
+ 'backup_file': 'core2890.fbk',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    commit;
+    set transaction no wait;
+    
+    update test set id = -id where id = 2;
+
+    set list on;
+
+    set term ^;
+    execute block returns(res_sqlcode int, res_gdscode int, res_sqlstate char(5)) as
+    begin
+        for
+            select res_sqlcode, res_gdscode, res_sqlstate
+            from sp_test('I')
+            into res_sqlcode, res_gdscode, res_sqlstate
+        do
+           suspend;
+        -------------------------------------
+        for
+            select res_sqlcode, res_gdscode, res_sqlstate
+            from sp_test('D')
+            into res_sqlcode, res_gdscode, res_sqlstate
+        do
+           suspend;
+        -------------------------------------
+        for
+            select res_sqlcode, res_gdscode, res_sqlstate
+            from sp_test('U')
+            into res_sqlcode, res_gdscode, res_sqlstate
+        do
+           suspend;
+    end
+    ^
+    set term ;^
+  """,
+ 'expected_stdout': 
+  """
+    RES_SQLCODE                     -803
+    RES_GDSCODE                     335544665
+    RES_SQLSTATE                    23000
+
+    RES_SQLCODE                     -913
+    RES_GDSCODE                     335544336
+    RES_SQLSTATE                    40001
+
+    RES_SQLCODE                     -802
+    RES_GDSCODE                     335544321
+    RES_SQLSTATE                    22012
+  """
+}
+]
+}

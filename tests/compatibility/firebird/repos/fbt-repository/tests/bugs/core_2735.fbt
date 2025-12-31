@@ -1,0 +1,30 @@
+{
+'id': 'bugs.core_2735',
+'qmid': None,
+'tracker_id': 'CORE-2735',
+'title': 'isql hangs when trying to show a view based on a procedure',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """set term ^;
+create procedure p returns(a int) as begin a = 9; suspend; end^
+create view vp1 as select a from p^
+set term ;^
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """show view vp1;
+""",
+ 'expected_stdout': """A                               INTEGER Nullable
+View Source:
+==== ======
+ select a from p
+"""
+}
+]
+}

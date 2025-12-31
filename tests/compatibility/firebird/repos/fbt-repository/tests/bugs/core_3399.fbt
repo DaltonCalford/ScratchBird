@@ -1,0 +1,44 @@
+{
+'id': 'bugs.core_3399',
+'qmid': None,
+'tracker_id': 'CORE-3399',
+'title': 'Allow write operations to temporary tables in read only transactions',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core3399-read_only.fbk',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- ======= from the ticket: ========
+    -- Implementation allows:
+    -- 1) writes into all kind of GTT's in read only transactions in read write database 
+    -- and also 
+    -- 2) make writabe GTT ON COMMIT DELETE in read only transactions in read only database.
+    -- =================================
+    -- Database will be in the state "force write, no reserve, read only".
+    -- This test verifies only SECOND issue from ticket: allow GTT with attribute "on commit DELETE rows"
+    -- to be writeable when database is READ-ONLY.
+    commit;
+    set transaction read only;
+    insert into gtt_del_rows(id) values(1);
+    select * from gtt_del_rows;
+  """,
+ 'expected_stdout': 
+  """
+         ID
+    =======
+          1 
+  """,
+  'substitutions': [('=.*','')]
+}
+]
+}

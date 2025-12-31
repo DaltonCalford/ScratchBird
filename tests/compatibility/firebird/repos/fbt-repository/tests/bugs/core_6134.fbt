@@ -1,0 +1,48 @@
+{
+'id': 'bugs.core_6134',
+'qmid': None,
+'tracker_id': 'CORE-6134',
+'title': " Win_Sspi in the list of auth plugins leads message about failed login to be changed (from 'Your user name and password are not defined...' to 'Missing security context ...')",
+'description':
+ """
+    Test assumes that firebird.conf parameter AuthClient is: Legacy_Auth,Srp,Win_Sspi.
+    This is done automaticaally by script that is launched daily on Firebird test machine.
+    Checked on: 4.0.0.1598, WI-V3.0.5.33168 -- all fine.
+ """,
+'min_versions': '3.0.5',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+     set heading off;
+     set term ^;
+     execute block returns (whoami varchar(32)) as 
+     begin 
+         execute statement 'select current_user from rdb$database' 
+             as user 'SYSDBA' 
+             password 'ful1yWr0ng'  -- or use here some other password that is for sure invalid
+         into whoami; 
+         suspend; 
+     end
+     ^
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 28000
+    Your user name and password are not defined. Ask your database administrator to set up a Firebird login.
+  """,
+  'substitutions':[
+    ('-At block line: [\d]+, col: [\d]+', '')
+  ]
+}
+]
+}

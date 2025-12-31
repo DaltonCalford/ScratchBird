@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_1841',
+'qmid': 'bugs.core_1841-250',
+'tracker_id': 'CORE-1841',
+'title': 'If some VIEW used derived tables and long table names\aliases, It is possible to overflow RDB$VIEW_RELATIONS.RDB$CONTEXT_NAME',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """create view x (id) as
+select RDB$RELATION_ID
+ from (select * from RDB$DATABASE long_alias_long_alias_1) long_alias_long_alias_2;
+COMMIT;
+SHOW VIEW x;
+""",
+ 'expected_stdout': """ID                              SMALLINT Expression
+View Source:
+==== ======
+
+select RDB$RELATION_ID
+ from (select * from RDB$DATABASE long_alias_long_alias_1) long_alias_long_alias_2
+"""
+},
+{
+ 'firebird_version': '2.0.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """create view x (id) as
+select RDB$RELATION_ID
+ from (select * from RDB$DATABASE long_alias_long_alias_1) long_alias_long_alias_2;
+COMMIT;
+SHOW VIEW x;
+""",
+ 'expected_stdout': """ID                              Computed by:
+View Source:
+==== ======
+
+select RDB$RELATION_ID
+ from (select * from RDB$DATABASE long_alias_long_alias_1) long_alias_long_alias_2
+"""
+}
+]
+}

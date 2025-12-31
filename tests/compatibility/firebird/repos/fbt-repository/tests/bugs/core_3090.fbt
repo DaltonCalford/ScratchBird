@@ -1,0 +1,84 @@
+{
+'id': 'bugs.core_3090',
+'qmid': None,
+'tracker_id': 'CORE-3090',
+'title': 'Incorrect LEFT JOIN result using table and derived constant subquery',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """recreate table test_err (id int);
+insert into test_err (ID) values (1);
+insert into test_err (ID) values (2);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select *
+  from test_err t
+       left join (select 1 id from rdb$database) a on a.id = t.id;
+select
+  RESULT
+from (select
+    'Well' as RESULT
+  from (select
+      (select 'Does not work' from RDB$DATABASE) as D
+    from RDB$DATABASE d) i
+  left join RDB$DATABASE on 1=0) j
+left join RDB$DATABASE on 1=0;
+""",
+ 'expected_stdout': """
+          ID           ID
+============ ============
+           1            1
+           2       <null>
+
+
+RESULT
+================
+Well
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """recreate table test_err (id int);
+insert into test_err (ID) values (1);
+insert into test_err (ID) values (2);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select *
+  from test_err t
+       left join (select 1 id from rdb$database) a on a.id = t.id;
+select
+  RESULT
+from (select
+    'Well' as RESULT
+  from (select
+      (select 'Does not work' from RDB$DATABASE) as D
+    from RDB$DATABASE d) i
+  left join RDB$DATABASE on 1=0) j
+left join RDB$DATABASE on 1=0;
+""",
+ 'expected_stdout': """
+          ID           ID
+============ ============
+           1            1
+           2       <null>
+
+
+RESULT
+======
+Well
+
+"""
+}
+]
+}

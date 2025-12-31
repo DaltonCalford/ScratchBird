@@ -1,0 +1,70 @@
+{
+'id': 'bugs.core_0521',
+'qmid': None,
+'tracker_id': 'CORE-521',
+'title': 'Permissions are checked case-insensitively',
+'description':
+ """
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create user tmp$c0521 password '123';
+    commit;
+
+    set term ^;
+    create procedure perm
+    as begin
+    end^
+
+    create procedure "PeRm"
+    as begin
+      execute procedure perm;
+    end^
+
+    create procedure "pErM"
+    as begin
+      --execute procedure perm;
+      execute procedure "PeRm";
+    end^
+    set term ;^
+    commit;
+
+    grant execute on procedure perm to procedure "PeRm";
+    grant execute on procedure "pErM" to user tmp$c0521;
+    commit;
+
+    connect '$(DSN)' user tmp$c0521 password '123';
+    set list on;
+    select current_user as whoami from rdb$database;
+    execute procedure "pErM";
+
+    commit;
+    connect '$(DSN)' user sysdba password 'masterkey';
+    drop user tmp$c0521;
+    commit;
+  """,
+  'expected_stdout':
+  """
+    WHOAMI                          TMP$C0521
+  """,
+  'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 28000
+    no permission for EXECUTE access to PROCEDURE PeRm
+  """,
+  'substitutions':[
+      ('execute', 'EXECUTE'),
+      ('-Effective user is.*', '')
+   ]
+}
+]
+}

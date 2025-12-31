@@ -1,0 +1,27 @@
+{
+'id': 'functional.table.alter.04',
+'qmid': 'functional.table.alter.alter_table_04',
+'tracker_id': '',
+'title': 'ALTER TABLE - ADD CONSTRAINT - UNIQUE',
+'description': """ALTER TABLE - ADD CONSTRAINT - UNIQUE
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER TABLE test ADD CONSTRAINT unq UNIQUE(id);
+SHOW TABLE test;""",
+ 'expected_stdout': """ID                              INTEGER Not Null
+CONSTRAINT UNQ:
+  Unique key (ID)
+"""
+}
+]
+}

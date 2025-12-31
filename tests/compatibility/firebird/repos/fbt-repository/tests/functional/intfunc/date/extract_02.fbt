@@ -1,0 +1,28 @@
+{
+'id': 'functional.intfunc.date.extract_02',
+'qmid': 'functional.intfunc.date.extract_02',
+'tracker_id': 'CORE-1387',
+'title': 'test extract function with miliseconds',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select extract(millisecond from time '12:12:00.1111' ) as test from rdb$database;
+select extract(millisecond from timestamp '2008-12-08 12:12:00.1111' ) as test from rdb$database;
+""",
+ 'expected_stdout': """
+        TEST
+============
+       111.1
+
+
+        TEST
+============
+       111.1
+
+"""
+}
+]
+}

@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_4719',
+'qmid': None,
+'tracker_id': 'CORE-4719',
+'title': 'Message "Statement failed, SQLSTATE = 00000 + unknown ISC error 0" appears when issuing REVOKE ALL ON ALL FROM <existing_user>',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    drop user tmp$c4719;
+    commit;
+    create user tmp$c4719 password '123';
+    commit;
+    revoke all on all from tmp$c4719;
+    commit;
+    drop user tmp$c4719;
+    commit;
+  """,
+ 'expected_stderr':
+  """
+    Warning: ALL on ALL is not granted to TMP$C4719.
+  """,
+  'substitutions': [
+    ('Statement failed, SQLSTATE.*',''),
+    ('record not found for user:.*','')
+  ]
+}
+]
+}

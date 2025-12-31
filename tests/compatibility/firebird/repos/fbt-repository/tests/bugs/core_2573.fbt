@@ -1,0 +1,36 @@
+{
+'id': 'bugs.core_2573',
+'qmid': None,
+'tracker_id': 'CORE-2573',
+'title': 'The server crashes when selecting from the MON$ tables in the ON DISCONNECT trigger',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'Python',
+ 'test_script': '''sql = """CREATE OR ALTER TRIGGER DIST
+ON DISCONNECT POSITION 0
+AS
+declare variable i integer;
+begin
+  select mon$stat_id from mon$attachments rows 1 into :i;
+end
+"""
+
+c = db_conn.cursor()
+c.execute(sql)
+db_conn.commit()
+db_conn.close()
+
+db_conn = kdb.connect(dsn=dsn,user=user_name,password=user_password)
+c = db_conn.cursor()
+c.execute("DROP TRIGGER DIST")
+db_conn.commit()
+db_conn.close()
+'''
+}
+]
+}

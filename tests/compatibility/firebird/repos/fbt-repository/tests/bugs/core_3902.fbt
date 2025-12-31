@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_3902',
+'qmid': None,
+'tracker_id': 'CORE-3902',
+'title': 'Derived fields may not be optimized via an index',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5.3',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLANONLY;
+select rdb$database.rdb$relation_id from rdb$database
+  left outer join
+  ( select rdb$relations.rdb$relation_id as tempid
+    from rdb$relations ) temp (tempid)
+  on temp.tempid = rdb$database.rdb$relation_id;
+select rdb$database.rdb$relation_id from rdb$database
+  left outer join
+  ( select rdb$relations.rdb$relation_id
+    from rdb$relations ) temp
+  on temp.rdb$relation_id = rdb$database.rdb$relation_id;
+
+""",
+ 'expected_stdout': """SQL>
+PLAN JOIN (RDB$DATABASE NATURAL, TEMP RDB$RELATIONS INDEX (RDB$INDEX_1))
+SQL>
+PLAN JOIN (RDB$DATABASE NATURAL, TEMP RDB$RELATIONS INDEX (RDB$INDEX_1))
+SQL>"""
+}
+]
+}

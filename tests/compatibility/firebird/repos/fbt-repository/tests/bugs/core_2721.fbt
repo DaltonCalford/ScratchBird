@@ -1,0 +1,70 @@
+{
+'id': 'bugs.core_2721',
+'qmid': None,
+'tracker_id': 'CORE-2721',
+'title': 'Issue with SIMILAR TO and UTF8 on 2.5 Beta 2 (and 1)',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core2721.fbk',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    set count on;
+    select * from test where utf8field similar to 'DELL %';
+    select * from test where utf8field similar to 'DE %';
+  """,
+ 'expected_stdout': 
+  """
+    ANSIFIELD                       DELL COMPUTERS
+    UTF8FIELD                       DELL COMPUTERS
+    UNICODECIFIELD                  DELL COMPUTERS
+    
+    ANSIFIELD                       DELL BV
+    UTF8FIELD                       DELL BV
+    UNICODECIFIELD                  DELL BV
+   
+    ANSIFIELD                       DELL BV-GLOBAL COMMUNITY
+    UTF8FIELD                       DELL BV-GLOBAL COMMUNITY
+    UNICODECIFIELD                  DELL BV-GLOBAL COMMUNITY
+
+    Records affected: 3
+    
+    ANSIFIELD                       DE HEER P.W. BALFOORT
+    UTF8FIELD                       DE HEER P.W. BALFOORT
+    UNICODECIFIELD                  DE HEER P.W. BALFOORT
+    
+    ANSIFIELD                       DE DRIESTAR
+    UTF8FIELD                       DE DRIESTAR
+    UNICODECIFIELD                  DE DRIESTAR
+    
+    ANSIFIELD                       DE SINGEL
+    UTF8FIELD                       DE SINGEL
+    UNICODECIFIELD                  DE SINGEL
+    
+    ANSIFIELD                       DE BOER PLASTIK B.V.
+    UTF8FIELD                       DE BOER PLASTIK B.V.
+    UNICODECIFIELD                  DE BOER PLASTIK B.V.
+    
+    ANSIFIELD                       DE LOOT PC REPAIR
+    UTF8FIELD                       DE LOOT PC REPAIR
+    UNICODECIFIELD                  DE LOOT PC REPAIR
+    
+    ANSIFIELD                       DE HEER P.W. BALFOORT
+    UTF8FIELD                       DE HEER P.W. BALFOORT
+    UNICODECIFIELD                  DE HEER P.W. BALFOORT
+    
+    Records affected: 6
+  """
+}
+]
+}

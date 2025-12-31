@@ -1,0 +1,148 @@
+{
+'id': 'bugs.core_5183',
+'qmid': None,
+'tracker_id': 'CORE-5183',
+'title': "Regression: line/column numbering may be twisted if alias.name syntax is used",
+'description':
+ """
+    NB: it's very _poor_ idea to compare line and column values from text of failed statement
+    and some concrete values because they depend on position of statement whithin text ('sqltxt')
+    which we going to execute by ISQL.
+    Thus it was decided to check only that at final point we will have error log with only ONE
+    unique pair of values {line, column} - no matter which exactly values are stored there.
+    For this purpose we run script, filter its log (which contains text like: -At line NN, column MM)
+    and parse (split) these lines on tokens. We extract tokens with number line and column and add
+    each pair to the dictionary (Python; Map in java). Name of variable for this dict. = 'pairs'.
+
+    Key point: length of this dictionary should be 1.
+    
+    Confirmed on 3.0.0.32493 - line and column numbers differed:
+        -At line 6, column 35
+        -At line 9, column 5
+    (thus length of 'pairs' is 2).
+
+    On 2.5.6.27001, 4.0.0.145 -- all fine, numbers of line and column is the same, length of 'pairs' = 1.
+ """,
+'min_versions': '2.5.6',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """\
+import os
+import time
+import subprocess
+import re
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+
+sqltxt='''
+    set term ^;
+    execute block
+    returns (id int)
+    as
+    begin
+      select y
+        from rdb$database x where z = 0
+        into id;
+      suspend;
+    end^
+
+    execute block
+    returns (id int)
+    as
+    begin
+      select x.y
+        from rdb$database x where z = 0
+        into id;
+      suspend;
+    end^ 
+'''
+
+f_checksql=open( os.path.join(context['temp_directory'],'tmp_5183.sql'), 'w')
+f_checksql.write(sqltxt)
+flush_and_close( f_checksql )
+
+f_isqllog=open( os.path.join(context['temp_directory'],'tmp_5183.log'), 'w')
+subprocess.call([context['isql_path'], dsn, "-i", f_checksql.name],  stdout=f_isqllog, stderr=subprocess.STDOUT)
+flush_and_close( f_isqllog )
+
+# Output 
+# -At line 6, column 35
+# -At line 9, column 5
+#  ^   ^   ^    ^    ^
+#  |   |   |    |    |
+#  1   2   3    4    5 <<< indices for tokens
+
+pattern = re.compile("-At line[\s]+[0-9]+[\s]*,[\s]*column[\s]+[0-9]+")
+pairs={}
+with open( f_isqllog.name,'r') as f:
+    for line in f:
+        if pattern.match(line):
+            tokens=re.split('\W+', line)
+            pairs[ tokens[3] ] = tokens[5]
+
+print( 'Number of distinct pairs {line,column}:  %d ' % len(pairs) )
+
+# This is sample of WRONG content of dictionary (it was so till 3.0.0.32493):
+# {'9': '5', '6': '35'}
+# Number of distinct pairs {line,column}:  2
+
+
+# Cleanup:
+##########
+time.sleep(1)
+cleanup( (f_isqllog,f_checksql) )
+
+  """,
+ 'expected_stdout': 
+  """
+    Number of distinct pairs {line,column}:  1
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

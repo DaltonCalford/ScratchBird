@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_3338',
+'qmid': None,
+'tracker_id': 'CORE-3338',
+'title': 'Regression: Code changes disabled support for expression indexes with COALESCE, CASE and DECODE',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    recreate table t(n int); commit;
+    insert into t select rand()*100 from rdb$types; commit;
+
+    create index t_n2_coalesce on t computed by ( coalesce(n*2,0) ); commit;
+    create index t_n2_decode   on t computed by ( decode( mod(n, 3), 0, coalesce(n,0), 1, iif(mod(n,7)=0, 2, 3) ) ); commit;
+
+    -- 2.5 raises:
+    -- Statement failed, SQLSTATE = HY000
+    -- request synchronization error
+    -- (for both variants of followed CREATE INDEX statement)
+
+    set planonly;
+    
+    select * from t where coalesce(n*2,0) = 0;
+    select * from t where decode( mod(n, 3), 0, coalesce(n,0), 1, iif(mod(n,7)=0, 2, 3) ) = 1;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN (T INDEX (T_N2_COALESCE))
+    PLAN (T INDEX (T_N2_DECODE))
+  """
+}
+]
+}

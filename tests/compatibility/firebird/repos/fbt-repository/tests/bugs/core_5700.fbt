@@ -1,0 +1,44 @@
+{
+'id': 'bugs.core_5700',
+'qmid': 'bugs.core_5700',
+'tracker_id': 'CORE-5700',
+'title': 'DECFLOAT underflow should yield zero instead of an error',
+'description':
+ """
+    Test case is based on letter from Alex, 05-feb-2018 20:23.
+    Confirmed on 4.0.0.800 (15-nov-18): evaluation of '1e-5000 / 1e5000' did raise exception:
+    ===
+        Statement failed, SQLSTATE = 22003
+        Decimal float underflow.  The exponent of a result is less than the magnitude allowed.
+    ===
+    Checked on 4.0.0.875: OK, 1.000s.
+ """,
+'min_versions': '4.0.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select 1e-5000 / 1e5000 as r from rdb$database; -- this should NOT raise exception since this ticket was fixed.
+    set decfloat traps to underflow;
+    select 1e-5000 / 1e5000 as r from rdb$database;
+  """,
+ 'expected_stdout':
+  """
+    R                                                                  0E-6176
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 22003
+    Decimal float underflow.  The exponent of a result is less than the magnitude allowed.
+  """,
+ 'substitutions':[ ('[\s]+', ' ') ]
+}
+]
+}

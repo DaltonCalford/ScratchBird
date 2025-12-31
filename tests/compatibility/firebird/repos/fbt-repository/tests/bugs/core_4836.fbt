@@ -1,0 +1,59 @@
+{
+'id': 'bugs.core_4836',
+'qmid': None,
+'tracker_id': 'CORE-4836',
+'title': "Grant update(c) on t to U01 with grant option: user U01 will not be able to `revoke update(c) on t from <user | role>` if this `U01` do some DML before revoke",
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create or alter user tmp$c4836 password '123' grant admin role;
+    create role tmp$r4836;
+    recreate table test(id int, text varchar(30));
+    
+    grant select on test to public;
+    grant update(text) on test to tmp$c4836 with grant option;
+    commit;
+    
+    connect '$(DSN)' user tmp$c4836 password '123';
+    
+    grant update (text) on test to tmp$r4836;
+    commit;
+    show grants;
+    commit;
+    
+    select * from test; -- this DML prevented to do subsequent `revoke update(text) on test from role` on build 3.0.0.31873
+    
+    commit;
+    
+    revoke update(text) on test from role tmp$r4836;
+    commit;
+    
+    show grants;
+    commit;
+    
+    connect '$(DSN)' user sysdba password 'masterkey';
+    drop role tmp$r4836;
+    drop user tmp$c4836;
+    drop table test;
+    commit; 
+  """,
+ 'expected_stdout': 
+  """
+    GRANT UPDATE (TEXT) ON TEST TO USER TMP$C4836 WITH GRANT OPTION
+    GRANT UPDATE (TEXT) ON TEST TO ROLE TMP$R4836 GRANTED BY TMP$C4836
+    GRANT UPDATE (TEXT) ON TEST TO USER TMP$C4836 WITH GRANT OPTION
+  """,
+  'substitutions':[('^((?!C4836|R4836).)*$','')]
+}
+]
+}

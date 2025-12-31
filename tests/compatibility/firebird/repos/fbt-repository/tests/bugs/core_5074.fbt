@@ -1,0 +1,75 @@
+{
+'id': 'bugs.core_5074',
+'qmid': None,
+'tracker_id': 'CORE-5074',
+'title': " Lost the charset ID in selection of array element",
+'description':
+ """
+    Confirmed missed charset in SQLDA output (remained "... charset: 0 NONE" in FB 3.0 and 4.0).
+    As of FB 2.5 there we can check only one difference: "sqlsubtype: 1" instead of old "sqlsubtype: 0".
+    Checked on:
+        build 4.0.0.1524: OK, 1.478s.
+        build 3.0.5.33139: OK, 0.913s.
+        build 2.5.9.27139: OK, 0.618s.
+ """,
+'min_versions': '2.5.9',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test(
+        a char(10)[0:3] character set octets
+    );
+    set sqlda_display on;
+    select a[0] from test;
+  """,
+ 'expected_stdout': 
+  """
+    INPUT  SQLDA version: 1 sqln: 10 sqld: 0
+
+    OUTPUT SQLDA version: 1 sqln: 20 sqld: 1
+    01: sqltype: 453 TEXT	  Nullable sqlscale: 0 sqlsubtype: 1 sqllen: 10
+      :  name: (1)A  alias: (1)A
+      : table: (4)TEST  owner: (6)SYSDBA
+
+  """,
+ 'expected_stderr': 
+  """
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test(
+        a char(10)[0:3] character set octets
+    );
+    set sqlda_display on;
+    select a[0] from test;
+  """,
+ 'expected_stdout': 
+  """
+    INPUT message field count: 0
+
+    OUTPUT message field count: 1
+    01: sqltype: 452 TEXT Nullable scale: 0 subtype: 0 len: 10 charset: 1 OCTETS
+      :  name: A  alias: A
+      : table: TEST  owner: SYSDBA
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

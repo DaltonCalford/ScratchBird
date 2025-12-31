@@ -1,0 +1,119 @@
+{
+'id': 'bugs.core_4822',
+'qmid': None,
+'tracker_id': 'CORE-4822',
+'title': 'MERGE JOIN cannot be used for DBKEY based expressions',
+'description': 'Test is related ONLY to versions 2.x. Block for 3.0 intentionally left EMPTY.',
+'min_versions': '2.5.5',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table tn(x int primary key using index tn_x);
+    commit;
+    insert into tn(x)
+    with recursive r as (select 0 i from rdb$database union all select r.i+1 from r where r.i<99)
+    select r1.i*100+r0.i from r r1, r r0;
+    commit;
+    set statistics index tn_x;
+    commit;
+    
+    set planonly;
+    --set echo on;
+    ----------- 1. Test `traditional` join form -----------------
+    -- Query '1A':
+    select count(*)
+    from (select rdb$db_key||'' a from tn) r1a
+    join (select rdb$db_key||'' a from tn) s1a on r1a.a = s1a.a;
+    
+    -- Query '1B':
+    select count(*)
+    from (select rdb$db_key||'' a from tn) r1b
+    join (select rdb$db_key||'' a from tn) s1b on r1b.a = s1b.a
+    join (select rdb$db_key||'' a from tn) t1b on s1b.a = t1b.a;
+    
+    -- Query '1C':
+    select count(*)
+    from (select rdb$db_key||'' a from tn) r1c
+    join (select rdb$db_key||'' a from tn) s1c on r1c.a = s1c.a
+    join (select rdb$db_key||'' a from tn) t1c on s1c.a = t1c.a
+    join (select rdb$db_key||'' a from tn) u1c on t1c.a = u1c.a;
+    
+    ----------- 2. Test join on named columns form -----------------
+    
+    -- Query '2A':
+    select count(*)
+    from (select rdb$db_key||'' a from tn) r2a
+    join (select rdb$db_key||'' a from tn) s2a using(a);
+    
+    -- Query '2B':
+    select count(*)
+    from (select rdb$db_key||'' a from tn) r2b
+    join (select rdb$db_key||'' a from tn) s2b using(a)
+    join (select rdb$db_key||'' a from tn) t2b using(a);
+    
+    -- Query '2C':
+    select count(*)
+    from (select rdb$db_key||'' a from tn) r2c
+    join (select rdb$db_key||'' a from tn) s2c using(a)
+    join (select rdb$db_key||'' a from tn) t2c using(a)
+    join (select rdb$db_key||'' a from tn) u2c using(a);
+    
+    ----------- 3. Test natural join form -----------------
+    
+    -- Query '3A':
+    select count(*)
+    from (select rdb$db_key||'' a from tn) r3a
+    natural join (select rdb$db_key||'' a from tn) s3a;
+    
+    -- Query '3B':
+    select count(*)
+    from (select rdb$db_key||'' a from tn) r3b
+    natural join (select rdb$db_key||'' a from tn) s3b
+    natural join (select rdb$db_key||'' a from tn) t3b;
+    
+    -- Query '3C':
+    select count(*)
+    from (select rdb$db_key||'' a from tn) r3c
+    natural join (select rdb$db_key||'' a from tn) s3c
+    natural join (select rdb$db_key||'' a from tn) t3c
+    natural join (select rdb$db_key||'' a from tn) u3c;
+  """,
+ 'expected_stdout':
+  """
+    PLAN MERGE (SORT (S1A TN NATURAL), SORT (R1A TN NATURAL))
+    PLAN MERGE (SORT (MERGE (SORT (T1B TN NATURAL), SORT (S1B TN NATURAL))), SORT (R1B TN NATURAL))
+    PLAN MERGE (SORT (MERGE (SORT (MERGE (SORT (U1C TN NATURAL), SORT (T1C TN NATURAL))), SORT (S1C TN NATURAL))), SORT (R1C TN NATURAL))
+    PLAN MERGE (SORT (S2A TN NATURAL), SORT (R2A TN NATURAL))
+    PLAN MERGE (SORT (T2B TN NATURAL), SORT (MERGE (SORT (S2B TN NATURAL), SORT (R2B TN NATURAL))))
+    PLAN MERGE (SORT (U2C TN NATURAL), SORT (MERGE (SORT (T2C TN NATURAL), SORT (MERGE (SORT (S2C TN NATURAL), SORT (R2C TN NATURAL))))))
+    PLAN MERGE (SORT (S3A TN NATURAL), SORT (R3A TN NATURAL))
+    PLAN MERGE (SORT (T3B TN NATURAL), SORT (MERGE (SORT (S3B TN NATURAL), SORT (R3B TN NATURAL))))
+    PLAN MERGE (SORT (U3C TN NATURAL), SORT (MERGE (SORT (T3C TN NATURAL), SORT (MERGE (SORT (S3C TN NATURAL), SORT (R3C TN NATURAL))))))
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    --- SKIP any test for 3.0 for this ticket ---
+  """,
+ 'expected_stdout':
+  """
+  """
+}
+]
+}

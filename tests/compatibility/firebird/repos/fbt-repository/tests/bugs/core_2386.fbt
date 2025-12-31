@@ -1,0 +1,43 @@
+{
+'id': 'bugs.core_2386',
+'qmid': None,
+'tracker_id': 'CORE-2386',
+'title': 'ALTER VIEW could remove column used in stored procedure or trigger',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """SET TERM ^ ;
+
+CREATE VIEW V_TEST (F1, F2)
+AS
+  SELECT 1, 2 FROM RDB$DATABASE
+^
+
+CREATE PROCEDURE SP_TEST
+AS
+DECLARE I INT;
+BEGIN
+  SELECT F1, F2 FROM V_TEST
+    INTO :I, :I;
+END
+^
+
+COMMIT
+^
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER VIEW V_TEST (F1) AS
+ SELECT 1 FROM RDB$DATABASE ;""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-cannot delete
+-COLUMN V_TEST.F2
+-there are 1 dependencies
+"""
+}
+]
+}

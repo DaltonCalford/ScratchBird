@@ -1,0 +1,56 @@
+{
+'id': 'bugs.core_3204',
+'qmid': None,
+'tracker_id': 'CORE-3204',
+'title': 'Constraint violation error of CAST is not raised inside views',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create or alter  view v1 as select 1 id from rdb$database;
+    commit;
+    set term ^;
+    execute block as
+    begin
+      execute statement 'drop domain d1';
+    when any do begin end
+    end
+    ^
+    set term ;^
+    commit;
+    
+    create domain d1 integer not null;
+    commit;
+    
+    set list on;
+    
+    select cast(null as d1) from rdb$database; -- error: ok
+    commit;
+    
+    create or alter view v1 as select cast(null as d1) x from rdb$database;
+    commit;
+
+    select * from v1; 
+    
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    validation error for CAST, value "*** null ***"
+    Statement failed, SQLSTATE = 42000
+    validation error for CAST, value "*** null ***"
+  """
+}
+]
+}

@@ -1,0 +1,23 @@
+{
+'id': 'functional.intfunc.math.tanh_01',
+'qmid': 'functional.intfunc.math.tanh_01',
+'tracker_id': '',
+'title': 'test for TANH  function',
+'description': """
+TANH( <number> )
+
+Returns the hyperbolic tangent of a number.
+    select tanh(x) from y;""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': ' select TANH(5) from rdb$database;',
+ 'expected_stdout': """                         TANH
+      =======================
+           0.9999092042625951
+"""
+}
+]
+}

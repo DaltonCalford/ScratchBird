@@ -1,0 +1,109 @@
+{
+'id': 'bugs.core_3311',
+'qmid': None,
+'tracker_id': 'CORE-3311',
+'title': 'Error "data type unknown" while preparing UPDATE/DELETE statements with the parameterized ROWS clause',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    recreate table test(id int);
+    commit;
+    insert into test select rand()*1000 from rdb$types,(select 1 i from rdb$types rows 10);
+    --insert into test select rand()*1000 from rdb$types,rdb$types,rdb$types,rdb$types;
+    commit;
+    create index test_id on test(id);
+    commit;
+  """,
+ 'test_script':
+  """
+    set planonly;
+    select * from test rows ?;
+    select * from test where id between ? and ? order by id  rows ? to ?;
+    update test set id=id rows ? to ?;
+    update test set id=id where id between ? and ? order by id rows ? to ?;
+    delete from test rows ? to ?;
+    delete from test where id between ? and ? order by id  rows ? to ?;
+    merge into test t 
+    using( 
+      select id from test where id between ? and ? rows ?
+    ) s 
+    on t.id=s.id 
+    when matched then update set t.id=s.id;
+    merge into test t 
+    using( 
+      select id from test where id between ? and ? order by id rows ? 
+    ) s 
+    on t.id=s.id 
+    when matched then update set t.id=s.id;
+    set planonly;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN (TEST NATURAL)
+    PLAN (TEST ORDER TEST_ID INDEX (TEST_ID))
+    PLAN (TEST NATURAL)
+    PLAN (TEST ORDER TEST_ID INDEX (TEST_ID))
+    PLAN (TEST NATURAL)
+    PLAN (TEST ORDER TEST_ID INDEX (TEST_ID))
+    PLAN JOIN (S TEST INDEX (TEST_ID), T INDEX (TEST_ID))
+    PLAN JOIN (S TEST ORDER TEST_ID INDEX (TEST_ID), T INDEX (TEST_ID))
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    recreate table test(id int);
+    commit;
+    insert into test select rand()*1000 from rdb$types,(select 1 i from rdb$types rows 10);
+    commit;
+    create index test_id on test(id);
+    commit;
+  """,
+ 'test_script':
+  """
+    set planonly;
+    select * from test rows ?;
+    select * from test where id between ? and ? order by id  rows ? to ?;
+    update test set id=id rows ? to ?;
+    update test set id=id where id between ? and ? order by id rows ? to ?;
+    delete from test rows ? to ?;
+    delete from test where id between ? and ? order by id  rows ? to ?;
+    merge into test t 
+    using( 
+      select id from test where id between ? and ? rows ?
+    ) s 
+    on t.id=s.id 
+    when matched then update set t.id=s.id;
+    merge into test t 
+    using( 
+      select id from test where id between ? and ? order by id rows ? 
+    ) s 
+    on t.id=s.id 
+    when matched then update set t.id=s.id;
+    set planonly;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN (TEST NATURAL)
+    PLAN (TEST ORDER TEST_ID)
+    PLAN (TEST NATURAL)
+    PLAN (TEST ORDER TEST_ID)
+    PLAN (TEST NATURAL)
+    PLAN (TEST ORDER TEST_ID)
+    PLAN JOIN (S TEST INDEX (TEST_ID), T INDEX (TEST_ID))
+    PLAN JOIN (S TEST ORDER TEST_ID, T INDEX (TEST_ID))
+  """
+}
+]
+}

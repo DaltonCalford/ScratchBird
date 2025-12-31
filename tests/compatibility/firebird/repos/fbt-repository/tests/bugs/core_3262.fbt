@@ -1,0 +1,74 @@
+{
+'id': 'bugs.core_3262',
+'qmid': None,
+'tracker_id': 'CORE-3262',
+'title': 'LIST() may overwrite last part of output with zero characters',
+'description': '',
+'min_versions': '2.1.4',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    recreate table vc (s varchar(8000));
+    commit;
+    
+    insert into vc values (cast('A' as char(4000)) || 'B');
+    
+    set list on;
+    
+    select char_length(s), position('A' in s), position('B' in s) from vc;
+    
+    with q (l) as (select list(s) from vc)
+      select char_length(l), position('A' in l), position('B' in l) from q;
+    
+    
+    update vc set s = (cast('A' as char(5000)) || 'B');
+    
+    select char_length(s), position('A' in s), position('B' in s) from vc;
+    
+    
+    with q (l) as (select list(s) from vc)
+      select char_length(l), position('A' in l), position('B' in l) from q;
+    
+    
+    with q (l) as (select reverse(list(s)) from vc)
+      select char_length(l), position('A' in l), position('B' in l) from q;
+    
+    with q (l) as (select list(s) from vc)
+      select ascii_val(substring(l from 4066 for 1)), ascii_val(substring(l from 4067 for 1)) from q;
+  """,
+ 'expected_stdout':
+  """
+    CHAR_LENGTH                     4001
+    POSITION                        1
+    POSITION                        4001
+
+    CHAR_LENGTH                     4001
+    POSITION                        1
+    POSITION                        4001
+
+    CHAR_LENGTH                     5001
+    POSITION                        1
+    POSITION                        5001
+
+    CHAR_LENGTH                     5001
+    POSITION                        1
+    POSITION                        5001
+    
+    CHAR_LENGTH                     5001
+    POSITION                        5001
+    POSITION                        1
+
+    ASCII_VAL                       32
+    ASCII_VAL                       32
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

@@ -1,0 +1,53 @@
+{
+'id': 'bugs.gh_7062',
+'qmid': None,
+'tracker_id': '',
+'title': 'Creation of expression index does not release its statement correctly',
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/7062
+
+    Confirmed bug on 5.0.0.321.
+    Checked on 5.0.0.336 - all fine.
+    Checked on 4.0.1.2682 (11.12.2021) - all OK, reduced min_version to 4.0.1
+ """,
+'min_versions': '4.0.1',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    -- case-1:
+    create table test_1 (n integer);
+    create table test_2 (n integer);
+    create index test_1_expr on test_1 computed by ((select n from test_2));
+    drop table test_1;
+    commit;
+    drop table test_2; -- this must NOT fail (raised "SQLSTATE = 42000 / object in use" before fix)
+
+    -- case-2:
+    create table test_a (n integer);
+    create table test_b (n integer);
+    insert into test_a values (0);
+    commit;
+    create index test_a_expr on test_a computed by (1 / 0 + (select 1 from test_b));
+    drop table test_a;
+    commit;
+    drop table test_b; -- this must NOT fail (raised "SQLSTATE = 42000 / object in use" before fix)
+
+  """,                                                      
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 22012
+    Expression evaluation error for index "***unknown***" on table "TEST_A"
+    -arithmetic exception, numeric overflow, or string truncation
+    -Integer divide by zero.  The code attempted to divide an integer value by an integer divisor of zero.
+  """
+}
+]
+}

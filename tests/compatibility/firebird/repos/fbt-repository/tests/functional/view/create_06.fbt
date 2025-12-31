@@ -1,0 +1,30 @@
+{
+'id': 'functional.view.create.06',
+'qmid': 'functional.view.create.create_view_06',
+'tracker_id': '',
+'title': 'CREATE VIEW - updateable',
+'description': """CREATE VIEW - updateable
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE tb(id INT);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE VIEW test (id) AS SELECT id FROM tb;
+INSERT INTO test VALUES(2);
+COMMIT;
+SELECT * FROM test;""",
+ 'expected_stdout': """          ID
+============
+
+           2
+"""
+}
+]
+}

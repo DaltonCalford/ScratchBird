@@ -1,0 +1,66 @@
+{
+'id': 'bugs.core_1812',
+'qmid': 'bugs.core_1812',
+'tracker_id': 'CORE-1812',
+'title': 'Index is not used for some date/time expressions in dialect 1',
+'description':
+ """
+    02.02.2019. Added separate code for FB 4.0: statements like SELECT TIMESTAMP 'now' FROM RDB$DATABASE;
+    -- can not be used anymore (Statement failed, SQLSTATE = 22018 / conversion error from string "now").
+    Details about timezone datatype see in: doc\sql.extensions\README.time_zone.md
+ """,
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'sql_dialect': 1,
+ 'init_script': 
+  """
+    create table t (col timestamp) ;
+    create index it on t (col) ;
+    commit ;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    SET PLAN ON;
+    select * from t where col > timestamp 'now' - 7 ;
+    select * from t where col > 'now' - 7 ;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN (T INDEX (IT))
+    PLAN (T INDEX (IT))
+  """
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'sql_dialect': 1,
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create table test (dts timestamp) ;
+    commit;
+    insert into test
+    select dateadd( rand() * 10 second to localtimestamp )
+    from rdb$types, rdb$types;
+    commit;
+    create index test_dts on test(dts);
+    commit;
+
+    set planonly;
+    select * from test where dts = localtimestamp;
+    select * from test where dts = current_timestamp;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN (TEST INDEX (TEST_DTS))
+    PLAN (TEST NATURAL)
+  """
+}
+]
+}

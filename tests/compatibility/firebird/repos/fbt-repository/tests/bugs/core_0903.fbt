@@ -1,0 +1,53 @@
+{
+'id': 'bugs.core_0903',
+'qmid': None,
+'tracker_id': 'CORE-903',
+'title': 'New value of column is accessable before update',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE TEST (
+    T1 INTEGER,
+    T2 INTEGER,
+    T3 INTEGER,
+    T4 INTEGER
+);
+
+Insert into test (T1, T2, T3, T4) values ( 0, 0 , 0, 0);
+
+SET TERM ^ ;
+
+CREATE OR ALTER PROCEDURE CH_TEST (
+    num integer)
+as
+begin
+
+update TEST
+ set
+   T1= T1 + T2 + T3 + T4 + :NUM
+   ,T2= T1 + T2 + T3 + T4 + :NUM
+   ,T3= T1 + T2 + T3 + T4 + :NUM
+   ,T4= T1 + T2 + T3 + T4 + :NUM
+ ;
+
+end^
+
+SET TERM ; ^
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """execute procedure ch_test( 1 );
+select * from test;
+""",
+ 'expected_stdout': """
+          T1           T2           T3           T4
+============ ============ ============ ============
+           1            1            1            1
+
+"""
+}
+]
+}

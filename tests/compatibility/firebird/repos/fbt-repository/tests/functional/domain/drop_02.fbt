@@ -1,0 +1,67 @@
+{
+'id': 'functional.domain.drop.02',
+'qmid': 'functional.domain.drop.drop_domain_02',
+'tracker_id': '',
+'title': 'DROP DOMAIN - in use',
+'description': """DROP DOMAIN - that was use
+
+Dependencies:
+CREATE DATABASE
+CREATE DOMAIN
+CREATE TABLE
+""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE DOMAIN test SMALLINT;
+CREATE TABLE tb( id test);""",
+ 'test_type': 'ISQL',
+ 'test_script': 'DROP DOMAIN test;',
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+
+unsuccessful metadata update
+-column TEST is used in table TB (local name ID) and cannot be dropped
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE DOMAIN test SMALLINT;
+CREATE TABLE tb( id test);""",
+ 'test_type': 'ISQL',
+ 'test_script': 'DROP DOMAIN test;',
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+unsuccessful metadata update
+-Domain TEST is used in table TB (local name ID) and cannot be dropped
+"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """CREATE DOMAIN test SMALLINT;
+CREATE TABLE tb( id test);""",
+ 'test_type': 'ISQL',
+ 'test_script': 'DROP DOMAIN test;',
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-Domain TEST is used in table TB (local name ID) and cannot be dropped
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """CREATE DOMAIN test SMALLINT;
+CREATE TABLE tb( id test);""",
+ 'test_type': 'ISQL',
+ 'test_script': 'DROP DOMAIN test;',
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-DROP DOMAIN TEST failed
+-Domain TEST is used in table TB (local name ID) and cannot be dropped
+
+"""
+}
+]
+}

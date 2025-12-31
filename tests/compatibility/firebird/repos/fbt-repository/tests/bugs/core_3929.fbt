@@ -1,0 +1,39 @@
+{
+'id': 'bugs.core_3929',
+'qmid': None,
+'tracker_id': 'CORE-3929',
+'title': 'Invalid "attempted update of read-only column" error when trying select minvalue from list with more than 255 elements',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    select minvalue(
+       1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 --50
+      ,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 --100
+      ,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 --150
+      ,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 --200
+      ,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 --250
+      ,1,1,1,1,1 -- the last element (# 255) where result is OK
+      ,1 -- adding this element leads to error message
+    ) from rdb$database; 
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    Maximum (255) number of arguments exceeded for function MINVALUE
+  """,
+}
+]
+}

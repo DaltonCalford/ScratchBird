@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_3201',
+'qmid': None,
+'tracker_id': 'CORE-3201',
+'title': 'ATAN2 returns incorrect value for (0, 0)',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    select ATAN2(0, 0) undef_atan from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    expression evaluation not supported
+    -Arguments for ATAN2 cannot both be zero
+  """
+}
+]
+}

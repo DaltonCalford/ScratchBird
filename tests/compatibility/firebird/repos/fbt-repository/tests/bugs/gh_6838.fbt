@@ -1,0 +1,68 @@
+{
+'id': 'bugs.gh_6838',
+'qmid': None,
+'tracker_id': '',
+'title': 'Deleting multiple rows from a view with triggers may cause triggers to fire just once',
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/6838
+
+    Confirmed bug on 4.1.0.2468, 5.0.0.56.
+    Checked on intermediate builds 4.0.0.2506, 5.0.0.60 (bith have timestamp: 02.06.2021 15:12) -- all OK.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    create table t (id int);
+    create view v as select id from t;
+    create table log (txt varchar(10));
+
+    set term ^;
+    create trigger trg for v before update or delete as
+    begin
+        insert into log values ( iif(deleting, 'deleted', 'updated') );
+    end
+    ^
+    set term ;^
+
+    insert into t values (1);
+    insert into t values (2);
+    commit;
+
+    delete from v;
+    set count on;
+    select * from log;
+    set count off;
+    rollback;
+
+    merge into v t
+    using v s on s.id = t.id
+    when matched then delete;
+
+    set count on;
+    select * from log;
+    set count off;
+    rollback;
+  """,
+ 'expected_stdout': 
+  """
+    TXT                             deleted
+    TXT                             deleted
+    Records affected: 2
+
+    TXT                             deleted
+    TXT                             deleted
+    Records affected: 2
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

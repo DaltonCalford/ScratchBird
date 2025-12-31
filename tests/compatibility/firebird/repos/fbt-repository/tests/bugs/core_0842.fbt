@@ -1,0 +1,37 @@
+{
+'id': 'bugs.core_0842',
+'qmid': 'bugs.core_842',
+'tracker_id': 'CORE-842',
+'title': 'Specific query crashing server',
+'description': """Run the query below twice and the server will crash:
+
+select
+   cast('' as varchar(32765)),
+   cast('' as varchar(32748))
+from
+   rdb$database;
+""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+  set list on;
+  select cast('' as varchar(32765)), cast('' as varchar(32748)) from rdb$database;
+  select cast('' as varchar(32765)), cast('' as varchar(32748)) from rdb$database;
+  """,
+ 'expected_stdout':
+ """
+    CAST
+    CAST
+    CAST
+    CAST
+ """,
+ 'expected_stderr':
+ """
+ """
+}
+]
+}

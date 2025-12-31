@@ -1,0 +1,27 @@
+{
+'id': 'bugs.core_4289',
+'qmid': None,
+'tracker_id': 'CORE-4289',
+'title': 'Regression: NOT-null field from derived table became NULL when is referred outside DT',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+set list on;
+select q.n, case when q.n=0 then 'zero' when q.n<>0 then 'NON-zero' else 'Hm!..' end what_is_n
+from (select 0 N from RDB$DATABASE) q; 
+  """,
+ 'expected_stdout': 
+  """
+N                               0
+WHAT_IS_N                       zero    
+  """
+}
+]
+}

@@ -1,0 +1,28 @@
+{
+'id': 'bugs.core_1338',
+'qmid': 'bugs.core_1338',
+'tracker_id': 'CORE-1338',
+'title': 'Problem with view , computed field and functions',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """create table a (a numeric(15,15));
+
+insert into a values(2);
+
+create view b(a) as select round(a,2) from a;
+
+select * from b;
+""",
+ 'expected_stdout': """
+                    A
+=====================
+    2.000000000000000
+
+"""
+}
+]
+}

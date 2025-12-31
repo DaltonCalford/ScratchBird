@@ -1,0 +1,42 @@
+{
+'id': 'bugs.core_5846',
+'qmid': None,
+'tracker_id': 'CORE-5846',
+'title': 'CREATE VIEW issues "Implementation of text subtype 512 not located"',
+'description':
+ """
+    Works fine on:
+        3.0.4.32995: OK, 1.047s.
+        4.0.0.1028: OK, 1.391s.
+ """,
+'min_versions': '3.0.4',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    alter character set utf8 set default collation unicode;
+    create table table1( fld1 char(1) character set none );
+
+    -- NB: 'expected_stderr' must remain empty as result of following command.
+    create view view1 as
+    select fld1 from table1
+    ; 
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

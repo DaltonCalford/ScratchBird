@@ -1,0 +1,61 @@
+{
+'id': 'bugs.core_3137',
+'qmid': None,
+'tracker_id': 'CORE-3137',
+'title': 'Partial rollback is possible for a selectable procedure modifying data',
+'description': '',
+'min_versions': '2.1.4',
+'versions': [
+{
+ 'firebird_version': '2.1.4',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    create or alter procedure sp_01 returns (ret int) as begin end;
+    commit;
+    recreate table tab (col int);
+    commit;
+    insert into tab (col) values (1);
+    commit;
+    
+    set term ^;
+    create or alter procedure sp_01 returns (ret int) as
+    begin
+        update tab set col = 2;
+        begin
+            update tab set col = 3;
+            ret = 1;
+            suspend;
+        end
+        when any do
+        begin
+            ret = 0;
+            suspend;
+        end
+    end
+    ^ set term ;^
+    commit;
+  """,
+ 'test_script':
+  """
+    set list on;
+    select col from tab; -- returns 1
+    commit;
+
+    select ret from sp_01;
+    rollback;
+
+    select col from tab; -- returns 2!!!
+    commit; 
+  """,
+ 'expected_stdout': 
+  """
+    COL                             1
+    RET                             1
+    COL                             1
+  """
+}
+]
+}

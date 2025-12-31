@@ -1,0 +1,24 @@
+{
+'id': 'bugs.core_3517',
+'qmid': None,
+'tracker_id': 'CORE-3517',
+'title': 'Server crash with built in function LPAD with string as second parameter',
+'description': '',
+'min_versions': '2.1.5',
+'versions': [
+{
+ 'firebird_version': '2.1.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select LPAD('abc', '0', 3) FROM RDB$DATABASE;
+""",
+ 'expected_stdout': """
+LPAD
+======
+
+
+"""
+}
+]
+}

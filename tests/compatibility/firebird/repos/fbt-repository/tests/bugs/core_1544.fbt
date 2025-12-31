@@ -1,0 +1,155 @@
+{
+'id': 'bugs.core_1544',
+'qmid': '',
+'tracker_id': 'CORE-1544',
+'title': 'RDB$procedures generator overflow',
+'description': 
+ """ 
+    New URL: https://github.com/FirebirdSQL/firebird/issues/1961
+
+    Re-implemented in order to generate SQL script with more than 32K create/drop procedures.
+    Total number of created procedures is set by 'TOTAL_PROCEDURES_COUNT' variable.
+
+    In order to reduce time:
+        * FW is changed OFF
+        * test uses LOCAL connection protocol 
+    Confirmed bug on 2.0.6.13266, got:
+        Statement failed, SQLCODE = -607
+        unsuccessful metadata update
+        -STORE RDB$PROCEDURES failed
+        -arithmetic exception, numeric overflow, or string truncation
+        -At trigger 'RDB$TRIGGER_28'
+    (value of gen_id(rdb$procedures,0) is 32768 when this error raises)
+
+    Checked on:
+        5.0.0.43 SS: 153.655s.
+        5.0.0.40 CS: 159.848s.
+        4.0.0.2491 SS: 156.878s.
+        4.0.0.2489 CS: 157.147s.
+        3.0.8.33468 SS: 174.331s.
+        3.0.8.33452 CS: 150.367s.
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': """
+
+import os
+import subprocess
+import time
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+db_name = db_conn.database_name
+db_conn.close()
+runProgram('gfix',[dsn,'-w','async'])
+
+############################
+TOTAL_PROCEDURES_COUNT=32800
+############################
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+
+script='''
+    set bail on;
+    set list on;
+    set term #;
+'''
+
+for i in range(1,TOTAL_PROCEDURES_COUNT+1):
+    script = '\\n'.join(
+                          (  script
+                            ,'create procedure sp_%d returns(r bigint) as begin r = %d; suspend; end#' % (i, (i+1)**3)
+                            ,'drop procedure sp_%d#' % i
+                          )
+                       )
+
+script = '\\n'.join(
+                      (   script
+                         ,"select iif( gen_id(rdb$procedures,0) >= %d, 'Expected.','UNEXPECTED: ' || gen_id(rdb$procedures,0) || ' - less then %d' ) as GEN_RDB_PROC_CURR_VALUE from rdb$database#" % (TOTAL_PROCEDURES_COUNT, TOTAL_PROCEDURES_COUNT)
+                         ,'create procedure sp_1 returns(r bigint) as begin r = -9876543321; suspend; end#'
+                         ,'select * from sp_1#'
+                         ,'set term ;#'
+                      )
+                  )
+
+
+f_isql_cmd=open(os.path.join(context['temp_directory'],'tmp_core_1544.sql'), 'w')
+f_isql_cmd.write(script)
+flush_and_close( f_isql_cmd )
+
+f_isql_log=open(os.path.join(context['temp_directory'],'tmp_core_1544.log'),'w')
+f_isql_err=open(os.path.join(context['temp_directory'],'tmp_core_1544.err'),'w')
+
+# NB: use local connection here in order to increase speed:
+subprocess.call([ context['isql_path'], db_name, "-i", f_isql_cmd.name],stdout = f_isql_log, stderr = f_isql_err)
+
+flush_and_close( f_isql_log )
+flush_and_close( f_isql_err )
+
+with open(f_isql_err.name,'r') as f:
+    for line in f:
+        if line.split():
+            print('UNEXPECTED STDERR: ' + line.strip())
+
+with open(f_isql_log.name,'r') as f:
+    for line in f:
+        if line.split():
+            print(line.strip())
+
+
+# cleanup:
+##########
+time.sleep(1)
+cleanup((f_isql_cmd, f_isql_log, f_isql_err))
+
+  """,
+ 'expected_stdout': 
+  """
+    GEN_RDB_PROC_CURR_VALUE         Expected.
+    R                               -9876543321
+  """,
+ 'expected_stderr': 
+  """
+  """
+},
+]
+}

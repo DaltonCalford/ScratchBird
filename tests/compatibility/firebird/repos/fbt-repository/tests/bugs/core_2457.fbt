@@ -1,0 +1,24 @@
+{
+'id': 'bugs.core_2457',
+'qmid': None,
+'tracker_id': 'CORE-2457',
+'title': ' UNICODE_CI internal gds software consistency check',
+'description': '',
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5.2',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE ATABLE (
+    AFIELD VARCHAR(50) CHARACTER SET UTF8 COLLATE UNICODE_CI);
+CREATE DESCENDING INDEX ATABLE_BWD ON ATABLE (AFIELD);
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT FIRST 1 T.AFIELD FROM ATABLE T
+  WHERE T.AFIELD < 'X'
+  ORDER BY T.AFIELD DESC;
+"""
+}
+]
+}

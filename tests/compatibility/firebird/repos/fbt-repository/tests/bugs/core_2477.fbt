@@ -1,0 +1,378 @@
+{
+'id': 'bugs.core_2477',
+'qmid': None,
+'tracker_id': 'CORE-2477',
+'title': 'mon$memory_usage: Sorting memory should be reported as owned by the statement',
+'description': 
+ """
+   We create view that gathers monitoring info related to all needed levels of statistics (DB, attachment, transaction, call).
+   Then this view is "customized" in order to leave only interested info about activity that will be started by separate isql process.
+   Then we start ascynchronously ISQL and make it stay in some (small) pause. At this moment we make first "photo" of mon$ info and store
+   it in dict object 'map_beg'.
+   NB: we should NOT wait too long because when SORT starts it can very fast to fill whole space of TempCacheLimit and mon$memory* counters
+   will not change  since this poitn at all (===> one mey to get zero difference between mon$ countyers in this case).
+
+   After small pause (in ISQL connect) will gone, ISQL starts to do "huge sort" by invoking query with 'SELECT DISTINCT FROM <huge data source>'.
+   We wait about 1..2 second after this sort start and then make 2nd "photo" of monitoring counters and also store their values in another 
+   dict object ('map_end').
+   
+   Finally, we force ISQL to finish (by moving DB in full shutdown state) and compare differences between corresp. values of map_end and map_beg.
+   Values for DATABASE level (mon$stat_group = 0) change only in SuperServer but never change in CS/SC and remain zero. We do not compare them.
+   Values for TRANSACTION level never increase; moreover, mon$memory_allocated counter at the "end-point" (when sorting is running) even is reduced
+   (and the reason still remain unknown for me; see letter to dimitr 04-may-2018 20:07).
+   So, we compare only difference of mon$memory* counters for ATTACHMENT and STATEMENT level (mon$stat_group = 1 and 3).
+
+   This difference must be not less than some threshold that depends on FB arch, for __BOTH__ levels (and this is main idea of this test)
+                                                                                 ###################
+
+   Runs this test on firebird.conf with default TempCacheLimit show following values of differences:
+   1) for SuperServer: ~68.1 Mb; 
+   2) for Classic: ~9.4 Mb
+   For this reason minimal threshold for consider difference Ok is about 1 Mb (see MIN_DIFF_THRESHOLD).
+
+   Checked on (Windows 32 bit):
+       25SC, build 2.5.9.27107: OK, 10.328s.
+       25sS, build 2.5.8.27056: OK, 14.656s.
+       30Cs, build 3.0.4.32947: OK, 14.234s.
+       30SS, build 3.0.4.32963: OK, 17.234s.
+       40CS, build 4.0.0.955: OK, 11.219s.
+       40SS, build 4.0.0.967: OK, 12.718s.
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    create or alter view v_mon as
+    select *
+    from (
+        select 
+            m.mon$stat_group as stat_gr
+           ,rpad( decode(m.mon$stat_group, 0,'0:database', 1,'1:attachment', 2,'2:transaction', 3,'3:statement', 4,'4:call'), 15,' ') as stat_type
+           ,m.mon$memory_used          as memo_used
+           ,m.mon$memory_allocated     as memo_allo
+           ,m.mon$max_memory_used      as max_memo_used
+           ,m.mon$max_memory_allocated as max_memo_allo
+           ,m.mon$stat_id              as stat_id
+           ,coalesce( s.mon$attachment_id, t.mon$attachment_id, a.mon$attachment_id, -999 ) as att_id
+           ,coalesce( s.mon$transaction_id, t.mon$transaction_id, -999 ) as trn_id
+           ,coalesce( s.mon$statement_id, -999) as sttm_id
+           ,coalesce( decode( s.mon$state, 0,'finished', 1,'running', 2,'suspended' ), 'n/a') as stm_state
+           ,lower(right( coalesce(trim(coalesce(a.mon$remote_process, a.mon$user)), ''), 20 )) as att_process -- isql.exe or Garbace Collector or Cache Writer
+           ,lower(left( coalesce(cast(s.mon$sql_text as varchar(2000)),''), 50 )) as sql_text
+        from mon$memory_usage m 
+        left join mon$statements s on m.mon$stat_group = 3 and m.mon$stat_id = s.mon$stat_id
+        left join mon$transactions t on 
+            m.mon$stat_group = 2 and m.mon$stat_id = t.mon$stat_id
+            or m.mon$stat_group = 3 and m.mon$stat_id = s.mon$stat_id and t.mon$transaction_id = s.mon$transaction_id
+        left join mon$attachments a on 
+            m.mon$stat_group = 1 and m.mon$stat_id = a.mon$stat_id 
+            or m.mon$stat_group=2 and m.mon$stat_id = t.mon$stat_id and a.mon$attachment_id = t.mon$attachment_id
+            or m.mon$stat_group=3 and m.mon$stat_id = s.mon$stat_id and a.mon$attachment_id = s.mon$attachment_id
+        where 
+            s.mon$sql_text is null 
+            or 
+            -- NB: There is additional statement like "SELECT RDB$MAP_USING, RDB$MAP_PLUGIN ..." in 4.0!
+            -- We have to filter it out and leave here only "our" statement that does SORT job:
+            s.mon$sql_text containing 'distinct'
+    ) t
+    where 
+            t.stat_gr = 0 
+        or
+            t.att_process similar to '%[\\/]isql(.exe){0,1}'
+    order by stat_type, stat_id;
+
+    -- Aux. table for make ISQL some small delay just after it will be loaded and establish connection:
+    recreate table test(id int primary key);
+
+  """,
+ 'test_type': 'Python',
+ 'test_script':"""\
+
+import os
+import subprocess
+from subprocess import Popen
+import time
+from fdb import services
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_file=db_conn.database_name
+
+db_conn.close()
+
+ISQL_USER=user_name
+ISQL_PSWD=user_password
+
+MIN_DIFF_THRESHOLD=1000000
+
+# change on True if one need to look at intermediate results of gathering mon$ info
+# (before ISQL async launch; after launch but before starting sort; while sorting)
+RUN_DBG=False
+
+DELAY_IN_ISQL_BEFORE_IT_STARTS_SORT = 3
+DELAY_FOR_ISQL_ESTABLISH_ITS_CONNECT = 1
+DELAY_BEFORE_MON_WHILE_SORT_IS_RUNNING = DELAY_IN_ISQL_BEFORE_IT_STARTS_SORT + DELAY_FOR_ISQL_ESTABLISH_ITS_CONNECT + 1
+
+SQL_GATHER_SORT_INFO='''
+    select 
+        v.att_process, 
+        replace(replace(replace(replace(v.sql_text, ascii_char(10),' '), ascii_char(13),' '),'   ',' '),'  ',' ') as sql_text, 
+        v.stat_type, 
+        v.stm_state, 
+        v.att_id, 
+        v.trn_id, 
+        v.sttm_id, 
+        v.memo_used, 
+        v.memo_allo, 
+        v.max_memo_used, 
+        v.max_memo_allo 
+    from v_mon v 
+    where v.att_id is distinct from current_connection
+'''
+
+#--------------------------------------------------------------
+
+def result_msg(a_diff_value, a_min_threshold):
+    return ( ('OK, expected: increased significantly.') if a_diff_value > a_min_threshold else ('BAD! Did not increased as expected. Difference: ' + "{:d}".format(a_diff_value)+'.') )
+
+def debug_store_mon_view(dsn, SQL_GATHER_SORT_INFO, file_name_suffix):
+    global os
+    global subprocess
+    f_sql_dbg=open( os.path.join( context['temp_directory'], 'tmp_c2477_dbg' + file_name_suffix + '.sql' ), 'w')
+    f_sql_dbg.write( 'set width att_process 20; set width sql_text 50; ' + SQL_GATHER_SORT_INFO+';')
+    f_sql_dbg.close()
+    f_log_dbg=open( os.path.join( context['temp_directory'], 'tmp_c2477_dbg' + file_name_suffix + '.log' ), 'w')
+    subprocess.call( [ context['isql_path'], dsn, '-q', '-n', '-i', f_sql_dbg.name ], stdout=f_log_dbg, stderr = subprocess.STDOUT)
+    f_log_dbg.close()
+    os.remove(f_sql_dbg.name)
+
+def forcely_clean_attachments_by_shutdown_online( db_file ):
+
+    global RUN_DBG
+    global os
+
+    f_shutdown_log = open( os.path.join(context['temp_directory'],'tmp_shutdown_and_online_2477.log'), 'w')
+
+    subprocess.call( [context['fbsvcmgr_path'], "localhost:service_mgr",
+                      "action_properties", "prp_shutdown_mode", "prp_sm_full", "prp_shutdown_db", "0",
+                      "dbname", db_file,
+                     ],
+                     stdout = f_shutdown_log,
+                     stderr = subprocess.STDOUT
+                   )
+
+    subprocess.call( [context['fbsvcmgr_path'],"localhost:service_mgr",
+                      "action_db_stats",
+                      "dbname", db_file, "sts_hdr_pages"
+                     ],
+                     stdout = f_shutdown_log,
+                     stderr=subprocess.STDOUT
+                   )
+
+    subprocess.call( [context['fbsvcmgr_path'], "localhost:service_mgr",
+                      "action_properties", "prp_db_online",
+                      "dbname", db_file,
+                     ],
+                     stdout = f_shutdown_log,
+                     stderr = subprocess.STDOUT
+                   )
+    subprocess.call( [context['fbsvcmgr_path'],"localhost:service_mgr",
+                      "action_db_stats",
+                      "dbname", db_file, "sts_hdr_pages"
+                     ],
+                     stdout = f_shutdown_log,
+                     stderr=subprocess.STDOUT
+                   )
+
+    f_shutdown_log.close()
+
+    if not RUN_DBG:
+        os.remove(f_shutdown_log.name)
+
+
+#--------------------------------------------------------
+
+
+sql_text='''
+    commit;
+    set transaction lock timeout %(DELAY_IN_ISQL_BEFORE_IT_STARTS_SORT)s;
+    insert into test(id) values(1);
+    set term ^;
+    execute block returns(c int) as
+    begin
+        begin
+            -- make ISQL stay in small pause just after connection will be established:
+            execute statement ( 'insert into test(id) values(?)' ) (1)
+            on external 'localhost:' || rdb$get_context('SYSTEM','DB_NAME')
+            as user '%(ISQL_USER)s' password '%(ISQL_PSWD)s'
+            ;
+            when any do 
+                begin 
+                end
+        end
+
+        select count(*) 
+        from ( 
+            -- this force to use "PLAN SORT":
+            select distinct lpad('', 500, uuid_to_char(gen_uuid())) s from rdb$types a,rdb$types b, rdb$types c 
+        )
+        into c;
+        suspend;
+    end
+    ^
+    set term ;^
+''' %locals()
+
+
+f_isql_cmd=open( os.path.join(context['temp_directory'],'tmp_2477_sort.sql'), 'w')
+f_isql_cmd.write(sql_text)
+f_isql_cmd.close()
+
+if RUN_DBG:
+    debug_store_mon_view(dsn, SQL_GATHER_SORT_INFO, '0')
+
+
+# Launch async-ly ISQL which must establish connect and:
+# 1) stay in small delay
+# 2) start "big sorting" job (for at least 20-30 seconds):
+
+f_log_sort=open( os.path.join(context['temp_directory'], 'tmp_2477_sort.log'), 'w')
+p_sql = subprocess.Popen( [ context['isql_path'], dsn, '-q', '-n', '-i', f_isql_cmd.name ], stdout=f_log_sort, stderr = subprocess.STDOUT)
+
+# do NOT remove this delay: we have to wait while ISQL for sure will establish connection.
+##########################
+time.sleep( DELAY_FOR_ISQL_ESTABLISH_ITS_CONNECT )
+
+
+if RUN_DBG:
+    # NOTE: assign RUN_DBG to True and look in debug snapshot file tmp_c2477_dbg1.log
+    # with results of 1st gathering of mon$ info. If it will contain only one record (of DB level)
+    # than it means that we have to increase DELAY_FOR_ISQL_ESTABLISH_ITS_CONNECT value):
+    debug_store_mon_view(dsn, SQL_GATHER_SORT_INFO, '1')
+
+
+# Start separate connect for  gather monio
+con_mon=fdb.connect(dsn=dsn)
+cur_mon=con_mon.cursor()
+
+# Gather info from mon$memory_usage before SORT start (ISQL stays in pause now):
+###################################
+cur_mon.execute(SQL_GATHER_SORT_INFO)
+
+map_beg={}
+
+# Take at once all the records that cursor can return (actually it can return only 5 records in 3.0+ SS):
+for x in cur_mon.fetchmanymap(99):
+    # we need only several for storing as KEY-VALUE pairs from the whole set of columns of view v_mon:
+    (stat_type, att_id, trn_id, sttm_id) = ( v for k,v in x.items() if k in ( 'STAT_TYPE', 'ATT_ID', 'TRN_ID', 'STTM_ID') )
+    val = [ v for k,v in x.items() if k in ('MEMO_USED', 'MEMO_ALLO') ]
+    
+    map_beg[ stat_type, att_id, trn_id, sttm_id ] = val
+
+#for k,v in sorted(map_beg.items()):
+#    print('::: beg ::: k=',k,'; v=',v)
+
+
+cur_mon.close()
+
+# This is mandatory before any subsequent gathering mon$ info:
+con_mon.commit()
+
+# This *seems* not necessary but one need to test this again in SC/CS:
+con_mon.close()
+con_mon=fdb.connect(dsn=dsn)
+
+# this delay is mandatory and must be greater than delay in ISQL
+# (see 'set tran lock timeout N' in its sql script).
+# We have to give ISQL to actually start SORT job:
+time.sleep( DELAY_BEFORE_MON_WHILE_SORT_IS_RUNNING )
+
+cur_mon=con_mon.cursor()
+
+# Gather info from mon$memory_usage when SORT is running:
+###################################
+cur_mon.execute(SQL_GATHER_SORT_INFO)
+map_end={}
+for x in cur_mon.fetchmanymap(99):
+    (stat_type, att_id, trn_id, sttm_id) = ( v for k,v in x.items() if k in ( 'STAT_TYPE', 'ATT_ID', 'TRN_ID', 'STTM_ID') )
+    val = [ v for k,v in x.items() if k in ('MEMO_USED', 'MEMO_ALLO') ]
+    
+    map_end[ stat_type, att_id, trn_id, sttm_id ] = val
+
+cur_mon.close()
+
+if RUN_DBG:
+    # NOTE: assign RUN_DBG to True and look in debug snapshot file tmp_c2477_dbg1.log
+    # with results of 1st gathering of mon$ info.
+    debug_store_mon_view(dsn, SQL_GATHER_SORT_INFO, '2')
+
+con_mon.close()
+
+# We have to be sure that NO ANY activity remains in the database before finish this test.
+# Unfortunately, it seems that just killing process of ISQL (that was launched async-ly) not enough,
+# so we turn database offline and bring back online:
+forcely_clean_attachments_by_shutdown_online( db_file )
+
+#             ::: !! :::
+########################################
+# TERMINATE ISQL THAT DOES HUGE SORT JOB
+########################################
+p_sql.terminate()
+f_log_sort.close()
+
+#time.sleep(1)
+
+for k,v in sorted(map_beg.items()):
+    
+    if 'database' in k[0]:
+        # mon$memory_* counters always ZERO in CS/SC for database level
+        pass
+
+    if 'transaction' in k[0]:
+        # mon$memory_* counters never change for transaction level (reason currently is unknown).
+        pass
+
+    if 'attachment' in  k[0] or 'statement' in k[0]:
+
+        (beg_memo_used, beg_memo_allo) = v
+
+        (end_memo_used, end_memo_allo) = map_end.get(k)
+        (dif_memo_used, dif_memo_allo) = (end_memo_used - beg_memo_used, end_memo_allo - beg_memo_allo)
+
+        #print( k[0].rstrip()+':' )
+        # 4debug: output value of mon$memory* counters difference:
+        #print(  ' '.join( ('  * DELTA of mon$memory_used:', "{:9d}".format(dif_memo_used), result_msg(dif_memo_used, MIN_DIFF_THRESHOLD) ) ) )
+        #print(  ' '.join( ('  * DELTA of mon$memory_allo:', "{:9d}".format(dif_memo_allo), result_msg(dif_memo_allo, MIN_DIFF_THRESHOLD) ) ) )
+        
+        print( ' '.join( k[0].split(':') ).rstrip() )
+        print(  '  * DELTA of mon$memory_used: ' + result_msg(dif_memo_used, MIN_DIFF_THRESHOLD) )
+        print(  '  * DELTA of mon$memory_allo: ' + result_msg(dif_memo_allo, MIN_DIFF_THRESHOLD) )
+
+# cleanup:
+##########
+time.sleep(1)
+f_list = (f_isql_cmd, f_log_sort)
+for f in f_list:
+     os.remove(f.name)
+
+  """,
+ 'expected_stdout':
+  """
+    1 attachment
+    * DELTA of mon$memory_used: OK, expected: increased significantly.
+    * DELTA of mon$memory_allo: OK, expected: increased significantly.
+
+    3 statement
+    * DELTA of mon$memory_used: OK, expected: increased significantly.
+    * DELTA of mon$memory_allo: OK, expected: increased significantly.
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

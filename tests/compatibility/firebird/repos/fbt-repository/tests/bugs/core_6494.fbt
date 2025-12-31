@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_6494',
+'qmid': '',
+'tracker_id': 'CORE-6494',
+'title': 'Inconsistent translation "string->timestamp->string->timestamp" in dialect 1',
+'description':
+  """
+    Confirmed bug on: 4.0.0.2406, 3.0.8.33441.
+    Checked on: 4.0.0.2416, 3.0.8.33445 - all fine.
+  """,
+'min_versions': '3.0.8',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'sql_dialect': 1,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set heading off;
+    select cast(cast(cast(cast('2-dec-0083' as timestamp) as varchar(64))as timestamp)as varchar(64)) from rdb$database;
+  """,
+ 'expected_stdout':
+  """
+    02-DEC-0083
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

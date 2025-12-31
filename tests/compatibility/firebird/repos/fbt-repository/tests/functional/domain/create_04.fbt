@@ -1,0 +1,18 @@
+{
+'id': 'functional.domain.create.04',
+'qmid': 'functional.domain.create.create_domain_04',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - FLOAT',
+'description': 'Simple domain creation based FLOAT datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test FLOAT;
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            FLOAT Nullable
+"""
+}
+]
+}

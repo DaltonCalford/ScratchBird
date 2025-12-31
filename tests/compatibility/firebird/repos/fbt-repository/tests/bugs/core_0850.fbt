@@ -1,0 +1,53 @@
+{
+'id': 'bugs.core_0850',
+'qmid': 'bugs.core_850',
+'tracker_id': 'CORE-850',
+'title': 'DYN allows to set defaults for computed fields when altering a field',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """create table t2(a int, b int computed by (00));
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """alter table t2 alter b set default 5;
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+unsuccessful metadata update
+-Local column B is computed, cannot set a default value
+"""
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': """create table t2(a int, b int computed by (00));
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """alter table t2 alter b set default 5;
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-Cannot add or remove COMPUTED from column B
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """create table t2(a int, b int computed by (00));
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """alter table t2 alter b set default 5;
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-ALTER TABLE T2 failed
+-Cannot add or remove COMPUTED from column B
+"""
+}
+]
+}

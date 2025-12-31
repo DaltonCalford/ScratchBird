@@ -1,0 +1,45 @@
+{
+'id': 'functional.dml.merge.01',
+'qmid': 'functional.dml.merge.merge_01',
+'tracker_id': 'CORE-815',
+'title': 'Merge',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE T1 (ID integer, NAME char(10), PRIMARY KEY(id));
+CREATE TABLE T2 ( ID integer, NAME char(10), PRIMARY KEY(id));
+COMMIT;
+INSERT INTO T1 (ID,NAME) VALUES (1,'1NOMT1');
+INSERT INTO T1 (ID,NAME) VALUES (2,'2NOMT1');
+INSERT INTO T2 (ID,NAME) VALUES (1,'1NOMT2');
+INSERT INTO T2 (ID,NAME) VALUES (2,'2NOMT2');
+INSERT INTO T2 (ID,NAME) VALUES (3,'3NOMT2');
+COMMIT;
+
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """MERGE
+ INTO T1
+ USING (SELECT * FROM T2 WHERE id > 1) cd
+	ON (T1.id = cd.id)
+	WHEN MATCHED THEN
+	UPDATE SET
+	 name = cd.name
+	WHEN NOT MATCHED THEN
+	INSERT (id, name)
+	 VALUES (cd.id, cd.name);
+COMMIT;
+SELECT ID, NAME FROM T1;""",
+ 'expected_stdout': """
+          ID NAME
+============ ==========
+           1 1NOMT1
+           2 2NOMT2
+           3 3NOMT2
+
+"""
+}
+]
+}

@@ -1,0 +1,72 @@
+{
+'id': 'bugs.core_5676',
+'qmid': None,
+'tracker_id': 'CORE-5676',
+'title': "Consider equivalence classes for index navigation",
+'description':
+ """
+    Confirmed inefficiense on:
+        3.0.3.32837
+        4.0.0.800
+    Checked on:
+        3.0.3.32852: OK, 1.250s.
+        4.0.0.830: OK, 1.375s.
+ """,
+'min_versions': '3.0.3',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    recreate table document(id int primary key using index pk_document);
+    recreate table doc_ip_doc(id int primary key using index pk_doc_ip_doc, name varchar(100));
+
+    insert into document (id) select row_number() over() from rdb$types,(select 1 i from rdb$types rows 10);
+    insert into doc_ip_doc (id) select row_number() over() from rdb$types;
+    commit;
+
+    set planonly;
+
+    select document.id, doc_ip_doc.name
+    from doc_ip_doc
+    join document on document.id=doc_ip_doc.id
+    order by doc_ip_doc.id;
+    --PLAN JOIN (DOC_IP_DOC ORDER PK_DOC_IP_DOC, DOCUMENT INDEX (PK_DOCUMENT))
+
+    select document.id, doc_ip_doc.name
+    from doc_ip_doc
+    join document on document.id=doc_ip_doc.id
+    order by document.id;
+    -- OLD: PLAN SORT (JOIN (DOC_IP_DOC NATURAL, DOCUMENT INDEX (PK_DOCUMENT)))
+
+    select doc_ip_doc.id, doc_ip_doc.name
+    from doc_ip_doc
+    join document on document.id=doc_ip_doc.id
+    order by id;
+    --PLAN JOIN (DOC_IP_DOC ORDER PK_DOC_IP_DOC, DOCUMENT INDEX (PK_DOCUMENT))
+
+    select document.id, doc_ip_doc.name
+    from doc_ip_doc
+    join document on document.id=doc_ip_doc.id
+    order by id;
+    -- OLD: PLAN SORT (JOIN (DOC_IP_DOC NATURAL, DOCUMENT INDEX (PK_DOCUMENT))) 
+
+  """,
+ 'expected_stdout': 
+  """
+    PLAN JOIN (DOC_IP_DOC ORDER PK_DOC_IP_DOC, DOCUMENT INDEX (PK_DOCUMENT))
+    PLAN JOIN (DOC_IP_DOC ORDER PK_DOC_IP_DOC, DOCUMENT INDEX (PK_DOCUMENT))
+    PLAN JOIN (DOC_IP_DOC ORDER PK_DOC_IP_DOC, DOCUMENT INDEX (PK_DOCUMENT))
+    PLAN JOIN (DOC_IP_DOC ORDER PK_DOC_IP_DOC, DOCUMENT INDEX (PK_DOCUMENT))
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -1,0 +1,56 @@
+{
+'id': 'bugs.core_0878',
+'qmid': 'bugs.core_878',
+'tracker_id': 'CORE-878',
+'title': 'problem when dropping column that is a primary key',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """create table pk1 (i1 integer not null, i2 integer);
+alter table pk1 add primary key (i1);
+commit;
+show table pk1;
+alter table pk1 drop i1;
+commit;
+
+create table pk2 (i1 integer not null, i2 integer);
+alter table pk2 add constraint pk2_pk primary key (i1);
+commit;
+show table pk2;
+alter table pk2 drop i1;
+commit;
+
+create table pk3 (i1 integer not null primary key, i2 integer);
+commit;
+show table pk3;
+alter table pk3 drop i1;
+commit;
+
+show table pk1;
+
+show table pk2;
+
+show table pk3;
+""",
+ 'expected_stdout': """I1                              INTEGER Not Null
+I2                              INTEGER Nullable
+CONSTRAINT INTEG_2:
+  Primary key (I1)
+I1                              INTEGER Not Null
+I2                              INTEGER Nullable
+CONSTRAINT PK2_PK:
+  Primary key (I1)
+I1                              INTEGER Not Null
+I2                              INTEGER Nullable
+CONSTRAINT INTEG_5:
+  Primary key (I1)
+I2                              INTEGER Nullable
+I2                              INTEGER Nullable
+I2                              INTEGER Nullable
+"""
+}
+]
+}

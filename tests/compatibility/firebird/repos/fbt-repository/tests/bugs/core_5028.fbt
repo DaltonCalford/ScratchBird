@@ -1,0 +1,43 @@
+{
+'id': 'bugs.core_5028',
+'qmid': None,
+'tracker_id': 'CORE-5028',
+'title': 'Report the remote port number in MON$ATTACHMENTS',
+'description': 
+ """
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': 
+  """\
+import os
+import time
+cur=db_conn.cursor()
+sqlcmd='''
+select iif(port > 0, 'OK', 'BAD') as port_value
+from (
+    select cast(substring(mon$remote_address from 1 + position('/' in mon$remote_address)) as int) as port
+    from mon$attachments 
+    where mon$attachment_id = current_connection
+)
+'''
+
+# On previous FB versions <sqlcmd> will raise exception:
+# Statement failed, SQLSTATE = 22018
+# conversion error from string "192.168.43.154"
+
+cur.execute(sqlcmd)
+for r in cur:
+    print(r[0])
+  """,
+ 'expected_stdout':
+  """
+    OK
+  """
+}
+]
+}

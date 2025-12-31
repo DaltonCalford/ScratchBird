@@ -1,0 +1,44 @@
+{
+'id': 'functional.gtcs.invalid-stream-when-use-trim',
+'qmid': None,
+'tracker_id': '',
+'title': 'GTCS/tests/CF_ISQL_32. Statement with TRIM raises "bad BLR -- invalid stream"',
+'description':
+ """
+	::: NB ::: 
+	### Name of original test has no any relation with actual task of this test: ###
+    https://github.com/FirebirdSQL/fbtcs/blob/master/GTCS/tests/CF_ISQL_32.script
+
+    Source description (Rudo Mihal, message of 2004-05-06 11:32:10; FB 1.5.1.4443):
+    https://sourceforge.net/p/firebird/mailman/message/17016190/
+
+    Example for reproducing (by N. Samofatov, with UDF usage):
+    https://sourceforge.net/p/firebird/mailman/message/17017012/
+
+    Checked on: 4.0.0.1804 SS; 3.0.6.33271 SS; 2.5.9.27149 SC.
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select trim(TRAILING FROM (select max(rdb$relation_id) from rdb$database)) trim_result from rdb$database;
+  """,
+ 'expected_stdout':
+  """
+    TRIM_RESULT 128
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[ ('[ \t]+', ' '), ('TRIM_RESULT.*', 'TRIM_RESULT') ]
+}
+]
+}

@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_3101',
+'qmid': None,
+'tracker_id': 'CORE-3101',
+'title': 'Cannot alter the domain after migrating from older versions',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'database': 'Restore',
+ 'backup_file': 'core3101-ods11.fbk',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    show domain state;
+    alter domain state set default 0;
+    commit;
+    show domain state;
+  """,
+ 'expected_stdout': 
+  """
+    STATE                           SMALLINT Nullable
+    STATE                           SMALLINT Nullable
+                                    default 0
+   """
+}
+]
+}

@@ -1,0 +1,29 @@
+{
+'id': 'functional.domain.create.25',
+'qmid': 'functional.domain.create.create_domain_25',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - NATIONAL CHAR VARYING ARRAY',
+'description': 'Array domain creation based on NATIONAL CHAR VARYING datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test NATIONAL CHAR VARYING(32765) [30,30,30];
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            ARRAY OF [1:30, 1:30, 1:30]
+                                VARCHAR(32765) CHARACTER SET ISO8859_1 Nullable
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test NATIONAL CHAR VARYING(32765) [30,30,30];
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            ARRAY OF [30, 30, 30]
+                                VARCHAR(32765) CHARACTER SET ISO8859_1 Nullable
+"""
+}
+]
+}

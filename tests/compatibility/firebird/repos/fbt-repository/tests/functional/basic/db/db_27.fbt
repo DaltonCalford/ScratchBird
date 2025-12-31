@@ -1,0 +1,24 @@
+{
+'id': 'functional.basic.db.27',
+'qmid': 'functional.basic.db.db_27',
+'tracker_id': '',
+'title': 'Empty DB - RDB$TRANSACTIONS',
+'description': 'Check for correct content of RDB$TRANSACTIONS in empty database.',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    set count on;
+    select * from rdb$transactions order by rdb$transaction_id;
+  """,
+  'expected_stdout':
+  """
+    Records affected: 0
+  """
+}
+]
+}

@@ -1,0 +1,60 @@
+{
+'id': 'bugs.core_2284',
+'qmid': None,
+'tracker_id': 'CORE-2284',
+'title': "Records left in RDB$PAGES after rollback of CREATE TABLE statement",
+'description':
+ """
+    This test also covers issues of CORE-5677.
+    Bug confirmed on: 3.0.3.32837, 4.0.0.800
+    Checked on:
+        3.0.3.32854: OK, 1.968s.
+        4.0.0.832: OK, 1.282s.
+ """,
+'min_versions': '3.0.3',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set autoddl off;
+    recreate table test_cs__master (
+        str_pk varchar(32) character set UTF8 not null,
+        primary key (str_pk) using index test_s_master_pk
+    );
+
+    recreate table test_cs__detail (
+        str_pk varchar(32) character set WIN1251 not null,
+        foreign key (str_pk) references test_cs__master (str_pk)
+    );
+
+    commit; -- this will raise: "SQLSTATE = 42000 / -partner index segment no 1 has incompatible data type"
+
+    rollback;
+
+    set list on;
+
+    select count(*) 
+    from rdb$pages 
+    where rdb$relation_id >= (select rdb$relation_id from rdb$database);
+
+    rollback;
+  """,
+ 'expected_stdout': 
+  """
+    COUNT                           0
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -partner index segment no 1 has incompatible data type
+  """
+}
+]
+}

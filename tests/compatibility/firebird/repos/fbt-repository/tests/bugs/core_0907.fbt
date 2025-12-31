@@ -1,0 +1,126 @@
+{
+'id': 'bugs.core_0907',
+'qmid': 'bugs.core_907-250',
+'tracker_id': 'CORE-907',
+'title': 'Server crash on violation of NOT NULL constraint',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+    recreate table crash (a1 integer,a2 integer,a3 integer, a4 integer) ;
+    commit;
+    insert into crash (a1, a2, a3, a4) values ( 1, 2, 3, 4);
+    insert into crash (a1, a2, a3    ) values ( 2, 3, 4   );
+    insert into crash (a1, a2,     a4) values ( 2, 3,    4);
+    commit;
+    alter table crash add a5 computed by (a2*a3*a4);
+    commit;
+  """,
+ 'test_script': 
+  """
+    -- Since 3.0 one may do like this (and NOT by updating RDB tables):
+    -- ALTER TABLE <table name> ALTER <field name> [NOT] NULL
+    -- ALTER DOMAIN <domain name> [NOT] NULL
+    -- :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+    -- 02.04.2015: since rev. 61204 (build 3.0.0.31767)syntax of altering nullability for 
+    -- domains and tables has been changed: mandatory SET | DROP clause now needed, i.e.:
+    -- ALTER TABLE <table name> ALTER <field name> {DROP | SET} NOT NULL
+    -- ALTER DOMAIN <domain name> {DROP | SET} NOT NULL
+    -- :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+    
+    -- This attempt will FAIL with message:
+    -- -Cannot make field A5 of table CRASH NOT NULL because there are NULLs present
+    alter table crash alter a5 SET not null; 
+    commit;
+    
+    update crash set a3=1 where a3 is null;
+    update crash set a4=1 where a4 is null;
+    commit;
+    
+    alter table crash alter a1 SET not null; 
+    alter table crash alter a2 SET not null; 
+    alter table crash alter a3 SET not null; 
+    alter table crash alter a4 SET not null; 
+    alter table crash alter a5 SET not null; 
+    commit;
+    update crash set a1=null, a2=null, a3=null,a4=null rows 1;
+    commit;
+    show table crash;
+  """,
+ 'expected_stdout': 
+  """
+    A1                              INTEGER Not Null 
+    A2                              INTEGER Not Null 
+    A3                              INTEGER Not Null 
+    A4                              INTEGER Not Null 
+    A5                              Computed by: (a2*a3*a4)
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 22006
+    unsuccessful metadata update
+    -Cannot make field A5 of table CRASH NOT NULL because there are NULLs present
+    Statement failed, SQLSTATE = 23000
+    validation error for column "CRASH"."A1", value "*** null ***"
+  """
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """create table crash (A1 INTEGER,A2 INTEGER,A3 integer, A4 INTEGER) ;
+commit;
+INSERT INTO crash (A1,A2,A3,A4) VALUES (1,2,3,4);
+INSERT INTO crash (A1,A2,A3) VALUES (2,3,4);
+INSERT INTO crash (A1,A2,A4) VALUES (2,3,4);
+commit;
+ALTER TABLE CRASH ADD A5 COMPUTED BY (A2*A3*A4);
+commit;
+
+/* Now alter the NOT NULL flag for computed or any source column: */
+
+update rdb$fields a
+ set a.rdb$null_flag = 1
+where
+   a.rdb$field_name = (select b.rdb$field_source
+   from rdb$relation_fields b where b.rdb$relation_name = 'CRASH' and b.rdb$field_name = 'A5');
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """update CRASH SET a1=2;
+""",
+ 'expected_stderr': '''Statement failed, SQLSTATE = 23000
+validation error for column *** unknown ***, value "*** null ***"'''
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """create table crash (A1 INTEGER,A2 INTEGER,A3 integer, A4 INTEGER) ;
+commit;
+INSERT INTO crash (A1,A2,A3,A4) VALUES (1,2,3,4);
+INSERT INTO crash (A1,A2,A3) VALUES (2,3,4);
+INSERT INTO crash (A1,A2,A4) VALUES (2,3,4);
+commit;
+ALTER TABLE CRASH ADD A5 COMPUTED BY (A2*A3*A4);
+commit;
+
+/* Now alter the NOT NULL flag for computed or any source column: */
+
+update rdb$fields a
+ set a.rdb$null_flag = 1
+where
+   a.rdb$field_name = (select b.rdb$field_source
+   from rdb$relation_fields b where b.rdb$relation_name = 'CRASH' and b.rdb$field_name = 'A5');
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """update CRASH SET a1=2;
+""",
+ 'expected_stderr': '''Statement failed, SQLCODE = -625
+validation error for column *** unknown ***, value "*** null ***"'''
+}
+]
+}

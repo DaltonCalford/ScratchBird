@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_2341',
+'qmid': None,
+'tracker_id': 'CORE-2341',
+'title': 'Hidden variables conflict with output parameters, causing assertions, unexpected errors or possibly incorrect results',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'Python',
+ 'test_script': '''c = db_conn.cursor()
+
+cmd = c.prep("""execute block (i varchar(10) = ?) returns (o varchar(10))
+as
+begin
+  o = coalesce(cast(o as date), current_date);
+  o = i;
+  suspend;
+end""")
+c.execute(cmd,['asd'])
+printData(c)
+''',
+ 'expected_stdout': """O
+----------
+asd
+"""
+}
+]
+}

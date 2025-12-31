@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_3991',
+'qmid': None,
+'tracker_id': 'CORE-3991',
+'title': '"attempted update of read-only column" when trying update editable view without triggers',
+'description':
+ """
+ """,
+'min_versions': '2.5.7',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create or alter view v_test as select 1 id from rdb$database;
+    commit;
+    recreate table test_table (id int);
+    create or alter view v_test as select id from test_table;
+    commit;
+
+    insert into v_test(id) values(10);
+    commit;
+
+    set count on;
+    update v_test set id = 10; 
+  """,
+ 'expected_stdout': 
+  """
+    Records affected: 1
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -1,0 +1,95 @@
+{
+'id': 'bugs.core_1313',
+'qmid': 'bugs.core_1313',
+'tracker_id': 'CORE-1313',
+'title': 'RDB$DB_KEY not supported in derived tables and merge command',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """create table T (c1 integer);
+
+commit;
+
+insert into T values (1);
+insert into T values (2);
+insert into T values (3);
+
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT T1.*
+FROM T T1
+RIGHT JOIN (SELECT T.RDB$DB_KEY AS DBKEY FROM T) T2 ON T2.DBKEY = T1.RDB$DB_KEY;
+
+MERGE INTO T T1
+USING (SELECT T.RDB$DB_KEY AS DBKEY FROM T) T2
+ON T2.DBKEY = T1.RDB$DB_KEY
+WHEN NOT MATCHED THEN INSERT values (NULL);
+
+select * from T;
+""",
+ 'expected_stdout': """
+          C1
+============
+           1
+           2
+           3
+
+
+          C1
+============
+           1
+           2
+           3
+
+"""
+}
+,
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    create table t (c1 integer);
+    commit;
+
+    insert into t values (1);
+    insert into t values (2);
+    insert into t values (3);
+
+    commit;
+      
+    select 'point-1' msg, t1.*
+    from t t1
+    right join (select t.rdb$db_key as dbkey from t) t2 on t2.dbkey = t1.rdb$db_key;
+
+    merge into t t1
+    using (select t.rdb$db_key as dbkey from t) t2
+    on t2.dbkey = t1.rdb$db_key
+    when not matched then insert values (null);
+
+    select 'point-2' msg, t.* from t;
+  """,
+ 'expected_stdout':
+  """
+    MSG     C1
+    point-1  1
+    point-1  2
+    point-1  3
+
+    MSG     C1
+    point-2  1
+    point-2  2
+    point-2  3
+  """,
+  'substitutions':[ ('=', ''), ('[ \t]+', ' ') ]
+}
+]
+}

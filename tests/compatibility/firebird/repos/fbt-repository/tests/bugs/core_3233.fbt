@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_3233',
+'qmid': None,
+'tracker_id': 'CORE-3233',
+'title': 'LIKE, STARTING and CONTAINING fail if second operand >= 32K',
+'description': '',
+'min_versions': '2.1.5',
+'versions': [
+{
+ 'firebird_version': '2.1.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table blobz (zin blob sub_type 1);
+insert into blobz (zin) values ('woord');
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select 1 from blobz where zin like cast(cast('woord' as char(32766)) as blob sub_type 1) || '!' or zin='woord';
+select 1 from blobz where zin like cast(cast('woord' as char(32767)) as blob sub_type 1) || '!' or zin='woord';
+""",
+ 'expected_stdout': """Database:  localhost:C:\fbtestnew\tmp\bugs.core_3233.fdb, User: SYSDBA
+SQL>
+    CONSTANT
+============
+           1
+
+SQL>
+    CONSTANT
+============
+           1
+
+SQL>"""
+}
+]
+}

@@ -1,0 +1,196 @@
+{
+'id': 'functional.basic.isql.01',
+'qmid': 'functional.basic.isql.isql_01',
+'tracker_id': '',
+'title': 'ISQL - SHOW DATABASE',
+'description': 'Check for correct output of SHOW DATABASE on empty database.',
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5.2',
+ 'platform': 'Windows',
+ 'test_type': 'ISQL',
+ 'test_script': 'show database;',
+ 'expected_stdout': """        Owner: SYSDBA
+PAGE_SIZE 4096
+Number of DB pages allocated = 196
+Sweep interval = 20000
+Forced Writes are ON
+Transaction - oldest = 1
+Transaction - oldest active = 2
+Transaction - oldest snapshot = 2
+Transaction - Next = 5
+ODS = 11.2
+Default Character set: NONE
+""",
+ 'substitutions': [("""
+Transaction -.*""",'')]
+},
+{
+ 'firebird_version': '2.5.2',
+ 'platform': 'Linux:MacOS:Solaris:FreeBSD:HP-UX',
+ 'test_type': 'ISQL',
+ 'test_script': 'show database;',
+ 'expected_stdout': """Database: localhost:/home/job/qa/fbtest/tmp/functional.basic.isql.isql_01.fdb
+        Owner: SYSDBA
+PAGE_SIZE 4096
+Number of DB pages allocated = 165
+Sweep interval = 20000
+Forced Writes are ON
+Transaction - oldest = 1
+Transaction - oldest active = 2
+Transaction - oldest snapshot = 2
+Transaction - Next = 5
+ODS = 11.2
+Default Character set: NONE
+""",
+ 'substitutions': [("""
+Transaction -.*""",'')]
+},
+# ----------------------------------------###  3.x  ###-------------------------------------
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- 19.01.2016: added line  "Database not encrypted", see  http://sourceforge.net/p/firebird/code/62825
+    show database;
+  """,
+ 'expected_stdout': 
+  """
+    Database: localhost:c:\\job\\qa\\fbtest-repo\\tmp\\functional.basic.isql.isql_01.fdb
+    Owner: SYSDBA
+    PAGE_SIZE 8192
+    Number of DB pages allocated
+    Number of DB pages used
+    Number of DB pages free
+    Sweep interval = 11120000
+    Forced Writes are ON
+    Transaction - oldest = 1
+    Transaction - oldest active = 2
+    Transaction - oldest snapshot = 2
+    Transaction - Next = 5
+    ODS = 12.0
+    Database not encrypted
+    Creation date: Sep 10, 2021 14:43:52
+    Default Character set: NONE
+  """,
+ 'substitutions': [ 
+     ('Owner.*', 'Owner'), 
+     ('PAGE_SIZE.*', 'PAGE_SIZE'), 
+     ('Number of DB pages allocated.*', 'Number of DB pages allocated'), 
+     ('Number of DB pages used.*', 'Number of DB pages used'), 
+     ('Number of DB pages free.*', 'Number of DB pages free'), 
+     ('Sweep.*', 'Sweep'), 
+     ('Forced Writes.*', 'Forced Writes'), 
+     ('Transaction -.*',''),
+     ('ODS.*', 'ODS'), 
+     ('Creation date.*', 'Creation date'),
+     ('Default Character.*', 'Default Character'), 
+  ]
+},
+# ----------------------------------------###  4.x  ###-------------------------------------
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Separate for FB 4.0 since 22.01.2020
+    -- Added "Replica mode: NONE", 4.0.3.2894, 27-jan-2022
+    show database;
+  """,
+ 'expected_stdout': 
+  """
+    Database: localhost:c:\\job\\qa\\fbtest-repo\\tmp\\functional.basic.isql.isql_01.fdb
+    Owner: SYSDBA
+    PAGE_SIZE 8192
+    Number of DB pages allocated = 212
+    Number of DB pages used = 192
+    Number of DB pages free = 20
+    Sweep interval = 20000
+    Forced Writes are ON
+    Transaction - oldest = 4
+    Transaction - oldest active = 5
+    Transaction - oldest snapshot = 5
+    Transaction - Next = 9
+    ODS = 13.0
+    Database not encrypted
+    Wire crypt plugin:
+    Creation date: Sep 10, 2021 14:43:52
+    Replica mode: NONE
+    Protocol version = 17
+    Default Character set: NONE
+  """,
+ 'substitutions': [ 
+     ('Owner.*', 'Owner'), 
+     ('PAGE_SIZE.*', 'PAGE_SIZE'), 
+     ('Number of DB pages allocated.*', 'Number of DB pages allocated'), 
+     ('Number of DB pages used.*', 'Number of DB pages used'), 
+     ('Number of DB pages free.*', 'Number of DB pages free'), 
+     ('Sweep.*', 'Sweep'), 
+     ('Forced Writes.*', 'Forced Writes'), 
+     ('Transaction -.*',''),
+     ('ODS.*', 'ODS'),
+     ('Wire crypt plugin.*', 'Wire crypt plugin'),
+     ('Creation date.*', 'Creation date'),
+     ('Protocol version.*', 'Protocol version'), 
+     ('Default Character.*', 'Default Character'), 
+  ]
+},
+
+# ----------------------------------------###  5.x  ###-------------------------------------
+{
+ 'firebird_version': '5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Separate for FB 5.0 since 10.09.2021
+    -- New lines in the output (builds >= 5.0.0.196):
+    --     Creation date: Sep 10, 2021 7:13:17 GMT
+    --     Protocol version = 17
+
+    show database;
+  """,
+ 'expected_stdout': 
+  """
+    Database: localhost:c:\\job\\qa\\fbtest-repo\\tmp\\functional.basic.isql.isql_01.fdb
+    Owner: SYSDBA
+    PAGE_SIZE 8192
+    Number of DB pages allocated = 212
+    Number of DB pages used = 192
+    Number of DB pages free = 20
+    Sweep interval = 20000
+    Forced Writes are ON
+    Transaction - oldest = 4
+    Transaction - oldest active = 5
+    Transaction - oldest snapshot = 5
+    Transaction - Next = 9
+    ODS = 13.0
+    Database not encrypted
+    Wire crypt plugin:
+    Creation date: Sep 10, 2021 7:13:17 GMT
+    Protocol version = 17
+    Default Character set: NONE
+  """,
+ 'substitutions': [ 
+     ('Owner.*', 'Owner'), 
+     ('PAGE_SIZE.*', 'PAGE_SIZE'), 
+     ('Number of DB pages allocated.*', 'Number of DB pages allocated'), 
+     ('Number of DB pages used.*', 'Number of DB pages used'), 
+     ('Number of DB pages free.*', 'Number of DB pages free'), 
+     ('Sweep.*', 'Sweep'), 
+     ('Forced Writes.*', 'Forced Writes'), 
+     ('Transaction -.*',''),
+     ('ODS.*', 'ODS'),
+     ('Wire crypt plugin.*', 'Wire crypt plugin'),
+     ('Creation date.*', 'Creation date'),
+     ('Protocol version.*', 'Protocol version'), 
+     ('Default Character.*', 'Default Character'), 
+  ]
+}
+
+]
+}

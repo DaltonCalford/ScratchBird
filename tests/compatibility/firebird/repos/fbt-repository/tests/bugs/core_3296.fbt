@@ -1,0 +1,54 @@
+{
+'id': 'bugs.core_3296',
+'qmid': None,
+'tracker_id': 'CORE-3296',
+'title': 'Error "context already in use" for the simple case function with a sub-select operand',
+'description': '',
+'min_versions': '2.1.5',
+'versions': [
+{
+ 'firebird_version': '2.1.5',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE VAT_ZAK
+(
+  ID Integer NOT NULL,
+  SYS_NR Integer,
+  CONSTRAINT PK_VAT_ZAK__ID PRIMARY KEY (ID)
+);
+
+CREATE TABLE ELEMENTY
+(
+   ID Integer NOT NULL,
+  ID_VAT_SPRZ Integer,
+CONSTRAINT PK_ELEMENTY__ID PRIMARY KEY (ID)
+);
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """UPDATE
+ELEMENTY E
+SET
+E.ID_VAT_SPRZ=
+CASE
+WHEN (SELECT V.SYS_NR FROM VAT_ZAK V WHERE V.ID=E.ID_VAT_SPRZ) = 1 THEN (SELECT V.ID FROM VAT_ZAK V WHERE V.SYS_NR=7)
+WHEN (SELECT V.SYS_NR FROM VAT_ZAK V WHERE V.ID=E.ID_VAT_SPRZ) = 2 THEN (SELECT V.ID FROM VAT_ZAK V WHERE V.SYS_NR=8)
+WHEN (SELECT V.SYS_NR FROM VAT_ZAK V WHERE V.ID=E.ID_VAT_SPRZ) = 3 THEN (SELECT V.ID FROM VAT_ZAK V WHERE V.SYS_NR=9)
+ELSE E.ID_VAT_SPRZ END;
+COMMIT;
+UPDATE
+ELEMENTY E
+SET
+E.ID_VAT_SPRZ=
+CASE
+(SELECT V.SYS_NR FROM VAT_ZAK V WHERE V.ID=E.ID_VAT_SPRZ)
+WHEN 1 THEN (SELECT V.ID FROM VAT_ZAK V WHERE V.SYS_NR=7)
+WHEN 2 THEN (SELECT V.ID FROM VAT_ZAK V WHERE V.SYS_NR=8)
+WHEN 3 THEN (SELECT V.ID FROM VAT_ZAK V WHERE V.SYS_NR=9)
+ELSE E.ID_VAT_SPRZ END;
+COMMIT;
+"""
+}
+]
+}

@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_0070',
+'qmid': None,
+'tracker_id': 'CORE-0070',
+'title': "Expression index regression since 2.0a3",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table t1 (col1 varchar(36));
+    commit;
+    insert into t1 select lower(uuid_to_char(gen_uuid())) from rdb$types rows 100;
+    commit;
+    create index idx1 on t1 computed by (upper(col1));
+    commit;
+
+    set planonly;
+    select * from t1 where upper(col1) = '1';
+  """,
+ 'expected_stdout':
+  """
+    PLAN (T1 INDEX (IDX1))
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

@@ -1,0 +1,62 @@
+{
+'id': 'bugs.core_3650',
+'qmid': None,
+'tracker_id': 'CORE-3650',
+'title': 'recreation of collation for utf8 from unicode with option NUMERIC-SORT=1 leads to FB death',
+'description': '',
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table tns(f int); -- drop dependencies if any
+    commit;
+    set term ^;
+    execute block as
+    begin
+      execute statement 'drop collation ns_coll;';
+      when any do begin end
+    end^
+    set term ;^
+    commit;
+    create collation ns_coll for utf8 from unicode 'NUMERIC-SORT=1';
+    recreate table tns(s varchar(50) character set utf8 collate ns_coll);
+    commit;
+    
+    recreate table tns(f int); -- drop dependencies if any
+    commit;
+    set term ^;
+    execute block as
+    begin
+      execute statement 'drop collation ns_coll;';
+      when any do begin end
+    end^
+    set term ;^
+    commit;
+    create collation ns_coll for utf8 from unicode 'NUMERIC-SORT=1';
+    rollback; -- !!NB!!
+    
+    set term ^;
+    execute block as
+    begin
+      execute statement 'drop collation ns_coll;';
+      when any do begin end
+    end^
+    set term ;^
+    commit; -- this commit kills FB service 
+    show collation;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  There are no user-defined collations in this database
+  """
+}
+]
+}

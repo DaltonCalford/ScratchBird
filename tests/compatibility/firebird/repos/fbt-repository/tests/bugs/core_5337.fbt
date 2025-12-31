@@ -1,0 +1,58 @@
+{
+'id': 'bugs.core_5337',
+'qmid': None,
+'tracker_id': 'CORE-5337',
+'title': 'Regression: The subquery in the insert list expressions ignore the changes made earlier in the same executable block.',
+'description':
+ """
+   Confirmed  on WI-T4.0.0.372 (nightly build)
+   Works fine on:
+   * 4.0.0.372 - after commit 21-sep-2016 12:39
+     https://github.com/FirebirdSQL/firebird/commit/d8f43da00f10181495160d12f17556fe9cc5687b
+   *  WI-V3.0.1.32609 -  after commit 25-sep-2016 23:47
+     https://github.com/FirebirdSQL/firebird/commit/d5ff6d82c2d9edba7b6def2e6a32f753b856227a
+ """,
+'min_versions': '3.0.1',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test (
+        id integer not null,
+        val integer not null
+    );
+
+    set term ^;
+    execute block
+    as
+    begin
+      insert into test (id, val) values (1, 100);
+      insert into test (id, val) values (2, (select val from test where id = 1));
+    end
+    ^
+    set term ;^
+
+    set list on;
+    select * from test;
+    rollback;
+  """,
+  'expected_stdout':
+  """
+    ID                              1
+    VAL                             100
+
+    ID                              2
+    VAL                             100
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

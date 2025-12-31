@@ -1,0 +1,914 @@
+@echo off
+setlocal enabledelayedexpansion enableextensions
+
+@rem ::: NOTE ::: 
+@rem Following must be done in order to prevent from pop-up window asking either to close or to debug:
+@rem 1. Open HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\Windows Error Reporting
+@rem 2. Ad there: DontShowUI, type: DWORD, value: 1
+@rem See also: https://www.raymond.cc/blog/disable-program-has-stopped-working-error-dialog-in-windows-server-2008/
+@rem --------------------------------------------------------------------------------------------------------------
+@rem change to folder %fbt_root%\fbt-repo\tests\bugs:
+@rem ..\..\fbt-run2.bat core_**** fb40ss & C:\Python27\Scripts\fbt_view -d ..\..\results.trf
+@rem OR
+@rem ..\..\fbt-run2.bat fb30ss **** & C:\Python27\Scripts\fbt_view -d ..\..\results.trf
+@rem ..\..\fbt-run2.bat **** fb40ss & C:\Python27\Scripts\fbt_view -d ..\..\results.trf
+@rem ..\..\fbt-run2.bat core_****.fbt fb40ss & C:\Python27\Scripts\fbt_view -d ..\..\results.trf
+@rem --------------------------------------------------------------------------------------------------------------
+
+set py_home=C:\Python27
+set usr=SYSDBA
+set pwd=masterkey
+set ISC_USER=
+set ISC_PASSWORD=
+
+set log=%~dpn0.log
+set tmp1=%~dpn0.1.tmp
+set tmp2=%~dpn0.2.tmp
+set tmp3=%~dpn0.3.tmp
+
+set res_ok=%~dpn0.success.tmp
+set res_warn=%~dpn0.warning.tmp
+set res_fail=%~dpn0.fail.tmp
+set res_skip=%~dpn0.skip.tmp
+
+set pbk=%path%
+
+cd >!tmp1!
+set /p curdir=<!tmp1!
+
+
+if "%1"=="" (
+  echo Arg #1 is mandatory - name of .fbt file
+  goto final
+)
+
+set fbt_to_check=%1
+set svc_to_check=%2
+
+set /a all_digits=0
+echo "!fbt_to_check!" | findstr /i /r /c:"[a-z]" > nul
+if errorlevel 1 (
+    set /a all_digits=!all_digits!+1
+)
+
+if not "%2" == "" (
+    echo "!svc_to_check!" | findstr /i /r /c:"[a-z]" > nul
+    if errorlevel 1 (
+        set /a all_digits=!all_digits!+2
+    )
+)
+if !all_digits! GEQ 3 (
+    echo Invalid arguments #1 and #2: both contains only digits.
+    goto final
+)
+
+if !all_digits! EQU 1 (
+    set fbt_to_check=core_!fbt_to_check!
+) else if !all_digits! EQU 2 (
+    set svc_to_check=core_!svc_to_check!
+)
+
+set check_for_core_number=1
+if exist !fbt_to_check! (
+    set check_for_core_number=0
+) else if exist !fbt_to_check!.fbt (
+    set check_for_core_number=0
+)
+
+if not "%2" == "" (
+
+    echo svc_to_check=!svc_to_check! ;  fbt_to_check=!fbt_to_check!
+
+    set cur_dir=!cd!
+    set chk_txt=!cur_dir:\tests\bugs=#!
+    if .!cur_dir!.==.!chk_txt!. (
+        echo.
+        echo Current .fbt is not related to CORE tests. We have to use its name 'as is', without parsing for possible CORE number.
+        set check_for_core_number=0
+        echo.
+    ) else (
+        echo.
+        echo Current .fbt belongs to CORE tests. We have to extract CORE number from it for possible check of its position.
+        echo.
+
+        set chkfbttext=!fbt_to_check!
+        set chkfbtrepl=!chkfbttext:core=!
+        set chksvctext=!svc_to_check!
+        set chksvcrepl=!chksvctext:core=!
+
+        if not .!chkfbtrepl!.==.!chkfbttext!. (
+            if .!chksvcrepl!.==.!chksvctext!. (
+                echo case-1: CORE file to be tested: !fbt_to_check!
+            ) else (
+                echo case-2: INVALID values of arg #1 and #2. Result of parsing:
+                echo.    svc_to_check=!svc_to_check!
+                echo.    fbt_to_check=!fbt_to_check!
+                goto final
+            )
+        ) 
+        if .!chkfbtrepl!.==.!chkfbttext!. (
+            if not .!chksvcrepl!.==.!chksvctext!. (
+                set chktext=!fbt_to_check!
+                set fbt_to_check=!svc_to_check!
+                set svc_to_check=!chktext!
+                echo case-3: CORE file to be tested: !fbt_to_check!
+            ) else (
+                echo case-4: INVALID values of arg #1 and #2. Result of parsing:
+                echo.    svc_to_check=!svc_to_check!
+                echo.    fbt_to_check=!fbt_to_check!
+                goto final
+            )
+        )
+    )
+
+)
+
+
+for /d %%a in (!log!,!tmp1!,!tmp2!,!res_ok!,!res_warn!,!res_fail!,!res_skip!) do (
+  del %%a 2>nul
+)
+
+if .!svc_to_check!.==.. (
+    @rem Run test against all ACTIVE services
+    @rem ====================================
+    @rem sc queryex | findstr /i /r /c:"service_name.*FirebirdServer"
+    @rem SERVICE_NAME: FirebirdServer257sC
+    @rem SERVICE_NAME: FirebirdServer302SS
+    @rem SERVICE_NAME: FirebirdServer400SS
+    set fb_checked_services=
+    for /f "tokens=*" %%s in ('sc queryex ^| findstr /i /r /c:"service_name.*FirebirdServer" ^| sort /r') do (
+        set line=%%s
+        set svcname=!line:SERVICE_NAME: FirebirdServer=!
+        if .!fb_checked_services!.==.. (
+            set fb_checked_services=!svcname!
+        ) else (
+            set fb_checked_services=!fb_checked_services!,!svcname!
+        )
+    )       
+    @rem RESULT: fb_checked_services=400SS,302SS,257sC etc
+
+) else (
+
+    @rem ::: NB ::: Several names with comma delimiter must be enclosed in double quotes when they are specified
+    @rem as command argument #2, i.e.:
+    @rem <this_batch> <fbt_name> "fb25sc,fb30ss,fb40ss"
+    @rem ----------------------------------------------
+    set fb_checked_services=!svc_to_check!
+    set fb_checked_services=!fb_checked_services:"=!
+)
+
+
+if !check_for_core_number! EQU 1 (
+    @rem ##################################################################################
+    @rem We have to check whether core_NNNN is valid: it should not contain asterisk or so.
+    @rem Command "for /f %%f in ('echo !fbt_to_check!') do ..." does NOT work properly if  string
+    @rem !fbt_to_check! is checked for presense of '*': it assigns name of first existent file 
+    @rem (i.e. 'core_0001') fo %%f argument.
+    @rem Command 'set fbt_name=!fbt_full:*=#!' also does not work: result always is empty string.
+    @rem For these reasons we have TRY to convert strng to number using "set /a" and check its errorlevel.
+    @rem See also: https://stackoverflow.com/questions/11685375/i-need-to-match-or-replace-an-asterisk-in-a-batch-environmental-variable-using
+    @rem ##################################################################################
+
+    set cnum=!fbt_to_check:core=!
+    set cnum=!cnum:_=!
+    set cnum=!cnum:.fbt=!
+
+    @rem core_0927 --> 0927 --> Invalid number.  Numeric constants are either decimal (17), hexadecimal (0x11), or octal (021).
+
+    @rem Here we add '1' to prevent from interpreting cnum as octal:
+    set ctmp=1!cnum!
+    set /a cval=!ctmp! 
+    set elevel=!errorlevel!
+    @rem result: elevel will be 1073750989 if !cnum! is invalid number, 1073750991 if cnum starts with '0', otherwise 0.
+    if !elevel! EQU 0 (
+        call :sho "File name !fbt_to_check! looks VALID." !log!
+    ) else (
+        (
+            echo #####################################################
+            echo INVALID NAME OF .FBT FILE TO BE CHECKED: !fbt_to_check!
+            echo YOU HAVE TO SPECIFY IT LIKE THIS: [core_]NNNN"
+            echo #####################################################
+            echo FAILED attempt: set /a cval=!ctmp!, errorlevel=!elevel!
+        ) > !res_fail!
+        call :bulksho !res_fail! !log!
+        goto final
+    )
+)
+for /f %%f in ('echo !fbt_to_check!') do (
+    set fbt_full=%%~dpnf
+    if not exist !fbt_full! (
+        set fbt_full=%%~dpnf.fbt
+    )
+)
+
+@rem does NOT work --> set fbt_name=!fbt_full:*=#!
+
+for /f %%f in ('echo !fbt_full!') do (
+    set fbt_name=%%~nf
+)
+
+@rem Example:
+@rem fbt_full=C:\FBTESTING\qa\fbt-repo\tests\bugs\core_1234.fbt
+@rem fbt_name=core_1234
+
+call :sho "File with test to be checked: !fbt_full!" !log!
+
+
+set find_what=%~dp0
+
+if not exist !fbt_full! (
+    call :sho "ERROR in command-line arguments: no such file: !fbt_full!". !log!
+    goto final
+) else (
+    set fbt_size=-1
+    for /f %%a in ("!fbt_full!") do (
+        set fbt_size=%%~za
+    )
+    echo Found test for run: fbt_full=!fbt_full!, size: !fbt_size! bytes
+)
+
+del %~dp0results.trf 2>nul
+
+if exist %~dp0results.trf (
+    call :sho "ERROR: could not drop file %~dp0results.trf - perhaps it is opened by another process." !log!
+    goto final
+)
+
+findstr /i /b /c:"'min_versions':" !fbt_full! | findstr /e /c:"," > !tmp1!
+for /f "tokens=2 delims=:, " %%a in (!tmp1!) do (
+    set min_vers=%%a
+    set min_vers=!min_vers:'=!
+    if .!min_vers!.==.None. (
+        set min_vers=1.5.6.0000
+    )
+    if .!min_vers!.==.. (
+        set min_vers=1.5.6.0000
+    )
+)
+
+
+set repl_with=
+for /f "tokens=* delims=\" %%a in ("%curdir%") do (
+  set string=%%a
+  set cdprefix=!string:%find_what%=%repl_with%!
+  set cdprefix=!cdprefix:tests\=%repl_with%!
+  set cdprefix=!cdprefix:\=.!
+)
+
+@rem cut-off extenstion from name of processed .fbt file: 'core_4786.fbt' ==> 'core_4786'
+@rem set fbt_name=%~n1
+
+(
+    echo Intro %~dpnx0
+    echo Check FB services: !fb_checked_services!
+    echo cdprefix=!cdprefix!
+    echo fbt_name=!fbt_name!
+    echo fbt_full=!fbt_full!
+    echo min_vers=!min_vers!
+) >!tmp1!
+
+call :bulksho !tmp1! !log!
+
+@echo off
+
+::::::::::::::::::::::::  change dir to batch ::::::::::::::::::::::
+cd /d %~dp0
+::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+@rem This temp database can remain from previous launch fbt-run if it was ebnormally ends.
+@rem One need to remove it otherwise fbt_run will raise exception 'file exists' when try to create
+@rem again temp database with the SAME name:
+
+set /a svcfound=0
+
+@rem sc queryex state= all | findstr /i /r /c:"service_name.*firebird" | findstr /v /i /c:"FirebirdGuardian" > !tmp1!
+
+sc queryex | findstr /i /r /c:"service_name.*FirebirdServer" | sort /r > !tmp1!
+
+@rem SERVICE_NAME: FirebirdServer257sC
+@rem SERVICE_NAME: FirebirdServer257SS
+@rem SERVICE_NAME: FirebirdServer302Cs
+@rem SERVICE_NAME: FirebirdServer302sC
+@rem SERVICE_NAME: FirebirdServer302SS
+@rem SERVICE_NAME: FirebirdServer400SS
+@rem SERVICE_NAME: FirebirdServer400Cs
+@rem ...
+
+for /f "tokens=2" %%a in (!tmp1!) do (
+
+  del .\tmp\!cdprefix!.!fbt_name!.fdb 2>nul
+  if exist .\tmp\!cdprefix!.!fbt_name!.fdb (
+      (
+          echo FATAL ERROR: CAN NOT REMOVE FILE .\tmp\!cdprefix!.!fbt_name!.fdb 
+          echo This file is still opened from previous test run.
+          echo Perhaps this is because of parameters ExtConnPool* in firebird.conf
+          echo ###################################################################
+          echo ENSURE THAT TEST HAS 'DELETE FROM MON$ATTACHMENTS' IN ITS CLEANUP.
+          echo ###################################################################
+      ) >!tmp1!
+      call :bulksho !tmp1! !log!
+      goto final
+
+  )
+  
+  set svcname=%%a
+  set svrsuff=!svcname:FirebirdServer=!
+  call :sho "Analyze service: !svcname!, svrsuff=!svrsuff!" !log!
+
+  echo ,!fb_checked_services!, | findstr /i /c:"!svrsuff!" > nul
+  if not errorlevel 1 (
+
+      call :sho "List of checked services CONTAINS string '!svcname!'" !log!
+      set /a svcfound=!svcfound!+1
+      @rem REG.EXE query HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\!svcname! | findstr /i /c:"ImagePath"
+
+      for /f "tokens=*" %%i in ('REG.EXE query HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\!svcname! ^| findstr /i /c:"ImagePath"') do (
+
+        set pre_checks_done=0
+
+        @rem echo REG.EXE query HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\!svcname!
+        @rem echo ImagePath    REG_EXPAND_SZ    C:\FB\40SS\firebird.exe -s 400SS
+        @rem ImagePath    REG_EXPAND       C:\FB\4w32\firebird.exe -s 40w32
+        @rem ImagePath    REG_EXPAND_SZ    C:\FB\4x64\firebird.exe -s 40x64
+
+        @rem set runcmd=%%i
+        @rem set runcmd=!runcmd:~24! <<< WRONG! Only for win32 can be done such.
+
+        set regstr=%%i
+        @rem regstr=|ImagePath    REG_EXPAND_SZ    C:\FB\40SS\firebird.exe -s 400SS| ==> runcmd=|C:\FB\40SS\firebird.exe -s 400SS|
+        for /f "tokens=2*" %%b in ("!regstr!") do (
+            set runcmd=%%c
+        )
+        call :sho "Image: !runcmd!" !log!
+
+        @rem 25.05.2018: we have to ensure that ALL possible protocols for connection are ALLOWED now: XNET, WNET and INET.
+        echo !runcmd! | findstr /i /c:" -i" /c:" -x" /c:" -w" >nul
+        if NOT errorlevel 1 (
+            call :sho "Launching command allows ONLY SPECIFIC protocol(s^) to be used for connect." !log!
+            call :sho "We have to check that both XNET and INET are allowed." !log!
+            echo !runcmd! | findstr /i /c:" -i" | findstr /i /c:" -x" > nul
+            if NOT errorlevel 1 (
+                call :sho "Check PASSED: ImagePath *does* allow both XINET and INET to be used for connect." !log!
+            ) else (
+                @rem fbt_run will issue: Can't connect to Firebird - if service ImapePath contains '-i'
+                call :sho "Check FAILED: at least one of XNET or INET is forbidden for usage." !log!
+                (
+                    echo.
+                    echo ###########################################################################
+                    echo ### Service must allow to use both XNET and INET protocols for connect.
+                    echo ### Check ImagePath in HKLM\SYSTEM\CurrentControlSet\Services:
+                    echo ###
+                    echo ### ^|!runcmd!^|
+                    echo ###
+                    echo ### Framework fbtest will not be able to create or work with test database.
+                    echo ### Either remove all additional switches: '-i', '-x' or specify them both.
+                    echo ###########################################################################
+                    echo.
+                    echo.
+                ) >!tmp1!
+
+                for /f "tokens=*" %%p in (!tmp1!) do (
+                    call :sho "%%p" !log!
+                )
+                call :sho "See also:" !log!
+                call :sho "www.sql.ru/forum/actualutils.aspx?action=gotomsg&tid=838190&msg=11620434" !log!
+                goto :final
+            )
+        ) else (
+            call :sho "Service !svcname! allows to use ALL possible protocols: XNET, INET and WNET." !log!
+        )
+
+        echo !runcmd! | findstr /i /c:"\bin\fb_inet_server" /c:"\bin\fbserver" >nul
+        if not errorlevel 1 (
+            set fbv=LEQ_25
+        ) else (
+            set fbv=GEQ_30
+        )
+
+        echo !runcmd! | findstr /i /c:"\bin\fb_inet_server.exe" /c:"\bin\fbserver.exe" /c:"\firebird.exe" >nul
+        if not errorlevel 1 (
+            set bindir=!runcmd:\fb_inet_server.exe=#!
+            set bindir=!bindir:\fbserver.exe=#!
+            set bindir=!bindir:\firebird.exe=#!
+        ) else (
+            set bindir=!runcmd:\fb_inet_server =#!
+            set bindir=!bindir:\fbserver =#!
+            set bindir=!bindir:\firebird =#!
+        )
+        for /f "tokens=1 delims=#" %%p in ("!bindir!") do (
+            set runpath=%%p
+        )
+        set bindir=!runpath:"=!
+        call :sho "FB home: !bindir!" !log!
+        call :sho "FB majr: !fbv!" !log!
+
+        set cfgdir=!bindir!
+        if /i .!fbv!.==.LEQ_25. (
+            echo !runcmd! | findstr /i /c:"\bin\fb_inet_server.exe" /c:"\bin\fbserver.exe" >nul
+            if not errorlevel 1 (
+                set cfgdir=!runcmd:\bin\fb_inet_server.exe=#!
+                set cfgdir=!cfgdir:\bin\fbserver.exe=#!
+            ) else (
+                set cfgdir=!runcmd:\bin\fb_inet_server=#!
+                set cfgdir=!cfgdir:\bin\fbserver=#!
+            )
+            for /f "tokens=1 delims=#" %%p in ("!cfgdir!") do (
+              set cfgdir=%%p
+            )
+        )
+        set cfgdir=!cfgdir:"=!
+        set fbcfg="!cfgdir!\firebird.conf"
+        call :sho "FB conf: !fbcfg!" !log!
+        
+        if exist !fbcfg! (
+            set /a fb_port=3050
+            findstr /i /c:"remoteserviceport"  !fbcfg! | findstr /v /r /i /c:"#[     ]*remoteserviceport" >!tmp2!
+            for /f "tokens=2 delims==" %%x in (!tmp2!) do (
+                if not .%%x.==.. (
+                    set /a fb_port=%%x
+                )
+            )
+            set fb_lsng=0
+            netstat -an | findstr /r /i /c:"tcp[ ]*0.0.0.0:!fb_port!" | findstr /i /c:"listening" >nul
+            if not errorlevel 1 (
+                set fb_lsng=1
+            )
+            call :sho "FB port: !fb_port!, listening: !fb_lsng!" !log!
+
+            if !fb_lsng! equ 1 (
+
+                set svccmd="!bindir!\fbsvcmgr.exe" localhost/!fb_port!:service_mgr user !usr! password !pwd!
+                set svc_vers=
+                if exist "!bindir!\fbsvcmgr.exe" (
+                    @rem xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+                    @rem xxx   g e t    F B    v e r s i o n   xxx
+                    @rem xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+                    set svcver="!bindir!\fbsvcmgr.exe" -z
+                    call :sho "Command to get FBSVCMGR version: !svcver!" !log!
+                    cmd /c !svcver! 1>!tmp3! 2>&1
+
+                    @rem Firebird services manager version WI-V2.5.8.27089 Firebird 2.5
+                    @rem     1       2        3       4           5           6      7
+
+                    for /f "tokens=5 delims= " %%x in (!tmp3!) do (
+                        @rem #######################################
+                        @rem ### NOTE ### do not use !tmp1! here ###
+                        @rem #######################################
+                        set svc_vers=%%x
+                        set svc_vers=!svc_vers:~4!
+                        call :sho "FBSVCMGR version: !svc_vers!" !log!
+                    )
+                    del !tmp3!
+
+                    @rem AuthServer = Legacy_Auth, Srp, Win_Sspi
+                    @rem AuthClient = Legacy_Auth,Srp,Win_Sspi
+                    @rem #WireCrypt = Enabled // commented
+                    @rem -->
+                    @rem  Client attempted to attach unencrypted but wire encryption is required
+
+                    call :sho "Command to get SERVER version: !svccmd! info_server_version" !log!
+                    cmd /c !svccmd! info_server_version 1>!tmp2! 2>&1
+
+                ) else (
+                    call :sho "File !bindir!\fbsvcmgr.exe does NOT exist. Too old FB version." !log!
+                    echo quit; | "!bindir!\isql.exe" -z -q  1>!tmp2!
+                )
+                call :sho "--- result ---" !log!
+                for /f "tokens=*" %%x in (!tmp2!) do (
+                    echo.    %%x
+                    echo.    %%x >>!log!
+                )
+                call :sho "--------------" !log!
+
+                for /f "tokens=3 delims= " %%x in (!tmp2!) do (
+                    set fb_vers=%%x
+                    set fb_vers=!fb_vers:~4!
+                    call :sho "Firebird ENGINE version: !fb_vers!" !log!
+                )
+
+                if not .!svc_vers!.==.. (
+                    if .!fb_vers!.==.!svc_vers!. (
+                        call :sho "Check passed: server and services versions matches." !log!
+                    ) else (
+                        (
+                            echo fb_vers="!fb_vers!"
+                            echo svc_vers="!svc_vers!"
+                            echo ############################ A C H T U N G   #########################
+                            echo ###                                                                ###
+                            echo ### MISMATCH DETECTED BETWEEN FIREBIRD ENGINE AND SERVICES VERSION ###
+                            echo ###                                                                ###
+                            echo ######################################################################
+                            echo.
+                            echo PROPABLY ANOTHER FIREBIRD INSTANCE IS LISTENING PORT !fb_port!
+                            echo.
+                        ) >!res_fail!
+                        call :bulksho !res_fail! !log!
+                        goto final
+                    )
+                )
+
+                if !fb_vers! GEQ !min_vers! (
+                    call :sho "Start check instance !svcname!" !log!
+                    set pre_checks_done=1
+                ) else (
+                    @rem call :sho ".S.K.I.P. checking instance !svcname!: its version = ^|!fb_vers!^| - is OLDER than min_vers=^|!min_vers!^|" !log!
+                    set msg=!svcname!, build !fb_vers!: SKIPPED, version is OLDER than min_vers=!min_vers!
+                    
+                    call :sho "#######    T O O     O L D    V E R S I O N    #######" !log!
+                    call :sho "!msg!" !log!
+                    call :sho "######################################################" !log!
+                    echo "!msg!" >>  !res_skip!
+                )
+               
+                if !pre_checks_done! EQU 1 (
+
+                    call :sho "Get actual FB architecture..." !log!
+                    set fb_arch=UNKNOWN
+                    @rem #####################################################
+                    @rem ###   g e t     a c t u a l     F B    a r c h.   ###
+                    @rem #####################################################
+                    call :get_fb_arch !bindir! !tmp1! !tmp2! fb_arch
+                    call :sho "Result: FB is working in !fb_arch! mode." !log!
+
+                    set "path=!bindir!;!py_home!\Scripts\;!py_home!;%pbk%"
+
+                    del results.trf 2>nul
+
+                    set success=0
+                    @echo on
+                    set ISC_USER=
+                    set ISC_PASSWORD=
+                    @echo off
+                    echo !PATH!
+                    (
+                        echo.    Check environment:
+                        echo.    !PATH!
+                        echo.    ISC_USER=!ISC_USER!
+                        echo.    ISC_PASSWORD=!ISC_PASSWORD!
+                        echo quit; | !bindir!\isql -q -z
+                        echo.
+                        echo.    Actual server mode: !fb_arch!
+                        echo.
+                    )>>!log!
+
+                    
+                    @rem -------------------------
+                    @rem Now we can launch fbt_run
+                    @rem -------------------------
+
+                    call :sho "Obtaining version info for Python, fbtest and fdb packages..." !log!
+
+                    !py_home!\python.exe -V 2>!tmp1! 1>&2
+
+                    (
+                       !py_home!\python.exe -c "import fbtest; import fdb; print( 'fbtest: ' + fbtest.__version__); print( 'fdb: ' + fdb.__version__)"
+                    ) >> !tmp1!
+
+                    @echo.
+                    call :sho "Check versions of Python, fbtest and fdb:" !log!
+                    call :bulksho !tmp1! !log!
+
+                    @echo.
+                    @echo :::::::::::::::::::::::::::::::::::::::::::
+                    @echo :::    l a u n c h     f b t _ r u n    :::
+                    @echo :::::::::::::::::::::::::::::::::::::::::::
+
+                    set fbt_cmd=!py_home!\Scripts\fbt_run.exe -b "!bindir!" -o localhost/!fb_port! !cdprefix!.!fbt_name! -c "!bindir!\fbclient.dll"
+                    @rem echo cdprefix=!cdprefix!, fbt_name=!fbt_name, result: !cdprefix!.!fbt_name!
+                    echo.
+                    call :sho "!fbt_cmd!" !log!
+                    echo.
+
+                    cmd /c !fbt_cmd! 1>!tmp2! 2>&1
+
+                    findstr /b /c:"OK" !tmp2! >nul
+                    if not errorlevel 1 (
+                        fbt_view -d results.trf | findstr /i /b /r /c:"Passes:[ ]*1" >nul
+                        if not errorlevel 1 (
+                            set succes=1
+                            for /f "tokens=5" %%u in ('findstr /i /r /c:"Ran [0-9]* tests in" !tmp2!') do (
+                              set elapsed_sec=%%u
+                            )
+
+                            for /f "tokens=*" %%u in ('fbt_view -d results.trf') do (
+                              @rem --- do NOT use here -- call :sho "%%u" !log!
+                              echo.    %%u
+                              echo.    %%u >> !log!
+                            )
+
+                            call :sho "++++++++++++++++++++++++" !log!
+                            call :sho "fbt_res: +++ SUCCESS +++, done for !elapsed_sec!." !log!
+                            call :sho "++++++++++++++++++++++++" !log!
+
+                            call :sho "!svcname!, build !fb_vers! !fb_arch!: !elapsed_sec!." !res_ok!
+
+                        ) else (
+
+                            (
+                                echo ### AMBIGOUS ###
+                                echo Found 'OK' but not found 'Passes: 1', check results:
+                                echo ------------------------------------
+                                for /f "tokens=*" %%u in ('fbt_view -d results.trf') do (
+                                    echo.    %%u
+                                )
+                                echo ------------------------------------
+                                echo.
+                                echo Check 'firebird_version' value:
+                                echo ###############################
+                                findstr /i /c:"'firebird_version':" !fbt_full!
+                                echo ###############################
+                                echo.
+                                echo !svcname!, build !fb_vers! !fb_arch!: WARNING, could not found 'Passes: 1' in the log.
+                            ) > !res_warn!
+                            call :bulksho !res_warn! !log!
+
+                        )
+                    ) else (
+                        call :sho "### FAILED ###" !log!
+                        set vsign=0
+                        for /f "tokens=*" %%u in ('findstr /v /c:"-----" /c:"=====" !tmp2!') do (
+                          set utxt=%%u
+
+                          @rem 24.05.2017: fbt_view can produce special characters like: "<", ">" and "&"!
+                          set utxt=!utxt:^&=^&amp;!
+                          set utxt=!utxt:^<=^&lt;!
+                          set utxt=!utxt:^>=^&gt;!
+
+                          if !vsign! EQU 1 (
+                              if NOT .!utxt!.==.. (
+                                  call :sho "!utxt!" !!log!
+                              )
+                          )
+                          set uchk=!utxt:%~n1=!
+                          if !vsign! EQU 0 if NOT !uchk!==!utxt! set vsign=1
+                        )
+
+                        for /f "tokens=*" %%u in ('fbt_view -d results.trf ^| findstr /v /b /c:"-----" /c:"====="') do (
+
+                          set utxt=%%u
+                          @rem set utxt=!utxt:^&=^&amp;!
+                          @rem set utxt=!utxt:^<=^&lt;!
+                          @rem set utxt=!utxt:^>=^&gt;!
+                          @rem do NOT >>> !!! >>> !!! >>> call :sho "!utxt!" !log! !!! <<< !!! <<<< DO NOT <<< !!!
+                          echo.    !utxt!
+                          echo.    !utxt! >>!log!
+
+
+                        )
+                        call :sho ---------------------------------------------------- !log!
+
+                        call :sho "!svcname!, build !fb_vers! !fb_arch!: FAILED." !res_fail!
+
+                    )
+                    set "path=!pbk!"
+                )
+                @rem pre_checks_done=1
+
+
+            ) else (
+                call :sho "WARNING: SKIP check of !svcname! because port !fb_port! is not in listened." !res_warn!
+            )
+        ) else (
+            call :sho "### ERROR ### !svcname! FB config: !fbcfg! - does NOT exist." !res_fail!
+        )
+
+        call :sho ----------------------------------------------- !log!
+      )
+
+  )
+  @rem "if not errlev 1"
+)
+@rem "for /f "tokens=2" %%a in (!tmp1!) do ("
+echo.
+call :sho "Check results:" !log!
+call :sho "##############" !log!
+
+if !svcfound! EQU 0 (
+    call :sho "^>^>^>^>^>^>^>^> ERROR. NOTHING WAS DONE: SERVICE NOT FOUND OR NOT RUNNING ^<^<^<^<^<^<^<^<" !log!
+    call :sho "Check 2nd input argument: ^|%2^|" !log!
+) else (
+    if exist !res_ok! (
+        call :sho "1. SUCCESSFULLY FINISHED:" !log!
+        call :sho ------------------------- !log!
+        type !res_ok!
+        type !res_ok!>>!log!
+        call :sho ------------------------- !log!
+    ) else (
+        call :sho "1. ### NO SUCCESS ###. All services either failed or not processed." !log!
+    )
+
+    if exist !res_warn! (
+        call :sho "2. FINISHED WITH WARNINGS:" !log!
+        call :sho ------------------------- !log!
+        type !res_warn!
+        type !res_warn!>>!log!
+        call :sho ------------------------- !log!
+    ) else (
+        call :sho "2. NO results with warnings." !log!
+    )
+
+    if exist !res_skip! (
+        call :sho "3. MISSING CHECKS:" !log!
+        call :sho ------------------------- !log!
+        type !res_skip!
+        type !res_skip!>>!log!
+        call :sho ------------------------- !log!
+    ) else (
+        call :sho "3. NO missed checks." !log!
+    )
+
+    if exist !res_fail! (
+        call :sho "4. FINISHED WITH ## FAIL ##:" !log!
+        call :sho ------------------------- !log!
+        type !res_fail!
+        type !res_fail!>>!log!
+        call :sho ------------------------- !log!
+    ) else (
+        call :sho "4. NO results with fails." !log!
+    )
+)
+
+for /d %%a in (!tmp1!,!tmp2!,!res_ok!,!res_warn!,!res_fail!,!res_skip!) do (
+  del %%a 2>nul
+)
+
+
+goto final
+@rem -----------------------------------------------------------------------------------------
+
+:sho
+    setlocal
+    set msg=%1
+    set log=%2
+    if .!log!.==.. (
+        echo Internal func sho: missed argument for log file.
+        echo Arg. #1 = ^|%1^|
+        exit
+    ) 
+
+    @rem echo msg=^|!msg!^|
+    set chr_beg=!msg:~0,1!
+    set chr_end=!msg:~-1!
+    @rem echo chr_beg=^|!chr_beg!^|
+    @rem echo chr_end=^|!chr_end!^|
+    set chr_txt=!chr_beg:"=!
+    if NOT .!chr_beg!.==.!chr_txt!. (
+        set msg=!msg:~1!
+    )
+    set chr_txt=!chr_end:"=!
+    @rem echo chr_txt=^|!chr_txt!^|
+    if NOT .!chr_end!.==.!chr_txt!. (
+        set msg=!msg!`
+        set msg=!msg:"`=!
+    )
+
+    set ts=!time!
+    for /f "tokens=1-4 delims=:.," %%a in ("!ts!") do (
+      set /a hh=%%a
+      set mi=%%b
+      set ss=%%c
+      set us=%%d
+    )
+    if !hh! LEQ 9 (
+      set hh=0!hh!
+    )
+
+    set msg=!date! !hh!:!mi!:!ss! !msg!
+    @echo !msg!
+    @echo !msg!>>%log%
+
+endlocal & goto:eof
+
+:bulksho
+    setlocal
+    set tmp=%1
+    set log=%2
+
+    if not exist !tmp! (
+        echo ERROR IN :BULKSHO ROUTINE: TEMP FILE DOES NOT EXIST.
+        pause
+        goto :final
+    )
+
+    for /f "tokens=*" %%a in (!tmp!) do (
+       set line=%%a
+       set line=!line:"=`!
+       call :sho "!line!" !log!
+    )
+    del !tmp!
+endlocal & goto:eof
+
+@rem ----------------------- end  of routine bulksho ------------------------------
+
+:get_fb_arch
+
+    set fbc=%1
+    set tmpsql=%2
+    set tmplog=%3
+    
+    @rem NOTE: arg %4 is OUTPUT, will be assigned here as result.
+
+    set tmpfdb=c:\temp\get_fb_arch.tmp.fdb
+    (
+        echo     set bail on;
+        echo     shell del !tmpfdb! 2^>nul;
+        echo     create database 'localhost:!tmpfdb!' user 'SYSDBA' password 'masterkey';
+        echo     set term ^^;
+        echo     create or alter procedure sys_get_fb_arch (
+        echo          a_connect_with_usr varchar(31^) default 'SYSDBA'
+        echo         ,a_connect_with_pwd varchar(31^) default 'masterkey'
+        echo     ^) returns(
+        echo         fb_arch varchar(50^)
+        echo     ^) as
+        echo         declare cur_server_pid int;
+        echo         declare ext_server_pid int;
+        echo         declare att_protocol varchar(255^);
+        echo         declare v_test_sttm varchar(255^);
+        echo         declare v_fetches_beg bigint;
+        echo         declare v_fetches_end bigint;
+        echo     begin
+        echo         fb_arch = rdb$get_context('USER_SESSION', 'SERVER_MODE'^);
+        echo         if ( fb_arch is null ^) then
+        echo         begin
+        echo             select a.mon$server_pid, a.mon$remote_protocol
+        echo             from mon$attachments a
+        echo             where a.mon$attachment_id = current_connection
+        echo             into cur_server_pid, att_protocol;
+        echo             if ( att_protocol is null ^) then
+        echo                 fb_arch = 'Embedded';
+        echo             else if ( upper(current_user^) = upper('SYSDBA'^)
+        echo                       and rdb$get_context('SYSTEM','ENGINE_VERSION'^) NOT starting with '2.5' 
+        echo                       and exists(select * from mon$attachments a 
+        echo                                  where a.mon$remote_protocol is null
+        echo                                        and upper(a.mon$user^) in ( upper('Cache Writer'^), upper('Garbage Collector'^)^)
+        echo                                 ^) 
+        echo                     ^) then
+        echo                 fb_arch = 'SS';
+        echo             else
+        echo                 begin
+        echo                     v_test_sttm =
+        echo                         'select a.mon$server_pid + 0*(select 1 from rdb$database^)'
+        echo                         ^|^|' from mon$attachments a '
+        echo                         ^|^|' where a.mon$attachment_id = current_connection';
+        echo                     select i.mon$page_fetches
+        echo                     from mon$io_stats i
+        echo                     where i.mon$stat_group = 0  -- db_level
+        echo                     into v_fetches_beg;
+        echo                     execute statement v_test_sttm
+        echo                     on external
+        echo                          'localhost:' ^|^| rdb$get_context('SYSTEM', 'DB_NAME'^)
+        echo                     as
+        echo                          user a_connect_with_usr
+        echo                          password a_connect_with_pwd
+        echo                          role left('R' ^|^| replace(uuid_to_char(gen_uuid(^)^),'-',''^),31^)
+        echo                     into ext_server_pid;
+        echo                     in autonomous transaction do
+        echo                     select i.mon$page_fetches
+        echo                     from mon$io_stats i
+        echo                     where i.mon$stat_group = 0  -- db_level
+        echo                     into v_fetches_end;
+        echo                     fb_arch = iif( cur_server_pid is distinct from ext_server_pid, 
+        echo                                    'CS', 
+        echo                                    iif( v_fetches_beg is not distinct from v_fetches_end, 
+        echo                                         'SC', 
+        echo                                         'SS'
+        echo                                       ^) 
+        echo                                  ^);
+        echo                 end
+        echo             fb_arch = trim(fb_arch^) ^|^| ' ' ^|^| rdb$get_context('SYSTEM','ENGINE_VERSION'^);
+        echo             rdb$set_context('USER_SESSION', 'SERVER_MODE', fb_arch^);
+        echo         end
+        echo         suspend;
+        echo     end 
+        echo     ^^ -- sys_get_fb_arch
+        echo     set term ;^^
+        echo     commit;
+        echo     set heading off;
+        echo     select * from sys_get_fb_arch('SYSDBA', 'masterkey'^);
+        echo     commit;
+        echo     delete from mon$attachments where mon$attachment_id ^<^> current_connection ;
+        echo     commit;
+        echo     drop database;
+    ) >!tmpsql!
+
+    !fbc!\isql.exe -q -i !tmpsql! 1>!tmplog! 2>&1
+
+    set actual_fb_arch=UNKNOWN
+    for /f "tokens=1" %%a in ('type !tmplog!') do (
+        set actual_fb_arch=%%a
+    )
+    del !tmpsql!
+    del !tmplog!
+
+endlocal & set "%~4=%actual_fb_arch%"  & goto:eof
+
+@rem ----------------------- end of routine get_fb_arch ---------------------------
+
+:final
+    cd /d %curdir%
+    call :sho "Bye-bye from %~dpnx0" !log!
+    del !tmp1! 2>nul
+    del !tmp2! 2>nul
+    if NOT .%overall%.==.0. ping -n 1 -w 800 1.1.1.1 1>nul 2>&1
+

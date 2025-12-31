@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_4530',
+'qmid': None,
+'tracker_id': 'CORE-4530',
+'title': 'DB_KEY based join of two tables may be ineffective',
+'description': 'Order of expressions in the join condition could negatively affect the generated plan and thus performance',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  recreate table t (id int, constraint t_pk primary key(id) using index t_pk_idx);
+  commit;
+  """,
+ 'test_script':
+  """
+  set planonly;
+
+  -- This query had bad generated plan before fix core-4530:
+  -- PLAN JOIN (X A ORDER RDB$PRIMARY4, Z NATURAL) 
+  select count(*)
+  from (select id, rdb$db_key k from t a order by id) x
+  left join t z on x.k = z.rdb$db_key; -------------------- left side: `x.k`, right side: `z.rdb$db_key`
+
+  select count(*)
+  from (select id, rdb$db_key k from t a order by id) x
+  left join t z on z.rdb$db_key = x.k; -------------------- left side: `z.rdb$db_key`, right side: `x.k`
+  """,
+ 'expected_stdout':
+  """
+  PLAN JOIN (X A ORDER T_PK_IDX, Z INDEX ())
+  PLAN JOIN (X A ORDER T_PK_IDX, Z INDEX ())
+  """
+}
+]
+}

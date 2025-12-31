@@ -1,0 +1,124 @@
+{
+'id': 'bugs.core_1215',
+'qmid': 'bugs.core_1215',
+'tracker_id': 'CORE-1215',
+'title': 'Wrong SELECT query results using index to evaluate >= condition',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE T (ID INT);
+COMMIT;
+
+set term ^;
+
+EXECUTE BLOCK AS
+DECLARE I INT = 0;
+BEGIN
+  WHILE (I < 50000) DO
+  BEGIN
+    INSERT INTO T VALUES (1);
+    I = I + 1;
+  END
+END^
+
+set term ;^
+commit;
+
+CREATE INDEX IDX_T ON T (ID);
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """set plan on;
+SELECT COUNT(*) FROM T ;
+SELECT COUNT(*) FROM T WHERE ID >= 1 ;
+SELECT COUNT(*) FROM T WHERE ID = 1 ;
+SELECT COUNT(*) FROM T WHERE ID <= 1 ;
+""",
+ 'expected_stdout': """PLAN (T NATURAL)
+
+       COUNT
+============
+       50000
+
+PLAN (T INDEX (IDX_T))
+
+       COUNT
+============
+       50000
+
+PLAN (T INDEX (IDX_T))
+
+       COUNT
+============
+       50000
+
+PLAN (T INDEX (IDX_T))
+
+       COUNT
+============
+       50000
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE T (ID INT);
+COMMIT;
+
+set term ^;
+
+EXECUTE BLOCK AS
+DECLARE I INT = 0;
+BEGIN
+  WHILE (I < 50000) DO
+  BEGIN
+    INSERT INTO T VALUES (1);
+    I = I + 1;
+  END
+END^
+
+set term ;^
+commit;
+
+CREATE INDEX IDX_T ON T (ID);
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """set plan on;
+SELECT COUNT(*) FROM T ;
+SELECT COUNT(*) FROM T WHERE ID >= 1 ;
+SELECT COUNT(*) FROM T WHERE ID = 1 ;
+SELECT COUNT(*) FROM T WHERE ID <= 1 ;
+""",
+ 'expected_stdout': """PLAN (T NATURAL)
+
+                COUNT
+=====================
+                50000
+
+PLAN (T INDEX (IDX_T))
+
+                COUNT
+=====================
+                50000
+
+PLAN (T INDEX (IDX_T))
+
+                COUNT
+=====================
+                50000
+
+PLAN (T INDEX (IDX_T))
+
+                COUNT
+=====================
+                50000
+
+"""
+}
+]
+}

@@ -1,0 +1,501 @@
+{
+'id': 'bugs.core_2765',
+'qmid': None,
+'tracker_id': 'CORE-2765',
+'title': 'Use of RDB$ADMIN role does not provide SYSDBA rights in GRANT/REVOKE',
+'description':
+ """
+    06.08.2018: removed old code for 3.0 and 4.0, replaced it with simplified one that does *exactly* what ticket says.
+    Checked on 3.0.4.33021, 4.0.0.1143.
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    drop user almost_dba;
+    commit;
+    create user almost_dba password '123';
+    commit;
+    grant rdb$admin to almost_dba;
+    commit;
+    
+    revoke all on all from maverick_1;
+    revoke all on all from maverick_2;
+    revoke all on all from maverick_3;
+    revoke all on all from maverick_4;
+    commit;
+    
+    recreate table test(x int, y int, z int);
+    commit;
+    
+    create or alter view v_priv as
+    select
+        rdb$user who_has_priv
+        ,rdb$privilege what_he_has
+        ,coalesce(rdb$grant_option,0) g_option
+        ,rdb$field_name fld_name
+    from rdb$user_privileges rp
+    where
+        rp.rdb$relation_name=upper('TEST')
+        and rp.rdb$grantor=upper('ALMOST_DBA')
+    ;
+    commit;
+
+    set list on;
+    set transaction read committed no wait;
+    set term ^;
+    execute block returns(
+        who_has_priv varchar(31),
+        what_he_has varchar(6),
+        g_option smallint,
+        fld_name varchar(31)
+    ) as
+        declare v_dbname type of column mon$database.mon$database_name;
+        declare v_usr varchar(31) = 'almost_dba';
+        declare v_pwd varchar(6) = '123';
+        declare v_role varchar(31) = 'RDB$ADMIN';
+    begin
+        v_dbname = 'localhost:' || rdb$get_context('SYSTEM', 'DB_NAME');
+        execute statement 'grant insert,select on test to maverick_1'
+        with autonomous transaction
+        on external v_dbname
+        as user v_usr password v_pwd role upper(v_role);
+    
+        for
+            select
+                who_has_priv,
+                what_he_has,
+                g_option,
+                fld_name
+            from v_priv v
+            where v.who_has_priv = upper('maverick_1')
+            into
+                who_has_priv,
+                what_he_has,
+                g_option,
+                fld_name
+        do suspend;
+    
+        -------------------------------------------------------------------------
+    
+        execute statement 'grant all on test to maverick_2 with grant option'
+        with autonomous transaction
+        on external v_dbname
+        as user v_usr password v_pwd role upper(v_role);
+    
+        for
+            select
+                who_has_priv,
+                what_he_has,
+                g_option,
+                fld_name
+            from v_priv v
+            where v.who_has_priv = upper('maverick_2')
+            into
+                who_has_priv,
+                what_he_has,
+                g_option,
+                fld_name
+        do suspend;
+    
+        -------------------------------------------------------------------------
+    
+        execute statement 'grant update(x,z) on test to maverick_3'
+        with autonomous transaction
+        on external v_dbname
+        as user v_usr password v_pwd role upper(v_role);
+    
+        for
+            select
+                who_has_priv,
+                what_he_has,
+                g_option,
+                fld_name
+            from v_priv v
+            where v.who_has_priv = upper('maverick_3')
+            into
+                who_has_priv,
+                what_he_has,
+                g_option,
+                fld_name
+        do suspend;
+    
+        -------------------------------------------------------------------------
+    
+        execute statement 'revoke update,delete on test from maverick_2'
+        with autonomous transaction
+        on external v_dbname
+        as user v_usr password v_pwd role upper(v_role);
+    
+        for
+            select
+                who_has_priv,
+                what_he_has,
+                g_option,
+                fld_name
+            from v_priv v
+            where v.who_has_priv = upper('maverick_2')
+            into
+                who_has_priv,
+                what_he_has,
+                g_option,
+                fld_name
+        do suspend;
+    
+        -------------------------------------------------------------------------
+    
+        execute statement 'revoke update(x) on test from maverick_3'
+        with autonomous transaction
+        on external v_dbname
+        as user v_usr password v_pwd role upper(v_role);
+    
+        for
+            select
+                who_has_priv,
+                what_he_has,
+                g_option,
+                fld_name
+            from v_priv v
+            where v.who_has_priv = upper('maverick_3')
+            into
+                who_has_priv,
+                what_he_has,
+                g_option,
+                fld_name
+        do suspend;
+    
+    
+    
+        -------------------------------------------------------------------------
+    
+        execute statement 'grant all on test to maverick_4'
+        with autonomous transaction
+        on external v_dbname
+        as user v_usr password v_pwd
+        -- intentionally COMMENTED: role upper(v_role) ==> should get ERROR here, "no S privilege with grant option"
+        ;
+    
+        for
+            select
+                who_has_priv,
+                what_he_has,
+                g_option,
+                fld_name
+            from v_priv v
+            where v.who_has_priv = upper('maverick_4')
+            into
+                who_has_priv,
+                what_he_has,
+                g_option,
+                fld_name
+        do suspend;
+    
+    end
+    ^
+    set term ;^
+    rollback;
+    drop user almost_dba;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+    WHO_HAS_PRIV                    MAVERICK_1
+    WHAT_HE_HAS                     I
+    G_OPTION                        0
+    FLD_NAME                        <null>
+    
+    WHO_HAS_PRIV                    MAVERICK_1
+    WHAT_HE_HAS                     S
+    G_OPTION                        0
+    FLD_NAME                        <null>
+    
+    WHO_HAS_PRIV                    MAVERICK_2
+    WHAT_HE_HAS                     S
+    G_OPTION                        1
+    FLD_NAME                        <null>
+    
+    WHO_HAS_PRIV                    MAVERICK_2
+    WHAT_HE_HAS                     I
+    G_OPTION                        1
+    FLD_NAME                        <null>
+    
+    WHO_HAS_PRIV                    MAVERICK_2
+    WHAT_HE_HAS                     U
+    G_OPTION                        1
+    FLD_NAME                        <null>
+    
+    WHO_HAS_PRIV                    MAVERICK_2
+    WHAT_HE_HAS                     D
+    G_OPTION                        1
+    FLD_NAME                        <null>
+    
+    WHO_HAS_PRIV                    MAVERICK_2
+    WHAT_HE_HAS                     R
+    G_OPTION                        1
+    FLD_NAME                        <null>
+    
+    WHO_HAS_PRIV                    MAVERICK_3
+    WHAT_HE_HAS                     U
+    G_OPTION                        0
+    FLD_NAME                        X
+    
+    WHO_HAS_PRIV                    MAVERICK_3
+    WHAT_HE_HAS                     U
+    G_OPTION                        0
+    FLD_NAME                        Z
+    
+    WHO_HAS_PRIV                    MAVERICK_2
+    WHAT_HE_HAS                     S
+    G_OPTION                        1
+    FLD_NAME                        <null>
+    
+    WHO_HAS_PRIV                    MAVERICK_2
+    WHAT_HE_HAS                     I
+    G_OPTION                        1
+    FLD_NAME                        <null>
+    
+    WHO_HAS_PRIV                    MAVERICK_2
+    WHAT_HE_HAS                     R
+    G_OPTION                        1
+    FLD_NAME                        <null>
+    
+    WHO_HAS_PRIV                    MAVERICK_3
+    WHAT_HE_HAS                     U
+    G_OPTION                        0
+    FLD_NAME                        Z
+  """,
+  'expected_stderr':
+  """
+    Statement failed, SQLSTATE = HY000
+    record not found for user: ALMOST_DBA
+    Warning: ALL on ALL is not granted to MAVERICK_1.
+    Warning: ALL on ALL is not granted to MAVERICK_2.
+    Warning: ALL on ALL is not granted to MAVERICK_3.
+    Warning: ALL on ALL is not granted to MAVERICK_4.
+    Statement failed, SQLSTATE = 42000
+    Execute statement error at isc_dsql_execute2 :
+    335544351 : unsuccessful metadata update
+    335544382 : no S privilege with grant option on table/view TEST
+    Statement : grant all on test to maverick_4
+    Data source : Firebird::localhost:C:\MIX\FIREBIRD\QA\FBT-REPO\TMP\E25.FDB
+    -At block line: 125, col: 9
+  """,
+  'substitutions': [
+    ('Statement failed, SQLSTATE.*',''),
+    ('record not found for user:.*',''),
+    ('Data source : Firebird::localhost:.*', 'Data source : Firebird::localhost:'),
+    ('-At block line: [\d]+, col: [\d]+', '-At block line')
+  ]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    --set bail on;
+    set list on;
+    set wng off;
+    create or alter user tmp$c2765_admin password '123';
+    create or alter user tmp$c2765_worker1 password '456';
+    create or alter user tmp$c2765_worker2 password '789';
+
+    grant rdb$admin to tmp$c2765_admin;
+    commit;
+   
+    recreate table test(id int, x int);
+    commit;
+    insert into test(id, x) values(1, 1000);
+    commit;
+
+    connect '$(DSN)' user tmp$c2765_admin password '123' role 'RDB$ADMIN';
+    select current_user as who_am_i, current_role as what_is_my_role from rdb$database;
+    --select * from test;
+    commit;
+
+    grant all on test to tmp$c2765_worker1;
+    commit;
+
+    connect '$(DSN)' user tmp$c2765_worker1 password '456';
+    select current_user as who_am_i, current_role as what_is_my_role from rdb$database;
+
+    -- all these statements should pass:
+    set count on;
+    select * from test;
+    update test set id=-id;
+    delete from test;
+    insert into test(id,x) values(2, 2000);
+    set count off;
+    rollback;
+
+
+    connect '$(DSN)' user tmp$c2765_admin password '123';
+    select current_user as who_am_i, current_role as what_is_my_role from rdb$database;
+    commit;
+
+    grant all on test to tmp$c2765_worker2; -- should fail!
+    commit;
+
+    connect '$(DSN)' user tmp$c2765_worker2 password '789';
+    select current_user as who_am_i, current_role as what_is_my_role from rdb$database;
+    select * from test; -- should FAIL!
+    commit;
+
+    -- cleanup:
+    -- ########
+    connect '$(DSN)' user sysdba password 'masterkey';
+    drop user tmp$c2765_admin;
+    drop user tmp$c2765_worker1;
+    drop user tmp$c2765_worker2;
+    commit;
+
+  """,
+ 'expected_stdout': 
+  """
+    WHO_AM_I                        TMP$C2765_ADMIN
+    WHAT_IS_MY_ROLE                 RDB$ADMIN
+
+    WHO_AM_I                        TMP$C2765_WORKER1
+    WHAT_IS_MY_ROLE                 NONE
+    ID                              1
+    X                               1000
+
+    Records affected: 1
+    Records affected: 1
+    Records affected: 1
+    Records affected: 1
+
+    WHO_AM_I                        TMP$C2765_ADMIN
+    WHAT_IS_MY_ROLE                 NONE
+
+    WHO_AM_I                        TMP$C2765_WORKER2
+    WHAT_IS_MY_ROLE                 NONE
+
+  """,
+  'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -GRANT failed
+    -no SELECT privilege with grant option on table/view TEST
+    Statement failed, SQLSTATE = 28000
+    no permission for SELECT access to TABLE TEST
+  """,
+  'substitutions': [
+      ('no (S|SELECT) privilege with grant option on table/view TEST', 'no SELECT privilege with grant option on table/view TEST')
+  ]
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    --set bail on;
+    set list on;
+    set wng off;
+    create or alter user tmp$c2765_admin password '123';
+    create or alter user tmp$c2765_worker1 password '456';
+    create or alter user tmp$c2765_worker2 password '789';
+
+    grant rdb$admin to tmp$c2765_admin;
+    commit;
+   
+    recreate table test(id int, x int);
+    commit;
+    insert into test(id, x) values(1, 1000);
+    commit;
+
+    connect '$(DSN)' user tmp$c2765_admin password '123' role 'RDB$ADMIN';
+    select current_user as who_am_i, current_role as what_is_my_role from rdb$database;
+    --select * from test;
+    commit;
+
+    grant all on test to tmp$c2765_worker1;
+    commit;
+
+    connect '$(DSN)' user tmp$c2765_worker1 password '456';
+    select current_user as who_am_i, current_role as what_is_my_role from rdb$database;
+
+    -- all these statements should pass:
+    set count on;
+    select * from test;
+    update test set id=-id;
+    delete from test;
+    insert into test(id,x) values(2, 2000);
+    set count off;
+    rollback;
+
+
+    connect '$(DSN)' user tmp$c2765_admin password '123';
+    select current_user as who_am_i, current_role as what_is_my_role from rdb$database;
+    commit;
+
+    grant all on test to tmp$c2765_worker2; -- should fail!
+    commit;
+
+    connect '$(DSN)' user tmp$c2765_worker2 password '789';
+    select current_user as who_am_i, current_role as what_is_my_role from rdb$database;
+    select * from test; -- should FAIL!
+    commit;
+
+    -- cleanup:
+    -- ########
+    connect '$(DSN)' user sysdba password 'masterkey';
+    drop user tmp$c2765_admin;
+    drop user tmp$c2765_worker1;
+    drop user tmp$c2765_worker2;
+    commit;
+
+  """,
+ 'expected_stdout': 
+  """
+    WHO_AM_I                        TMP$C2765_ADMIN
+    WHAT_IS_MY_ROLE                 RDB$ADMIN
+
+    WHO_AM_I                        TMP$C2765_WORKER1
+    WHAT_IS_MY_ROLE                 NONE
+    ID                              1
+    X                               1000
+
+    Records affected: 1
+    Records affected: 1
+    Records affected: 1
+    Records affected: 1
+
+    WHO_AM_I                        TMP$C2765_ADMIN
+    WHAT_IS_MY_ROLE                 NONE
+
+    WHO_AM_I                        TMP$C2765_WORKER2
+    WHAT_IS_MY_ROLE                 NONE
+
+  """,
+  'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -GRANT failed
+    -no SELECT privilege with grant option on table/view TEST
+    Statement failed, SQLSTATE = 28000
+    no permission for SELECT access to TABLE TEST
+    -Effective user is TMP$C2765_WORKER2
+  """,
+  'substitutions': [
+      ('no (S|SELECT) privilege with grant option on table/view TEST', 'no SELECT privilege with grant option on table/view TEST')
+  ]
+}
+]
+}

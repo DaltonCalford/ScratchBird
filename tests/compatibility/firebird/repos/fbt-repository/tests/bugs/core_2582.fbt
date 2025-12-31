@@ -1,0 +1,133 @@
+{
+'id': 'bugs.core_2582',
+'qmid': None,
+'tracker_id': 'CORE-2582',
+'title': 'Infinity from UDF should be trapped by the engine',
+'description':
+  """
+    24.01.2019. 
+    Disabled this test to be run on FB 4.0: added record to '%FBT_REPO%\tests\qa4x-exclude-list.txt'.
+    UDF usage is deprecated in FB 4+, see: ".../doc/README.incompatibilities.3to4.txt".
+    Added EMPTY section for FB version 4.0 in this .fbt as one more way to protect from running.
+  """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    DECLARE EXTERNAL FUNCTION DPOWER
+    DOUBLE PRECISION BY DESCRIPTOR, DOUBLE PRECISION BY DESCRIPTOR, DOUBLE PRECISION BY DESCRIPTOR
+    RETURNS PARAMETER 3
+    ENTRY_POINT 'power' MODULE_NAME 'fbudf';
+
+    DECLARE EXTERNAL FUNCTION XASIN
+    DOUBLE PRECISION
+    RETURNS DOUBLE PRECISION BY VALUE
+    ENTRY_POINT 'IB_UDF_asin' MODULE_NAME 'ib_udf';
+
+    DECLARE EXTERNAL FUNCTION XDIV
+    INTEGER, INTEGER
+    RETURNS DOUBLE PRECISION BY VALUE
+    ENTRY_POINT 'IB_UDF_div' MODULE_NAME 'ib_udf';
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select dpower(1e120, 3) from rdb$database;
+    select xasin(2) from rdb$database;
+    select xdiv(10, 0) from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 39000
+    expression evaluation not supported
+    -Floating point overflow in result from UDF DPOWER
+
+    Statement failed, SQLSTATE = 39000
+    expression evaluation not supported
+    -Invalid floating point value returned by UDF XASIN
+
+    Statement failed, SQLSTATE = 39000
+    expression evaluation not supported
+    -Floating point overflow in result from UDF XDIV
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    DECLARE EXTERNAL FUNCTION DPOWER
+    DOUBLE PRECISION BY DESCRIPTOR, DOUBLE PRECISION BY DESCRIPTOR, DOUBLE PRECISION BY DESCRIPTOR
+    RETURNS PARAMETER 3
+    ENTRY_POINT 'power' MODULE_NAME 'fbudf';
+
+    DECLARE EXTERNAL FUNCTION XASIN
+    DOUBLE PRECISION
+    RETURNS DOUBLE PRECISION BY VALUE
+    ENTRY_POINT 'IB_UDF_asin' MODULE_NAME 'ib_udf';
+
+    DECLARE EXTERNAL FUNCTION XDIV
+    INTEGER, INTEGER
+    RETURNS DOUBLE PRECISION BY VALUE
+    ENTRY_POINT 'IB_UDF_div' MODULE_NAME 'ib_udf';
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select dpower(1e120, 3) from rdb$database;
+    select xasin(2) from rdb$database;
+    select xdiv(10, 0) from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 39000
+    expression evaluation not supported
+    -Floating point overflow in result from UDF DPOWER
+    -UDF: DPOWER
+
+    Statement failed, SQLSTATE = 39000
+    expression evaluation not supported
+    -Invalid floating point value returned by UDF XASIN
+    -UDF: XASIN
+
+    Statement failed, SQLSTATE = 39000
+    expression evaluation not supported
+    -Floating point overflow in result from UDF XDIV
+    -UDF: XDIV
+  """
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+     -- This section was intentionally left empty.
+     -- No message should be in expected_* sections.
+     -- It is STRONGLY RECOMMENDED to add this ticket
+     -- in the 'excluded-list file:
+     -- %FBT_REPO%\tests\qa4x-exclude-list.txt
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

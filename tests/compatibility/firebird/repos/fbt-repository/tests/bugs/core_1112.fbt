@@ -1,0 +1,30 @@
+{
+'id': 'bugs.core_1112',
+'qmid': 'bugs.core_1112',
+'tracker_id': 'CORE-1112',
+'title': 'Crash when dealing with a string literal longer than 32K',
+'description': 'This test may crash the server',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': """c = db_conn.cursor()
+longstr = 'abc' * 10930
+try:
+  c.execute("select * from rdb$database where '%s' = 'a'" % longstr)
+except:
+  pass
+
+try:
+  c.execute("select * from rdb$database where '%s' containing 'a'" % longstr)
+except:
+  pass
+c.execute("select 'a' from rdb$database")
+print (c.fetchall())""",
+ 'expected_stdout': """[('a',)]
+"""
+}
+]
+}

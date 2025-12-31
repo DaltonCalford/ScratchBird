@@ -1,0 +1,48 @@
+{
+'id': 'bugs.core_3503',
+'qmid': None,
+'tracker_id': 'CORE-3503',
+'title': 'ALTER VIEW crashes the server if the new version has an artificial (aggregate or union) stream at the position of a regular context in the older version',
+'description':
+ """
+    Checked on:
+        4.0.0.1635 SS: 1.890s.
+        3.0.5.33182 SS: 1.207s.
+        2.5.9.27146 SC: 0.360s.
+ """,
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core3503.fbk',
+ 'database_character_set': 'NONE',
+ 'connection_character_set': 'NONE',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create or alter view v_test (id)
+    as
+    select rdb$relation_id from rdb$relations
+    union all
+    select rdb$relation_id from rdb$relations;
+    commit; -- here the crash happens 
+    set list on;
+    select (select count(id) from v_test) / count(*) c
+    from rdb$relations;
+  """,
+ 'expected_stdout': 
+  """
+    C                               2
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions':[ ('[ \t]+',' ') ]
+}
+]
+}

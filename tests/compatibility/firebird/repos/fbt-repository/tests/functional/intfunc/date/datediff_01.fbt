@@ -1,0 +1,27 @@
+{
+'id': 'functional.intfunc.date.datediff_01',
+'qmid': 'functional.intfunc.date.datediff_01',
+'tracker_id': '',
+'title': 'test de la fonction datediff pour avoir un resultat en seconde',
+'description': 'Returns an exact numeric value representing the interval of time from the first date/time/timestamp value to the second one.',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select datediff(SECOND,cast( '12/02/2008 13:33:33' as timestamp),cast( '12/02/2008 13:33:35' as timestamp)) from rdb$database;
+select datediff(SECOND FROM cast( '12/02/2008 13:33:33' as timestamp) TO cast( '12/02/2008 13:33:35' as timestamp)) from rdb$database;""",
+ 'expected_stdout': """
+             DATEDIFF
+=====================
+                    2
+
+
+             DATEDIFF
+=====================
+                    2
+
+"""
+}
+]
+}

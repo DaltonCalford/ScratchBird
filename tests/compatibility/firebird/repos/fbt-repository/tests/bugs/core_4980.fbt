@@ -1,0 +1,108 @@
+{
+'id': 'bugs.core_4980',
+'qmid': None,
+'tracker_id': 'CORE-4980',
+'title': "Operator REVOKE can modify rights granted to system tables at DB creation time",
+'description': 
+ """
+     We create here NON-privileged user and revoke any right from him. Also create trivial table TEST.
+     Then try to connect with as user and query non-system table TEST and system tables.
+     Query to table TEST should be denied, but queries to RDB-tables should run OK and display their data.
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set wng off;
+    create or alter user tmp_c4980 password '123';
+    commit;
+
+    recreate table test(id int);
+    commit;
+    insert into test values(1);
+    commit;
+
+    revoke all on all from tmp_c4980;
+    revoke all on all from public;
+    commit;
+
+    connect '$(DSN)' user tmp_c4980 password '123';
+
+    -- All subsequent statements (being issued by TMP_C4980) failed on 3.0.0.32134 and runs OK on build 32136:
+    set list on;
+
+    select current_user as who_am_i from rdb$database;
+    select current_user as who_am_i, r.rdb$character_set_name from rdb$database r;
+    select current_user as who_am_i, r.rdb$relation_name from rdb$relations r order by rdb$relation_id rows 1;
+    select current_user as who_am_i, t.id from test t; -- this should ALWAYS fail because this is non-system table.
+    commit;
+
+    connect '$(DSN)' user 'SYSDBA' password 'masterkey';
+    drop user tmp_c4980;
+  """,
+ 'expected_stdout': 
+  """
+    WHO_AM_I                        TMP_C4980
+    WHO_AM_I                        TMP_C4980
+    RDB$CHARACTER_SET_NAME          NONE
+    WHO_AM_I                        TMP_C4980
+    RDB$RELATION_NAME               RDB$PAGES
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 28000
+    no permission for SELECT access to TABLE TEST
+  """
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set wng off;
+    create or alter user tmp_c4980 password '123';
+    commit;
+
+    recreate table test(id int);
+    commit;
+    insert into test values(1);
+    commit;
+
+    revoke all on all from tmp_c4980;
+    revoke all on all from public;
+    commit;
+
+    connect '$(DSN)' user tmp_c4980 password '123';
+
+    set list on;
+    select current_user as who_am_i from rdb$database;
+    select current_user as who_am_i, r.rdb$character_set_name from rdb$database r;
+    select current_user as who_am_i, r.rdb$relation_name from rdb$relations r order by rdb$relation_id rows 1;
+    select current_user as who_am_i, t.id from test t; -- this should ALWAYS fail because this is non-system table.
+    commit;
+
+    connect '$(DSN)' user 'SYSDBA' password 'masterkey';
+    drop user tmp_c4980;
+  """,
+ 'expected_stdout': 
+  """
+    WHO_AM_I                        TMP_C4980
+    WHO_AM_I                        TMP_C4980
+    RDB$CHARACTER_SET_NAME          NONE
+    WHO_AM_I                        TMP_C4980
+    RDB$RELATION_NAME               RDB$PAGES
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 28000
+    no permission for SELECT access to TABLE TEST
+    -Effective user is TMP_C4980
+  """
+}
+]
+}

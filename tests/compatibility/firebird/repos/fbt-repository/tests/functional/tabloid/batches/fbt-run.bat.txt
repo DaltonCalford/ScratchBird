@@ -1,0 +1,642 @@
+@echo off
+setlocal enabledelayedexpansion enableextensions
+
+@rem File name: ..\fbt-repo\fbt-run.bat 
+@rem It is recommended to put this file in the top-level QA folder - "fbt-repo".
+@rem Running sample: C:\MIX\firebird\QA\fbt-repo\fbt-run.bat core_NNNN.fbt 
+@rem Also it is convenient to 'bind' this batch to files with pattern *.fbt
+@rem from sub-folder fbt-repo\tests\ (FAR: F10 / Commands / File associations)
+@rem In that case one may always to sit in the folder with .fbt files
+@rem (e.g. fbt-repo\tests\bugs\) and run all necessary tests only by pressing
+@rem [ ENTER ] key on selected .fbt
+@rem My setting for running test against all FB instances in Far Manager "File associations":
+@rem C:\MIX\firebird\QA\fbt-repo\fbt-run.bat !.! 2>&1 | mtee C:\MIX\firebird\QA\fbt-repo\mtee.log
+
+if "%1"=="" (
+  echo Arg #1 is mandatory - name of .fbt file
+  exit
+)
+
+cd >tmp.tmp.tmp
+set /p curdir= < tmp.tmp.tmp
+del tmp.tmp.tmp
+
+set cdprefix=
+set find_what=%~dp0
+
+set fbt_full=%~dp1%1
+
+set repl_with=
+for /f "tokens=* delims=\" %%a in ("%curdir%") do (
+  set string=%%a
+  set cdprefix=!string:%find_what%=%repl_with%!
+  set cdprefix=!cdprefix:tests\=%repl_with%!
+  set cdprefix=!cdprefix:\=.!
+)
+
+@rem cut-off extenstion from name of processed .fbt file: 'core_4786.fbt' ==> 'core_4786'
+set fbt_name=%~n1
+
+@echo off
+
+::::::::::::::::::::::::  change dir to batch ::::::::::::::::::::::
+cd %~dp0
+::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+::::::::::::::::::::::::  read fbt-run.conf  ::::::::::::::::::::::
+call :readcfg %~n0.conf
+:: Result:
+:: get values of all necessary env. variables (fbNNhome, fbNNport)
+::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+@rem results: 0=ok, 1=fault
+
+set res21=0
+set res25=0
+
+set res30sS=0
+set res30Cs=0
+set res30sC=0
+
+set e21size=0
+set e25size=0
+
+set err30Cs=0
+set err30sC=0
+set err30sS=0
+
+del fbt-run.21*.* 2>nul
+del fbt-run.25*.* 2>nul
+del fbt-run.30*.* 2>nul
+del fbt_check_this.*.log 2>nul
+
+@rem if specified than ONLY this FB version will be checked: 25 30ss or 30sc
+set fb_only=%2
+
+if /i .%fb_only%.==.21. goto run21
+if /i .%fb_only%.==.25. goto run25
+
+if /i .%fb_only%.==.30Cs. goto run30Cs
+if /i .%fb_only%.==.30sC. goto run30sC
+if /i .%fb_only%.==.30sS. goto run30sS
+
+set skip21=0
+set skip25=0
+findstr /c:"'min_versions'" %fbt_full% | findstr /c:"3.0">nul
+if errorlevel 1 (
+  findstr /c:"'min_versions'" %fbt_full% | findstr /c:"2.5">nul
+  if errorlevel 1 (
+    set skip21=0
+  ) else (
+    @rem min_version = 2.5 -- we have to SKIP execution for 2.1
+    set skip21=1
+    @echo ############################
+    @echo SKIP running for 2.1
+    @echo ############################
+  )
+) else (
+  @rem min_version = 3.0 -- we have to SKIP execution for 2.1 and 2.5
+  set skip21=1
+  set skip25=1
+  @echo ############################
+  @echo SKIP running for 2.1 and 2.5
+  @echo ############################
+)
+
+@rem echo skip21=%skip21%, skip25=%skip25%
+
+if .%skip25%.==.1. goto run30sS
+if .%skip21%.==.1. goto run25
+
+goto run21
+
+:run21
+  echo.
+  set msg=%time%, FB 2.1. Test: %fbt_name%
+  echo %msg%
+  echo %msg%>fbt-run.21.log
+  echo ------------------------------------------------------->>fbt-run.21.log
+  %fb21home%\fbsvcmgr localhost/%fb21port%:service_mgr user %isc_user% password %isc_password% info_server_version 1>>fbt-run.21.log 2>&1
+  set fbt_run=fbt_run -b %fb21home% %cdprefix%.%fbt_name% -o localhost/%fb21port%
+
+  set msg=Command: %fbt_run%
+  echo %msg%
+  echo %msg%>>fbt-run.21.log
+
+  set pbak=%path%
+  set path=%fb21home%;%path%
+  @rem echo Temply changed path: %path%>>fbt-run.21.log
+
+  @rem This temp database can remain from previous launch fbt-run if it was ebnormally ends.
+  @rem One need to remove it otherwise fbt_run will raise exception 'file exists' when try to create
+  @rem again temp database with the SAME name:
+
+  del .\tmp\%cdprefix%.%fbt_name%.fdb 2>nul
+
+  @rem ####################################################################
+  @rem ########     L A U N C H   F B T _ R U N   f o r   2.1    ##########
+  @rem ####################################################################
+  cmd /c %fbt_run% 1>>fbt-run.21.log 2>fbt-run.21.err
+  copy %~dp0results.trf fbt-run.21.trf 1>nul
+
+  set path=%pbak%
+  @rem echo Restored path: %path%>>fbt-run.21.log
+
+  findstr /B /I "Nothing to run" fbt-run.21.log 1>nul 2>&1
+  if errorlevel 1 goto chkr21
+  echo ### FB 2.1: "NOTHING TO RUN" - ERROR(?) ###
+  set res21=1                       &:: .......... no sense to check on errors because of "Nothing to run"
+  goto run25
+
+:chkr21
+  findstr /B /I "FAIL ERROR" fbt-run.21.log 1>nul 2>&1
+  if errorlevel 1 (
+     findstr /i /r /b /c:"Ran [1-9] tests in" fbt-run.21.log 1>nul 2>&1
+     if errorlevel 1 set res21=1
+
+     findstr /b /e /c:OK fbt-run.21.log 1>nul 2>&1
+     if errorlevel 1 set res21=1
+
+     if .!res21!.==.0. (
+       echo FB 2.1: SUCCESS          &:: ............ test finished OK, continue next one .........
+       if /i .%fb_only%.==.21. goto chk_err
+       goto run25
+     )
+  )
+  echo ### FB 2.1: FAILED ###
+  set res21=1
+  goto run25
+
+
+:run25
+  echo.
+  set msg=%time%, FB 2.5. Test: %fbt_name%
+  echo %msg%
+  echo %msg%>fbt-run.25.log
+  echo ------------------------------------------------------->>fbt-run.25.log
+  %fb25home%\fbsvcmgr localhost/%fb25port%:service_mgr user %isc_user% password %isc_password% info_server_version 1>>fbt-run.25.log 2>&1
+  set fbt_run=fbt_run -b %fb25home% %cdprefix%.%fbt_name% -o localhost/%fb25port%
+
+  set msg=Command: %fbt_run%
+  echo %msg%
+  echo %msg%>>fbt-run.25.log
+
+  set pbak=%path%
+  set path=%fb25home%;%path%
+  @rem echo Temply changed path: %path%>>fbt-run.25.log
+
+  @rem This temp database can remain from previous launch fbt-run if it was ebnormally ends.
+  @rem One need to remove it otherwise fbt_run will raise exception 'file exists' when try to create
+  @rem again temp database with the SAME name:
+
+  del .\tmp\%cdprefix%.%fbt_name%.fdb 2>nul
+
+  @rem ####################################################################
+  @rem ########     L A U N C H   F B T _ R U N   f o r   2.5    ##########
+  @rem ####################################################################
+  cmd /c %fbt_run% 1>>fbt-run.25.log 2>fbt-run.25.err
+  copy %~dp0results.trf fbt-run.25.trf 1>nul
+
+  set path=%pbak%
+  @rem echo Restored path: %path%>>fbt-run.25.log
+
+  findstr /B /I "Nothing to run" fbt-run.25.log 1>nul 2>&1
+  if errorlevel 1 goto chkr25
+  echo ### FB 2.5: "NOTHING TO RUN" - ERROR(?) ###
+  set res25=1                       &:: .......... no sense to check on errors because of "Nothing to run"
+  goto run30sS
+
+:chkr25
+  findstr /B /I "FAIL ERROR" fbt-run.25.log 1>nul 2>&1
+  if errorlevel 1 (
+     findstr /i /r /b /c:"Ran [1-9] tests in" fbt-run.25.log 1>nul 2>&1
+     if errorlevel 1 set res25=1
+
+     findstr /b /e /c:OK fbt-run.25.log 1>nul 2>&1
+     if errorlevel 1 set res25=1
+
+     if .!res25!.==.0. (
+       echo FB 2.5: SUCCESS          &:: ............ test finished OK, continue next one .........
+       if /i .%fb_only%.==.25. goto chk_err
+       goto run30sS
+     )
+  )
+  echo ### FB 2.5: FAILED ###
+  set res25=1
+  goto run30sS
+
+:run30sS
+  echo.
+  set msg=%time%, FB 3.0 SUPER. Test: %fbt_name%
+  echo %msg%
+  echo %msg%>fbt-run.30sS.log
+  echo ------------------------------------------------------->>fbt-run.30sS.log
+  %fb30sShome%\fbsvcmgr localhost/%fb30sSport%:service_mgr user %isc_user% password %isc_password% info_server_version 1>>fbt-run.30sS.log 2>&1
+
+  set fbt_run=fbt_run -b %fb30sShome% %cdprefix%.%fbt_name% -o localhost/%fb30sSport%
+  set msg=Command: %fbt_run%
+  echo %msg%
+  echo %msg%>>fbt-run.30sS.log
+
+  set pbak=%path%
+  set path=%fb30sShome%;%path%
+  @rem echo Temply changed path: %path%>>fbt-run.30sS.log
+
+  @rem This temp database can remain from previous launch fbt-run if it was ebnormally ends.
+  @rem One need to remove it otherwise fbt_run will raise exception 'file exists' when try to create
+  @rem again temp database with the SAME name:
+
+  del .\tmp\%cdprefix%.%fbt_name%.fdb 2>nul
+
+  @rem #######################################################################
+  @rem ########     L A U N C H   F B T _ R U N   f o r   3.0 SS    ##########
+  @rem #######################################################################
+  cmd /c %fbt_run% 1>>fbt-run.30sS.log 2>fbt-run.30sS.err
+  copy %~dp0results.trf fbt-run.30sS.trf 1>nul
+
+  set path=%pbak%
+  @rem echo Restored path: %path%>>fbt-run.30sS.log
+
+  findstr /B /I "Nothing to run" fbt-run.30sS.log 1>nul 2>&1
+  if errorlevel 1 goto chkr30sS
+  echo ### FB 3.0 SUPER: "NOTHING TO RUN" - ERROR(?) ###
+  set res30sS=1                       &:: .......... no sense to check on errors because of "Nothing to run"
+  goto run30sC
+
+
+:chkr30sS
+  findstr /B /I "FAIL ERROR" fbt-run.30sS.log 1>nul 2>&1
+  if errorlevel 1 (
+     findstr /i /r /b /c:"Ran [1-9] tests in" fbt-run.30sS.log 1>nul 2>&1
+     if errorlevel 1 set res30sS=1
+
+     findstr /b /e /c:OK fbt-run.30sS.log 1>nul 2>&1
+     if errorlevel 1 set res30sS=1
+
+     if .!res30sS!.==.0. (
+       echo FB 3.0 SUPER: SUCCESS            &:: ............ test finished OK, continue next one .........
+       if /i .%fb_only%.==.30sS. goto chk_err
+       goto run30Cs
+     )
+  )
+
+  echo ### FB 3.0 SUPER: FAILED ###
+  set res30sS=1
+  goto run30Cs
+
+
+:run30Cs
+  echo.
+  set msg=%time%, FB 3.0 CLASSIC. Test: %fbt_name%
+  echo %msg%
+  echo %msg%>fbt-run.30Cs.log
+  echo ------------------------------------------------------->>fbt-run.30Cs.log
+  %fb30Cshome%\fbsvcmgr localhost/%fb30Csport%:service_mgr user %isc_user% password %isc_password% info_server_version 1>>fbt-run.30Cs.log 2>&1
+
+  set fbt_run=fbt_run -b %fb30Cshome% %cdprefix%.%fbt_name% -o localhost/%fb30Csport%
+  set msg=Command: %fbt_run%
+  echo %msg%
+  echo %msg%>>fbt-run.30Cs.log
+
+  set pbak=%path%
+  set path=%fb30Cshome%;%path%
+  @rem echo Temply changed path: %path%>>fbt-run.30Cs.log
+
+  @rem This temp database can remain from previous launch fbt-run if it was ebnormally ends.
+  @rem One need to remove it otherwise fbt_run will raise exception 'file exists' when try to create
+  @rem again temp database with the SAME name:
+
+  del .\tmp\%cdprefix%.%fbt_name%.fdb 2>nul
+
+  @rem #######################################################################
+  @rem ########     L A U N C H   F B T _ R U N   f o r   3.0 Cs    ##########
+  @rem #######################################################################
+  cmd /c %fbt_run% 1>>fbt-run.30Cs.log 2>fbt-run.30Cs.err
+  copy %~dp0results.trf fbt-run.30Cs.trf 1>nul
+
+  set path=%pbak%
+  @rem echo Restored path: %path%>>fbt-run.30Cs.log
+
+  findstr /B /I "Nothing to run" fbt-run.30Cs.log 1>nul 2>&1
+  if errorlevel 1 goto chkr30Cs
+  echo ### FB 3.0 CLASSIC: "NOTHING TO RUN" - ERROR(?) ###
+  set res30Cs=1                       &:: .......... no sense to check on errors because of "Nothing to run"
+  goto run30sC
+
+
+:chkr30Cs
+  findstr /B /I "FAIL ERROR" fbt-run.30Cs.log 1>nul 2>&1
+  if errorlevel 1 (
+     findstr /i /r /b /c:"Ran [1-9] tests in" fbt-run.30Cs.log 1>nul 2>&1
+     if errorlevel 1 set res30Cs=1
+
+     findstr /b /e /c:OK fbt-run.30Cs.log 1>nul 2>&1
+     if errorlevel 1 set res30Cs=1
+
+     if .!res30Cs!.==.0. (
+       echo FB 3.0 CLASSIC: SUCCESS            &:: ............ test finished OK, continue next one .........
+       if /i .%fb_only%.==.30Cs. goto chk_err
+       goto run30sC
+     )
+  )
+
+  echo ### FB 3.0 CLASSIC: FAILED ###
+  set res30Cs=1
+  goto run30sC
+
+
+:run30sC
+  echo.
+  set msg=%time%, FB 3.0 SUPERCLASSIC. Test: %fbt_name%
+  echo %msg%
+  echo %msg%>fbt-run.30sC.log
+  echo ------------------------------------------------------->>fbt-run.30sC.log
+  %fb30sChome%\fbsvcmgr localhost/%fb30sCport%:service_mgr user %isc_user% password %isc_password% info_server_version 1>>fbt-run.30sC.log 2>&1
+
+  set fbt_run=fbt_run -b %fb30sChome% %cdprefix%.%fbt_name% -o localhost/%fb30sCport%
+  set msg=Command: %fbt_run%
+  echo %msg%
+  echo %msg%>>fbt-run.30sC.log
+
+  set pbak=%path%
+  set path=%fb30sChome%;%path%
+  @rem echo Temply changed path: %path%>>fbt-run.30sC.log
+
+  @rem This temp database can remain from previous launch fbt-run if it was ebnormally ends.
+  @rem One need to remove it otherwise fbt_run will raise exception 'file exists' when try to create
+  @rem again temp database with the SAME name:
+
+  del .\tmp\%cdprefix%.%fbt_name%.fdb 2>nul
+
+  @rem #######################################################################
+  @rem ########     L A U N C H   F B T _ R U N   f o r   3.0 SC    ##########
+  @rem #######################################################################
+  cmd /c %fbt_run% 1>>fbt-run.30sC.log 2>fbt-run.30sC.err
+  copy %~dp0results.trf fbt-run.30sC.trf 1>nul
+
+  set path=%pbak%
+  @rem echo Restored path: %path%>>fbt-run.30sC.log
+
+  findstr /B /I "Nothing to run" fbt-run.30sC.log 1>nul 2>&1
+  if errorlevel 1 goto chkr30sC
+  echo ### FB 3.0 SUPERCLASSIC: "NOTHING TO RUN" - ERROR(?) ###
+  set res30sC=1                       &:: .......... no sense to check on errors because of "Nothing to run"
+
+  goto chk_err
+
+:chkr30sC
+  findstr /B /I "FAIL ERROR" fbt-run.30sC.log 1>nul 2>&1
+  if errorlevel 1 (
+     findstr /i /r /b /c:"Ran [1-9] tests in" fbt-run.30sC.log 1>nul 2>&1
+     if errorlevel 1 set res30sC=1
+
+     findstr /b /e /c:OK fbt-run.30sC.log 1>nul 2>&1
+     if errorlevel 1 set res30sC=1
+
+     if .!res30sC!.==.0. (
+       echo FB 3.0 SUPERCLASSIC: SUCCESS            &:: ............ test finished OK, continue next one .........
+       if /i .%fb_only%.==.30sC. goto chk_err
+       goto chk_err
+     )
+  )
+
+  echo ### FB 3.0 SUPERCLASSIC: FAILED ###
+  set res30sC=1
+  goto chk_err                         &:: ::::::::::::::::  show log *AND* errors ::::::::::::::::::
+
+
+@rem --- final check ---
+:chk_err
+  
+  @rem Take a little pause (enough to see all results)
+  ping -n 1 -w 500 1.1.1.1 1>nul 2>&1
+
+  for /f "usebackq" %%A in ('fbt-run.21.err') do set e21size=%%~zA
+  if .%e21size%.==.. set e21size=0
+  if %e21size% gtr 0 (
+   set res21=1
+  )
+
+  for /f "usebackq" %%A in ('fbt-run.25.err') do set e25size=%%~zA
+  if .%e25size%.==.. set e25size=0
+  if %e25size% gtr 0 (
+   set res25=1
+  )
+
+  for /f "usebackq" %%A in ('fbt-run.30sS.err') do set err30sS=%%~zA
+  if .%err30sS%.==.. set err30sS=0
+  if %err30sS% gtr 0 (
+    set res30sS=1
+  )
+
+  for /f "usebackq" %%A in ('fbt-run.30Cs.err') do set err30Cs=%%~zA
+  if .%err30Cs%.==.. set err30Cs=0
+  if %err30Cs% gtr 0 (
+    set res30Cs=1
+  )
+
+  for /f "usebackq" %%A in ('fbt-run.30sC.err') do set err30sC=%%~zA
+  if .%err30sC%.==.. set err30sC=0
+  if %err30sC% gtr 0 (
+    set res30sC=1
+  )
+
+echo.
+if .%skip21%.==.0. (
+  echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, log21: start  ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+  type fbt-run.21.log
+  echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, log21: finish ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+  echo.
+)
+
+if .%skip25%.==.0. (
+  echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, log25: start  ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+  type fbt-run.25.log
+  echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, log25: finish ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+  echo.
+)
+echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, log30 SUPER: start  ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+type fbt-run.30sS.log
+echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, log30 SUPER: finish ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+echo.
+echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, log30 CLASSIC: start  ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+type fbt-run.30Cs.log
+echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, log30 CLASSIC: finish ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+echo.
+echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, log30 SUPERCLASSIC: start  ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+type fbt-run.30sC.log
+echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, log30 SUPERCLASSIC: finish ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+
+set /a overall=%res21%+%res25%+%res30sS%+%res30sC%+%res30Cs%
+set faults=
+if NOT .%res21%.==.0. set faults=%faults%_2.1
+if NOT .%res25%.==.0. set faults=%faults%_2.5
+if NOT .%res30sS%.==.0. set faults=%faults%_3.0sS
+if NOT .%res30Cs%.==.0. set faults=%faults%_3.0Cs
+if NOT .%res30sC%.==.0. set faults=%faults%_3.0sC
+set faults=%faults:_= %
+
+if .%overall%.==.0. (
+  echo.
+  echo ###  A L L    O K  ###
+  del fbt-run.30*.err
+  del fbt-run.30*.log
+  if .%skip25%.==.0. (
+    del fbt-run.25.err
+    del fbt-run.25.log
+  ) else (
+    echo NB: SKIPPED test for 2.5
+  )
+  if .%skip21%.==.0. (
+    del fbt-run.21.err
+    del fbt-run.21.log
+  ) else (
+    echo NB: SKIPPED test for 2.1
+  )
+  @rem Take a little pause (enough to see all thre results)
+  ping -n 1 -w 500 1.1.1.1 1>nul 2>&1
+) else (
+
+  if .%skip21%.==.0. (
+    if .%e21size%. gtr .0. (
+      echo.
+      echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, err21: start  ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+      type fbt-run.21.err
+      echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, err21: finish ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+    ) else (
+      del fbt-run.21.err
+    )
+  )
+
+  if .%skip25%.==.0. (
+    if .%e25size%. gtr .0. (
+      echo.
+      echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, err25: start  ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+      type fbt-run.25.err
+      echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, err25: finish ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+    ) else (
+      del fbt-run.25.err
+    )
+  )
+
+  if .%err30sS%. gtr .0. (
+    echo.
+    echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, err30 SUPER: start  ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+    type fbt-run.30sS.err
+    echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, err30 SUPER: finish ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+  ) else (
+    del fbt-run.30sS.err
+  )
+
+  if .%err30Cs%. gtr .0. (
+    echo.
+    echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, err30 CLASSIC: start  ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+    type fbt-run.30Cs.err
+    echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, err30 CLASSIC: finish ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+  ) else (
+    del fbt-run.30Cs.err
+  )
+
+  if .%err30sC%. gtr .0. (
+    echo.
+    echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, err30 SUPERCLASSIC: start  ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+    type fbt-run.30sC.err
+    echo ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^| %fbt_name%, err30 SUPERCLASSIC: finish ^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|^|
+  ) else (
+    del fbt-run.30sC.err
+  )
+ 
+  echo.
+  echo ###   A C H T U N G  ###  At least one of tests FAILED ^>^>^> %faults% ^<^<^<
+  echo.
+  echo Check results in files fbt_check_this.***.log
+  echo -----------------------------------------------
+  if .%skip21%.==.0. (
+    fbt_view -d %~dp0fbt-run.21.trf 1>fbt_check_this.21.log 2>&1
+  )
+  if .%skip25%.==.0. (
+    fbt_view -d %~dp0fbt-run.25.trf 1>fbt_check_this.25.log 2>&1
+  )
+  fbt_view -d %~dp0fbt-run.30sS.trf 1>fbt_check_this.30sS.log 2>&1
+  fbt_view -d %~dp0fbt-run.30Cs.trf 1>fbt_check_this.30Cs.log 2>&1
+  fbt_view -d %~dp0fbt-run.30sC.trf 1>fbt_check_this.30sC.log 2>&1
+)
+
+del %~dp0results.trf 2>nul
+del %~dp0fbt-run.21.trf 2>nul
+del %~dp0fbt-run.25.trf 2>nul
+del %~dp0fbt-run.30sS.trf 2>nul
+del %~dp0fbt-run.30Cs.trf 2>nul
+del %~dp0fbt-run.30sC.trf 2>nul
+
+cd /d %curdir%
+
+if NOT .%overall%.==.0. ping -n 1 -w 800 1.1.1.1 1>nul 2>&1
+goto end
+
+
+@rem ::::::::::::::::::::::::::::::::::::::   r e a d    c o n f i g   :::::::::::::::::::::::::::::::::::::::::
+:readcfg
+
+set cfg=%1
+for /F "tokens=*" %%a in ('findstr /i /r /c:"^[ 	]*[a-z,0-9]" %cfg%') do (
+  if "%%a" neq "" (
+
+    @rem Detect whether value of parameter contain quotes or no. If yes than this
+    @rem value should NOT be changed by removing its whitespaces.
+
+    echo %%a|find """">nul
+
+    if errorlevel 1 ( 
+      @rem @echo ^|%%a^| - does NOT contain quotes
+      for /F "tokens=1-2 delims==" %%i in ("%%a") do (
+        @rem echo Parsed-NON-quoted: param="%%i" val="%%j"
+        if "%%j"=="" (
+          set err_setenv=1
+          echo. && echo ### NO VALUE found for parameter "%%i" ### && echo.
+        ) else (
+
+          @rem _NAME_ and _VALUE_ of parameter (both can be with leading and trailing whitespaces):
+          set par=%%i
+          set val=%%j
+
+          @rem -----------------------------------
+          @rem When "delims=" clause is NOT specified then default delimeters are TAB and SPACE.
+          @rem If we take 1st token from such string than it will be WITHOUT whitespaces.
+          @rem Similarly for _VALUE_ of parameter:
+          @rem -----------------------------------
+          for /F "tokens=1" %%p in ("!par!") do (
+            @rem echo param=^|%%i^|, name w/o white-spaces=^|%%p^|
+            for /F "tokens=1" %%u in ("!val!") do (
+              set %%p=%%u
+              @rem echo param=^|%%p^|, value w/o white-spaces=^|%%u^|
+            )
+          )
+        )
+      )
+
+    ) else (
+
+      @rem @echo ^|%%a^| - DOES contain quotes
+      for /F "tokens=1-2 delims==" %%i in ("%%a") do (
+        @rem echo Parsed-quoted: param="%%i" val="%%j"
+        set par=%%i
+
+        if "%%j"=="" (
+          set err_setenv=1
+          echo. && echo ### NO VALUE found for parameter "%%i" ### && echo.
+        ) else (
+          @rem We can remove all white-spaces only from _NAME_ of parameter
+          @rem but NOT from its _VALUE_
+          for /F "tokens=1" %%p in ("!par!") do (
+            set %%p=%%j
+            @rem echo param=^|%%p^|, value w/o white-spaces=^|%%j^|
+          )
+        )
+      )
+    )
+  )
+)
+goto:eof
+
+:end

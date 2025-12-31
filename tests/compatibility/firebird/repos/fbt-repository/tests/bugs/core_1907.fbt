@@ -1,0 +1,30 @@
+{
+'id': 'bugs.core_1907',
+'qmid': None,
+'tracker_id': 'CORE-1907',
+'title': 'Dropping and adding a domain constraint in the same transaction leaves incorrect dependencies',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table t1 (n integer);
+create table t2 (n integer);
+
+create domain d1 integer check (value = (select n from t1));
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """set autoddl off;
+
+alter domain d1 drop constraint;
+alter domain d1 add constraint check (value = (select n from t2));;
+commit;
+
+drop table t1; -- cannot drop - there are dependencies
+commit;
+"""
+}
+]
+}

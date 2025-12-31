@@ -1,0 +1,79 @@
+{
+'id': 'bugs.core_0927',
+'qmid': '',
+'tracker_id': 'CORE-927',
+'title': "Grants don't work for procedures used inside views",
+'description':
+ """
+    Checked on: 4.0.0.1635: OK, 2.209s; 3.0.5.33180: OK, 1.838s; 2.5.9.27119: OK, 0.292s.
+ """,
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set wng off;
+    set list on;
+
+    -- Drop old account if it remains from prevoius run:
+    set term ^;
+    execute block as
+    begin
+        begin
+        execute statement 'drop user tmp$c0927' with autonomous transaction;
+            when any do begin end
+        end
+    end^
+    set term ;^
+    commit;
+
+    create user tmp$c0927 password '123';
+    commit;
+    revoke all on all from tmp$c0927;
+    commit;
+    
+    create or alter view v_test as select 1 id from rdb$database;
+    commit;
+    
+    set term ^;
+    create or alter procedure sp_test returns (result integer) as
+    begin
+        result = 1;
+        suspend;
+    end
+    ^
+    set term ;^
+    commit;
+    
+    create or alter view v_test as
+    select (select result from sp_test) as result from rdb$database;
+    
+    grant execute on procedure sp_test to view v_test;
+    grant select on v_test to tmp$c0927;
+    commit;
+
+    -------------------------------------------------
+    connect '$(DSN)' user 'tmp$c0927' password '123';
+    -------------------------------------------------
+    select current_user as who_am_i, v.* from v_test v;
+    commit;
+
+    connect '$(DSN)' user 'SYSDBA' password 'masterkey';
+
+    drop user tmp$c0927;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+    WHO_AM_I                        TMP$C0927
+    RESULT                          1
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -1,0 +1,58 @@
+{
+'id': 'bugs.core_4203',
+'qmid': None,
+'tracker_id': 'CORE-4203',
+'title': 'Cannot create packaged routines with [VAR]CHAR parameters',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^;
+    create package test1 as
+    begin
+       function f1(x char(3)) returns char(6) ;
+    end
+    ^
+    commit ^
+
+    create package body test1 as
+    begin
+        function f1(x char(3)) returns char(6) as
+        begin
+            return x;
+        end
+    end
+    ^
+    
+    show package test1
+    ^
+  """,
+ 'expected_stdout': 
+  """
+    TEST1                           
+    Header source:
+    begin
+           function f1(x char(3)) returns char(6) ;
+        end
+    
+    Body source:
+    begin
+            function f1(x char(3)) returns char(6) as
+            begin
+                return x;
+            end
+        end
+  """
+}
+]
+}

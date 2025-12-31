@@ -1,0 +1,26 @@
+{
+'id': 'bugs.core_2579',
+'qmid': None,
+'tracker_id': 'CORE-2579',
+'title': 'Parameters and variables cannot be used as expressions in EXECUTE PROCEDURE parameters without a colon prefix',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """set term ^ ;
+
+create procedure P123 (param int)
+as
+begin
+   execute procedure p123 (param);
+end ^
+
+set term ; ^
+"""
+}
+]
+}

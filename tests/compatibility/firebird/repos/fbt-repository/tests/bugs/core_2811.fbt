@@ -1,0 +1,65 @@
+{
+'id': 'bugs.core_2811',
+'qmid': None,
+'tracker_id': 'CORE-2811',
+'title': "Unsuccessful execution' error when updating a record",
+'description': """CREATE OR ALTER TRIGGER NEW_TRIGGER FOR NEW_TABLE
+ACTIVE AFTER UPDATE POSITION 20
+AS
+-- Typically this variable would be used in the trigger. To make it simple, I've
+-- removed all code possible to still get the error.
+declare variable NewHours numeric(9,2) = 0;
+BEGIN
+-- Remove the coalesce and the update will work.
+-- Remove the multiplication and the update will work.
+-- Remove this unneeded variable and the update will work.
+NewHours = coalesce(new.new_field * (0), 0);
+
+-- Remove this exit command and the update will work. I know it's not needed,
+-- however in the scenario I ran into this there was much more code after the
+-- exit, and the exit was inside an IF clause. This is just the simplest way of reproducing it.
+exit;
+end
+^
+
+-- Now update the record to see the error:
+update new_table set new_field = 6;""",
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE NEW_TABLE (
+    NEW_FIELD NUMERIC(9,2)
+);
+
+INSERT INTO NEW_TABLE (NEW_FIELD) VALUES (4);
+
+SET TERM ^ ;
+
+CREATE OR ALTER TRIGGER NEW_TRIGGER FOR NEW_TABLE
+ACTIVE AFTER UPDATE POSITION 20
+AS
+declare variable NewHours numeric(9,2) = 0;
+BEGIN
+NewHours = coalesce(new.new_field * (0), 0);
+exit;
+end
+^
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """update new_table set new_field = 6;
+select new_field from new_table;
+""",
+ 'expected_stdout': """
+   NEW_FIELD
+============
+        6.00
+
+"""
+}
+]
+}

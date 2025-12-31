@@ -1,0 +1,47 @@
+{
+'id': 'bugs.core_6526',
+'qmid': '',
+'tracker_id': 'CORE-6526',
+'title': 'AV in engine when StatementTimeout is active for user statement and some internal DSQL statement was executed as part of overall execution process',
+'description':
+ """
+    Confirmed crash on 4.0.0.2387.
+    Checked on 4.0.0.2394 SS/CS - works OK.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set bail on;
+    set heading off;
+    set term ^;
+    execute block as begin
+      in autonomous transaction do
+         execute statement 'set statistics index rdb$index_0';
+    end
+    ^
+    set statement timeout 60
+    ^
+    execute block as begin
+      in autonomous transaction do
+         execute statement 'set statistics index rdb$index_0';
+    end
+    ^
+    set term ;^
+    commit;
+    select 'Done.' from rdb$database;
+  """,
+ 'expected_stdout':
+  """
+    Done.
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

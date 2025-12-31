@@ -1,0 +1,91 @@
+{
+'id': 'bugs.core_1286',
+'qmid': 'bugs.core_1286',
+'tracker_id': 'CORE-1286',
+'title': 'Bug with COMPUTED BY fields',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.0.2',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'init_script': """create table T (COL1 INTEGER);
+commit;
+insert into T values (1);
+insert into T values (2);
+insert into T values (3);
+commit;
+""",
+ 'test_type': 'Python',
+ 'test_script': '''script = """select * from T;
+
+alter table T add STR1 computed by ('BLA-BLA-BLA');
+commit;
+
+select * from T;
+"""
+
+runProgram('isql',[dsn,'-user',user_name,'-pas',user_password],script)
+''',
+ 'expected_stdout': """Database:  localhost:c:\db\qaug.fdb, User: SYSDBA
+SQL>
+        COL1
+============
+           1
+           2
+           3
+
+SQL> SQL> SQL> SQL> SQL>
+        COL1 STR1
+============ ============================================
+           1 BLA-BLA-BLA
+           2 BLA-BLA-BLA
+           3 BLA-BLA-BLA
+
+SQL> SQL>""",
+ 'substitutions': [('Database.*',''),('SQL>.*','')]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'init_script': """create table T (COL1 INTEGER);
+commit;
+insert into T values (1);
+insert into T values (2);
+insert into T values (3);
+commit;
+""",
+ 'test_type': 'Python',
+ 'test_script': '''script = """select * from T;
+
+alter table T add STR1 computed by ('BLA-BLA-BLA');
+commit;
+
+select * from T;
+"""
+
+runProgram('isql',[dsn,'-user',user_name,'-pas',user_password],script)
+''',
+ 'expected_stdout': """
+        COL1
+============
+           1
+           2
+           3
+
+
+        COL1 STR1
+============ ===========
+           1 BLA-BLA-BLA
+           2 BLA-BLA-BLA
+           3 BLA-BLA-BLA
+
+""",
+ 'substitutions': [('Database.*',''),('SQL>.*','')]
+}
+]
+}

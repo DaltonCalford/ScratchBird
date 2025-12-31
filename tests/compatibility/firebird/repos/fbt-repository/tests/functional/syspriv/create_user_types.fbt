@@ -1,0 +1,131 @@
+{
+'id': 'functional.syspriv.create_user_types',
+'tracker_id': '',
+'title': 'Check ability to update content of RDB$TYPES.',
+'description':
+ """
+ """,
+'min_versions': '4.0.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set wng off;
+    set list on;
+
+    create or alter view v_check as
+    select 
+         current_user as who_ami
+        ,r.rdb$role_name
+        ,rdb$role_in_use(r.rdb$role_name) as RDB_ROLE_IN_USE
+        ,r.rdb$system_privileges
+    from mon$database m cross join rdb$roles r;
+    commit;
+    grant select on v_check to public;
+    commit;
+
+    create or alter user dba_helper_create_usr_types password '123' revoke admin role;
+    revoke all on all from dba_helper_create_usr_types;
+    commit;
+
+    set term ^;
+    execute block as
+    begin
+      execute statement 'drop role role_for_create_user_types';
+      when any do begin end
+    end^
+    set term ;^
+    commit;
+
+    -- Add/change/delete non-system records in RDB$TYPES
+    create role role_for_create_user_types set system privileges to CREATE_USER_TYPES;
+    commit;
+    grant default role_for_create_user_types to user dba_helper_create_usr_types;
+    commit;
+
+    connect '$(DSN)' user dba_helper_create_usr_types password '123';
+    select * from v_check;
+    commit;
+
+    --set echo on;
+
+    insert into rdb$types(rdb$field_name, rdb$type, rdb$type_name, rdb$description, rdb$system_flag)
+      values( 'amount_avaliable', 
+              -32767, 
+              'stock_amount', 
+              'Total number of units that can be sold immediately to any customer', 
+              0 -- rdb$system_flag
+            )
+    returning rdb$field_name, rdb$type, rdb$type_name, rdb$description, rdb$system_flag
+    ;
+
+    insert into rdb$types(rdb$field_name, rdb$type, rdb$type_name, rdb$description, rdb$system_flag)
+      values( 'amount_ion_reserve', 
+              -2, 
+              'stock_amount', 
+              'Total number of units that is to be sold for customers who previously did order them', 
+              1 -- rdb$system_flag
+            );
+
+    update rdb$types set rdb$type = -32768, rdb$field_name = null
+    where rdb$type < 0 
+    order by rdb$type 
+    rows 1
+    returning rdb$field_name, rdb$type, rdb$type_name, rdb$description, rdb$system_flag;
+
+    delete from rdb$types where rdb$type < 0
+    returning rdb$field_name, rdb$type, rdb$type_name, 
+    -- rdb$description, -- TODO: uncomment this after core-5287 will be fixed
+    rdb$system_flag
+    ;
+    commit;
+
+    connect '$(DSN)' user sysdba password 'masterkey';
+    drop user dba_helper_create_usr_types;
+    drop role role_for_create_user_types;
+    commit;
+  """,
+  'expected_stdout':
+  """
+    WHO_AMI                         DBA_HELPER_CREATE_USR_TYPES
+    RDB$ROLE_NAME                   RDB$ADMIN                                                                                                                                                                                                                                                   
+    RDB_ROLE_IN_USE                 <false>
+    RDB$SYSTEM_PRIVILEGES           FFFFFFFFFFFFFFFF
+
+    WHO_AMI                         DBA_HELPER_CREATE_USR_TYPES
+    RDB$ROLE_NAME                   ROLE_FOR_CREATE_USER_TYPES                                                                                                                                                                                                                                  
+    RDB_ROLE_IN_USE                 <true>
+    RDB$SYSTEM_PRIVILEGES           0800000000000000
+
+    RDB$FIELD_NAME                  amount_avaliable                                                                                                                                                                                                                                            
+    RDB$TYPE                        -32767
+    RDB$TYPE_NAME                   stock_amount                                                                                                                                                                                                                                                
+    RDB$DESCRIPTION                 b:782
+    Total number of units that can be sold immediately to any customer
+    RDB$SYSTEM_FLAG                 0
+
+    RDB$FIELD_NAME                  <null>
+    RDB$TYPE                        -32768
+    RDB$TYPE_NAME                   stock_amount                                                                                                                                                                                                                                                
+    RDB$DESCRIPTION                 b:782
+    Total number of units that can be sold immediately to any customer
+    RDB$SYSTEM_FLAG                 0
+
+
+    RDB$FIELD_NAME                  <null>
+    RDB$TYPE                        -32768
+    RDB$TYPE_NAME                   stock_amount                                                                                                                                                                                                                                                
+    RDB$SYSTEM_FLAG                 0
+  """,
+  'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    INSERT operation is not allowed for system table RDB$TYPES
+  """,
+  'substitutions': [('RDB\$DESCRIPTION.*', 'RDB$DESCRIPTION')]
+}
+]
+}

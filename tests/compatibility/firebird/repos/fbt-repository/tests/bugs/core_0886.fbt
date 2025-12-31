@@ -1,0 +1,46 @@
+{
+'id': 'bugs.core_0886',
+'qmid': None,
+'tracker_id': 'CORE-886',
+'title': 'SPs in views',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """set term !!;
+create procedure MY_PROCEDURE (input1 INTEGER)
+returns (output1 INTEGER)
+as begin
+ output1 = input1+1;
+ suspend;
+end !!
+set term ;!!
+commit;
+
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """create view a_view as
+select * from MY_PROCEDURE(1);
+commit;
+show view a_view;
+select *from a_view;
+""",
+ 'expected_stdout': """Database:  localhost:C:\fbtest2\tmp\bugs.core_0886.fdb, User: SYSDBA
+SQL> CON> SQL> SQL> OUTPUT1                         INTEGER Nullable
+View Source:
+==== ======
+
+select * from MY_PROCEDURE(1)
+SQL>
+     OUTPUT1
+============
+           2
+
+SQL> SQL>"""
+}
+]
+}

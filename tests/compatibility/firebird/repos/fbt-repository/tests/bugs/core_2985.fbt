@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_2985',
+'qmid': None,
+'tracker_id': 'CORE-2985',
+'title': "The new 2.5 feature to alter COMPUTED columns doesn't handle dependencies well",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """create table test (id numeric, f1 varchar(20));
+create table test1(id1 numeric, ff computed((select f1 from test where id=id1)));
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """show table test1;
+alter table test1 alter ff computed(cast(null as varchar(20)));
+drop table test;
+commit;
+show table test1;
+""",
+ 'expected_stdout': """ID1                             NUMERIC(9, 0) Nullable
+FF                              Computed by: ((select f1 from test where id=id1))
+ID1                             NUMERIC(9, 0) Nullable
+FF                              Computed by: (cast(null as varchar(20)))
+"""
+}
+]
+}

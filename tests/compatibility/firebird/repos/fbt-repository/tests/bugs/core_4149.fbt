@@ -1,0 +1,43 @@
+{
+'id': 'bugs.core_4149',
+'qmid': None,
+'tracker_id': 'CORE-4149',
+'title': 'New permission types are not displayed by ISQL',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test(id int); 
+    commit;
+    grant select on test to public; 
+    commit;
+    show grants;
+    
+    create sequence g_test; 
+    commit;
+    
+    grant usage on sequence g_test to public; 
+    commit;
+    show grants;
+  """,
+ 'expected_stdout': 
+  """
+    /* Grant permissions for this database */
+    GRANT SELECT ON TEST TO PUBLIC
+    
+    /* Grant permissions for this database */
+    GRANT SELECT ON TEST TO PUBLIC
+    GRANT USAGE ON SEQUENCE G_TEST TO PUBLIC
+  """
+}
+]
+}

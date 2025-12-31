@@ -1,0 +1,33 @@
+{
+'id': 'bugs.core_1025',
+'qmid': 'bugs.core_1025',
+'tracker_id': 'CORE-1025',
+'title': 'Server crashes at runtime when an explicit MERGE plan is specified over a few JOIN ones',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.0.1',
+ 'platform': 'All',
+ 'init_script': """recreate table t (id int not null);
+alter table t add constraint pk primary key (id);
+
+insert into t values (1);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select *
+from t t1, t t2, t t3, t t4
+where t1.id = t2.id
+  and t2.id = t3.id
+  and t3.id = t4.id
+PLAN MERGE (JOIN (T1 NATURAL, T2 INDEX (PK)), JOIN(T3 NATURAL, T4 INDEX (PK)));
+
+""",
+ 'expected_stdout': """ID           ID           ID           ID
+============ ============ ============ ============
+           1            1            1            1
+
+"""
+}
+]
+}

@@ -1,0 +1,28 @@
+{
+'id': 'functional.basic.db.08',
+'qmid': 'functional.basic.db.db_08',
+'tracker_id': '',
+'title': 'Empty DB - RDB$FILES',
+'description': 'Check for correct content of RDB$FILES in empty database;',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    set count on;
+    select * from rdb$files
+    order by
+        rdb$file_name
+        ,rdb$file_sequence
+    ;
+  """,
+  'expected_stdout':
+  """
+    Records affected: 0
+  """
+}
+]
+}

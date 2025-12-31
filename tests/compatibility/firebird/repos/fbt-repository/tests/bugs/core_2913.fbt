@@ -1,0 +1,27 @@
+{
+'id': 'bugs.core_2913',
+'qmid': None,
+'tracker_id': 'CORE-2913',
+'title': 'COLLATE expressions are applied incorrectly',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    select cast(_dos850 'X' as char(1) character set iso8859_1) collate iso8859_1 as x from rdb$database;
+  """,
+   'expected_stdout': 
+  """
+    X                               X
+  """
+}
+]
+}

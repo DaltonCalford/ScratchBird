@@ -1,0 +1,54 @@
+{
+'id': 'bugs.core_4322',
+'qmid': None,
+'tracker_id': 'CORE-4322',
+'title': 'Engine crashes when use aggregate or window functions in recursive query (instead of producing compiling error)',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'NONE',
+ 'connection_character_set': 'NONE',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+with recursive
+r as(
+  select 0 i,count(*)over() c
+  from rdb$database
+  union all
+  select r.i+1,sum(i)over() from r where r.i<10
+)
+select * from r; 
+
+with recursive
+r as(
+  select 0 i,count(*) c from rdb$database
+  union all
+  select r.i + 1, 0 from r where sum(r.i) = 0
+)
+select * from r; 
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+-SQL error code = -104
+-Recursive member of CTE cannot use aggregate or window function
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+-SQL error code = -104
+-Cannot use an aggregate or window function in a WHERE clause, use HAVING (for aggregate only) instead
+  """
+}
+]
+}

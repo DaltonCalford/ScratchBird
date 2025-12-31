@@ -1,0 +1,37 @@
+{
+'id': 'functional.dml.update_or_insert.02',
+'qmid': 'functional.dml.update_or_insert.update_or_insert_02',
+'tracker_id': '',
+'title': 'UPDATE OR INSERT',
+'description': 'WITH RETURNING Clause',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': 'CREATE TABLE TMPTEST( id INTEGER , name VARCHAR(20) , PRIMARY KEY(id));',
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^ ;
+
+EXECUTE BLOCK
+RETURNS (V integer)
+AS
+
+  BEGIN
+	UPDATE OR INSERT INTO TMPTEST(id, name) VALUES (1,'ivan' )
+	RETURNING id INTO :V;
+	SUSPEND;
+
+  END^
+
+
+SET TERM ; ^
+""",
+ 'expected_stdout': """
+           V
+============
+           1
+
+"""
+}
+]
+}

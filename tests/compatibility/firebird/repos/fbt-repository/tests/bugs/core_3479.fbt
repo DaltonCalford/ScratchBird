@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_3479',
+'qmid': None,
+'tracker_id': 'CORE-3479',
+'title': 'ASCII_VAL raises error instead of return 0 for empty strings',
+'description': 'Added two expressions with "non-typical" arguments',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    select ascii_val('') v1, ascii_val(ascii_char(0)) v2, ascii_val(ascii_char(null)) v3 from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    V1                              0
+    V2                              0
+    V3                              <null>
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

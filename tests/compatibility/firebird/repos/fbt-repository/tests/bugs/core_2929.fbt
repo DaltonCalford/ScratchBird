@@ -1,0 +1,63 @@
+{
+'id': 'bugs.core_2929',
+'qmid': None,
+'tracker_id': 'CORE-2929',
+'title': '"Invalid ESCAPE sequence" when connecting to the database',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set wng off;
+    set list on;
+
+    recreate table t(id int, who_am_i varchar(31) default current_user, whats_my_role varchar(31) default current_role); 
+    commit;
+    insert into t(id) values(0); 
+    commit;
+
+    create user "#" password '#'; 
+    create role "##"; 
+    commit;
+
+    grant "##" to "#"; 
+    commit;
+
+    grant select, insert, update, delete on t to role "##";
+    commit;
+
+    connect '$(DSN)' user "#" password '#' role "##";
+    insert into t(id) values(1);
+    insert into t(id) values(2);
+    update t set id = -id where id = 1;
+    delete from t where id = 0;
+
+    select * from t order by id;
+    commit;
+
+    connect '$(DSN)' user 'SYSDBA' password 'masterkey';
+    drop role "##";
+    drop user "#";
+    commit;
+  """,
+ 'expected_stdout':
+  """
+    ID                              -1
+    WHO_AM_I                        #
+    WHATS_MY_ROLE                   ##
+
+    ID                              2
+    WHO_AM_I                        #
+    WHATS_MY_ROLE                   ##
+  """
+}
+]
+}

@@ -1,0 +1,81 @@
+{
+'id': 'bugs.gh_6942',
+'qmid': None,
+'tracker_id': '',
+'title': 'Incorrect singleton error with MERGE and RETURNING',
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/6942
+
+    Confirmed bug on 5.0.0.172.
+    Checked on: 5.0.0.181 - works fine.
+ """,
+'min_versions': '5.0',
+'versions': [
+{
+ 'firebird_version': '5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    recreate table test(
+        n1 integer,
+        n2 integer
+    );
+
+    insert into test values (1, 10);
+    insert into test values (2, 20);
+    commit;
+
+    --------------------------------------------------
+
+    merge into test
+        using (
+            select 2 x from rdb$database
+            union all
+            select 3 x from rdb$database
+        ) t
+            on test.n1 = t.x
+        when not matched then insert values (3, 30)
+        returning n1, n2;
+    rollback;
+
+    --------------------------------------------------
+
+    set term ^;
+    execute block returns (
+        o1 integer,
+        o2 integer
+    )
+    as
+    begin
+        merge into test
+            using (
+                select 2 x from rdb$database
+                union all
+                select 3 x from rdb$database
+            ) t
+                on test.n1 = t.x
+            when not matched then insert values (3, 30)
+            returning n1, n2 into o1, o2;
+
+        suspend;
+    end
+    ^
+    set term ;^
+
+  """,                                                      
+ 'expected_stdout': 
+  """
+    N1                              3
+    N2                              30
+    O1                              3
+    O2                              30
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

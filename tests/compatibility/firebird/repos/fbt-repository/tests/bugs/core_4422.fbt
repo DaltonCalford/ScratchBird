@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_4422',
+'qmid': None,
+'tracker_id': 'CORE-4422',
+'title': 'FB crashes when using row_number()over( PARTITION BY x) in ORDER by clause',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+  select 1 as n
+  from rdb$database
+  order by row_number()over( PARTITION BY 1);
+  """,
+ 'expected_stdout':
+  """
+           N
+============
+           1
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

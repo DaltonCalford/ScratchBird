@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_5414',
+'qmid': None,
+'tracker_id': 'CORE-5414',
+'title': 'Error restoring on FB 3.0 from FB 2.5: bugcheck 221 (cannot remap)',
+'description':
+ """
+    Test verifies only issue 08/Dec/16 02:47 PM (pointed out by ASF).
+    Confirmed bug on 3.0.1.32539, 3.0.2.32643 got on new database:
+        SQL> select 1 from rdb$database a full join rdb$database b on (exists(select 1 from rdb$database));
+        Statement failed, SQLSTATE = XX000
+        internal Firebird consistency check ((CMP) copy: cannot remap (221), file: RecordSourceNodes.cpp line: 594)
+    Checked on 3.0.2.32676, 4.0.0.511 -- all fine.
+ """,
+'min_versions': '3.0.2',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on; 
+    select 1 x from rdb$database a full join rdb$database b on (exists(select 1 from rdb$database));
+  """,
+  'expected_stdout':
+  """
+    X                               1
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

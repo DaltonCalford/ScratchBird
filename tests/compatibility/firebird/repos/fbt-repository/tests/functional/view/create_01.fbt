@@ -1,0 +1,26 @@
+{
+'id': 'functional.view.create.01',
+'qmid': 'functional.view.create.create_view_01',
+'tracker_id': '',
+'title': 'CREATE VIEW',
+'description': """CREATE VIEW
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE tb(id INT);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE VIEW test AS SELECT * FROM tb;
+SHOW VIEW test;""",
+ 'expected_stdout': """ID                              INTEGER Nullable
+View Source:
+==== ======
+ SELECT * FROM tb"""
+}
+]
+}

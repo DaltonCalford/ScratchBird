@@ -1,0 +1,61 @@
+{
+'id': 'bugs.core_2783',
+'qmid': None,
+'tracker_id': 'CORE-2783',
+'title': "AV using recursive query as subquery in SELECT list and ORDER'ing by them",
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.1.4',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT RDB$RELATION_ID,
+       (WITH RECURSIVE
+         NUM (ID) AS
+         (
+           SELECT 1 FROM RDB$DATABASE
+
+           UNION ALL
+
+           SELECT ID + 1
+             FROM NUM
+            WHERE ID < 10
+         )
+        SELECT MAX(ID) FROM NUM
+       ) AS NNN
+  FROM RDB$DATABASE
+ORDER BY NNN;
+WITH RECURSIVE
+  NUM (ID) AS
+  (
+           SELECT 1 FROM RDB$DATABASE
+
+           UNION ALL
+
+           SELECT ID + 1
+             FROM NUM
+            WHERE ID < 10
+  )
+SELECT RDB$RELATION_ID, (SELECT MAX(ID) FROM NUM) AS NNN
+  FROM RDB$DATABASE
+ORDER BY NNN;
+""",
+ 'expected_stdout': """Database:  localhost:C:\fbtest2\tmp\bugs.core_2783.fdb, User: SYSDBA
+SQL> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON>
+RDB$RELATION_ID          NNN
+=============== ============
+            128           10
+
+SQL> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON>
+RDB$RELATION_ID          NNN
+=============== ============
+            128           10
+
+SQL>"""
+}
+]
+}

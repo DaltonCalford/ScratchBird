@@ -1,0 +1,32 @@
+{
+'id': 'functional.view.create.05',
+'qmid': 'functional.view.create.create_view_05',
+'tracker_id': '',
+'title': 'CREATE VIEW',
+'description': """CREATE VIEW
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+INSERT
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE tb(id INT);
+INSERT INTO tb VALUES(3);
+INSERT INTO tb VALUES(10);
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE VIEW test (id,num) AS SELECT id,5 FROM tb;
+SELECT * FROM test;""",
+ 'expected_stdout': """          ID          NUM
+============ ============
+
+           3            5
+          10            5
+"""
+}
+]
+}

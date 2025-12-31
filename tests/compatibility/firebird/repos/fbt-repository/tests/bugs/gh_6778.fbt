@@ -1,0 +1,148 @@
+{
+'id': 'bugs.core_6397',
+'qmid': None,
+'tracker_id': '',
+'title': 'Inconsistent cursor-driven deletion',
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/6778
+    
+    Confirmed bug on: WI-V4.0.0.2436.
+    Checked on: 4.0.0.2448 - works fine.
+    No errors must be during execution of this code.
+
+    13.10.2022
+    Added spearate section for 5.x with hard-coded
+    PLAN clauses for each cursor - after letter
+    from dimitr 13.10.2022 11:55.
+    Checked on 5.0.0.770.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    create table a1 (id int);
+    create table a2 (id int);
+
+    create index ia1 on a1 (id);
+    create index ia2 on a2 (id);
+
+    commit;
+
+    insert into a1 values (1);
+    insert into a2 values (1);
+    insert into a2 values (1);
+
+    commit;
+
+    set plan;
+
+    set term ^;
+    execute block
+    as
+    begin
+      for select a1.id from a1, a2 where a2.id = a1.id+0 as cursor c do
+        delete from a1 where current of c;
+    end^
+    set term ;^
+
+    -- PLAN JOIN (C A1 NATURAL, C A2 INDEX (IA2))
+    -- Statement failed, SQLSTATE = 22000
+    -- no current record for fetch operation
+    -- -At block line: 5, col: 5
+
+    rollback;
+
+    set term ^;
+    execute block
+    as
+    begin
+      for select a1.id from a1, a2 where a2.id+0 = a1.id as cursor c do
+        delete from a1 where current of c;
+    end^
+    set term ;^
+
+    -- PLAN JOIN (C A2 NATURAL, C A1 INDEX (IA1))
+
+    rollback;
+
+  """,
+ 'expected_stdout': 
+  """
+    PLAN JOIN (C A1 NATURAL, C A2 INDEX (IA2))
+    PLAN JOIN (C A2 NATURAL, C A1 INDEX (IA1))
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+, # ----------------------------- FB 5.x  -----------------------------
+{
+ 'firebird_version': '5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    create table a1 (id int);
+    create table a2 (id int);
+
+    create index ia1 on a1 (id);
+    create index ia2 on a2 (id);
+
+    commit;
+
+    insert into a1 values (1);
+    insert into a2 values (1);
+    insert into a2 values (1);
+
+    commit;
+
+    set plan;
+
+    set term ^;
+    execute block
+    as
+    begin
+        for
+            select a1.id from a1, a2 where a2.id = a1.id
+            PLAN JOIN (A1 NATURAL, A2 INDEX (IA2))
+            as cursor c
+        do
+            delete from a1 where current of c;
+    end
+    ^
+    rollback
+    ^
+
+    execute block
+    as
+    begin
+        for
+            select a1.id from a1, a2 where a2.id = a1.id
+            PLAN JOIN (A2 NATURAL, A1 INDEX (IA1))
+            as cursor c
+        do
+            delete from a1 where current of c;
+    end
+    ^
+    set term ;^
+
+  """,
+ 'expected_stdout': 
+  """
+    -- line 4, column 9
+    PLAN JOIN (C A1 NATURAL, C A2 INDEX (IA2))
+    -- line 4, column 9
+    PLAN JOIN (C A2 NATURAL, C A1 INDEX (IA1))
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions': [('-- line(:)? \d+, col(umn)?(:)? \d+', '-- line, column')]
+}
+]
+}

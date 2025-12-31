@@ -1,0 +1,49 @@
+{
+'id': 'bugs.core_1254',
+'qmid': None,
+'tracker_id': 'CORE-1254',
+'title': 'Problem with DISTINCT and insensitive collations',
+'description': '',
+'min_versions': '2.5',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE TEST
+(GROUP_ID VARCHAR(1) CHARACTER SET UTF8 COLLATE UNICODE_CI,
+QUESTION INTEGER,
+SCORE INTEGER);
+COMMIT;
+INSERT INTO TEST (GROUP_ID,QUESTION,SCORE) VALUES ('a',1,1);
+INSERT INTO TEST (GROUP_ID,QUESTION,SCORE) VALUES ('a',2,1);
+INSERT INTO TEST (GROUP_ID,QUESTION,SCORE) VALUES ('a',3,1);
+INSERT INTO TEST (GROUP_ID,QUESTION,SCORE) VALUES ('A',1,1);
+INSERT INTO TEST (GROUP_ID,QUESTION,SCORE) VALUES ('A',2,1);
+INSERT INTO TEST (GROUP_ID,QUESTION,SCORE) VALUES ('A',3,1);
+COMMIT;
+
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT GROUP_ID, QUESTION, SUM(SCORE) FROM TEST GROUP BY 1,2;
+SELECT DISTINCT GROUP_ID, QUESTION FROM TEST;""",
+ 'expected_stdout': """
+GROUP_ID     QUESTION                   SUM
+======== ============ =====================
+a                   1                     2
+a                   2                     2
+a                   3                     2
+
+
+GROUP_ID     QUESTION
+======== ============
+a                   1
+a                   2
+a                   3
+
+"""
+}
+]
+}

@@ -1,0 +1,37 @@
+{
+'id': 'bugs.core_1246',
+'qmid': None,
+'tracker_id': 'CORE-1246',
+'title': 'Incorrect column values with outer joins and derived tables',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE T1 (N INTEGER);
+CREATE TABLE T2 (N INTEGER);
+
+insert into t1 values (1);
+insert into t1 values (2);
+insert into t2 values (2);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """select *
+    from (select 1 n from rdb$database) t1
+    full join (select 2 n from rdb$database) t2
+        on (t2.n = t1.n)
+;
+
+""",
+ 'expected_stdout': """
+           N            N
+============ ============
+      <null>            2
+           1       <null>
+
+"""
+}
+]
+}

@@ -1,0 +1,24 @@
+{
+'id': 'functional.intfunc.math.floor_01',
+'qmid': 'functional.intfunc.math.floor_01',
+'tracker_id': '',
+'title': 'test for FLOOR',
+'description': 'Returns a value representing the largest integer that is less than or equal to the input argument',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select FLOOR(2.1) from rdb$database;
+	select FLOOR(-4.4) from rdb$database;""",
+ 'expected_stdout': """                      FLOOR
+      =====================
+                          2
+
+
+                      FLOOR
+      =====================
+                         -5"""
+}
+]
+}

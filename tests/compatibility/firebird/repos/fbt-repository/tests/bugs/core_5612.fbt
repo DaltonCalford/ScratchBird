@@ -1,0 +1,55 @@
+{
+'id': 'bugs.core_5612',
+'qmid': None,
+'tracker_id': 'CORE-5612',
+'title': "Gradual slowdown compilation (create, recreate or drop) of views",
+'description':
+ """
+    Checked on 4.0.0.1479: OK, 1.336s.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set count on;
+    select ri.rdb$index_id idx_id,rs.rdb$field_position pos, rs.rdb$field_name key
+    from rdb$indices ri
+    left join rdb$index_segments rs on ri.rdb$index_name = rs.rdb$index_name
+    where ri.rdb$relation_name = upper('rdb$dependencies')
+    order by 1,2;
+  """,
+ 'expected_stdout': 
+  """
+    IDX_ID                          1
+    POS                             0
+    KEY                             RDB$DEPENDENT_NAME
+    IDX_ID                          1
+    POS                             1
+    KEY                             RDB$DEPENDENT_TYPE
+    IDX_ID                          2
+    POS                             0
+    KEY                             RDB$DEPENDED_ON_NAME
+
+    IDX_ID                          2
+    POS                             1
+    KEY                             RDB$DEPENDED_ON_TYPE
+    IDX_ID                          2
+    POS                             2
+    KEY                             RDB$FIELD_NAME
+
+    Records affected: 5
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

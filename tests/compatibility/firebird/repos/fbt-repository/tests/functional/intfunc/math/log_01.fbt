@@ -1,0 +1,22 @@
+{
+'id': 'functional.intfunc.math.log_01',
+'qmid': 'functional.intfunc.math.log_01',
+'tracker_id': '',
+'title': 'test for LOG function',
+'description': """  LOG( <number>, <number> )
+
+returns the logarithm base x of y.
+
+""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'select log(6, 10) from rdb$database;',
+ 'expected_stdout': """                          LOG
+      =======================
+            1.285097208938469"""
+}
+]
+}

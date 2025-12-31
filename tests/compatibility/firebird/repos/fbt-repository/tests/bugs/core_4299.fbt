@@ -1,0 +1,43 @@
+{
+'id': 'bugs.core_4299',
+'qmid': None,
+'tracker_id': 'CORE-4299',
+'title': 'Inappropriate self-reference of column when using "with check option" with extract(...)',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    -- Source description found here:
+    -- http://stackoverflow.com/questions/20505769/inappropriate-self-reference-of-column-when-using-with-check-option-in-fireb
+    create or alter view foo as select current_date dt from rdb$database;
+    commit;
+    
+    recreate table bar(dt date);
+    commit;
+    insert into bar(dt) values ('28.03.2011');
+    commit;
+    
+    create or alter view foo as
+    select * from bar
+    where extract(year from bar.dt) = '2011' 
+    with check option
+    ; 
+  """,
+ 'test_script':
+  """
+  set list on;
+  select * from foo;
+  """,
+ 'expected_stdout': 
+  """
+  DT                              2011-03-28
+  """
+}
+]
+}

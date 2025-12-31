@@ -1,0 +1,53 @@
+{
+'id': 'bugs.core_6987',
+'qmid': None,
+'tracker_id': 'CORE-6987',
+'title': 'DATEDIFF does not support fractional value for MILLISECOND',
+'description':
+ """
+    Checked on 5.0.0.240; 4.0.1.2621; 3.0.8.33506.
+ """,
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '3.0.8',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set sqlda_display on;
+    set list on;
+
+    select datediff(millisecond from timestamp '0001-01-01' to timestamp '0001-01-01 00:00:00.0001') dd_01 from rdb$database;
+    select datediff(millisecond from timestamp '9999-12-31 23:59:59.9999' to timestamp '0001-01-01 00:00:00.0001') dd_02 from rdb$database;
+
+    select datediff(millisecond from time '00:00:00' to time '00:00:00.0001') dd_03 from rdb$database;
+    select datediff(millisecond from time '23:59:59' to time '00:00:00.0001') dd_04 from rdb$database;
+
+  """,
+ 'expected_stdout':
+  """
+    01: sqltype: 580 INT64 scale: -1 subtype: 0 len: 8
+    : name: DATEDIFF alias: DD_01
+    : table: owner:
+    DD_01 0.1
+
+    01: sqltype: 580 INT64 scale: -1 subtype: 0 len: 8
+    : name: DATEDIFF alias: DD_02
+
+    DD_02 -315537897599999.8
+
+    01: sqltype: 580 INT64 scale: -1 subtype: 0 len: 8
+    : name: DATEDIFF alias: DD_03
+    DD_03 0.1
+
+    01: sqltype: 580 INT64 scale: -1 subtype: 0 len: 8
+    : name: DATEDIFF alias: DD_04
+    DD_04 -86398999.9
+  """,
+  'substitutions':[
+      ('^((?!sqltype:|DD_).)*$',''),('[ \t]+',' '),('.*alias:.*','')
+   ]
+}
+]
+}

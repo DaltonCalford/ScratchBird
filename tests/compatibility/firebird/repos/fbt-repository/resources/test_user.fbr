@@ -1,0 +1,6 @@
+{
+ 'id': 'test_user',
+ 'kind': 'user',
+ 'user_name': 'TEST',
+ 'user_password': 'test'
+}

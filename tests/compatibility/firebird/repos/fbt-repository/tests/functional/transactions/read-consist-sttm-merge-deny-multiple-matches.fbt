@@ -1,0 +1,418 @@
+{
+'id': 'functional.transactions.read-consist-sttm-merge-deny-multiple-matches',
+'qmid': '',
+'tracker_id': '',
+'title': "READ CONSISTENCY. MERGE must reject multiple matches, regardless on statement-level restart.",
+'description': 
+ """
+    Initial article for reading:
+    https://asktom.oracle.com/pls/asktom/f?p=100:11:::::P11_QUESTION_ID:11504247549852
+    Note on terms which are used there: "BLOCKER", "LONG" and "FIRSTLAST" - their names are slightly changed here
+    to: LOCKER-1, WORKER and LOCKER-2 respectively.
+
+    See also: doc\README.read_consistency.md
+    Letter from Vlad: 15.09.2020 20:04 // subj "read consistency // addi test(s)"
+
+    ::: NB :::
+    This test uses script %FBT_REPO%\files\read-consist-sttm-restart-DDL.sql which contains common DDL for all other such tests.
+    Particularly, it contains two TRIGGERS (TLOG_WANT and TLOG_DONE) which are used for logging of planned actions and actual
+    results against table TEST. These triggers use AUTONOMOUS transactions in order to have ability to see results in any
+    outcome of test.
+
+    Test verifies DENIAL of multiple matches when MERGE encounteres them, but this statement works in read committed read consistency TIL
+    and forced to do several statement-level restarts before such condition will occur.
+
+    Scenario:
+    * add initial data to the table TEST: six rows with ID and X = (0, ..., 5);
+    * launch LOCKER-1 and catch record with ID = 0: update, then commit and once again update this record (without commit);
+    * launch WORKER which tries to do:
+          merge into test t
+              using (
+                  select s.id, s.x from test as s
+                  where s.id <= 1
+                  order by s.id DESC
+              ) s
+              on abs(t.id) = abs(s.id)
+          when matched then
+              update set t.x = t.x * s.x
+          ;
+      This statement will update record with ID = 1 but then hanging because rows with ID = 0 is locked by LOCKER-1.
+      At this point WORKER changes its TIL to RC NO RECORD_VERSION. This allows WORKER to see all records which will be committed later;
+      NOTE: records with ID = 2...5 will not be subect for this statement (because they will not returned by data source marked as 's').
+
+    * LOCKER-2 updates row with ID = 5 by reverting sign of this field (i.e. set ID to -5), then issues commit and updates this row again (without commit);
+    * LOCKER-1 updates row with ID = 4 and set ID to -4, then issues commit and updates this row again (without commit);
+    * LOCKER-2 updates row with ID = 3 and set ID to -3, then issues commit and updates this row again (without commit);
+    * LOCKER-1 updates row with ID = 2 and set ID to -2, then issues commit and updates this row again (without commit);
+    * LOCKER-2 inserts row (ID,X) = (-1, 1), commit and updates this row again (without commit);
+    * LOCKER-1 issues commit;
+    * LOCKER-2 issues commit;
+
+    Each of updates/inserts which are performed by LOCKERs lead to new record be appeared in the data source 's' of MERGE statement.
+    But note that last statement: insert into test(id,x) values(-1,1) -- creates record that will match TWISE when ON-expression of MERGE
+    will evaluates "abs(t.id) = abs(s.id)": first match will be found for record with ID = +1 and second - for newly added rows with ID=-1.
+
+    At this point MERGE must fail with message
+        Statement failed, SQLSTATE = 21000
+        Multiple source records cannot match the same target during MERGE
+
+    All changes that was performed by MERGE must be rolled back.
+    ISQL which did MERGE must issue "Records affected: 2" because MERGE was actually could process records with ID = 1 and 0 (and failed on row with ID=-1).
+
+    Above mentioned actions are performed two times: first for TABLE and second for naturally-updatable VIEW (v_test), see 'target_object_type'.
+
+    Checked on 4.0.0.2214 SS/CS.
+
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import sys
+import subprocess
+from subprocess import Popen
+import shutil
+from fdb import services
+import time
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+# How long LOCKER must wait before raise update-conflict error
+# (useful for debug in case os some error in this test algorithm):
+LOCKER_LOCK_TIMEOUT = 5
+
+##############################
+# Temply, for debug obly:
+this_fdb=db_conn.database_name
+this_dbg=os.path.splitext(this_fdb)[0] + '.4debug.fdb'
+##############################
+
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for f in f_names_list:
+       if type(f) == file:
+          del_name = f.name
+       elif type(f) == str:
+          del_name = f
+       else:
+          print('Unrecognized type of element:', f, ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+    
+#--------------------------------------------
+
+sql_init_ddl = os.path.join(context['files_location'],'read-consist-sttm-restart-DDL.sql')
+f_worker_sql, f_worker_log, f_worker_err = None, None, None
+
+for target_object_type in('table', 'view'):
+
+
+    target_obj = 'test' if target_object_type == 'table' else 'v_test'
+
+    f_init_log=open( os.path.join(context['temp_directory'],'read-consist-sttm-merge-deny-multiple-matches-DDL.log'), 'w')
+    f_init_err=open( ''.join( ( os.path.splitext(f_init_log.name)[0], '.err') ), 'w')
+
+    # RECREATION OF ALL DB OBJECTS:
+    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    subprocess.call( [context['isql_path'], dsn, '-q', '-i', sql_init_ddl], stdout=f_init_log, stderr=f_init_err )
+    
+    flush_and_close(f_init_log)
+    flush_and_close(f_init_err)
+
+    if os.path.getsize(f_init_err.name):
+        # ::: NOTE ::: We have to immediately quit if any error raised in prepare phase.
+        # See also letter from dimitr, 01-feb-2022 14:46
+        with open(f_init_err.name,'r') as g:
+            for line in g:
+                if line.strip():
+                    print( 'checked_mode: ', checked_mode, ' UNEXPECTED STDERR IN ' + g.name + ':', line)
+        break
+
+    sql_addi='''
+        set term ^;
+        execute block as
+        begin
+            rdb$set_context('USER_SESSION', 'WHO', 'INIT_DATA');
+        end
+        ^
+        set term ;^
+
+         -- INITIAL DATA: add rows with ID = 0...6
+         -- #############
+        insert into %(target_obj)s(id, x)
+        select row_number()over()-1, row_number()over()-1
+        from rdb$types rows 6;
+
+        commit;
+    ''' % locals()
+
+    runProgram('isql', [ dsn, '-q' ], sql_addi)
+
+    locker_tpb = fdb.TPB()
+    locker_tpb.lock_timeout = LOCKER_LOCK_TIMEOUT
+    locker_tpb.lock_resolution = fdb.isc_tpb_wait
+
+    con_lock_1 = fdb.connect( dsn = dsn, isolation_level=locker_tpb )
+    con_lock_2 = fdb.connect( dsn = dsn, isolation_level=locker_tpb )
+
+    con_lock_1.execute_immediate( "execute block as begin rdb$set_context('USER_SESSION', 'WHO', 'LOCKER #1'); end" )
+    con_lock_2.execute_immediate( "execute block as begin rdb$set_context('USER_SESSION', 'WHO', 'LOCKER #2'); end" )
+
+    #########################
+    ###  L O C K E R - 1  ###
+    #########################
+
+    con_lock_1.execute_immediate( 'update %(target_obj)s set id=id where id = 0' % locals() )
+
+    sql_text='''
+        connect '%(dsn)s';
+        set list on;
+        set autoddl off;
+        set term ^;
+        execute block as
+        begin
+            rdb$set_context('USER_SESSION','WHO', 'WORKER');
+        end
+        ^
+        set term ;^
+        commit;
+        SET KEEP_TRAN_PARAMS ON;
+        set transaction read committed read consistency;
+        set list off;
+        set wng off;
+
+        set count on;
+
+        merge into %(target_obj)s t
+            using (
+                select s.id, s.x from %(target_obj)s as s
+                where s.id <= 1
+                order by s.id DESC
+            ) s
+            on abs(t.id) = abs(s.id)
+        when matched then
+            update set t.x = t.x * s.x
+        ;
+
+        -- check results:
+        -- ###############
+
+        select id,x from %(target_obj)s order by id;
+
+        select v.old_id, v.op, v.snap_no_rank
+        from v_worker_log v
+        where v.op = 'upd';
+
+
+        --set width who 10;
+        -- DO NOT check this! Values can differ here from one run to another!
+        -- select id, trn, who, old_id, new_id, op, rec_vers, global_cn, snap_no from tlog_done order by id;
+        rollback;
+
+    '''  % dict(globals(), **locals())
+
+    f_worker_sql=open( os.path.join(context['temp_directory'],'read-consist-sttm-merge-deny-multiple-matches.sql'), 'w')
+    f_worker_sql.write(sql_text)
+    flush_and_close(f_worker_sql)
+
+
+    f_worker_log=open( ''.join( ( os.path.splitext(f_worker_sql.name)[0], '.log') ), 'w')
+    f_worker_err=open( ''.join( ( os.path.splitext(f_worker_log.name)[0], '.err') ), 'w')
+
+    ############################################################################
+    ###  L A U N C H     W O R K E R    U S I N G     I S Q L,   A S Y N C.  ###
+    ############################################################################
+
+    p_worker = Popen( [ context['isql_path'], '-pag', '9999999', '-q', '-i', f_worker_sql.name ],stdout=f_worker_log, stderr=f_worker_err)
+    time.sleep(1)
+
+    cur_lock_1 = con_lock_1.cursor()
+    cur_lock_2 = con_lock_2.cursor()
+
+
+    sttm = 'update %(target_obj)s set id = ? where abs( id ) = ?' % locals()
+
+    #########################
+    ###  L O C K E R - 2  ###
+    #########################
+    cur_lock_2.execute( sttm, ( -5, 5, ) )
+    con_lock_2.commit()
+    cur_lock_2.execute( sttm, ( -5, 5, ) )
+
+    #########################
+    ###  L O C K E R - 1  ###
+    #########################
+    con_lock_1.commit()
+    cur_lock_1.execute( sttm, ( -4, 4, ) )
+    con_lock_1.commit()
+    cur_lock_1.execute( sttm, ( -4, 4, ) )
+
+    #########################
+    ###  L O C K E R - 2  ###
+    #########################
+    con_lock_2.commit()
+    cur_lock_2.execute( sttm, ( -3, 3, ) )
+    con_lock_2.commit()
+    cur_lock_2.execute( sttm, ( -3, 3, ) )
+
+    #########################
+    ###  L O C K E R - 1  ###
+    #########################
+    con_lock_1.commit()
+    cur_lock_1.execute( sttm, ( -2, 2, ) )
+    con_lock_1.commit()
+    cur_lock_1.execute( sttm, ( -2, 2, ) )
+
+    #########################
+    ###  L O C K E R - 2  ###
+    #########################
+    con_lock_2.commit()
+    cur_lock_2.execute( 'insert into %(target_obj)s(id,x) values(?, ?)' % locals(), ( -1, 1, ) )
+    con_lock_2.commit()
+    cur_lock_2.execute( 'update %(target_obj)s set id = id where id = ?' % locals(), ( -1, ) )
+
+    #########################
+    ###  L O C K E R - 1  ###
+    #########################
+    con_lock_1.commit()
+
+    #########################
+    ###  L O C K E R - 2  ###
+    #########################
+    con_lock_2.commit() # At this point merge can complete its job but it must FAIL because of multiple matches for abs(t.id) = abs(s.id), i.e. when ID = -1 and 1
+
+    # Close lockers:
+    ################
+    for c in (con_lock_1, con_lock_2):
+        c.close()
+
+    # Here we wait for ISQL complete its mission:
+    p_worker.wait()
+
+    flush_and_close(f_worker_log)
+    flush_and_close(f_worker_err)
+
+    # CHECK RESULTS
+    ###############
+    for f in (f_worker_log, f_worker_err):
+        with open(f.name,'r') as g:
+            for line in g:
+                if line:
+                    logname = 'STDLOG' if f.name == f_worker_log.name else 'STDERR'
+                    print( 'target_object_type: %(target_object_type)s, worker %(logname)s: %(line)s'  % locals() )
+
+
+# < for target_object_type in ('table', 'view')
+
+# Cleanup.
+##########
+time.sleep(1)
+cleanup( (f_init_log, f_init_err, f_worker_sql, f_worker_log, f_worker_err)  )
+  """,
+ 'expected_stdout':
+  """
+    target_object_type: table, worker STDLOG: Records affected: 2
+    target_object_type: table, worker STDLOG:
+    target_object_type: table, worker STDLOG:      ID       X
+    target_object_type: table, worker STDLOG: ======= =======
+    target_object_type: table, worker STDLOG:      -5       5
+    target_object_type: table, worker STDLOG:      -4       4
+    target_object_type: table, worker STDLOG:      -3       3
+    target_object_type: table, worker STDLOG:      -2       2
+    target_object_type: table, worker STDLOG:      -1       1
+    target_object_type: table, worker STDLOG:       0       0
+    target_object_type: table, worker STDLOG:       1       1
+    target_object_type: table, worker STDLOG:
+    target_object_type: table, worker STDLOG: Records affected: 7
+    target_object_type: table, worker STDLOG:
+    target_object_type: table, worker STDLOG:  OLD_ID OP              SNAP_NO_RANK
+    target_object_type: table, worker STDLOG: ======= ====== =====================
+    target_object_type: table, worker STDLOG:       0 UPD                        1
+    target_object_type: table, worker STDLOG:       1 UPD                        1
+    target_object_type: table, worker STDLOG:       0 UPD                        2
+    target_object_type: table, worker STDLOG:       1 UPD                        2
+    target_object_type: table, worker STDLOG:       0 UPD                        3
+    target_object_type: table, worker STDLOG:       1 UPD                        3
+    target_object_type: table, worker STDLOG:       0 UPD                        4
+    target_object_type: table, worker STDLOG:       1 UPD                        4
+    target_object_type: table, worker STDLOG:       0 UPD                        5
+    target_object_type: table, worker STDLOG:       1 UPD                        5
+    target_object_type: table, worker STDLOG:
+    target_object_type: table, worker STDLOG: Records affected: 10
+    target_object_type: table, worker STDERR: Statement failed, SQLSTATE = 21000
+    target_object_type: table, worker STDERR: Multiple source records cannot match the same target during MERGE
+    target_object_type: table, worker STDERR: After line 18 in file C:\FBTESTING\qa\fbt-repo\tmp\tmp_sttm_restart_max_limit.sql
+    target_object_type: view, worker STDLOG: Records affected: 2
+    target_object_type: view, worker STDLOG:
+    target_object_type: view, worker STDLOG:      ID       X
+    target_object_type: view, worker STDLOG: ======= =======
+    target_object_type: view, worker STDLOG:      -5       5
+    target_object_type: view, worker STDLOG:      -4       4
+    target_object_type: view, worker STDLOG:      -3       3
+    target_object_type: view, worker STDLOG:      -2       2
+    target_object_type: view, worker STDLOG:      -1       1
+    target_object_type: view, worker STDLOG:       0       0
+    target_object_type: view, worker STDLOG:       1       1
+    target_object_type: view, worker STDLOG:
+    target_object_type: view, worker STDLOG: Records affected: 7
+    target_object_type: view, worker STDLOG:
+    target_object_type: view, worker STDLOG:  OLD_ID OP              SNAP_NO_RANK
+    target_object_type: view, worker STDLOG: ======= ====== =====================
+    target_object_type: view, worker STDLOG:       0 UPD                        1
+    target_object_type: view, worker STDLOG:       1 UPD                        1
+    target_object_type: view, worker STDLOG:       0 UPD                        2
+    target_object_type: view, worker STDLOG:       1 UPD                        2
+    target_object_type: view, worker STDLOG:       0 UPD                        3
+    target_object_type: view, worker STDLOG:       1 UPD                        3
+    target_object_type: view, worker STDLOG:       0 UPD                        4
+    target_object_type: view, worker STDLOG:       1 UPD                        4
+    target_object_type: view, worker STDLOG:       0 UPD                        5
+    target_object_type: view, worker STDLOG:       1 UPD                        5
+    target_object_type: view, worker STDLOG:
+    target_object_type: view, worker STDLOG: Records affected: 10
+    target_object_type: view, worker STDERR: Statement failed, SQLSTATE = 21000
+    target_object_type: view, worker STDERR: Multiple source records cannot match the same target during MERGE
+    target_object_type: view, worker STDERR: After line 18 in file C:\FBTESTING\qa\fbt-repo\tmp\tmp_sttm_restart_max_limit.sql
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[
+      ('=','')
+     ,('[ \t]+',' ')
+     ,('.After\s+line\s+\d+\s+.*', '')
+   ]
+
+},
+]
+}

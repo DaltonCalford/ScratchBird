@@ -1,0 +1,33 @@
+{
+'id': 'bugs.core_4258',
+'qmid': None,
+'tracker_id': 'CORE-4258',
+'title': 'Regression: Wrong boundary for minimum value for BIGINT/DECIMAL(18)',
+'description': '',
+'min_versions': '2.1',
+'versions': [
+{
+ 'firebird_version': '2.1.7',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+    recreate table test(x decimal(18), y bigint);
+    commit;
+    insert into test values( -9223372036854775808, -9223372036854775808);
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select * from test;
+  """,
+ 'expected_stdout': 
+  """
+    X                               -9223372036854775808
+    Y                               -9223372036854775808
+  """
+}
+]
+}

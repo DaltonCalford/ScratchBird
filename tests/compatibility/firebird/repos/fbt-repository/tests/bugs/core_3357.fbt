@@ -1,0 +1,122 @@
+{
+'id': 'bugs.core_3357',
+'qmid': None,
+'tracker_id': 'CORE-3357',
+'title': 'Generators are set to 0 after restore',
+'description':
+ """
+    NOTE: FB 4.x has incompatible behaviour with all previous versions since build 4.0.0.2131 (06-aug-2020):
+    statement 'alter sequence <seq_name> restart with 0' changes rdb$generators.rdb$initial_value to -1 thus
+    next call of gen_id(<seq_name>,1) will return 0 (ZERO!) rather than 1. 
+    See also CORE-6084 and its fix: https://github.com/FirebirdSQL/firebird/commit/23dc0c6297825b2e9006f4d5a2c488702091033d
+    This is considered as *expected* and is noted in doc/README.incompatibilities.3to4.txt
+
+    Because of this it was decided to create separate section for check FB 4.x results.
+    Checked on 4.0.0.2164
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script':
+  """
+    create sequence g1;
+    create sequence g2;
+    alter sequence g1 restart with 9223372036854775807;
+    alter sequence g2 restart with -9223372036854775808;
+    commit;
+  """,
+ 'test_type': 'Python',
+ 'test_script':"""#
+import os
+db_conn.close()
+fbk = os.path.join(context['temp_directory'],'tmp.core_3942.fbk')
+runProgram('gbak',['-b','-user',user_name,'-password',user_password,dsn,fbk])
+runProgram('gbak',['-rep','-user',user_name,'-password',user_password,fbk,dsn])
+sql='''show sequ g1;
+show sequ g2;
+'''
+runProgram('isql',[dsn,'-user',user_name,'-pas',user_password],sql)
+
+if os.path.isfile(fbk):
+    os.remove(fbk)
+"""
+,
+ 'expected_stdout':
+  """
+    Generator G1, current value is 9223372036854775807
+    Generator G2, current value is -9223372036854775808
+  """,
+ 'expected_stderr':
+  """
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+    recreate sequence g1 start with 9223372036854775807 increment by -2147483647;
+    recreate sequence g2 start with -9223372036854775808 increment by 2147483647;
+    commit;
+  """,
+ 'test_type': 'Python',
+ 'test_script':"""import os
+db_conn.close()
+fbk = os.path.join(context['temp_directory'],'tmp.core_3942.fbk')
+runProgram('gbak',['-b','-user',user_name,'-password',user_password,dsn,fbk])
+runProgram('gbak',['-rep','-user',user_name,'-password',user_password,fbk,dsn])
+sql='''show sequ g1;
+show sequ g2;
+'''
+runProgram('isql',[dsn,'-user',user_name,'-pas',user_password],sql)
+
+if os.path.isfile(fbk):
+    os.remove(fbk)
+"""
+,
+ 'expected_stdout':
+  """
+    Generator G1, current value: 9223372036854775807, initial value: 9223372036854775807, increment: -2147483647
+    Generator G2, current value: -9223372036854775808, initial value: -9223372036854775808, increment: 2147483647
+  """,
+ 'expected_stderr':
+  """
+  """
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+    recreate sequence g1 start with 9223372036854775807 increment by -2147483647;
+    recreate sequence g2 start with -9223372036854775808 increment by 2147483647;
+    commit;
+  """,
+ 'test_type': 'Python',
+ 'test_script':"""import os
+db_conn.close()
+fbk = os.path.join(context['temp_directory'],'tmp.core_3942.fbk')
+runProgram('gbak',['-b','-user',user_name,'-password',user_password,dsn,fbk])
+runProgram('gbak',['-rep','-user',user_name,'-password',user_password,fbk,dsn])
+sql='''show sequ g1;
+show sequ g2;
+'''
+runProgram('isql',[dsn,'-user',user_name,'-pas',user_password],sql)
+
+if os.path.isfile(fbk):
+    os.remove(fbk)
+"""
+,
+ 'expected_stdout':
+  """
+    Generator G1, current value: -9223372034707292162, initial value: 9223372036854775807, increment: -2147483647
+    Generator G2, current value: 9223372034707292161, initial value: -9223372036854775808, increment: 2147483647
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+} 

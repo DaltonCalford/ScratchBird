@@ -1,0 +1,46 @@
+{
+'id': 'bugs.core_4430',
+'qmid': '',
+'tracker_id': 'CORE-4430',
+'title': 'Properties of user created in Legacy_UserManager padded with space up to 10 character',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    -- Confirmed padded output in WI-T3.0.0.30809 Firebird 3.0 Alpha 2:
+    --    SEC$USER_NAME                   TMP$C4430
+    --    FIRST_NAME_WITH_DOT             john                            .
+    --    LAST_NAME_WITH_DOT              smith                           .
+
+    create user tmp$c4430 password '123' firstname 'john' lastname 'smith';
+    commit;
+    set list on;
+    select 
+        sec$user_name, 
+        sec$first_name || '.' first_name_with_dot, 
+        sec$last_name  || '.' last_name_with_dot 
+    from sec$users
+    where sec$user_name = upper('tmp$c4430');
+    drop user tmp$c4430;
+    commit;
+  """,
+ 'expected_stdout':
+  """
+    SEC$USER_NAME                   TMP$C4430
+    FIRST_NAME_WITH_DOT             john.
+    LAST_NAME_WITH_DOT              smith.
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

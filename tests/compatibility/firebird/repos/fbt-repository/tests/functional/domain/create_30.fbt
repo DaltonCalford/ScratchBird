@@ -1,0 +1,18 @@
+{
+'id': 'functional.domain.create.30',
+'qmid': 'functional.domain.create.create_domain_30',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - BLOB SUB_TYPE CHARACTER SET',
+'description': 'Domain creation based on BLOB datatype with SUBTYPE TEXT and CHARACTER SET specification.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test BLOB SUB_TYPE 1 CHARACTER SET BIG_5;
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            BLOB segment 80, subtype TEXT CHARACTER SET BIG_5 Nullable
+"""
+}
+]
+}

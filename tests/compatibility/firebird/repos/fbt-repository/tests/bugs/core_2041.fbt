@@ -1,0 +1,71 @@
+{
+'id': 'bugs.core_2041',
+'qmid': None,
+'tracker_id': 'CORE-2041',
+'title': 'update or insert with gen_id() with wrong generator value',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE GENERATOR LOGID;
+
+set generator LOGID to 0;
+
+CREATE TABLE LOGBOOK
+  ( ID integer not null,
+    ENTRY varchar(64),
+    PRIMARY KEY (ID));
+
+set term ^ ;
+
+create procedure logrow(txt varchar(64))
+as
+  declare variable lid integer;
+begin
+  lid = gen_id(LOGID, 1);
+  update or insert into logbook (id, entry)
+      values (:lid, :txt);
+end^
+
+set term ; ^
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """update or insert into logbook (id, entry) values (gen_id(LOGID, 1), 'Testing 1');
+update or insert into logbook (id, entry) values (gen_id(LOGID, 1), 'Testing 2');
+update or insert into logbook (id, entry) values (gen_id(LOGID, 1), 'Testing 3');
+update or insert into logbook (id, entry) values (gen_id(LOGID, 1), 'Testing 4');
+select * from logbook;
+
+execute procedure logrow('Test 1');
+execute procedure logrow('Test 2');
+execute procedure logrow('Test 3');
+execute procedure logrow('Test 4');
+select * from logbook;
+""",
+ 'expected_stdout': """
+          ID ENTRY
+============ ================================================================
+           1 Testing 1
+           2 Testing 2
+           3 Testing 3
+           4 Testing 4
+
+
+          ID ENTRY
+============ ================================================================
+           1 Testing 1
+           2 Testing 2
+           3 Testing 3
+           4 Testing 4
+           5 Test 1
+           6 Test 2
+           7 Test 3
+           8 Test 4
+
+"""
+}
+]
+}

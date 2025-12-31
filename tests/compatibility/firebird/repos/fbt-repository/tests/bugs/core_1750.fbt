@@ -1,0 +1,54 @@
+{
+'id': 'bugs.core_1750',
+'qmid': None,
+'tracker_id': 'CORE-1750',
+'title': 'Include information about context variables into the monitoring tables',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+	set count on;
+	select mon$variable_name, mon$variable_value from mon$context_variables;
+	commit;
+	set term ^;
+	execute block as
+	    declare c int;
+	begin
+	    c = rdb$set_context('USER_SESSION', 'SESSION_LEVEL_VARIABLE', 1);
+	end
+	^
+	commit
+	^
+	execute block as
+	    declare c int;
+	begin
+	    c = rdb$set_context('USER_TRANSACTION', 'TRANSACTION_LEVEL_VARIABLE', 1);
+	end
+	^
+	select mon$variable_name, mon$variable_value from mon$context_variables
+	^
+  """,
+ 'expected_stdout':
+  """
+	Records affected: 0
+
+	MON$VARIABLE_NAME               SESSION_LEVEL_VARIABLE
+	MON$VARIABLE_VALUE              1
+	MON$VARIABLE_NAME               TRANSACTION_LEVEL_VARIABLE
+	MON$VARIABLE_VALUE              1
+	
+	Records affected: 2  
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

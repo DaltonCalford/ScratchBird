@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_4304',
+'qmid': None,
+'tracker_id': 'CORE-4304',
+'title': 'Engine crashes when attempt to REcreate table with FK after syntax error before such recreating',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'NONE',
+ 'connection_character_set': 'NONE',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+recreate table t1(x int);
+recreate table t1(x int, constraint t1_pk primary key(x), y int, constraint t1_fk foreign key(y) references t1(z)); -- NB: there is no field `z` in this table, this was misprit
+recreate table t1(x int, constraint t1_pk primary key(x), y int, constraint t1_fk foreign key(y) references t1(x));
+commit;
+show table t1;
+  """,
+ 'expected_stdout':
+  """
+X                               INTEGER Not Null
+Y                               INTEGER Nullable
+CONSTRAINT T1_FK:
+  Foreign key (Y)    References T1 (X)
+CONSTRAINT T1_PK:
+  Primary key (X)
+  """,
+ 'expected_stderr':
+  """
+Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-RECREATE TABLE T1 failed
+-could not find UNIQUE or PRIMARY KEY constraint in table T1 with specified columns
+  """
+}
+]
+}

@@ -1,0 +1,55 @@
+{
+'id': 'bugs.core_0115',
+'qmid': None,
+'tracker_id': 'CORE-0115',
+'title': "bug with ALL keyword",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test (i int not null);
+
+    insert into test values (2);
+    insert into test values (3);
+    commit;
+
+    set plan on;
+
+    set count on;
+    select * from test where 1 > all(select i from test);
+
+    commit;
+
+    alter table test add constraint test_pk primary key(i) using index test_pk;
+    commit;
+
+    select * from test where i > all(select i from test);
+    select * from test where i > 0 and i > all(select i from test where i > 0);
+
+    set count off;
+  """,
+ 'expected_stdout':
+  """
+    PLAN (TEST NATURAL)
+    PLAN (TEST NATURAL)
+    Records affected: 0
+
+    PLAN (TEST NATURAL)
+    PLAN (TEST NATURAL)
+    Records affected: 0
+
+    PLAN (TEST INDEX (TEST_PK))
+    PLAN (TEST INDEX (TEST_PK))
+    Records affected: 0
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

@@ -1,0 +1,26 @@
+{
+'id': 'functional.intfunc.cast.17',
+'qmid': 'functional.intfunc.cast.cast_17',
+'tracker_id': '',
+'title': 'CAST DATE -> TIMESTAMP',
+'description': """CAST DATE -> TIMESTAMP
+Be careful about date/time format on FB server !
+Universal format is not defined or not documented.
+
+Dependencies:
+CREATE DATABASE
+CAST CHAR -> DATE
+Basic SELECT""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': "SELECT CAST(CAST('10.2.1973' AS DATE) AS TIMESTAMP) FROM rdb$Database;",
+ 'expected_stdout': """                     CAST
+=========================
+
+1973-02-10 00:00:00.0000"""
+}
+]
+}

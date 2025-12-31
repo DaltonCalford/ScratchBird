@@ -1,0 +1,33 @@
+{
+'id': 'bugs.core_0871',
+'qmid': 'bugs.core_871',
+'tracker_id': 'CORE-871',
+'title': 'Incorrect handling of null within view - returns 0',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE DOMAIN D INTEGER NOT NULL;
+CREATE TABLE T (A D);
+CREATE TABLE U (B D);
+CREATE VIEW V (A, B) AS
+SELECT T.A, U.B FROM T LEFT JOIN U ON (T.A = U.B);
+
+COMMIT;
+
+INSERT INTO T VALUES(1);
+COMMIT;
+
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT * FROM V;
+""",
+ 'expected_stdout': """A            B
+============ ============
+           1       <null>
+
+"""
+}
+]
+}

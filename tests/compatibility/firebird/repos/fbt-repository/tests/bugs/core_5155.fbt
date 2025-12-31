@@ -1,0 +1,30 @@
+{
+'id': 'bugs.core_5155',
+'qmid': None,
+'tracker_id': 'CORE-5155',
+'title': "[CREATE OR] ALTER USER statement: clause PASSWORD (if present) must be always specified just after USER",
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create or alter user tmp$c5155 password '123' firstname 'john' revoke admin role; 
+    create or alter user tmp$c5155 revoke admin role firstname 'john' password '123'; 
+    create or alter user tmp$c5155 firstname 'john' revoke admin role password '123' lastname 'smith'; 
+    create or alter user tmp$c5155 lastname 'adams' grant admin role firstname 'mick' password '123'; 
+    create or alter user tmp$c5155 revoke admin role lastname 'adams' firstname 'mick' password '123'; 
+    drop user tmp$c5155;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

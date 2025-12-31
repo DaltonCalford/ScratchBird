@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_2038',
+'qmid': None,
+'tracker_id': 'CORE-2038',
+'title': 'New EXECUTE STATEMENT implementation asserts or throws an error if used both before and after commin/rollback retaining',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """-- set transaction read write snapshot;
+set term ^ ;
+execute block returns (i integer)
+as
+begin
+  execute statement 'select 1 from rdb$database' into :i;
+end ^
+commit retain^
+execute block returns (i integer)
+as
+begin
+  execute statement 'select 1 from rdb$database' into :i;
+end ^
+commit retain^
+commit ^
+"""
+}
+]
+}

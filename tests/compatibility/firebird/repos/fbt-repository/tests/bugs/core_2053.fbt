@@ -1,0 +1,33 @@
+{
+'id': 'bugs.core_2053',
+'qmid': 'bugs.core_2053',
+'tracker_id': 'CORE-2053',
+'title': 'Computed expressions may be optimized badly if used inside the RETURNING clause of the INSERT statement',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1.2',
+ 'platform': 'All',
+ 'init_script': """create table t1 (col1 int);
+create index i1 on t1 (col1);
+commit;
+insert into t1 (col1) values (1);
+commit;
+create table t2 (col2 int);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+insert into t2 (col2) values (1) returning case when exists (select 1 from t1 where col1 = col2) then 1 else 0 end;
+commit;""",
+ 'expected_stdout': """
+PLAN (T1 INDEX (I1))
+
+        CASE
+============
+           1
+
+"""
+}
+]
+}

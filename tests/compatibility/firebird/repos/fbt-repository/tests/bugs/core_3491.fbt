@@ -1,0 +1,43 @@
+{
+'id': 'bugs.core_3491',
+'qmid': None,
+'tracker_id': 'CORE-3491',
+'title': 'Altering of a TYPE OF COLUMN parameter affects the original column',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table aaa (a integer);
+commit;
+set term !!;
+create or alter procedure bbb
+returns (b type of column aaa.a)
+as
+begin
+ suspend;
+end!!
+set term ;!!
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """show table aaa;
+set term !!;
+create or alter procedure bbb
+returns (b varchar(10))
+as
+begin
+ suspend;
+end!!
+set term ;!!
+commit;
+show table aaa;
+""",
+ 'expected_stdout': """SQL> A                               INTEGER Nullable
+SQL> A                               INTEGER Nullable
+"""
+}
+]
+}

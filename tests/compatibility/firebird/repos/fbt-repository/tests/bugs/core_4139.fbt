@@ -1,0 +1,24 @@
+{
+'id': 'bugs.core_4139',
+'qmid': None,
+'tracker_id': 'CORE-4139',
+'title': ' Error "invalid stream" can be raised in some cases while matching a computed index',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5.3',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table A (ID int);
+create table B (ID int);
+create index IDX on A computed by (ID);
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET HEADING OFF;
+select min( (select 1 from A where cast(ID as int) = B.ID) ) from B;
+""",
+ 'expected_stdout': '<null>'
+}
+]
+}

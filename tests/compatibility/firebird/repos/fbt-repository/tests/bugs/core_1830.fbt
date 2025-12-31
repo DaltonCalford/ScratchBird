@@ -1,0 +1,69 @@
+{
+'id': 'bugs.core_1830',
+'qmid': '',
+'tracker_id': 'CORE-1830',
+'title': 'Possible index corruption with multiply updates of the same record in the same transaction and using of savepoints',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script':
+  """
+	create table a(id char(1), name varchar(255));
+
+	create index idx_a on a (id);
+	create exception ex_perm 'Something wrong occurs...';
+	commit ;
+
+	insert into a (id) values ('1');
+	commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+	select * from a where id = '1';
+	set term ^;
+	execute block as
+	begin
+	  update a set name = 'xxx';
+	  update a set id = '2';
+	  exception ex_perm;
+	end ^
+	set term ; ^
+	select * from a ;
+	select * from a where id = '1' ;
+
+	commit;
+	select * from a ;
+  """,
+ 'expected_stdout':
+  """
+	ID                              1
+	NAME                            <null>
+	
+	ID                              1
+	NAME                            <null>
+	
+	ID                              1
+	NAME                            <null>
+	
+	ID                              1
+	NAME                            <null>  
+  """,
+ 'expected_stderr': 
+  """
+	Statement failed, SQLSTATE = HY000
+	exception 1
+	-EX_PERM
+	-Something wrong occurs...  
+  """,
+  'substitutions':[
+    ('column.*','column x'),
+    ('[ \t]+', ' '),
+    ('-At block line: [\d]+, col: [\d]+', '')
+  ]
+}
+]
+}

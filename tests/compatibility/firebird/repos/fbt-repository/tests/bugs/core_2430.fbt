@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_2430',
+'qmid': None,
+'tracker_id': 'CORE-2430',
+'title': 'Server adds "NOT" at the end of default value for the TIMESTAMP field',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE TABLE T1 (
+    F1 BIGINT NOT NULL,
+    F2 BIGINT NOT NULL,
+    F3 TIMESTAMP DEFAULT current_timestamp NOT NULL
+);
+
+ALTER TABLE T1 ADD CONSTRAINT PK_T1 PRIMARY KEY (F1, F2);
+
+show table t1;
+""",
+ 'expected_stdout': """F1                              BIGINT Not Null
+F2                              BIGINT Not Null
+F3                              TIMESTAMP Not Null DEFAULT current_timestamp
+CONSTRAINT PK_T1:
+  Primary key (F1, F2)
+"""
+}
+]
+}

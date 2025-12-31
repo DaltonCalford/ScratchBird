@@ -1,0 +1,51 @@
+{
+'id': 'bugs.core_4529',
+'qmid': None,
+'tracker_id': 'CORE-4529',
+'title': 'Allow to use index when GROUP BY on field which has DESCENDING index',
+'description':
+ """
+     4.0.0.804: OK, 1.484s. // Before this build plan was: "PLAN SORT (T NATURAL)"
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    recreate table t(x int, y int); 
+    commit;
+
+    insert into t select rand()*5, rand()*5 
+    from rdb$types; 
+    commit;
+
+    create DESCENDING index t_x_desc on t(x); 
+    create DESCENDING index t_c_desc on t computed by( x+y ); 
+    commit;
+
+    set planonly;
+
+    select x,max(y) from t group by x;
+    select x,min(y) from t group by x; 
+
+    select count(x) from t group by ( x+y );
+
+  """,
+ 'expected_stdout': 
+  """
+    PLAN (T ORDER T_X_DESC)
+    PLAN (T ORDER T_X_DESC)
+    PLAN (T ORDER T_C_DESC)
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

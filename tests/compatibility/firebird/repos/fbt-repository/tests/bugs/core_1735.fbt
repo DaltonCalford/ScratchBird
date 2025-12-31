@@ -1,0 +1,24 @@
+{
+'id': 'bugs.core_1735',
+'qmid': None,
+'tracker_id': 'CORE-1735',
+'title': 'Bug in SET DEFAULT statement',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE TEST (
+   A INTEGER
+);
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER TABLE TEST ADD CHECK (A > 0);
+
+ALTER TABLE TEST ALTER A SET DEFAULT '1000';
+"""
+}
+]
+}

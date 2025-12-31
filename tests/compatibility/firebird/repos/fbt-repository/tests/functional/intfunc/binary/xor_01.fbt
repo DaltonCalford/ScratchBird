@@ -1,0 +1,38 @@
+{
+'id': 'functional.intfunc.binary.xor_01',
+'qmid': 'functional.intfunc.binary.bin_xor_01',
+'tracker_id': '',
+'title': 'New Built-in Functions, Firebird 2.1 : BIN_XOR( <number> [, <number> ...] )',
+'description': """test of BIN_XOR
+
+Returns the result of a binary XOR operation performed on all arguments.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select BIN_XOR( 0,1) from rdb$database;
+select BIN_XOR( 0,0) from rdb$database;
+select BIN_XOR( 1,1) from rdb$database;
+""",
+ 'expected_stdout': """     BIN_XOR
+============
+           1
+
+
+     BIN_XOR
+============
+           0
+
+
+     BIN_XOR
+============
+           0
+
+
+
+
+"""
+}
+]
+}

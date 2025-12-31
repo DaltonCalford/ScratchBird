@@ -1,0 +1,49 @@
+{
+'id': 'bugs.core_4142',
+'qmid': None,
+'tracker_id': 'CORE-4142',
+'title': 'Regression: Server crashes while preparing a query with DISTINCT and ORDER BY',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+    recreate table trel(id smallint, name char(31) character set unicode_fss collate unicode_fss);
+    commit;
+    insert into trel(id, name) select row_number()over(), 'RDB$NAME_' || row_number()over()
+    from rdb$types
+    rows 9;
+    commit;
+    alter table trel add constraint trel_name_unq unique (name);
+    create index trel_id on trel(id);
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    select distinct id + 0 id, name
+    from trel
+    order by name;
+  """,
+ 'expected_stdout': 
+  """
+    ID NAME
+    == ==========
+     1 RDB$NAME_1
+     2 RDB$NAME_2
+     3 RDB$NAME_3
+     4 RDB$NAME_4
+     5 RDB$NAME_5
+     6 RDB$NAME_6
+     7 RDB$NAME_7
+     8 RDB$NAME_8
+     9 RDB$NAME_9
+  """,
+  'substitutions': [('=.*','')]
+}
+]
+}

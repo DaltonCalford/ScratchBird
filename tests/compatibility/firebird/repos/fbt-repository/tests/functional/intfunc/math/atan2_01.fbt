@@ -1,0 +1,22 @@
+{
+'id': 'functional.intfunc.math.atan2_01',
+'qmid': 'functional.intfunc.math.atan2_01',
+'tracker_id': '',
+'title': 'New Built-in Functions, Firebird 2.1 : ATAN2( <number>, <number> )',
+'description': """test of ATAN2
+
+Returns the arc tangent of the first number / the second number. Returns a value in the range -PI to PI.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'select ATAN2( 1, 1) from rdb$database;',
+ 'expected_stdout': """                  ATAN2
+=======================
+     0.7853981633974483
+
+"""
+}
+]
+}

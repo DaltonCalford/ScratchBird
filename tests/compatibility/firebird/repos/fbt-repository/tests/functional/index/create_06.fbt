@@ -1,0 +1,27 @@
+{
+'id': 'functional.index.create.06',
+'qmid': 'functional.index.create.create_index_06',
+'tracker_id': '',
+'title': 'CREATE DESCENDING INDEX',
+'description': """CREATE DESCENDING INDEX
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+SHOW INDEX
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE t( a INTEGER);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DESCENDING INDEX test ON t(a);
+SHOW INDEX test;""",
+ 'expected_stdout': """TEST DESCENDING INDEX ON T(A)
+"""
+}
+]
+}

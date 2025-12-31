@@ -1,0 +1,105 @@
+{
+'id': 'bugs.core_5876',
+'qmid': None,
+'tracker_id': 'CORE-5876',
+'title': 'Provide name of udf function for "arithmetic exception, numeric overflow, or string truncation"',
+'description':
+ """
+    *** FOR FB 3.X ONLY ***
+        Test uses UDF 'sright' declared in ib_udf.sql script which for sure present in every FB snapshot.
+        After this, we try to create PSQL function with the same signature.
+
+    *** FOR FB 4.X AND ABOVE  ***
+        Added separate code for running on FB 4.0.x: use udf_compat!UC_div from UDR engine. 
+        It seems that this UDR function is the only wich we can force to raise exception by passing invalid
+        argument #2 that will cause zero divide.
+
+        UDF usage is deprecated in FB 4+, see: ".../doc/README.incompatibilities.3to4.txt".
+        Functions div, frac, dow, sdow, getExactTimestampUTC and isLeapYear got safe replacement 
+        in UDR library "udf_compat", see it in folder: ../plugins/udr/
+
+    Checked on:
+        400SS, build 4.0.0.1421: OK, 1.457s.
+        302SS, build 3.0.5.33097: OK, 0.832s.
+        302Cs, build 3.0.4.33054: OK, 1.423s.
+ """,
+'min_versions': '3.0.4',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^;
+    execute block as
+    begin
+        execute statement 'drop function substr';
+        when any do begin end
+    end
+    ^
+    set term ;^
+    commit;
+
+    declare external function substr
+    cstring(80), smallint, smallint
+    returns cstring(80)
+    entry_point 'IB_UDF_substr'
+    module_name 'ib_udf'
+    ;
+    commit;
+
+    set heading off;
+    select substr(cast('abc' as char(1500)) || '123', 1, 1000)
+    from rdb$database 
+    ;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 22001
+    arithmetic exception, numeric overflow, or string truncation
+    -string right truncation
+    -expected length 80, actual 1503
+    -UDF: SUBSTR
+  """
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create function UDR40_div (
+        n1 integer,
+        n2 integer
+    ) returns double precision
+        external name 'udf_compat!UC_div'
+        engine udr;
+
+
+    commit;
+    set list on;
+    select UDR40_div( 1, 0) from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 22012
+    arithmetic exception, numeric overflow, or string truncation
+    -Integer divide by zero.  The code attempted to divide an integer value by an integer divisor of zero.
+    -At function 'UDR40_DIV'
+  """
+}
+]
+}

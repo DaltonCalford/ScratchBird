@@ -1,0 +1,21 @@
+{
+'id': 'functional.intfunc.string.right_01',
+'qmid': 'functional.intfunc.string.right_01',
+'tracker_id': '',
+'title': 'test for RIGHT function',
+'description': """
+  RIGHT( <string>, <number> )
+
+Returns the substring, of the specified length, from the right-hand end of a string""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': " select RIGHT('NORD PAS DE CALAIS', 13) from rdb$database;",
+ 'expected_stdout': """      RIGHT
+      ==================
+      PAS DE CALAIS"""
+}
+]
+}

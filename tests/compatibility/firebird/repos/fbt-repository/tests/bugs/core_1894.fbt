@@ -1,0 +1,73 @@
+{
+'id': 'bugs.core_1894',
+'qmid': None,
+'tracker_id': 'CORE-1894',
+'title': 'Circular dependencies between computed fields crashs the engine',
+'description':
+ """
+   Checked on LI-T4.0.0.419 after commit 19.10.2016 18:26
+   https://github.com/FirebirdSQL/firebird/commit/6a00b3aee6ba17b2f80a5b00def728023e347707
+   -- all OK.
+ """,
+'min_versions': '3.0.2',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table t (
+        n integer,
+        n1 computed by (n),
+        n2 computed by (n1)
+    );
+
+    recreate table t2 (
+        n integer,
+        c1 computed by (1),
+        c2 computed by (c1)
+    );
+
+    alter table t alter n1 computed by (n2);
+    commit;
+
+    set autoddl off;
+    alter table t2 drop c1;
+    alter table t2 add c1 computed by (c2);
+    commit;
+
+    select * from t;
+    select * from t2; -- THIS LEAD SERVER CRASH (checked on WI-T4.0.0.399)
+
+  """,
+  'expected_stdout':
+  """
+  """,
+  'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -Cannot have circular dependencies with computed fields
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -cannot delete
+    -COLUMN T2.C1
+    -there are 1 dependencies
+
+    Statement failed, SQLSTATE = 42000
+    Cannot have circular dependencies with computed fields
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -cannot delete
+    -COLUMN T2.C1
+    -there are 1 dependencies
+  """
+}
+]
+}

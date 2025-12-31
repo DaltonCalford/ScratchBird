@@ -1,0 +1,127 @@
+{
+'id': 'functional.intfunc.avg.06',
+'qmid': 'functional.intfunc.avg.avg_06',
+'tracker_id': '',
+'title': 'AVG - Integer OverFlow',
+'description': 
+ """
+    Refactored 14.10.2019: adjusted expected_stdout/stderr
+    25.06.2020, 4.0.0.2076: changed types in SQLDA from numeric to int128 // after discuss with Alex about CORE-6342.
+    09.07.2020, 4.0.0.2091:
+        NO more overflow since INT128 was introduced. AVG() is evaluated successfully.
+        Removed error message from expected_stderr, added result into expected_stdout.
+
+    27.07.2021: changed sqltype in FB 4.x+ to 580 INT64: this is needed since fix #6874.
+    Checked on 5.0.0.113, 4.0.1.2539.
+ """,
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    recreate table test( id integer not null);
+    insert into test values(2100000000);
+    insert into test values(2100000000);
+    insert into test values(2100000000);
+    insert into test values(2100000000);
+    commit;
+    create or alter view v_test as select avg(2100000000*id)as avg_result from test;
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    set sqlda_display on;
+    select * from v_test;
+  """,
+ 'expected_stdout':
+   """
+    INPUT  SQLDA version: 1 sqln: 10 sqld: 0
+    OUTPUT SQLDA version: 1 sqln: 20 sqld: 1
+    01: sqltype: 581 INT64 			Nullable sqlscale: 0 sqlsubtype: 0 sqllen: 8
+    : name: (10)AVG_RESULT alias: (10)AVG_RESULT
+    : table: (6)V_TEST owner: (6)SYSDBA
+   """,
+ 'expected_stderr':
+   """
+    Statement failed, SQLSTATE = 22003
+    Integer overflow.  The result of an integer operation caused the most significant bit of the result to carry.
+   """,
+   'substitutions':[( '[ \t]+', ' ')]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    recreate table test( id integer not null);
+    insert into test values(2100000000);
+    insert into test values(2100000000);
+    insert into test values(2100000000);
+    insert into test values(2100000000);
+    commit;
+    create or alter view v_test as select avg(2100000000*id)as avg_result from test;
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    set sqlda_display on;
+    select * from v_test;
+  """,
+ 'expected_stdout':
+   """
+    INPUT message field count: 0
+    OUTPUT message field count: 1
+    01: sqltype: 580 INT64 Nullable scale: 0 subtype: 0 len: 8
+    : name: AVG_RESULT alias: AVG_RESULT
+    : table: V_TEST owner: SYSDBA
+   """,
+ 'expected_stderr':
+   """
+    Statement failed, SQLSTATE = 22003
+    Integer overflow.  The result of an integer operation caused the most significant bit of the result to carry.
+   """,
+   'substitutions':[( '[ \t]+', ' ')]
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    recreate table test( id integer not null);
+    insert into test values(2100000000);
+    insert into test values(2100000000);
+    insert into test values(2100000000);
+    insert into test values(2100000000);
+    commit;
+    create or alter view v_test as select avg(2100000000*id)as avg_result from test;
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    set sqlda_display on;
+    select * from v_test;
+  """,
+ 'expected_stdout':
+   """
+      01: sqltype: 580 INT64 Nullable scale: 0 subtype: 0 len: 8
+      :  name: AVG_RESULT  alias: AVG_RESULT
+      : table: V_TEST  owner: SYSDBA
+
+    AVG_RESULT                                                4410000000000000000    
+   """,
+ 'expected_stderr':
+   """
+   """,
+   'substitutions':[
+       ('^((?!sqltype|AVG_RESULT).)*$', ''), ('[ \t]+',' ')
+   ]
+}
+]
+}

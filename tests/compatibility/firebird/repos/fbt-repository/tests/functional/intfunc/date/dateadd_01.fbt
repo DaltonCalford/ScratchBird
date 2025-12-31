@@ -1,0 +1,27 @@
+{
+'id': 'functional.intfunc.date.dateadd_01',
+'qmid': 'functional.intfunc.date.dateadd_01',
+'tracker_id': '',
+'title': "test de la fonction dateadd  pour l'ajout d'un jour",
+'description': 'Returns a date/time/timestamp value increased (or decreased, when negative) by the specified amount of time.',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select dateadd(-1 day TO date '2008-02-06' ) as yesterday from rdb$database;
+select dateadd(day,-1, date '2008-02-06' ) as yesterday from rdb$database;""",
+ 'expected_stdout': """
+  YESTERDAY
+===========
+2008-02-05
+
+
+  YESTERDAY
+===========
+2008-02-05
+
+"""
+}
+]
+}

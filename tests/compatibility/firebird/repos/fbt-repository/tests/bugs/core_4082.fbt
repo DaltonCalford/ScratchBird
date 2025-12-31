@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_4082',
+'qmid': None,
+'tracker_id': 'CORE-4082',
+'title': 'Wrong value of expected length in the sring right truncation error',
+'description':
+ """
+    NB. Ticket title: Wrong error message (should point out the proper expected length)
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^;
+    execute block as
+        declare u varchar(14);
+    begin
+        u = gen_uuid();
+    end
+    ^
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 22001
+    arithmetic exception, numeric overflow, or string truncation
+    -string right truncation
+    -expected length 14, actual 16
+    -At block line: 4, col: 9
+  """,
+  'substitutions': [ ('-At block line: [\d]+, col: [\d]+', '-At block line') ]
+}
+]
+}

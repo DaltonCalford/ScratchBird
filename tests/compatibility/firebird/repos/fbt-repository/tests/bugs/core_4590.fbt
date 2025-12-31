@@ -1,0 +1,39 @@
+{
+'id': 'bugs.core_4590',
+'qmid': None,
+'tracker_id': 'CORE-4590',
+'title': 'Change type of returning value of CHAR_LENGTH, BIT_LENGTH and OCTET_LENGTH of BLOBs to bigint',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set sqlda_display;
+    set planonly;
+    select
+        char_length(rdb$description) clen
+        ,bit_length(rdb$description) blen
+        ,octet_length(rdb$description) olen
+    from rdb$database;
+    -- No more output of charset name for NON-text field, see:
+    -- http://sourceforge.net/p/firebird/code/61779 // 10.06.2015
+    -- Enhance metadata display - show charset only for fields where it makes sense
+  """,
+ 'expected_stdout':
+  """
+    01: sqltype: 580 INT64 Nullable scale: 0 subtype: 0 len: 8
+    02: sqltype: 580 INT64 Nullable scale: 0 subtype: 0 len: 8
+    03: sqltype: 580 INT64 Nullable scale: 0 subtype: 0 len: 8
+  """,
+  'substitutions':[('^((?!sqltype).)*$',''),('[ ]+',' '),('[\t]*',' ')]
+}
+]
+}

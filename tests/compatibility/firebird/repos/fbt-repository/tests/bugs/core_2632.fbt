@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_2632',
+'qmid': None,
+'tracker_id': 'CORE-2632',
+'title': 'Invalid BLOB ID when working with monitoring tables',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'connection_character_set': 'UNICODE_FSS',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set blob all;
+    select 1 as k from mon$database;
+    set count on;
+
+    select s.mon$sql_text as sql_text_blob 
+    from mon$statements s
+    where s.mon$sql_text NOT containing 'rdb$auth_mapping' -- added 30.03.2017 (4.0.0.x)
+    ;
+  """,
+  'expected_stdout':
+  """
+    K                               1
+    SQL_TEXT_BLOB
+    select 1 as k from mon$database
+
+    Records affected: 1
+  """,
+  'substitutions':[('SQL_TEXT_BLOB.*', 'SQL_TEXT_BLOB')]
+}
+]
+}

@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_2051',
+'qmid': 'bugs.core_2051',
+'tracker_id': 'CORE-2051',
+'title': "don't work subquery in COALESCE",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """ 
+    recreate table test1(id int primary key using index test1_pk);
+    commit;
+    insert into test1 values(1);
+    insert into test1 values(2);
+    insert into test1 values(3);
+    commit;
+    
+    recreate table test2(id int primary key using index test2_pk);
+    commit;
+    insert into test2 values(1);
+    insert into test2 values(2);
+    commit;
+    
+    set plan on;
+    set list on;
+    select coalesce((select t2.id from test2 t2 where t2.id = t1.id), 0) id2 from test1 t1 order by t1.id;
+  """,
+ 'expected_stdout':
+  """
+    PLAN (T2 INDEX (TEST2_PK))
+    PLAN (T1 ORDER TEST1_PK)
+    ID2                             1
+    ID2                             2
+    ID2                             0
+  """
+}
+]
+}

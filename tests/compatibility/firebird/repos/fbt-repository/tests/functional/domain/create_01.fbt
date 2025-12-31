@@ -1,0 +1,19 @@
+{
+'id': 'functional.domain.create.01',
+'qmid': 'functional.domain.create.create_domain_01',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - SMALLINT',
+'description': 'Simple domain creation based SMALLINT datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test SMALLINT;
+SHOW DOMAIN test;
+""",
+ 'expected_stdout': """TEST                            SMALLINT Nullable
+"""
+}
+]
+}

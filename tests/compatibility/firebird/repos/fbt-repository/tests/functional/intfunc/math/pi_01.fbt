@@ -1,0 +1,22 @@
+{
+'id': 'functional.intfunc.math.pi_01',
+'qmid': 'functional.intfunc.math.pi_01',
+'tracker_id': '',
+'title': 'test for PI  function',
+'description': """ PI()
+
+ Returns the PI constant (3.1459...).
+""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': ' select PI() from rdb$database;',
+ 'expected_stdout': """                           PI
+      =======================
+            3.141592653589793
+"""
+}
+]
+}

@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_1126',
+'qmid': 'bugs.core_1126',
+'tracker_id': 'CORE-1126',
+'title': 'UNION vs UTF8 literals : arithmetic exception is thrown',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.0.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT _UTF8 'Z' FROM RDB$DATABASE
+UNION ALL
+SELECT _UTF8 'A' FROM RDB$DATABASE;
+""",
+ 'expected_stdout': """======
+Z
+A
+
+"""
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT _UTF8 'Z' FROM RDB$DATABASE
+UNION ALL
+SELECT _UTF8 'A' FROM RDB$DATABASE;
+""",
+ 'expected_stdout': """CONSTANT
+========
+Z
+A
+
+"""
+}
+]
+}

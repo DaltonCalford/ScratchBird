@@ -1,0 +1,244 @@
+{
+'id': 'bugs.core_3131',
+'qmid': None,
+'tracker_id': 'CORE-3131',
+'title': 'WIN1257_LV (Latvian) collation is wrong for 4 letters: A E I U.',
+'description':
+  """
+    ::: NOTE :::
+	In order to check correctness of following statements under ISQL itself (NOT under fbt_run), do following:
+	1) open some text editor that supports charset = win1257 and set encoding for new document = WIN1257
+	  (e.g. in Notepad++ pull-down menu: "Encoding / Character sets / Baltic / Windows 1257")
+	2) type commands statements that contains diacritical marks (accents) and save to .sql
+	3) open this .sql in FAR editor and ensure that letters with diacritical marks are displayed as SINGLE characters
+	4) run isql -i <script_encoded_in_win1257.sql>
+	In order to run this script under fbt_run:
+	1) open Notepad++ new .fbt document and set Encoding = "UTF8 without BOM"
+	2) copy-paste text from <script_encoded_in_win1257.sql>, ensure that letters with diacritical marks are readable
+	   (it should be pasted here in UTF8 encoding)
+	3) add in `expected_stdout` section required output by copy-paste from result of isql -i <script_encoded_in_win1257.sql>
+	   (it should be pasted here in UTF8 encoding)
+	4) save .fbt and ensure that it was saved in UTF8 encoding, otherwise exeption like
+	   "UnicodeDecodeError: 'utf8' codec can't decode byte 0xc3 in position 621: invalid continuation byte"
+	   will raise.
+
+    05-mar-2021. Re-implemented in order to have ability to run this test on Linux.
+    Test encodes to UTF8 all needed statements (SET NAMES; CONNECT; DDL and DML) and stores this text in .sql file.
+    NOTE: 'SET NAMES' contain character set that must be used for reproducing problem (WIN1257 in this test).
+    Then ISQL is launched in separate (child) process which performs all necessary actions (using required charset).
+    Result will be redirected to log(s) which will be opened further via codecs.open(...encoding='cp1257').
+    Finally, its content will be converted to UTF8 for showing in expected_stdout.
+
+    Confirmed bug on 2.5.0.26074. Fixed on 2.5.1.26351 and up to 2.5.9.27152
+
+    Checked on:
+    * Windows: 4.0.0.2377, 3.0.8.33423
+    * Linux:   4.0.0.2379, 3.0.8.33415
+  """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database_character_set': 'WIN1257',
+ 'connection_character_set': 'UTF8',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import codecs
+import subprocess
+import time
+engine = db_conn.engine_version
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f,
+    # first do f.flush(), and
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+sql_txt='''\
+    set bail on;
+    set names win1257;
+    connect '%(dsn)s' user '%(user_name)s' password '%(user_password)s';
+
+	create collation coll_1257_ci_ai
+	   for win1257 from win1257_lv
+	   no pad case insensitive accent sensitive;
+	commit;
+
+	create table test1257 (
+		letter varchar(2) collate coll_1257_ci_ai,
+		sort_index  smallint
+	);
+	
+	-- ### ONCE AGAIN ###
+	-- 1) for checking this under ISQL following must be encoded in WIN1257
+	-- 2) for running under fbt_run utility following must be encoded in UTF8.
+	insert into test1257 values ('Iz',  18);
+	insert into test1257 values ('Īb',  19);
+	insert into test1257 values ('Īz',  20);
+
+	insert into test1257 values ('Ķz',  24);
+	insert into test1257 values ('Ēz',  12);
+	insert into test1257 values ('Gb',  13);
+
+	insert into test1257 values ('Ģz',  16);
+	insert into test1257 values ('Ib',  17);
+
+	insert into test1257 values ('Gz',  14);
+	insert into test1257 values ('Ģb',  15);
+
+	insert into test1257 values ('Ņb',  31);
+	insert into test1257 values ('Ņz',  32);
+	insert into test1257 values ('Cb',  5);
+	insert into test1257 values ('Ūb',  39);
+	insert into test1257 values ('Ūz',  40);
+	insert into test1257 values ('Zb',  41);
+	insert into test1257 values ('Eb',  9);
+	insert into test1257 values ('Ez',  10);
+	insert into test1257 values ('Ēb',  11);
+
+	insert into test1257 values ('Ub',  37);
+	insert into test1257 values ('Uz',  38);
+
+	insert into test1257 values ('Lz',  26);
+	insert into test1257 values ('Ļb',  27);
+	insert into test1257 values ('Ļz',  28);
+	insert into test1257 values ('Kb',  21);
+	insert into test1257 values ('Kz',  22);
+	insert into test1257 values ('Šz',  36);
+	insert into test1257 values ('Lb',  25);
+	insert into test1257 values ('Cz',  6);
+	insert into test1257 values ('Čb',  7);
+	insert into test1257 values ('Čz',  8);
+
+	insert into test1257 values ('Sb',  33);
+	insert into test1257 values ('Sz',  34);
+	insert into test1257 values ('Šb',  35);
+
+	insert into test1257 values ('Nb',  29);
+	insert into test1257 values ('Nz',  30);
+	insert into test1257 values ('Ķb',  23);
+	insert into test1257 values ('Zz',  42);
+	insert into test1257 values ('Žb',  43);
+	insert into test1257 values ('Žz',  44);
+
+	insert into test1257 values ('Ab',  1);
+	insert into test1257 values ('Az',  2);
+	insert into test1257 values ('Āb',  3);
+	insert into test1257 values ('Āz',  4);	
+	commit;
+
+	set heading off;
+	select *
+	from test1257 tls
+	order by tls.letter collate coll_1257_ci_ai;
+
+''' % dict(globals(), **locals())
+
+f_run_sql = open( os.path.join(context['temp_directory'], 'tmp_3131_win1257.sql'), 'w' )
+f_run_sql.write( sql_txt.decode('utf8').encode('cp1257') )
+flush_and_close( f_run_sql )
+
+# result: file tmp_3131_win1257.sql is encoded in win1257
+
+f_run_log = open( os.path.splitext(f_run_sql.name)[0]+'.log', 'w')
+subprocess.call( [ context['isql_path'], '-q', '-i', f_run_sql.name ],
+                 stdout = f_run_log,
+                 stderr = subprocess.STDOUT
+               )
+flush_and_close( f_run_log ) # result: output will be encoded in win1257
+
+with codecs.open(f_run_log.name, 'r', encoding='cp1257' ) as f:
+    result_in_win1257 = f.readlines()
+
+for i in result_in_win1257:
+    print( i.encode('utf8') )
+
+# cleanup:
+###########
+cleanup( (f_run_sql, f_run_log) )
+	
+  """,
+ 'expected_stdout':
+  """
+	Ab              1 
+	Az              2 
+	Āb              3 
+	Āz              4 
+	Cb              5 
+	Cz              6 
+	Čb              7 
+	Čz              8 
+	Eb              9 
+	Ez             10 
+	Ēb             11 
+	Ēz             12 
+	Gb             13 
+	Gz             14 
+	Ģb             15 
+	Ģz             16 
+	Ib             17 
+	Iz             18 
+	Īb             19 
+	Īz             20 
+	Kb             21 
+	Kz             22 
+	Ķb             23 
+	Ķz             24 
+	Lb             25 
+	Lz             26 
+	Ļb             27 
+	Ļz             28 
+	Nb             29 
+	Nz             30 
+	Ņb             31 
+	Ņz             32 
+	Sb             33 
+	Sz             34 
+	Šb             35 
+	Šz             36 
+	Ub             37 
+	Uz             38 
+	Ūb             39 
+	Ūz             40 
+	Zb             41 
+	Zz             42 
+	Žb             43 
+	Žz             44 
+  """
+}
+]
+}

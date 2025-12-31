@@ -1,0 +1,28 @@
+{
+'id': 'bugs.core_1009',
+'qmid': 'bugs.core_1009',
+'tracker_id': 'CORE-1009',
+'title': 'Restoring RDB$BASE_FIELD for expression',
+'description': 'RDB$BASE_FIELD for expression have to be NULL',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core1009.fbk',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+  set list on;
+  select rdb$field_name, rdb$base_field from rdb$relation_fields where rdb$relation_name = 'TEST_VIEW';
+  """,
+ 'expected_stdout':
+  """
+    RDB$FIELD_NAME                  ID
+    RDB$BASE_FIELD                  ID
+    RDB$FIELD_NAME                  EXPR
+    RDB$BASE_FIELD                  <null>
+  """
+}
+]
+}

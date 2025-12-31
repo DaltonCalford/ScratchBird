@@ -1,0 +1,37 @@
+{
+'id': 'bugs.core_1986',
+'qmid': None,
+'tracker_id': 'CORE-1986',
+'title': 'Altering domains name drops dependencies using the domain',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE DOMAIN D_SOME AS INTEGER;
+
+CREATE OR ALTER PROCEDURE SP_SOME(
+    SOME_PARAM D_SOME)
+AS
+BEGIN
+END;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER DOMAIN D_SOME TO D_OTHER;
+
+execute procedure SP_SOME (1);
+commit;
+execute procedure SP_SOME (1);
+commit;
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-cannot delete
+-DOMAIN D_SOME
+-there are 1 dependencies
+"""
+}
+]
+}

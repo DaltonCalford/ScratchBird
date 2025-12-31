@@ -1,0 +1,62 @@
+{
+'id': 'bugs.core_5862',
+'qmid': None,
+'tracker_id': 'CORE-5862',
+'title': 'Varchar computed column length stores incorrect and invalid values for field',
+'description':
+ """
+   Checked on FB40SS, build 4.0.0.1142: OK, 1.938s.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test (
+        id int
+        ,vc_default_user varchar(100) default user
+        ,vc_default_literal varchar(100) default 'literal'
+        ,vc_generated_explicit varchar(201) computed by (vc_default_user || ' ' || vc_default_literal)
+        ,vc_generated_implicit computed by (vc_default_user || ' ' || vc_default_literal) 
+    );
+    commit;
+
+    set list on;
+    select
+         rf.rdb$field_name
+        ,ff.rdb$field_length
+        ,ff.rdb$character_length
+    from rdb$relation_fields rf
+    join rdb$fields ff on rf.rdb$field_source = ff.rdb$field_name
+    where 
+        upper(rf.rdb$relation_name) = upper('test') 
+        and upper(rf.rdb$field_name) starting with upper('vc_generated_')
+    order by rf.rdb$field_position
+    ;
+  """,
+ 'expected_stdout': 
+  """
+    RDB$FIELD_NAME                  VC_GENERATED_EXPLICIT
+
+    RDB$FIELD_LENGTH                804
+    RDB$CHARACTER_LENGTH            201
+
+    RDB$FIELD_NAME                  VC_GENERATED_IMPLICIT
+
+    RDB$FIELD_LENGTH                804
+    RDB$CHARACTER_LENGTH            201
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

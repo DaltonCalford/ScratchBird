@@ -1,0 +1,55 @@
+{
+'id': 'functional.trigger.create.04',
+'qmid': 'functional.trigger.create.create_trigger_04',
+'tracker_id': '',
+'title': 'CREATE TRIGGER AFTER UPDATE',
+'description': """CREATE TRIGGER AFTER UPDATE
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': 'CREATE TABLE tb(id INT);',
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE TRIGGER test FOR tb AFTER UPDATE AS
+BEGIN
+  old.id=1;
+END^
+SET TERM ;^
+SHOW TRIGGER test;""",
+ 'expected_stdout': """Triggers on Table TB:
+TEST, Sequence: 0, Type: AFTER UPDATE, Active
+AS
+BEGIN
+  old.id=1;
+END
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': 'CREATE TABLE tb(id INT);',
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE TRIGGER test FOR tb AFTER UPDATE AS
+BEGIN
+END^
+SET TERM ;^
+SHOW TRIGGER test;""",
+ 'expected_stdout': """Triggers on Table TB:
+TEST, Sequence: 0, Type: AFTER UPDATE, Active
+AS
+BEGIN
+END
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+""",
+  'substitutions':[('\+.*',''),('\=.*',''),('Trigger text.*','')]
+}
+]
+}

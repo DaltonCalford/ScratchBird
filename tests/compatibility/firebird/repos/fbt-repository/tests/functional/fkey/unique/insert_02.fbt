@@ -1,0 +1,178 @@
+{
+'id': 'functional.fkey.unique.insert_02',
+'qmid': 'functional.fkey.unique.ins_02',
+'tracker_id': '',
+'title': 'Check correct work fix with foreign key',
+'description': """Check foreign key work.
+Master table has one primary key field and one unique field. Master transaction modifies unique field
+Detail transaction inserts record in detail_table.
+Expected: error - unique field in master table has been changed""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE MASTER_TABLE (
+    ID     INTEGER PRIMARY KEY,
+    UF     INTEGER UNIQUE,
+    INT_F  INTEGER
+);
+
+CREATE TABLE DETAIL_TABLE (
+    ID    INTEGER PRIMARY KEY,
+    FKEY  INTEGER
+);
+
+ALTER TABLE DETAIL_TABLE ADD CONSTRAINT FK_DETAIL_TABLE FOREIGN KEY (FKEY) REFERENCES MASTER_TABLE (UF);
+COMMIT;
+INSERT INTO MASTER_TABLE (ID, UF, INT_F) VALUES (1, 1, 10);
+commit;""",
+ 'test_type': 'Python',
+ 'test_script': """TPB_master = (
+      chr(kdb.isc_tpb_write)
+    + chr(kdb.isc_tpb_read_committed) + chr(kdb.isc_tpb_rec_version)
+    + chr(kdb.isc_tpb_nowait)
+                  )
+TPB_detail = (
+      chr(kdb.isc_tpb_write)
+    + chr(kdb.isc_tpb_read_committed) + chr(kdb.isc_tpb_rec_version)
+    + chr(kdb.isc_tpb_nowait)
+                  )
+
+db_conn.begin(tpb=TPB_master)
+c = db_conn.cursor()
+c.execute("uPDATE MASTER_TABLE SET UF=2 WHERE ID=1")
+
+#Create second connection - update detail table
+con_detail = kdb.connect(
+     dsn=dsn.encode(),
+     user=user_name.encode(),
+     password=user_password.encode()
+)
+
+try:
+   con_detail.begin(tpb=TPB_detail)
+   c = con_detail.cursor()
+   c.execute("INSERT INTO DETAIL_TABLE (ID, FKEY) VALUES (1,2)")
+   con_detail.commit()
+except Exception, e:
+  print (e[0])""",
+ 'expected_stdout': """Error while executing SQL statement:
+- SQLCODE: -901
+- lock conflict on no wait transaction
+- violation of FOREIGN KEY constraint "FK_DETAIL_TABLE" on table "DETAIL_TABLE"
+- Foreign key reference target does not exist
+- Problematic key value is ("FKEY" = 2)
+"""
+},
+{
+ 'firebird_version': '2.5.2',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE MASTER_TABLE (
+    ID     INTEGER PRIMARY KEY,
+    UF     INTEGER UNIQUE,
+    INT_F  INTEGER
+);
+
+CREATE TABLE DETAIL_TABLE (
+    ID    INTEGER PRIMARY KEY,
+    FKEY  INTEGER
+);
+
+ALTER TABLE DETAIL_TABLE ADD CONSTRAINT FK_DETAIL_TABLE FOREIGN KEY (FKEY) REFERENCES MASTER_TABLE (UF);
+COMMIT;
+INSERT INTO MASTER_TABLE (ID, UF, INT_F) VALUES (1, 1, 10);
+commit;""",
+ 'test_type': 'Python',
+ 'test_script': """TPB_master = (
+      chr(kdb.isc_tpb_write)
+    + chr(kdb.isc_tpb_read_committed) + chr(kdb.isc_tpb_rec_version)
+    + chr(kdb.isc_tpb_nowait)
+                  )
+TPB_detail = (
+      chr(kdb.isc_tpb_write)
+    + chr(kdb.isc_tpb_read_committed) + chr(kdb.isc_tpb_rec_version)
+    + chr(kdb.isc_tpb_nowait)
+                  )
+
+db_conn.begin(tpb=TPB_master)
+c = db_conn.cursor()
+c.execute("uPDATE MASTER_TABLE SET UF=2 WHERE ID=1")
+
+#Create second connection - update detail table
+con_detail = kdb.connect(
+     dsn=dsn.encode(),
+     user=user_name.encode(),
+     password=user_password.encode()
+)
+
+try:
+   con_detail.begin(tpb=TPB_detail)
+   c = con_detail.cursor()
+   c.execute("INSERT INTO DETAIL_TABLE (ID, FKEY) VALUES (1,2)")
+   con_detail.commit()
+except Exception, e:
+  print (e[0])""",
+ 'expected_stdout': """Error while executing SQL statement:
+- SQLCODE: -530
+- violation of FOREIGN KEY constraint "FK_DETAIL_TABLE" on table "DETAIL_TABLE"
+- Foreign key reference target does not exist
+"""
+},
+{
+ 'firebird_version': '2.5.3',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE MASTER_TABLE (
+    ID     INTEGER PRIMARY KEY,
+    UF     INTEGER UNIQUE,
+    INT_F  INTEGER
+);
+
+CREATE TABLE DETAIL_TABLE (
+    ID    INTEGER PRIMARY KEY,
+    FKEY  INTEGER
+);
+
+ALTER TABLE DETAIL_TABLE ADD CONSTRAINT FK_DETAIL_TABLE FOREIGN KEY (FKEY) REFERENCES MASTER_TABLE (UF);
+COMMIT;
+INSERT INTO MASTER_TABLE (ID, UF, INT_F) VALUES (1, 1, 10);
+commit;""",
+ 'test_type': 'Python',
+ 'test_script': """TPB_master = (
+      chr(kdb.isc_tpb_write)
+    + chr(kdb.isc_tpb_read_committed) + chr(kdb.isc_tpb_rec_version)
+    + chr(kdb.isc_tpb_nowait)
+                  )
+TPB_detail = (
+      chr(kdb.isc_tpb_write)
+    + chr(kdb.isc_tpb_read_committed) + chr(kdb.isc_tpb_rec_version)
+    + chr(kdb.isc_tpb_nowait)
+                  )
+
+db_conn.begin(tpb=TPB_master)
+c = db_conn.cursor()
+c.execute("uPDATE MASTER_TABLE SET UF=2 WHERE ID=1")
+
+#Create second connection - update detail table
+con_detail = kdb.connect(
+     dsn=dsn.encode(),
+     user=user_name.encode(),
+     password=user_password.encode()
+)
+
+try:
+   con_detail.begin(tpb=TPB_detail)
+   c = con_detail.cursor()
+   c.execute("INSERT INTO DETAIL_TABLE (ID, FKEY) VALUES (1,2)")
+   con_detail.commit()
+except Exception, e:
+  print (e[0])""",
+ 'expected_stdout': """Error while executing SQL statement:
+- SQLCODE: -530
+- violation of FOREIGN KEY constraint "FK_DETAIL_TABLE" on table "DETAIL_TABLE"
+- Foreign key reference target does not exist
+- Problematic key value is ("FKEY" = 2)
+"""
+}
+]
+}

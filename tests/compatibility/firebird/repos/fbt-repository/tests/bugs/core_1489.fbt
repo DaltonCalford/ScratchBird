@@ -1,0 +1,22 @@
+{
+'id': 'bugs.core_1489',
+'qmid': 'bugs.core_1489',
+'tracker_id': 'CORE-1489',
+'title': 'DATEADD wrong work with NULL arguments',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT 1, DATEADD(SECOND, Null, CAST('01.01.2007' AS DATE)) FROM RDB$DATABASE;
+""",
+ 'expected_stdout': """
+    CONSTANT     DATEADD
+============ ===========
+           1      <null>
+
+"""
+}
+]
+}

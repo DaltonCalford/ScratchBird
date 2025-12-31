@@ -1,0 +1,42 @@
+{
+'id': 'bugs.core_4473',
+'qmid': 'bugs.core_4473',
+'tracker_id': 'CORE-4473',
+'title': 'Restore of pre ODS 11.1 database can leave RDB$RELATION_TYPE null',
+'description':
+ """
+    25SC, build 2.5.8.27065: OK, 0.860s.
+    30SS, build 3.0.3.32738: OK, 1.344s.
+    40SS, build 4.0.0.680: OK, 1.344s.
+ """,
+'min_versions': '2.5.8',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core_4473-ods10_1.fbk',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Source DB was created under FB 1.5.6 (ODS 10.1) and contains following objects:
+    -- create table test_t(x int);
+    -- create view test_v(x) as select x from test_t;
+    -- Value of rdb$relations.rdb$relation_type for these objects must be zero rather than null.
+
+    set list on; 
+    select rdb$relation_type 
+    from rdb$relations 
+    where 
+        rdb$relation_name starting with upper('test') 
+        and rdb$system_flag is distinct from 1
+    ;
+  """,
+ 'expected_stdout': 
+  """
+    RDB$RELATION_TYPE               0
+    RDB$RELATION_TYPE               0
+  """
+}
+]
+}

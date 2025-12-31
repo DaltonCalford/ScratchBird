@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_3476',
+'qmid': None,
+'tracker_id': 'CORE-3476',
+'title': 'LIST function wrongly concatenates binary blobs',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    select ascii_val( left(list(f,''),1) ) v1, ascii_val( right(list(f,''),1) ) v2
+    from (
+        select cast(ascii_char(0xff) as blob sub_type 0) as f
+        from rdb$database
+        union all
+        select cast(ascii_char(0xde) as blob sub_type 0) as f
+        from rdb$database
+    );
+    -- NB: proper result will be only in 3.0, WI-V2.5.4.26853 produces:
+    -- V1                              46
+    -- V2                              46
+  """,
+ 'expected_stdout': 
+  """
+    V1                              255
+    V2                              222
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -1,0 +1,59 @@
+{
+'id': 'bugs.core_2922',
+'qmid': None,
+'tracker_id': 'CORE-2922',
+'title': 'Character set used in constants is not registered as dependency',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set term ^;
+    create or alter procedure p1 as
+    declare variable a varchar(10) character set win1250;
+    begin
+      rdb$set_context('user_session', 'x', :a);
+    end
+    ^
+    create or alter procedure p2 as
+    begin
+      post_event _win1250'abc';
+    end
+    ^
+    set term ;^
+    commit;
+    
+    -- show proc;
+    set width dep_nm 10;
+    set width dep_on 10;
+    set width dep_on_type 20;
+    set list on;
+
+    select rd.rdb$dependent_name dep_name, rd.rdb$depended_on_name dep_on,rt.rdb$type_name dep_on_type
+    from rdb$dependencies rd
+    join rdb$types rt on
+        rd.rdb$depended_on_type = rt.rdb$type
+        and rt.rdb$type_name containing upper('COLLATION')
+    order by 1;
+
+  """,
+   'expected_stdout': 
+  """
+    DEP_NAME                        P1
+    DEP_ON                          WIN1250
+    DEP_ON_TYPE                     COLLATION
+
+    DEP_NAME                        P2
+    DEP_ON                          WIN1250
+    DEP_ON_TYPE                     COLLATION
+  """
+}
+]
+}

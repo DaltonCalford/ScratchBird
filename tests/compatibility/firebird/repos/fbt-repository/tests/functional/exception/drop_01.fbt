@@ -1,0 +1,23 @@
+{
+'id': 'functional.exception.drop.01',
+'qmid': 'functional.exception.drop.drop_exception_01',
+'tracker_id': '',
+'title': 'DROP EXCEPTION',
+'description': """DROP EXCEPTION
+
+Dependencies:
+CREATE DATABASE
+CREATE EXCEPTION""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE EXCEPTION test 'message to show';
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """DROP EXCEPTION test;
+SHOW EXCEPTION test;""",
+ 'expected_stderr': 'There is no exception TEST in this database'
+}
+]
+}

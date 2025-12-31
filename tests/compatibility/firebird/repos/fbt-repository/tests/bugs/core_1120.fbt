@@ -1,0 +1,65 @@
+{
+'id': 'bugs.core_1120',
+'qmid': 'bugs.core_1120-250',
+'tracker_id': 'CORE-1120',
+'title': 'Conversion from string to number is not standard compliant',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select cast(5.6 as integer) from rdb$database;
+select cast('5.6' as integer) from rdb$database;
+select cast('5,6' as integer) from rdb$database;
+select cast('5,6,7 8 9' as integer) from rdb$database;
+""",
+ 'expected_stdout': """CAST
+============
+           6
+
+CAST
+============
+           6
+
+CAST
+============
+CAST
+============
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 22018
+conversion error from string "5,6"
+Statement failed, SQLSTATE = 22018
+conversion error from string "5,6,7 8 9"
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select cast(5.6 as integer) from rdb$database;
+select cast('5.6' as integer) from rdb$database;
+select cast('5,6' as integer) from rdb$database;
+select cast('5,6,7 8 9' as integer) from rdb$database;
+""",
+ 'expected_stdout': """CAST
+============
+           6
+
+CAST
+============
+           6
+
+CAST
+============
+CAST
+============
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -413
+conversion error from string "5,6"
+Statement failed, SQLCODE = -413
+conversion error from string "5,6,7 8 9"
+"""
+}
+]
+}

@@ -1,0 +1,72 @@
+{
+'id': 'functional.trigger.alter.06',
+'qmid': 'functional.trigger.alter.alter_trigger_06',
+'tracker_id': '',
+'title': 'ALTER TRIGGER - AFTER DELETE',
+'description': """ALTER TRIGGER - AFTER DELETE
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+CREATE TRIGGER
+SHOW TRIGGER
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL CONSTRAINT unq UNIQUE,
+                   text VARCHAR(32));
+SET TERM ^;
+CREATE TRIGGER tg FOR test BEFORE UPDATE
+AS
+BEGIN
+  old.id=1;
+END ^
+SET TERM ;^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER TRIGGER tg AFTER DELETE;
+SHOW TRIGGER tg;""",
+ 'expected_stdout': """Triggers on Table TEST:
+TG, Sequence: 0, Type: AFTER DELETE, Active
+AS
+BEGIN
+  old.id=1;
+END
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    CREATE TABLE test( id INTEGER NOT NULL CONSTRAINT unq UNIQUE,
+                   text VARCHAR(32));
+    SET TERM ^;
+    CREATE TRIGGER tg FOR test BEFORE UPDATE
+    AS
+    BEGIN
+    END ^
+    SET TERM ;^
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    ALTER TRIGGER tg AFTER DELETE;
+    SHOW TRIGGER tg;
+  """,
+ 'expected_stdout': 
+  """
+    Triggers on Table TEST:
+    TG, Sequence: 0, Type: AFTER DELETE, Active
+    AS
+    BEGIN
+    END
+  """,
+  'substitutions':[('\+.*',''),('\=.*',''),('Trigger text.*','')]
+}
+]
+}

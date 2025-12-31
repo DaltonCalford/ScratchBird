@@ -1,0 +1,21 @@
+{
+'id': 'functional.intfunc.math.sqrt_01',
+'qmid': 'functional.intfunc.math.sqrt_01',
+'tracker_id': '',
+'title': 'test for SQRT function',
+'description': """
+SQRT( <number> )
+
+ Returns the square root of a number.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': ' select SQRT(4) from rdb$database;',
+ 'expected_stdout': """                         SQRT
+      =======================
+            2.000000000000000"""
+}
+]
+}

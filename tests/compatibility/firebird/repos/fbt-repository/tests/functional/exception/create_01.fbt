@@ -1,0 +1,52 @@
+{
+'id': 'functional.exception.create.01',
+'qmid': 'functional.exception.create.create_exception_01',
+'tracker_id': '',
+'title': 'CREATE EXCEPTION',
+'description': """CREATE EXCEPTION
+
+Dependencies:
+CREATE DATABASE
+Basic SELECT""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE EXCEPTION test 'message to show';
+COMMIT;
+
+SELECT RDB$EXCEPTION_NAME, RDB$EXCEPTION_NUMBER, cast(RDB$MESSAGE as varchar(15)) FROM RDB$EXCEPTIONS;""",
+ 'expected_stdout': """RDB$EXCEPTION_NAME              RDB$EXCEPTION_NUMBER CAST
+=============================== ==================== ===============
+
+TEST                                               1 message to show
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create exception test 'message to show';
+    commit;
+    
+    set list on;
+    set width exc_name 31;
+    set width exc_msg 80;
+    select
+        e.rdb$exception_name exc_name
+        ,e.rdb$exception_number exc_number
+        ,e.rdb$message exc_msg
+    from rdb$exceptions e;
+  """,
+ 'expected_stdout': 
+  """
+    EXC_NAME                        TEST                                                                                         
+    EXC_NUMBER                      1
+    EXC_MSG                         message to show
+  """
+}
+]
+}

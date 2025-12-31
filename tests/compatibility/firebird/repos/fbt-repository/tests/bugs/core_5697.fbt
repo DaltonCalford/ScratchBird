@@ -1,0 +1,39 @@
+{
+'id': 'bugs.core_5697',
+'qmid': None,
+'tracker_id': 'CORE-5697',
+'title': "Conversion from numeric literals to DECFLOAT adds precision that is not originally present",
+'description':
+ """
+   Have no snapshot 4.0.0.840 x64 thus i can not confirm whether bug was or no.
+   Checked on 4.0.0.1556, 4.0.0.1535 - works OK.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    recreate table decfloat16(column1 DECFLOAT(16));
+    commit;
+    insert into decfloat16(column1) values (1E300);
+    insert into decfloat16(column1) values ('1E300');
+    select cast(column1 as varchar(30)) as casted_df16_as_vc30 from decfloat16;
+  """,
+ 'expected_stdout': 
+  """
+    CASTED_DF16_AS_VC30             1E+300
+    CASTED_DF16_AS_VC30             1E+300
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -1,0 +1,50 @@
+{
+'id': 'bugs.core_2359',
+'qmid': None,
+'tracker_id': 'CORE-2359',
+'title': 'Logical multibyte maximum string length is not respected when assigning numbers',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table t (c varchar(2) character set utf8);
+
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """insert into t values ('aaaaaaaa'); -- error: ok
+insert into t values (12345678); -- pass: not ok
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 22001
+arithmetic exception, numeric overflow, or string truncation
+-string right truncation
+Statement failed, SQLSTATE = 22001
+arithmetic exception, numeric overflow, or string truncation
+-string right truncation
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table t (c varchar(2) character set utf8);
+
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """insert into t values ('aaaaaaaa'); -- error: ok
+insert into t values (12345678); -- pass: not ok
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 22001
+arithmetic exception, numeric overflow, or string truncation
+-string right truncation
+-expected length 2, actual 8
+Statement failed, SQLSTATE = 22001
+arithmetic exception, numeric overflow, or string truncation
+-string right truncation
+-expected length 2, actual 8
+"""
+}
+]
+}

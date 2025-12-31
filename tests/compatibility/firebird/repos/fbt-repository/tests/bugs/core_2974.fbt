@@ -1,0 +1,58 @@
+{
+'id': 'bugs.core_2974',
+'qmid': None,
+'tracker_id': 'CORE-2974',
+'title': 'Unexpected "Invalid SIMILAR TO pattern" error',
+'description':
+ """
+ """,
+'min_versions': '2.5',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+
+    -- Should raise "Invalid SIMILAR TO pattern" error, as minus sign should be ecaped 
+    select case when '-1' similar to '(-)%' then 1 else 0 end as chk_a
+      from rdb$database 
+    ;
+
+    -- Should raise "Invalid SIMILAR TO pattern" error because there is no "default" escape character:
+    select case when '-1' similar to '(\\-)%' then 1 else 0 end as chk_b
+      from rdb$database 
+    ;
+
+    -- Should NOT raise error:
+    select case when '-1' similar to '(\\-)%' escape '\\' then 1 else 0 end as chk_c
+      from rdb$database 
+    ;
+    -- works ok 
+
+    -- Should NOT raise error:
+    select case when '-1' similar to '(\\+)%' then 1 else 0 end as chk_d
+      from rdb$database 
+    ;
+  """,
+ 'expected_stdout': 
+  """
+    CHK_C                           1
+    CHK_D                           0
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    Invalid SIMILAR TO pattern
+
+    Statement failed, SQLSTATE = 42000
+    Invalid SIMILAR TO pattern
+  """
+}
+]
+}

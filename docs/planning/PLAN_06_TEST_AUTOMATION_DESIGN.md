@@ -74,14 +74,14 @@ This document specifies the **test automation infrastructure** for running SQL c
          ▼                                           ▼
 ┌──────────────────┐                        ┌──────────────┐
 │  External Repos  │                        │    CI/CD     │
-│  (git submodules)│                        │  Pipeline    │
+│ (vendored tests) │                        │  Pipeline    │
 └──────────────────┘                        └──────────────┘
 ```
 
 ### Data Flow
 
 ```
-1. Pull Test Repositories (git clone/submodule)
+1. Refresh Test Repositories (vendored snapshots)
    ↓
 2. Scan and Categorize Tests
    ↓
@@ -119,7 +119,7 @@ tests/
 tests/compatibility/firebird/
 ├── README.md                          # Firebird test documentation
 ├── repos/                             # Original test repositories
-│   └── fbt-repository/               # Git submodule
+│   └── fbt-repository/               # Vendored snapshot
 │       └── tests/                    # 8,000+ .fbt test files
 │
 ├── converted/                         # Converted SQL tests
@@ -153,7 +153,7 @@ tests/compatibility/firebird/
 tests/compatibility/mysql/
 ├── README.md
 ├── repos/
-│   └── mysql-server/                 # Git submodule (sparse checkout)
+│   └── mysql-server/                 # Vendored snapshot (sparse checkout via update script)
 │       └── mysql-test/
 │           ├── t/                    # Test files (.test)
 │           └── r/                    # Expected results (.result)
@@ -188,7 +188,7 @@ tests/compatibility/mysql/
 tests/compatibility/postgresql/
 ├── README.md
 ├── repos/
-│   └── postgres/                     # Git submodule (sparse checkout)
+│   └── postgres/                     # Vendored snapshot (sparse checkout via update script)
 │       └── src/test/regress/
 │           ├── sql/                  # SQL test files (.sql)
 │           └── expected/             # Expected output (.out)
@@ -266,101 +266,46 @@ tests/compatibility/common/
 
 ## Test Repository Management
 
-### Git Submodule Approach
+### Vendored Snapshot Approach
 
-Use git submodules to track official test repositories:
+Compatibility test repositories are stored as vendored snapshots in
+`tests/compatibility/*/repos/`. Updates are one-way into ScratchBird.
+
+Refresh them with:
 
 ```bash
-# Add Firebird test repository
-git submodule add \
-  https://github.com/FirebirdSQL/fbt-repository.git \
-  tests/compatibility/firebird/repos/fbt-repository
-
-# Add MySQL test repository (sparse checkout for mysql-test only)
-git submodule add \
-  https://github.com/mysql/mysql-server.git \
-  tests/compatibility/mysql/repos/mysql-server
-
-# Add PostgreSQL test repository (sparse checkout for regress tests)
-git submodule add \
-  https://github.com/postgres/postgres.git \
-  tests/compatibility/postgresql/repos/postgres
-
-# Initialize and update submodules
-git submodule update --init --recursive
+./tests/compatibility/scripts/update_test_repos.sh
 ```
 
-### Sparse Checkout Configuration
+The update script performs shallow clones and sparse checkouts for large
+repositories, then syncs the relevant paths into the repo. Commit the
+refreshed snapshots to ScratchBird; no upstream pushes are required.
 
-For large repositories (MySQL, PostgreSQL), use sparse checkout:
+### Sparse Checkout Notes
+
+The update script handles sparse checkout for MySQL/PostgreSQL. If you need to
+refresh manually in a temp clone:
 
 ```bash
-# MySQL sparse checkout
-cd tests/compatibility/mysql/repos/mysql-server
-git config core.sparseCheckout true
-echo "mysql-test/" >> .git/info/sparse-checkout
-git read-tree -mu HEAD
+# MySQL (mysql-test only)
+git clone --depth 1 --filter=blob:none --no-checkout \
+  https://github.com/mysql/mysql-server.git mysql-server
+git -C mysql-server sparse-checkout init --cone
+git -C mysql-server sparse-checkout set mysql-test
+git -C mysql-server checkout
 
-# PostgreSQL sparse checkout
-cd tests/compatibility/postgresql/repos/postgres
-git config core.sparseCheckout true
-echo "src/test/regress/" >> .git/info/sparse-checkout
-git read-tree -mu HEAD
+# PostgreSQL (src/test/regress only)
+git clone --depth 1 --filter=blob:none --no-checkout \
+  https://github.com/postgres/postgres.git postgres
+git -C postgres sparse-checkout init --cone
+git -C postgres sparse-checkout set src/test/regress
+git -C postgres checkout
 ```
 
 ### Update Script
 
-Create `tests/compatibility/scripts/update_test_repos.sh`:
-
-```bash
-#!/bin/bash
-# Update all test repository submodules to latest versions
-
-set -e
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMPAT_DIR="$(dirname "$SCRIPT_DIR")"
-
-echo "Updating test repository submodules..."
-
-# Update Firebird tests
-echo "  - Updating Firebird fbt-repository..."
-cd "$COMPAT_DIR/firebird/repos/fbt-repository"
-git pull origin master
-FIREBIRD_COMMIT=$(git rev-parse --short HEAD)
-FIREBIRD_DATE=$(git log -1 --format=%cd --date=short)
-echo "    ✓ Updated to commit $FIREBIRD_COMMIT ($FIREBIRD_DATE)"
-
-# Update MySQL tests
-echo "  - Updating MySQL mysql-test..."
-cd "$COMPAT_DIR/mysql/repos/mysql-server"
-git pull origin trunk
-MYSQL_COMMIT=$(git rev-parse --short HEAD)
-MYSQL_DATE=$(git log -1 --format=%cd --date=short)
-echo "    ✓ Updated to commit $MYSQL_COMMIT ($MYSQL_DATE)"
-
-# Update PostgreSQL tests
-echo "  - Updating PostgreSQL regress tests..."
-cd "$COMPAT_DIR/postgresql/repos/postgres"
-git pull origin master
-POSTGRES_COMMIT=$(git rev-parse --short HEAD)
-POSTGRES_DATE=$(git log -1 --format=%cd --date=short)
-echo "    ✓ Updated to commit $POSTGRES_COMMIT ($POSTGRES_DATE)"
-
-# Log update to history
-cd "$COMPAT_DIR"
-cat > update_history.txt <<EOF
-Test Repository Update - $(date +%Y-%m-%d)
-
-Firebird:    $FIREBIRD_COMMIT ($FIREBIRD_DATE)
-MySQL:       $MYSQL_COMMIT ($MYSQL_DATE)
-PostgreSQL:  $POSTGRES_COMMIT ($POSTGRES_DATE)
-EOF
-
-echo ""
-echo "✓ All test repositories updated successfully!"
-echo "  See update_history.txt for details"
-```
+See `tests/compatibility/scripts/update_test_repos.sh` for the current
+implementation.
 
 ---
 
@@ -652,7 +597,7 @@ if [ -d "$FIREBIRD_REPO" ]; then
     count=$(find "$FIREBIRD_OUTPUT" -name "*.sql" | wc -l)
     echo "  ✓ Converted $count Firebird tests"
 else
-    echo "  ⚠ Firebird repository not found. Run: git submodule update --init"
+    echo "  ⚠ Firebird repository not found. Run: ./tests/compatibility/scripts/update_test_repos.sh"
 fi
 
 # Convert MySQL tests
@@ -677,7 +622,7 @@ if [ -d "$MYSQL_REPO" ]; then
     count=$(find "$MYSQL_OUTPUT" -name "*.sql" | wc -l)
     echo "  ✓ Converted $count MySQL tests"
 else
-    echo "  ⚠ MySQL repository not found. Run: git submodule update --init"
+    echo "  ⚠ MySQL repository not found. Run: ./tests/compatibility/scripts/update_test_repos.sh"
 fi
 
 # Convert PostgreSQL tests
@@ -697,7 +642,7 @@ if [ -d "$POSTGRES_REPO" ]; then
     count=$(find "$POSTGRES_OUTPUT" -name "*.sql" | wc -l)
     echo "  ✓ Converted $count PostgreSQL tests"
 else
-    echo "  ⚠ PostgreSQL repository not found. Run: git submodule update --init"
+    echo "  ⚠ PostgreSQL repository not found. Run: ./tests/compatibility/scripts/update_test_repos.sh"
 fi
 
 echo ""
@@ -1209,7 +1154,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          submodules: recursive
+          fetch-depth: 1
 
       - name: Build ScratchBird
         run: |
@@ -1260,7 +1205,7 @@ jobs:
 ### Phase 1: Infrastructure Setup (8-12 hours)
 
 - [ ] Create directory structure for all databases
-- [ ] Add git submodules for test repositories
+- [ ] Vendor test repository snapshots (one-way updates)
 - [ ] Configure sparse checkout for large repositories
 - [ ] Create update_test_repos.sh script
 - [ ] Test repository cloning and updates
@@ -1324,7 +1269,7 @@ This test automation design provides a comprehensive framework for managing and 
 
 **Next Steps:**
 1. Create directory structure
-2. Add test repository submodules
+2. Vendor test repository snapshots
 3. Implement conversion scripts
 4. Build test runner framework
 5. Integrate with CI/CD

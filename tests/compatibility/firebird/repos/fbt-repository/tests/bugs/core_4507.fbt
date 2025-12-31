@@ -1,0 +1,43 @@
+{
+'id': 'bugs.core_4507',
+'qmid': '',
+'tracker_id': 'CORE-4507',
+'title': 'Unable delete procedure source on Firebird 3.0 Alpha 2.0',
+'description': '',
+'min_versions': '2.0.7',
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set term ^;
+    create or alter procedure sp_test(x int, y int) returns(z bigint) as
+    begin
+       z = x + y;
+       suspend;
+    end
+    ^set term ;^
+    commit;
+    
+    set blob all;
+    set list on;
+    select rdb$procedure_source from rdb$procedures where rdb$procedure_name = upper('sp_test');
+    
+    update rdb$procedures set rdb$procedure_source = null where rdb$procedure_name = upper('sp_test');
+    commit;
+    select iif(rdb$procedure_source is null, 'NO_SOURCE', 'HAS_SOURCE') sp_src from rdb$procedures where rdb$procedure_name = upper('sp_test');
+  """,
+  'expected_stdout':
+  """
+    begin
+       z = x + y;
+       suspend;
+    end
+    SP_SRC                          NO_SOURCE
+  """,
+  'substitutions': [('RDB\$PROCEDURE_SOURCE.*','')]
+}
+]
+}

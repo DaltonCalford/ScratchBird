@@ -1349,7 +1349,7 @@ done
 2. **Build Tools**
    - CMake 3.15+
    - C++17 compiler
-   - Git (for submodules if needed)
+   - Git (for test repository updates if needed)
 
 3. **Testing Tools**
    - Python 3.x (for test conversion scripts)

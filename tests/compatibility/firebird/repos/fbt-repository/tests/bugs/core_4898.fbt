@@ -1,0 +1,31 @@
+{
+'id': 'bugs.core_4898',
+'qmid': None,
+'tracker_id': 'CORE-4898',
+'title': 'Speed up function creation and loading when there are many functions in the database',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- See: http://sourceforge.net/p/firebird/code/62075
+    set list on;
+    select ri.rdb$relation_name,rs.rdb$field_name,rs.rdb$field_position 
+    from rdb$indices ri join rdb$index_segments rs 
+    using (rdb$index_name) 
+    where ri.rdb$relation_name='RDB$FUNCTIONS' and rdb$field_name='RDB$FUNCTION_ID'; 
+  """,
+ 'expected_stdout': 
+  """
+    RDB$RELATION_NAME               RDB$FUNCTIONS
+    RDB$FIELD_NAME                  RDB$FUNCTION_ID
+    RDB$FIELD_POSITION              0
+  """
+}
+]
+}

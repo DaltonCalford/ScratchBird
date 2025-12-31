@@ -1,0 +1,18 @@
+{
+'id': 'functional.domain.create.28',
+'qmid': 'functional.domain.create.create_domain_28',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - BLOB SUB TYPE TEXT',
+'description': 'Domain creation based on BLOB datatype with SUBTYPE TEXT specification.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test BLOB SUB_TYPE TEXT;
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            BLOB segment 80, subtype TEXT Nullable
+"""
+}
+]
+}

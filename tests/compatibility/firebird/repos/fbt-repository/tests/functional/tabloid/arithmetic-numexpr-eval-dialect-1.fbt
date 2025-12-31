@@ -1,0 +1,30 @@
+{
+'id': 'functional.tabloid.arithmetic-numexpr-eval-dialect-1',
+'qmid': None,
+'tracker_id': '',
+'title': 'Check result of integer division on dialect 1.',
+'description': 'Was fixed in 2.1, see: sql.ru/forum/actualutils.aspx?action=gotomsg&tid=708324&msg=7865013',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'sql_dialect': 1,
+
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set list on; select 36/-4/3 d from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    D                               -3.000000000000000
+  """,
+ 'substitutions':[ ('[ \t]+',' ') ]
+}
+]
+}

@@ -1,0 +1,46 @@
+{
+'id': 'bugs.core_5974',
+'qmid': None,
+'tracker_id': 'CORE-5974',
+'title': "Wrong result of select distinct with decfload/timezone/collated column",
+'description':
+ """
+   NB: this was regression because WI-T4.0.0.1249 (build 27.10.2018) worked OK.
+   Confirmed wrong result on 4.0.0.1340 (build 08.12.2018)
+   Checked on: 4.0.0.1347: OK, 2.844s.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    recreate table test( d decfloat(34) );
+    create index test_d on test(d);
+    commit;
+
+    insert into test select 15514 from rdb$types rows 3;
+    commit;
+    --set plan on;
+    select distinct d+0 as d_distinct from test;
+    select d+0 as d_grouped_nat from test group by d+0;
+    select d as d_grouped_idx from test group by d;
+  """,
+ 'expected_stdout': 
+  """
+    D_DISTINCT                                                           15514
+    D_GROUPED_NAT                                                        15514
+    D_GROUPED_IDX                                                        15514
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

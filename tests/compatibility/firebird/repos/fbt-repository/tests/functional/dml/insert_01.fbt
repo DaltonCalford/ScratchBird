@@ -1,0 +1,41 @@
+{
+'id': 'functional.dml.insert.01',
+'qmid': 'functional.dml.insert.insert_01',
+'tracker_id': '',
+'title': 'INSERT with Defaults',
+'description': """INSERT INTO <table>
+DEFAULT VALUES
+[RETURNING <values>]""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': "CREATE TABLE employee( prenom VARCHAR(20) default 'anonymous' , sex CHAR(1) default 'M' );",
+ 'test_type': 'ISQL',
+ 'test_script': """insert into employee DEFAULT VALUES;
+commit;
+SELECT * FROM EMPLOYEE;
+insert into employee DEFAULT VALUES RETURNING prenom,sex;
+SELECT * FROM EMPLOYEE;
+
+""",
+ 'expected_stdout': """
+PRENOM               SEX
+==================== ======
+anonymous            M
+
+
+PRENOM               SEX
+==================== ======
+anonymous            M
+
+
+PRENOM               SEX
+==================== ======
+anonymous            M
+anonymous            M
+
+"""
+}
+]
+}

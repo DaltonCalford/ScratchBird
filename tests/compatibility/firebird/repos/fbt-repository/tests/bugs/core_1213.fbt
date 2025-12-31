@@ -1,0 +1,51 @@
+{
+'id': 'bugs.core_1213',
+'qmid': 'bugs.core_1213',
+'tracker_id': 'CORE-1213',
+'title': 'CURRENT OF support views',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE TAB1 (COL1 INTEGER);
+CREATE VIEW V1 (COL1) AS SELECT COL1 FROM TAB1;
+COMMIT;
+INSERT INTO TAB1 (COL1) VALUES (1);
+INSERT INTO TAB1 (COL1) VALUES (2);
+INSERT INTO TAB1 (COL1) VALUES (3);
+COMMIT;
+SET TERM ^ ;
+CREATE PROCEDURE P1 AS
+DECLARE vCOL1 INTEGER;
+BEGIN
+FOR SELECT COL1 FROM V1 WHERE COL1 IN (2,3) INTO :vCOL1 AS CURSOR VIEW_CURSOR DO
+  BEGIN
+   DELETE FROM V1 WHERE CURRENT OF VIEW_CURSOR;
+  END
+END ^
+COMMIT ^
+
+
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT COL1 FROM V1;
+EXECUTE PROCEDURE P1;
+SELECT COL1 FROM V1;
+""",
+ 'expected_stdout': """
+        COL1
+============
+           1
+           2
+           3
+
+
+        COL1
+============
+           1
+
+"""
+}
+]
+}

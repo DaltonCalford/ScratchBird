@@ -1,0 +1,33 @@
+{
+'id': 'bugs.core_0967',
+'qmid': 'bugs.core_967',
+'tracker_id': 'CORE-967',
+'title': 'SQL with incorrect characters (outside the ASCII range) may be processed wrongly',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'init_script': """create table t (i integer);
+insert into t values (0);
+commit;
+""",
+ 'test_type': 'Python',
+ 'test_script': """c = db_conn.cursor()
+try:
+  c.execute('update t set i=1'+chr(238)+' where 1=0')
+except Exception,e:
+  msg = repr(e[0])
+  msg = msg.replace(chr(92),"/")
+  print (msg)
+else:
+  c.execute('select * from t')
+  printData(c)
+""",
+ 'expected_stdout': """'Error while preparing SQL statement:/n- SQLCODE: -104/n- Dynamic SQL Error/n- SQL error code = -104/n- Token unknown - line 1, column 17/n- /xee'
+"""
+}
+]
+}

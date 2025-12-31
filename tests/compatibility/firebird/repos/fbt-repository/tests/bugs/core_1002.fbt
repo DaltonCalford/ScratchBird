@@ -1,0 +1,16 @@
+{
+'id': 'bugs.core_1002',
+'qmid': 'bugs.core_1002',
+'tracker_id': 'CORE-1002',
+'title': 'bad handling of  /*/ comments in ISQL',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """/*/ select * from rdb$database; /*/
+"""
+}
+]
+}

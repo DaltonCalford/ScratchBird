@@ -1,0 +1,83 @@
+{
+'id': 'bugs.core_1263',
+'qmid': 'bugs.core_1263',
+'tracker_id': 'CORE-1263',
+'title': 'GSec incorrectly processes some switches',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': '''commands = """add BADPARAM -pa PWD
+add BADPARAM -pas PWD
+add BADPARAM -password PWD
+add BADPARAM -user USR
+add BADPARAM -database DB
+add BADPARAM -trusted
+quit
+"""
+runProgram('gsec',['-user',user_name,'-pas',user_password],commands)''',
+ 'expected_stdout': """GSEC> Invalid switch specified in interactive mode
+GSEC> Invalid switch specified in interactive mode
+GSEC> Invalid switch specified in interactive mode
+GSEC> Invalid switch specified in interactive mode
+GSEC> Invalid switch specified in interactive mode
+GSEC> Invalid switch specified in interactive mode
+GSEC>""",
+ 'substitutions': [('GSEC> Invalid switch specified*','GSEC> invalid switch specified'),('GSEC> invalid switch specified*','GSEC> invalid switch specified'),('error in switch specifications*',''),('in interactive mode*','')]
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': '''commands = """add BADPARAM -pa PWD
+add BADPARAM -pas PWD
+add BADPARAM -password PWD
+add BADPARAM -user USR
+add BADPARAM -database DB
+add BADPARAM -trusted
+quit
+"""
+runProgram('gsec',['-user',user_name,'-pas',user_password],commands)''',
+ 'expected_stderr': """GSEC> invalid switch specified in interactive mode
+GSEC> invalid switch specified in interactive mode
+GSEC> invalid switch specified in interactive mode
+GSEC> invalid switch specified in interactive mode
+GSEC> invalid switch specified in interactive mode
+GSEC> ambiguous switch specified
+error in switch specifications
+GSEC>""",
+ 'substitutions': [('GSEC> Invalid switch specified*','GSEC> invalid switch specified'),('GSEC> invalid switch specified*','GSEC> invalid switch specified'),('error in switch specifications*',''),('in interactive mode*','')]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': '''commands = """add BADPARAM -pa PWD
+add BADPARAM -pas PWD
+add BADPARAM -password PWD
+add BADPARAM -user USR
+add BADPARAM -database DB
+add BADPARAM -trusted
+quit
+"""
+runProgram('gsec',['-user',user_name,'-pas',user_password],commands)''',
+ 'expected_stderr':
+  """
+    GSEC> invalid switch specified in interactive mode
+    GSEC> invalid switch specified in interactive mode
+    GSEC> invalid switch specified in interactive mode
+    GSEC> invalid switch specified in interactive mode
+    GSEC> invalid switch specified in interactive mode
+    GSEC> invalid switch specified
+  """,
+ 'substitutions': [
+   ('^((?!invalid switch specified).)*$',''),
+   ('invalid switch specified.*','invalid switch specified'),
+   ('.*gsec is deprecated.*','')
+ ]
+}
+]
+}

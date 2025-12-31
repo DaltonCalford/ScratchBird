@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_5130',
+'qmid': '',
+'tracker_id': 'CORE-5130',
+'title': 'Compiler issues message about "invalid request BLR" when attempt to compile wrong DDL of view with both subquery and "WITH CHECK OPTION" in its DDL',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    -- Confirmed proper result on:  WI-V3.0.0.32380
+    create or alter view v1 as select 1 id from rdb$database;
+    recreate table t1(id int, x int, y int);
+    commit;
+
+    alter view v1 as
+    select * from t1 a
+    where
+        not exists(select * from t1 r where r.x > a.x)
+    with check option
+    ; 
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -ALTER VIEW V1 failed
+    -Dynamic SQL Error
+    -SQL error code = -607
+    -No subqueries permitted for VIEW WITH CHECK OPTION
+  """
+}
+]
+}

@@ -1,0 +1,71 @@
+{
+'id': 'functional.arno.optimizer.opt_single_index_selection_02',
+'qmid': 'functional.arno.optimizer.opt_single_index_selection_02',
+'tracker_id': '',
+'title': 'Best match index selection (single segment)',
+'description': """Check if it will select the index with the best selectivity.
+UNIQUE index is the best and prefer ASC index.
+Only the equals conjunctions should be bound to the index, because it's the most selective.
+""",
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE SelectionTest (
+  F1 INTEGER NOT NULL
+);
+
+SET TERM ^^ ;
+CREATE PROCEDURE PR_SelectionTest
+AS
+DECLARE VARIABLE FillID INTEGER;
+BEGIN
+  FillID = 1;
+  WHILE (FillID <= 1000) DO
+  BEGIN
+    INSERT INTO SelectionTest
+      (F1)
+    VALUES
+      (:FillID);
+    FillID = FillID + 1;
+  END
+END
+^^
+SET TERM ; ^^
+
+COMMIT;
+
+/* Fill table with data */
+EXECUTE PROCEDURE PR_SelectionTest;
+
+COMMIT;
+
+/* Create indexes */
+CREATE UNIQUE ASC INDEX I_F1_UNIQUE_ASC ON SelectionTest (F1);
+CREATE UNIQUE DESC INDEX I_F1_UNIQUE_DESC ON SelectionTest (F1);
+CREATE ASC INDEX I_F1_ASC ON SelectionTest (F1);
+CREATE DESC INDEX I_F1_DESC ON SelectionTest (F1);
+
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+SELECT
+  st.F1
+FROM
+  SelectionTest st
+WHERE
+  st.F1 > 1 and
+  st.F1 = 500 and
+  st.F1 < 1000;
+""",
+ 'expected_stdout': """PLAN (ST INDEX (I_F1_UNIQUE_ASC))
+
+          F1
+============
+
+         500
+"""
+}
+]
+}

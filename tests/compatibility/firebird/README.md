@@ -14,7 +14,7 @@ This directory contains converted Firebird compatibility tests from the official
 ```
 firebird/
 ├── repos/
-│   └── fbt-repository/          # Git submodule with original .fbt tests
+│   └── fbt-repository/          # Vendored snapshot of original .fbt tests
 ├── converted/                    # Converted SQL test files
 │   ├── bugs/                    # Bug regression tests
 │   ├── functional/              # Functional tests organized by feature

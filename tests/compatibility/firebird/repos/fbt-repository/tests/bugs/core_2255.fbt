@@ -1,0 +1,48 @@
+{
+'id': 'bugs.core_2255',
+'qmid': None,
+'tracker_id': 'CORE-2255',
+'title': "'...exception...string right truncation' when alter view with join",
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE TEST_VARCHAR (
+    ID INTEGER,
+    CAPTION VARCHAR(1024)
+);
+
+INSERT INTO TEST_VARCHAR (ID, CAPTION) VALUES (1, 'CAP_1');
+
+CREATE VIEW P_TEST_VARCHAR(
+    ID,
+    CAPTION)
+AS
+SELECT
+    T1.ID,
+    T1.CAPTION
+FROM TEST_VARCHAR T1;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER VIEW P_TEST_VARCHAR(
+    ID)
+AS
+SELECT
+    T1.ID
+FROM TEST_VARCHAR T1, TEST_VARCHAR T2
+  WHERE T1.ID = T2.ID;
+
+SELECT * FROM P_TEST_VARCHAR;
+""",
+ 'expected_stdout': """
+          ID
+============
+           1
+
+"""
+}
+]
+}

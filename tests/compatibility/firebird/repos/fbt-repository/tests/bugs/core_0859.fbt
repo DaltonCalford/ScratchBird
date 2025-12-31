@@ -1,0 +1,48 @@
+{
+'id': 'bugs.core_0859',
+'qmid': 'bugs.core_859',
+'tracker_id': 'CORE-859',
+'title': 'Sorting is allowed for blobs and arrays',
+'description': "This one is supposed to fail for now, as we restored the legacy behavior until we're able to implement DISTINCT for blobs properly",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '9.1',
+ 'platform': 'All',
+ 'init_script': """create table t (i integer, b blob sub_type text, a integer [5]);
+""",
+ 'test_type': 'Python',
+ 'test_script': """c = db_conn.cursor()
+try:
+  c.prep('select * from t order by b')
+except:
+  pass
+else:
+  print ('Test Failed in case 1')
+
+try:
+  c.prep('select * from t order by a')
+except:
+  pass
+else:
+  print ('Test Failed in case 2')
+
+try:
+  c.prep('select b, count(*) from t group by b')
+except:
+  pass
+else:
+  print ('Test Failed in case 3')
+
+try:
+  c.prep('select a, count(*) from t group by a')
+except:
+  pass
+else:
+  print ('Test Failed in case 4')
+
+
+"""
+}
+]
+}

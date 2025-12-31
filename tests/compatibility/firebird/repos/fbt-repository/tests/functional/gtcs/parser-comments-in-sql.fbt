@@ -1,0 +1,120 @@
+{
+'id': 'functional.gtcs.parser-comments-in-sql',
+'qmid': None,
+'tracker_id': '',
+'title': 'GTCS/tests/CF_ISQL_19. Check for problems with comments (single-line and multi-line)',
+'description':
+ """
+	::: NB ::: 
+	### Name of original test has no any relation with actual task of this test: ###
+    https://github.com/FirebirdSQL/fbtcs/blob/master/GTCS/tests/CF_ISQL_19.script
+
+    bug #781610 problems with one line comments (--)
+
+    Checked on: 4.0.0.1803 SS; 3.0.6.33265 SS; 2.5.9.27149 SC.
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set heading off;
+
+    create table test (n integer);
+    insert into test values (1);
+
+    -- I am a comment
+
+    /* BEGIN */
+    -- I am a comment
+    select * from test;
+    /* END */
+
+    /* BEGIN */
+    -- comment with unclosed 'quoted string
+    select * from test;
+    /* END */
+
+    /* BEGIN */
+    -- comment with unclosed "quoted string
+    select * from test;
+    /* END */
+
+    /* BEGIN */
+    -- I am a comment;
+    select * from test;
+    /* END */
+
+    /* BEGIN with unclosed "quoted */
+    -- I am a comment;
+    select * from test;
+    /* END */
+
+    select * /*
+    comment
+    */
+    from test;
+
+    select * 
+    /* comment */
+    from test;
+
+    select * 
+    -- comment
+    from test;
+
+    /*
+    Comment
+    */ select * from test;
+
+
+    -- Added 18.03.2020
+    --#################
+
+    -- single-line comment '*/
+    select * from test;
+
+    -- single-line comment --*/
+    select * from test;
+
+    /* * / / * q'{ 
+       BEGIN multi-line comment-1
+       '*/
+    select * from test;
+
+
+    /* '' BEGIN multi-line comment-2
+       '* / / *  */
+    select * from test;
+
+
+  """,
+ 'expected_stdout':
+  """
+    1
+    1
+    1
+    1
+    1
+    1
+    1
+    1
+    1
+    1
+    1
+    1
+    1
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[('=', ''),('[ \t]+', ' ')]
+}
+]
+}

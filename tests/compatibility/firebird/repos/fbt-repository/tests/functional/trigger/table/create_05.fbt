@@ -1,0 +1,57 @@
+{
+'id': 'functional.trigger.create.05',
+'qmid': 'functional.trigger.create.create_trigger_05',
+'tracker_id': '',
+'title': 'CREATE TRIGGER BEFORE DELETE',
+'description': """CREATE TRIGGER BEFORE DELETE
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE tb(id INT);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE TRIGGER test FOR tb BEFORE DELETE AS
+BEGIN
+  old.id=1;
+END^
+SET TERM ;^
+SHOW TRIGGER test;""",
+ 'expected_stdout': """Triggers on Table TB:
+TEST, Sequence: 0, Type: BEFORE DELETE, Active
+AS
+BEGIN
+  old.id=1;
+END
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE tb(id INT);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE TRIGGER test FOR tb BEFORE DELETE AS
+BEGIN
+END^
+SET TERM ;^
+SHOW TRIGGER test;""",
+ 'expected_stdout': """Triggers on Table TB:
+TEST, Sequence: 0, Type: BEFORE DELETE, Active
+AS
+BEGIN
+END
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+""",
+  'substitutions':[('\+.*',''),('\=.*',''),('Trigger text.*','')]
+}
+]
+}

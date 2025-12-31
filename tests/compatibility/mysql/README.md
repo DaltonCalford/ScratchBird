@@ -14,7 +14,7 @@ This directory contains converted MySQL compatibility tests from the official [m
 ```
 mysql/
 ├── repos/
-│   └── mysql-server/             # Git submodule (sparse checkout: mysql-test/)
+│   └── mysql-server/             # Vendored snapshot (sparse checkout via update script)
 │       └── mysql-test/
 │           ├── t/               # Main test suite (.test files)
 │           ├── r/               # Expected results (.result files)

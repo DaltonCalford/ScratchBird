@@ -1,0 +1,61 @@
+{
+'id': 'bugs.core_3999',
+'qmid': None,
+'tracker_id': 'CORE-3999',
+'title': 'Bug in unique constraints and / or NUMERIC-SORT collation',
+'description':
+ """
+    Confirmed on WI-V2.5.7.27026, it issues:
+    Statement failed, SQLSTATE = 23000
+    violation of PRIMARY or UNIQUE KEY constraint "UK_PRODUCTS" on table "PRODUCTS"
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    recreate table products(productno char(1));
+    commit;
+    set term ^;
+    execute block as
+    begin
+      execute statement 'drop collation unicode_num_ci_ai';
+      when any do begin end
+    end^
+    set term ;^
+    commit;
+    create collation unicode_num_ci_ai for utf8 from unicode_ci_ai 'numeric-sort=1';
+    recreate table products(productno varchar(100) character set utf8 collate unicode_num_ci_ai);
+    alter table products add constraint uk_products unique (productno) using index uk_products; 
+    commit;
+    insert into products values('s01');
+    insert into products values('s1');
+    insert into products values('01');
+    insert into products values('001');
+    insert into products values('-01');
+    insert into products values('-001');
+    commit;
+    set list on;
+    select distinct productno from products;
+  """,
+ 'expected_stdout': 
+  """
+    PRODUCTNO                       -001
+    PRODUCTNO                       -01
+    PRODUCTNO                       001
+    PRODUCTNO                       01
+    PRODUCTNO                       s01
+    PRODUCTNO                       s1
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

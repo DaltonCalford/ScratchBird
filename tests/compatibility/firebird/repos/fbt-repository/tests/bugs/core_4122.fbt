@@ -1,0 +1,132 @@
+{
+'id': 'bugs.core_4122',
+'qmid': None,
+'tracker_id': 'CORE-4122',
+'title': "Metadata export with isql (option -ex) does not export functions properly",
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script':
+  """
+    set term ^ ;
+    create or alter package PKG_TEST
+    as
+    begin
+      function F_TEST_INSIDE_PKG
+      returns smallint;
+    end^
+    set term ; ^
+    
+    set term ^ ;
+    recreate package body PKG_TEST
+    as
+    begin
+      function F_TEST_INSIDE_PKG
+      returns smallint
+      as
+      begin
+        return 1;
+      end
+    end^
+    set term ; ^
+    
+    set term ^ ;
+    create or alter function F_TEST_OUTSIDE_PKG
+    returns smallint
+    as
+    begin
+      return -1;
+    end^
+    
+    set term ; ^
+    commit;
+  """,
+ 'test_type': 'Python',
+ 'test_script':
+  """#
+runProgram('isql',['-x',dsn,'-user',user_name,'-pass',user_password])
+  """,
+ 'expected_stdout': 
+  """
+    SET SQL DIALECT 3; 
+
+    /* CREATE DATABASE 'localhost/3330:C:\FBTESTING\qa\fbt-repo\tmp\core4122.fdb' PAGE_SIZE 4096 DEFAULT CHARACTER SET NONE; */
+
+
+    COMMIT WORK;
+
+    COMMIT WORK;
+    SET AUTODDL OFF;
+    SET TERM ^ ;
+
+    /* Stored functions headers */
+    CREATE OR ALTER FUNCTION F_TEST_OUTSIDE_PKG RETURNS SMALLINT
+    AS 
+    BEGIN END ^
+
+    SET TERM ; ^
+    COMMIT WORK;
+    SET AUTODDL ON;
+
+    COMMIT WORK;
+    SET AUTODDL OFF;
+    SET TERM ^ ;
+
+    /* Package headers */
+
+    /* Package header: PKG_TEST, Owner: SYSDBA */
+    CREATE PACKAGE PKG_TEST AS
+    begin
+      function F_TEST_INSIDE_PKG
+      returns smallint;
+    end^
+
+    SET TERM ; ^
+    COMMIT WORK;
+    SET AUTODDL ON;
+
+    COMMIT WORK;
+    SET AUTODDL OFF;
+    SET TERM ^ ;
+
+    /* Stored functions bodies */
+
+    ALTER FUNCTION F_TEST_OUTSIDE_PKG RETURNS SMALLINT
+    AS 
+    begin
+      return -1;
+    end ^
+
+    SET TERM ; ^
+    COMMIT WORK;
+    SET AUTODDL ON;
+
+    COMMIT WORK;
+    SET AUTODDL OFF;
+    SET TERM ^ ;
+
+    /* Package bodies */
+
+    /* Package body: PKG_TEST, Owner: SYSDBA */
+    CREATE PACKAGE BODY PKG_TEST AS
+    begin
+      function F_TEST_INSIDE_PKG
+      returns smallint
+      as
+      begin
+        return 1;
+      end
+    end^
+
+    SET TERM ; ^
+    COMMIT WORK;
+    SET AUTODDL ON;
+  """,
+ 'substitutions': [("CREATE DATABASE '.*' PAGE_SIZE 4096 DEFAULT CHARACTER SET NONE","CREATE DATABASE '' PAGE_SIZE 4096 DEFAULT CHARACTER SET NONE")]
+}
+]
+}

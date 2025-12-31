@@ -1,0 +1,24 @@
+{
+'id': 'bugs.core_2451',
+'qmid': None,
+'tracker_id': 'CORE-2451',
+'title': 'Query SELECT ... WHERE ... IN (SELECT DISTINCT ... ) returns a wrong result set.',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE TBL_TEST (FLD_VALUE INTEGER);
+INSERT INTO TBL_TEST VALUES (1);
+INSERT INTO TBL_TEST VALUES (2);
+INSERT INTO TBL_TEST VALUES (3);
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT * FROM TBL_TEST WHERE FLD_VALUE IN (SELECT DISTINCT FLD_VALUE FROM TBL_TEST WHERE FLD_VALUE NOT IN (SELECT DISTINCT FLD_VALUE FROM TBL_TEST));
+"""
+}
+]
+}

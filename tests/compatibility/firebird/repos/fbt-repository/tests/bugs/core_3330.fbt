@@ -1,0 +1,30 @@
+{
+'id': 'bugs.core_3330',
+'qmid': None,
+'tracker_id': 'CORE-3330',
+'title': 'Server crashes while recreating the table with a NULL -> NOT NULL change',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create table test (a int);
+    commit;
+    insert into test (a) values (null);
+    commit;
+    recreate table test (b int not null);
+    commit; -- crash here 
+  """,
+ 'expected_stdout': 
+  """
+  """
+}
+]
+}

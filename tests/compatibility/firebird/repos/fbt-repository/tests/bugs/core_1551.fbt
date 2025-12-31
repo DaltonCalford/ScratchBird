@@ -1,0 +1,44 @@
+{
+'id': 'bugs.core_1551',
+'qmid': 'bugs.core_1551-250',
+'tracker_id': 'CORE-1551',
+'title': 'AV when all statements are cancelled',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """delete from MON$STATEMENTS;
+delete from MON$ATTACHMENTS;
+COMMIT;
+SELECT 1 FROM RDB$DATABASE;
+""",
+ 'expected_stdout': """
+    CONSTANT
+============
+           1
+
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """delete from MON$STATEMENTS;
+delete from MON$ATTACHMENTS;
+COMMIT;
+SELECT 1 FROM RDB$DATABASE;
+""",
+ 'expected_stdout': """
+    CONSTANT
+============
+           1
+
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -817
+operation not supported
+"""
+}
+]
+}

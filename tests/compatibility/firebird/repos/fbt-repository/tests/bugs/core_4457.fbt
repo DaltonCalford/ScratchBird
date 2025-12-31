@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_4457',
+'qmid': None,
+'tracker_id': 'CORE-4457',
+'title': 'DATEADD should support fractional value for MILLISECOND',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    select cast(dateadd(-1 * extract(millisecond from ts) millisecond to ts) as varchar(30)) dts, extract(millisecond from ts) ms
+    from (
+        select timestamp'2014-06-09 13:50:17.4971' as ts
+        from rdb$database
+    ) a;
+  """,
+  'expected_stdout': 
+  """
+    DTS                             2014-06-09 13:50:17.0000
+    MS                              497.1
+  """
+}
+]
+}

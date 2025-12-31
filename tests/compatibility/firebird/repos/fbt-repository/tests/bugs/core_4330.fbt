@@ -1,0 +1,59 @@
+{
+'id': 'bugs.core_4330',
+'qmid': None,
+'tracker_id': 'CORE-4330',
+'title': 'not correct result function LAG, if OFFSET value are assigned from a table',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    with t(a, b) as
+    (
+      select 1, null from rdb$database
+      union all
+      select 2, 1 from rdb$database
+      union all
+      select 3, 2 from rdb$database
+      union all
+      select 4, 3 from rdb$database
+      union all
+      select 5, 2 from rdb$database
+    )
+    select
+      a,
+      b,
+      lag(a, b)over(order by a) as la
+    from t ;
+  """,
+ 'expected_stdout':
+  """
+    A                               1
+    B                               <null>
+    LA                              <null>
+
+    A                               2
+    B                               1
+    LA                              1
+
+    A                               3
+    B                               2
+    LA                              1
+
+    A                               4
+    B                               3
+    LA                              1
+
+    A                               5
+    B                               2
+    LA                              3
+  """
+}
+]
+}

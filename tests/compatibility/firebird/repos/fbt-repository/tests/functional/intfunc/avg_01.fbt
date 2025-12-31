@@ -1,0 +1,28 @@
+{
+'id': 'functional.intfunc.avg.01',
+'qmid': 'functional.intfunc.avg.avg_01',
+'tracker_id': '',
+'title': 'AVG from single integer row',
+'description': """AVG from single integer row
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+INSERT
+Basic SELECT""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL CONSTRAINT unq UNIQUE,
+                   text VARCHAR(32));
+INSERT INTO test VALUES(5,null);""",
+ 'test_type': 'ISQL',
+ 'test_script': 'SELECT AVG(id) FROM test;',
+ 'expected_stdout': """                  AVG
+=====================
+
+                    5"""
+}
+]
+}

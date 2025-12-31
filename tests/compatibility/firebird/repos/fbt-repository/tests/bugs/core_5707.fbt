@@ -1,0 +1,46 @@
+{
+'id': 'bugs.core_5707',
+'qmid': None,
+'tracker_id': 'CORE-5707',
+'title': 'Begin and end of physical backup in the same transaction could crash engine',
+'description':
+ """
+    Confirmed crashes on:
+        3.0.3.32837
+        4.0.0.800
+    Could NOT reproduce on 3.0.3.32882 (SS).
+    Checked on:
+        30SS, build 3.0.3.32887: OK, 0.844s.
+        40SS, build 4.0.0.861: OK, 2.016s.
+ """,
+'min_versions': '3.0.3',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    alter database begin backup end backup;
+    commit;
+    set autoddl off;
+    alter database begin backup;
+    alter database end backup;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -ALTER DATABASE failed
+    -Incompatible ALTER DATABASE clauses: 'BEGIN BACKUP' and 'END BACKUP'
+  """
+}
+]
+}

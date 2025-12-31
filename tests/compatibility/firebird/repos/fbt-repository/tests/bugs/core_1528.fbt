@@ -1,0 +1,22 @@
+{
+'id': 'bugs.core_1528',
+'qmid': 'bugs.core_1528',
+'tracker_id': 'CORE-1528',
+'title': 'Functions DATEDIFF does not work in dialect 1',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'sql_dialect': 1,
+ 'test_type': 'ISQL',
+ 'test_script': "SELECT DATEDIFF(DAY, CAST('18.10.2007' AS TIMESTAMP), CAST('23.10.2007' AS TIMESTAMP)) FROM RDB$DATABASE;",
+ 'expected_stdout': """
+               DATEDIFF
+=======================
+      5.000000000000000
+
+"""
+}
+]
+}

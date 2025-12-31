@@ -1,0 +1,49 @@
+{
+'id': 'bugs.core_0063',
+'qmid': None,
+'tracker_id': 'CORE-0063',
+'title': "Sequence of commands crash FB server",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'database_character_set': 'WIN1252',
+ 'connection_character_set': 'ISO8859_1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set bail on;
+
+    create domain d_descricao_30000_nn as varchar(30000) not null collate win_ptbr;
+    create table movimento( complemento d_descricao_30000_nn );
+
+    insert into movimento values ('');
+    insert into movimento values ('1234567890');
+    insert into movimento values ('');
+
+    create domain d_text_blob as blob sub_type text collate win_ptbr;
+
+    alter table movimento add complemento2 d_text_blob;
+
+    update movimento set complemento2 = complemento;
+
+    alter table movimento drop complemento, add complemento d_text_blob;
+
+    drop domain d_descricao_30000_nn;
+
+    update movimento set complemento = complemento2;
+    set list on;
+    select 'OK' as result from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    RESULT                          OK
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

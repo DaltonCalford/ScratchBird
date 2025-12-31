@@ -1,0 +1,19 @@
+{
+'id': 'functional.dml.delete.01',
+'qmid': 'functional.dml.delete.delete_01',
+'tracker_id': '',
+'title': 'DELETE',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE tb(id INT);
+INSERT INTO tb VALUES(10);
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """DELETE FROM tb;
+SELECT * FROM tb;"""
+}
+]
+}

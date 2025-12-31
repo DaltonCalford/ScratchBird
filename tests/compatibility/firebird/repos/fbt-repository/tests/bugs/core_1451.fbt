@@ -1,0 +1,62 @@
+{
+'id': 'bugs.core_1451',
+'qmid': 'bugs.core_1451-250',
+'tracker_id': 'CORE-1451',
+'title': 'Using RDB$DB_KEY in where section while selecting from a procedure crashes the server',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """SET TERM ^;
+create procedure test_proc
+returns (A INTEGER)
+as
+begin
+  A = 1;
+  SUSPEND;
+end^
+SET TERM ;^
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select * from test_proc
+where rdb$db_key is not null;
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42S22
+Dynamic SQL Error
+-SQL error code = -206
+-Column unknown
+-DB_KEY
+-At line 2, column 7
+""",
+  'substitutions': [('line\s[0-9]+,','line x'),
+                    ('column\s[0-9]+','column y')
+  ]
+},
+{
+ 'firebird_version': '2.0.5',
+ 'platform': 'All',
+ 'init_script': """SET TERM ^;
+create procedure test_proc
+returns (A INTEGER)
+as
+begin
+  A = 1;
+  SUSPEND;
+end^
+SET TERM ;^
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select * from test_proc
+where rdb$db_key is not null;
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+Dynamic SQL Error
+-SQL error code = -607
+-Cannot SELECT RDB$DB_KEY from a stored procedure.
+"""
+}
+]
+}

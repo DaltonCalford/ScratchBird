@@ -1,0 +1,56 @@
+{
+'id': 'bugs.core_4572',
+'qmid': None,
+'tracker_id': 'CORE-4572',
+'title': 'Regression: Incorrect result in subquery with aggregate',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set term ^;
+    create or alter function fn_multiplier ( a_val int, a_times int ) returns bigint
+    as
+    begin
+        return a_val * a_times;
+    end
+    ^
+     
+    create or alter procedure sp_multiplier (a_val int, a_times int )
+    returns (result bigint)
+    as
+    begin
+        result = a_val * a_times;
+    end
+    ^
+    set term ;^
+    commit;
+    
+    -- Confirmed on WI-T3.0.0.31374 Firebird 3.0 Beta 1:
+    -- Statement failed, SQLSTATE = 39000
+    -- invalid request BLR at offset 50
+    -- -function FN_MULTIPLIER could not be matched
+    select fn_multiplier(191) as t from rdb$database;
+
+    execute procedure sp_multiplier(191);
+  """,
+  'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 07001
+    Dynamic SQL Error
+    -Input parameter mismatch for function FN_MULTIPLIER
+
+    Statement failed, SQLSTATE = 07001
+    Dynamic SQL Error
+    -Input parameter mismatch for procedure SP_MULTIPLIER
+  """
+}
+]
+}

@@ -1,0 +1,28 @@
+{
+'id': 'bugs.core_1522',
+'qmid': 'bugs.core_1522',
+'tracker_id': 'CORE-1522',
+'title': 'Inconsistent DATEDIFF behaviour',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT DATEDIFF(HOUR, CAST('01:59:59' AS TIME), CAST('02:59:58' AS TIME)) FROM RDB$DATABASE;
+SELECT DATEDIFF(HOUR, CAST('01:59:59' AS TIME), CAST('02:59:59' AS TIME)) FROM RDB$DATABASE;
+""",
+ 'expected_stdout': """
+             DATEDIFF
+=====================
+                    1
+
+
+             DATEDIFF
+=====================
+                    1
+
+"""
+}
+]
+}

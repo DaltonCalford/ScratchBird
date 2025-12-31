@@ -1,0 +1,71 @@
+{
+'id': 'bugs.core_3547',
+'qmid': None,
+'tracker_id': 'CORE-3547',
+'title': "Floating-point negative zero doesn't match positive zero in the index",
+'description':
+ """
+    :: NB ::: Problematic key representaion for 0e0 can differ:
+    NIX: -Problematic key value is ("COL" = 0.000000000000000)  // LINUX
+    WIN: -Problematic key value is ("COL" = 0.0000000000000000) // intel, win-8, ver 6.3, build 9600 (and also on win-2008 server) -- 16 digits
+                                                             ^
+                                            0.000000000000000   // intel, win-10, ver 21H2, build 19044.1766 -- 15 digits
+                                              ....:....1....:....2
+    Because of this, substituion is used here, with check that result (representation of '0e0') contains at least 15 digits.
+ """,
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+    recreate table t_float_no_pk (col float);
+    commit;
+    insert into t_float_no_pk (col) values (0e0);
+    insert into t_float_no_pk (col) values (-0e0);
+    commit;
+    
+    recreate table t1_double_as_pk (col double precision, constraint t1_double_pk primary key(col) using index t1_double_pk);
+    commit;
+  """,
+ 'test_script': 
+  """
+    set list on;
+    select count(*) "where id = 0"            from rdb$relations where rdb$relation_id = 0;
+    select count(*) "where id = 0e0"          from rdb$relations where rdb$relation_id = 0e0;
+    select count(*) "where id = (1e0 - 1e0)"  from rdb$relations where rdb$relation_id = (1e0 - 1e0);
+    select count(*) "where id = -0e0"         from rdb$relations where rdb$relation_id = -0e0;
+    select count(*) "where id = -(1e0 - 1e0)" from rdb$relations where rdb$relation_id = -(1e0 - 1e0);
+    select count(*) "where 0e0 = -0e0"        from rdb$database where 0e0 = -0e0;
+    
+    insert into t1_double_as_pk (col) values (0e0);
+    commit;
+    insert into t1_double_as_pk (col) values (-0e0);
+    commit;
+    select count(distinct col) "t_float_no_pk: count(dist col)" from t_float_no_pk;
+    select count(*) "t_double_pk: col, count(*)" from t1_double_as_pk group by col;
+
+  """,
+ 'expected_stdout': 
+  """
+    where id = 0                    1
+    where id = 0e0                  1
+    where id = (1e0 - 1e0)          1
+    where id = -0e0                 1
+    where id = -(1e0 - 1e0)         1
+    where 0e0 = -0e0                1
+    t_float_no_pk: count(dist col)  1
+    t_double_pk: col, count(*)      1
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 23000
+    violation of PRIMARY or UNIQUE KEY constraint "T1_DOUBLE_PK" on table "T1_DOUBLE_AS_PK"
+    -Problematic key value is ("COL" = 0.0000000000000000)
+  """,
+  'substitutions': [('0.0{15,}', '0.0')]
+}
+]
+}

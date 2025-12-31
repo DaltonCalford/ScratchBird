@@ -1,0 +1,18 @@
+{
+'id': 'functional.domain.create.05',
+'qmid': 'functional.domain.create.create_domain_05',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - DOUBLE PRECISION',
+'description': 'Simple domain creation based DOUBLE PRECISION datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test DOUBLE PRECISION;
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            DOUBLE PRECISION Nullable
+"""
+}
+]
+}

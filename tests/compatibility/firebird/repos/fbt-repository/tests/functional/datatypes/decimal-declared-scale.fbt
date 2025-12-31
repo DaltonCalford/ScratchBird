@@ -1,0 +1,59 @@
+{
+'id': 'functional.datatypes.decimal-declared-scale',
+'qmid': None,
+'tracker_id': '',
+'title': 'Declared scale does not act as a constraint, it just defines the accuracy of the storage',
+'description': 
+ """
+   Samples are from CORE-3556 and CORE-5723.
+   Checked on:
+       FB25SC, build 2.5.8.27090: OK, 0.453s.
+       FB30SS, build 3.0.3.32897: OK, 1.047s.
+       FB40SS, build 4.0.0.872: OK, 1.313s.
+ """,
+'min_versions': '2.5.8',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set list on;
+    recreate table test ( id int, b numeric(18,5) );
+    insert into test(id, b) values (1, 1.0000199);
+    insert into test(id, b) values (2, (select round(min(b),5) from test) );
+    commit;
+
+    select id, b, iif(b = 1.00002, 'true', 'false') c from test order by id;
+    commit;
+
+    recreate table test(id int, a decimal(18,18), b decimal(3,3) );
+    commit;
+
+    insert into test(id, a, b) values( 1, '9.123456789012345678', '999999.999' );
+    select * from test order by id;
+  """,
+ 'expected_stdout':
+  """
+    ID                              1
+    B                               1.00002
+    C                               true
+
+    ID                              2
+    B                               1.00002
+    C                               true
+
+    ID                              1
+    A                               9.123456789012345678
+    B                               999999.999
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

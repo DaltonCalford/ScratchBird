@@ -1,0 +1,158 @@
+{
+'id': 'bugs.core_5231',
+'qmid': None,
+'tracker_id': 'CORE-5231',
+'title': 'EXECUTE STATEMENT: BLR error if more than 256 output parameters exist',
+'description': 
+ """
+    We define here number of output args for which one need to made test - see var 'sp_args_count'.
+    Then we open .sql file and GENERATE it content based on value of 'sp_args_count' (procedure will
+    have header and body with appropriate number of arguments and statement to be executed).
+    Finally, we run ISQL subprocess with giving to it for execution just generated .sql script. 
+    ISQL should _not_ issue any error and all lines of its STDOUT should start from the names of 
+    output arguments (letter 'O': O1, O2, ... O5000).
+
+    Confirmed bug on WI-T4.0.0.184 for number of output args >= 256:
+        Statement failed, SQLSTATE = HY000
+        invalid request BLR at offset 7157
+        -BLR syntax error: expected statement at offset 7158, encountered 0
+    Checked on WI-V3.0.1.32518, WI-T4.0.0.197 - works fine.
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """\
+import os
+import time
+import subprocess
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_conn.close()
+#--------------------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+
+#######################  N U M B E R    O F    O U T P U T    A R G S.  ###########
+sp_args_count=5000
+###################################################################################
+
+sql_pref='''\
+set term ^;
+execute block as
+begin
+    execute statement 'drop procedure sp_test';
+when any do begin end
+end ^
+commit ^
+create or alter procedure sp_test returns (
+'''
+
+f_ddl_sql = open( os.path.join(context['temp_directory'],'tmp_5231_ddl.sql'), 'w')
+f_ddl_sql.write(sql_pref)
+
+delimiter=''
+for i in range(sp_args_count):
+    f_ddl_sql.write( '%so%s int' % (delimiter, str(i)) )
+    delimiter=','
+
+f_ddl_sql.write( 
+''') as begin
+for execute statement 'select
+'''
+)
+
+delimiter=''
+for i in range(sp_args_count):
+    f_ddl_sql.write( '%s%s' % (delimiter, str(i)) )
+    delimiter=','
+f_ddl_sql.write(" from rdb$database'\\ninto ")
+
+delimiter=''
+for i in range(sp_args_count):
+    f_ddl_sql.write( '%so%s' % (delimiter, str(i)) )
+    delimiter=','
+
+sql_suff='''
+do suspend;
+end^
+set term ;^
+commit;
+set list on;
+select * from sp_test;
+'''
+f_ddl_sql.write(sql_suff)
+flush_and_close( f_ddl_sql )
+
+f_run_log=open( os.path.join(context['temp_directory'],'tmp_5231_run.log'), 'w')
+f_run_err=open( os.path.join(context['temp_directory'],'tmp_5231_run.err'), 'w')
+
+subprocess.call([context['isql_path'], dsn, "-i", f_ddl_sql.name],
+                stdout=f_run_log, 
+                stderr=f_run_err)
+flush_and_close( f_run_log )
+flush_and_close( f_run_err )
+
+with open( f_run_err.name,'r') as f:
+    for line in f:
+        if line.split():
+            print('UNEXPECTED STDERR: '+line)
+
+with open( f_run_log.name,'r') as f:
+    for line in f:
+        if line.split() and not line.startswith('O'):
+            print('UNEXPECTED STDLOG: '+line)
+
+# CLEANUP
+#########
+time.sleep(1)
+cleanup( (f_ddl_sql, f_run_log, f_run_err) )
+
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

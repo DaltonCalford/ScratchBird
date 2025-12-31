@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_2538',
+'qmid': None,
+'tracker_id': 'CORE-2538',
+'title': "PSQL doesnt allow to use singleton query result as input parameter of stored procedure when procedure accessed using 'execute procedure'",
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """set term ^ ;
+
+create procedure P (I integer)
+returns (O integer)
+AS
+BEGIN
+  SUSPEND;
+END ^
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """set term ^ ;
+
+execute block
+as
+declare variable i integer;
+begin
+  select 1 from P((select 1 from rdb$database)) into :i;
+end ^
+
+execute block
+as
+declare variable i integer;
+begin
+  execute procedure P((select 1 from rdb$database)) returning_values :i;
+end ^
+"""
+}
+]
+}

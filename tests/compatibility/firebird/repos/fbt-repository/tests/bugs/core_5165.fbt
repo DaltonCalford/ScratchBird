@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_5165',
+'qmid': None,
+'tracker_id': 'CORE-5165',
+'title': "HAVING COUNT(*) NOT IN ( <Q> ) prevent record from appearing in outer resultset when it should be there (<Q> = resultset without nulls)",
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Confirmed proper result on: WI-V3.0.0.32418, WI-T4.0.0.98
+    set list on;
+    set count on;
+    select 1 as check_ok
+    from rdb$database r
+    group by r.rdb$relation_id
+    having count(*) not in (select -1 from rdb$database r2); 
+
+    select 2 as check_ok
+    from rdb$database r
+    group by r.rdb$relation_id
+    having count(1) not in (select -1 from rdb$database r2); 
+  """,
+ 'expected_stdout':
+  """
+    CHECK_OK                        1
+    Records affected: 1
+
+    CHECK_OK                        2
+    Records affected: 1
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

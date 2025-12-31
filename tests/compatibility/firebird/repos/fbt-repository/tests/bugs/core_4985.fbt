@@ -1,0 +1,58 @@
+{
+'id': 'bugs.core_4985',
+'qmid': None,
+'tracker_id': 'CORE-4985',
+'title': "Non-privileged user can implicitly count records in a restricted table",
+'description': '',
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Checked on build  of 24.03.2016 4.0 Unstable.
+
+    set wng off;
+    create or alter user TMP$C4985 password '123';
+    create table test(id int);
+    set count on;
+    insert into test select 1 from rdb$types rows 7;
+    commit;
+    revoke all on all from TMP$C4985;
+    commit;
+
+    connect '$(DSN)' user 'TMP$C4985' password '123';
+
+    set list on;
+    select current_user as who_am_i from rdb$database;
+    select count(*) from test;
+    set count on;
+    select 1 from test;
+
+    commit;
+    connect '$(DSN)' user 'SYSDBA' password 'masterkey';
+
+    drop user TMP$C4985;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+    Records affected: 7
+    WHO_AM_I                        TMP$C4985
+    Records affected: 1
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 28000
+    no permission for SELECT access to TABLE TEST
+    -Effective user is TMP$C4985
+
+    Statement failed, SQLSTATE = 28000
+    no permission for SELECT access to TABLE TEST
+    -Effective user is TMP$C4985
+  """
+}
+]
+}

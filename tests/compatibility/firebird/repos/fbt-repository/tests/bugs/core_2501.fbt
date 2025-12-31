@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_2501',
+'qmid': None,
+'tracker_id': 'CORE-2501',
+'title': 'Binary shift functions give wrong results with negative shift values',
+'description': '',
+'min_versions': '2.5',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select bin_shl(100, -1) from rdb$database;
+select bin_shr(100, -1) from rdb$database;
+""",
+ 'expected_stdout': """
+              BIN_SHL
+=====================
+
+              BIN_SHR
+=====================
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+
+expression evaluation not supported
+
+-Argument for BIN_SHL must be zero or positive
+
+Statement failed, SQLSTATE = 42000
+
+expression evaluation not supported
+
+-Argument for BIN_SHR must be zero or positive
+
+"""
+}
+]
+}

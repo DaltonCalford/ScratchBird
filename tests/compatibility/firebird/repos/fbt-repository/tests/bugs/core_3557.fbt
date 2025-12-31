@@ -1,0 +1,44 @@
+{
+'id': 'bugs.core_3557',
+'qmid': None,
+'tracker_id': 'CORE-3557',
+'title': 'AV in engine when preparing query against dropping table',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create table test (id int primary key);
+    commit;
+
+    -- RECONNECT IS MANDATORY HERE IN ORDER TO GET CRASH:
+    -- ##################################################
+    connect '$(DSN)' user 'sysdba' password 'masterkey';
+    
+    -- Confirmed for 2.5.0 only: server crashes on running the following EB. 26.02.2015
+    -- All subsequent releases should produce no stdout & stderr.
+    set term ^;
+    execute block as
+    begin
+      execute statement 'drop table test';
+      in autonomous transaction do
+        execute statement ( 'insert into test values ( ? ) ') (1);
+    end
+    ^ 
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

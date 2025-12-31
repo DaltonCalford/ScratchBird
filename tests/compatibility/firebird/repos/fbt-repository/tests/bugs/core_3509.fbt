@@ -1,0 +1,82 @@
+{
+'id': 'bugs.core_3509',
+'qmid': None,
+'tracker_id': 'CORE-3509',
+'title': 'Alter procedure allows to add the parameter with the same name',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script':
+  """
+    set term ^;
+    create or alter procedure duplicate_output_args returns (a_dup int) as
+    begin
+      a_dup = 1;
+    Suspend;
+    end^
+    set term ;^
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set term ^;
+    create or alter procedure duplicate_output_args returns( a_dup int, a_dup int) as
+    begin
+      a_dup = 1;
+    Suspend;
+    end
+    ^
+    set term ;^
+    commit;
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    Dynamic SQL Error
+    -SQL error code = -637
+    -duplicate specification of A_DUP - not supported
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script':
+  """
+    set term ^;
+    create or alter procedure duplicate_output_args returns (a_dup int) as
+    begin
+      a_dup = 1;
+    Suspend;
+    end^
+    set term ;^
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set term ^;
+    create or alter procedure duplicate_output_args returns( a_dup int, a_dup int) as
+    begin
+      a_dup = 1;
+    Suspend;
+    end
+    ^
+    set term ;^
+    commit;
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    CREATE OR ALTER PROCEDURE DUPLICATE_OUTPUT_ARGS failed
+    -SQL error code = -901
+    -duplicate specification of A_DUP - not supported
+  """
+}
+]
+}

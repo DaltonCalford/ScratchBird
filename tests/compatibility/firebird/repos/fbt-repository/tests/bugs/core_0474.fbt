@@ -1,0 +1,42 @@
+{
+'id': 'bugs.core_0474',
+'qmid': None,
+'tracker_id': 'CORE-0474',
+'title': "Redundant evaluations in COALESCE",
+'description':
+ """
+   Proper result - only since 2.5.0 :-)
+   On WI-V2.1.7.18553 Firebird 2.1 result still wrong (curr_gen 4)
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create generator g1;
+    commit;
+    set list on;
+    select 
+        coalesce( 
+                   nullif(gen_id(g1,1),1), 
+                   nullif(gen_id(g1,1),2), 
+                   gen_id(g1,1), 
+                   nullif(gen_id(g1,1),4), 
+                   gen_id(g1,1) 
+                ) 
+                as curr_gen 
+    from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    CURR_GEN                        3
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

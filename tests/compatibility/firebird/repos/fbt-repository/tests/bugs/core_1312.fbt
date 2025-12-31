@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_1312',
+'qmid': 'bugs.core_1312-250',
+'tracker_id': 'CORE-1312',
+'title': 'A remote attacker can check, if a file is present in the system, running firebird server',
+'description': 'Check if password validation is done as soon as possible',
+'versions': [
+{
+ 'firebird_version': '2.0.2',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    commit;
+    connect 'localhost:bla' user 'qqq' password 'zzz';
+  """,
+ 'expected_stderr': """Statement failed, SQLCODE = -902
+Your user name and password are not defined. Ask your database administrator to set up a Firebird login.
+"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    commit;
+    connect 'localhost:bla' user 'qqq' password 'zzz';
+  """,
+ 'expected_stderr': """Statement failed, SQLSTATE = 28000
+Your user name and password are not defined. Ask your database administrator to set up a Firebird login.
+"""
+}
+]
+}

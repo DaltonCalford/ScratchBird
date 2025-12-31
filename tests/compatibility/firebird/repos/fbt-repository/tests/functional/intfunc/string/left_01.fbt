@@ -1,0 +1,22 @@
+{
+'id': 'functional.intfunc.string.left_01',
+'qmid': 'functional.intfunc.string.left_01',
+'tracker_id': '',
+'title': 'test for LEFT function',
+'description': """ Returns the substring of a specified length that appears at the start of a left-to-right string.
+
+LEFT
+""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select left('bonjour', 3)
+	from rdb$database;""",
+ 'expected_stdout': """      LEFT
+      =======
+      bon"""
+}
+]
+}

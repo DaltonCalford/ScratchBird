@@ -1,0 +1,28 @@
+{
+'id': 'functional.basic.db.14',
+'qmid': 'functional.basic.db.db_14',
+'tracker_id': '',
+'title': 'Empty DB - RDB$CHECK_CONSTRAINTS',
+'description': 'Check for correct content of RDB$CHECK_CONSTRAINTS in empty database.',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    set count on;
+    select * from rdb$check_constraints
+    order by
+        rdb$constraint_name
+        ,rdb$trigger_name
+    ;
+  """,
+  'expected_stdout':
+  """
+    Records affected: 0
+  """
+}
+]
+}

@@ -1,0 +1,24 @@
+{
+'id': 'functional.intfunc.math.ln_01',
+'qmid': 'functional.intfunc.math.ln_01',
+'tracker_id': '',
+'title': 'test for LN   function',
+'description': """LN( <number> )
+Returns the natural logarithm of a number.
+""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """
+   select ln(5) from rdb$database;
+
+
+""",
+ 'expected_stdout': """                           LN
+      =======================
+            1.609437912434100"""
+}
+]
+}

@@ -1,0 +1,139 @@
+{
+'id': 'bugs.core_4342',
+'qmid': None,
+'tracker_id': 'CORE-4342',
+'title': "Non-privileged user can delete records from RDB$SECURITY_CLASSES table",
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create or alter user boss password '123';
+    create or alter user mngr password '456';
+    commit;
+
+    -- Add these DDL privileges in order to have some rows in 
+    -- rdb$security_classes table for user BOSS:
+    grant create table to boss;
+    grant alter any table to boss;
+    grant drop any table to boss;
+    commit;
+
+    set list on;
+    select current_user,count(*) acl_count from rdb$security_classes where rdb$acl containing 'boss';
+
+    select 1 from rdb$security_classes where rdb$acl containing 'boss' with lock;
+    update rdb$security_classes set rdb$security_class = rdb$security_class where rdb$acl containing 'boss';
+    delete from rdb$security_classes where rdb$acl containing 'boss'; 
+    commit;
+
+    connect '$(DSN)' user 'MNGR' password '456';
+    select current_user,count(*) acl_count from rdb$security_classes where rdb$acl containing 'boss';
+
+    select 1 from rdb$security_classes where rdb$acl containing 'boss' with lock;
+    update rdb$security_classes set rdb$security_class = rdb$security_class where rdb$acl containing 'boss';
+    delete from rdb$security_classes where rdb$acl containing 'boss'; 
+    commit;
+
+    connect '$(DSN)' user 'SYSDBA' password 'masterkey';
+    drop user mngr;
+    drop user boss;
+  """,
+ 'expected_stdout': 
+  """
+    USER                            SYSDBA
+    ACL_COUNT                       1
+
+    USER                            MNGR
+    ACL_COUNT                       1
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = HY000
+    Cannot select system table RDB$SECURITY_CLASSES for update WITH LOCK
+
+    Statement failed, SQLSTATE = 42000
+    UPDATE operation is not allowed for system table RDB$SECURITY_CLASSES
+
+    Statement failed, SQLSTATE = 42000
+    DELETE operation is not allowed for system table RDB$SECURITY_CLASSES
+
+    Statement failed, SQLSTATE = HY000
+    Cannot select system table RDB$SECURITY_CLASSES for update WITH LOCK
+
+    Statement failed, SQLSTATE = 28000
+    no permission for UPDATE access to TABLE RDB$SECURITY_CLASSES
+
+    Statement failed, SQLSTATE = 28000
+    no permission for DELETE access to TABLE RDB$SECURITY_CLASSES
+  """
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create or alter user boss password '123';
+    create or alter user mngr password '456';
+    commit;
+
+    -- Add these DDL privileges in order to have some rows in 
+    -- rdb$security_classes table for user BOSS:
+    grant create table to boss;
+    grant alter any table to boss;
+    grant drop any table to boss;
+    commit;
+
+    set list on;
+    select current_user,count(*) acl_count from rdb$security_classes where rdb$acl containing 'boss';
+
+    select 1 from rdb$security_classes where rdb$acl containing 'boss' with lock;
+    update rdb$security_classes set rdb$security_class = rdb$security_class where rdb$acl containing 'boss';
+    delete from rdb$security_classes where rdb$acl containing 'boss'; 
+    commit;
+
+    connect '$(DSN)' user 'MNGR' password '456';
+    select current_user,count(*) acl_count from rdb$security_classes where rdb$acl containing 'boss';
+
+    select 1 from rdb$security_classes where rdb$acl containing 'boss' with lock;
+    update rdb$security_classes set rdb$security_class = rdb$security_class where rdb$acl containing 'boss';
+    delete from rdb$security_classes where rdb$acl containing 'boss'; 
+    commit;
+
+    connect '$(DSN)' user 'SYSDBA' password 'masterkey';
+    drop user mngr;
+    drop user boss;
+  """,
+ 'expected_stdout': 
+  """
+    USER                            SYSDBA
+    ACL_COUNT                       1
+
+    USER                            MNGR
+    ACL_COUNT                       1
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = HY000
+    Cannot select system table RDB$SECURITY_CLASSES for update WITH LOCK
+    Statement failed, SQLSTATE = 42000
+    UPDATE operation is not allowed for system table RDB$SECURITY_CLASSES
+    Statement failed, SQLSTATE = 42000
+    DELETE operation is not allowed for system table RDB$SECURITY_CLASSES
+    Statement failed, SQLSTATE = HY000
+    Cannot select system table RDB$SECURITY_CLASSES for update WITH LOCK
+    Statement failed, SQLSTATE = 28000
+    no permission for UPDATE access to TABLE RDB$SECURITY_CLASSES
+    -Effective user is MNGR
+    Statement failed, SQLSTATE = 28000
+    no permission for DELETE access to TABLE RDB$SECURITY_CLASSES
+    -Effective user is MNGR
+  """
+}
+]
+}

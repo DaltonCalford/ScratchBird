@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_4371',
+'qmid': None,
+'tracker_id': 'CORE-4371',
+'title': 'Create function/sp which references to non-existent exception <...>',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+  set term ^;
+  create or alter function fn_test returns int as begin end^
+  set term ;^
+  commit;
+
+  set term ^;
+  create or alter function fn_test returns int as
+  begin
+    exception ex_some_non_existent_name;
+    return 1;
+  end
+  ^
+  set term ;^
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+Statement failed, SQLSTATE = 2F000
+Error while parsing function FN_TEST's BLR
+-invalid request BLR at offset 55
+-exception EX_SOME_NON_EXISTENT_NAME not defined
+  """
+}
+]
+}

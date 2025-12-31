@@ -1,0 +1,322 @@
+{
+'id': 'bugs.core_4337',
+'qmid': None,
+'tracker_id': 'CORE-4337',
+'title': 'gfix -sweep makes "reconnect" when it is removed from mon$attachments by delete command (issued in another window)',
+'description': 
+ """
+   https://github.com/FirebirdSQL/firebird/issues/1535
+
+   FULLY RE-IMPLEMENTED 11-JUL-2022.
+   We create table with very long char field and fill it with uuid data. 
+   Then we create index for this field and finally - delete all rows.
+   Such table will require valuable time to be swept, at least 4-5 seconds on SSD.
+
+   After this, we open connect (using FDB driver) which will serve as 'killer' for GFIX
+   process which will launch after this to perform sweep.
+   Then 'gfix -sweep' is launched (async.), and we take delay about 2..3 seconds in order
+   to have warranty that sweep really started.
+   Further, we start LOOP and try to kill GFIX attachment from mon$attachments table.
+   After each execution of 'delete from mon$attachments where ...' we check whether GFIX process
+   is alive or not. If yes then we take delay about 1 second and repeat loop. Otherwise break from loop.
+
+   Command 'delete from mon$attachments' is used with RETURNING clause in order to obtain PID and attachment_id
+   of gfix process which record was just handled. We have to store these values somewhere (e.g. in the text log).
+   ::: NOTE :::
+   When bug did exist (this was on 3.0.0.31374 Beta1), command 'DELETE FROM MON$...' returned TWO DIFFERENT 
+   positive values in mon$attachmentd_id for GFIX, and this could occur on 1st and 3rd...4th iterations.
+   Second iteration always returned 'None, None', and this could obfuscate (one may to thing that gfix was really
+   gone, but this was not so!).
+   We have to continue loop until subprocess Popen() object for GFIX shows that its process is alive (see poll()).
+   Finally, we have to parse log of this execution. It must contain only ONE UNIQUE positive value for attachment_id
+   of GFIX process.
+
+   Confirmed bug on 3.0.0.31374 Beta1, CS only (SS with shared DB was not yet supported at that time).
+   Checked on SS and CS:
+   1. WINDOWS: 3.0.0.32136 RC1, 3.0.10.33605, 4.0.2.2796, 5.0.0.579
+   2. LINUX:                    3.0.11.33608, 4.0.2.2798, 5.0.0.582
+
+   Examples of log when we run loop and try to delete GFIX process from mon$attachments:
+   3.0.0.31374 Beta1, CS only (SS with shared DB was not yet supported at that time):
+      10:58:18.105. Beg of iter 0. Obtained values for mon$remote_pid, mon$attachment_id: 6228, 15
+      10:58:18.121. End of iter 0. GFIX process 6228 is alive. We take delay and then continue loop.
+      10:58:42.090. Beg of iter 1. Obtained values for mon$remote_pid, mon$attachment_id: 6228, 15
+      10:58:42.106. End of iter 1. GFIX process 6228 is alive. We take delay and then continue loop.
+      10:58:50.434. Beg of iter 2. Obtained values for mon$remote_pid, mon$attachment_id: 6228, 17   <<< BUG! SECOND ATTACHMENT!
+      10:58:50.606. End of iter 2. GFIX process 6228 is alive. We take delay and then continue loop.
+      10:59:13.029. Beg of iter 3. Obtained values for mon$remote_pid, mon$attachment_id: 6228, 17
+      10:59:13.575. End of iter 3. GFIX process 6228 is alive. We take delay and then continue loop.
+      10:59:14.576. Beg of iter 4. Obtained values for mon$remote_pid, mon$attachment_id: None, None
+      10:59:14.576. End of iter 4. GFIX process 6228 TERMINATED.
+  3.0.0.32136 RC1:
+      13:30:38.777. Beg of iter 0. Obtained values for mon$remote_pid, mon$attachment_id: 8032, 22
+      13:30:38.781. End of iter 0. GFIX process 8032 TERMINATED.
+  3.0.10.33605 CS, 4.0.2.2796 CS:
+      11:22:51.984. Beg of iter 0. Obtained values for mon$remote_pid, mon$attachment_id: 6512, 15
+      11:22:52.000. End of iter 0. GFIX process 6512 is alive. We take delay and then continue loop.
+      11:22:53.000. Beg of iter 1. Obtained values for mon$remote_pid, mon$attachment_id: None, None
+      11:22:53.047. End of iter 1. GFIX process 6512 TERMINATED.
+  3.0.10.33605 SS, 4.0.2.2796 SS:
+      11:03:39.668. Beg of iter 0. Obtained values for mon$remote_pid, mon$attachment_id: 5500, 24
+      11:03:39.683. End of iter 0. GFIX process 5500 is alive. We take delay and then continue loop.
+      11:03:40.699. Beg of iter 1. Obtained values for mon$remote_pid, mon$attachment_id: None, None
+      11:03:40.699. End of iter 1. GFIX process 5500 TERMINATED.
+  5.0.0.579 SS and CS:
+      11:18:16.135. Beg of iter 0. Obtained values for mon$remote_pid, mon$attachment_id: 7064, 8
+      11:18:16.150. End of iter 0. GFIX process 7064 is alive. We take delay and then continue loop.
+      11:18:17.150. Beg of iter 1. Obtained values for mon$remote_pid, mon$attachment_id: None, None
+      11:18:17.166. End of iter 1. GFIX process 7064 is alive. We take delay and then continue loop.
+      11:18:18.166. Beg of iter 2. Obtained values for mon$remote_pid, mon$attachment_id: None, None
+      11:18:18.166. End of iter 2. GFIX process 7064 TERMINATED.
+
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'Python',
+ 'test_script': 
+  """\
+import os
+import time
+import datetime
+import subprocess
+from subprocess import Popen
+import difflib
+import re
+import psutil
+
+FLD_WIDTH=700
+ADD_ROWS=20000
+MAX_ITER_TRY_2_KILL=10
+DELAY_BEFORE_1ST_KILL=1
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+db_file=db_conn.database_name
+db_conn.close()
+
+#-----------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    os.fsync(file_handle.fileno())
+
+    file_handle.close()
+
+#--------------------------------------------
+
+def showtime():
+    return ''.join( (datetime.datetime.now().strftime("%H:%M:%S.%f")[:12],'.') )
+
+#--------------------------------------------
+
+def write_and_flush(file_handle, text):
+    global datetime
+    dts = ''.join( (datetime.datetime.now().strftime("%H:%M:%S.%f")[:12],'.') )
+    file_handle.write(dts + " " + text + "\\n")
+    file_handle.flush()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if os.path.isfile( f_names_list[i]):
+            os.remove( f_names_list[i] )
+            if os.path.isfile( f_names_list[i]):
+                print('ERROR: can not remove file ' + f_names_list[i])
+
+#--------------------------------------------
+
+# Change FW to OFF in order to speed up initial data filling:
+##################
+
+fn_nul = open(os.devnull, 'w')
+subprocess.call([ context['fbsvcmgr_path'], "localhost:service_mgr",
+                  "action_properties", "prp_write_mode", "prp_wm_async",
+                  "dbname", db_file ],
+                  stdout = fn_nul,
+                  stderr = subprocess.STDOUT
+               )
+fn_nul.close()
+
+sql_init = '''
+    set bail on;
+    alter database set linger to 0;
+    recreate table t_log(
+        id int generated by default as identity constraint pk_log primary key
+       ,att int default current_connection
+       ,trn int default current_transaction
+       ,who varchar(255)
+    );
+
+    recreate table t_garbage(
+        id int primary key
+        ,s01 varchar(%(FLD_WIDTH)s)
+        ,s02 varchar(%(FLD_WIDTH)s)
+        ,s03 varchar(%(FLD_WIDTH)s)
+    );
+    commit;
+    create index t_s01 on t_garbage(s01);
+    create index t_s02 on t_garbage(s02);
+    create index t_s03 on t_garbage(s03);
+    commit;
+
+    set term ^;
+    execute block as
+        declare n int = %(ADD_ROWS)s;
+        declare w smallint;
+    begin
+        select f.rdb$field_length
+        from rdb$relation_fields rf
+        join rdb$fields f on rf.rdb$field_source=f.rdb$field_name
+        where
+            rf.rdb$relation_name = upper('t_garbage')
+            and rf.rdb$field_name = upper('s01')
+        into w;
+
+        while (n>0) do
+            insert into t_garbage(id, s01, s02, s03)
+            values( :n
+                    ,rpad('', :w, uuid_to_char(gen_uuid()))
+                    ,rpad('', :w, uuid_to_char(gen_uuid()))
+                    ,rpad('', :w, uuid_to_char(gen_uuid()))
+                   )
+            returning :n-1 into n;
+    end^
+    set term ;^
+    commit;
+    delete from t_garbage;
+    commit;
+'''
+
+runProgram('isql',[ '-q', dsn ], sql_init % locals() )
+
+# Change FW to ON (in order to make sweep life harder :))
+##################
+
+fn_nul = open(os.devnull, 'w')
+subprocess.call([ context['fbsvcmgr_path'], "localhost:service_mgr",
+                  "action_properties", "prp_write_mode", "prp_wm_sync",
+                  "dbname", db_file ],
+                  stdout = fn_nul,
+                  stderr = subprocess.STDOUT
+               )
+fn_nul.close()
+
+con_gfix_killer = fdb.connect(dsn = dsn)
+cur_gfix_killer = con_gfix_killer.cursor()
+stm_gfix_killer = "delete from mon$attachments where mon$remote_process containing 'gfix' returning mon$remote_pid, mon$attachment_id"
+ps = cur_gfix_killer.prep(stm_gfix_killer)
+
+######################
+# LAUNCH SWEEP, ASYNC:
+######################
+# It should be killed by ISQL
+
+fn_nul = open(os.devnull, 'w')
+p_gfix = subprocess.Popen( [ context['gfix_path'], dsn, "-sweep"],
+                  stdout = fn_nul,
+                  stderr = subprocess.STDOUT
+                )
+
+time.sleep(DELAY_BEFORE_1ST_KILL)
+
+f_gfix_killer_log = open( os.path.join(context['temp_directory'],'tmp_4337_gfix_killer.log'), 'w')
+
+p_gfix.poll()
+if p_gfix.returncode is None:
+    pass
+else:
+    write_and_flush(f_gfix_killer_log, 'GFIX process %d already finished with retcode=%d. TRY TO REDUCE DELAY_BEFORE_1ST_KILL=%d' % (p_gfix.pid, p_gfix.returncode, DELAY_BEFORE_1ST_KILL) )
+
+# Start _LOOP_ with attempts to delete from mon$attachments record for process p_gfix
+# We have to REPEAT these actions that until PROCESS p_gfix will disappear.
+# We should not "trust" the absence of records in mon$attachments because gfix will
+# do RE-CONNECT after several seconds (with getting another mon$attachment_id).
+
+for i in range(0,MAX_ITER_TRY_2_KILL):
+
+    mon_pid, mon_att = None, None
+    for r in cur_gfix_killer.execute(ps):
+        mon_pid, mon_att = r
+
+
+    write_and_flush(f_gfix_killer_log, 'Beg of iter %d. Obtained values for mon$remote_pid, mon$attachment_id: %s, %s' % ( i, str(mon_pid), str(mon_att) )  )
+
+    con_gfix_killer.commit()
+
+    # Check if process has terminated. Set and return returncode attribute. Otherwise, returns None.
+    p_gfix.poll()
+    if p_gfix.returncode is None:
+        # A None value indicates that the process has not terminated yet.
+        if i < MAX_ITER_TRY_2_KILL-1:
+            write_and_flush(f_gfix_killer_log, 'End of iter %d. GFIX process %d is alive. We take delay and then continue loop.' % (i, p_gfix.pid) )
+            time.sleep(1)
+            continue
+        else:
+            write_and_flush(f_gfix_killer_log, 'End of iter %d. GFIX process %d is alive for %d iterations. We forcedly terminate it.' % (i, p_gfix.pid, MAX_ITER_TRY_2_KILL) )
+            p_gfix.terminate()
+            break
+    else:
+        write_and_flush(f_gfix_killer_log, 'End of iter %d. GFIX process %d TERMINATED.' % (i, p_gfix.pid) )
+        break
+
+fn_nul.close()
+
+flush_and_close(f_gfix_killer_log)
+cur_gfix_killer.close()
+con_gfix_killer.close()
+
+gfix_active_map, gfix_killed_map = {}, {}
+
+log_lines = []
+with open(f_gfix_killer_log.name, 'r') as f:
+    for line in f:
+        log_lines.append(line)
+        if 'Obtained values' in line:
+             gfix_pid, gfix_att = line.replace(',',' ').replace(';',' ').split()[-2:]
+             if gfix_pid.isdigit():
+                 gfix_active_map[ gfix_pid, gfix_att ] = line
+             elif gfix_pid == 'None':
+                 gfix_killed_map[ gfix_pid, gfix_att ] = line
+
+msg = 'Number of lines with DEFINED PID of gfix: '
+if len(gfix_active_map) == 1:
+    msg += 'EXPECTED.'
+    print(msg)
+else:
+    msg += 'UNEXPECTED %d' % len(gfix_active_map)
+    print(msg)
+    if len(gfix_active_map) > 0:
+        for k,v in sorted(gfix_active_map.items()):
+            print('PID: %s, attachment_id: %s, line: %s' % (str(k[0]),str(k[1]),v))
+    else:
+        print('Check lines of %s:' % f_gfix_killer_log.name)
+        for p in log_lines:
+            print(p)
+
+# CLEANUP:
+##########
+cleanup( [i.name for i in (f_gfix_killer_log,) ] )  
+
+  """,
+ 'expected_stdout':
+  """
+    Number of lines with DEFINED PID of gfix: EXPECTED.
+  """,
+ 'expected_stderr':
+  """
+  """
+}                                                                                                      
+]
+}

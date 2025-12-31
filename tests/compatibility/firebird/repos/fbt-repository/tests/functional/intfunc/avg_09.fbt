@@ -1,0 +1,27 @@
+{
+'id': 'functional.intfunc.avg.09',
+'qmid': 'functional.intfunc.avg.avg_09',
+'tracker_id': '',
+'title': 'AVG - DOUBLE PRECISION',
+'description': """AVG from single DOUBLE PRECISION row
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+INSERT
+Basic SELECT""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id DOUBLE PRECISION NOT NULL);
+INSERT INTO test VALUES(5.123456789);""",
+ 'test_type': 'ISQL',
+ 'test_script': 'SELECT AVG(id) FROM test;',
+ 'expected_stdout': """                    AVG
+=======================
+
+      5.123456789000000"""
+}
+]
+}

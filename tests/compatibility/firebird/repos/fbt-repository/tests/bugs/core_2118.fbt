@@ -1,0 +1,119 @@
+{
+'id': 'bugs.core_2118',
+'qmid': None,
+'tracker_id': 'CORE-2118',
+'title': "UPDATE OR INSERT with subquery used in the MATCHING part doesn't insert record",
+'description':
+  """
+   14.08.2020:
+   removed usage of generator because gen_id() result differs in FB 4.x vs previous versions since fixed core-6084.
+   Use hard-coded value for ID that is written into table MACRO..
+   Checked on:
+        4.0.0.2151 SS: 1.749s.
+        3.0.7.33348 SS: 0.897s.
+        2.5.9.27150 SC: 0.378s.
+  """,
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.1.2',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """CREATE GENERATOR GEN_MACRO_ID;
+
+CREATE TABLE MACRO (
+    ID INTEGER NOT NULL,
+    T1 INTEGER,
+    CODE VARCHAR(50)
+);
+
+CREATE TABLE PARAM (
+    ID INTEGER NOT NULL,
+    P1 INTEGER
+);
+
+COMMIT;
+ALTER TABLE MACRO ADD CONSTRAINT PK_MACRO PRIMARY KEY (ID);
+ALTER TABLE PARAM ADD CONSTRAINT PK_PARAM PRIMARY KEY (ID);
+COMMIT;
+ALTER TABLE MACRO ADD CONSTRAINT FK_MACRO_1 FOREIGN KEY (T1) REFERENCES PARAM (ID);
+COMMIT;
+
+SET TERM ^ ;
+
+CREATE TRIGGER MACRO_BI FOR MACRO
+ACTIVE BEFORE INSERT POSITION 0
+AS
+BEGIN
+  IF (NEW.ID IS NULL) THEN
+    NEW.ID = GEN_ID(GEN_MACRO_ID,1);
+END
+^
+
+SET TERM ; ^
+COMMIT;
+
+INSERT INTO PARAM (ID, P1) VALUES (2, 11);
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """update or insert into MACRO (T1, CODE)
+values ( (select ID from PARAM where P1 = 11), 'fsdfdsf')
+matching (T1);
+COMMIT;
+SELECT ID, T1, CODE FROM MACRO;
+""",
+ 'expected_stdout': """
+          ID           T1 CODE
+============ ============ ===============================================================================
+           1            2 fsdfdsf
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'init_script':
+  """
+    create table macro (
+        id integer not null,
+        t1 integer,
+        code varchar(50)
+    );
+
+    create table param (
+        id integer not null,
+        p1 integer
+    );
+
+    commit;
+    alter table macro add constraint pk_macro primary key (id);
+    alter table param add constraint pk_param primary key (id);
+    commit;
+    alter table macro add constraint fk_macro_1 foreign key (t1) references param (id);
+    commit;
+
+    insert into param (id, p1) values (2, 11);
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    update or insert into macro (id, t1, code) values ( 1, (select id from param where p1 = 11), 'fsdfdsf') matching (t1);
+    commit;
+    set list on;
+    select id, t1, code from macro;
+  """,
+ 'expected_stdout':
+  """
+    ID                              1
+    T1                              2
+    CODE                            fsdfdsf
+  """,
+  'substitutions': [('=.*',''),('[ \t]+',' ') ]
+}
+]
+}

@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_4569',
+'qmid': None,
+'tracker_id': 'CORE-4569',
+'title': 'BIN_SHL and BIN_SHR does not work in Dialect 1',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'sql_dialect': 1,
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    select bin_shl(1073741824, 2) bin_shl from rdb$database
+    union all
+    select bin_shl(1, 32) from rdb$database
+    union all
+    select bin_shl(0, 1) from rdb$database
+    union all
+    select bin_shl(-1073741824, 2) from rdb$database
+    union all
+    select bin_shl(-1, 32) from rdb$database;
+  """,
+  'expected_stdout':
+  """
+    BIN_SHL                         4294967296
+    BIN_SHL                         4294967296
+    BIN_SHL                         0
+    BIN_SHL                         -4294967296
+    BIN_SHL                         -4294967296
+  """
+}
+]
+}

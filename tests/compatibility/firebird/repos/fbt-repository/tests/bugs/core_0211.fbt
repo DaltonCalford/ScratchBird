@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_0211',
+'qmid': None,
+'tracker_id': 'CORE-0211',
+'title': "SELECT...HAVING...NOT IN crashes server",
+'description': 
+ """
+   Crashed on: WI-V3.0.0.32380, WI-T4.0.0.32399, found 16-mar-2016.
+   Passed on:  WI-V3.0.0.32487, WI-T4.0.0.141 -- works fine.
+ """,
+'min_versions': '2.0',
+'versions': [
+{
+ 'firebird_version': '2.0.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select r.rdb$relation_id, count(*)
+    from rdb$database r
+    group by r.rdb$relation_id
+    having count(*) not in (select r2.rdb$relation_id from rdb$database r2);
+  """,
+ 'expected_stdout': 
+  """
+    RDB$RELATION_ID                 134
+    COUNT                           1
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions':[
+    ('RDB\$RELATION_ID[ ]+\d+','RDB$RELATION_ID')
+  ]
+}
+]
+}

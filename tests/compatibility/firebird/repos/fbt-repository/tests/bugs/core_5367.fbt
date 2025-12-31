@@ -1,0 +1,57 @@
+{
+'id': 'bugs.core_5367',
+'qmid': None,
+'tracker_id': 'CORE-5367',
+'title': 'Regression: (boolean) parameters as search condition no longer allowed',
+'description':
+ """
+  Confirmed on WI-T4.0.0.397 before commit 04-oct-2016 17:52
+  https://github.com/FirebirdSQL/firebird/commit/8a4b7e3b79a31dc7bf6e569e6cf673cf6899a475
+  - got:
+          Statement failed, SQLSTATE = 22000
+          Dynamic SQL Error
+          -SQL error code = -104
+          -Invalid usage of boolean expression
+
+  Works fine since that commit (checked on LI-T4.0.0.397).
+ """,
+'min_versions': '3.0.2',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+    recreate table test(id int,boo boolean);
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set sqlda_display on;
+    set planonly;
+    select * from test where ?;
+    set planonly;
+  """,
+  'expected_stdout':
+  """
+    INPUT message field count: 1
+    01: sqltype: 32764 BOOLEAN scale: 0 subtype: 0 len: 1
+      :  name:   alias:
+      : table:   owner:
+
+    PLAN (TEST NATURAL)
+
+    OUTPUT message field count: 2
+    01: sqltype: 496 LONG Nullable scale: 0 subtype: 0 len: 4
+      :  name: ID  alias: ID
+      : table: TEST  owner: SYSDBA
+    02: sqltype: 32764 BOOLEAN Nullable scale: 0 subtype: 0 len: 1
+      :  name: BOO  alias: BOO
+      : table: TEST  owner: SYSDBA
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

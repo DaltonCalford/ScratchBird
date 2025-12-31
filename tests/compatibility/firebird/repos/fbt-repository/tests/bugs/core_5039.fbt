@@ -1,0 +1,60 @@
+{
+'id': 'bugs.core_5039',
+'qmid': None,
+'tracker_id': 'CORE-5039',
+'title': 'Connecting to service with invalid servicename yields incorrect error message',
+'description': 
+  """
+    28.01.2019. 
+    Name of service manager is ignored in FB 4.0, see http://tracker.firebirdsql.org/browse/CORE-5883
+    ("service_mgr" to be cleaned out from connection string completely...")
+    26.05.2021: changed code for FB 4.x and enabled after discuss with Alex.
+  """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script':
+  """
+db_conn.close()
+runProgram('fbsvcmgr',['localhost:qwe_mnb_zxc_9','user', user_name, 'password', user_password, 'info_server_version'])
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Cannot attach to services manager
+    -service qwe_mnb_zxc_9 is not defined
+  """
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+db_conn.close()
+# Server version must be issued here, regardless on the (invalid/non-existing) name of service manager, e.g.:
+# Server version: WI-V4.0.0.2491 Firebird 4.0 Release Candidate 1
+runProgram('fbsvcmgr',['localhost:qwe_mnb_zxc_9','user', user_name, 'password', user_password, 'info_server_version'])
+  """,
+ 'expected_stdout': 
+  """
+    Server version: Firebird
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions':[('Server version: .* Firebird \d+\.\d+.*', 'Server version: Firebird')]
+}
+]
+}

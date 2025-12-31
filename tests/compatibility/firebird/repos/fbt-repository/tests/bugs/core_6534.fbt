@@ -1,0 +1,44 @@
+{
+'id': 'bugs.core_6534',
+'qmid': '',
+'tracker_id': 'CORE-6534',
+'title': "Hash join cannot match records using some TIME ZONE / DECFLOAT keys",
+'description':
+  """
+    Confirmed bug on 4.0.0.2387.
+    Checked on intermediate build 4.0.0.2406 (built 06-apr-2021 12:40) - all OK.
+  """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    -- All subsequent statements must return non-empty result:
+    set heading off;
+    select 1 from (select timestamp '01.01.2021 13:00:00 +03:00' as ts from rdb$database) natural join (select timestamp '01.01.2021 12:00:00 +02:00' as ts from rdb$database);
+    select 2 from (select cast(10 as decfloat) as df from rdb$database) natural join (select cast(10.000 as decfloat) as df from rdb$database);
+    select 3 from (select cast('+0' as decfloat) as df from rdb$database) natural join (select cast('-0' as decfloat) as df from rdb$database);
+    select 4 from (select cast('+0' as float) as f from rdb$database) natural join (select cast('-0' as float) as f from rdb$database); 
+    select 5 from (select cast('+0' as double precision) as d from rdb$database) natural join (select cast('-0' as double precision) as d from rdb$database);
+    select 6 from (select cast('0E-6176' as decfloat) as d from rdb$database) natural join (select cast('0e0' as decfloat) as d from rdb$database);
+    select 7 from (select time '05:05:05.5555' at time zone '-10:0' t from rdb$database) natural join (select time '05:05:05.5555' at time zone '+14:0' t from rdb$database);
+  """,
+ 'expected_stdout':
+  """
+    1
+    2
+    3
+    4
+    5
+    6
+    7
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

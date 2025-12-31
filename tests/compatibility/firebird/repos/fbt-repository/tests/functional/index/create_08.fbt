@@ -1,0 +1,35 @@
+{
+'id': 'functional.index.create.08',
+'qmid': 'functional.index.create.create_index_08',
+'tracker_id': '',
+'title': 'CREATE INDEX - Table with data',
+'description': """CREATE INDEX - Table with data
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+INSERT
+SHOW INDEX
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE t( a INTEGER);
+commit;
+INSERT INTO t VALUES(0);
+INSERT INTO t VALUES(0);
+INSERT INTO t VALUES(1);
+INSERT INTO t VALUES(2);
+INSERT INTO t VALUES(3);
+INSERT INTO t VALUES(4);
+INSERT INTO t VALUES(null);
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE INDEX test ON t(a);
+SHOW INDEX test;""",
+ 'expected_stdout': """TEST INDEX ON T(A)
+"""
+}
+]
+}

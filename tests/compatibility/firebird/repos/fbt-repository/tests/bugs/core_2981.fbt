@@ -1,0 +1,393 @@
+{
+'id': 'bugs.core_2981',
+'qmid': None,
+'tracker_id': 'CORE-2981',
+'title': "Error in Trace plugin (use local symbols in query)",
+'description':
+ """
+   Test prepares trace config as it was mentioned in the ticket, then creates .sql with russian text in UTF8 encoding
+   and run trace and ISQL.
+   Finally, we compare content of firebird.log before and after running this query (it should be empty) and check that
+   size of error log of trace session is zero.
+   
+   Checked on: WI-V2.5.7.27024, WI-V3.0.1.32570, WI-T4.0.0.316 -- all works OK.
+ """,
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """\
+import os
+import time
+import subprocess
+import difflib
+from subprocess import Popen
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+engine = str(db_conn.engine_version)
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb'):
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if os.path.isfile( f_names_list[i]):
+            os.remove( f_names_list[i] )
+
+#--------------------------------------------
+
+def svc_get_fb_log( engine, f_fb_log ):
+
+  global subprocess
+
+  if engine.startswith('2.5'):
+      get_firebird_log_key='action_get_ib_log'
+  else:
+      get_firebird_log_key='action_get_fb_log'
+
+  subprocess.call([ context['fbsvcmgr_path'],
+                    "localhost:service_mgr",
+                    get_firebird_log_key
+                  ],
+                   stdout=f_fb_log, 
+                   stderr=subprocess.STDOUT
+                 )
+
+  return
+
+#--------------------------------------------
+
+
+txt25 = '''# Trace config, format for 2.5. Generated auto, do not edit!
+<database %[\\\\\\\\/]bugs.core_2981.fdb>
+  enabled true
+  #connection_id 7
+  include_filter %(SELECT|INSERT|UPDATE|DELETE)%
+  log_connections true
+  log_transactions true
+  log_statement_prepare true
+  log_statement_free true
+  log_statement_start true
+  log_statement_finish true
+  log_procedure_start true
+  log_procedure_finish true
+  log_trigger_start true
+  log_trigger_finish true
+  log_context true
+  print_plan true
+  print_perf true
+  log_blr_requests false
+  print_blr false
+  log_dyn_requests false
+  print_dyn false
+  time_threshold 0
+  max_sql_length 5000
+  max_blr_length 500
+  max_dyn_length 500
+  max_arg_length 80
+  max_arg_count 30 
+</database>
+<services>
+    enabled false
+    log_services false
+    log_service_query false
+</services> 
+'''
+
+# NOTES ABOUT TRACE CONFIG FOR 3.0:
+# 1) Header contains `database` clause in different format vs FB 2.5: its data must be enclosed with '{' '}'
+# 2) Name and value must be separated by EQUALITY sign ('=') in FB-3 trace.conf, otherwise we get runtime error:
+#    element "<. . .>" have no attribute value set
+
+txt30 = '''# Trace config, format for 3.0. Generated auto, do not edit!
+database=%[\\\\\\\\/]bugs.core_2981.fdb
+{
+  enabled = true
+  include_filter = %(SELECT|INSERT|UPDATE|DELETE)%
+  log_connections = true
+  log_transactions=  true
+  log_statement_prepare = true
+  log_statement_free = true
+  log_statement_start = true
+  log_statement_finish = true
+  log_procedure_start = true
+  log_procedure_finish = true
+  log_trigger_start = true
+  log_trigger_finish = true
+  log_context = true
+  print_plan = true
+  print_perf = true
+  log_blr_requests = false
+  print_blr = false
+  log_dyn_requests = false
+  print_dyn = false
+  time_threshold = 0
+  max_sql_length = 5000
+  max_blr_length = 500
+  max_dyn_length = 500
+  max_arg_length = 80
+  max_arg_count = 30 
+}
+services {
+  enabled = false
+  log_services = false
+  log_service_query = false
+}
+'''
+
+f_trccfg=open( os.path.join(context['temp_directory'],'tmp_trace_2981.cfg'), 'w')
+if engine.startswith('2.5'):
+    f_trccfg.write(txt25)
+else:
+    f_trccfg.write(txt30)
+flush_and_close( f_trccfg )
+
+# Get content of firebird.log BEFORE test:
+##########################################
+
+f_fblog_before=open( os.path.join(context['temp_directory'],'tmp_2981_fblog_before.txt'), 'w')
+svc_get_fb_log( engine, f_fblog_before )
+flush_and_close( f_fblog_before )
+
+# Starting trace session in new child process (async.):
+#######################################################
+
+f_trclog=open( os.path.join(context['temp_directory'],'tmp_trace_2981.log'), 'w')
+f_trcerr=open( os.path.join(context['temp_directory'],'tmp_trace_2981.err'), 'w')
+
+# Execute a child program in a new process, redirecting STDERR to the same target as of STDOUT:
+p_trace=Popen([context['fbsvcmgr_path'], "localhost:service_mgr",
+               "action_trace_start",
+                "trc_cfg", f_trccfg.name],
+                stdout=f_trclog, 
+                stderr=f_trcerr
+             )
+
+# Wait! Trace session is initialized not instantly!
+time.sleep(2)
+
+localized_query='''
+set list on;
+select '*Лев Николаевич Толстой *
+
+*Анна Каренина *
+
+/Мне отмщение, и аз воздам/
+
+*ЧАСТЬ ПЕРВАЯ*
+
+*I *
+
+       Все счастливые семьи похожи друг на друга, каждая несчастливая
+    семья несчастлива по-своему. 
+       Все смешалось в доме Облонских. Жена узнала, что муж был в связи
+    с бывшею в их доме француженкою-гувернанткой, и объявила мужу, что
+    не может жить с ним в одном доме. Положение это продолжалось уже
+    третий день и мучительно чувствовалось и самими супругами, и всеми
+    членами семьи, и домочадцами. Все члены семьи и домочадцы
+    чувствовали, что нет смысла в их сожительстве и что на каждом
+    постоялом дворе случайно сошедшиеся люди более связаны между собой,
+    чем они, члены семьи и домочадцы Облонских. Жена не выходила из
+    своих комнат, мужа третий день не было дома. Дети бегали по всему
+    дому, как потерянные; англичанка поссорилась с экономкой и написала
+    записку приятельнице, прося приискать ей новое место; повар ушел еще
+    вчера со двора, во время обеда; черная кухарка и кучер просили расчета. 
+       На третий день после ссоры князь Степан Аркадьич Облонский --
+    Стива, как его звали в свете, -- в обычный час, то есть в восемь
+    часов утра, проснулся не в спальне жены, а в своем кабинете, на
+    сафьянном диване... Он повернул свое полное, выхоленное тело на
+    пружинах дивана, как бы желая опять заснуть надолго, с другой
+    стороны крепко обнял подушку и прижался к ней щекой; но вдруг
+    вскочил, сел на диван и открыл глаза. 
+       "Да, да, как это было? -- думал он, вспоминая сон. -- Да, как это
+    было? Да! Алабин давал обед в Дармштадте; нет, не в Дармштадте, а
+    что-то американское. Да, но там Дармштадт был в Америке. Да, Алабин
+    давал обед на стеклянных столах, да, -- и столы пели: Il mio tesoro,
+    и не Il mio tesoro, а что-то лучше, и какие-то маленькие графинчики,
+    и они же женщины", -- вспоминал он. 
+       Глаза Степана Аркадьича весело заблестели, и он задумался,
+    улыбаясь. "Да, хорошо было, очень хорошо. Много еще там было
+    отличного, да не скажешь словами и мыслями даже наяву не выразишь".
+    И, заметив полосу света, пробившуюся сбоку одной из суконных стор,
+    он весело скинул ноги с дивана, отыскал ими шитые женой (подарок ко
+    дню рождения в прошлом году), обделанные в золотистый сафьян туфли и
+    по старой, девятилетней привычке, не вставая, потянулся рукой к тому
+    месту, где в спальне у него висел халат. И тут он вспомнил вдруг,
+    как и почему он спит не в спальне жены, а в кабинете; улыбка исчезла
+    с его лица, он сморщил лоб. 
+       "Ах, ах, ах! Ааа!.." -- замычал он, вспоминая все, что было. И
+    его воображению представились опять все подробности ссоры с женою,
+    вся безвыходность его положения и мучительнее всего собственная вина
+    его. 
+       "Да! она не простит и не может простить. И всего ужаснее то, что
+    виной всему я, виной я, а не виноват. В этом-то вся драма, -- думал
+    он. -- Ах, ах, ах!" -- приговаривал он с отчаянием, вспоминая самые
+    тяжелые для себя впечатления из этой ссоры. 
+       Неприятнее всего была та первая минута, когда он, вернувшись из
+    театра, веселый и довольный, с огромною грушей для жены в руке, не
+    нашел жены в гостиной; к удивлению, не нашел ее и в кабинете и,
+    наконец, увидал ее в спальне с несчастною, открывшею все, запиской в
+    руке. 
+       Она, эта вечно озабоченная, и хлопотливая, и недалекая, какою он
+    считал ее, Долли, неподвижно сидела с запиской в руке и с выражением
+    ужаса, отчаяния и гнева смотрела на него. 
+       -- Что это? это? -- спрашивала она, указывая на записку. 
+       И при этом воспоминании, как это часто бывает, мучала Степана
+    Аркадьича не столько самое событие, сколько то, как он ответил на
+    эти слова жены. 
+       С ним случилось в эту минуту то, что случается с людьми, когда
+    они неожиданно уличены в чем-нибудь слишком постыдном. Он не сумел
+    приготовить свое лицо к тому положению, в которое он становился
+    перед женой после открытия его вины. Вместо того чтоб оскорбиться,
+    отрекаться, оправдываться, просить прощения, оставаться даже
+    равнодушным -- все было бы лучше того, что он сделал! -- его лицо
+    совершенно невольно ("рефлексы головного мозга", -- подумал Степан
+    Аркадьич, который любил физиологию), совершенно невольно вдруг
+    улыбнулось привычною, доброю и потому глупою улыбкой. 
+       Эту глупую улыбку он не мог простить себе. Увидав эту улыбку,
+    Долли вздрогнула, как от физической боли, разразилась, со
+    свойственною ей горячностью, потоком жестоких слов и выбежала из
+    комнаты. С тех пор она не хотела видеть мужа. 
+       "Всему виной эта глупая улыбка", -- думал Степан Аркадьич. 
+       "Но что же делать? что делать?" -- с отчаянием говорил он себе и
+    не находил ответа. 
+' from rdb$database;
+'''
+f_utf8 = open( os.path.join(context['temp_directory'],'tmp_2981_run.sql'), 'w')
+f_utf8.write(localized_query)
+flush_and_close( f_utf8 )
+
+# RUN QUERY WITH NON-ASCII CHARACTERS
+#####################################
+
+f_run_log = open( os.path.join(context['temp_directory'],'tmp_2981_run.log'), 'w')
+f_run_err = open( os.path.join(context['temp_directory'],'tmp_2981_run.err'), 'w')
+subprocess.call( [context['isql_path'], dsn, "-q", "-i", f_utf8.name, '-ch', 'utf8' ],
+                 stdout = f_run_log,
+                 stderr = f_run_err
+               )
+
+flush_and_close( f_run_log )
+flush_and_close( f_run_err )
+
+#####################################################
+# Getting ID of launched trace session and STOP it:
+
+# Save active trace session info into file for further parsing it and obtain session_id back (for stop):
+f_trclst=open( os.path.join(context['temp_directory'],'tmp_trace_2981.lst'), 'w')
+subprocess.call([context['fbsvcmgr_path'], "localhost:service_mgr",
+                 "action_trace_list"],
+                 stdout=f_trclst, 
+                 stderr=subprocess.STDOUT
+               )
+flush_and_close( f_trclst )
+
+trcssn=0
+with open( f_trclst.name,'r') as f:
+    for line in f:
+        i=1
+        if 'Session ID' in line:
+            for word in line.split():
+                if i==3:
+                    trcssn=word
+                i=i+1
+            break
+
+# Result: `trcssn` is ID of active trace session. Now we have to terminate it:
+f_trclst=open(f_trclst.name,'a')
+f_trclst.seek(0,2)
+subprocess.call([context['fbsvcmgr_path'], "localhost:service_mgr",
+                 "action_trace_stop",
+                 "trc_id",trcssn],
+                 stdout=f_trclst, stderr=subprocess.STDOUT
+               )
+flush_and_close( f_trclst )
+
+# do NOT remove this delay: trase session can not be stopped immediatelly:
+time.sleep(2)
+
+# Terminate child process of launched trace session (though it should already be killed):
+p_trace.terminate()
+flush_and_close( f_trclog )
+flush_and_close( f_trcerr )
+
+
+# Get content of firebird.log AFTER test:
+#########################################
+
+f_fblog_after=open( os.path.join(context['temp_directory'],'tmp_2981_fblog_after.txt'), 'w')
+svc_get_fb_log( engine, f_fblog_after )
+flush_and_close( f_fblog_after )
+
+# STDERR for ISQL (that created DB) and trace session - they both must be EMPTY:
+#################
+f_list=[f_run_err, f_trcerr]
+for i in range(len(f_list)):
+   f_name=f_list[i].name
+   if os.path.getsize(f_name) > 0:
+       with open( f_name,'r') as f:
+           for line in f:
+               print("Unexpected STDERR, file "+f_name+": "+line)
+
+# DIFFERENCE in the content of firebird.log should be EMPTY:
+####################
+
+oldfb=open(f_fblog_before.name, 'r')
+newfb=open(f_fblog_after.name, 'r')
+
+difftext = ''.join(difflib.unified_diff(
+    oldfb.readlines(), 
+    newfb.readlines()
+  ))
+oldfb.close()
+newfb.close()
+
+f_diff_txt=open( os.path.join(context['temp_directory'],'tmp_2981_diff.txt'), 'w')
+f_diff_txt.write(difftext)
+flush_and_close( f_diff_txt )
+
+with open( f_diff_txt.name,'r') as f:
+    for line in f:
+        print("Unexpected DIFF in firebird.log: "+line)
+
+
+
+# Cleanup:
+###########
+time.sleep(1)
+cleanup( [i.name for i in (f_run_log, f_run_err, f_trccfg, f_trclst, f_trcerr, f_fblog_before,f_fblog_after, f_diff_txt, f_trclog, f_utf8)] )
+        
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

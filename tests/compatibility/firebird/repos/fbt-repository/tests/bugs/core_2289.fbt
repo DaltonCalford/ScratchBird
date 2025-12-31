@@ -1,0 +1,74 @@
+{
+'id': 'bugs.core_2289',
+'qmid': None,
+'tracker_id': 'CORE-2289',
+'title': "Wrong (primary) constraint name is reported for the foreign key violation during FK creation",
+'description': '',
+'min_versions': '2.1.7',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    recreate table packet_detail(id int, packet_id int);
+    recreate table packet(id int, constraint packet_pk primary key(id) using index packet_idx);
+    commit;
+    insert into packet_detail(id, packet_id) values(1, 753);
+    commit;
+    
+    alter table packet_detail
+    add constraint packet_detail_fk
+    foreign key (packet_id)
+    references packet(id)
+    using index packet_detail_idx
+    ;
+    commit;
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLCODE = -530
+    violation of FOREIGN KEY constraint "PACKET_DETAIL_FK" on table "PACKET_DETAIL"
+    -Foreign key reference target does not exist
+    -Problematic key value is ("PACKET_ID" = 753)
+  """
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    recreate table packet_detail(id int, packet_id int);
+    recreate table packet(id int, constraint packet_pk primary key(id) using index packet_idx);
+    commit;
+    insert into packet_detail(id, packet_id) values(1, 753);
+    commit;
+    
+    alter table packet_detail
+    add constraint packet_detail_fk
+    foreign key (packet_id)
+    references packet(id)
+    using index packet_detail_idx
+    ;
+    commit;
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 23000
+    violation of FOREIGN KEY constraint "PACKET_DETAIL_FK" on table "PACKET_DETAIL"
+    -Foreign key reference target does not exist
+    -Problematic key value is ("PACKET_ID" = 753)
+  """
+}
+]
+}

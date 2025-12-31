@@ -1,0 +1,46 @@
+{
+'id': 'bugs.core_5423',
+'qmid': None,
+'tracker_id': 'CORE-5423',
+'title': 'Regression: "Invalid usage of boolean expression" when use "BETWEEN" and "IS" operators',
+'description':
+ """
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    set count on;
+    select 1 k from rdb$database where 1 between 0 and 2 and null is null;
+    select 2 k from rdb$database where 1 between 0 and 2 and foo is not null;
+  """,
+ 'expected_stdout': 
+  """
+    K                               1
+
+
+    Records affected: 1
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42S22
+    Dynamic SQL Error
+    -SQL error code = -206
+    -Column unknown
+    -FOO
+    -At line: column:
+  """,
+  'substitutions':[
+    ('-At line[:]{0,1}[\s]+[\d]+,[\s]+column[:]{0,1}[\s]+[\d]+', '-At line: column:')
+  ]
+}
+]
+}

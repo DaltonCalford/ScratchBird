@@ -1,0 +1,27 @@
+{
+'id': 'bugs.core_1582',
+'qmid': 'bugs.core_1582',
+'tracker_id': 'CORE-1582',
+'title': 'ABS() rounds NUMERIC values',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT
+  ABS(CAST(-1.98 AS NUMERIC(10,2))),
+  ABS(CAST(-1.23 AS DECIMAL(10,2))),
+  ABS(CAST(-1.98 AS NUMERIC(9,2))),
+  ABS(CAST(-1.23 AS DECIMAL(9,2)))
+  FROM RDB$DATABASE;
+""",
+ 'expected_stdout': """
+                  ABS                   ABS                   ABS                   ABS
+===================== ===================== ===================== =====================
+                 1.98                  1.23                  1.98                  1.23
+
+"""
+}
+]
+}

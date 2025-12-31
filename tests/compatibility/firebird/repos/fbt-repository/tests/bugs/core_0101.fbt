@@ -1,0 +1,96 @@
+{
+'id': 'bugs.core_0101',
+'qmid': None,
+'tracker_id': 'CORE-0101',
+'title': "JOIN the same table - problem with alias names",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Confirmed wrong result on WI-V1.5.6.5026, all above wirks fine.
+    recreate table test(id int);
+    insert into test values(1);
+    insert into test values(-1);
+    insert into test values(-2);
+    insert into test values(2);
+    commit;
+
+    --set plan on;
+    set list on;
+
+    select *
+    from (
+        select test.id a_id, b.id as b_id
+        from test test
+        join test b on test.id = b.id
+    ) order by 1,2
+    ;
+
+    create index test_id on test(id);
+
+    select *
+    from (
+        select test.id a_id, b.id as b_id
+        from test test
+        join test b on test.id = b.id
+    ) order by 1,2
+    ;
+
+    select *
+    from (
+        select test.id a_id, b.id as b_id
+        from (select id from test order by id) test
+        join (select id from test order by id) b on test.id = b.id
+    ) order by 1,2
+    ;
+  """,
+ 'expected_stdout':
+  """
+    A_ID                            -2
+    B_ID                            -2
+
+    A_ID                            -1
+    B_ID                            -1
+
+    A_ID                            1
+    B_ID                            1
+
+    A_ID                            2
+    B_ID                            2
+
+
+
+    A_ID                            -2
+    B_ID                            -2
+
+    A_ID                            -1
+    B_ID                            -1
+
+    A_ID                            1
+    B_ID                            1
+
+    A_ID                            2
+    B_ID                            2
+
+
+
+    A_ID                            -2
+    B_ID                            -2
+
+    A_ID                            -1
+    B_ID                            -1
+
+    A_ID                            1
+    B_ID                            1
+
+    A_ID                            2
+    B_ID                            2
+  """
+}
+]
+}

@@ -1,0 +1,42 @@
+{
+'id': 'functional.trigger.create.17',
+'qmid': 'functional.trigger.create.create_trigger_17',
+'tracker_id': '',
+'title': 'CREATE TRIGGER SQL2003',
+'description': """CREATE TRIGGER SQL2003
+""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    CREATE TABLE tb(id INT);
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    SET TERM ^;
+    /* Tested command: */
+    CREATE TRIGGER test BEFORE INSERT
+    ON tb AS
+    BEGIN
+        new.id=1;
+    END^
+    SET TERM ;^
+    SHOW TRIGGER test;
+  """,
+ 'expected_stdout': 
+  """
+    Triggers on Table TB:
+    TEST, Sequence: 0, Type: BEFORE INSERT, Active
+    AS
+    BEGIN
+      new.id=1;
+    END
+  """,
+  'substitutions':[('\+.*',''),('\=.*',''),('Trigger text.*','')]
+}
+]
+}

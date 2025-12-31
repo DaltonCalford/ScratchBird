@@ -1,0 +1,185 @@
+{
+'id': 'bugs.core_0847',
+'qmid': 'bugs.core_847',
+'tracker_id': 'CORE-847',
+'title': "computed field can't be changed to non-computed using 'alter table alter column type xy'",
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+    recreate table t (
+      f1 varchar(10),
+      f2 varchar(10),
+      cf computed by (f1 || ' - ' || f2)
+    );
+    
+    insert into t (f1,f2) values ('0123456789','abcdefghij');
+    commit;
+  """,
+ 'test_script': 
+  """
+    set blob off;
+    set list on;
+    
+    select f1,f2,cf as cf_before_altering from t;
+    
+    select b.rdb$field_name field_name, cast(a.rdb$computed_source as varchar(80)) computed_source_before_altering
+    from rdb$fields a 
+    join rdb$relation_fields b  on a.rdb$field_name = b.rdb$field_source
+    where b.rdb$field_name = upper('CF');
+    
+    alter table t alter cf type varchar(30);
+    commit;
+
+    select f1,f2,cf as cf_after_altering from t;
+    
+    select b.rdb$field_name field_name, cast(a.rdb$computed_source as varchar(80)) computed_source_after_altering
+    from rdb$fields a 
+    join rdb$relation_fields b  on a.rdb$field_name = b.rdb$field_source
+    where b.rdb$field_name = upper('CF');
+  """,
+ 'expected_stdout': 
+  """
+    F1                              0123456789
+    F2                              abcdefghij
+    CF_BEFORE_ALTERING              0123456789 - abcdefghij
+    
+    FIELD_NAME                      CF                                                                                           
+    COMPUTED_SOURCE_BEFORE_ALTERING (f1 || ' - ' || f2)
+    
+    F1                              0123456789
+    F2                              abcdefghij
+    CF_AFTER_ALTERING               <null>
+    
+    FIELD_NAME                      CF                                                                                           
+    COMPUTED_SOURCE_AFTER_ALTERING  <null>
+  """
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+    recreate table t (
+      f1 varchar(10),
+      f2 varchar(10),
+      cf computed by (f1 || ' - ' || f2)
+    );
+    
+    insert into t (f1,f2) values ('0123456789','abcdefghij');
+    commit;
+  """,
+ 'test_script': 
+  """
+    set blob off;
+    set list on;
+    
+    select f1,f2,cf as cf_before_altering from t;
+    
+    select b.rdb$field_name field_name, cast(a.rdb$computed_source as varchar(80)) computed_source_before_altering
+    from rdb$fields a 
+    join rdb$relation_fields b  on a.rdb$field_name = b.rdb$field_source
+    where b.rdb$field_name = upper('CF');
+    
+    alter table t alter cf type varchar(30);
+    commit;
+
+    select f1,f2,cf as cf_after_altering from t;
+    
+    select b.rdb$field_name field_name, cast(a.rdb$computed_source as varchar(80)) computed_source_after_altering
+    from rdb$fields a 
+    join rdb$relation_fields b  on a.rdb$field_name = b.rdb$field_source
+    where b.rdb$field_name = upper('CF');
+  """,
+ 'expected_stdout': 
+  """
+    F1                              0123456789
+    F2                              abcdefghij
+    CF_BEFORE_ALTERING              0123456789 - abcdefghij
+    
+    FIELD_NAME                      CF                                                                                           
+    COMPUTED_SOURCE_BEFORE_ALTERING (f1 || ' - ' || f2)
+    
+    F1                              0123456789
+    F2                              abcdefghij
+    CF_AFTER_ALTERING               0123456789 - abcdefghij
+    
+    FIELD_NAME                      CF                                                                                           
+    COMPUTED_SOURCE_AFTER_ALTERING  (f1 || ' - ' || f2)
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -Cannot add or remove COMPUTED from column CF
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+    recreate table t (
+      f1 varchar(10),
+      f2 varchar(10),
+      cf computed by (f1 || ' - ' || f2)
+    );
+    
+    insert into t (f1,f2) values ('0123456789','abcdefghij');
+    commit;
+  """,
+ 'test_script': 
+  """
+    set blob off;
+    set list on;
+    
+    select f1,f2,cf as cf_before_altering from t;
+    
+    select b.rdb$field_name field_name, cast(a.rdb$computed_source as varchar(80)) computed_source_before_altering
+    from rdb$fields a 
+    join rdb$relation_fields b  on a.rdb$field_name = b.rdb$field_source
+    where b.rdb$field_name = upper('CF');
+    
+    alter table t alter cf type varchar(30);
+    commit;
+
+    select f1,f2,cf as cf_after_altering from t;
+    
+    select b.rdb$field_name field_name, cast(a.rdb$computed_source as varchar(80)) computed_source_after_altering
+    from rdb$fields a 
+    join rdb$relation_fields b  on a.rdb$field_name = b.rdb$field_source
+    where b.rdb$field_name = upper('CF');
+  """,
+ 'expected_stdout': 
+  """
+    F1                              0123456789
+    F2                              abcdefghij
+    CF_BEFORE_ALTERING              0123456789 - abcdefghij
+    
+    FIELD_NAME                      CF                                                                                           
+    COMPUTED_SOURCE_BEFORE_ALTERING (f1 || ' - ' || f2)
+    
+    F1                              0123456789
+    F2                              abcdefghij
+    CF_AFTER_ALTERING               0123456789 - abcdefghij
+    
+    FIELD_NAME                      CF                                                                                           
+    COMPUTED_SOURCE_AFTER_ALTERING  (f1 || ' - ' || f2)
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -ALTER TABLE T failed
+    -Cannot add or remove COMPUTED from column CF
+  """
+}
+]
+}

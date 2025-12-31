@@ -1,0 +1,48 @@
+{
+'id': 'bugs.core_1401',
+'qmid': 'bugs.core_1401',
+'tracker_id': 'CORE-1401',
+'title': 'Global temporary table instance may pick up not all indices',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """create global temporary table t (f1 int, f2 int, f3 int);
+create index idx1 on t (f1);
+create index idx2 on t (f2);
+create index idx3 on t (f3);
+drop index idx2;
+
+set plan on;
+insert into t values (1, 1, 1);
+select * from t where f1 = 1;
+select * from t where f2 = 1;
+select * from t where f3 = 1;
+""",
+ 'expected_stdout': """
+PLAN (T INDEX (IDX1))
+
+          F1           F2           F3
+============ ============ ============
+           1            1            1
+
+
+PLAN (T NATURAL)
+
+          F1           F2           F3
+============ ============ ============
+           1            1            1
+
+
+PLAN (T INDEX (IDX3))
+
+          F1           F2           F3
+============ ============ ============
+           1            1            1
+
+"""
+}
+]
+}

@@ -1,0 +1,25 @@
+{
+'id': 'functional.intfunc.cast.02',
+'qmid': 'functional.intfunc.cast.cast_02',
+'tracker_id': '',
+'title': 'CAST Numeric -> VARCHAR',
+'description': """CAST Numeric -> VARCHAR
+
+Dependencies:
+CREATE DATABASE
+Basic SELECT
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'SELECT CAST(1.25001 AS VARCHAR(21)) FROM rdb$Database;',
+ 'expected_stdout': """CAST
+=====================
+
+1.25001
+"""
+}
+]
+}

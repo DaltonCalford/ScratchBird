@@ -1,0 +1,56 @@
+{
+'id': 'bugs.core_1316',
+'qmid': 'bugs.core_1316',
+'tracker_id': 'CORE-1316',
+'title': 'NOT NULL constraint for procedure parameters and variables',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """create procedure get_something(id integer not null) as begin end;
+commit;
+execute procedure get_something(NULL);
+execute procedure get_something(1);
+set term ^;
+create procedure p0(inp int) as declare i int not null; begin i = inp; end^
+set term ;^
+commit;
+execute procedure p0(null);
+execute procedure p0(1);
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -625
+validation error for variable ID, value "*** null ***"
+-At procedure 'GET_SOMETHING'
+Statement failed, SQLCODE = -625
+validation error for variable I, value "*** null ***"
+-At procedure 'P0' line: 1, col: 63
+"""
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """create procedure get_something(id integer not null) as begin end;
+commit;
+execute procedure get_something(NULL);
+execute procedure get_something(1);
+set term ^;
+create procedure p0(inp int) as declare i int not null; begin i = inp; end^
+set term ;^
+commit;
+execute procedure p0(null);
+execute procedure p0(1);
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+validation error for variable ID, value "*** null ***"
+-At procedure 'GET_SOMETHING'
+Statement failed, SQLSTATE = 42000
+validation error for variable I, value "*** null ***"
+-At procedure 'P0' line: 1, col: 63
+""",
+  'substitutions':[('line: \d+, col: \d+', '')]
+}
+]
+}

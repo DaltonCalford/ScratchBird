@@ -1,0 +1,63 @@
+{
+'id': 'bugs.core_3335',
+'qmid': None,
+'tracker_id': 'CORE-3335',
+'title': 'Wrong results (internal wrapping occured) for the multi-byte blob SUBSTRING function and its boundary arguments',
+'description': '',
+'min_versions': '2.1.5',
+'versions': [
+{
+ 'firebird_version': '2.1.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select substring(cast('abcdef' as blob sub_type text character set utf8)
+from 1 for 2147483647) from rdb$database;
+select substring(cast('abcdef' as blob sub_type text character set utf8)
+from 2 for 2147483647) from rdb$database;
+select substring(cast('abcdef' as blob sub_type text character set utf8)
+from 3 for 2147483647) from rdb$database;
+select substring(cast('abcdef' as blob sub_type text character set utf8)
+from 3 for 2147483646) from rdb$database;
+""",
+ 'expected_stdout': """Database:  localhost:C:\fbtestnew\tmp\bugs.core_3335.fdb, User: SYSDBA
+SQL> CON>
+        SUBSTRING
+=================
+              0:2
+==============================================================================
+SUBSTRING:
+abcdef
+==============================================================================
+
+SQL> CON>
+        SUBSTRING
+=================
+              0:6
+==============================================================================
+SUBSTRING:
+bcdef
+==============================================================================
+
+SQL> CON>
+        SUBSTRING
+=================
+              0:a
+==============================================================================
+SUBSTRING:
+cdef
+==============================================================================
+
+SQL> CON>
+        SUBSTRING
+=================
+              0:e
+==============================================================================
+SUBSTRING:
+cdef
+==============================================================================
+
+SQL>"""
+}
+]
+}

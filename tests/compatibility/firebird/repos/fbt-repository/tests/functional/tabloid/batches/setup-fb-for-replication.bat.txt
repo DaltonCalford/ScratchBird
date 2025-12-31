@@ -1,0 +1,205 @@
+@echo off
+setlocal enabledelayedexpansion enableextensions
+
+@rem 50sS; 50CS, etc - name suffix of FB service
+set fbs=%1
+
+if .!fbs!.==.. (
+    echo Syntax: %~f0 [FB_service_name_suffix],
+    echo e.g.:
+    echo    %~f0 50SS
+    echo    %~f0 40CS
+    echo etc
+    pause
+    goto :err
+)
+
+set fbs=FirebirdServer!fbs!
+
+set fbt_repo=C:\FBTESTING\qa\fbt-repo
+
+set tmpsql=%~dpn0.tmp.sql
+set tmplog=%~dpn0.tmp.log
+
+
+for /f "tokens=3" %%a in ('REG.EXE query HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\!fbs! ^| findstr /i /c:"ImagePath"') do (
+   set fbc=%%~dpa
+   set fbc=!fbc:~0,-1!
+)
+
+net stop !fbs! 2>nul
+
+sc queryex !fbs! | findstr /i /r /c:"1[ ]*STOPPED" 1>!tmplog! 2>&1
+if errorlevel 1 (
+    echo Service !fbs! state:
+    type !tmplog!
+    goto :err
+) else (
+    echo Service !fbs! is in 'STOPPED' state. We can go on.
+)
+
+(
+    echo set heading off;
+    echo select
+    echo      rdb$get_context('SYSTEM','ENGINE_VERSION'^) 
+    echo     ,rdb$config_value
+    echo from rdb$config where upper(rdb$config_name^) = upper('ServerMode'^)
+    echo ;
+) > !tmpsql!
+
+for /f "tokens=1-2" %%a in ('!fbc!\isql security.db -i !tmpsql! -user sysdba') do (
+    set engine=%%a
+    set srvmode=%%b
+)
+
+@rem Server version: WI-V4.0.0.2453 Firebird 4.0 Release Candidate 1
+@rem   1       2            3
+for /f "tokens=3" %%a in ('!fbc!\fbsvcmgr service_mgr info_server_version') do (
+    set build_str=%%a
+    for /f "tokens=4 delims=." %%b in ("!build_str!") do (
+        set build_num=%%b
+    )
+)
+
+if /i .!srvmode!.==.Super. (
+    set srvmode=SS
+) else if /i .!srvmode!.==.SuperClassic. (
+    set srvmode=SC
+) else if /i .!srvmode!.==.Classic. (
+    set srvmode=CS
+)
+
+if "!engine:~0,2!"=="5." (
+    set fb_suffix=fb50
+    set replconf_format=new
+) else if "!engine:~0,2!"=="4." (
+    set fb_suffix=fb40
+    if !build_num! GEQ 2465 (
+        set replconf_format=new
+    ) else (
+        set replconf_format=old
+    )
+) else (
+    echo ENGINE VERSION DOES NOT SUPPORT REPLICATION.
+    goto :fin
+)
+
+if .1.==.0. (
+echo engine=!engine!
+echo build_str=!build_str!
+echo build_num=!build_num!
+echo replconf_format=!replconf_format!
+)
+
+set repl_journal_dir=!fbt_repo!\tmp\fb-replication.!fb_suffix!.!srvmode!.journal
+set repl_archive_dir=!fbt_repo!\tmp\fb-replication.!fb_suffix!.!srvmode!.archive
+
+if exist !repl_journal_dir!\nul (
+    rmdir /q /s !repl_journal_dir!
+)
+if exist !repl_archive_dir!\nul (
+    rmdir /q /s !repl_archive_dir!
+)
+mkdir !repl_journal_dir!
+mkdir !repl_archive_dir!
+
+set db_main_name=!fbt_repo!\tmp\fbt-main.!fb_suffix!.!srvmode!.fdb
+set db_repl_name=!fbt_repo!\tmp\fbt-repl.!fb_suffix!.!srvmode!.fdb
+for /d %%x in (!db_main_name!,!db_main_name!) do (
+    if exist %%x del %%x
+    if exist %%x (
+        echo COULD NOT DELETE FILE %%X
+        goto :err
+    )
+)
+
+for /d %%x in (main,repl) do (
+    
+    if .%%x.==.main. (
+        echo create database '!db_main_name!'; | !fbc!\isql -q -user sysdba 1>nul 2>!tmplog!
+        if errorlevel 1 (
+            type !tmplog!
+            goto :err
+        )
+
+        copy !db_main_name! !db_repl_name! 1>!tmplog! 2>&1
+        if errorlevel 1 (
+            type !tmplog!
+            goto :err
+
+        )
+
+    ) else (
+        !fbc!\gfix -replica read_only !db_repl_name! -user sysdba 1>!tmplog! 2>&1
+        if errorlevel 1 (
+            type !tmplog!
+            goto :err
+        )
+        echo alter database enable publication; alter database include all to publication; | !fbc!\isql -user sysdba !db_main_name! 1>!tmplog! 2>&1
+        if errorlevel 1 (
+            type !tmplog!
+            goto :err
+        )
+
+    )
+)
+
+dir !fbt_repo!\tmp | findstr /i /c:"fb-replication.!fb_suffix!.!srvmode!." /c:"fbt-main.!fb_suffix!.!srvmode!." /c:"fbt-repl.!fb_suffix!.!srvmode!."
+
+(
+    echo database
+    echo {
+    echo   verbose_logging = true
+    echo }
+    echo ########################################################
+    echo database = !db_main_name!
+    echo {
+    echo     # location of the replication journal files _aka_ segments
+    if /i .!replconf_format!.==.new. (
+        echo     journal_directory = "!repl_journal_dir!"
+        echo     journal_archive_directory = "!repl_archive_dir!"
+    ) else (
+        echo     log_directory = "!repl_journal_dir!"
+        echo     log_archive_directory = "!repl_archive_dir!"
+    )
+
+    echo     # journal_archive_command allows to use any system shell command, including scripts / batch files, to deliver segments to the replica side
+    echo     # $(pathname^) and $(archivepathname^) are built-in macros that provide the custom shell command with real file names.
+    echo     #
+    if /i .!replconf_format!.==.new. (
+        echo     journal_archive_command = "copy $(pathname) $(archivepathname)"
+        echo     journal_archive_timeout = 10
+    ) else (
+        echo     log_archive_command = "copy $(logpathname) $(archpathname)"
+        echo     log_archive_timeout = 10
+    )
+    echo }
+
+    echo ########################################################
+    
+    echo database = !db_repl_name!
+    echo {
+    echo     # location that Firebird server scans for the transmitted segments
+    if /i .!replconf_format!.==.new. (
+        echo     journal_source_directory = "!repl_archive_dir!"
+    ) else (
+        echo     log_source_directory = "!repl_archive_dir!"
+    )
+    echo }
+) >!tmplog!
+
+copy !tmplog! !fbc!\replication.conf 1>nul 2>&1
+dir 1>nul 2>!fbc!\replication.log
+
+net start !fbs!
+
+del !tmpsql! 2>nul
+del !tmplog! 2>nul
+
+goto :fin
+
+:err
+  echo ### ERROR OCCURED ###
+  goto :fin
+:fin
+  echo Bye-bye from %~f0

@@ -1,0 +1,55 @@
+{
+'id': 'bugs.core_0282',
+'qmid': 'bugs.core_282-250',
+'tracker_id': 'CORE-282',
+'title': "DOMAINs don't register their dependency on other objects",
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': """create table t(a int);
+create domain d int check(value > (select max(a) from t));
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """drop table t;
+commit;
+create table u(a d);
+commit;
+show table u;
+""",
+ 'expected_stdout': """A                               (D) INTEGER Nullable
+                                check(value > (select max(a) from t))
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-cannot delete
+-COLUMN T.A
+-there are 1 dependencies
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """create table t(a int);
+create domain d int check(value > (select max(a) from t));
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """drop table t;
+commit;
+create table u(a d);
+commit;
+show table u;
+""",
+ 'expected_stdout': """A                               (D) INTEGER Nullable
+                                check(value > (select max(a) from t))
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+unsuccessful metadata update
+-cannot delete
+-COLUMN A
+-there are 1 dependencies
+"""
+}
+]
+}

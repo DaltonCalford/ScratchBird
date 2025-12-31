@@ -1,0 +1,26 @@
+{
+'id': 'bugs.core_0696',
+'qmid': None,
+'tracker_id': 'CORE-696',
+'title': 'User Account maintanance in SQL',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE USER alex PASSWORD 'test';
+COMMIT;
+ALTER USER alex FIRSTNAME 'Alex' LASTNAME 'Peshkov';
+COMMIT;
+ALTER USER alex PASSWORD 'IdQfA';
+COMMIT;
+DROP USER alex;
+COMMIT;
+"""
+}
+]
+}

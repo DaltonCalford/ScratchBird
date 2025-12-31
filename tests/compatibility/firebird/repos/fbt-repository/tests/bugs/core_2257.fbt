@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_2257',
+'qmid': None,
+'tracker_id': 'CORE-2257',
+'title': 'internal Firebird consistency check when alter dependent procedures',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """set term ^ ;
+CREATE OR ALTER PROCEDURE B
+AS
+begin
+
+end ^
+
+CREATE OR ALTER PROCEDURE A
+AS
+begin
+  execute procedure B;
+end ^
+
+COMMIT WORK ^
+
+execute procedure A ^
+
+COMMIT WORK ^
+
+CREATE OR ALTER PROCEDURE B
+AS
+begin
+
+end ^
+
+COMMIT WORK ^
+
+execute procedure A ^
+"""
+}
+]
+}

@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_2831',
+'qmid': None,
+'tracker_id': 'CORE-2831',
+'title': "isql shouldn't display db and user name when extracting a script",
+'description': '',
+'min_versions': '2.0.6;2.1.4;2.5',
+'versions': [
+{
+ 'firebird_version': '2.0.6',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'Python',
+ 'test_script': """#
+runProgram('isql',['-x',dsn,'-user',user_name,'-pass',user_password])
+""",
+ 'expected_stdout': """
+""",
+ 'substitutions':[('^((?!Database:|User:).)*$','')]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'Python',
+ 'test_script': """#
+runProgram('isql',['-x',dsn,'-user',user_name,'-pass',user_password])
+""",
+ 'expected_stdout': """
+""",
+ 'substitutions':[('^((?!Database:|User:).)*$','')]
+}
+]
+}

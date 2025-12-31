@@ -1,0 +1,89 @@
+{
+'id': 'bugs.core_3340',
+'qmid': None,
+'tracker_id': 'CORE-3340',
+'title': 'Error in autonomous transaction with empty exception handler: can insert duplicate values into PK/UK column (leads to unrestorable backup)',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """recreate table tmp(id int not null primary key using index tmp_id_pk);
+commit;
+set transaction no wait isolation level read committed;
+set term ^;
+execute block as
+begin
+  insert into tmp values(1);
+  insert into tmp values(2);
+  in autonomous transaction do begin
+     insert into tmp values(1);
+     when any do begin
+        --exception;
+     end
+  end
+end^
+set term ;^
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select id from tmp;
+select count(*) from tmp;
+commit;""",
+ 'expected_stdout': """Database:  localhost:C:\Users\win7\Firebird_testsbt-repository	mpugs.core_3340.fdb, User: SYSDBA
+SQL>
+          ID
+============
+           1
+           2
+
+SQL>
+       COUNT
+============
+           2
+
+SQL> SQL>"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """recreate table tmp(id int not null primary key using index tmp_id_pk);
+commit;
+set transaction no wait isolation level read committed;
+set term ^;
+execute block as
+begin
+  insert into tmp values(1);
+  insert into tmp values(2);
+  in autonomous transaction do begin
+     insert into tmp values(1);
+     when any do begin
+        --exception;
+     end
+  end
+end^
+set term ;^
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select id from tmp;
+select count(*) from tmp;
+commit;""",
+ 'expected_stdout': """
+          ID
+============
+           1
+           2
+
+
+                COUNT
+=====================
+                    2
+
+"""
+}
+]
+}

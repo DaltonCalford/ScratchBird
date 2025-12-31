@@ -1,0 +1,52 @@
+{
+'id': 'functional.domain.alter.03',
+'qmid': 'functional.domain.alter.alter_domain_03',
+'tracker_id': '',
+'title': 'ALTER DOMAIN - ADD CONSTRAINT',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': 'CREATE DOMAIN test VARCHAR(63);',
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER DOMAIN test ADD CONSTRAINT CHECK (VALUE LIKE 'TE%');
+COMMIT;
+SELECT RDB$FIELD_NAME, RDB$VALIDATION_SOURCE FROM rdb$fields WHERE RDB$FIELD_NAME='TEST';
+""",
+ 'expected_stdout': """RDB$FIELD_NAME                  RDB$VALIDATION_SOURCE
+=============================== =====================
+
+TEST                                        2:119
+==============================================================================
+RDB$VALIDATION_SOURCE:
+CHECK (VALUE LIKE 'TE%')
+=============================================================================="""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+    create domain test varchar(63);
+    commit;
+  """,
+ 'test_script': 
+  """
+    alter domain test add constraint check (value like 'te%');
+    commit;
+    set list on;
+    set blob all;
+    select rdb$field_name, rdb$validation_source from rdb$fields where rdb$field_name=upper('test');  
+  """,
+ 'expected_stdout': 
+  """
+    RDB$FIELD_NAME                  TEST
+    check (value like 'te%')
+  """,
+  'substitutions': [('RDB\$VALIDATION_SOURCE.*','')]
+}
+]
+}

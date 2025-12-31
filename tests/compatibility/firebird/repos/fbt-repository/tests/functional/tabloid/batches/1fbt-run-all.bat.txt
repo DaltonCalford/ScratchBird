@@ -1,0 +1,151 @@
+@echo off
+setlocal enabledelayedexpansion enableextensions
+
+if "%1"=="" (
+  echo Arg #1 is mandatory - name of .sql
+  goto end
+)
+
+@rem check that GNU sed for Windows is avaliable:
+sed 2>tmp.sed-usage.tmp
+findstr /i /c /b "Usage: sed.EXE" tmp.sed-usage.tmp 1>nul 2>&1
+if errorlevel 1 (
+  del tmp.sed-usage.tmp
+  echo GNU sed.exe utility required for this batch.
+  echo Check also that you have: libiconv2.dll, libintl3.dll and regex2.dll 
+  echo for successful work of sed.exe
+  goto end
+)
+del tmp.sed-usage.tmp
+
+call :readcfg %~n0.conf
+
+@echo off
+
+copy e20.fd0 e20.fdb 1>nul
+echo.
+echo|set /p=%time%, test 2.0 Classic:
+echo.|%fb20Cs_bin%\isql -z localhost/%fb20Cs_port%:%~dp0e20.fdb|findstr /i /b /c:"WI-"|findstr /i /e /c:"2.0"
+set run_isql=%fb20Cs_bin%\isql localhost/%fb20Cs_port%:%~dp0e20.fdb -i %1 2^>e20Cs.err ^| sed "s/ *$//" 1^>e20Cs.log
+echo "%run_isql%"
+cmd /c %run_isql% 
+@rem 1>e20Cs.log 2>e20Cs.err
+echo ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+copy e21.fd0 e21.fdb 1>nul
+echo.
+echo|set /p=%time%, test 2.1 Classic:
+%fb21Cs_bin%\fbsvcmgr localhost/%fb21Cs_port%:service_mgr user %isc_user% password %isc_password% info_server_version
+set run_isql=%fb21Cs_bin%\isql localhost/%fb21Cs_port%:%~dp0e21.fdb -i %1 2^>e21Cs.err ^| sed "s/ *$//" 1^>e21Cs.log
+echo "%run_isql%"
+cmd /c %run_isql% 
+echo ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+copy e25.fd0 e25.fdb 1>nul
+echo.
+echo|set /p=%time%, test 2.5 SuperClassic:	
+%fb25sC_bin%\fbsvcmgr localhost/%fb25sC_port%:service_mgr user %isc_user% password %isc_password% info_server_version
+set run_isql=%fb25sC_bin%\isql localhost/%fb25sC_port%:%~dp0e25.fdb -i %1 2^>e25sC.err ^| sed "s/ *$//" 1^>e25sC.log
+echo "%run_isql%"
+cmd /c %run_isql% 
+echo ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+copy e30.fd0 e30.fdb 1>nul
+echo.
+echo|set /p=%time%, test 3.0 Classic:	
+%fb30Cs_bin%\fbsvcmgr localhost/%fb30Cs_port%:service_mgr user %isc_user% password %isc_password% info_server_version
+set run_isql=%fb30Cs_bin%\isql localhost/%fb30Cs_port%:%~dp0e30.fdb -i %1 2^>e30Cs.err ^| sed "s/ *$//" 1^>e30Cs.log
+echo "%run_isql%"
+cmd /c %run_isql% 
+echo ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+copy e30.fd0 e30.fdb 1>nul
+echo.
+echo|set /p=%time%, test 3.0 SuperClassic:	
+%fb30sC_bin%\fbsvcmgr localhost/%fb30sC_port%:service_mgr user %isc_user% password %isc_password% info_server_version
+set run_isql=%fb30sC_bin%\isql localhost/%fb30sC_port%:%~dp0e30.fdb -i %1 2^>e30sC.err ^| sed "s/ *$//" 1^>e30sC.log
+echo "%run_isql%"
+cmd /c %run_isql% 
+echo ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+copy e30.fd0 e30.fdb 1>nul
+echo.
+echo|set /p=%time%, test 3.0 SuperServer:	
+%fb30sS_bin%\fbsvcmgr localhost/%fb30sS_port%:service_mgr user %isc_user% password %isc_password% info_server_version
+set run_isql=%fb30sS_bin%\isql localhost/%fb30sS_port%:%~dp0e30.fdb -i %1 2^>e30sS.err ^| sed "s/ *$//" 1^>e30sS.log
+echo "%run_isql%"
+cmd /c %run_isql% 
+echo ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+for /f "tokens=*" %%A in ('dir /b e20Cs.* e21Cs.* e25sC.* e30Cs.* e30sC.* e30sS.*') do (
+  set esize=%%~zA
+  if .!esize!.==.. set esize=0
+  if .!esize!.==.0. del %%A 2>nul
+)
+
+goto end
+
+:readcfg
+
+set cfg=%1
+for /F "tokens=*" %%a in ('findstr /i /r /c:"^[ 	]*[a-z,0-9]" %cfg%') do (
+  if "%%a" neq "" (
+
+    @rem Detect whether value of parameter contain quotes or no. If yes than this
+    @rem value should NOT be changed by removing its whitespaces.
+
+    echo %%a|find """">nul
+
+    if errorlevel 1 ( 
+      @rem @echo ^|%%a^| - does NOT contain quotes
+      for /F "tokens=1-2 delims==" %%i in ("%%a") do (
+        @rem echo Parsed-NON-quoted: param="%%i" val="%%j"
+        if "%%j"=="" (
+          set err_setenv=1
+          echo. && echo ### NO VALUE found for parameter "%%i" ### && echo.
+        ) else (
+
+          @rem _NAME_ and _VALUE_ of parameter (both can be with leading and trailing whitespaces):
+          set par=%%i
+          set val=%%j
+
+          @rem -----------------------------------
+          @rem When "delims=" clause is NOT specified then default delimeters are TAB and SPACE.
+          @rem If we take 1st token from such string than it will be WITHOUT whitespaces.
+          @rem Similarly for _VALUE_ of parameter:
+          @rem -----------------------------------
+          for /F "tokens=1" %%p in ("!par!") do (
+            @rem echo param=^|%%i^|, name w/o white-spaces=^|%%p^|
+            for /F "tokens=1" %%u in ("!val!") do (
+              set %%p=%%u
+              @rem echo param=^|%%p^|, value w/o white-spaces=^|%%u^|
+            )
+          )
+        )
+      )
+
+    ) else (
+
+      @rem @echo ^|%%a^| - DOES contain quotes
+      for /F "tokens=1-2 delims==" %%i in ("%%a") do (
+        @rem echo Parsed-quoted: param="%%i" val="%%j"
+        set par=%%i
+
+        if "%%j"=="" (
+          set err_setenv=1
+          echo. && echo ### NO VALUE found for parameter "%%i" ### && echo.
+        ) else (
+          @rem We can remove all white-spaces only from _NAME_ of parameter
+          @rem but NOT from its _VALUE_
+          for /F "tokens=1" %%p in ("!par!") do (
+            set %%p=%%j
+            @rem echo param=^|%%p^|, value w/o white-spaces=^|%%j^|
+          )
+        )
+      )
+    )
+  )
+)
+goto:eof
+
+:end

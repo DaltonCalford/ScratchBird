@@ -1,0 +1,39 @@
+{
+'id': 'bugs.core_1997',
+'qmid': None,
+'tracker_id': 'CORE-1997',
+'title': 'Broken foreign key handling for multi-segmented index using multi-level collations',
+'description': '',
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5.2',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table pk (
+    c1 varchar (5) character set utf8 collate unicode_ci,
+    c2 varchar (5) character set utf8 collate unicode_ci,
+    primary key (c1, c2)
+);
+commit;
+create table fk (
+    c1 varchar (5) character set utf8 collate unicode_ci,
+    c2 varchar (5) character set utf8 collate unicode_ci,
+    foreign key (c1, c2) references pk
+);
+commit;
+insert into pk values ('a', 'b');
+insert into fk values ('A', 'b');
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """delete from pk; -- should not be allowed
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 23000
+violation of FOREIGN KEY constraint "INTEG_2" on table "FK"
+-Foreign key references are present for the record
+-Problematic key value is ("C1" = 'a', "C2" = 'b')
+"""
+}
+]
+}

@@ -1,0 +1,51 @@
+{
+'id': 'bugs.core_4070',
+'qmid': None,
+'tracker_id': 'CORE-4070',
+'title': 'NOT-NULL-column can be used as primary key and filled with NULL-values',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test01(uid char(16) character set octets collate octets);
+    alter table test01 add constraint test01_pk primary key (uid);
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -Column: UID not defined as NOT NULL - cannot be used in PRIMARY KEY constraint definition
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test01(uid char(16) character set octets collate octets);
+    alter table test01 add constraint test01_pk primary key (uid);
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -ALTER TABLE TEST01 failed
+    -Column: UID not defined as NOT NULL - cannot be used in PRIMARY KEY constraint definition
+  """
+}
+]
+}

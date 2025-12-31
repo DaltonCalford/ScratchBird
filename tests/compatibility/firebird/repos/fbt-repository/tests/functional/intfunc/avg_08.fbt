@@ -1,0 +1,25 @@
+{
+'id': 'functional.intfunc.avg.08',
+'qmid': 'functional.intfunc.avg.avg_08',
+'tracker_id': '',
+'title': 'AVG - NULL test',
+'description': """Dependencies:
+CREATE DATABASE
+CREATE TABLE
+INSERT
+SELECT""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER);
+INSERT INTO test VALUES(NULL);""",
+ 'test_type': 'ISQL',
+ 'test_script': 'SELECT AVG(id) FROM test;',
+ 'expected_stdout': """                  AVG
+=====================
+
+               <null>"""
+}
+]
+}

@@ -1,0 +1,42 @@
+{
+'id': 'bugs.core_1554',
+'qmid': 'bugs.core_1554',
+'tracker_id': '',
+'title': 'select ... where ... <> ALL (select ... join ...) bug',
+'description': '',
+'min_versions': '2.1.7',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select
+    (
+        select count(*) from rdb$triggers t1
+    )
+    -
+    (
+        select count(*)
+        from rdb$triggers t1
+        where
+            t1.RDB$SYSTEM_FLAG=1 and
+            t1.rdb$trigger_name <>
+            all (
+                select t2.rdb$trigger_name
+                from rdb$triggers t2
+                join rdb$triggers t3 on t3.rdb$trigger_name=t2.rdb$trigger_name
+                where t2.rdb$trigger_name='xxx'
+            )
+    ) as cnt
+    from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    CNT                             0
+  """
+}
+]
+}

@@ -1,0 +1,68 @@
+{
+'id': 'bugs.core_0945',
+'qmid': 'bugs.core_945-250',
+'tracker_id': 'CORE-945',
+'title': 'Bad error message when tring to create FK to non-existent table',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE TABLE TAB_TestA (
+  UID INTEGER NOT NULL PRIMARY KEY
+);
+
+CREATE TABLE TAB_TestB (
+  UID INTEGER NOT NULL PRIMARY KEY,
+  TestA INTEGER CONSTRAINT FK_TestA REFERENCES TABTestA(UID) ON UPDATE CASCADE
+);
+
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-Table TABTESTA not found
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE TABLE TAB_TestA (
+  UID INTEGER NOT NULL PRIMARY KEY
+);
+
+CREATE TABLE TAB_TestB (
+  UID INTEGER NOT NULL PRIMARY KEY,
+  TestA INTEGER CONSTRAINT FK_TestA REFERENCES TABTestA(UID) ON UPDATE CASCADE
+);
+
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+unsuccessful metadata update
+-Table TABTESTA not found
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE TABLE TAB_TestA (
+  UID INTEGER NOT NULL PRIMARY KEY
+);
+
+CREATE TABLE TAB_TestB (
+  UID INTEGER NOT NULL PRIMARY KEY,
+  TestA INTEGER CONSTRAINT FK_TestA REFERENCES TABTestA(UID) ON UPDATE CASCADE
+);
+
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-CREATE TABLE TAB_TESTB failed
+-Table TABTESTA not found
+"""
+}
+]
+}

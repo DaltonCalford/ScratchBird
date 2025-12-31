@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_1533',
+'qmid': 'bugs.core_1533',
+'tracker_id': 'CORE-1533',
+'title': 'JOIN on first record of ordered derived table returns wrong record',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.0.4',
+ 'platform': 'All',
+ 'init_script': """create table X (
+    ID integer,
+    DAT DATE
+);
+commit;
+insert into X (ID, DAT) values (1, '2006-05-16');
+insert into X (ID, DAT) values (2, '2004-11-16');
+insert into X (ID, DAT) values (3, '2007-01-01');
+insert into X (ID, DAT) values (4, '2005-07-11');
+commit;
+create index IDX_X on X (DAT);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select X2.ID, x1.ID,x2.dat from X as X2 left join (select first 1 X.ID from X order by X.DAT) X1 on X1.ID=X2.ID;
+""",
+ 'expected_stdout': """
+          ID           ID         DAT
+============ ============ ===========
+           1       <null> 2006-05-16
+           2            2 2004-11-16
+           3       <null> 2007-01-01
+           4       <null> 2005-07-11
+
+"""
+}
+]
+}

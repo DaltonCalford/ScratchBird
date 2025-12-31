@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_1286',
+'qmid': 'bugs.core_1286',
+'tracker_id': 'CORE-1286',
+'title': 'isql: zero divide + coredump when use "-pag 0" command switch & set heading on inside .sql script',
+'description': '',
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': """create table test(id int);
+commit;
+""",
+ 'test_type': 'Python',
+ 'test_script': 
+  '''script = """
+    set heading on;
+    select 1 as r from rdb$fields rows 1;
+    -- Crash of ISQL (not server) is reproduced when make connect by ISQL of WI-V2.5.1.26351.
+    -- After ISQL crash firebird.log contains: INET/inet_error: read errno = 10054
+  """
+runProgram('isql',[dsn,'-pag','0','-user',user_name,'-pas',user_password],script)
+  ''',
+ 'expected_stdout': """
+           R
+============
+           1
+"""
+}
+]
+}

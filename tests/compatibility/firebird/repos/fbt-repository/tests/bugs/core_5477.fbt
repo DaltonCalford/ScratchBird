@@ -1,0 +1,185 @@
+{
+'id': 'bugs.core_5477',
+'qmid': None,
+'tracker_id': 'CORE-5477',
+'title': "Trace duplicates asci_char(13) in its output (Windows only)",
+'description': 
+ """
+   We launch trace and create connect to DB with statement line 'select 1 from rdb$database'.
+   Trace log should contain several lines related to connection, transaction and statement.
+   These lines should be separated by standard Windows PAIR of characters: CR + NL.
+   Count of these chars should be equal (ideally; actually 1st line in trace has EOL = single NL 
+   rather than pair CR+NL).
+   We then open trace log as binary file and read all its content into dict of Counter type,
+   thus we can get number of occurences for each character, including CR and NL.
+   Finally, we compare number of occurences of CR and NL. Difference has to be no more than 1.
+
+   Checked on 2.5.7.27048, 3.0.2.32685, 4.0.0.531 - all fine.
+ """,
+'min_versions': '2.5.7',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'Windows',
+ 'test_type': 'Python',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+import os
+import subprocess
+import time
+from fdb import services
+from subprocess import Popen
+from collections import Counter
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+# Obtain engine version:
+engine = str(db_conn.engine_version) # convert to text because 'float' object has no attribute 'startswith'
+
+db_conn.close()
+
+# NB, 06.12.2016: as of  fdb 1.6.1 one need to EXPLICITLY specify user+password pair when doing connect 
+# via to FB services API by services.connect() - see FB tracker, PYFB-69
+# ("Can not connect to FB services if set ISC_USER & ISC_PASSWORD by os.environ[ ... ]")
+
+fb_home = services.connect(host='localhost', user= user_name, password= user_password).get_home_directory()
+# fb_home = services.connect(host='localhost').get_home_directory()
+
+if engine.startswith('2.5'):
+    fb_home = fb_home + 'bin'+os.sep
+    txt = '''# Generated auto, do not edit!
+      <database %[\\\\\\\\/]security?.fdb>
+          enabled false
+      </database>
+
+      <database %[\\\\\\\\/]bugs.core_5477.fdb>
+          enabled        true
+          time_threshold 0
+          log_initfini   false
+          log_connections true
+          log_transactions true
+          log_statement_finish = true
+      </database>
+    '''
+else:
+    txt = '''# Generated auto, do not edit!
+      database=%[\\\\\\\\/]security?.fdb
+      {
+          enabled = false
+      }
+      database=%[\\\\\\\\/]bugs.core_5477.fdb
+      {
+          enabled = true
+          time_threshold = 0
+          log_initfini   = false
+          log_connections = true
+          log_transactions = true
+          log_statement_finish = true
+      }
+    '''
+f_trc_cfg=open( os.path.join(context['temp_directory'],'tmp_trc_5477.cfg'), 'w')
+f_trc_cfg.write(txt)
+f_trc_cfg.close()
+
+# ##############################################################
+# S T A R T   T R A C E   i n   S E P A R A T E    P R O C E S S
+# ##############################################################
+
+f_trc_log=open( os.path.join(context['temp_directory'],'tmp_trc_5477.log'), "w")
+f_trc_err=open( os.path.join(context['temp_directory'],'tmp_trc_5477.err'), "w")
+
+p_trace = Popen( [ fb_home+'fbsvcmgr', 'localhost:service_mgr', 'action_trace_start' , 'trc_cfg', f_trc_cfg.name],stdout=f_trc_log,stderr=f_trc_err)
+
+time.sleep(1)
+
+# ####################################################
+# G E T  A C T I V E   T R A C E   S E S S I O N   I D
+# ####################################################
+# Save active trace session info into file for further parsing it and obtain session_id back (for stop):
+
+f_trc_lst = open( os.path.join(context['temp_directory'],'tmp_trace_5477.lst'), 'w')
+subprocess.call([fb_home+'fbsvcmgr', 'localhost:service_mgr', 'action_trace_list'], stdout=f_trc_lst)
+f_trc_lst.close()
+
+# !!! DO NOT REMOVE THIS LINE !!!
+time.sleep(1)
+
+trcssn=0
+with open( f_trc_lst.name,'r') as f:
+    for line in f:
+        i=1
+        if 'Session ID' in line:
+            for word in line.split():
+                if i==3:
+                    trcssn=word
+                i=i+1
+            break
+f.close()
+# Result: `trcssn` is ID of active trace session. Now we have to terminate it:
+
+con1 = fdb.connect(dsn=dsn)
+cur1=con1.cursor()
+cur1.execute('select 1 from rdb$database')
+for r in cur1:
+    pass
+con1.close()
+
+# Let trace log to be entirely written on disk:
+time.sleep(2)
+
+# ####################################################
+# S E N D   R E Q U E S T    T R A C E   T O   S T O P
+# ####################################################
+if trcssn>0:
+    fn_nul = open(os.devnull, 'w')
+    subprocess.call([fb_home+'fbsvcmgr', 'localhost:service_mgr', 'action_trace_stop','trc_id', trcssn], stdout=fn_nul)
+    fn_nul.close()
+    # DO NOT REMOVE THIS LINE:
+    time.sleep(2)
+
+p_trace.terminate()
+f_trc_log.close()
+f_trc_err.close()
+
+# Following file should be EMPTY:
+################
+
+f_list=(f_trc_err,)
+for i in range(len(f_list)):
+    f_name=f_list[i].name
+    if os.path.getsize(f_name) > 0:
+        with open( f_name,'r') as f:
+            for line in f:
+                print("Unexpected STDERR, file "+f_name+": "+line)
+
+letters_dict={}
+with open( f_trc_log.name,'rb') as f:
+    letters_dict = Counter(f.read())
+
+nl_count = letters_dict['\\n']
+cr_count = letters_dict['\\r']
+
+print( 'EXPECTED.' if nl_count >= 1 and abs(nl_count - cr_count) <= 1 else 'FAIL: empty log or NL count differ than CR.' )
+
+# CLEANUP
+#########
+f_list=(f_trc_cfg, f_trc_lst, f_trc_log, f_trc_err)
+for i in range(len(f_list)):
+   if os.path.isfile(f_list[i].name):
+       os.remove(f_list[i].name)
+
+  """,
+ 'expected_stdout': 
+  """
+    EXPECTED.
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

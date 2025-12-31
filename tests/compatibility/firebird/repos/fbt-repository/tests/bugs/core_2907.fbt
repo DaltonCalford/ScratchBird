@@ -1,0 +1,74 @@
+{
+'id': 'bugs.core_2907',
+'qmid': None,
+'tracker_id': 'CORE-2907',
+'title': 'Unable to catch exceptions that are thrown inside a dynamic builded execute block.',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """CREATE OR ALTER EXCEPTION EX_TEST 'test';
+
+SET TERM ^ ;
+CREATE OR ALTER procedure sp_1
+as
+declare variable v_stmt varchar(256);
+begin
+
+  v_stmt = 'execute block as '||
+           'begin '||
+           ' exception ex_test; '||
+           'end';
+  execute statement v_stmt;
+
+end
+^
+SET TERM ; ^
+
+
+
+SET TERM ^ ;
+CREATE OR ALTER procedure sp_2
+as
+begin
+  begin
+    execute procedure sp_1;
+
+    when exception ex_test do
+    begin
+      exit;
+    end
+  end
+end
+^
+SET TERM ; ^
+
+SET TERM ^ ;
+CREATE OR ALTER procedure sp_3
+as
+begin
+  begin
+    execute procedure sp_1;
+    when any do
+    begin
+      exit;
+    end
+  end
+end
+^
+SET TERM ; ^
+commit;
+
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """EXECUTE PROCEDURE SP_2;
+EXECUTE PROCEDURE SP_3;
+"""
+}
+]
+}

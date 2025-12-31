@@ -1,0 +1,46 @@
+{
+'id': 'bugs.core_1619',
+'qmid': None,
+'tracker_id': 'CORE-1619',
+'title': 'Some aggregate functions does NOT support NULL-constant in 3-d dialect',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select 
+        avg(null)              as avg_for_null
+       ,sum(null)              as sum_for_null
+       ,var_samp(null)         as var_samp_for_null
+       ,var_pop(null)          as var_pop_for_null
+       ,stddev_samp(null)      as stddev_samp_for_null
+       ,stddev_pop(null)       as stddev_pop_for_null
+       ,covar_samp(null, null) as covar_samp_for_nulls
+       ,covar_pop(null, null)  as covar_pop_for_nulls
+       ,corr(null, null)       as corr_for_nulls
+    from rdb$relations;
+  """,
+ 'expected_stdout': 
+  """
+    AVG_FOR_NULL                    <null>
+    SUM_FOR_NULL                    <null>
+    VAR_SAMP_FOR_NULL               <null>
+    VAR_POP_FOR_NULL                <null>
+    STDDEV_SAMP_FOR_NULL            <null>
+    STDDEV_POP_FOR_NULL             <null>
+    COVAR_SAMP_FOR_NULLS            <null>
+    COVAR_POP_FOR_NULLS             <null>
+    CORR_FOR_NULLS                  <null>
+  """
+}
+]
+}

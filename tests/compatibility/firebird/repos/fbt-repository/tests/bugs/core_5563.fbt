@@ -1,0 +1,47 @@
+{
+'id': 'bugs.core_5563',
+'qmid': None,
+'tracker_id': 'CORE-5563',
+'title': "Use exception instead bugcheck for EVL_expr",
+'description':
+ """
+   Checked on:
+      fb30Cs, build 3.0.4.32972: OK, 0.687s.
+      FB30SS, build 3.0.4.32988: OK, 0.672s.
+      FB40CS, build 4.0.0.955: OK, 1.656s.
+      FB40SS, build 4.0.0.1008: OK, 0.891s.
+
+   NOTE. 
+   Ability to use nested aggregate looks strange.
+   Query like here can not be run in MS SQL or Postgress.
+   Sent letters to dimitr, 19.06.2018.
+ """,
+'min_versions': '3.0.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select
+        sum(
+            sum(
+                (select sum(rf.rdb$field_position) from rdb$relation_fields rf)
+               )
+           )
+    from
+        rdb$database
+    ;
+  """,
+  'expected_stdout':
+  """
+    SUM                             <null>
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

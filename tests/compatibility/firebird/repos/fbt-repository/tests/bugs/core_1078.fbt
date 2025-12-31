@@ -1,0 +1,19 @@
+{
+'id': 'bugs.core_1078',
+'qmid': 'bugs.core_1078',
+'tracker_id': 'CORE-1078',
+'title': 'View with equally named source fields not faisible',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """create table t1(id integer, field1 integer);
+create table t2(id integer, field1 integer);
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """create view view1 as select t1.field1 as t1f1, t2.field1 as t2f1 from t1 JOIN t2 on t2.id = t1.id;
+"""
+}
+]
+}

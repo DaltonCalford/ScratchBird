@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_5016',
+'qmid': None,
+'tracker_id': 'CORE-5016',
+'title': "Server crashes during GC when DELETE is executed after adding new referencing column",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create table a (x integer primary key);
+    create table b (x integer primary key);
+    insert into b values (1);
+    commit;
+    alter table b add y integer references a(x);
+    commit;
+    delete from b;
+    commit;
+    set list on;
+    select count(*) as k from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    K                               1
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

@@ -1,0 +1,28 @@
+{
+'id': 'bugs.core_1497',
+'qmid': None,
+'tracker_id': 'CORE-1497',
+'title': 'New builtin function DATEADD() implements wrong choice of keywords for expanded syntax',
+'description': '',
+'min_versions': '2.1.0',
+'versions': [
+{
+ 'firebird_version': '2.1.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT DATEADD(1 DAY TO date '29-Feb-2012')
+,DATEADD(1 MONTH TO date '29-Feb-2012')
+,DATEADD(1 YEAR TO date '29-Feb-2012')
+FROM RDB$DATABASE;""",
+ 'expected_stdout': """Database:  localhost:C:\fbtest2\tmp\bugs.core_1497.fdb, User: SYSDBA
+SQL> CON> CON> CON>
+    DATEADD     DATEADD     DATEADD
+=========== =========== ===========
+2012-03-01  2012-03-29  2013-02-28
+
+SQL>"""
+}
+]
+}

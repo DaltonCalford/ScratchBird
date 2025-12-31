@@ -1,0 +1,110 @@
+{
+'id': 'bugs.core_1033',
+'qmid': 'bugs.core_1033',
+'tracker_id': 'CORE-1033',
+'title': "like doesn't work for computed values (at least in a view)",
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.0.1',
+ 'platform': 'All',
+ 'init_script': """create table TABLE_X (
+  id numeric(10,0) not null,
+  descr varchar(50) not null
+);
+
+commit;
+
+create view X_VW (id, description)
+as select id, x.descr || ' ('||x.id||')' from TABLE_X as x;
+
+commit;
+
+insert into TABLE_X values (1,'xyz');
+insert into TABLE_X values (2,'xyzxyz');
+insert into TABLE_X values (3,'xyz012');
+
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """select * from X_VW ;
+
+select * from X_VW where description like 'xyz (1)' ;
+
+select * from X_VW where description like 'xyz (%)' ;
+
+select * from X_VW where description like 'xyz%' ;
+""",
+ 'expected_stdout': """ID DESCRIPTION
+===================== ==========================================================================
+                    1 xyz (1)
+                    2 xyzxyz (2)
+                    3 xyz012 (3)
+
+ID DESCRIPTION
+===================== ==========================================================================
+                    1 xyz (1)
+
+ID DESCRIPTION
+===================== ==========================================================================
+                    1 xyz (1)
+
+ID DESCRIPTION
+===================== ==========================================================================
+                    1 xyz (1)
+                    2 xyzxyz (2)
+                    3 xyz012 (3)
+
+"""
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': """create table TABLE_X (
+  id numeric(10,0) not null,
+  descr varchar(50) not null
+);
+
+commit;
+
+create view X_VW (id, description)
+as select id, x.descr || ' ('||x.id||')' from TABLE_X as x;
+
+commit;
+
+insert into TABLE_X values (1,'xyz');
+insert into TABLE_X values (2,'xyzxyz');
+insert into TABLE_X values (3,'xyz012');
+
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """select * from X_VW ;
+
+select * from X_VW where description like 'xyz (1)' ;
+
+select * from X_VW where description like 'xyz (%)' ;
+
+select * from X_VW where description like 'xyz%' ;
+""",
+ 'expected_stdout': """                   ID DESCRIPTION
+===================== =========================================================================
+                    1 xyz (1)
+                    2 xyzxyz (2)
+                    3 xyz012 (3)
+
+                   ID DESCRIPTION
+===================== =========================================================================
+                    1 xyz (1)
+
+                   ID DESCRIPTION
+===================== =========================================================================
+                    1 xyz (1)
+
+                   ID DESCRIPTION
+===================== =========================================================================
+                    1 xyz (1)
+                    2 xyzxyz (2)
+                    3 xyz012 (3)
+"""
+}
+]
+}

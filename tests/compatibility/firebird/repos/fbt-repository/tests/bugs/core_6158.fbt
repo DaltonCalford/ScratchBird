@@ -1,0 +1,155 @@
+{
+'id': 'bugs.core_6158',
+'qmid': None,
+'tracker_id': 'CORE-6158',
+'title': 'substring similar - extra characters in the result for non latin characters',
+'description':
+ """
+    Confirmed regression on build 4.0.0.1629, 4.0.0.1631 
+	Worked as expected on 4.0.0.1535 (build 24.06.2019, before replacement old regexp library with 're2')
+    Works fine on: 4.0.0.1632 (build 19.10.2019)
+
+    05-mar-2021. Re-implemented in order to have ability to run this test on Linux.
+    Test encodes to UTF8 all needed statements (SET NAMES; CONNECT; DDL and DML) and stores this text in .sql file.
+    NOTE: 'SET NAMES' contain character set that must be used for reproducing problem (WIN1251 in this test).
+    Then ISQL is launched in separate (child) process which performs all necessary actions (using required charset).
+    Result will be redirected to log(s) which will be opened further via codecs.open(...encoding='cp1251').
+    Finally, its content will be converted to UTF8 for showing in expected_stdout.
+    Checked on:
+    * Windows: 4.0.0.2377
+    * Linux:   4.0.0.2379
+
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'database_character_set': 'WIN1251',
+ 'connection_character_set': 'UTF8',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import codecs
+import subprocess
+import time
+engine = db_conn.engine_version
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f,
+    # first do f.flush(), and
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+# Put patterns outside of sql_txt in order to avoid replacement percent sign
+# with its duplicate ('%' --> '%%') because of Python substitution requirements:
+pattern_01 = '%/#*(=){3,}#"%#"(=){3,}#*/%'
+pattern_02 = '%/#*(#-){3,}#"%#"(#-){3,}#*/%'
+
+sql_txt='''\
+    set bail on;
+    set names win1251;
+    connect '%(dsn)s' user '%(user_name)s' password '%(user_password)s';
+
+
+    -- This is needed to get "cannot transliterate character between character sets"
+	--	on build 4.0.0.1631, see comment in the tracker 18/Oct/19 02:57 PM:
+	create domain T_A64 as varchar (64) character set WIN1251 collate WIN1251;
+	create table VALUT_LIST (NAME T_A64 not null);
+	commit;
+	insert into VALUT_LIST (NAME) values ('Российский рубль');
+	insert into VALUT_LIST (NAME) values ('Турецкая лира');
+	insert into VALUT_LIST (NAME) values ('Доллар США');
+	commit;
+	
+	set list on;
+	set blob all;
+
+	select substring('
+	aaa
+	/*==== Комментарий между символами "равно" ====*/
+	bbb
+	ccc
+	ddd
+	eee
+	fff
+	jjj
+	' similar '%(pattern_01)s' escape '#') as result1
+	from rdb$database;
+
+	-- additional check for special character '-' as delimiter:
+	select substring('здесь написан /*---- Комментарий между символами "дефис" ----*/ - и больше ничего!' similar '%(pattern_02)s' escape '#') as result2
+	from rdb$database;
+
+	-- Confirmed fail on 4.0.0.1631 with "cannot transliterate character between character sets":
+	select substring(list(T.NAME, '; ') from 1 for 250) as result_3_blob_id from VALUT_LIST T;
+
+
+''' % dict(globals(), **locals())
+
+f_run_sql = open( os.path.join(context['temp_directory'], 'tmp_6158_win1251.sql'), 'w' )
+f_run_sql.write( sql_txt.decode('utf8').encode('cp1251') )
+flush_and_close( f_run_sql )
+
+# result: file tmp_6158_win1251.sql is encoded in win1251
+
+f_run_log = open( os.path.splitext(f_run_sql.name)[0]+'.log', 'w')
+subprocess.call( [ context['isql_path'], '-q', '-i', f_run_sql.name ],
+                 stdout = f_run_log,
+                 stderr = subprocess.STDOUT
+               )
+flush_and_close( f_run_log ) # result: output will be encoded in win1251
+
+with codecs.open(f_run_log.name, 'r', encoding='cp1251' ) as f:
+    result_in_win1251 = f.readlines()
+
+for i in result_in_win1251:
+    print( i.encode('utf8') )
+
+# cleanup:
+###########
+cleanup( (f_run_sql, f_run_log) )
+  
+  """,
+ 'expected_stdout': 
+  """
+	RESULT1                         = Комментарий между символами "равно" =
+	RESULT2                         - Комментарий между символами "дефис" -
+	Российский рубль; Турецкая лира; Доллар США
+  """,
+  'substitutions': [('RESULT_3_BLOB_ID.*','')]
+}
+]
+}

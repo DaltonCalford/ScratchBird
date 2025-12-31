@@ -1,0 +1,42 @@
+{
+'id': 'bugs.core_5146',
+'qmid': None,
+'tracker_id': 'CORE-5146',
+'title': "Suboptimal join order if one table has a selective predicate and MIN is calculated for the other one",
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Confirmed:
+    -- effective plan on: V3.0.0.32435, T4.0.0.113
+    -- ineffect. plan on: V3.0.0.32378, T4.0.0.98
+    
+    recreate table houritems(houritemid int, projectid int); -- hi
+    recreate table dihourentries(houritemid int, datevalue int); -- he
+
+    create index hi_itemid on houritems(houritemid);
+    create index hi_projid on houritems(projectid);
+    create index he_itemid on dihourentries(houritemid);
+    create index he_datevl on dihourentries(datevalue);
+
+    set planonly;
+
+    select min(he.datevalue)
+    from houritems hi inner join dihourentries he on hi.houritemid = he.houritemid
+    where hi.projectid = ?;
+  """,
+ 'expected_stdout':
+  """
+    PLAN JOIN (HI INDEX (HI_PROJID), HE INDEX (HE_ITEMID))
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

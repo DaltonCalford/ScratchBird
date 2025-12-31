@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_4493',
+'qmid': None,
+'tracker_id': 'CORE-4493',
+'title': 'Index not found for RECREATE TRIGGER',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table mvt(id int primary key, ac int, amount numeric(12,2));
+    recreate table account(id int primary key, balance numeric(12,2));
+    commit;
+    
+    set term ^;
+    recreate trigger tai_mvt active after insert or update position 1 on mvt as
+    begin
+        update account a set a.balance = a.balance + new.amount
+        where a.id = new.ac;
+    end
+    ^
+    set term ;^
+    commit;
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

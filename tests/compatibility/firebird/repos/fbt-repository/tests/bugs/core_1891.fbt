@@ -1,0 +1,27 @@
+{
+'id': 'bugs.core_1891',
+'qmid': None,
+'tracker_id': 'CORE-1891',
+'title': 'SHOW VIEW shows non-sense information for view fields with expressions',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table test (n integer);
+create view view_test (x, y) as select n, n * 2 from test;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """show view view_test;
+""",
+ 'expected_stdout': """X                               INTEGER Nullable
+Y                               BIGINT Expression
+View Source:
+==== ======
+ select n, n * 2 from test
+"""
+}
+]
+}

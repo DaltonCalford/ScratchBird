@@ -1,0 +1,152 @@
+{
+'id': 'bugs.core_6329',
+'qmid': '',
+'tracker_id': 'CORE-6329',
+'title': ' GBAK with service_mgr and WinSSPI authentication for Windows SYSTEM user producing error in clumplet API',
+'description': 
+ """ 
+    Confirmed bug on 4.0.0.2035 SS: got 
+    "gbak: ERROR:Internal error when using clumplet API: attempt to store 866 bytes in a clumplet with maximum size 255 bytes"
+    
+    Checked on 4.0.0.2066 SS/CS, 3.0.6.33212 SS/CS.
+ """,
+'min_versions': '3.0.6',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'Windows',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import sys
+import os
+import re
+import time
+import subprocess
+from fdb import services
+import socket
+import getpass
+
+THIS_DBA_USER=user_name
+THIS_DBA_PSWD=user_password
+
+THIS_COMPUTER_NAME = socket.gethostname()
+CURRENT_WIN_ADMIN = getpass.getuser()
+
+##########################################
+THIS_FDB = db_conn.database_name
+THIS_FBK=os.path.join(context['temp_directory'],'tmp_6329.fbk')
+##########################################
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if os.path.isfile( f_names_list[i]):
+            os.remove( f_names_list[i] )
+            if os.path.isfile( f_names_list[i]):
+                print('ERROR: can not remove file ' + f_names_list[i])
+
+#--------------------------------------------
+
+
+fb_home = services.connect(host='localhost', user= THIS_DBA_USER, password= THIS_DBA_PSWD).get_home_directory()
+
+f_sql_make_map = open( os.path.join(context['temp_directory'],'tmp_6329.sql'), 'w', buffering=0)
+f_sql_txt=\
+'''
+    set bail on;
+    connect 'localhost:%(THIS_FDB)s' user %(THIS_DBA_USER)s password '%(THIS_DBA_PSWD)s';
+ 
+    create or alter global mapping win_system using plugin win_sspi from user "%(THIS_COMPUTER_NAME)s\%(CURRENT_WIN_ADMIN)s" to user %(THIS_DBA_USER)s;
+    commit;
+''' % locals()
+
+f_sql_make_map.write(f_sql_txt)
+f_sql_make_map.close()
+
+# do NOT remove this delay otherwise can get 'Windows error 2: file not found'.
+time.sleep(1)
+
+f_prepare_log=open( os.path.join(context['temp_directory'],'tmp_6329_prepare.log'), 'w', buffering=0)
+subprocess.call( [ fb_home + "isql", "-q", "-i", f_sql_make_map.name ], stdout=f_prepare_log, stderr=subprocess.STDOUT )
+f_prepare_log.close()
+
+f_backup_log=open( os.path.join(context['temp_directory'],'tmp_6329_backup.log'), 'w', buffering=0)
+subprocess.call( [ fb_home + "gbak", "-v", "-b", "-se", "localhost:service_mgr", THIS_FDB, THIS_FBK], stdout=f_backup_log, stderr=subprocess.STDOUT )
+f_backup_log.close()
+
+
+# Remove global mapping:
+########################
+
+f_sql_drop_map = open( os.path.join(context['temp_directory'],'tmp_6329_cleanup.sql'), 'w', buffering=0)
+f_sql_txt='''
+    set bail on;
+    connect 'localhost:%(THIS_FDB)s' user %(THIS_DBA_USER)s password '%(THIS_DBA_PSWD)s';
+ 
+    drop global mapping win_system;
+    commit;
+''' % locals()
+f_sql_drop_map.write(f_sql_txt)
+f_sql_drop_map.close()
+
+f_cleanup_log = open( os.path.join(context['temp_directory'],'tmp_6329_cleanup.log'), 'w', buffering=0)
+subprocess.call( [ fb_home + "isql", "-q", "-i", f_sql_drop_map.name ], stdout=f_cleanup_log, stderr=subprocess.STDOUT )
+f_cleanup_log.close()
+
+# Checks:
+#########
+
+with open( f_prepare_log.name,'r') as f:
+  for line in f:
+      if line.split():
+        print('UNEXPECTED OUTPUT in '+f_prepare_log.name+': '+line)
+
+
+allowed_patterns = (
+     re.compile('gbak:.*closing.*commit.*finish',re.IGNORECASE),
+)
+
+with open( f_backup_log.name,'r') as f:
+  for line in f:
+      if 'ERROR' in line:
+        print('UNEXPECTED STDERR in '+f_backup_log.name+': '+line)
+      elif 'closing' in line:
+        match2some = filter( None, [ p.search(line) for p in allowed_patterns ] )
+        if match2some:
+            print('EXPECTED output found in the backup log')
+
+with open( f_cleanup_log.name,'r') as f:
+  for line in f:
+      if line.split():
+        print('UNEXPECTED OUTPUT in '+f_cleanup_log.name+': '+line)
+
+# Cleanup:
+##########
+
+# do NOT remove this pause otherwise some of logs will not be enable for deletion and test will finish with 
+# Exception raised while executing Python test script. exception: WindowsError: 32
+time.sleep(1)
+
+f_list=( f_sql_make_map, f_sql_drop_map, f_prepare_log, f_backup_log, f_cleanup_log )
+cleanup( [ i.name for i in f_list ] )
+
+os.remove(THIS_FBK)
+
+
+  """,
+ 'expected_stdout':
+  """
+    EXPECTED output found in the backup log
+  """,
+ 'expected_stderr':
+  """
+  """
+},
+]
+}

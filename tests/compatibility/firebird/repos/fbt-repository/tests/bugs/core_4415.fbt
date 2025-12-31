@@ -1,0 +1,31 @@
+{
+'id': 'bugs.core_4415',
+'qmid': None,
+'tracker_id': 'CORE-4415',
+'title': 'Useless extraction of generic DDL trigger',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create or alter trigger tr before any ddl statement as begin end; 
+    show trigger tr; 
+    -- Confirmed excessive output in WI-T3.0.0.30809 Firebird 3.0 Alpha 2. Was:
+    -- TR, Sequence: 0, Type: BEFORE CREATE TABLE OR ALTER TABLE OR DROP TABLE OR ... OR <unknown>, Active // length = 967 characters.
+  """,
+ 'expected_stdout': 
+  """
+    TR, Sequence: 0, Type: BEFORE ANY DDL STATEMENT, Active
+    as begin end
+  """,
+  'substitutions':[('\+.*',''),('\=.*',''),('Trigger text.*','')]
+}
+]
+}

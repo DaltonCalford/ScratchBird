@@ -1,0 +1,150 @@
+{
+'id': 'bugs.core_1366',
+'qmid': None,
+'tracker_id': 'CORE-1366',
+'title': 'French insensitive collation FR_FR_CI_AI',
+'description':
+ """
+    ::: NOTE :::
+	In order to check correctness of following statements under ISQL itself (NOT under fbt_run), do following:
+	1) open some text editor that supports charset = ISO8859_1 and set encoding for new document = ISO 8859-1
+	  (e.g. in Notepad++ pull-down menu: "Encoding / Character sets / Western european / ISO 8859_1")
+	2) type commands statements that contains diacritical marks (accents) and save to .sql
+	3) open this .sql in FAR editor and ensure that letters with diacritical marks are displayed as SINGLE characters
+	4) run isql -i <script_encoded_in_iso8859_1.sql>
+	In order to run this script under fbt_run:
+	1) open Notepad++ new .fbt document and set Encoding = "UTF8 without BOM"
+	2) copy-paste text from <script_encoded_in_iso8859_1.sql>, ensure that letters with diacritical marks are readable
+	   (it should be pasted here in UTF8 encoding)
+	3) add in `expected_stdout` section required output by copy-paste from result of isql -i <script_encoded_in_iso8859_1.sql>
+	   (it should be pasted here in UTF8 encoding)
+	4) save .fbt and ensure that it was saved in UTF8 encoding, otherwise exeption like
+	   "UnicodeDecodeError: 'utf8' codec can't decode byte 0xc3 in position 621: invalid continuation byte" will raise.
+ 
+	14.08.2020:
+	removed usage of generator because gen_id() result differs in FB 4.x vs previous versions since fixed core-6084.
+	Use hard-coded values for IDs.
+	Checked on:
+		4.0.0.2151 SS: 1.672s.
+		3.0.7.33348 SS: 0.984s.
+		2.5.9.27150 SC: 0.277s. 
+
+	28.02.2021
+	Changed connection charset to UTF8 otherwise on Linux this test leads to 'ERROR' with issuing:
+	====
+        Statement failed, SQLSTATE = 42000
+        Dynamic SQL Error
+        -SQL error code = -104
+        -Token unknown - line 4, column 1
+        -e
+        Statement failed, SQLSTATE = 42000
+        Dynamic SQL Error
+        -SQL error code = -104
+        -Token unknown - line 3, column 1
+        -o
+        . . .
+    ====
+    Checked again on:
+    1) Windows: 4.0.0.2372; 3.0.8.33416
+    2) Linux:   4.0.0.2377
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'database_character_set': 'ISO8859_1',
+ 'connection_character_set': 'UTF8',
+ 'init_script': 
+  """
+	recreate table test(id int);
+	commit;
+
+	set term ^;
+	execute block as
+	begin
+		begin execute statement 'drop collation coll_fr'; when any do begin end end
+	end
+	^set term ;^
+	commit;
+
+	create collation coll_fr for iso8859_1 from external ('FR_FR') case insensitive accent insensitive;
+	commit;
+
+	recreate table test(id int, cf varchar(10) collate coll_fr);
+	commit;
+
+	recreate table noac(id int, nf varchar(10) collate coll_fr);
+	commit;
+
+	-- http://french.about.com/od/pronunciation/a/accents.htm
+	
+	-- ### ONCE AGAIN ###
+	-- 1) for checking this under ISQL following must be encoded in ISO8859_1
+	-- 2) for running under fbt_run utility following must be encoded in UTF8.
+	
+	-- (cedilla) is found only on the letter "C":
+	insert into test(id, cf) values( 1010, 'ç');
+	
+	-- (acute accent) can only be on an "E" 
+	insert into test(id, cf) values( 1020, 'é');
+	
+	-- (grave accent) can be found on an "A", "E", "U"
+	insert into test(id, cf) values( 1030, 'à');
+	insert into test(id, cf) values( 1040, 'è');
+	insert into test(id, cf) values( 1050, 'ù');
+	
+	-- (dieresis or umlaut) can be on an E, I and U
+	insert into test(id, cf) values( 1060, 'ë');
+	insert into test(id, cf) values( 1070, 'ï');
+	insert into test(id, cf) values( 1080, 'ü');
+	
+	-- (circumflex) can be on an A, E, I, O and U
+	insert into test(id, cf) values( 1090, 'â');
+	insert into test(id, cf) values( 1110, 'ê');
+	insert into test(id, cf) values( 1120, 'î');
+	insert into test(id, cf) values( 1130, 'û');
+	insert into test(id, cf) values( 1140, 'ô');
+	commit;
+
+	-- ANSI letters that should be equal to diacritical
+	-- when doing comparison CI_AI:
+	insert into noac(id, nf) values( 1150, 'A');
+	insert into noac(id, nf) values( 1160, 'C');
+	insert into noac(id, nf) values( 1170, 'E');
+	insert into noac(id, nf) values( 1180, 'I');
+	insert into noac(id, nf) values( 1190, 'O');
+	insert into noac(id, nf) values( 1200, 'U');
+	commit;
+
+  """,
+ 'test_script': 
+  """
+	select n.id n_id, n.nf, t.cf, t.id t_id
+	from noac n
+	left join test t on n.nf is not distinct from t.cf 
+	order by n_id, t_id;
+  """,
+ 'expected_stdout':
+  """
+	N_ID NF         CF                 T_ID
+	============ ========== ========== ============
+	1150 A          à                  1030
+	1150 A          â                  1090
+	1160 C          ç                  1010
+	1170 E          é                  1020
+	1170 E          è                  1040
+	1170 E          ë                  1060
+	1170 E          ê                  1110
+	1180 I          ï                  1070
+	1180 I          î                  1120
+	1190 O          ô                  1140
+	1200 U          ù                  1050
+	1200 U          ü                  1080
+	1200 U          û                  1130  
+  """,
+  'substitutions': [('=.*',''),('[ \t]+',' ') ]
+}
+]
+}

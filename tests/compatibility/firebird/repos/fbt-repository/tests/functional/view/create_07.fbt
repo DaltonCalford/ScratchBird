@@ -1,0 +1,29 @@
+{
+'id': 'functional.view.create.07',
+'qmid': 'functional.view.create.create_view_07',
+'tracker_id': '',
+'title': 'CREATE VIEW - updateable WITH CHECK OPTION',
+'description': """CREATE VIEW - updateable WITH CHECK OPTION
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': 'CREATE TABLE tb(id INT);',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE VIEW test (id) AS SELECT id FROM tb WHERE id<10 WITH CHECK OPTION;
+INSERT INTO test VALUES(2);
+COMMIT;
+SELECT * FROM test;""",
+ 'expected_stdout': """          ID
+============
+
+           2
+"""
+}
+]
+}

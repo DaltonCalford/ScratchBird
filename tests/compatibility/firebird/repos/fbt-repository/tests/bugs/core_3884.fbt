@@ -1,0 +1,366 @@
+{
+'id': 'bugs.core_3884',
+'qmid': None,
+'tracker_id': 'CORE-3884',
+'title': "Server crashes on preparing empty query when trace is enabled",
+'description': 
+ """
+   https://github.com/FirebirdSQL/firebird/issues/4221
+
+   Crash can be reproduced if FB 2.5.0 or 2.5.1 runs in Classic or SuperClassic mode (Super not affected).
+   Steps to reproduce:
+       0. Prepare trace configuration and launch user trace session;
+       1. Prepare script for ISQL (execute block with empty statement to be executed using ES);
+       2. Launch ISQL and give this script to it;
+       3, Launch then Python, make connection to DB and run it it execute_immediate() with empty statement as arg.
+          FB 2.5.1.26351 crashed at this point.
+
+       ::: NOTES :::
+
+       A.  If Firebird is running in SuperClassic mode then Python code gets exception with message related to crash
+           ('Error writing to connection'). and we can check them in exception instance content.
+
+           But if FB runs as Classic Server then no such message will be received!
+           Because of this, we have to check difference between 'old' and 'new' content of firebird.log.
+           This difference must NOT contain messages like:
+               * "Uncommitted work may have been lost" or
+               * "Error writing data to the connection."
+           If no such messages in the FB log difference then we can assume that test PASSES.
+           Otherwise we must suspect that FB crashed (every such message will be shown in that case).
+
+       B. Error stack can differ in some versions of FB!
+          * FB 3.x and 4.x contain three lines (which was also in FB 2.5.1.26351):
+                1 Error while executing SQL statement:
+                2 - SQLCODE: -104
+                3 - Unexpected end of command
+          * FB 5.x (up to 5.0.0.304) also had three lines before builds with date less thjan 12-nov-2021.
+            But after gh-6966 was fixed (5b7d0c7a64cf9873534acfffeb997718bab89800 ) error stack content returned
+            to proper look and contain five lines:
+                1 Error while executing SQL statement:
+                2 - SQLCODE: -104
+            >>> 3 - Dynamic SQL Error        <<<
+            >>> 4 - SQL error code = -104    <<<
+                5 - Unexpected end of command - ...
+          Because of this, we have to check only presence of lines with "SQLCODE: -104" and "Unexpected end of command"
+          for FB of major versions 3.x and 4.x (gh-6966 was NOT fixed for them!).
+
+   Checked on 5.0.0.309; 4.0.0.2496; 3.0.8.33527; 2.5.9.27152; 2.5.3.26780.
+
+ """,
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+import os
+import re
+import difflib
+import subprocess
+import time
+from fdb import services
+from subprocess import Popen
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+# Obtain engine version:
+engine = str(db_conn.engine_version) # convert to text because 'float' object has no attribute 'startswith'
+db_file = db_conn.database_name
+# do NOT: db_conn.close()
+
+#---------------------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb'):
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if os.path.isfile( f_names_list[i]):
+            os.remove( f_names_list[i] )
+            if os.path.isfile( f_names_list[i]):
+                print('ERROR: can not remove file ' + f_names_list[i])
+
+#--------------------------------------------
+
+def svc_get_fb_log( engine, f_fb_log ):
+
+    import subprocess
+
+    if engine.startswith('2.5'):
+        get_firebird_log_key='action_get_ib_log'
+    else:
+        get_firebird_log_key='action_get_fb_log'
+
+    subprocess.call( [ context['fbsvcmgr_path'],
+                       "localhost:service_mgr",
+                       'user', user_name, 'password', user_password,
+                       get_firebird_log_key
+                     ]
+                     ,stdout=f_fb_log
+                     ,stderr=subprocess.STDOUT
+                   )
+
+    return
+
+#--------------------------------------------
+
+
+txt25 = '''# Trace config, format for 2.5. Generated auto, do not edit!
+<database %[\\\\\\\\/]bugs.core_3884.fdb>
+    enabled true
+    time_threshold 0
+</database>
+'''
+
+# NOTES ABOUT TRACE CONFIG FOR 3.0:
+# 1) Header contains `database` clause in different format vs FB 2.5: its data must be enclosed with '{' '}'
+# 2) Name and value must be separated by EQUALITY sign ('=') in FB-3 trace.conf, otherwise we get runtime error:
+#    element "<. . .>" have no attribute value set
+
+txt30 = '''# Trace config, format for 3.0. Generated auto, do not edit!
+database=%[\\\\\\\\/]bugs.core_3884.fdb
+{
+  enabled = true
+  time_threshold = 0
+  log_statement_finish = true
+}
+'''
+
+f_trc_cfg=open( os.path.join(context['temp_directory'],'tmp_trace_3884.cfg'), 'w')
+if engine.startswith('2.5'):
+    f_trc_cfg.write(txt25)
+else:
+    f_trc_cfg.write(txt30)
+f_trc_cfg.close()
+
+# ##############################################################
+# S T A R T   T R A C E   i n   S E P A R A T E    P R O C E S S
+# ##############################################################
+
+f_trc_log=open( os.path.join(context['temp_directory'],'tmp_trace_3884.log'), "w")
+f_trc_err=open( os.path.join(context['temp_directory'],'tmp_trace_3884.err'), "w")
+
+p_trace = Popen( [ context['fbsvcmgr_path'],
+                   'localhost:service_mgr',
+                   'user', user_name, 'password', user_password,
+                   'action_trace_start',
+                   'trc_cfg', f_trc_cfg.name
+                 ]
+                 ,stdout=f_trc_log,stderr=f_trc_err
+               )
+
+# Wait! Trace session is initialized not instantly!
+time.sleep(1.1)
+
+# ####################################################
+# G E T  A C T I V E   T R A C E   S E S S I O N   I D
+# ####################################################
+# Save active trace session info into file for further parsing it and obtain session_id back (for stop):
+
+f_trc_lst = open( os.path.join(context['temp_directory'],'tmp_trace_3884.lst'), 'w')
+subprocess.call( [ context['fbsvcmgr_path'],
+                   'localhost:service_mgr',
+                   'user', user_name, 'password', user_password,
+                   'action_trace_list'
+                 ]
+                 ,stdout=f_trc_lst
+               )
+flush_and_close( f_trc_lst )
+
+trcssn=0
+with open( f_trc_lst.name,'r') as f:
+    for line in f:
+        i=1
+        if 'Session ID' in line:
+            for word in line.split():
+                if i==3:
+                    trcssn=word
+                i=i+1
+            break
+
+# Result: `trcssn` is ID of active trace session. Now we have to terminate it:
+
+
+f_fblog_before=open( os.path.join(context['temp_directory'],'tmp_3884_fblog_before.txt'), 'w')
+svc_get_fb_log( engine, f_fblog_before )
+flush_and_close( f_fblog_before )
+
+
+#.............................................................................
+
+sql_cmd='''\
+    set term ^;
+    execute block as
+    begin
+        execute statement '';
+    end
+    ^
+'''
+
+f_sql_chk = open( os.path.join(context['temp_directory'],'tmp_3884_run.sql'), 'w')
+f_sql_chk.write(sql_cmd)
+flush_and_close( f_sql_chk )
+
+
+f_sql_log = open( ''.join( (os.path.splitext(f_sql_chk.name)[0], '.log' ) ), 'w')
+subprocess.call( [ context['isql_path'], dsn, '-q', '-i', f_sql_chk.name ], stdout = f_sql_log, stderr = subprocess.STDOUT)
+flush_and_close( f_sql_log )
+
+
+#--------------------------------------
+
+crash_pattern = re.compile('Error\s+(reading|writing)\s+data.*\s+connection', re.IGNORECASE)
+
+# Error while executing SQL statement:
+# - SQLCODE: -104
+# - Unexpected end of command
+
+# Error while executing SQL statement:
+# - SQLCODE: -104
+# - Dynamic SQL Error
+# - SQL error code = -104
+# - Unexpected end of command
+
+required_patterns = (
+    re.compile('SQLCODE:\s+-104', re.IGNORECASE)
+   ,re.compile('Unexpected\s+end\sof\s+command', re.IGNORECASE)
+)
+
+
+try:
+    db_conn.execute_immediate('')
+except Exception,e:
+    match_list = [ p.search(e[0]) for p in required_patterns ]
+    if crash_pattern.search(e[0]):
+        print('### CRASH DETECTED ###')
+        print(e[0])
+    elif min(match_list):
+        # True ==> every pattern from required_patterns
+        # presents in the Status vector ==> test PASSED.
+        print('Status vector is EXPECTED.')
+    else:
+        print('Status vector is UNEXPECTED:')
+        print(e[0])
+
+finally:
+    db_conn.close()
+
+
+f_fblog_after=open( os.path.join(context['temp_directory'],'tmp_3884_fblog_after.txt'), 'w')
+svc_get_fb_log( engine, f_fblog_after )
+flush_and_close( f_fblog_after )
+
+
+oldfb=open(f_fblog_before.name, 'r')
+newfb=open(f_fblog_after.name, 'r')
+
+difftext = ''.join(difflib.unified_diff(
+    oldfb.readlines(), 
+    newfb.readlines()
+  ))
+oldfb.close()
+newfb.close()
+
+f_diff_txt=open( os.path.join(context['temp_directory'],'tmp_3884_fblog_diff.txt'), 'w')
+f_diff_txt.write(difftext)
+flush_and_close( f_diff_txt )
+
+#IMAGE-PC1 (Client)	Fri Nov 12 15:40:31 2021
+#	REMOTE INTERFACE/gds__detach: Unsuccesful detach from database. 
+#	Uncommitted work may have been lost
+
+#IMAGE-PC1	Fri Nov 12 15:42:11 2021
+#	Unable to complete network request to host "Image-PC1".
+#	Error writing data to the connection.
+
+
+fblog_crash_patterns = (
+    crash_pattern
+   ,re.compile('Uncommitted\s+work\s+.*\s+lost', re.IGNORECASE)
+)
+
+
+match2some = False
+with open( f_diff_txt.name,'r') as f:
+    for line in f:
+        if line.startswith('+'):
+            match2some = filter( None, [ p.search(line) for p in fblog_crash_patterns ] )
+            if match2some:
+                print( 'UNEXPECTED DIFF in the firebird.log: ' + line.strip() )
+
+#.............................................................................
+
+
+# ####################################################
+# S E N D   R E Q U E S T    T R A C E   T O   S T O P
+# ####################################################
+if trcssn>0:
+
+    #########################
+    ###   C R U C I A L   ###
+    #########################
+    # We must stay idle here at least 1.1 second before ask fbsbcmgr to stop trace.
+    # The reason is that fbsvcmgr make query to FB services only one time per second.
+    # If we do not take delay here then test can fail with (most often) empty log
+    # or its log can look incompleted.
+    # See letter from Vlad, 04-mar-2021 13:02 (subj: "Test core_6469 on Linux...").
+    ###############
+    time.sleep(1.1)
+    ###############
+    
+    f_trc_stop_log=open( os.path.join(context['temp_directory'],'tmp_trc_3884_stop.log'), "w")
+    f_trc_stop_err=open( os.path.join(context['temp_directory'],'tmp_trc_3884_stop.err'), "w")
+
+    subprocess.call( [ context['fbsvcmgr_path'],
+                       'localhost:service_mgr',
+                       'user', user_name, 'password', user_password,
+                       'action_trace_stop',
+                       'trc_id', trcssn
+                     ]
+                     ,stdout=f_trc_stop_log
+                     ,stderr=f_trc_stop_err
+                   )
+    flush_and_close( f_trc_stop_log )
+    flush_and_close( f_trc_stop_err )
+
+
+p_trace.terminate()
+flush_and_close( f_trc_log )
+flush_and_close( f_trc_err )
+
+
+# CLEANUP
+#########
+time.sleep(1)
+cleanup( [i.name for i in (f_trc_cfg, f_trc_log, f_trc_err, f_trc_lst, f_trc_stop_log, f_trc_stop_err, f_sql_chk, f_sql_log, f_fblog_before, f_fblog_after, f_diff_txt) ] )
+
+  """,
+ 'expected_stdout': 
+  """
+    Status vector is EXPECTED.
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

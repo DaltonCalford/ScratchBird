@@ -1,0 +1,59 @@
+{
+'id': 'bugs.core_0200',
+'qmid': 'bugs.core_200',
+'tracker_id': 'CORE-200',
+'title': 'Empty column names with aggregate funcs',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select (select count(1) from rdb$database) from rdb$database ;
+select (select avg(1) from rdb$database) from rdb$database ;
+select (select sum(1) from rdb$database) from rdb$database ;
+""",
+ 'expected_stdout': """
+       COUNT
+============
+           1
+
+
+                  AVG
+=====================
+                    1
+
+
+                  SUM
+=====================
+                    1
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select (select count(1) from rdb$database) from rdb$database ;
+select (select avg(1) from rdb$database) from rdb$database ;
+select (select sum(1) from rdb$database) from rdb$database ;
+""",
+ 'expected_stdout': """                COUNT
+=====================
+                    1
+
+
+                  AVG
+=====================
+                    1
+
+
+                  SUM
+=====================
+                    1
+
+"""
+}
+]
+}

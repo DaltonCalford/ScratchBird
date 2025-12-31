@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_336',
+'qmid': 'bugs.core_336-21',
+'tracker_id': 'CORE-336',
+'title': 'DateTime math imprecision',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select (cast('01.01.2004 10:01:00' as timestamp)-cast('01.01.2004 10:00:00' as timestamp))+cast('01.01.2004 10:00:00' as timestamp) from rdb$database ;
+""",
+ 'expected_stdout': """ADD
+=========================
+2004-01-01 10:01:00.0000
+
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select (cast('01.01.2004 10:01:00' as timestamp)-cast('01.01.2004 10:00:00' as timestamp))+cast('01.01.2004 10:00:00' as timestamp) from rdb$database ;
+""",
+ 'expected_stdout': """
+
+=========================
+2004-01-01 10:01:00.0000
+
+"""
+}
+]
+}

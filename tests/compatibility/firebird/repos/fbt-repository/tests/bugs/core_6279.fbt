@@ -1,0 +1,192 @@
+{
+'id': 'bugs.core_6279',
+'qmid': None,
+'tracker_id': 'CORE-6279',
+'title': 'Put options in user management statements in any order',
+'description': 
+ """
+    According to new syntax that is described in doc\sql.extensions\README.user_management, any statement that 
+    creates or modifies user, must now look like this:
+        CREATE OR ALTER USER name [ SET ] [ options ];
+    where OPTIONS is a list of following options:
+        - PASSWORD 'password'
+        - FIRSTNAME 'firstname'
+        - MIDDLENAME 'middlename'
+        - LASTNAME 'lastname'
+        - ACTIVE
+        - INACTIVE
+        - USING PLUGIN name
+        - TAGS ( tag [, tag [, tag ...]] )
+
+    We add all options from this list, except 'INACTIVE', as separate records to the table 'TSYNTAX', field: 'token'.
+    Then we generate all possible combinations of these options with requirement that each of them occurs in a generated
+    record only once (see: f_generate_sql_with_combos).
+    Query will contain 7 columns, one per each option, and we further concatenate them to the string. 
+    As result, this 'suffix part' will contain all tokens in all possible places will be created. 
+    We will add this 'suffix part' to 'create or alter user ...' statement.
+
+    Finally, we redirect result of this query to a new .sql script (see: f_ddl_combinations_script) and run it.
+    NOTE: total number of 'CREATE OR ALTER USER' statements in it will be 10080.
+
+    Result of this .sql must be EMPTY: all statements have to be executed without error.
+
+    It is crusial for this test to make .sql script run within SINGLE transaction otherwise performance will suffer.
+    Also, we must inject 'SET BAIL ON;' at the start line of this script in order to make it stop when first error occurs.
+
+    Checked on 4.0.0.1876 SS/CS: OK, 6.659/7.722s
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script':"""\
+
+import os
+import time
+import subprocess
+from subprocess import Popen
+from fdb import services
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for f in f_names_list:
+       if type(f) == file:
+          del_name = f.name
+       elif type(f) == str:
+          del_name = f
+       else:
+          print('Unrecognized type of element:', f, ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+    
+#--------------------------------------------
+
+sql_init=\
+'''
+    recreate table tsyntax( token varchar(100) );
+    commit;
+    insert into tsyntax( token ) values( 'password ''bar'' ' );
+    insert into tsyntax( token ) values( 'firstname ''john'' ' );
+    insert into tsyntax( token ) values( 'middlename ''ozzy'' ' );
+    insert into tsyntax( token ) values( 'lastname ''osbourne'' ' );
+    insert into tsyntax( token ) values( 'active' );
+    insert into tsyntax( token ) values( 'inactive' );
+    insert into tsyntax( token ) values( 'using plugin Srp' );
+    insert into tsyntax( token ) values( 'tags ( foo = ''bar'', rio = ''gee'' )' );
+    commit;
+
+    set heading off;
+    select 'set bail on;' from rdb$database union all
+    select 'set echo off;' from rdb$database union all
+    select 'commit;' from rdb$database union all
+    select 'set autoddl off;' from rdb$database union all
+    select 'commit;' from rdb$database
+    ;
+
+    with
+    t as (
+      select *
+      from tsyntax x
+      where x.token not in ('inactive')
+    )
+    ,b as (
+        select trim(a.token) as a, trim(b.token) as b, trim(c.token) as c, trim(d.token) as d, trim(e.token) as e, trim(f.token) as f, trim(g.token) as g
+        from t a
+        left join t b on b.token not in (a.token)
+        left join t c on c.token not in (a.token, b.token)
+        left join t d on d.token not in (a.token, b.token, c.token)
+        left join t e on e.token not in (a.token, b.token, c.token, d.token)
+        left join t f on f.token not in (a.token, b.token, c.token, d.token, e.token)
+        left join t g on g.token not in (a.token, b.token, c.token, d.token, e.token, f.token)
+    )
+    ,c as (
+        select a || ' ' || b || ' ' || c || ' ' || d || ' ' || e || ' ' || f || ' ' || g || ';' as ddl_expr
+        from b
+    )
+    select 'create or alter user tmp$c6279 ' || ddl_expr from c
+    union all
+    select 'create or alter user tmp$c6279 ' || replace(ddl_expr, ' active', ' inactive') from c;
+
+    select 'rollback;' from rdb$database
+    ;
+
+'''
+
+
+f_generate_sql_with_combos=open( os.path.join(context['temp_directory'],'tmp_c6279_pre.sql'), 'w')
+f_generate_sql_with_combos.write(sql_init)
+flush_and_close( f_generate_sql_with_combos )
+
+f_ddl_combinations_script=open( os.path.join(context['temp_directory'],'tmp_c6279_run.sql'), 'w', buffering = 0)
+f_create_combinations_err=open( os.path.join(context['temp_directory'],'tmp_c6279_pre.err'), 'w', buffering = 0)
+
+# PREPARING. GENERATE .SQL STATEMENTS WITH ALL POSSIBLE COMBINATIONS OF OPTIONS:
+############
+subprocess.call( [context['isql_path'], dsn, '-q', '-i', f_generate_sql_with_combos.name], stdout=f_ddl_combinations_script, stderr=f_create_combinations_err )
+flush_and_close( f_ddl_combinations_script )
+flush_and_close( f_create_combinations_err )
+
+#------------------------------------------------------------------------------------------------
+
+f_run_ddl_combinations_log=open( os.path.join(context['temp_directory'],'tmp_c6279_run.log'), 'w', buffering = 0)
+f_run_ddl_combinations_err=open( os.path.join(context['temp_directory'],'tmp_c6279_run.err'), 'w', buffering = 0)
+
+# MAIN QUERY. CHECK ALL POSSIBLE COMBINATIONS OF OPTIONS:
+#############
+subprocess.call( [context['isql_path'], dsn, '-q', '-i', f_ddl_combinations_script.name], stdout=f_run_ddl_combinations_log, stderr=f_run_ddl_combinations_err )
+flush_and_close( f_run_ddl_combinations_log )
+flush_and_close( f_run_ddl_combinations_err )
+
+# Checks:
+#########
+# Both for prepare (creating main .sql) and for main sql script STDOUT and STDERR must be empty:
+for r in (f_run_ddl_combinations_log, f_create_combinations_err, f_run_ddl_combinations_err):
+    with open(r.name, 'r') as f:
+        for line in f:
+            if line.split():
+                print('UNEXPECTED OUTPUT IN ISQL RESULT: ' + line.strip() +'; file: ' +  r.name )
+
+# Cleanup:
+##########
+time.sleep(1)
+
+cleanup( ( f_generate_sql_with_combos,f_ddl_combinations_script,f_create_combinations_err,f_run_ddl_combinations_log,f_run_ddl_combinations_err ) )
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

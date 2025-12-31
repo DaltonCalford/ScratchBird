@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_6314',
+'qmid': None,
+'tracker_id': 'CORE-6314',
+'title': 'Assigning RDB$DB_KEY to MBCS CHAR/VARCHAR does not enforce the target limit',
+'description':
+ """
+   In order to prevent receiving non-ascii characters in output we try to get only octet_length of this.
+   Confirmed bug on 3.0.6.33289, 4.0.0.1954 (get result = 2 instead of raising error).
+   Checked on 3.0.6.33294, 4.0.0.2000 - works fine.
+ """,
+'min_versions': '3.0.6',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    select octet_length(x) as cast_dbkey_to_char2_length from (select cast(rdb$db_key as char(2) character set utf8) x from rdb$database);
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 22001
+    arithmetic exception, numeric overflow, or string truncation
+    -string right truncation
+    -expected length 2, actual 8
+  """
+}
+]
+}

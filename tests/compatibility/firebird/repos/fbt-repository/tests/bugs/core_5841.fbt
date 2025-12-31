@@ -1,0 +1,92 @@
+{
+'id': 'bugs.core_5841',
+'qmid': None,
+'tracker_id': 'CORE-5841',
+'title': "No permission for SELECT access to BLOB field if a TABLE is accessed using VIEW",
+'description':
+ """
+    Confirmed bug on 3.0.4.32985
+    Checked on both Srp and Legacy_Auth, builds:
+        3.0.4.33053: OK, 4.125s.
+        4.0.0.1224: OK, 4.203s.
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0.4',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set bail on;
+    set list on;
+    set blob all;
+
+    create or alter user tmp$c5841 password '123';
+    commit;
+
+    create table test (
+            name_fld varchar(64),
+            blob_fld blob,
+            bool_fld boolean,
+            primary key (name_fld)
+           );
+
+    create view v_test as
+    select 
+        name_fld, 
+        blob_fld,
+        bool_fld 
+        from test 
+    ;
+
+    grant select on test to view v_test;
+    grant select on v_test to public;
+    commit;
+
+    insert into test (
+        name_fld, 
+        blob_fld, 
+        bool_fld)
+    values (
+        upper('tmp$c5841'),
+        lpad('', 70, 'qwerty'), 
+        true
+    );
+
+    commit;
+
+    connect '$(DSN)' user tmp$c5841 password '123';
+
+    set bail off;
+    set count on;
+    select
+         name_fld
+         ,blob_fld -- content of this blob field was inaccessible before bug fix
+         ,bool_fld
+    from v_test
+    ;
+    rollback;
+
+    connect '$(DSN)' user sysdba password 'masterkey';
+    drop user tmp$c5841 ;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+    NAME_FLD                        TMP$C5841
+    BLOB_FLD                        80:0
+    qwertyqwertyqwertyqwertyqwertyqwertyqwertyqwertyqwertyqwertyqwertyqwer
+    BOOL_FLD                        <true>
+    Records affected: 1
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions':[('BLOB_FLD.*', 'BLOB_FLD')]
+}
+]
+}

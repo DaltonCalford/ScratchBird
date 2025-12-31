@@ -1,0 +1,52 @@
+{
+'id': 'bugs.core_4366',
+'qmid': None,
+'tracker_id': 'CORE-4366',
+'title': 'Wrong result of WHERE predicate when it contains NULL IS NOT DISTINCT FROM (select min(NULL) from ...)',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'NONE',
+ 'connection_character_set': 'NONE',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+recreate table tf(id int primary key, nm varchar(3)); commit;
+insert into tf values(5, 'qwe');
+insert into tf values(1, 'rty');
+insert into tf values(2, 'asd');
+insert into tf values(4, 'fgh');
+insert into tf values(3, 'mnb');
+insert into tf values(7, 'bvc');
+insert into tf values(9, 'zxc');
+insert into tf values(0, 'lkj');
+insert into tf values(6, 'oiu');
+insert into tf values(8, 'fgh');
+commit;
+  """,
+ 'test_script':
+  """
+select nm from tf where null is not distinct from (select min(null) from tf) order by id rows 10;
+  """,
+ 'expected_stdout':
+  """
+NM
+======
+lkj
+rty
+asd
+mnb
+fgh
+qwe
+oiu
+bvc
+fgh
+zxc
+  """
+}
+]
+}

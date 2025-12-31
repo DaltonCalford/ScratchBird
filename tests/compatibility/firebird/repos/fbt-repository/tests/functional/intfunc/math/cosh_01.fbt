@@ -1,0 +1,32 @@
+{
+'id': 'functional.intfunc.math.cosh_01',
+'qmid': 'functional.intfunc.math.cosh_01',
+'tracker_id': '',
+'title': 'New Built-in Functions, Firebird 2.1 : COSH( <number>)',
+'description': """test of COSH
+Returns the hyperbolic cosine of a number.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select COSH( 1) from rdb$database;
+select COSH( 0) from rdb$database;
+
+""",
+ 'expected_stdout': """                         COSH
+      =======================
+            1.543080634815244
+
+
+                         COSH
+      =======================
+            1.000000000000000
+
+
+
+
+"""
+}
+]
+}

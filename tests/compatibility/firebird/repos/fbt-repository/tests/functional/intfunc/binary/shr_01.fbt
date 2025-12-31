@@ -1,0 +1,26 @@
+{
+'id': 'functional.intfunc.binary.shr_01',
+'qmid': 'functional.intfunc.binary.bin_shr_01',
+'tracker_id': '',
+'title': 'New Built-in Functions, Firebird 2.1 : BIN_SHR( <number>, <number> )',
+'description': """test of BIN_SHR
+
+Returns the result of a binary shift left operation performed on the arguments (first << second).""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select BIN_SHR( 8,1) from rdb$database;
+""",
+ 'expected_stdout': """              BIN_SHR
+=====================
+                    4
+
+
+
+
+"""
+}
+]
+}

@@ -1,0 +1,61 @@
+{
+'id': 'bugs.core_2258',
+'qmid': None,
+'tracker_id': 'CORE-2258',
+'title': 'internal error when select upper(<blob>) from union',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT * FROM
+  (
+   SELECT CAST('123' AS BLOB SUB_TYPE TEXT) FROM RDB$DATABASE
+   UNION ALL
+   SELECT CAST('123' AS BLOB SUB_TYPE TEXT) FROM RDB$DATABASE
+   ) AS R (BLOB_FIELD)
+;
+
+SELECT UPPER(BLOB_FIELD) FROM
+  (
+   SELECT CAST('123' AS BLOB SUB_TYPE TEXT) FROM RDB$DATABASE
+   UNION ALL
+   SELECT CAST('123' AS BLOB SUB_TYPE TEXT) FROM RDB$DATABASE
+   ) AS R (BLOB_FIELD)
+;
+""",
+ 'expected_stdout': """
+       BLOB_FIELD
+=================
+              0:1
+==============================================================================
+BLOB_FIELD:
+123
+==============================================================================
+              0:2
+==============================================================================
+BLOB_FIELD:
+123
+==============================================================================
+
+
+            UPPER
+=================
+              0:7
+==============================================================================
+UPPER:
+123
+==============================================================================
+              0:a
+==============================================================================
+UPPER:
+123
+==============================================================================
+
+"""
+}
+]
+}

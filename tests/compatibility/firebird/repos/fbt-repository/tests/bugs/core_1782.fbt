@@ -1,0 +1,82 @@
+{
+'id': 'bugs.core_1782',
+'qmid': None,
+'tracker_id': 'CORE-1782',
+'title': 'ISQL crashes when fetching data for a column having alias longer than 30 characters',
+'description': '',
+'min_versions': '2.1.7',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select 1 as test567890test567890test567890test567890 from rdb$database; 
+  """,
+ 'expected_stdout': 
+  """
+    TEST567890TEST567890TEST567890T 1
+  """,
+ 'expected_stderr': 
+  """
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select 1 as test567890test567890test567890test567890 from rdb$database; 
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    Dynamic SQL Error
+    -SQL error code = -104
+    -Name longer than database column size
+  """
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- NB: 4.0 has limit on length of column size = 255 _bytes_ (not characters).
+    -- More complex test see in core_2350.fbt
+    set list on;
+select 'Check column title, ASCII, width = 256' as 
+i2345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890i2345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890i23456789012345678901234567890123456
+from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    Dynamic SQL Error
+    -SQL error code = -104
+    -token size exceeds limit
+  """,
+  'substitutions':[('-At line[:]{0,1}[\s]+[\d]+,[\s]+column[:]{0,1}[\s]+[\d]+', '')]
+}
+]
+}

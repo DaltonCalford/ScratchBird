@@ -1,0 +1,26 @@
+{
+'id': 'bugs.core_1690',
+'qmid': None,
+'tracker_id': 'CORE-1690',
+'title': 'arithmetic exception, numeric overflow, or string truncation in utf8 tables',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.1.3',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """create table A (C1 INTEGER PRIMARY KEY);
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """show table A;
+""",
+ 'expected_stdout': """C1                              INTEGER Not Null
+CONSTRAINT INTEG_2:
+  Primary key (C1)
+"""
+}
+]
+}

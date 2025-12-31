@@ -1,0 +1,266 @@
+{
+'id': 'bugs.gh_6220',
+'qmid': None,
+'tracker_id': '',
+'title': "Slow performance when executing SQL scripts as non-SYSDBA user [CORE5966]",
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/6220
+
+    Confirmed poor ratio between sysdba/non_dba time on 3.0.4.33054 (03-oct-2018): ratio was about 3.5 ... 4.0.
+    Bug was fixed in 3.0.5, 11-nov-2018, build #33081 ( https://www.sql.ru/forum/actualutils.aspx?action=gotomsg&tid=1295388&msg=21800371 ).
+
+    Recent FB versions have no problem, ratio is about 1.05 ... 1.15.
+
+    Problem can be preproduced if each DML prepare will require lot of work, for example - check access rights for many nested views before
+    update underlying table.
+
+    30.11.2021. Completely reworked: use psutil package in order to take in account CPU User Time instead of evaluating datediff.
+    Difference between CPU User Time values which are received before and after each call of stored procedure can be considered as much more
+    accurate way to evaluate time that was spent for job.
+
+    Test creates table and lot of nested views based on this table and (furter) on each other.
+    Then stored procedure is created with DYNAMIC SQL, and we intentionally do NOT use parameters in it (because we want engine to compile
+    statement on each iteration).
+    Procedure performs loop for <N_COUNT_PER_MEASURE> times with executing statement like 'UPDATE <top_level_view> SET <new values here on each iteration>'.
+    Engine needs to determine access rights not only for <top_level_view> but also for all NESTED views and, eventually, for underlying table which must be
+    updated.
+    We call this procedure N_MEASURES times for SYSDBA and the same (N_MEASURES times) for NON_DBA user, and store difference values between CPU User Time
+    counters for each call. These differences then are divided (value that was received for NON_DBA is divided for apropriate value of SYSDBA).
+    MEDIAN of these ratios must be LESS than threshold MAX_TIME_RATIO.
+
+    Checked on:
+        5.0.0.321 : 18.426s.
+        4.0.1.2672 : 18.469s.
+        3.0.8.33540 : 18.220s.
+ """,
+'min_versions': '3.0.4',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+    set bail on;
+    create or alter user tmp$gh_6220 password '123' using plugin Srp;
+    recreate sequence g;
+    create table test(id int primary key, measure int, iter_no int);
+
+    create view v_test01 as select * from test;
+    create view v_test02 as select * from v_test01;
+    create view v_test03 as select * from v_test02;
+    create view v_test04 as select * from v_test03;
+    create view v_test05 as select * from v_test04;
+    create view v_test06 as select * from v_test05;
+    create view v_test07 as select * from v_test06;
+    create view v_test08 as select * from v_test07;
+    create view v_test09 as select * from v_test08;
+    create view v_test10 as select * from v_test09;
+    create view v_test11 as select * from v_test10;
+    create view v_test12 as select * from v_test11;
+    create view v_test13 as select * from v_test12;
+    create view v_test14 as select * from v_test13;
+    create view v_test15 as select * from v_test14;
+    create view v_test16 as select * from v_test15;
+    create view v_test17 as select * from v_test16;
+    create view v_test18 as select * from v_test17;
+    create view v_test19 as select * from v_test18;
+    create view v_test20 as select * from v_test19;
+    create view v_test21 as select * from v_test20;
+    create view v_test22 as select * from v_test21;
+    create view v_test23 as select * from v_test22;
+    create view v_test24 as select * from v_test23;
+    create view v_test25 as select * from v_test24;
+    create view v_test26 as select * from v_test25;
+    create view v_test27 as select * from v_test26;
+    create view v_test28 as select * from v_test27;
+    create view v_test29 as select * from v_test28;
+    create view v_test30 as select * from v_test29;
+    create view v_test31 as select * from v_test30;
+    create view v_test32 as select * from v_test31;
+    create view v_test33 as select * from v_test32;
+    create view v_test34 as select * from v_test33;
+    create view v_test35 as select * from v_test34;
+    create view v_test36 as select * from v_test35;
+    create view v_test37 as select * from v_test36;
+    create view v_test38 as select * from v_test37;
+    create view v_test39 as select * from v_test38;
+    create view v_test40 as select * from v_test39;
+    create view v_test41 as select * from v_test40;
+    create view v_test42 as select * from v_test41;
+    create view v_test43 as select * from v_test42;
+    create view v_test44 as select * from v_test43;
+    create view v_test45 as select * from v_test44;
+    create view v_test46 as select * from v_test45;
+    create view v_test47 as select * from v_test46;
+    create view v_test48 as select * from v_test47;
+    create view v_test49 as select * from v_test48;
+    create view v_test50 as select * from v_test49;
+
+    create view v_test51 as select * from v_test50;
+    create view v_test52 as select * from v_test51;
+    create view v_test53 as select * from v_test52;
+    create view v_test54 as select * from v_test53;
+    create view v_test55 as select * from v_test54;
+    create view v_test56 as select * from v_test55;
+    create view v_test57 as select * from v_test56;
+    create view v_test58 as select * from v_test57;
+    create view v_test59 as select * from v_test58;
+    create view v_test60 as select * from v_test59;
+    create view v_test61 as select * from v_test60;
+    create view v_test62 as select * from v_test61;
+    create view v_test63 as select * from v_test62;
+    create view v_test64 as select * from v_test63;
+    create view v_test65 as select * from v_test64;
+    create view v_test66 as select * from v_test65;
+    create view v_test67 as select * from v_test66;
+    create view v_test68 as select * from v_test67;
+    create view v_test69 as select * from v_test68;
+    create view v_test70 as select * from v_test69;
+    create view v_test71 as select * from v_test70;
+    create view v_test72 as select * from v_test71;
+    create view v_test73 as select * from v_test72;
+    create view v_test74 as select * from v_test73;
+    create view v_test75 as select * from v_test74;
+    create view v_test76 as select * from v_test75;
+    create view v_test77 as select * from v_test76;
+    create view v_test78 as select * from v_test77;
+    create view v_test79 as select * from v_test78;
+    create view v_test80 as select * from v_test79;
+    create view v_test81 as select * from v_test80;
+    create view v_test82 as select * from v_test81;
+    create view v_test83 as select * from v_test82;
+    create view v_test84 as select * from v_test83;
+    create view v_test85 as select * from v_test84;
+    create view v_test86 as select * from v_test85;
+    create view v_test87 as select * from v_test86;
+    create view v_test88 as select * from v_test87;
+    create view v_test89 as select * from v_test88;
+    create view v_test90 as select * from v_test89;
+    create view v_test91 as select * from v_test90;
+    create view v_test92 as select * from v_test91;
+    create view v_test93 as select * from v_test92;
+    create view v_test94 as select * from v_test93;
+    create view v_test95 as select * from v_test94;
+    create view v_test96 as select * from v_test95;
+    create view v_test97 as select * from v_test96;
+    create view v_test98 as select * from v_test97;
+    create view v_test99 as select * from v_test98;
+    commit;
+
+    set term ^;
+    create procedure sp_run(a_measure smallint, n_iterations int) as
+    begin
+        while ( n_iterations > 0 ) do
+        begin
+            execute statement 'update v_test99 set measure = ' || a_measure || ', iter_no = ' || n_iterations;
+            n_iterations = n_iterations - 1;
+        end
+        
+    end
+    ^
+    set term ;^
+    commit;
+
+    grant execute on procedure sp_run to tmp$gh_6220;
+    grant select, update on v_test99 to tmp$gh_6220;
+    grant usage on sequence g to tmp$gh_6220;
+    commit;
+
+    insert into v_test99(id, measure, iter_no) values(0,-1,-1);
+    commit;
+
+  """,
+ 'test_type': 'Python',
+ 'test_script':
+  """
+
+import os
+import psutil
+from fdb import services
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+db_conn.close()
+
+#------------------
+def median(lst):
+    n = len(lst)
+    s = sorted(lst)
+    return (sum(s[n//2-1:n//2+1])/2.0, s[n//2])[n % 2] if n else None
+#------------------
+
+###########################
+###   S E T T I N G S   ###
+###########################
+# How many times we call stored procedure 'sp_run':
+#
+N_MEASURES = 30
+
+# How many iterations (EXECUTE STATEMENT invocations) must be done in SP
+#
+N_COUNT_PER_MEASURE = 100
+
+# Maximal allowable threshold for MEDIAN of ratios:
+#
+MAX_TIME_RATIO = 1.3
+
+con_map = {}
+for who in (user_name, 'TMP$GH_6220'):
+        psw = user_password if who == user_name else '123'
+        con = fdb.connect( dsn = dsn, user = who, password = psw)
+        cur = con.cursor()
+        cur.execute('select mon$server_pid as p from mon$attachments where mon$attachment_id = current_connection')
+        fb_pid = int(cur.fetchone()[0])
+        con_map [ who ] = (con, cur, fb_pid)
+
+sp_time = {}
+for who in (user_name, 'TMP$GH_6220'):
+    (con, cur, fb_pid) = con_map [ who ]
+
+    for iter_no in range(0, N_MEASURES):
+        fb_info_init = psutil.Process(fb_pid).cpu_times()
+        cur.callproc( 'sp_run', (iter_no, N_COUNT_PER_MEASURE,) )
+        fb_info_curr = psutil.Process(fb_pid).cpu_times()
+        sp_time[ who, iter_no ]  = max(fb_info_curr.user - fb_info_init.user, 0.000001)
+        
+    cur.close()
+    con.close()
+
+
+con = fdb.connect( dsn = dsn )
+con.execute_immediate('drop user tmp$gh_6220 using plugin Srp');
+con.close()
+
+ratio_lst = []
+for iter_no in range(0, N_MEASURES):
+    ratio_lst.append( sp_time['TMP$GH_6220',iter_no]  / sp_time[user_name,iter_no]  )
+
+median_ratio = median(ratio_lst)
+
+msg = 'Durations ratio for execution by NON-DBA vs SYSDBA: '
+if median_ratio < MAX_TIME_RATIO:
+    print(msg + 'acceptable.')
+else:
+    print( msg + 'UNACCEPTABLE: greater than threshold = ', MAX_TIME_RATIO)
+
+    print( 'Check result of %d measures:' % N_MEASURES )
+    for k,v in sorted(sp_time.items()):
+        print(k,':',v)
+
+    print('Ratio values:')
+    for i,p in enumerate(ratio_lst):
+        print('%3d' %i, ':', '%12.2f' % p)
+
+
+  """,                                                      
+ 'expected_stdout': 
+  """
+    Durations ratio for execution by NON-DBA vs SYSDBA: acceptable.
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

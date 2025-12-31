@@ -1,0 +1,36 @@
+{
+'id': 'bugs.core_3244',
+'qmid': None,
+'tracker_id': 'CORE-3244',
+'title': "POSITION: Wrong result with '' if third argument present",
+'description': '',
+'min_versions': '2.1.4',
+'versions': [
+{
+ 'firebird_version': '2.1.4',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select position ('', 'Broehaha') from rdb$database;
+select position ('', 'Broehaha', 4) from rdb$database;
+select position ('', 'Broehaha', 20) from rdb$database;""",
+ 'expected_stdout': """Database:  localhost:C:\fbtest2\tmp\bugs.core_3244.fdb, User: SYSDBA
+SQL>
+    POSITION
+============
+           1
+
+SQL>
+    POSITION
+============
+           4
+
+SQL>
+    POSITION
+============
+           0
+
+SQL>"""
+}
+]
+}

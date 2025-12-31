@@ -1,0 +1,39 @@
+{
+'id': 'bugs.core_5742',
+'qmid': None,
+'tracker_id': 'CORE-5742',
+'title': 'Incorrect error message in iSQL when trying to create database with wrong password',
+'description':
+ """
+     We can just attempt to create current test database with wrong password.
+     Result should contain text "SQLSTATE=28000"
+     ("Your user name and password are not defined" or "install incomplete..." - no matter).
+
+     Confirmed bug on 3.0.4.32917; 4.0.0.907
+     Works fine on 3.0.4.32919.
+ """,
+'min_versions': '3.0.4',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    commit;
+    create database '$(DSN)' user sysdba password 'T0tAlly$Wr0ng';
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 28000
+  """,
+  'substitutions': [('^((?!SQLSTATE).)*$','')]
+}
+]
+}

@@ -1,0 +1,27 @@
+{
+'id': 'functional.view.create.10',
+'qmid': 'functional.view.create.create_view_10',
+'tracker_id': 'CORE-831',
+'title': 'CREATE VIEW as SELECT ....',
+'description': 'Create view without field list',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE T1 (ID INTEGER, NAME VARCHAR(10));
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE VIEW V1 AS SELECT ID AS VID, NAME FROM T1;
+COMMIT;
+SHOW VIEW V1;
+""",
+ 'expected_stdout': """VID                             INTEGER Nullable
+NAME                            VARCHAR(10) Nullable
+View Source:
+==== ======
+ SELECT ID AS VID, NAME FROM T1
+"""
+}
+]
+}

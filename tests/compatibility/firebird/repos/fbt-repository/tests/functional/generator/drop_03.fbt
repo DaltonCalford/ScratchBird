@@ -1,0 +1,59 @@
+{
+'id': 'functional.generator.drop.03',
+'qmid': 'functional.generator.drop.drop_generator_03',
+'tracker_id': '',
+'title': 'DROP GENERATOR - generator does not exists',
+'description': """DROP GENERATOR - generator does not exists
+
+Dependencies:
+CREATE DATABASE
+""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'DROP GENERATOR test;',
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+
+unsuccessful metadata update
+-Generator not found
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'DROP GENERATOR test;',
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+
+unsuccessful metadata update
+-Generator TEST not found
+"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'DROP GENERATOR test;',
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+
+unsuccessful metadata update
+-Generator TEST not found
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'DROP GENERATOR test;',
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-DROP SEQUENCE TEST failed
+-generator TEST is not defined
+
+"""
+}
+]
+}

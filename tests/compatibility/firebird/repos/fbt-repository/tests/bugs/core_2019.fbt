@@ -1,0 +1,54 @@
+{
+'id': 'bugs.core_2019',
+'qmid': None,
+'tracker_id': 'CORE-2019',
+'title': 'UTF-8 conversion error (string truncation)',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """recreate table test (
+ column1 varchar(10) character set none collate none );
+
+insert into test values ('1234567890');
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select coalesce(column1, '') from test;
+""",
+ 'expected_stdout': """
+COALESCE
+========================================
+1234567890
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """recreate table test (
+ column1 varchar(10) character set none collate none );
+
+insert into test values ('1234567890');
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select coalesce(column1, '') from test;
+""",
+ 'expected_stdout': """
+COALESCE
+==========
+1234567890
+
+"""
+}
+]
+}

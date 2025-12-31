@@ -1,0 +1,498 @@
+{
+'id': 'tests.functional.replication.shutdown-during-applying-segments-leads-to-crash',
+'qmid': None,
+'tracker_id': '',
+'title': "Crash or hang while shutting down the replica database if segments are being applied",
+'description':
+ """
+    See: https://github.com/FirebirdSQL/firebird/issues/6975
+
+    Bug initially was found during heavy test of replication performed by OLTP-EMUL, for FB 4.x
+    (see letters to dimitr 13.09.2021; reply from dimitr, 18.09.2021 08:42 - all in mailbox: pz at ibase.ru).
+
+    It *can* be reproduced without heavy/concurrent workload, but we have to operate with data that are written
+    into database 'slowly'. Such data can be wide INDEXED column which has GUID-based values.
+
+    Test creates a table with 'wide' indexed field and adds data to it.
+    Then we save current timestamp (with accuracy up to SECONDS, i.e. cut off milli- or microseconds) to variable.
+    After this we start check replicationb.log for appearance of phrase 'Added <N> segment(s) to the processing queue'.
+    After founding each such phrase we skip two lines above and parse timestamp when this occurred.
+    If timestamp in log less than saved timestamp of our DML action then we go on to the next such phrase.
+    Otherwise we can assume that replication BEGINS to apply just generated segment.
+    See function wait_for_add_queue_in_replica() which does this parsing of replication.log.
+
+    Because we operate with table which have very 'wide' index and, moreover, data in this index are GUID-generated
+    text strings, we can safely assume that applying of segment will take at least 5...10 seconds (actually this 
+    can take done for 30...35 seconds).
+
+    During this time we change replica mode to full shutdown and (immediately after that) return to online.
+    NO message like 'error reading / writing from/to connection' must appear at this step.
+
+    After this, we have to wait for replica finish applying segment and when this occur we drop the table.
+
+    Finally, we extract metadata for master and replica and compare them (see 'f_meta_diff').
+    The only difference in metadata must be 'CREATE DATABASE' statement with different DB names - we suppress it,
+    thus metadata difference must not be issued.
+
+    ################
+    ### N O T E  ###
+    ################
+    Test assumes that master and replica DB have been created beforehand.
+    Also, it assumes that %FB_HOME%\replication.conf has been prepared with apropriate parameters for replication.
+    Particularly, name of directories and databases must have info about checked FB major version and ServerMode.
+        * verbose = true // in order to find out line with message that required segment was replicated
+        * section for master database with specified parameters:
+            journal_directory = "!fbt_repo!\tmp\fb-replication.!fb_major!.!server_mode!.journal"
+            journal_archive_directory = "!fbt_repo!\tmp\fb-replication.!fb_major!.!server_mode!.archive"
+            journal_archive_command = "copy $(pathname) $(archivepathname)"
+            journal_archive_timeout = 10
+        * section for replica database with specified parameter:
+             journal_source_directory =  "!fbt_repo!\tmp\fb-replication.!fb_major!.!server_mode!.archive"
+
+    Master and replica databases must be created in "!fbt_repo!\tmp\" directory and have names like these:
+        'fbt-main.fb40.SS.fdb'; 'fbt-repl.fb40.SS.fdb'; - for FB 4.x ('SS' = Super; 'CS' = Classic)
+        'fbt-main.fb50.SS.fdb'; 'fbt-repl.fb50.SS.fdb'; - for FB 5.x ('SS' = Super; 'CS' = Classic)
+        NB: fixed numeric value ('40' or '50') must be used for any minor FB version (4.0; 4.0.1; 4.1; 5.0; 5.1 etc)
+
+    These two databases must NOT be dropped in any of tests related to replication!
+    They are created and dropped in the batch scenario which prepares FB instance to be checked for each ServerMode
+    and make cleanup after it, i.e. when all tests will be completed.
+
+    NB. Currently this task was implemented only in Windows batch, thus test has attribute platform = 'Windows'.
+
+    Temporary comment. For debug purpoces:
+        1) find out SUFFIX of the name of FB service which is to be tested (e.g. 'DefaultInstance', '40SS' etc);
+        2) copy file %fbt-repo%\tests\functional\tabloid\batches\setup-fb-for-replication.bat.txt
+           to some place and rename it "*.bat";
+        3) open this .bat in editor and asjust value of 'fbt_repo' variable;
+        4) run: setup-fb-for-replication.bat [SUFFIX_OF_FB_SERVICE]
+           where SUFFIX_OF_FB_SERVICE is ending part of FB service which you want to check:
+           DefaultInstance ; 40ss ; 40cs ; 50ss ; 50cs etc
+        5) batch 'setup-fb-for-replication.bat' will:
+           * stop selected FB instance
+           * create test databases (in !fbt_repo!\tmp\);
+           * prepare journal/archive sub-folders for replication (also in !fbt_repo!\tmp\);
+           * replace %fb_home%\replication.conf with apropriate
+           * start selected FB instance
+        6) run this test (FB instance will be already launched by setup-fb-for-replication.bat):
+            %fpt_repo%\fbt-run2.bat dblevel-triggers-must-not-fire-on-replica.fbt 50ss, etc
+
+	Confirmed bug on 5.0.0.215: server crashed when segment was applied to replica and at the same time we issued
+	'gfix -shut full -force 0 ...'. Regardless of that command, replica DB remained in NORMAL mode, not in shutdown.
+	If this command was issued after this again - FB process hanged (gfix could not return control to OS).
+	This is the same bug as described in the ticked (discussed with dimitr, letters 22.09.2021).
+    
+    Checked on: 4.0.1.2613 (SS/CS); 5.0.0.219 (SS/CS)
+ """,
+'min_versions': '4.0.1',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'Windows',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import subprocess
+import re
+import difflib
+import shutil
+import time
+from datetime import datetime
+from datetime import timedelta
+
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+# NB: with default values of 'apply_idle_timeout' and 'apply_error_timeout' (10 and 60 s)
+# total time of this test is about 130...132s.
+#####################################
+MAX_TIME_FOR_WAIT_SEGMENT_IN_LOG = 135
+MAX_TIME_FOR_WAIT_ADDED_TO_QUEUE = 135
+#####################################
+
+svc = fdb.services.connect(host='localhost', user=user_name, password=user_password)
+FB_HOME = svc.get_home_directory()
+svc.close()
+
+engine = db_conn.engine_version         # 4.0; 4.1; 5.0 etc -- type float
+fb_major = 'fb' + str(engine)[:1] + '0' # 'fb40'; 'fb50'
+
+cur = db_conn.cursor()
+cur.execute("select rdb$config_value from rdb$config where upper(rdb$config_name) = upper('ServerMode')")
+server_mode = 'XX'
+for r in cur:
+    if r[0] == 'Super':
+        server_mode = 'SS'
+    elif r[0] == 'SuperClassic':
+        server_mode = 'SC'
+    elif r[0] == 'Classic':
+        server_mode = 'CS'
+cur.close()
+
+# 'fbt-main.fb50.ss.fdb' etc:
+db_main = os.path.join( context['temp_directory'], 'fbt-main.' + fb_major + '.' + server_mode + '.fdb' )
+db_repl = db_main.replace( 'fbt-main.', 'fbt-repl.')
+
+# Folders for journalling and archieving segments.
+repl_journal_dir = os.path.join( context['temp_directory'], 'fb-replication.' + fb_major + '.' + server_mode + '.journal' )
+repl_archive_dir = os.path.join( context['temp_directory'], 'fb-replication.' + fb_major + '.' + server_mode +  '.archive' )
+
+runProgram('gfix', ['-w', 'async', 'localhost:' + db_main])
+
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f,
+    # first do f.flush(), and
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+def wait_for_data_in_replica( fb_home, max_allowed_time_for_wait, db_main, prefix_msg = '' ):
+    global re
+    global difflib
+    global time
+
+    # -:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-
+    def check_pattern_in_log( log_lines, pattern, prefix_msg = '' ):
+        found_required_message = False
+        for d in log_lines:
+            if pattern.search(d):
+                print( (prefix_msg + ' ' if prefix_msg else '') + 'FOUND message about replicated segment.' )
+                found_required_message = True
+                break
+        return found_required_message
+    # -:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-
+
+    replold_lines = []
+    with open( os.path.join(fb_home,'replication.log'), 'r') as f:
+        replold_lines = f.readlines()
+
+    con = fdb.connect( dsn = 'localhost:' + db_main, no_db_triggers = 1)
+    cur = con.cursor()
+    cur.execute("select rdb$get_context('SYSTEM','REPLICATION_SEQUENCE') from rdb$database")
+    for r in cur:
+        last_generated_repl_segment = r[0]
+    cur.close()
+    con.close()
+
+    # VERBOSE: Segment 1 (2582 bytes) is replicated in 1 second(s), deleting the file
+    segment_replicated_pattern=re.compile( 'verbose:\s+segment\s+%(last_generated_repl_segment)s\s+\(\d+\s+bytes\)\s+is\s+replicated.*deleting' % locals(), re.IGNORECASE)
+
+    # 08.09.2021: replication content can remain unchanged if there was no user-defined object in DB that must be dropped!
+    # Because of this, it is crucial to check OLD content of replication log before loop.
+    # Also, segment_replicated_pattern must NOT start from '\+' because it can occur only for diff_data (within loop):
+    #
+    found_required_message = check_pattern_in_log( replold_lines, segment_replicated_pattern, prefix_msg )
+
+    if not found_required_message:
+
+        for i in range(0,max_allowed_time_for_wait):
+            time.sleep(1)
+         
+            # Get content of fb_home replication.log _after_ isql finish:
+            f_repllog_new = open( os.path.join(fb_home,'replication.log'), 'r')
+            diff_data = difflib.unified_diff(
+                replold_lines, 
+                f_repllog_new.readlines()
+              )
+            f_repllog_new.close()
+
+            found_required_message = check_pattern_in_log( diff_data, segment_replicated_pattern, prefix_msg )
+            if found_required_message:
+                break
+
+    if not found_required_message:
+        print('UNEXPECTED RESULT: no message about replicated segment No. %d for %d seconds.' % (int(last_generated_repl_segment), max_allowed_time_for_wait) )
+
+
+#--------------------------------------------
+
+def wait_for_add_queue_in_replica( fb_home, max_allowed_time_for_wait, min_timestamp, prefix_msg = '' ):
+
+    global re
+    global difflib
+    global time
+    global datetime
+
+    # <hostname> (replica) Tue Sep 21 20:24:57 2021
+    # Database: ...
+    # Added 3 segment(s) to the processing queue
+
+    # -:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-
+    def check_pattern_in_log( log_lines, pattern, min_timestamp, prefix_msg = '' ):
+        found_required_message = False
+        for i,r in enumerate(log_lines):
+            if pattern.search(r):
+                if i>=2 and log_lines[i-2]:
+                    # a = r.replace('(',' ').split()
+                    a = log_lines[i-2].split()
+                    if len(a)>=4:
+                        # s='replica_host_name (slave) Sun May 30 17:46:43 2021'
+                        # s.split()[-5:] ==> ['Sun', 'May', '30', '17:46:43', '2021']
+                        # ' '.join( ...) ==> 'Sun May 30 17:46:43 2021'
+                        dts = ' '.join( log_lines[i-2].split()[-5:] )
+                        segment_timestamp = datetime.strptime( dts, '%a %b %d %H:%M:%S %Y')
+                        if segment_timestamp >= min_timestamp:
+                            print( (prefix_msg + ' ' if prefix_msg else '') + 'FOUND message about segments added to queue after given timestamp.') #, 'segment_timestamp=%s' % segment_timestamp, '; min_timestamp=%s' % min_timestamp )
+                            found_required_message = True
+                            break
+        return found_required_message
+
+    # -:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-:-
+
+    replold_lines = []
+    with open( os.path.join(fb_home,'replication.log'), 'r') as f:
+        replold_lines = f.readlines()
+
+
+    segments_to_queue_pattern=re.compile( 'verbose:\s+added\s+\d+\s+segment.*to.*queue', re.IGNORECASE)
+
+    # 08.09.2021: replication content can remain unchanged if there was no user-defined object in DB that must be dropped!
+    # Because of this, it is crucial to check OLD content of replication log before loop.
+    # Also, segments_to_queue_pattern must NOT start from '\+' because it can occur only for diff_data (within loop):
+    #
+    found_required_message = check_pattern_in_log( replold_lines, segments_to_queue_pattern, min_timestamp, prefix_msg )
+
+    if not found_required_message:
+
+        for i in range(0,max_allowed_time_for_wait):
+            time.sleep(1)
+         
+            # Get content of fb_home replication.log _after_ isql finish:
+            f_repllog_new = open( os.path.join(fb_home,'replication.log'), 'r')
+            diff_data = difflib.unified_diff(
+                replold_lines, 
+                f_repllog_new.readlines()
+              )
+            f_repllog_new.close()
+
+            found_required_message = check_pattern_in_log( list(diff_data), segments_to_queue_pattern, min_timestamp, prefix_msg )
+            if found_required_message:
+                break
+
+    if not found_required_message:
+        print('UNEXPECTED RESULT: no message about segments added to queue after %s.' % min_timestamp)
+
+#--------------------------------------------
+
+sql_ddl = '''\
+    set bail on;
+    recreate table test(s varchar(700), constraint test_s_unq unique(s));
+    commit;
+
+    set term ^;
+    execute block as
+        declare fld_len int;
+        declare n int;
+    begin
+        select ff.rdb$field_length
+        from rdb$relation_fields rf
+        join rdb$fields ff on rf.rdb$field_source = ff.rdb$field_name
+        where upper(rf.rdb$relation_name) = upper('test') and upper(rf.rdb$field_name) = upper('s')
+        into fld_len;
+
+
+        n = 10000;
+        while (n > 0) do
+        begin
+            insert into test(s) values( lpad('', :fld_len, uuid_to_char(gen_uuid())) );
+            n = n - 1;
+        end
+
+    end
+    ^
+    set term ;^
+    commit;
+''' % locals()
+
+
+f_sql_chk = open( os.path.join(context['temp_directory'],'tmp_gh_6975_init.sql'), 'w')
+f_sql_chk.write(sql_ddl)
+flush_and_close( f_sql_chk )
+
+f_sql_log = open( ''.join( (os.path.splitext(f_sql_chk.name)[0], '.log' ) ), 'w')
+f_sql_err = open( ''.join( (os.path.splitext(f_sql_chk.name)[0], '.err' ) ), 'w')
+subprocess.call( [ context['isql_path'], 'localhost:' + db_main, '-i', f_sql_chk.name ], stdout = f_sql_log, stderr = f_sql_err)
+flush_and_close( f_sql_log )
+flush_and_close( f_sql_err )
+
+last_generated_repl_segment = 0
+
+with open(f_sql_err.name,'r') as f:
+    for line in f:
+        print('UNEXPECTED STDERR in initial SQL: ' + line)
+        MAX_TIME_FOR_WAIT_SEGMENT_IN_LOG = 0
+
+if MAX_TIME_FOR_WAIT_SEGMENT_IN_LOG: # ==> initial SQL script finished w/o errors
+
+
+    ##################################
+    ###  A.C.H.T.U.N.G             ###
+    ### do NOT use datetime.now()  ###
+    ### because of missed accuracy ###
+    ### of timestamps in repl.log  ###
+    ### (it is HH:MM:SS only)      ###
+    ##################################
+    current_date_with_hhmmss = datetime.today().replace(microsecond=0)
+
+    
+    ##############################################################################
+    ###  W A I T   F O R    S E G M E N T S    A D D E D    T O    Q U E U E   ###
+    ##############################################################################
+    wait_for_add_queue_in_replica( FB_HOME, MAX_TIME_FOR_WAIT_ADDED_TO_QUEUE, current_date_with_hhmmss, 'POINT-A' )
+
+    # This led to crash and appearance of message:
+    # "Fatal lock manager error: invalid lock id (0), errno: 0" in firebird.log:
+    #
+    runProgram('gfix', ['-shut', 'full', '-force', '0', 'localhost:' + db_repl])
+
+    f_repl_hdr_log=open( os.path.join(context['temp_directory'],'db_repl_hdr.log'), 'w')
+    subprocess.call( [context['gstat_path'], db_repl, '-h'], stdout=f_repl_hdr_log, stderr=subprocess.STDOUT )
+    flush_and_close( f_repl_hdr_log )
+
+    with open(f_repl_hdr_log.name,'r') as f:
+        for line in f:
+            if 'Attributes' in line:
+                print('POINT-B ' + line.strip())
+
+
+    # This (issuing 'gfix -shu ...' second time) led FB process to hang!
+    # runProgram('gfix', ['-shut', 'full', '-force', '0', 'localhost:' + db_repl])
+
+    runProgram('gfix', ['-online', 'localhost:' + db_repl])
+
+
+    ##############################################################################
+    ###  W A I T   U N T I L    R E P L I C A    B E C O M E S   A C T U A L   ###
+    ##############################################################################
+    wait_for_data_in_replica( FB_HOME, MAX_TIME_FOR_WAIT_SEGMENT_IN_LOG, db_main, 'POINT-1' )
+
+# return initial state of master DB:
+# remove all DB objects (tables, views, ...):
+# --------------------------------------------
+sql_clean_ddl = os.path.join(context['files_location'],'drop-all-db-objects.sql')
+
+f_clean_log=open( os.path.join(context['temp_directory'],'drop-all-db-objects-gh_6975.log'), 'w')
+f_clean_err=open( ''.join( ( os.path.splitext(f_clean_log.name)[0], '.err') ), 'w')
+subprocess.call( [context['isql_path'], 'localhost:' + db_main, '-q', '-nod', '-i', sql_clean_ddl], stdout=f_clean_log, stderr=f_clean_err )
+flush_and_close(f_clean_log)
+flush_and_close(f_clean_err)
+
+with open(f_clean_err.name,'r') as f:
+    for line in f:
+        print('UNEXPECTED STDERR in cleanup SQL: ' + line)
+        MAX_TIME_FOR_WAIT_SEGMENT_IN_LOG = 0
+
+with open(f_clean_log.name,'r') as f:
+    for line in f:
+        # show number of dropped objects
+        print(line)
+
+if MAX_TIME_FOR_WAIT_SEGMENT_IN_LOG: # ==> previous SQL script finished w/o errors
+
+    ##############################################################################
+    ###  W A I T   U N T I L    R E P L I C A    B E C O M E S   A C T U A L   ###
+    ##############################################################################
+    wait_for_data_in_replica( FB_HOME, MAX_TIME_FOR_WAIT_SEGMENT_IN_LOG, db_main, 'POINT-2' )
+
+    f_main_meta_sql=open( os.path.join(context['temp_directory'],'db_main_meta_gh_6975.sql'), 'w')
+    subprocess.call( [context['isql_path'], 'localhost:' + db_main, '-q', '-nod', '-ch', 'utf8', '-x'], stdout=f_main_meta_sql, stderr=subprocess.STDOUT )
+    flush_and_close( f_main_meta_sql )
+
+    f_repl_meta_sql=open( os.path.join(context['temp_directory'],'db_repl_meta_gh_6975.sql'), 'w')
+    subprocess.call( [context['isql_path'], 'localhost:' + db_repl, '-q', '-nod', '-ch', 'utf8', '-x'], stdout=f_repl_meta_sql, stderr=subprocess.STDOUT )
+    flush_and_close( f_repl_meta_sql )
+
+    db_main_meta=open(f_main_meta_sql.name, 'r')
+    db_repl_meta=open(f_repl_meta_sql.name, 'r')
+
+    diffmeta = ''.join(difflib.unified_diff(
+        db_main_meta.readlines(), 
+        db_repl_meta.readlines()
+      ))
+    db_main_meta.close()
+    db_repl_meta.close()
+
+    f_meta_diff=open( os.path.join(context['temp_directory'],'db_meta_diff_gh_6975.txt'), 'w', buffering = 0)
+    f_meta_diff.write(diffmeta)
+    flush_and_close( f_meta_diff )
+
+    # Following must issue only TWO rows:
+    #     UNEXPECTED METADATA DIFF.: -/* CREATE DATABASE 'localhost:[db_main]' ... */
+    #     UNEXPECTED METADATA DIFF.: -/* CREATE DATABASE 'localhost:[db_repl]' ... */
+    # Only thes lines will be suppressed further (see subst. section):
+    with open(f_meta_diff.name, 'r') as f:
+        for line in f:
+           if line[:1] in ('-', '+') and line[:3] not in ('---','+++'):
+               print('UNEXPECTED METADATA DIFF.: ' + line)
+
+runProgram('gfix', ['-w', 'sync', 'localhost:' + db_main])
+
+######################
+### A C H T U N G  ###
+######################
+# MANDATORY, OTHERWISE REPLICATION GETS STUCK ON SECOND RUN OF THIS TEST
+# WITH 'ERROR: Record format with length 68 is not found for table TEST':
+runProgram('gfix', ['-sweep', 'localhost:' + db_repl])
+runProgram('gfix', ['-sweep', 'localhost:' + db_main])
+#######################
+
+# cleanup:
+##########
+#cleanup( (f_sql_chk, f_sql_log, f_sql_err,f_clean_log,f_clean_err,f_main_meta_sql,f_repl_meta_sql,f_meta_diff) )
+  
+  """,
+ 'expected_stdout':
+  """
+    POINT-A FOUND message about segments added to queue after given timestamp.
+    POINT-B Attributes            force write, full shutdown, read-only replica
+    POINT-1 FOUND message about replicated segment.
+    Start removing objects
+    Finish. Total objects removed
+    POINT-2 FOUND message about replicated segment.
+  """,
+ 'expected_stderr':
+  """
+  """,
+ 'substitutions': [
+     ('Start removing objects in:.*', 'Start removing objects')
+    ,('Finish. Total objects removed:  [1-9]\d*', 'Finish. Total objects removed')
+    ,('.* CREATE DATABASE .*', '')
+    ,('FMT_DESCR .*', 'FMT_DESCR')
+    , ('[ \t]+',' ')
+  ]
+}
+]
+}

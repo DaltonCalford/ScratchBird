@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_2044',
+'qmid': None,
+'tracker_id': 'CORE-2044',
+'title': 'Incorrect result with UPDATE OR INSERT ... RETURNING OLD and non-nullable columns',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table t (
+    n integer primary key,
+    x1 integer not null,
+    x2 integer
+);
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """update or insert into t
+    values (1, 1, 1)
+    returning old.n, old.x1, old.x2, new.n, new.x1, new.x2;
+""",
+ 'expected_stdout': """
+    CONSTANT     CONSTANT     CONSTANT            N           X1           X2
+============ ============ ============ ============ ============ ============
+      <null>       <null>       <null>            1            1            1
+
+"""
+}
+]
+}

@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_5153',
+'qmid': None,
+'tracker_id': 'CORE-5153',
+'title': "Regression: Server crashes when aggregate functions are used together with NOT IN predicate",
+'description':
+ """
+   ::: NB :::
+   Here we only check that server is alive after running query but WITHOUT checking its data
+   (see: "and 1=0" below in HAVING section).
+   We do NOT check correctness of query results - this will be done by another ticket, CORE-5165: 
+   wrong result in 3.0 RC2 and 4.0 comparing 2.5. It's NOT related to this ticket.
+
+   Confirmed success (no crash) on snapshots 3.0 RC2 and 4.0 with timestamp 23-mar-2016.
+   Crash was detected on WI-V3.0.0.32378.
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    select r.rdb$relation_id as id, count(*) as cnt
+    from rdb$database r
+    group by r.rdb$relation_id
+    having count(*) not in (select r2.rdb$relation_id from rdb$database r2)
+    and 1=0
+    ;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

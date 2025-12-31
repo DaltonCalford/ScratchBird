@@ -1,0 +1,65 @@
+{
+'id': 'bugs.core_4156',
+'qmid': None,
+'tracker_id': 'CORE-4156',
+'title': 'RDB$GET_CONTEXT/RDB$SET_CONTEXT parameters incorrectly described as CHAR NOT NULL instead of VARCHAR NULLABLE',
+'description': '',
+'min_versions': '2.1.7',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set planonly;
+    set sqlda_display on;
+    select rdb$set_context( ?, ?, ?) x from rdb$database;
+    -- Result is value of constant from src/dsql/sqlda_pub.h, but bit_0
+    -- is ON if this parameter is Nullable, i.e.:
+    -- #define SQL_VARYING 448 ==> 449 for Nullable
+    -- #define SQL_LONG    496 ==> 497 for Nullable
+  """,
+ 'expected_stdout':
+  """
+    01: sqltype: 449 VARYING   Nullable sqlscale: 0 sqlsubtype: 0 sqllen: 80
+    02: sqltype: 449 VARYING   Nullable sqlscale: 0 sqlsubtype: 0 sqllen: 80
+    03: sqltype: 449 VARYING   Nullable sqlscale: 0 sqlsubtype: 0 sqllen: 255
+    01: sqltype: 497 LONG	  Nullable sqlscale: 0 sqlsubtype: 0 sqllen: 4
+  """,
+  'substitutions':[('^((?!sqltype).)*$','')]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set planonly;
+    set sqlda_display on;
+    select rdb$set_context( ?, ?, ?) x from rdb$database;
+    -- NB: output in 3.0 will contain values of sqltype with ZERO in bit_0,
+    -- so it will be: 448 instead of previous 449, and 496 instead of 497.
+    -- Result is value that equal to constant from src/dsql/sqlda_pub.h, i.e:
+    -- #define SQL_VARYING 448
+    -- #define SQL_LONG    496
+  """,
+ 'expected_stdout':
+  """
+    01: sqltype: 448 VARYING Nullable scale: 0 subtype: 0 len: 80 charset: 0 NONE
+    02: sqltype: 448 VARYING Nullable scale: 0 subtype: 0 len: 80 charset: 0 NONE
+    03: sqltype: 448 VARYING Nullable scale: 0 subtype: 0 len: 255 charset: 0 NONE
+    01: sqltype: 496 LONG scale: 0 subtype: 0 len: 4
+  """,
+  'substitutions':[('^((?!sqltype).)*$',''),('[ ]+',' '),('[\t]*',' ')]
+}
+]
+}

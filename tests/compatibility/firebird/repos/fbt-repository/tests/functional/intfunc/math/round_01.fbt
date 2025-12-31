@@ -1,0 +1,22 @@
+{
+'id': 'functional.intfunc.math.round_01',
+'qmid': 'functional.intfunc.math.round_01',
+'tracker_id': '',
+'title': 'test for ROUND function',
+'description': """
+
+ ROUND( <number>, <number> )
+
+ Returns a number rounded to the specified scale.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': ' select ROUND(5.7778, 3) from rdb$database;',
+ 'expected_stdout': """                      ROUND
+      =====================
+                     5.7780"""
+}
+]
+}

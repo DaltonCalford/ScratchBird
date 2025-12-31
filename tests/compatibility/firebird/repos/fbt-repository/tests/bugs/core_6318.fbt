@@ -1,0 +1,31 @@
+{
+'id': 'bugs.core_6318',
+'qmid': None,
+'tracker_id': 'CORE-6318',
+'title': "CAST('NOW' as TIME) raises exception",
+'description':
+ """
+   Confirmed bug on 4.0.0.1954, 4.0.0.2000
+   Checked on 4.0.0.2004 - works fine.
+ """,
+'min_versions': '4.0.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set heading off;
+    select cast('now' as time) is not null from rdb$database;
+  """,
+ 'expected_stdout':
+  """
+    <true>
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

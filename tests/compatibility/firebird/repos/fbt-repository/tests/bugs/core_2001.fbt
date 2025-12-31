@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_2001',
+'qmid': None,
+'tracker_id': 'CORE-2001',
+'title': 'When trying to show "conversion error", "arithmetic exception/string truncation" may appear instead, misleading the user',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select cast('1995' as date) from rdb$database;
+select cast('1995-12-2444444444444444444444444444444' as date) from rdb$database;
+""",
+ 'expected_stdout': """
+       CAST
+===========
+
+       CAST
+===========""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 22018
+
+conversion error from string "1995"
+
+Statement failed, SQLSTATE = 22018
+
+conversion error from string "1995-12-2444444444444444444444444444444"
+
+"""
+}
+]
+}

@@ -1,0 +1,49 @@
+{
+'id': 'bugs.core_4102',
+'qmid': None,
+'tracker_id': 'CORE-4102',
+'title': 'Bad optimization of OR predicates applied to unions',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5.3',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLANONLY;
+select * from
+(
+  select rdb$relation_id as id
+    from rdb$relations r
+  union all
+  select rdb$relation_id as id
+    from rdb$relations r
+) x
+where x.id = 0 or x.id = 1;
+""",
+ 'expected_stdout': """PLAN (X R INDEX (RDB$INDEX_1, RDB$INDEX_1))
+PLAN (X R INDEX (RDB$INDEX_1, RDB$INDEX_1))
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLANONLY;
+select * from
+(
+  select rdb$relation_id as id
+    from rdb$relations r
+  union all
+  select rdb$relation_id as id
+    from rdb$relations r
+) x
+where x.id = 0 or x.id = 1;
+""",
+ 'expected_stdout': """PLAN (X R INDEX (RDB$INDEX_1, RDB$INDEX_1), X R INDEX (RDB$INDEX_1, RDB$INDEX_1))
+"""
+}
+]
+}

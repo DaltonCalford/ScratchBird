@@ -1,0 +1,37 @@
+{
+'id': 'bugs.core_4585',
+'qmid': None,
+'tracker_id': 'CORE-4585',
+'title': "Can't create column check constraint when the column is domain based",
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create domain x int;
+    create table test(
+        x x constraint test_x_chk check(x>0)
+    );
+    insert into test(x) values(1);
+    insert into test(x) values(0);
+    set list on;
+    select * from test;
+  """,
+ 'expected_stdout': 
+  """
+    X                               1
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 23000
+    Operation violates CHECK constraint TEST_X_CHK on view or table TEST
+    -At trigger 'CHECK_1'
+  """
+}
+]
+}

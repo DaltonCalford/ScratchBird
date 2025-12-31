@@ -1,0 +1,66 @@
+{
+'id': 'bugs.core_3808',
+'qmid': None,
+'tracker_id': 'CORE-3808',
+'title': "Provide ability to return all columns using RETURNING (eg RETURNING *)",
+'description':
+ """
+    Ability to use 'returning *' is verified both in DSL and PSQL.
+    Checked on: 4.0.0.1455: OK, 1.337s.
+
+    30.10.2019. NB: new datatype in FB 4.0 was introduces: numeric(38,0).
+    It can lead to additional ident of values when we show them in form "SET LIST ON",
+    so we have to ignore all internal spaces - see added 'substitution' section below.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    recreate table test(id int default 2, x computed by ( id*2 ), y computed by ( x*x ), z computed by ( y*y ) );
+    commit;
+    
+    insert into test default values returning *;
+
+    update test set id=3 where id=2 returning *;
+    
+    set term ^;
+    execute block returns( deleted_id int, deleted_x bigint, deleted_y bigint, deleted_z bigint ) as
+    begin
+        delete from test where id=3 returning * into deleted_id, deleted_x, deleted_y, deleted_z;
+        suspend;
+    end
+    ^
+    set term ;^
+  """,
+ 'expected_stdout': 
+  """
+    ID                              2
+    X                               4
+    Y                               16
+    Z                               256
+
+    ID                              3
+    X                               6
+    Y                               36
+    Z                               1296
+
+    DELETED_ID                      3
+    DELETED_X                       6
+    DELETED_Y                       36
+    DELETED_Z                       1296
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions':[ ('[ \t]+',' ') ]
+}
+]
+}

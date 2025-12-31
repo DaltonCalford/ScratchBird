@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_0148',
+'qmid': None,
+'tracker_id': 'CORE-0148',
+'title': "SELECT '1' UNION SELECT '12'",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Confirmed: runtime error on WI-V1.5.6.5026:
+    -- -SQL error code = -104
+    -- -Invalid command
+    -- -Data type unknown
+
+    recreate table test_a(x int);
+    recreate table test_b(y int);
+
+    insert into test_a values(9999999);
+    insert into test_b values(888888);
+
+    set list on;
+    select '1' || a.x as result
+    from test_a a
+    union
+    select '12' || b.y
+    from test_b b
+    ;
+  """,
+ 'expected_stdout': 
+  """
+    RESULT                          12888888
+    RESULT                          19999999
+  """
+}
+]
+}

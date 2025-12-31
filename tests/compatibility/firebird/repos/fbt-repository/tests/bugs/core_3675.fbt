@@ -1,0 +1,50 @@
+{
+'id': 'bugs.core_3675',
+'qmid': None,
+'tracker_id': 'CORE-3675',
+'title': 'CREATE INDEX considers NULL and empty string being the same in compound indices',
+'description': '',
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core3675.fbk',
+ 'database_character_set': 'NONE',
+ 'connection_character_set': 'NONE',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    show table t;
+    select * from t;
+  """,
+ 'expected_stdout': 
+  """
+F1                              VARCHAR(1) Nullable
+F2                              VARCHAR(1) Nullable
+F3                              VARCHAR(1) Nullable
+F4                              VARCHAR(1) Nullable
+CONSTRAINT T1_UNQ:
+  Unique key (F1, F2, F3, F4)
+F1     F2     F3     F4
+====== ====== ====== ======
+a      b      c      d
+a      <null> c      d
+a             c      d
+a      b      <null> d
+a      b      <null>
+a      b             <null>
+a      b      <null> <null>
+a      <null> <null> <null>
+<null> <null> <null> <null>
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -1,0 +1,29 @@
+{
+'id': 'bugs.core_4118',
+'qmid': None,
+'tracker_id': 'CORE-4118',
+'title': 'Expression index may be not used for derived fields or view fields',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5.3',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table t (id int, d timestamp);
+create index itd on t computed (cast(d as date));
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+select * from t where cast(d as date) = current_date;
+select * from (select id, cast(d as date) as d from t) where d = current_date;
+""",
+ 'expected_stdout': """SQL>
+PLAN (T INDEX (ITD))
+SQL>
+PLAN (T INDEX (ITD))
+SQL>"""
+}
+]
+}

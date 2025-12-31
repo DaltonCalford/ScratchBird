@@ -1,0 +1,72 @@
+{
+'id': 'bugs.core_1274',
+'qmid': None,
+'tracker_id': 'CORE-1274',
+'title': 'Wrong results when PLAN MERGE is chosen and datatypes of the equality predicate arguments are different',
+'description': '',
+'min_versions': '2.1.4',
+'versions': [
+{
+ 'firebird_version': '2.1.4',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """create table t1 (col1 int);
+create table t2 (col2 varchar(10));
+commit;
+
+insert into t1 values (100);
+insert into t1 values (20);
+insert into t1 values (3);
+commit;
+
+insert into t2 values ('100');
+insert into t2 values ('20');
+insert into t2 values ('3');
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """select * from t1 join t2 on col1 = col2 ORDER by 1 DESC;
+""",
+ 'expected_stdout': """
+        COL1 COL2
+============ ========================================
+         100 100
+          20 20
+           3 3
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """create table t1 (col1 int);
+create table t2 (col2 varchar(10));
+commit;
+
+insert into t1 values (100);
+insert into t1 values (20);
+insert into t1 values (3);
+commit;
+
+insert into t2 values ('100');
+insert into t2 values ('20');
+insert into t2 values ('3');
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """select * from t1 join t2 on col1 = col2 ORDER by 1 DESC;
+""",
+ 'expected_stdout': """
+        COL1 COL2
+============ ==========
+         100 100
+          20 20
+           3 3
+
+"""
+}
+]
+}

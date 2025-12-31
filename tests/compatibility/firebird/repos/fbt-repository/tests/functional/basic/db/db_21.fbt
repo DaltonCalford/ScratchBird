@@ -1,0 +1,25 @@
+{
+'id': 'functional.basic.db.21',
+'qmid': 'functional.basic.db.db_21',
+'tracker_id': '',
+'title': 'Empty DB - RDB$REF_CONSTRAINTS',
+'description': 'Check for correct content of RDB$REF_CONSTRAINTS in empty database.',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    set count on;
+    select * from rdb$ref_constraints order by rdb$constraint_name;
+  """,
+  'expected_stdout':
+  """
+    Records affected: 0
+  """
+
+}
+]
+}

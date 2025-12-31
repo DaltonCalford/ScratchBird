@@ -1,0 +1,21 @@
+{
+'id': 'functional.intfunc.math.log10_01',
+'qmid': 'functional.intfunc.math.log10_01',
+'tracker_id': '',
+'title': 'test for LOG10  function',
+'description': """ LOG10( <number> )
+
+ Returns the logarithm base ten of a number.
+""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': ' select log10(6) from rdb$database;',
+ 'expected_stdout': """                        LOG10
+      =======================
+           0.7781512503836436"""
+}
+]
+}

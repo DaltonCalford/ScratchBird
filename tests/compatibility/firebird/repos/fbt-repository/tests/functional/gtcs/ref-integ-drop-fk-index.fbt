@@ -1,0 +1,115 @@
+{
+'id': 'functional.gtcs.ref-integ-drop-fk-index',
+'qmid': None,
+'tracker_id': '',
+'title': 'GTCS/tests/REF_INT.4.ISQL ; ref-integ-drop-fk-index. Index that is used for FK should not be avail for DROP.',
+'description':
+ """
+	Original test see in:
+        https://github.com/FirebirdSQL/fbtcs/blob/master/GTCS/tests/REF_INT.4.ISQL.script
+    Checked on: 4.0.0.1806 SS; 3.0.6.33272 CS; 2.5.9.27149 SC.
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import sys
+import subprocess
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_conn.close()
+
+with open( os.path.join(context['files_location'],'gtcs-ref-integ.sql'), 'r') as f:
+    sql_init = f.read()
+
+sql_addi=\
+'''
+    drop index ref_key;
+    commit;
+    insert into employee( emp_no, last_name, dept_no) values (12, 'e12', -1); -- should FAIL
+    set count on;
+    select * from employee e where e.dept_no < 0;
+'''
+
+runProgram('isql', [ dsn], os.linesep.join( (sql_init, sql_addi) ) )
+  """,
+ 'expected_stdout':
+  """
+    Records affected: 0
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -ERASE RDB$INDICES failed
+    -action cancelled by trigger (1) to preserve data integrity
+    -Cannot delete index used by an Integrity Constraint
+
+    Statement failed, SQLSTATE = 23000
+    violation of FOREIGN KEY constraint "REF_KEY" on table "EMPLOYEE"
+    -Foreign key reference target does not exist
+    -Problematic key value is ("DEPT_NO" = '-1')
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import sys
+import subprocess
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_conn.close()
+
+with open( os.path.join(context['files_location'],'gtcs-ref-integ.sql'), 'r') as f:
+    sql_init = f.read()
+
+sql_addi=\
+'''
+    drop index ref_key;
+    commit;
+    insert into employee( emp_no, last_name, dept_no) values (12, 'e12', -1); -- should FAIL
+    set count on;
+    select * from employee e where e.dept_no < 0;
+'''
+
+runProgram('isql', [ dsn], os.linesep.join( (sql_init, sql_addi) ) )
+  """,
+ 'expected_stdout':
+  """
+    Records affected: 0
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 27000
+    unsuccessful metadata update
+    -DROP INDEX REF_KEY failed
+    -action cancelled by trigger (1) to preserve data integrity
+    -Cannot delete index used by an Integrity Constraint
+
+    Statement failed, SQLSTATE = 23000
+    violation of FOREIGN KEY constraint "REF_KEY" on table "EMPLOYEE"
+    -Foreign key reference target does not exist
+    -Problematic key value is ("DEPT_NO" = '-1')
+  """
+}
+]
+}

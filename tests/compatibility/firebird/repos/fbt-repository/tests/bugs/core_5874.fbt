@@ -1,0 +1,59 @@
+{
+'id': 'bugs.core_5874',
+'qmid': None,
+'tracker_id': 'CORE-5874',
+'title': 'Provide name of read-only column incorrectly referenced in UPDATE ... SET xxx',
+'description':
+ """
+   Table with computed field (non-ascii) that is result of addition is used here.
+   UPDATE statement is used in trivial form, then as 'update or insert' and as 'merge'.
+   All cases should produce STDERR with specifying table name and R/O column after dot.
+   Checked on 4.0.0.1142: OK, 2.359s.
+ """,
+'min_versions': '4.0.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test(id int, x int, y int, "hozzáadása" computed by (x * y) );
+    commit;
+
+    set planonly;
+
+    update test set "hozzáadása" = 1;
+
+    update or insert into test(id, "hozzáadása") 
+    values(1, 111) matching(id)
+    returning "hozzáadása";
+
+    merge into test t
+    using( select 1 as id, 2 as x, 3 as y from rdb$database ) s on s.id = t.id
+    when matched then 
+        update set "hozzáadása" = 1
+    ;  
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    attempted update of read-only column TEST.hozzáadása
+
+    Statement failed, SQLSTATE = 42000
+    attempted update of read-only column TEST.hozzáadása
+
+    Statement failed, SQLSTATE = 42000
+    attempted update of read-only column TEST.hozzáadása
+  """
+}
+]
+}

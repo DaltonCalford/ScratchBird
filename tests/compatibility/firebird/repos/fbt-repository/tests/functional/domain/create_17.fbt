@@ -1,0 +1,18 @@
+{
+'id': 'functional.domain.create.17',
+'qmid': 'functional.domain.create.create_domain_17',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - CHARACTER VARYING',
+'description': 'Simple domain creation based CHARACTER VARYING datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test CHARACTER VARYING(1);
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            VARCHAR(1) Nullable
+"""
+}
+]
+}

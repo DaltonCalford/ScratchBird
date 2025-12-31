@@ -1,0 +1,49 @@
+{
+'id': 'bugs.gh_6887',
+'qmid': None,
+'tracker_id': '',
+'title': 'Invalid SIMILAR TO patterns may lead memory read beyond string limits',
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/6887
+
+    On 5.0.0.88 and 4.0.1.2523 expression marked as [ 2 ] raises:
+    "SQLSTATE = 22025/Invalid ESCAPE sequence",
+    After fix its error became the same as for [ 1 ].
+
+    NB: backslash character must be duplicated when SQL script is launched from Python,
+    in contrary to common usage (pass script to ISQL utility from OS command prompt).
+
+    Checked on: 5.0.0.113, 4.0.1.2539.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    select '1' similar to '1[a-' from rdb$database; ----------------------- [ 1 ]
+
+    -- NOTE: we have to DUPLICATE backslash here otherwise Python
+    -- framework will 'swallow' it and error message will differ.
+    -- Single backslash must be used if this expression is passed
+    -- to ISQL from OS command prompt or using '-i' command switch:
+    select '1' similar to '1\\' escape '\\' from rdb$database; ------------ [ 2 ]
+  """,                                                      
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    Invalid SIMILAR TO pattern
+
+    Statement failed, SQLSTATE = 42000
+    Invalid SIMILAR TO pattern
+  """
+}
+]
+}

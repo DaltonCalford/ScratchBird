@@ -1,0 +1,22 @@
+{
+'id': 'bugs.core_1295',
+'qmid': None,
+'tracker_id': 'CORE-1295',
+'title': 'Bad optimization of queries with DB_KEY',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5.3',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLANONLY;
+select * from rdb$relations where rdb$db_key = ? and rdb$relation_id = 0;
+select * from rdb$relations where rdb$db_key = ? and rdb$relation_name = 'RDB$RELATIONS';""",
+ 'expected_stdout': """PLAN (RDB$RELATIONS INDEX ())
+PLAN (RDB$RELATIONS INDEX ())
+"""
+}
+]
+}

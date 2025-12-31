@@ -1,0 +1,322 @@
+{
+'id': 'bugs.core_4710',
+'qmid': None,
+'tracker_id': 'CORE-4710',
+'title': 'invalid request BLR at offset 361 context already in use (BLR error)',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set planonly;
+    select
+        (select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        --,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1) /* #2 */
+        --,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1) /* #1 */
+    from
+    rdb$database;
+    
+    select
+        (select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1) /* #2 */
+        --,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1) /* #1 */
+    from
+    rdb$database;
+    
+    
+    select
+        (select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1)
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1) /* #2 */
+        ,(select row_number() over() from rdb$database r full join rdb$database r2 on r2.rdb$relation_id=r.rdb$relation_id group by r.rdb$relation_id having count(*)>0 order by r.rdb$relation_id rows 1 to 1) /* #1 */
+    from
+    rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN SORT (SORT (JOIN (JOIN (R2 NATURAL, R NATURAL), JOIN (R NATURAL, R2 NATURAL))))
+    PLAN (RDB$DATABASE NATURAL)
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 54001
+    Dynamic SQL Error
+    -Too many Contexts of Relation/Procedure/Views. Maximum allowed is 256
+    
+    Statement failed, SQLSTATE = 54001
+    Dynamic SQL Error
+    -Too many Contexts of Relation/Procedure/Views. Maximum allowed is 256
+  """
+}
+]
+}

@@ -1,0 +1,60 @@
+{
+'id': 'bugs.core_0855',
+'qmid': 'bugs.core_855-250',
+'tracker_id': 'CORE-855',
+'title': 'Aggregates in the WHERE clause vs derived tables',
+'description': 'Aggregates in the WHERE clause vs derived tables',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select * from (
+  select rdb$relation_id
+  from rdb$database
+)
+where sum(rdb$relation_id) = 0;
+""",
+ 'expected_stderr': """Database:  employee.fdb, User: SYSDBA
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+-SQL error code = -104
+-Cannot use an aggregate function in a WHERE clause, use HAVING instead
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select * from (
+  select rdb$relation_id
+  from rdb$database
+)
+where sum(rdb$relation_id) = 0;
+""",
+ 'expected_stderr': """Database:  employee.fdb, User: SYSDBA
+Statement failed, SQLCODE = -104
+Dynamic SQL Error
+-SQL error code = -104
+-Cannot use an aggregate function in a WHERE clause, use HAVING instead
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select * from (
+  select rdb$relation_id
+  from rdb$database
+)
+where sum(rdb$relation_id) = 0;
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+-SQL error code = -104
+-Cannot use an aggregate or window function in a WHERE clause, use HAVING (for aggregate only) instead
+"""
+}
+]
+}

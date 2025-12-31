@@ -1,0 +1,1204 @@
+{
+'id': 'bugs.core_2969',
+'qmid': None,
+'tracker_id': 'CORE-2969',
+'title': 'rdb$set_context does NOT allow to overwrite any vars after encountering limit (default=1000) of them',
+'description': '',
+'min_versions': '2.1.4',
+'versions': [
+{
+ 'firebird_version': '2.1.4',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """Set term !!;
+execute block returns(was_overwritten int, ctx_key varchar(30), ctx_val char(3))
+as
+  declare variable k int;
+begin
+  k = 0;
+  while (k < 1000) do
+  begin
+    ctx_key = 'var_' || k;
+
+    was_overwritten=rdb$set_context('USER_SESSION', :ctx_key, 'xxx');
+    ctx_val = rdb$get_context('USER_SESSION', :ctx_key);
+
+    k = k + 1;
+  end
+end !!
+
+execute block returns(was_overwritten int, ctx_key varchar(30), ctx_val char(3))
+as
+  declare variable k int;
+begin
+  k = 0;
+  while (k < 1000) do
+  begin
+    ctx_key = 'var_' || k;
+
+    was_overwritten=rdb$set_context('USER_SESSION', :ctx_key, 'yyy');
+    ctx_val = rdb$get_context('USER_SESSION', :ctx_key);
+    suspend;
+
+    k = k + 1;
+  end
+end !!
+
+""",
+ 'expected_stdout': """Database:  localhost:C:\Users\win7\Firebird_tests\fbt-repository\tmp\bugs.core_2969.fdb, User: SYSDBA
+SQL> SQL> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> SQL> SQL> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON> CON>
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_0                          yyy
+              1 var_1                          yyy
+              1 var_2                          yyy
+              1 var_3                          yyy
+              1 var_4                          yyy
+              1 var_5                          yyy
+              1 var_6                          yyy
+              1 var_7                          yyy
+              1 var_8                          yyy
+              1 var_9                          yyy
+              1 var_10                         yyy
+              1 var_11                         yyy
+              1 var_12                         yyy
+              1 var_13                         yyy
+              1 var_14                         yyy
+              1 var_15                         yyy
+              1 var_16                         yyy
+              1 var_17                         yyy
+              1 var_18                         yyy
+              1 var_19                         yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_20                         yyy
+              1 var_21                         yyy
+              1 var_22                         yyy
+              1 var_23                         yyy
+              1 var_24                         yyy
+              1 var_25                         yyy
+              1 var_26                         yyy
+              1 var_27                         yyy
+              1 var_28                         yyy
+              1 var_29                         yyy
+              1 var_30                         yyy
+              1 var_31                         yyy
+              1 var_32                         yyy
+              1 var_33                         yyy
+              1 var_34                         yyy
+              1 var_35                         yyy
+              1 var_36                         yyy
+              1 var_37                         yyy
+              1 var_38                         yyy
+              1 var_39                         yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_40                         yyy
+              1 var_41                         yyy
+              1 var_42                         yyy
+              1 var_43                         yyy
+              1 var_44                         yyy
+              1 var_45                         yyy
+              1 var_46                         yyy
+              1 var_47                         yyy
+              1 var_48                         yyy
+              1 var_49                         yyy
+              1 var_50                         yyy
+              1 var_51                         yyy
+              1 var_52                         yyy
+              1 var_53                         yyy
+              1 var_54                         yyy
+              1 var_55                         yyy
+              1 var_56                         yyy
+              1 var_57                         yyy
+              1 var_58                         yyy
+              1 var_59                         yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_60                         yyy
+              1 var_61                         yyy
+              1 var_62                         yyy
+              1 var_63                         yyy
+              1 var_64                         yyy
+              1 var_65                         yyy
+              1 var_66                         yyy
+              1 var_67                         yyy
+              1 var_68                         yyy
+              1 var_69                         yyy
+              1 var_70                         yyy
+              1 var_71                         yyy
+              1 var_72                         yyy
+              1 var_73                         yyy
+              1 var_74                         yyy
+              1 var_75                         yyy
+              1 var_76                         yyy
+              1 var_77                         yyy
+              1 var_78                         yyy
+              1 var_79                         yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_80                         yyy
+              1 var_81                         yyy
+              1 var_82                         yyy
+              1 var_83                         yyy
+              1 var_84                         yyy
+              1 var_85                         yyy
+              1 var_86                         yyy
+              1 var_87                         yyy
+              1 var_88                         yyy
+              1 var_89                         yyy
+              1 var_90                         yyy
+              1 var_91                         yyy
+              1 var_92                         yyy
+              1 var_93                         yyy
+              1 var_94                         yyy
+              1 var_95                         yyy
+              1 var_96                         yyy
+              1 var_97                         yyy
+              1 var_98                         yyy
+              1 var_99                         yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_100                        yyy
+              1 var_101                        yyy
+              1 var_102                        yyy
+              1 var_103                        yyy
+              1 var_104                        yyy
+              1 var_105                        yyy
+              1 var_106                        yyy
+              1 var_107                        yyy
+              1 var_108                        yyy
+              1 var_109                        yyy
+              1 var_110                        yyy
+              1 var_111                        yyy
+              1 var_112                        yyy
+              1 var_113                        yyy
+              1 var_114                        yyy
+              1 var_115                        yyy
+              1 var_116                        yyy
+              1 var_117                        yyy
+              1 var_118                        yyy
+              1 var_119                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_120                        yyy
+              1 var_121                        yyy
+              1 var_122                        yyy
+              1 var_123                        yyy
+              1 var_124                        yyy
+              1 var_125                        yyy
+              1 var_126                        yyy
+              1 var_127                        yyy
+              1 var_128                        yyy
+              1 var_129                        yyy
+              1 var_130                        yyy
+              1 var_131                        yyy
+              1 var_132                        yyy
+              1 var_133                        yyy
+              1 var_134                        yyy
+              1 var_135                        yyy
+              1 var_136                        yyy
+              1 var_137                        yyy
+              1 var_138                        yyy
+              1 var_139                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_140                        yyy
+              1 var_141                        yyy
+              1 var_142                        yyy
+              1 var_143                        yyy
+              1 var_144                        yyy
+              1 var_145                        yyy
+              1 var_146                        yyy
+              1 var_147                        yyy
+              1 var_148                        yyy
+              1 var_149                        yyy
+              1 var_150                        yyy
+              1 var_151                        yyy
+              1 var_152                        yyy
+              1 var_153                        yyy
+              1 var_154                        yyy
+              1 var_155                        yyy
+              1 var_156                        yyy
+              1 var_157                        yyy
+              1 var_158                        yyy
+              1 var_159                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_160                        yyy
+              1 var_161                        yyy
+              1 var_162                        yyy
+              1 var_163                        yyy
+              1 var_164                        yyy
+              1 var_165                        yyy
+              1 var_166                        yyy
+              1 var_167                        yyy
+              1 var_168                        yyy
+              1 var_169                        yyy
+              1 var_170                        yyy
+              1 var_171                        yyy
+              1 var_172                        yyy
+              1 var_173                        yyy
+              1 var_174                        yyy
+              1 var_175                        yyy
+              1 var_176                        yyy
+              1 var_177                        yyy
+              1 var_178                        yyy
+              1 var_179                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_180                        yyy
+              1 var_181                        yyy
+              1 var_182                        yyy
+              1 var_183                        yyy
+              1 var_184                        yyy
+              1 var_185                        yyy
+              1 var_186                        yyy
+              1 var_187                        yyy
+              1 var_188                        yyy
+              1 var_189                        yyy
+              1 var_190                        yyy
+              1 var_191                        yyy
+              1 var_192                        yyy
+              1 var_193                        yyy
+              1 var_194                        yyy
+              1 var_195                        yyy
+              1 var_196                        yyy
+              1 var_197                        yyy
+              1 var_198                        yyy
+              1 var_199                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_200                        yyy
+              1 var_201                        yyy
+              1 var_202                        yyy
+              1 var_203                        yyy
+              1 var_204                        yyy
+              1 var_205                        yyy
+              1 var_206                        yyy
+              1 var_207                        yyy
+              1 var_208                        yyy
+              1 var_209                        yyy
+              1 var_210                        yyy
+              1 var_211                        yyy
+              1 var_212                        yyy
+              1 var_213                        yyy
+              1 var_214                        yyy
+              1 var_215                        yyy
+              1 var_216                        yyy
+              1 var_217                        yyy
+              1 var_218                        yyy
+              1 var_219                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_220                        yyy
+              1 var_221                        yyy
+              1 var_222                        yyy
+              1 var_223                        yyy
+              1 var_224                        yyy
+              1 var_225                        yyy
+              1 var_226                        yyy
+              1 var_227                        yyy
+              1 var_228                        yyy
+              1 var_229                        yyy
+              1 var_230                        yyy
+              1 var_231                        yyy
+              1 var_232                        yyy
+              1 var_233                        yyy
+              1 var_234                        yyy
+              1 var_235                        yyy
+              1 var_236                        yyy
+              1 var_237                        yyy
+              1 var_238                        yyy
+              1 var_239                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_240                        yyy
+              1 var_241                        yyy
+              1 var_242                        yyy
+              1 var_243                        yyy
+              1 var_244                        yyy
+              1 var_245                        yyy
+              1 var_246                        yyy
+              1 var_247                        yyy
+              1 var_248                        yyy
+              1 var_249                        yyy
+              1 var_250                        yyy
+              1 var_251                        yyy
+              1 var_252                        yyy
+              1 var_253                        yyy
+              1 var_254                        yyy
+              1 var_255                        yyy
+              1 var_256                        yyy
+              1 var_257                        yyy
+              1 var_258                        yyy
+              1 var_259                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_260                        yyy
+              1 var_261                        yyy
+              1 var_262                        yyy
+              1 var_263                        yyy
+              1 var_264                        yyy
+              1 var_265                        yyy
+              1 var_266                        yyy
+              1 var_267                        yyy
+              1 var_268                        yyy
+              1 var_269                        yyy
+              1 var_270                        yyy
+              1 var_271                        yyy
+              1 var_272                        yyy
+              1 var_273                        yyy
+              1 var_274                        yyy
+              1 var_275                        yyy
+              1 var_276                        yyy
+              1 var_277                        yyy
+              1 var_278                        yyy
+              1 var_279                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_280                        yyy
+              1 var_281                        yyy
+              1 var_282                        yyy
+              1 var_283                        yyy
+              1 var_284                        yyy
+              1 var_285                        yyy
+              1 var_286                        yyy
+              1 var_287                        yyy
+              1 var_288                        yyy
+              1 var_289                        yyy
+              1 var_290                        yyy
+              1 var_291                        yyy
+              1 var_292                        yyy
+              1 var_293                        yyy
+              1 var_294                        yyy
+              1 var_295                        yyy
+              1 var_296                        yyy
+              1 var_297                        yyy
+              1 var_298                        yyy
+              1 var_299                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_300                        yyy
+              1 var_301                        yyy
+              1 var_302                        yyy
+              1 var_303                        yyy
+              1 var_304                        yyy
+              1 var_305                        yyy
+              1 var_306                        yyy
+              1 var_307                        yyy
+              1 var_308                        yyy
+              1 var_309                        yyy
+              1 var_310                        yyy
+              1 var_311                        yyy
+              1 var_312                        yyy
+              1 var_313                        yyy
+              1 var_314                        yyy
+              1 var_315                        yyy
+              1 var_316                        yyy
+              1 var_317                        yyy
+              1 var_318                        yyy
+              1 var_319                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_320                        yyy
+              1 var_321                        yyy
+              1 var_322                        yyy
+              1 var_323                        yyy
+              1 var_324                        yyy
+              1 var_325                        yyy
+              1 var_326                        yyy
+              1 var_327                        yyy
+              1 var_328                        yyy
+              1 var_329                        yyy
+              1 var_330                        yyy
+              1 var_331                        yyy
+              1 var_332                        yyy
+              1 var_333                        yyy
+              1 var_334                        yyy
+              1 var_335                        yyy
+              1 var_336                        yyy
+              1 var_337                        yyy
+              1 var_338                        yyy
+              1 var_339                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_340                        yyy
+              1 var_341                        yyy
+              1 var_342                        yyy
+              1 var_343                        yyy
+              1 var_344                        yyy
+              1 var_345                        yyy
+              1 var_346                        yyy
+              1 var_347                        yyy
+              1 var_348                        yyy
+              1 var_349                        yyy
+              1 var_350                        yyy
+              1 var_351                        yyy
+              1 var_352                        yyy
+              1 var_353                        yyy
+              1 var_354                        yyy
+              1 var_355                        yyy
+              1 var_356                        yyy
+              1 var_357                        yyy
+              1 var_358                        yyy
+              1 var_359                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_360                        yyy
+              1 var_361                        yyy
+              1 var_362                        yyy
+              1 var_363                        yyy
+              1 var_364                        yyy
+              1 var_365                        yyy
+              1 var_366                        yyy
+              1 var_367                        yyy
+              1 var_368                        yyy
+              1 var_369                        yyy
+              1 var_370                        yyy
+              1 var_371                        yyy
+              1 var_372                        yyy
+              1 var_373                        yyy
+              1 var_374                        yyy
+              1 var_375                        yyy
+              1 var_376                        yyy
+              1 var_377                        yyy
+              1 var_378                        yyy
+              1 var_379                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_380                        yyy
+              1 var_381                        yyy
+              1 var_382                        yyy
+              1 var_383                        yyy
+              1 var_384                        yyy
+              1 var_385                        yyy
+              1 var_386                        yyy
+              1 var_387                        yyy
+              1 var_388                        yyy
+              1 var_389                        yyy
+              1 var_390                        yyy
+              1 var_391                        yyy
+              1 var_392                        yyy
+              1 var_393                        yyy
+              1 var_394                        yyy
+              1 var_395                        yyy
+              1 var_396                        yyy
+              1 var_397                        yyy
+              1 var_398                        yyy
+              1 var_399                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_400                        yyy
+              1 var_401                        yyy
+              1 var_402                        yyy
+              1 var_403                        yyy
+              1 var_404                        yyy
+              1 var_405                        yyy
+              1 var_406                        yyy
+              1 var_407                        yyy
+              1 var_408                        yyy
+              1 var_409                        yyy
+              1 var_410                        yyy
+              1 var_411                        yyy
+              1 var_412                        yyy
+              1 var_413                        yyy
+              1 var_414                        yyy
+              1 var_415                        yyy
+              1 var_416                        yyy
+              1 var_417                        yyy
+              1 var_418                        yyy
+              1 var_419                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_420                        yyy
+              1 var_421                        yyy
+              1 var_422                        yyy
+              1 var_423                        yyy
+              1 var_424                        yyy
+              1 var_425                        yyy
+              1 var_426                        yyy
+              1 var_427                        yyy
+              1 var_428                        yyy
+              1 var_429                        yyy
+              1 var_430                        yyy
+              1 var_431                        yyy
+              1 var_432                        yyy
+              1 var_433                        yyy
+              1 var_434                        yyy
+              1 var_435                        yyy
+              1 var_436                        yyy
+              1 var_437                        yyy
+              1 var_438                        yyy
+              1 var_439                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_440                        yyy
+              1 var_441                        yyy
+              1 var_442                        yyy
+              1 var_443                        yyy
+              1 var_444                        yyy
+              1 var_445                        yyy
+              1 var_446                        yyy
+              1 var_447                        yyy
+              1 var_448                        yyy
+              1 var_449                        yyy
+              1 var_450                        yyy
+              1 var_451                        yyy
+              1 var_452                        yyy
+              1 var_453                        yyy
+              1 var_454                        yyy
+              1 var_455                        yyy
+              1 var_456                        yyy
+              1 var_457                        yyy
+              1 var_458                        yyy
+              1 var_459                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_460                        yyy
+              1 var_461                        yyy
+              1 var_462                        yyy
+              1 var_463                        yyy
+              1 var_464                        yyy
+              1 var_465                        yyy
+              1 var_466                        yyy
+              1 var_467                        yyy
+              1 var_468                        yyy
+              1 var_469                        yyy
+              1 var_470                        yyy
+              1 var_471                        yyy
+              1 var_472                        yyy
+              1 var_473                        yyy
+              1 var_474                        yyy
+              1 var_475                        yyy
+              1 var_476                        yyy
+              1 var_477                        yyy
+              1 var_478                        yyy
+              1 var_479                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_480                        yyy
+              1 var_481                        yyy
+              1 var_482                        yyy
+              1 var_483                        yyy
+              1 var_484                        yyy
+              1 var_485                        yyy
+              1 var_486                        yyy
+              1 var_487                        yyy
+              1 var_488                        yyy
+              1 var_489                        yyy
+              1 var_490                        yyy
+              1 var_491                        yyy
+              1 var_492                        yyy
+              1 var_493                        yyy
+              1 var_494                        yyy
+              1 var_495                        yyy
+              1 var_496                        yyy
+              1 var_497                        yyy
+              1 var_498                        yyy
+              1 var_499                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_500                        yyy
+              1 var_501                        yyy
+              1 var_502                        yyy
+              1 var_503                        yyy
+              1 var_504                        yyy
+              1 var_505                        yyy
+              1 var_506                        yyy
+              1 var_507                        yyy
+              1 var_508                        yyy
+              1 var_509                        yyy
+              1 var_510                        yyy
+              1 var_511                        yyy
+              1 var_512                        yyy
+              1 var_513                        yyy
+              1 var_514                        yyy
+              1 var_515                        yyy
+              1 var_516                        yyy
+              1 var_517                        yyy
+              1 var_518                        yyy
+              1 var_519                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_520                        yyy
+              1 var_521                        yyy
+              1 var_522                        yyy
+              1 var_523                        yyy
+              1 var_524                        yyy
+              1 var_525                        yyy
+              1 var_526                        yyy
+              1 var_527                        yyy
+              1 var_528                        yyy
+              1 var_529                        yyy
+              1 var_530                        yyy
+              1 var_531                        yyy
+              1 var_532                        yyy
+              1 var_533                        yyy
+              1 var_534                        yyy
+              1 var_535                        yyy
+              1 var_536                        yyy
+              1 var_537                        yyy
+              1 var_538                        yyy
+              1 var_539                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_540                        yyy
+              1 var_541                        yyy
+              1 var_542                        yyy
+              1 var_543                        yyy
+              1 var_544                        yyy
+              1 var_545                        yyy
+              1 var_546                        yyy
+              1 var_547                        yyy
+              1 var_548                        yyy
+              1 var_549                        yyy
+              1 var_550                        yyy
+              1 var_551                        yyy
+              1 var_552                        yyy
+              1 var_553                        yyy
+              1 var_554                        yyy
+              1 var_555                        yyy
+              1 var_556                        yyy
+              1 var_557                        yyy
+              1 var_558                        yyy
+              1 var_559                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_560                        yyy
+              1 var_561                        yyy
+              1 var_562                        yyy
+              1 var_563                        yyy
+              1 var_564                        yyy
+              1 var_565                        yyy
+              1 var_566                        yyy
+              1 var_567                        yyy
+              1 var_568                        yyy
+              1 var_569                        yyy
+              1 var_570                        yyy
+              1 var_571                        yyy
+              1 var_572                        yyy
+              1 var_573                        yyy
+              1 var_574                        yyy
+              1 var_575                        yyy
+              1 var_576                        yyy
+              1 var_577                        yyy
+              1 var_578                        yyy
+              1 var_579                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_580                        yyy
+              1 var_581                        yyy
+              1 var_582                        yyy
+              1 var_583                        yyy
+              1 var_584                        yyy
+              1 var_585                        yyy
+              1 var_586                        yyy
+              1 var_587                        yyy
+              1 var_588                        yyy
+              1 var_589                        yyy
+              1 var_590                        yyy
+              1 var_591                        yyy
+              1 var_592                        yyy
+              1 var_593                        yyy
+              1 var_594                        yyy
+              1 var_595                        yyy
+              1 var_596                        yyy
+              1 var_597                        yyy
+              1 var_598                        yyy
+              1 var_599                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_600                        yyy
+              1 var_601                        yyy
+              1 var_602                        yyy
+              1 var_603                        yyy
+              1 var_604                        yyy
+              1 var_605                        yyy
+              1 var_606                        yyy
+              1 var_607                        yyy
+              1 var_608                        yyy
+              1 var_609                        yyy
+              1 var_610                        yyy
+              1 var_611                        yyy
+              1 var_612                        yyy
+              1 var_613                        yyy
+              1 var_614                        yyy
+              1 var_615                        yyy
+              1 var_616                        yyy
+              1 var_617                        yyy
+              1 var_618                        yyy
+              1 var_619                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_620                        yyy
+              1 var_621                        yyy
+              1 var_622                        yyy
+              1 var_623                        yyy
+              1 var_624                        yyy
+              1 var_625                        yyy
+              1 var_626                        yyy
+              1 var_627                        yyy
+              1 var_628                        yyy
+              1 var_629                        yyy
+              1 var_630                        yyy
+              1 var_631                        yyy
+              1 var_632                        yyy
+              1 var_633                        yyy
+              1 var_634                        yyy
+              1 var_635                        yyy
+              1 var_636                        yyy
+              1 var_637                        yyy
+              1 var_638                        yyy
+              1 var_639                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_640                        yyy
+              1 var_641                        yyy
+              1 var_642                        yyy
+              1 var_643                        yyy
+              1 var_644                        yyy
+              1 var_645                        yyy
+              1 var_646                        yyy
+              1 var_647                        yyy
+              1 var_648                        yyy
+              1 var_649                        yyy
+              1 var_650                        yyy
+              1 var_651                        yyy
+              1 var_652                        yyy
+              1 var_653                        yyy
+              1 var_654                        yyy
+              1 var_655                        yyy
+              1 var_656                        yyy
+              1 var_657                        yyy
+              1 var_658                        yyy
+              1 var_659                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_660                        yyy
+              1 var_661                        yyy
+              1 var_662                        yyy
+              1 var_663                        yyy
+              1 var_664                        yyy
+              1 var_665                        yyy
+              1 var_666                        yyy
+              1 var_667                        yyy
+              1 var_668                        yyy
+              1 var_669                        yyy
+              1 var_670                        yyy
+              1 var_671                        yyy
+              1 var_672                        yyy
+              1 var_673                        yyy
+              1 var_674                        yyy
+              1 var_675                        yyy
+              1 var_676                        yyy
+              1 var_677                        yyy
+              1 var_678                        yyy
+              1 var_679                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_680                        yyy
+              1 var_681                        yyy
+              1 var_682                        yyy
+              1 var_683                        yyy
+              1 var_684                        yyy
+              1 var_685                        yyy
+              1 var_686                        yyy
+              1 var_687                        yyy
+              1 var_688                        yyy
+              1 var_689                        yyy
+              1 var_690                        yyy
+              1 var_691                        yyy
+              1 var_692                        yyy
+              1 var_693                        yyy
+              1 var_694                        yyy
+              1 var_695                        yyy
+              1 var_696                        yyy
+              1 var_697                        yyy
+              1 var_698                        yyy
+              1 var_699                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_700                        yyy
+              1 var_701                        yyy
+              1 var_702                        yyy
+              1 var_703                        yyy
+              1 var_704                        yyy
+              1 var_705                        yyy
+              1 var_706                        yyy
+              1 var_707                        yyy
+              1 var_708                        yyy
+              1 var_709                        yyy
+              1 var_710                        yyy
+              1 var_711                        yyy
+              1 var_712                        yyy
+              1 var_713                        yyy
+              1 var_714                        yyy
+              1 var_715                        yyy
+              1 var_716                        yyy
+              1 var_717                        yyy
+              1 var_718                        yyy
+              1 var_719                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_720                        yyy
+              1 var_721                        yyy
+              1 var_722                        yyy
+              1 var_723                        yyy
+              1 var_724                        yyy
+              1 var_725                        yyy
+              1 var_726                        yyy
+              1 var_727                        yyy
+              1 var_728                        yyy
+              1 var_729                        yyy
+              1 var_730                        yyy
+              1 var_731                        yyy
+              1 var_732                        yyy
+              1 var_733                        yyy
+              1 var_734                        yyy
+              1 var_735                        yyy
+              1 var_736                        yyy
+              1 var_737                        yyy
+              1 var_738                        yyy
+              1 var_739                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_740                        yyy
+              1 var_741                        yyy
+              1 var_742                        yyy
+              1 var_743                        yyy
+              1 var_744                        yyy
+              1 var_745                        yyy
+              1 var_746                        yyy
+              1 var_747                        yyy
+              1 var_748                        yyy
+              1 var_749                        yyy
+              1 var_750                        yyy
+              1 var_751                        yyy
+              1 var_752                        yyy
+              1 var_753                        yyy
+              1 var_754                        yyy
+              1 var_755                        yyy
+              1 var_756                        yyy
+              1 var_757                        yyy
+              1 var_758                        yyy
+              1 var_759                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_760                        yyy
+              1 var_761                        yyy
+              1 var_762                        yyy
+              1 var_763                        yyy
+              1 var_764                        yyy
+              1 var_765                        yyy
+              1 var_766                        yyy
+              1 var_767                        yyy
+              1 var_768                        yyy
+              1 var_769                        yyy
+              1 var_770                        yyy
+              1 var_771                        yyy
+              1 var_772                        yyy
+              1 var_773                        yyy
+              1 var_774                        yyy
+              1 var_775                        yyy
+              1 var_776                        yyy
+              1 var_777                        yyy
+              1 var_778                        yyy
+              1 var_779                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_780                        yyy
+              1 var_781                        yyy
+              1 var_782                        yyy
+              1 var_783                        yyy
+              1 var_784                        yyy
+              1 var_785                        yyy
+              1 var_786                        yyy
+              1 var_787                        yyy
+              1 var_788                        yyy
+              1 var_789                        yyy
+              1 var_790                        yyy
+              1 var_791                        yyy
+              1 var_792                        yyy
+              1 var_793                        yyy
+              1 var_794                        yyy
+              1 var_795                        yyy
+              1 var_796                        yyy
+              1 var_797                        yyy
+              1 var_798                        yyy
+              1 var_799                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_800                        yyy
+              1 var_801                        yyy
+              1 var_802                        yyy
+              1 var_803                        yyy
+              1 var_804                        yyy
+              1 var_805                        yyy
+              1 var_806                        yyy
+              1 var_807                        yyy
+              1 var_808                        yyy
+              1 var_809                        yyy
+              1 var_810                        yyy
+              1 var_811                        yyy
+              1 var_812                        yyy
+              1 var_813                        yyy
+              1 var_814                        yyy
+              1 var_815                        yyy
+              1 var_816                        yyy
+              1 var_817                        yyy
+              1 var_818                        yyy
+              1 var_819                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_820                        yyy
+              1 var_821                        yyy
+              1 var_822                        yyy
+              1 var_823                        yyy
+              1 var_824                        yyy
+              1 var_825                        yyy
+              1 var_826                        yyy
+              1 var_827                        yyy
+              1 var_828                        yyy
+              1 var_829                        yyy
+              1 var_830                        yyy
+              1 var_831                        yyy
+              1 var_832                        yyy
+              1 var_833                        yyy
+              1 var_834                        yyy
+              1 var_835                        yyy
+              1 var_836                        yyy
+              1 var_837                        yyy
+              1 var_838                        yyy
+              1 var_839                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_840                        yyy
+              1 var_841                        yyy
+              1 var_842                        yyy
+              1 var_843                        yyy
+              1 var_844                        yyy
+              1 var_845                        yyy
+              1 var_846                        yyy
+              1 var_847                        yyy
+              1 var_848                        yyy
+              1 var_849                        yyy
+              1 var_850                        yyy
+              1 var_851                        yyy
+              1 var_852                        yyy
+              1 var_853                        yyy
+              1 var_854                        yyy
+              1 var_855                        yyy
+              1 var_856                        yyy
+              1 var_857                        yyy
+              1 var_858                        yyy
+              1 var_859                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_860                        yyy
+              1 var_861                        yyy
+              1 var_862                        yyy
+              1 var_863                        yyy
+              1 var_864                        yyy
+              1 var_865                        yyy
+              1 var_866                        yyy
+              1 var_867                        yyy
+              1 var_868                        yyy
+              1 var_869                        yyy
+              1 var_870                        yyy
+              1 var_871                        yyy
+              1 var_872                        yyy
+              1 var_873                        yyy
+              1 var_874                        yyy
+              1 var_875                        yyy
+              1 var_876                        yyy
+              1 var_877                        yyy
+              1 var_878                        yyy
+              1 var_879                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_880                        yyy
+              1 var_881                        yyy
+              1 var_882                        yyy
+              1 var_883                        yyy
+              1 var_884                        yyy
+              1 var_885                        yyy
+              1 var_886                        yyy
+              1 var_887                        yyy
+              1 var_888                        yyy
+              1 var_889                        yyy
+              1 var_890                        yyy
+              1 var_891                        yyy
+              1 var_892                        yyy
+              1 var_893                        yyy
+              1 var_894                        yyy
+              1 var_895                        yyy
+              1 var_896                        yyy
+              1 var_897                        yyy
+              1 var_898                        yyy
+              1 var_899                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_900                        yyy
+              1 var_901                        yyy
+              1 var_902                        yyy
+              1 var_903                        yyy
+              1 var_904                        yyy
+              1 var_905                        yyy
+              1 var_906                        yyy
+              1 var_907                        yyy
+              1 var_908                        yyy
+              1 var_909                        yyy
+              1 var_910                        yyy
+              1 var_911                        yyy
+              1 var_912                        yyy
+              1 var_913                        yyy
+              1 var_914                        yyy
+              1 var_915                        yyy
+              1 var_916                        yyy
+              1 var_917                        yyy
+              1 var_918                        yyy
+              1 var_919                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_920                        yyy
+              1 var_921                        yyy
+              1 var_922                        yyy
+              1 var_923                        yyy
+              1 var_924                        yyy
+              1 var_925                        yyy
+              1 var_926                        yyy
+              1 var_927                        yyy
+              1 var_928                        yyy
+              1 var_929                        yyy
+              1 var_930                        yyy
+              1 var_931                        yyy
+              1 var_932                        yyy
+              1 var_933                        yyy
+              1 var_934                        yyy
+              1 var_935                        yyy
+              1 var_936                        yyy
+              1 var_937                        yyy
+              1 var_938                        yyy
+              1 var_939                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_940                        yyy
+              1 var_941                        yyy
+              1 var_942                        yyy
+              1 var_943                        yyy
+              1 var_944                        yyy
+              1 var_945                        yyy
+              1 var_946                        yyy
+              1 var_947                        yyy
+              1 var_948                        yyy
+              1 var_949                        yyy
+              1 var_950                        yyy
+              1 var_951                        yyy
+              1 var_952                        yyy
+              1 var_953                        yyy
+              1 var_954                        yyy
+              1 var_955                        yyy
+              1 var_956                        yyy
+              1 var_957                        yyy
+              1 var_958                        yyy
+              1 var_959                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_960                        yyy
+              1 var_961                        yyy
+              1 var_962                        yyy
+              1 var_963                        yyy
+              1 var_964                        yyy
+              1 var_965                        yyy
+              1 var_966                        yyy
+              1 var_967                        yyy
+              1 var_968                        yyy
+              1 var_969                        yyy
+              1 var_970                        yyy
+              1 var_971                        yyy
+              1 var_972                        yyy
+              1 var_973                        yyy
+              1 var_974                        yyy
+              1 var_975                        yyy
+              1 var_976                        yyy
+              1 var_977                        yyy
+              1 var_978                        yyy
+              1 var_979                        yyy
+
+WAS_OVERWRITTEN CTX_KEY                        CTX_VAL
+=============== ============================== =======
+              1 var_980                        yyy
+              1 var_981                        yyy
+              1 var_982                        yyy
+              1 var_983                        yyy
+              1 var_984                        yyy
+              1 var_985                        yyy
+              1 var_986                        yyy
+              1 var_987                        yyy
+              1 var_988                        yyy
+              1 var_989                        yyy
+              1 var_990                        yyy
+              1 var_991                        yyy
+              1 var_992                        yyy
+              1 var_993                        yyy
+              1 var_994                        yyy
+              1 var_995                        yyy
+              1 var_996                        yyy
+              1 var_997                        yyy
+              1 var_998                        yyy
+              1 var_999                        yyy
+
+SQL> SQL>"""
+}
+]
+}

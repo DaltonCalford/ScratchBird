@@ -1,0 +1,33 @@
+{
+'id': 'bugs.core_0932',
+'qmid': 'bugs.core_932p',
+'tracker_id': 'CORE-932',
+'title': 'Comment in create database',
+'description': 'Accept comment in Create database',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    commit;
+    create database /* foo */ '$(DATABASE_LOCATION)tmp_c0932_1.fdb';
+    select iif( m.mon$database_name containing 'tmp_c0932_1', 'OK', 'FAIL' ) as result_1 from mon$database m;
+    commit;
+    drop database;
+    create database /*/**//**/'$(DATABASE_LOCATION)tmp_c0932_2.fdb'/*/**//**//**//*/**/;
+    select iif( m.mon$database_name containing 'tmp_c0932_2', 'OK', 'FAIL' ) as result_2 from mon$database m;
+    commit;
+    drop database;
+  """,
+ 'expected_stdout':
+  """
+    RESULT_1                        OK
+    RESULT_2                        OK
+  """
+}
+]
+}

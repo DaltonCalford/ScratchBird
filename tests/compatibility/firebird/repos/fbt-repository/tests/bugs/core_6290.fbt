@@ -1,0 +1,39 @@
+{
+'id': 'bugs.core_6290',
+'qmid': None,
+'tracker_id': 'CORE-6290',
+'title': 'Hex number used at end of statement (e.g. CREATE DOMAIN ... DEFAULT) may read invalid memory and produce wrong values or exceptions',
+'description':
+ """
+    Checked on 3.0.6.33289, 4.0.0.1931.
+ """,
+'versions': [
+{
+ 'firebird_version': '3.0.6',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    -- All following statements should not produce neither STDOUT nor STDERR:
+
+    create domain dm_test_01 as double precision default 100000000;
+    create domain dm_test_02 as bigint default 0xf0000000;
+    ----------------------------------------------------------------
+    create domain dm_test_03 as int default 1;
+    create domain dm_test_04 as bigint default 0xf0000000; 
+    ----------------------------------------------------------------
+    create domain dm_test_05 as date default 'TODAY';
+    create domain dm_test_06 as bigint default 0x0F0000000; 
+    ----------------------------------------------------------------
+    create domain dm_test_07 as boolean default true;
+    create domain dm_test_08 as bigint default 0x0F0000000;
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

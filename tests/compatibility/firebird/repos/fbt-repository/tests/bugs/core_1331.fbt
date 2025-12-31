@@ -1,0 +1,97 @@
+{
+'id': 'bugs.core_1331',
+'qmid': 'bugs.core_1331',
+'tracker_id': 'CORE-1331',
+'title': "Charset transliterations don't work with EXECUTE STATEMENT",
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.0.2',
+ 'platform': 'All',
+ 'database': 'Existing',
+ 'database_name': 'core1331.fdb',
+ 'database_character_set': 'WIN1251',
+ 'connection_character_set': 'WIN1251',
+ 'test_type': 'ISQL',
+ 'test_script': """select opis from T1;
+
+set term ^ ;
+execute block returns ( opis varchar(100) ) as
+BEGIN
+  for select opis from t1 into :opis
+  do SUSPEND;
+END^
+
+execute block returns ( opis varchar(100) ) as
+BEGIN
+  for execute statement 'select opis from t1'
+  into :opis
+  do SUSPEND;
+END ^
+
+set term ;^
+
+""",
+ 'expected_stdout': """
+OPIS
+===============================================================================
+ASCII
+милан
+
+
+OPIS
+===============================================================================
+ASCII
+милан
+
+
+OPIS
+===============================================================================
+ASCII
+милан
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core1331-25.fbk',
+ 'database_character_set': 'WIN1251',
+ 'connection_character_set': 'WIN1251',
+ 'test_type': 'ISQL',
+ 'test_script': """
+	set list on;
+    select opis as direct_select from T1;
+	set term ^ ;
+	execute block returns ( execute_block_select varchar(100) ) as
+	BEGIN
+	  for select opis from t1
+	  into :execute_block_select
+	  do
+	      SUSPEND;
+	END^
+
+	execute block returns ( execute_sttm_select varchar(100) ) as
+	BEGIN
+	  for execute statement 'select opis from t1'
+	  into :execute_sttm_select
+	  do
+	      SUSPEND;
+	END ^
+
+	set term ;^
+""",
+ 'expected_stdout':
+  """
+	DIRECT_SELECT                   ASCII
+	DIRECT_SELECT                   милан
+	EXECUTE_BLOCK_SELECT            ASCII
+	EXECUTE_BLOCK_SELECT            милан
+	EXECUTE_STTM_SELECT             ASCII
+	EXECUTE_STTM_SELECT             милан
+  """
+}
+]
+}

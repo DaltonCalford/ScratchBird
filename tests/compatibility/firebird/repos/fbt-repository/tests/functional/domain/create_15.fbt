@@ -1,0 +1,18 @@
+{
+'id': 'functional.domain.create.15',
+'qmid': 'functional.domain.create.create_domain_15',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - CHAR',
+'description': 'Simple domain creation based CHAR datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test CHAR(300);
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            CHAR(300) Nullable
+"""
+}
+]
+}

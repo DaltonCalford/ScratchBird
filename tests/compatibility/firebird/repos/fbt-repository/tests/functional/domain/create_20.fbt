@@ -1,0 +1,18 @@
+{
+'id': 'functional.domain.create.20',
+'qmid': 'functional.domain.create.create_domain_20',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - VARCHAR CHARACTER SET',
+'description': 'Domain creation based on VARCHAR datatype with CHARACTER SET specification.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test VARCHAR(32765) CHARACTER SET ASCII;
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            VARCHAR(32765) CHARACTER SET ASCII Nullable
+"""
+}
+]
+}

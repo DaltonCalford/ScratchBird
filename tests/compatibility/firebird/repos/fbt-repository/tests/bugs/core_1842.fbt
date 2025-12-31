@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_1842',
+'qmid': None,
+'tracker_id': 'CORE-1842',
+'title': 'DEFAULT values are unnecessary evaluated',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """create table tb_date (
+    tb_date_id integer not null primary key,
+    f_date date default 0);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """INSERT INTO TB_DATE (
+    TB_DATE_ID, F_DATE)
+  VALUES (
+    1, '09-MAY-1945');
+insert into tb_date (
+    tb_date_id, f_date)
+  values (
+    2, null);
+commit;
+SELECT TB_DATE_ID, F_DATE FROM TB_DATE;
+""",
+ 'expected_stdout': """Database:  localhost:C:\fbtest2\tmp\bugs.core_1842.fdb, User: SYSDBA
+SQL> CON> CON> CON> SQL> CON> CON> CON> SQL> SQL>
+  TB_DATE_ID      F_DATE
+============ ===========
+           1 1945-05-09
+           2      <null>
+
+SQL>"""
+}
+]
+}

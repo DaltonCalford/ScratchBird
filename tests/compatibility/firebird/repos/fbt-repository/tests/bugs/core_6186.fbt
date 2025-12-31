@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_6186',
+'qmid': None,
+'tracker_id': 'CORE-6186',
+'title': "Original content of column which is involved into ENCRYPT() is displayed as distorted view after this call",
+'description':
+ """
+    Confirmed bug on 4.0.0.1637
+    Checked on 4.0.0.1691: OK, 1.124s.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    with
+    a as (
+        select 'Encrypts/decrypts data using symmetric cipher' as s_origin
+        from rdb$database
+    )
+    select
+        a.s_origin
+        ,encrypt( a.s_origin using aes mode ofb key '0123456789012345' iv 'abcdefghhgfedcba') as s_encrypted
+    from a
+    ;
+  """,
+ 'expected_stdout': 
+  """
+    S_ORIGIN                        Encrypts/decrypts data using symmetric cipher
+    S_ENCRYPTED                     910805BDA8B05C475E8B5D3D0971D58649EA0D549FEA1633A8811429183E925E1C2C77CE4E3B9DCDFA0C75997E
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_2699',
+'qmid': None,
+'tracker_id': 'CORE-2699',
+'title': 'Common table expression context could be used with parameters',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    with x as (
+        select 1 n from rdb$database
+    )
+    select * from x(10);
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    Dynamic SQL Error
+    -SQL error code = -204
+    -Procedure unknown
+    -X
+    -At line 4, column 15
+  """,
+  'substitutions': [ ('-At line.*','') ]
+}
+]
+}

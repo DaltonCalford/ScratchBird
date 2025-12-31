@@ -1,0 +1,25 @@
+{
+'id': 'functional.table.alter.05',
+'qmid': 'functional.table.alter.alter_table_05',
+'tracker_id': '',
+'title': 'ALTER TABLE - ALTER - TO',
+'description': """ALTER TABLE - ALTER - TO
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER TABLE test ALTER id TO new_col_name;
+SHOW TABLE test;""",
+ 'expected_stdout': """NEW_COL_NAME                    INTEGER Not Null
+"""
+}
+]
+}

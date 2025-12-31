@@ -1,0 +1,39 @@
+{
+'id': 'bugs.core_1811',
+'qmid': None,
+'tracker_id': 'CORE-1811',
+'title': '''Incorrect parser's reaction to the unquoted usage of the keyword "VALUE"''',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """recreate table T ( "VALUE" int ) ;
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """delete from T where "VALUE" = 1;
+-- OK
+
+delete from T where value = 1 ;
+-- ERROR: Illegal use of keyword VALUE
+-- This is correct.
+
+delete from T where value = ? ;
+-- ERROR: Data type unknown (release build) or assertion failure (debug build)
+-- There should be the same error as previously (Illegal use of keyword VALUE)
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+-SQL error code = -901
+-Illegal use of keyword VALUE
+Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+-SQL error code = -901
+-Illegal use of keyword VALUE
+"""
+}
+]
+}

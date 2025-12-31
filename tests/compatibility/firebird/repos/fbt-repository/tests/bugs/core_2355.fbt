@@ -1,0 +1,54 @@
+{
+'id': 'bugs.core_2355',
+'qmid': None,
+'tracker_id': 'CORE-2355',
+'title': 'Incorrect handling of LOWER/UPPER when result string shrinks in terms of byte length',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.1.3',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT LOWER('İA') FROM RDB$DATABASE;
+SELECT LOWER('AӴЁΪΣƓİ') FROM RDB$DATABASE;
+""",
+ 'expected_stdout': """
+LOWER
+========
+ia
+
+
+LOWER
+============================
+aӵёϊσɠi
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT LOWER('İA') FROM RDB$DATABASE;
+SELECT LOWER('AӴЁΪΣƓİ') FROM RDB$DATABASE;
+""",
+ 'expected_stdout': """
+LOWER
+======
+ia
+
+
+LOWER
+=======
+aӵёϊσɠi
+
+"""
+}
+]
+}

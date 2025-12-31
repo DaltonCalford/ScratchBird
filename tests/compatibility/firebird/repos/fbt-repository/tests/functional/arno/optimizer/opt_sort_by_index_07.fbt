@@ -1,0 +1,66 @@
+{
+'id': 'functional.arno.optimizer.opt_sort_by_index_07',
+'qmid': 'functional.arno.optimizer.opt_sort_by_index_07',
+'tracker_id': '',
+'title': 'MIN() and ASC index (non-unique)',
+'description': """SELECT MIN(FieldX) FROM X
+When a index can be used for sorting, use it.""",
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE Table_66 (
+  ID INTEGER
+);
+
+SET TERM ^^ ;
+CREATE PROCEDURE PR_FillTable_66
+AS
+DECLARE VARIABLE FillID INTEGER;
+BEGIN
+  FillID = 2147483647;
+  WHILE (FillID > 0) DO
+  BEGIN
+    INSERT INTO Table_66 (ID) VALUES (:FillID);
+    FillID = FillID / 2;
+  END
+  INSERT INTO Table_66 (ID) VALUES (NULL);
+  INSERT INTO Table_66 (ID) VALUES (0);
+  INSERT INTO Table_66 (ID) VALUES (NULL);
+  FillID = -2147483648;
+  WHILE (FillID < 0) DO
+  BEGIN
+    INSERT INTO Table_66 (ID) VALUES (:FillID);
+    FillID = FillID / 2;
+  END
+END
+^^
+SET TERM ; ^^
+
+COMMIT;
+
+EXECUTE PROCEDURE PR_FillTable_66;
+
+COMMIT;
+
+CREATE ASC INDEX I_Table_66_ASC ON Table_66 (ID);
+CREATE DESC INDEX I_Table_66_DESC ON Table_66 (ID);
+
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+SELECT
+  MIN(t66.ID) AS MIN_ID
+FROM
+  Table_66 t66;""",
+ 'expected_stdout': """PLAN (T66 ORDER I_TABLE_66_ASC)
+
+      MIN_ID
+============
+
+ -2147483648
+"""
+}
+]
+}

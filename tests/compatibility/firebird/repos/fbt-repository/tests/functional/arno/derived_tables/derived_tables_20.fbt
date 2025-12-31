@@ -1,0 +1,53 @@
+{
+'id': 'functional.arno.derived_tables.20',
+'qmid': 'functional.arno.derived_tables.derived_tables_20',
+'tracker_id': '',
+'title': 'Simple derived table',
+'description': 'Test sub-select inside derived table.',
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE Table_10 (
+  ID INTEGER NOT NULL,
+  GROUPID INTEGER,
+  DESCRIPTION VARCHAR(10)
+);
+
+COMMIT;
+
+INSERT INTO Table_10 (ID, GROUPID, DESCRIPTION) VALUES (0, NULL, NULL);
+INSERT INTO Table_10 (ID, GROUPID, DESCRIPTION) VALUES (1, 1, 'one');
+INSERT INTO Table_10 (ID, GROUPID, DESCRIPTION) VALUES (2, 1, 'two');
+INSERT INTO Table_10 (ID, GROUPID, DESCRIPTION) VALUES (3, 2, 'three');
+INSERT INTO Table_10 (ID, GROUPID, DESCRIPTION) VALUES (4, 2, 'four');
+INSERT INTO Table_10 (ID, GROUPID, DESCRIPTION) VALUES (5, 2, 'five');
+INSERT INTO Table_10 (ID, GROUPID, DESCRIPTION) VALUES (6, 3, 'six');
+INSERT INTO Table_10 (ID, GROUPID, DESCRIPTION) VALUES (7, 3, 'seven');
+INSERT INTO Table_10 (ID, GROUPID, DESCRIPTION) VALUES (8, 3, 'eight');
+INSERT INTO Table_10 (ID, GROUPID, DESCRIPTION) VALUES (9, 3, 'nine');
+
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT
+  dt.*
+FROM
+  (SELECT
+    t2.GROUPID,
+    (SELECT MIN(t1.ID) FROM Table_10 t1 WHERE t1.GROUPID = t2.GROUPID),
+    (SELECT MAX(t1.ID) FROM Table_10 t1 WHERE t1.GROUPID = t2.GROUPID)
+   FROM
+     Table_10 t2
+   GROUP BY
+     t2.GROUPID) dt (GROUPID, MIN_ID, MAX_ID);
+""",
+ 'expected_stdout': """     GROUPID       MIN_ID       MAX_ID
+============ ============ ============
+      <null>       <null>       <null>
+           1            1            2
+           2            3            5
+           3            6            9"""
+}
+]
+}

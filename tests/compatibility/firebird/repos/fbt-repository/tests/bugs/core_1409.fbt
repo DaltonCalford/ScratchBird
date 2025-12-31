@@ -1,0 +1,48 @@
+{
+'id': 'bugs.core_1409',
+'qmid': None,
+'tracker_id': 'CORE-1409',
+'title': 'Support for autonomous transactions',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """create table log (
+  msg varchar(60)
+);
+commit;
+set term !;
+
+create trigger t_conn on connect
+as
+begin
+  if (current_user = 'SYSDBA') then
+  begin
+    in autonomous transaction
+    do
+    begin
+      insert into log (msg) values ('SYSDBA connected');
+    end
+  end
+end!
+
+set term ;!
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select msg from log;
+""",
+ 'expected_stdout': """Database:  localhost:C:\fbtest2\tmp\bugs.core_1409.fdb, User: SYSDBA
+SQL>
+MSG
+============================================================
+SYSDBA connected
+
+SQL>"""
+}
+]
+}

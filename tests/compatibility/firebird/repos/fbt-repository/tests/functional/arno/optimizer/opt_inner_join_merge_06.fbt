@@ -1,0 +1,335 @@
+{
+'id': 'functional.arno.optimizer.opt_inner_join_merge_06',
+'qmid': 'functional.arno.optimizer.opt_inner_join_merge_06',
+'tracker_id': '',
+'title': 'INNER JOIN join merge and SP',
+'description':
+  """
+    X JOIN Y ON (X.Field = Y.Field)
+    When no index can be used on a INNER JOIN and there's a relation setup between X and Y
+    then a MERGE should be performed. Test with selectable Stored Procedure.
+
+    05-apr-2022.
+    Added separate code for FB 5.x: data source with greatest cardinality will be specified FIRST in the PLAN HASH.
+    See letter from fimire, 05.04.2022 17:38.
+  """,
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE Table_10 (
+  ID INTEGER NOT NULL
+);
+
+CREATE TABLE Table_100 (
+  ID INTEGER NOT NULL
+);
+
+SET TERM ^^ ;
+CREATE PROCEDURE PR_FillTable_10
+AS
+DECLARE VARIABLE FillID INTEGER;
+BEGIN
+  FillID = 1;
+  WHILE (FillID <= 10) DO
+  BEGIN
+    INSERT INTO Table_10 (ID) VALUES (:FillID);
+    FillID = FillID + 1;
+  END
+END
+^^
+
+CREATE PROCEDURE PR_FillTable_100
+AS
+DECLARE VARIABLE FillID INTEGER;
+BEGIN
+  FillID = 1;
+  WHILE (FillID <= 100) DO
+  BEGIN
+    INSERT INTO Table_100 (ID) VALUES (:FillID);
+    FillID = FillID + 1;
+  END
+END
+^^
+
+CREATE PROCEDURE PR_List_1000
+RETURNS (
+  ID Integer
+)
+AS
+BEGIN
+  ID = 2;
+  WHILE (ID <= 1000) DO
+  BEGIN
+    SUSPEND;
+    ID = ID + 2;
+  END
+END
+^^
+SET TERM ; ^^
+
+COMMIT;
+
+EXECUTE PROCEDURE PR_FillTable_10;
+EXECUTE PROCEDURE PR_FillTable_100;
+
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+SELECT
+  Count(*)
+FROM
+  Table_100 t100
+  JOIN Table_10 t10 ON (t10.ID = t100.ID)
+  JOIN PR_List_1000 sp1000 ON (sp1000.ID = t10.ID);
+""",
+ 'expected_stdout': """PLAN MERGE (SORT (T10 NATURAL), SORT (T100 NATURAL), SORT (PR_LIST_1000 NATURAL))
+
+       COUNT
+============
+
+           5
+"""
+},
+{
+ 'firebird_version': '2.1.2',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE Table_10 (
+  ID INTEGER NOT NULL
+);
+
+CREATE TABLE Table_100 (
+  ID INTEGER NOT NULL
+);
+
+SET TERM ^^ ;
+CREATE PROCEDURE PR_FillTable_10
+AS
+DECLARE VARIABLE FillID INTEGER;
+BEGIN
+  FillID = 1;
+  WHILE (FillID <= 10) DO
+  BEGIN
+    INSERT INTO Table_10 (ID) VALUES (:FillID);
+    FillID = FillID + 1;
+  END
+END
+^^
+
+CREATE PROCEDURE PR_FillTable_100
+AS
+DECLARE VARIABLE FillID INTEGER;
+BEGIN
+  FillID = 1;
+  WHILE (FillID <= 100) DO
+  BEGIN
+    INSERT INTO Table_100 (ID) VALUES (:FillID);
+    FillID = FillID + 1;
+  END
+END
+^^
+
+CREATE PROCEDURE PR_List_1000
+RETURNS (
+  ID Integer
+)
+AS
+BEGIN
+  ID = 2;
+  WHILE (ID <= 1000) DO
+  BEGIN
+    SUSPEND;
+    ID = ID + 2;
+  END
+END
+^^
+SET TERM ; ^^
+
+COMMIT;
+
+EXECUTE PROCEDURE PR_FillTable_10;
+EXECUTE PROCEDURE PR_FillTable_100;
+
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+SELECT
+  Count(*)
+FROM
+  Table_100 t100
+  JOIN Table_10 t10 ON (t10.ID = t100.ID)
+  JOIN PR_List_1000 sp1000 ON (sp1000.ID = t10.ID);
+""",
+ 'expected_stdout': """PLAN MERGE (SORT (T100 NATURAL), SORT (T10 NATURAL), SORT (PR_LIST_1000 NATURAL))
+
+       COUNT
+============
+           5
+
+"""
+}
+, # ---------------------------- 3.x and 4.x -----------------------------
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE Table_10 (
+  ID INTEGER NOT NULL
+);
+
+CREATE TABLE Table_100 (
+  ID INTEGER NOT NULL
+);
+
+SET TERM ^^ ;
+CREATE PROCEDURE PR_FillTable_10
+AS
+DECLARE VARIABLE FillID INTEGER;
+BEGIN
+  FillID = 1;
+  WHILE (FillID <= 10) DO
+  BEGIN
+    INSERT INTO Table_10 (ID) VALUES (:FillID);
+    FillID = FillID + 1;
+  END
+END
+^^
+
+CREATE PROCEDURE PR_FillTable_100
+AS
+DECLARE VARIABLE FillID INTEGER;
+BEGIN
+  FillID = 1;
+  WHILE (FillID <= 100) DO
+  BEGIN
+    INSERT INTO Table_100 (ID) VALUES (:FillID);
+    FillID = FillID + 1;
+  END
+END
+^^
+
+CREATE PROCEDURE PR_List_1000
+RETURNS (
+  ID Integer
+)
+AS
+BEGIN
+  ID = 2;
+  WHILE (ID <= 1000) DO
+  BEGIN
+    SUSPEND;
+    ID = ID + 2;
+  END
+END
+^^
+SET TERM ; ^^
+
+COMMIT;
+
+EXECUTE PROCEDURE PR_FillTable_10;
+EXECUTE PROCEDURE PR_FillTable_100;
+
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+SELECT
+  Count(*)
+FROM
+  Table_100 t100
+  JOIN Table_10 t10 ON (t10.ID = t100.ID)
+  JOIN PR_List_1000 sp1000 ON (sp1000.ID = t10.ID);
+""",
+ 'expected_stdout': """PLAN HASH (T100 NATURAL, T10 NATURAL, SP1000 NATURAL)
+
+                COUNT
+=====================
+                    5
+
+"""
+}
+, # ------------------------------- 5.x ------------------------------
+{
+ 'firebird_version': '5.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE Table_10 (
+  ID INTEGER NOT NULL
+);
+
+CREATE TABLE Table_100 (
+  ID INTEGER NOT NULL
+);
+
+SET TERM ^^ ;
+CREATE PROCEDURE PR_FillTable_10
+AS
+DECLARE VARIABLE FillID INTEGER;
+BEGIN
+  FillID = 1;
+  WHILE (FillID <= 10) DO
+  BEGIN
+    INSERT INTO Table_10 (ID) VALUES (:FillID);
+    FillID = FillID + 1;
+  END
+END
+^^
+
+CREATE PROCEDURE PR_FillTable_100
+AS
+DECLARE VARIABLE FillID INTEGER;
+BEGIN
+  FillID = 1;
+  WHILE (FillID <= 100) DO
+  BEGIN
+    INSERT INTO Table_100 (ID) VALUES (:FillID);
+    FillID = FillID + 1;
+  END
+END
+^^
+
+CREATE PROCEDURE PR_List_1000
+RETURNS (
+  ID Integer
+)
+AS
+BEGIN
+  ID = 2;
+  WHILE (ID <= 1000) DO
+  BEGIN
+    SUSPEND;
+    ID = ID + 2;
+  END
+END
+^^
+SET TERM ; ^^
+
+COMMIT;
+
+EXECUTE PROCEDURE PR_FillTable_10;
+EXECUTE PROCEDURE PR_FillTable_100;
+
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+SELECT
+  Count(*)
+FROM
+  Table_100 t100
+  JOIN Table_10 t10 ON (t10.ID = t100.ID)
+  JOIN PR_List_1000 sp1000 ON (sp1000.ID = t10.ID);
+""",
+ 'expected_stdout':
+  """
+    PLAN HASH (SP1000 NATURAL, T10 NATURAL, T100 NATURAL)
+
+                    COUNT
+    =====================
+                        5
+
+  """
+}
+]
+}

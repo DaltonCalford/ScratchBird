@@ -1,0 +1,61 @@
+{
+'id': 'bugs.core_5279',
+'qmid': None,
+'tracker_id': 'CORE-5279',
+'title': 'Granting access rights to view is broken',
+'description':
+ """
+   Confirmed bug on 3.0.0.32483 (official 3.0 release).
+   Checked on 3.0.1.32539, 4.0.0.262 - works fine.
+ """,
+'min_versions': '3.0.1',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create or alter user tmp$c5279 password '123';
+    commit;
+    recreate table test (id integer);
+    recreate table test1 (id integer);
+    commit;
+    create or alter view v_test as 
+    select * 
+    from test 
+    where id in (select id from test1);
+    commit;
+    grant select on v_test to public;
+    grant select on test1 to view v_test; 
+    commit;
+    insert into test(id) values(1);
+    insert into test(id) values(2);
+    insert into test(id) values(3);
+
+    insert into test1(id) values(3);
+    insert into test1(id) values(4);
+    insert into test1(id) values(5);
+    commit;
+
+    connect '$(DSN)' user tmp$c5279 password '123';
+    set count on;
+    set list on;
+    select current_user as who_am_i, v.* from v_test v;
+    commit;
+    connect '$(DSN)' user sysdba password 'masterkey';
+    drop user tmp$c5279;
+    commit;
+  """,
+  'expected_stdout':
+  """
+    WHO_AM_I                        TMP$C5279
+    ID                              3
+    Records affected: 1
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

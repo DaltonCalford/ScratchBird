@@ -1,0 +1,132 @@
+{
+'id': 'bugs.core_2215',
+'qmid': None,
+'tracker_id': 'CORE-2215',
+'title': 'GROUP BY concatenation with empty string',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.1.4',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE ATTRIBUTES_DICTIONARY (
+    ID INTEGER NOT NULL,
+    NAME VARCHAR(25)
+);
+
+insert into ATTRIBUTES_DICTIONARY (ID, NAME)
+ values (1,'ATTR1');
+insert into ATTRIBUTES_DICTIONARY (ID, NAME)
+ values (2,'ATTR1');
+insert into ATTRIBUTES_DICTIONARY (ID, NAME)
+ values (3,'ATTR2');
+
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select ATR.name, count(*)
+  from ATTRIBUTES_DICTIONARY ATR
+  group by 1 order by 2 desc ;
+
+select ATR.name||'TEXT', count(*)
+  from ATTRIBUTES_DICTIONARY ATR
+  group by 1 order by 2 desc ;
+
+select ATR.name||'', count(*)
+  from ATTRIBUTES_DICTIONARY ATR
+  group by 1 order by 2 desc ;
+
+select ATR.name||'', count(*)
+  from ATTRIBUTES_DICTIONARY ATR
+  group by ATR.name||'' order by count(*) desc ;
+""",
+ 'expected_stdout': """
+NAME                             COUNT
+========================= ============
+ATTR1                                2
+ATTR2                                1
+
+
+CONCATENATION                        COUNT
+============================= ============
+ATTR1TEXT                                2
+ATTR2TEXT                                1
+
+
+CONCATENATION                    COUNT
+========================= ============
+ATTR1                                2
+ATTR2                                1
+
+
+CONCATENATION                    COUNT
+========================= ============
+ATTR1                                2
+ATTR2                                1
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE ATTRIBUTES_DICTIONARY (
+    ID INTEGER NOT NULL,
+    NAME VARCHAR(25)
+);
+
+insert into ATTRIBUTES_DICTIONARY (ID, NAME)
+ values (1,'ATTR1');
+insert into ATTRIBUTES_DICTIONARY (ID, NAME)
+ values (2,'ATTR1');
+insert into ATTRIBUTES_DICTIONARY (ID, NAME)
+ values (3,'ATTR2');
+
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select ATR.name, count(*)
+  from ATTRIBUTES_DICTIONARY ATR
+  group by 1 order by 2 desc ;
+
+select ATR.name||'TEXT', count(*)
+  from ATTRIBUTES_DICTIONARY ATR
+  group by 1 order by 2 desc ;
+
+select ATR.name||'', count(*)
+  from ATTRIBUTES_DICTIONARY ATR
+  group by 1 order by 2 desc ;
+
+select ATR.name||'', count(*)
+  from ATTRIBUTES_DICTIONARY ATR
+  group by ATR.name||'' order by count(*) desc ;
+""",
+ 'expected_stdout': """
+NAME                                      COUNT
+========================= =====================
+ATTR1                                         2
+ATTR2                                         1
+
+
+CONCATENATION                                 COUNT
+============================= =====================
+ATTR1TEXT                                         2
+ATTR2TEXT                                         1
+
+
+CONCATENATION                             COUNT
+========================= =====================
+ATTR1                                         2
+ATTR2                                         1
+
+
+CONCATENATION                             COUNT
+========================= =====================
+ATTR1                                         2
+ATTR2                                         1
+
+"""
+}
+]
+}

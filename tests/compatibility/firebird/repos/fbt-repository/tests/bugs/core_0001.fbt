@@ -1,0 +1,66 @@
+{
+'id': 'bugs.core_0001',
+'qmid': None,
+'tracker_id': 'CORE-0001',
+'title': "FBserver shutsdown when a user password is attempted to be modified to a empty string",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    drop user tmp$c0001;
+    commit;
+    create user tmp$c0001 password '123';
+    commit;
+    alter user tmp$c0001 password '';
+    commit;
+    drop user tmp$c0001;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -Password should not be empty string
+  """,
+  'substitutions': [
+    ('Statement failed, SQLSTATE = HY000',''),
+    ('record not found for user:.*','')
+  ]
+
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create or alter user tmp$c0001 password '123';
+    commit;
+    alter user tmp$c0001 password '';
+    commit;
+    drop user tmp$c0001;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -ALTER USER TMP$C0001 failed
+    -Password should not be empty string
+  """
+}
+]
+}
+
+

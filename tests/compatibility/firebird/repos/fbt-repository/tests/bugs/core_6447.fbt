@@ -1,0 +1,52 @@
+{
+'id': 'bugs.core_6447',
+'qmid': None,
+'tracker_id': 'CORE-6447',
+'title': 'Unexpectedly different text of message for parameterized expression starting from second run',
+'description':
+  """
+    Previous title: "SET SQLDA_DISPLAY ON: different text of message for parameterized expression starting from second run"
+    Confirmed bug on: 4.0.0.2267, 3.0.8.33390.
+    Checked on 4.0.0.2269; 3.0.8.33391 -- all OK.
+  """,
+'min_versions': '3.0.8',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set sqlda_display on;
+    select 1 from rdb$database where current_connection = ? and current_transaction = ?;
+    select 1 from rdb$database where current_connection = ? and current_transaction = ?;
+  """,
+ 'expected_stdout':
+  """
+    01: sqltype: 580 INT64 scale: 0 subtype: 0 len: 8
+    02: sqltype: 580 INT64 scale: 0 subtype: 0 len: 8
+    01: sqltype: 496 LONG scale: 0 subtype: 0 len: 4
+
+    01: sqltype: 580 INT64 scale: 0 subtype: 0 len: 8
+    02: sqltype: 580 INT64 scale: 0 subtype: 0 len: 8
+    01: sqltype: 496 LONG scale: 0 subtype: 0 len: 4
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 07002
+    Dynamic SQL Error
+    -SQLDA error
+    -No SQLDA for input values provided
+
+    Statement failed, SQLSTATE = 07002
+    Dynamic SQL Error
+    -SQLDA error
+    -No SQLDA for input values provided
+  """,
+  'substitutions':[ ('^((?!sqltype|SQLSTATE|(e|E)rror|number|SQLDA).)*$',''), ('[ \t]+',' ') ]
+}
+]
+}

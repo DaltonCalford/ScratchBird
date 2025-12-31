@@ -1,0 +1,203 @@
+{
+'id': 'bugs.core_4058',
+'qmid': None,
+'tracker_id': 'CORE-4058',
+'title': 'Remote Stack Buffer Overflow in Firebird SQL Server (when specially crafted packet is sent via socket API)',
+'description':
+ """
+   Bug was fixed on 2.5.5.26952.
+   On  2.5.2.26540, 2.5.3.26780 and 2.5.4.26856  following lines appear in firebird.log
+   after execution of this test:
+   ===
+        CSPROG        Sun Aug 21 09:49:12 2016
+                *** DUMP ***
+
+        CSPROG        Sun Aug 21 09:49:12 2016
+                Tag=-1 Offset=18 Length=34 Eof=0
+
+        CSPROG        Sun Aug 21 09:49:12 2016
+                Clump 5 at offset 0: AAAABBBBCCCCDDDD
+
+        CSPROG        Sun Aug 21 09:49:12 2016
+                Fatal exception during clumplet dump: Invalid clumplet buffer structure: buffer end before end of clumplet - clumplet too long
+
+        CSPROG        Sun Aug 21 09:49:12 2016
+                Plain dump starting with offset 18: <05><15>localhost.loca
+   ===
+    Checked on:
+        4.0.0.1635 SS: 4.251s.
+        4.0.0.1633 CS: 4.948s.
+        3.0.5.33180 SS: 3.868s.
+        3.0.5.33178 CS: 4.312s.
+        2.5.9.27119 SS: 3.269s.
+        2.5.9.27146 SC: 3.280s.
+
+ """,
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': """
+import sys
+import socket
+import os
+import time
+import difflib
+import subprocess
+from fdb import services
+
+os.environ["ISC_USER"] = 'none'
+os.environ["ISC_PASSWORD"] = 'QwaSeDTy'
+db_file = db_conn.database_name
+engine = str(db_conn.engine_version)
+
+db_conn.close()
+
+#---------------------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb'):
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if os.path.isfile( f_names_list[i]):
+            os.remove( f_names_list[i] )
+            if os.path.isfile( f_names_list[i]):
+                print('ERROR: can not remove file ' + f_names_list[i])
+
+#--------------------------------------------
+
+def svc_get_fb_log( engine, f_fb_log ):
+
+    import subprocess
+
+    if engine.startswith('2.5'):
+        get_firebird_log_key='action_get_ib_log'
+    else:
+        get_firebird_log_key='action_get_fb_log'
+
+    subprocess.call([ context['fbsvcmgr_path'],
+                      "localhost:service_mgr",
+                      "-user", user_name,
+                      "-password", user_password,
+                      get_firebird_log_key
+                    ],
+                     stdout=f_fb_log, stderr=subprocess.STDOUT
+                   )
+    return
+
+#--------------------------------------------
+
+# Get HOME dir of FB instance that is now checked.
+# We will concatenate this string with 'fbsvcmgr' command in order to choose 
+# PROPER binary file when querying services API to shutdown/online DB
+# NOTE: this is NECESSARY if several instances are in work and we did not change
+# PATH variable before call this test!
+
+# NB, 06.12.2016: as of  fdb 1.6.1 one need to EXPLICITLY specify user+password pair when doing connect 
+# via to FB services API by services.connect() - see FB tracker, PYFB-69
+# ("Can not connect to FB services if set ISC_USER & ISC_PASSWORD by os.environ[ ... ]")
+
+fb_home = services.connect(host='localhost', user= user_name, password= user_password).get_home_directory()
+
+fb_conf = os.path.join( fb_home, 'firebird.conf')
+
+#################################################
+# Parsing firebird.conf for getting port  number:
+#################################################
+with open( fb_conf,'r') as f:
+    for line in f:
+        if 'remoteserviceport' in line.lower():
+            fb_port = line.split('=')[1].strip()
+            
+
+f_fblog_before=open( os.path.join(context['temp_directory'],'tmp_4058_fblog_before.txt'), 'w')
+svc_get_fb_log( engine, f_fblog_before )
+flush_and_close( f_fblog_before )
+
+#########################################################
+data_1 =  ""
+data_1 += "00000001000000130000000200000024"
+data_1 += "00000010433a5c746573745f66697265"
+data_1 += "626972640000000400000022"
+data_1 += "0510"
+data_1 += "41414141424242424343434344444444"
+data_1 += "05156c6f63616c"
+data_1 += "686f73742e6c6f63616c646f6d61696e"
+data_1 += "06000000000000090000000100000002"
+data_1 += "00000005000000020000000a00000001"
+data_1 += "000000020000000500000004ffff800b"
+data_1 += "00000001000000020000000500000006"
+data_1 += "000000010000000200000005"
+data_1 += "0000000800" 
+
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.connect( ('localhost', int(fb_port) ) )
+s.send(data_1.decode('hex'))
+s.close()
+    
+# ------------------------------------------------------------------------------------------    
+
+f_fblog_after=open( os.path.join(context['temp_directory'],'tmp_4058_fblog_after.txt'), 'w')
+svc_get_fb_log( engine, f_fblog_after )
+flush_and_close( f_fblog_after )
+
+# Now we can compare two versions of firebird.log and check their difference.
+#################################
+
+oldfb=open(f_fblog_before.name, 'r')
+newfb=open(f_fblog_after.name, 'r')
+
+difftext = ''.join(difflib.unified_diff(
+    oldfb.readlines(), 
+    newfb.readlines()
+  ))
+oldfb.close()
+newfb.close()
+
+f_diff_txt=open( os.path.join(context['temp_directory'],'tmp_4058_diff.txt'), 'w')
+f_diff_txt.write(difftext)
+flush_and_close( f_diff_txt )
+
+# NB: difflib.unified_diff() can show line(s) that present in both files, without marking that line(s) with "+". 
+# Usually these are 1-2 lines that placed just BEFORE difference starts.
+# So we have to check output before display diff content: lines that are really differ must start with "+".
+
+# This should be empty:
+#######################
+with open( f_diff_txt.name,'r') as f:
+    for line in f:
+        if line.startswith('+'):
+            print('UNEXPECTED NEW LINE IN FIREBIRD.LOG: '+line.upper())
+
+# CLEANUP
+#########
+time.sleep(1)
+
+cleanup( [i.name for i in (f_fblog_before, f_fblog_after, f_diff_txt) ] )
+
+""",
+ 'expected_stdout': 
+  """
+  """
+}
+]
+}

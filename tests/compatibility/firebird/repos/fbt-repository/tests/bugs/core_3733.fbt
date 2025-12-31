@@ -1,0 +1,26 @@
+{
+'id': 'bugs.core_3733',
+'qmid': '',
+'tracker_id': 'CORE-3733',
+'title': 'GBAK fails to fix system generators while restoring',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.2',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core3733.fbk',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

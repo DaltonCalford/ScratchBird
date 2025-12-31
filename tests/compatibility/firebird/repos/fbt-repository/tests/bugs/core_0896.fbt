@@ -1,0 +1,26 @@
+{
+'id': 'bugs.core_0896',
+'qmid': 'bugs.core_896',
+'tracker_id': 'CORE-896',
+'title': "SUBSTRING with NULL offset or length don't return NULL",
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select substring('abc' from null) from rdb$database;
+select substring('abc' from 2 for null) from rdb$database;
+""",
+ 'expected_stdout': """SUBSTRING
+=========
+<null>
+
+SUBSTRING
+=========
+<null>
+
+"""
+}
+]
+}

@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_1019',
+'qmid': 'bugs.core_1019-250',
+'tracker_id': 'CORE-1019',
+'title': 'Make information available regading ODS Version and Dialect via SQL',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    -- Refactored 05-may-2018, to be universal for all possible ODS numbers:
+    select 
+          iif( mon$ods_major similar to '[[:digit:]]{1,2}', 'YES', 'NO!') as "ods_major_looks_ok ?"
+        , iif( mon$ods_minor similar to '[[:digit:]]{1,2}', 'YES', 'NO!') as "ods_minor_looks_ok ?"
+        , iif( mon$sql_dialect similar to '[[:digit:]]{1}', 'YES', 'NO!') as "sql_dialect_looks_ok ?"
+        --, mon$forced_writes as "mon_forced_writes"
+    from mon$database;
+  """,
+ 'expected_stdout': 
+ """
+    ods_major_looks_ok ?            YES
+    ods_minor_looks_ok ?            YES
+    sql_dialect_looks_ok ?          YES
+ """
+}
+]
+}

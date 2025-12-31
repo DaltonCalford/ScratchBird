@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_1846',
+'qmid': None,
+'tracker_id': 'CORE-1846',
+'title': 'Allow index walk (ORDER plan) when there is a composite index {A, B} and the query looks like WHERE A = ? ORDER BY B',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test(
+       n1 int
+      ,n2 int
+    );
+    commit;
+    
+    insert into test select rand()*100, rand()*100 from rdb$types;
+    commit;
+    
+    create index test_n1_n2_asc on test(n1, n2);
+    commit;
+    create descending index test_n2_n1_desc on test(n2, n1);
+    commit;
+    
+    set planonly;
+    select * from test where n1 = ? order by n2 asc;
+    select * from test where n2 = ? order by n1 desc;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN (TEST ORDER TEST_N1_N2_ASC)
+    PLAN (TEST ORDER TEST_N2_N1_DESC)
+  """,
+  'substitutions': [('=.*','')]
+}
+]
+}

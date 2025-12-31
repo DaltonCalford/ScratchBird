@@ -1,0 +1,115 @@
+{
+'id': 'bugs.core_1083',
+'qmid': 'bugs.core_1083',
+'tracker_id': 'CORE-1083',
+'title': "User (not SYSDBA) what have privileges with grant option, can't revoke privileges, granted by other user or SYSDBA",
+'description': '',
+'min_versions': '2.1.0',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE TAB1 (COL1 INTEGER, COL2 INTEGER);
+COMMIT;
+CREATE ROLE ROLE1;
+GRANT UPDATE (COL1) ON TAB1 TO TEST WITH GRANT OPTION;
+GRANT UPDATE (COL2) ON TAB1 TO ROLE1;
+COMMIT;
+""",
+ 'test_type': 'Python',
+ 'test_script': """con_1 = kdb.connect(dsn=dsn.encode(),user='TEST',password='test')
+con_1.begin()
+c1 = con_1.cursor()
+try:
+   c1.execute("GRANT UPDATE(COL1) ON TAB1 TO ROLE1")
+   con_1.commit()
+   print ('sucess')
+except Exception, e:
+   print (e[0])
+con_1.begin()
+try:
+   c1.execute("REVOKE UPDATE (COL1) ON TAB1 FROM ROLE1")
+   con_1.commit()
+   print ('sucess')
+except Exception, e:
+   print (e[0])
+con_1.begin()
+try:
+   c1.execute("REVOKE UPDATE (COL2) ON TAB1 FROM ROLE1")
+   con_1.commit()
+   print ('sucess')
+except Exception, e:
+   print (e[0])
+
+
+""",
+ 'expected_stdout': """sucess
+sucess
+Error while executing SQL statement:
+- SQLCODE: -607
+- unsuccessful metadata update
+- TEST is not grantor of Update on TAB1 to ROLE1.
+""",
+ 'resources': ['test_user']
+}
+,
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Refactored 05-JAN-2016: removed dependency on recource 'test_user'.
+    -- Checked on WI-V3.0.0.32266 (SS/SC/CS).
+    -- Checked 06.08.2018: added 'substitutions' because different case if some words in error message
+    -- ('Update' in 3.0.x vs 'UPDATE' in 4.0)
+    -- 3.0.4.33021: OK, 1.563s.
+    -- 4.0.0.1143: OK, 2.703s.
+
+    create or alter user tmp$c1083 password 'QweRtyUioP';
+    commit;
+    recreate table tab1(col1 integer);
+    recreate table tab2(col2 integer);
+    commit;
+    create role role1;
+    grant update (col1) on tab1 to tmp$c1083 with grant option;
+    grant update (col2) on tab2 to role1;
+    commit;
+    
+    connect 'localhost:$(DATABASE_LOCATION)bugs.core_1083.fdb' user 'TMP$C1083' password 'QweRtyUioP';
+    --set bail on;
+    set echo on;
+    grant update(col1) on tab1 to role1;
+    revoke update(col1) on tab1 from role1;
+    revoke update(col2) on tab2 from role1;
+    set echo off;
+    commit;
+    
+    connect 'localhost:$(DATABASE_LOCATION)bugs.core_1083.fdb' user 'SYSDBA' password 'masterkey';
+    set echo on;
+    drop user tmp$c1083;
+    set echo off;
+    commit;
+    --  ('-TMP\$C1083 is not grantor.*', '')
+  """,
+ 'expected_stdout': 
+  """
+    grant update(col1) on tab1 to role1;
+    revoke update(col1) on tab1 from role1;
+    revoke update(col2) on tab2 from role1;
+    drop user tmp$c1083;
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -REVOKE failed
+    -TMP$C1083 is not grantor of UPDATE on TAB2 to ROLE1.
+  """,
+  'substitutions':[
+      ('set echo .*',''),
+      ('-TMP\$C1083 is not grantor of (UPDATE|Update|update) on TAB2 to ROLE1.', '-TMP$C1083 is not grantor of UPDATE on TAB2 to ROLE1.')
+  ]
+}
+]
+}

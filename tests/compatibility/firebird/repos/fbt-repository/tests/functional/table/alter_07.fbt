@@ -1,0 +1,27 @@
+{
+'id': 'functional.table.alter.07',
+'qmid': 'functional.table.alter.alter_table_07',
+'tracker_id': '',
+'title': 'ALTER TABLE - ALTER - POSITION',
+'description': """ALTER TABLE - ALTER - POSITION
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL,
+                   text VARCHAR(32));
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER TABLE test ALTER text POSITION 1;
+SHOW TABLE test;""",
+ 'expected_stdout': """TEXT                            VARCHAR(32) Nullable
+ID                              INTEGER Not Null
+"""
+}
+]
+}

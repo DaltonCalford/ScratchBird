@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_4354',
+'qmid': None,
+'tracker_id': 'CORE-4354',
+'title': 'Parsing of recursive query returns error "Column does not belong to referenced table" for source that HAS such column',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'NONE',
+ 'connection_character_set': 'NONE',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+with recursive
+b as (
+    select 0 rc
+    from rdb$database qa
+
+    union all
+
+    select b.rc+1
+    from b
+        join rdb$database q1 on q1.rdb$relation_id*0=b.rc*0
+        join rdb$database q2 on q2.rdb$relation_id*0=b.rc*0
+    where b.rc=0
+)
+select * from b;
+  """,
+ 'expected_stdout':
+  """
+          RC
+============
+           0
+           1
+  """
+}
+]
+}

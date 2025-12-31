@@ -1,0 +1,227 @@
+{
+'id': 'bugs.core_5606',
+'qmid': None,
+'tracker_id': 'CORE-5606',
+'title': 'slow changes on domain',
+'description':
+ """
+   Poor performance was reproduced after discuss with Vlad (14.09.2017).
+   Test restores DB which has 20 tables, each with 20 fields based on domain 
+   (i.e. 'create table t_NN(f_N bool_emul, ...)', where NN=1,2, ..., 20).
+   Also it has 20 stored procedures, and each of these SP has 20 input 
+   and 20 output parameters declared as 'type of column t_NN.field_NN'
+   NOTE. We have to SKIP preparing phase of such DB because DDL vasts 
+   too much time, so this database was created once and then stored as fbk.
+   After restoring we only run:
+   1) alter domain drop constraint; 
+   2) commit;
+   3) alter domain add check; 
+   4) commit;
+   -- and measure elapsed time of each step (we store time in context variables).
+   Then we evaluate DATEDIFF() for each of 1...4 steps and two RATIOS:
+   A) 'alter domain drop constraint' vs commit just after it;
+   B) 'alter domain add check' vs commit just after it;
+
+   RESULTS of dozen measures :
+   ==========================
+   * on build 31798 (17-aug-2017) ratio for 20 tables, 20 fields and 20 SPs was more than 100
+     (i.e. 'ALTER DOMAIN ADD | DROP' ran ~100x slower than COMMIT);
+   * on build 32802 (06-sep-2017) ratio is about 0.1 (YES, 'alter domain' runs FASTER ~10x than commit!)
+
+   Threshold in this test is assigned to 1 - I hope it will be enough for all subsequent builds of 3.0 and 4.0.
+
+   Checked on:
+       fb30Cs, build 3.0.3.32802: OK, 5.312s.
+       FB30SS, build 3.0.3.32802: OK, 4.297s.
+       FB40CS, build 4.0.0.744: OK, 7.484s.
+       FB40SS, build 4.0.0.744: OK, 7.140s.
+
+   Here is auxiliary batch that allows to get DB with arbitrary number of tables/fields and SPs:
+   ========= start of batch ========
+
+        @echo off
+        setlocal enabledelayedexpansion enableextensions
+
+        @rem Required number of TABLES:
+        set tq=20
+
+        @rem Required number of FIELDS in each table (and also this will be equal to number of SP input and output args):
+        set fq=20
+
+        set tmp_ddl=%~dpn0_tmp_ddl.sql
+        set tmp_run=%~dpn0_tmp_run.sql
+        
+        @rem Name of test DB that will be recreated each time this batch run:
+        set dsn=localhost:C:\MIX\firebird\QA\fbt-repo\tmp\c5602.fdb
+
+        @rem Which FB we test: 2.5 or 3.0 ?
+        if .%1.==.25. (
+            set fbc=C:\MIX\firebird\fb25\bin
+        ) else if .%1.==.30. (
+            set fbc=C:\MIX\firebird\fb30
+        ) else (
+            echo Arg #1 must be specified: 'fbc' = 25 ^| 30 - path to FB binaries.
+            exit
+        )
+
+        if exist C:\MIX\firebird\QA\fbt-repo\tmp\c5602.fdb del C:\MIX\firebird\QA\fbt-repo\tmp\c5602.fdb
+
+        echo create database '!dsn!' page_size 8192; | !fbc!\isql -q -z
+        !fbc!\gfix -w async !dsn!
+        @rem !fbc!\gstat -h !dsn! | findstr /i /c:date /c:attrib
+
+        (
+            echo set bail on;
+            echo create domain bool_emul char(1^) check ( value in ('t','f' ^) ^);
+            echo commit;
+            echo set autoddl off;
+            echo commit;
+            echo.
+        ) >!tmp_ddl!
+
+        for /l %%i in (1,1,!tq!) do (
+            (
+
+               echo create table t_%%i(
+               for /l %%j in (1,1,!fq!) do (
+                 set del=,
+                 if %%j EQU 1 set del=
+                 echo   !del!bool_fld_%%j bool_emul
+               )
+               echo ^);
+               
+               echo set term ^^;
+               echo create or alter procedure p_%%i (
+               for /l %%j in (1,1,!fq!) do (
+                 set del=,
+                 if %%j EQU 1 set del=
+                 echo       !del!inp_%%j type of column t_%%i.bool_fld_%%j
+               )
+               echo ^) returns (
+               for /l %%j in (1,1,!fq!) do (
+                 set del=,
+                 if %%j EQU 1 set del=
+                 echo       !del!out_%%j type of column t_%%i.bool_fld_%%j
+               )
+               echo ^) as begin
+               echo        suspend;
+               echo end
+               echo ^^
+               echo set term ;^^
+               echo commit;
+
+               echo --------------------
+            ) >>!tmp_ddl!
+
+            if %%i EQU !tq! (
+                echo commit; 
+            ) >>!tmp_ddl!
+        ) 
+
+        !fbc!\isql !dsn! -i !tmp_ddl!
+
+
+        (
+            echo --set stat on;
+            echo --set echo on;
+            echo set autoddl OFF;
+            echo commit;
+            echo set term ^^; execute block as begin rdb$set_context('USER_SESSION','DTS_1', current_timestamp^); end ^^ set term ;^^
+            echo alter domain bool_emul drop constraint;
+            echo set term ^^; execute block as begin rdb$set_context('USER_SESSION','DTS_2', current_timestamp^); end ^^ set term ;^^
+            echo commit;
+            echo set term ^^; execute block as begin rdb$set_context('USER_SESSION','DTS_3', current_timestamp^); end ^^ set term ;^^
+            echo alter domain bool_emul add check (value in ('t', 'f'^)^);
+            echo set term ^^; execute block as begin rdb$set_context('USER_SESSION','DTS_4', current_timestamp^); end ^^ set term ;^^
+            echo commit;
+            echo set term ^^; execute block as begin rdb$set_context('USER_SESSION','DTS_5', current_timestamp^); end ^^ set term ;^^
+            echo set list on;
+            echo select 
+            echo      iif(drop_to_commit_ratio ^< 1, 'OK, ACCEPTABLE', '"ALTER DOMAIN DROP CONSTRAINT" too slow: ratio to commit is ' ^|^| drop_to_commit_ratio ^) "DROP CHECK to COMMIT time ratio"
+            echo     ,iif(add_to_commit_ratio ^< 1, 'OK, ACCEPTABLE', '"ALTER DOMAIN ADD CHECK" too slow: ratio to commit is ' ^|^| add_to_commit_ratio ^) "ADD CHECK to COMMIT time ratio"
+            echo from (
+            echo   select 
+            echo       cast(1.0000 * elap_ms_drop_chk/elap_ms_commit_1 as double precision^) as drop_to_commit_ratio
+            echo      ,cast(1.0000 * elap_ms_add_chk/elap_ms_commit_2 as double precision^) as add_to_commit_ratio
+            echo   from (
+            echo     select 
+            echo          datediff(millisecond from dts1 to dts2^) as elap_ms_drop_chk
+            echo         ,datediff(millisecond from dts2 to dts3^) as elap_ms_commit_1
+            echo         ,datediff(millisecond from dts3 to dts4^) as elap_ms_add_chk
+            echo         ,datediff(millisecond from dts4 to dts5^) as elap_ms_commit_2
+            echo     from (
+            echo           select
+            echo              cast( rdb$get_context('USER_SESSION','DTS_1'^) as timestamp ^) as dts1
+            echo             ,cast( rdb$get_context('USER_SESSION','DTS_2'^) as timestamp ^) as dts2
+            echo             ,cast( rdb$get_context('USER_SESSION','DTS_3'^) as timestamp ^) as dts3
+            echo             ,cast( rdb$get_context('USER_SESSION','DTS_4'^) as timestamp ^) as dts4
+            echo             ,cast( rdb$get_context('USER_SESSION','DTS_5'^) as timestamp ^) as dts5
+            echo           from rdb$database
+            echo     ^)
+            echo  ^)
+            echo ^);
+            echo quit;
+        )>!tmp_run!
+
+        !fbc!\isql !dsn! -n -i !tmp_run!
+
+   ======== finish of batch ========
+ """,
+'min_versions': '3.0.3',
+'versions': [
+{
+ 'firebird_version': '3.0.3',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core5602.fbk',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set autoddl OFF;
+    commit;
+    set term ^; execute block as begin rdb$set_context('USER_SESSION','DTS_1', current_timestamp); end ^ set term ;^
+    alter domain bool_emul drop constraint;
+    set term ^; execute block as begin rdb$set_context('USER_SESSION','DTS_2', current_timestamp); end ^ set term ;^
+    commit;
+    set term ^; execute block as begin rdb$set_context('USER_SESSION','DTS_3', current_timestamp); end ^ set term ;^
+    alter domain bool_emul add check (value in ('t', 'f'));
+    set term ^; execute block as begin rdb$set_context('USER_SESSION','DTS_4', current_timestamp); end ^ set term ;^
+    commit;
+    set term ^; execute block as begin rdb$set_context('USER_SESSION','DTS_5', current_timestamp); end ^ set term ;^
+    set list on;
+    select 
+         iif(drop_to_commit_ratio < 1, 'OK, ACCEPTABLE', 'ALTER DOMAIN DROP CONSTRAINT runs slowly: ratio to commit is ' || drop_to_commit_ratio ) "DROP CHECK to COMMIT time ratio"
+        ,iif(add_to_commit_ratio < 1, 'OK, ACCEPTABLE', 'ALTER DOMAIN ADD CHECK runs slowly: ratio to commit is ' || add_to_commit_ratio ) "ADD CHECK to COMMIT time ratio"
+    from (
+      select 
+          cast(1.0000 * elap_ms_drop_chk/elap_ms_commit_1 as double precision) as drop_to_commit_ratio
+         ,cast(1.0000 * elap_ms_add_chk/elap_ms_commit_2 as double precision) as add_to_commit_ratio
+      from (
+        select 
+             datediff(millisecond from dts1 to dts2) as elap_ms_drop_chk
+            ,datediff(millisecond from dts2 to dts3) as elap_ms_commit_1
+            ,datediff(millisecond from dts3 to dts4) as elap_ms_add_chk
+            ,datediff(millisecond from dts4 to dts5) as elap_ms_commit_2
+        from (
+              select
+                 cast( rdb$get_context('USER_SESSION','DTS_1') as timestamp ) as dts1
+                ,cast( rdb$get_context('USER_SESSION','DTS_2') as timestamp ) as dts2
+                ,cast( rdb$get_context('USER_SESSION','DTS_3') as timestamp ) as dts3
+                ,cast( rdb$get_context('USER_SESSION','DTS_4') as timestamp ) as dts4
+                ,cast( rdb$get_context('USER_SESSION','DTS_5') as timestamp ) as dts5
+              from rdb$database
+        )
+     )
+    );
+  """,
+  'expected_stdout':
+  """
+    DROP CHECK to COMMIT time ratio OK, ACCEPTABLE
+    ADD CHECK to COMMIT time ratio  OK, ACCEPTABLE
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

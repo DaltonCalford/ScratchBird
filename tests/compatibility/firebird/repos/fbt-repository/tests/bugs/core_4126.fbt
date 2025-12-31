@@ -1,0 +1,298 @@
+{
+'id': 'bugs.core_4126',
+'qmid': None,
+'tracker_id': 'CORE-4126',
+'title': "gbak -r fails in restoring all stored procedures/functions in packages",
+'description':
+ """
+   Test creates table and procedure + function - both standalone and packaged.
+   Then we do (with saving result in logs):
+   1) checking query;
+   2) isql -x
+   After this we try to backup and restore - STDERR should be empty.
+   Finally, we try again to run checking query and extract metadata - and compare 
+   their result with previously stored one. 
+   Difference between them should be EMPTY with excluding name of databases.
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'Python',
+ 'init_script':
+  """
+    create or alter procedure p01 as begin end;
+    create or alter function f01() returns int as begin end;
+    recreate package pg_01 as begin end;
+    commit;
+
+    recreate table test (x smallint);
+    commit;
+
+    set term ^;
+    execute block as
+    begin
+        begin
+          execute statement 'drop domain dm_nums';
+          when any do begin end
+        end
+        begin
+          execute statement 'drop collation nums_coll';
+          when any do begin end
+        end
+    end
+    ^
+    set term ;^
+    commit;
+
+    create collation nums_coll for utf8 from unicode case insensitive 'NUMERIC-SORT=1';
+    create domain dm_nums as varchar(10) character set utf8 collate nums_coll;
+    commit;
+
+    recreate table test (id int, s dm_nums);
+    commit;
+
+    set term ^;
+    create or alter procedure p01(a_id int) returns (o_s type of dm_nums ) as
+    begin
+            for select reverse(s) from test where id = :a_id into o_s do suspend;
+    end
+    ^
+    create or alter function f01(a_id int) returns dm_nums as
+    begin
+            return reverse((select s from test where id = :a_id));
+    end
+    ^
+    recreate package pg_01 as 
+    begin 
+        procedure p01(a_id int) returns (o_s type of dm_nums );
+        function f01(a_id int) returns dm_nums;
+    end
+    ^
+    create package body pg_01 as
+    begin
+        procedure p01(a_id int) returns (o_s type of dm_nums ) as
+        begin
+            for select s from test where id = :a_id into o_s do suspend;
+        end
+        function f01(a_id int) returns dm_nums as
+        begin
+            return (select s from test where id = :a_id);
+        end
+    end
+    ^
+    set term ;^
+    commit;
+
+    insert into test(id, s) values(1, '1234');
+    insert into test(id, s) values(2, '125');
+    insert into test(id, s) values(3, '16');
+    commit;
+
+  """,
+ 'test_script':
+  """\
+import os
+import time
+import subprocess
+import difflib
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_file=db_conn.database_name
+db_conn.close()
+
+#---------------------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb'):
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if os.path.isfile( f_names_list[i]):
+            os.remove( f_names_list[i] )
+            if os.path.isfile( f_names_list[i]):
+                print('ERROR: can not remove file ' + f_names_list[i])
+
+#--------------------------------------------
+
+tmpfbk1=os.path.join(context['temp_directory'],'tmp_4126.fbk')
+if os.path.isfile(tmpfbk1):
+    os.remove(tmpfbk1)
+
+tmpfdb1=os.path.join(context['temp_directory'],'tmp_4126.fdb')
+if os.path.isfile(tmpfdb1):
+    os.remove(tmpfdb1)
+
+dml_test = '''\
+    set list on;
+
+    select t.id, p.o_s as standalone_proc_result
+    from test t left join p01(t.id) p on 1=1
+    order by 2;
+
+    select t.id, f01(t.id) as standalone_func_result from test t 
+    order by 2;
+
+    select t.id, p.o_s as packaged_proc_result
+    from test t left join pg_01.p01(t.id) p on 1=1
+    order by 2;
+
+    select t.id, pg_01.f01(t.id) as packaged_func_result from test t 
+    order by 2;
+'''
+fbb=''
+
+
+# FIRST RUN DML_TEST
+####################
+
+f_run_dml_sql = open( os.path.join(context['temp_directory'],'tmp_4126_dml.sql'), 'w')
+f_run_dml_sql.write(dml_test)
+flush_and_close( f_run_dml_sql )
+
+f_run_dml_log_1 = open( os.path.join(context['temp_directory'],'tmp_4126_dml_1.log'), 'w')
+subprocess.call( [context['isql_path'], dsn, "-i", f_run_dml_sql.name, "-ch", "utf8" ],
+                 stdout = f_run_dml_log_1,
+                 stderr = subprocess.STDOUT
+               )
+flush_and_close( f_run_dml_log_1 )
+
+
+# EXTRACT METADATA-1
+####################
+
+f_extract_meta1_sql = open( os.path.join(context['temp_directory'],'tmp_4126_meta1.log'), 'w')
+subprocess.call( [context['isql_path'], dsn, "-x"],
+                 stdout = f_extract_meta1_sql,
+                 stderr = subprocess.STDOUT
+               )
+flush_and_close( f_extract_meta1_sql )
+
+# TRY TO BACKUP AND RESTORE
+###########################
+
+f_backup_log=open( os.path.join(context['temp_directory'],'tmp_4126_backup.log'), "w")
+f_backup_err=open( os.path.join(context['temp_directory'],'tmp_4126_backup.err'), "w")
+
+subprocess.call([context['fbsvcmgr_path'],"localhost:service_mgr",
+                 "action_backup", "verbose",
+                 "dbname", db_file,
+                 "bkp_file", tmpfbk1
+                ],
+                stdout=f_backup_log, stderr=f_backup_err)
+flush_and_close( f_backup_log )
+flush_and_close( f_backup_err )
+
+f_restore_log=open( os.path.join(context['temp_directory'],'tmp_4126_restore.log'), "w")
+f_restore_err=open( os.path.join(context['temp_directory'],'tmp_4126_restore.err'), "w")
+subprocess.call([context['fbsvcmgr_path'],"localhost:service_mgr",
+                 "action_restore", "res_replace", "verbose",
+                 "bkp_file", tmpfbk1, 
+                 "dbname", tmpfdb1 
+                ],
+                stdout=f_restore_log, stderr=f_restore_err)
+flush_and_close( f_restore_log )
+flush_and_close( f_restore_err )
+
+# EXTRACT METADATA-2
+####################
+
+f_extract_meta2_sql = open( os.path.join(context['temp_directory'],'tmp_4126_meta2.log'), 'w')
+subprocess.call( [context['isql_path'], 'localhost:'+tmpfdb1, "-x"],
+                 stdout = f_extract_meta2_sql,
+                 stderr = subprocess.STDOUT
+               )
+flush_and_close( f_extract_meta2_sql )
+
+# AGAIN RUN DML_TEST
+####################
+
+f_run_dml_log_2 = open( os.path.join(context['temp_directory'],'tmp_4126_dml_2.log'), 'w')
+subprocess.call( [context['isql_path'], 'localhost:'+tmpfdb1, "-i", f_run_dml_sql.name, "-ch", "utf8" ],
+                 stdout = f_run_dml_log_2,
+                 stderr = subprocess.STDOUT
+               )
+flush_and_close( f_run_dml_log_2 )
+
+
+# 7. CHECKS
+###########
+# 1) STDERR for backup and restore - they all must be EMPTY.
+
+f_list=[f_backup_err, f_restore_err]
+for i in range(len(f_list)):
+   f_name=f_list[i].name
+   if os.path.getsize(f_name) > 0:
+       with open( f_name,'r') as f:
+           for line in f:
+               print("Unexpected STDERR, file "+f_name+": "+line)
+
+# 2) diff between dml_1.log and dml_2.log should be EMPTY.
+# 3) diff between meta1.log and meta2.log should be EMPTY.
+
+f_diff_txt=open( os.path.join(context['temp_directory'],'tmp_4126_diff.txt'), 'w')
+f_old=[]
+f_new=[]
+
+f_old.append(f_extract_meta1_sql) # DDL: what we have BEFORE database backup
+f_old.append(f_run_dml_log_1)     # DML: result of querying tables before DB backup
+f_new.append(f_extract_meta2_sql) # DDL: what we have AFTER database restore
+f_new.append(f_run_dml_log_2)     # DML: result of querying tables AFTER database restore
+
+for i in range(len(f_old)):
+    old_file=open(f_old[i].name,'r')
+    new_file=open(f_new[i].name,'r')
+
+    f_diff_txt.write( ''.join( difflib.unified_diff( old_file.readlines(), new_file.readlines() ) ) )
+
+    old_file.close()
+    new_file.close()
+
+flush_and_close( f_diff_txt )
+
+# Should be EMPTY:
+##################
+with open( f_diff_txt.name,'r') as f:
+    for line in f:
+        if line.split() and not('---' in line or '+++' in line or '@@' in line or 'SET SQL DIALECT' in line or 'CREATE DATABASE' in line or 'collation'.upper() in line.upper()):
+            print( 'Unexpected diff: ' + line )
+
+
+# Cleanup:
+##########
+cleanup( [i.name for i in (f_backup_log, f_backup_err, f_restore_log, f_restore_err, f_extract_meta1_sql, f_extract_meta2_sql, f_run_dml_sql, f_run_dml_log_1, f_run_dml_log_2, f_diff_txt) ] )
+
+os.remove(tmpfdb1) 
+os.remove(tmpfbk1)
+
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions':[
+    ('CREATE DATABASE.*', 'CREATE DATABASE'),
+    ('CREATE COLLATION .*','CREATE COLLATION')
+  ]
+}
+]
+}

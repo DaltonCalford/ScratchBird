@@ -1,0 +1,113 @@
+{
+'id': 'bugs.core_0856',
+'qmid': 'bugs.core_856',
+'tracker_id': 'CORE-856',
+'title': 'Unable to set FName, MName, LName fields in security to blank',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': '''commands = """add BLNKNMS -pw PWD -fname X -mname Y -lname Z
+display BLNKNMS
+modify BLNKNMS -pw PWD -fname -mname -lname
+display BLNKNMS
+delete BLNKNMS
+quit
+"""
+runProgram('gsec',['-user',user_name,'-pas',user_password],commands)
+''',
+ 'expected_stdout': """     user name                      uid   gid     full name
+------------------------------------------------------------------------------------------
+BLNKNMS                             0     0      X Y Z
+     user name                      uid   gid     full name
+------------------------------------------------------------------------------------------
+BLNKNMS                             0     0
+""",
+ 'substitutions': [('GSEC> ','')]
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': '''commands = """add BLNKNMS -pw PWD -fname X -mname Y -lname Z
+display BLNKNMS
+modify BLNKNMS -pw PWD -fname -mname -lname
+display BLNKNMS
+delete BLNKNMS
+quit
+"""
+db_conn.close()
+runProgram('gsec',['-user',user_name,'-pas',user_password],commands)
+''',
+ 'expected_stdout':
+  """
+     user name                    uid   gid admin     full name
+     BLNKNMS                             0     0           X Y Z
+     user name                    uid   gid admin     full name
+     BLNKNMS                             0     0
+  """,
+  'substitutions': [
+     ('GSEC>.*',''),
+     ('-.*',''),
+     ('.*gsec is deprecated.*','')
+  ]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create or alter user tmp$c0856 password '123'
+      firstname  '....:....1....:....2....:....3..'
+      middlename '....:....1....:....2....:....3..'
+      lastname   '....:....1....:....2....:....3..'
+    ;
+    commit;
+    set list on;
+
+    select sec$user_name, sec$first_name, sec$middle_name, sec$last_name
+    from sec$users where upper(sec$user_name)=upper('tmp$c0856');
+
+    alter user tmp$c0856
+    firstname ''
+    middlename _ascii x'09'
+    lastname _ascii x'0A'
+    ;
+
+    commit;
+    select 
+        sec$user_name, 
+        octet_length(sec$first_name), 
+        octet_length(sec$middle_name), 
+        octet_length(sec$last_name), 
+        ascii_val(left(sec$first_name,1)), 
+        ascii_val(left(sec$middle_name,1)), 
+        ascii_val(left(sec$last_name,1))
+    from sec$users where upper(sec$user_name)=upper('tmp$c0856');
+    commit;
+    
+    drop user tmp$c0856;
+    commit;
+  """,
+ 'expected_stdout':
+  """
+    SEC$USER_NAME                   TMP$C0856
+    SEC$FIRST_NAME                  ....:....1....:....2....:....3..
+    SEC$MIDDLE_NAME                 ....:....1....:....2....:....3..
+    SEC$LAST_NAME                   ....:....1....:....2....:....3..
+
+    SEC$USER_NAME                   TMP$C0856
+    OCTET_LENGTH                    <null>
+    OCTET_LENGTH                    1
+    OCTET_LENGTH                    1
+    ASCII_VAL                       <null>
+    ASCII_VAL                       9
+    ASCII_VAL                       10
+  """
+}
+]
+}

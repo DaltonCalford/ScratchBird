@@ -1,0 +1,72 @@
+{
+'id': 'bugs.core_3967',
+'qmid': None,
+'tracker_id': 'CORE-3967',
+'title': 'subselect with reference to outer select fails',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'employee-ods11.fbk',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    select r1.rdb$relation_name rel_name
+    from rdb$relation_fields f1
+    join rdb$relations r1 on f1.rdb$relation_name = r1.rdb$relation_name
+    where
+        f1.rdb$field_name = upper('emp_no') and
+        not exists(
+            select r2.rdb$relation_name
+            from rdb$relation_fields f2
+            join rdb$relations r2 on f2.rdb$relation_name=r1.rdb$relation_name
+            where f2.rdb$field_name = upper('phone_ext')
+        )
+    order by 1;
+  """,
+ 'expected_stdout': 
+  """
+    REL_NAME                        EMPLOYEE_PROJECT
+    REL_NAME                        SALARY_HISTORY
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'employee-ods12.fbk',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    select r1.rdb$relation_name rel_name
+    from rdb$relation_fields f1
+    join rdb$relations r1 on f1.rdb$relation_name = r1.rdb$relation_name
+    where
+        f1.rdb$field_name = upper('emp_no') and
+        not exists(
+            select r2.rdb$relation_name
+            from rdb$relation_fields f2
+            join rdb$relations r2 on f2.rdb$relation_name=r1.rdb$relation_name
+            where f2.rdb$field_name = upper('phone_ext')
+        )
+    order by 1;
+  """,
+ 'expected_stdout': 
+  """
+    REL_NAME                        EMPLOYEE_PROJECT
+    REL_NAME                        SALARY_HISTORY
+  """
+}
+]
+}

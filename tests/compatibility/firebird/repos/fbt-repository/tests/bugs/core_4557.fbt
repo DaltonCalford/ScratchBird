@@ -1,0 +1,57 @@
+{
+'id': 'bugs.core_4557',
+'qmid': None,
+'tracker_id': 'CORE-4557',
+'title': 'FB 3.0 crashes on EXIT (or QUIT) command if use UTF8-collation + create domain based on it + issue SHOW DOMAIN',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  create collation name_coll for utf8 from unicode CASE INSENSITIVE;
+  create collation nums_coll for utf8 from unicode CASE INSENSITIVE 'NUMERIC-SORT=1';
+  commit;
+  create domain dm_name as varchar(80) character set utf8 collate name_coll;
+  create domain dm_nums as varchar(20) character set utf8 collate nums_coll;
+  commit;
+  """,
+ 'test_script':
+  """
+  show domain; -- FB crashes if this will be uncommented
+  exit; 
+  """,
+ 'expected_stdout':
+  """
+  DM_NAME                                DM_NUMS
+  """
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  create collation name_coll for utf8 from unicode CASE INSENSITIVE;
+  create collation nums_coll for utf8 from unicode CASE INSENSITIVE 'NUMERIC-SORT=1';
+  commit;
+  create domain dm_name as varchar(80) character set utf8 collate name_coll;
+  create domain dm_nums as varchar(20) character set utf8 collate nums_coll;
+  commit;
+  """,
+ 'test_script':
+  """
+  show domain; -- FB crashes if this will be uncommented
+  exit; 
+  """,
+ 'expected_stdout':
+  """
+    DM_NAME
+    DM_NUMS
+  """
+}
+]
+}

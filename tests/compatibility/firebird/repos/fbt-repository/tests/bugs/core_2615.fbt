@@ -1,0 +1,43 @@
+{
+'id': 'bugs.core_2615',
+'qmid': None,
+'tracker_id': 'CORE-2615',
+'title': 'Silent truncation when using utf8 parameters and utf8 client character set encoding',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE test (c CHAR(10) CHARACTER SET UTF8);
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """INSERT INTO test VALUES ('012345679012345');
+COMMIT;""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 22001
+arithmetic exception, numeric overflow, or string truncation
+-string right truncation
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE test (c CHAR(10) CHARACTER SET UTF8);
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """INSERT INTO test VALUES ('012345679012345');
+COMMIT;""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 22001
+arithmetic exception, numeric overflow, or string truncation
+-string right truncation
+-expected length 10, actual 15
+"""
+}
+]
+}

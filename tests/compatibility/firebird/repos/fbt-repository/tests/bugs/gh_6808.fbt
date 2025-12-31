@@ -1,0 +1,35 @@
+{
+'id': 'bugs.gh_6808',
+'qmid': None,
+'tracker_id': '',
+'title': "assertion in tomcrypt when key length for rc4 too small",
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/6808
+
+    Checked on intermediate builds 4.0.0.2481, 5.0.0.22 (timestamps: 13.05.2021 14:54 and 15:04)-- all OK.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set blob all;
+    set heading off;
+    select encrypt(null using aes mode cfb key 'AbcdAbcdAbcdAbcd' iv '0123456789012345') from rdb$database;
+    select decrypt(null using aes mode ofb key '0123456701234567' iv '1234567890123456') from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    <null>
+    <null>
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

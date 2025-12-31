@@ -1,0 +1,56 @@
+{
+'id': 'bugs.core_4645',
+'qmid': None,
+'tracker_id': 'CORE-4645',
+'title': 'internal Firebird consistency check (cannot find tip page (165), file: tra.cpp line: 2375)',
+'description': 
+ """
+   Both STDOUT and STDERR in this test should be empty.
+   Confirmed:
+   1) bugcheck exception on 3.0.0.32378;  4.0.0.98:
+       Statement failed, SQLSTATE = XX000
+       internal Firebird consistency check (cannot find tip page (165), file: tra.cpp line: 2303)
+       Statement failed, SQLSTATE = XX000
+       internal Firebird consistency check (can't continue after bugcheck)
+   2) normal work on 3.0.0.32471; 4.0.0.127.
+ """,
+'min_versions': '2.5',
+'versions': [
+{
+ 'firebird_version': '2.5.6',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+db_conn.close()
+runProgram('gfix',[dsn,'-user',user_name,'-pas',user_password,'-mode','read_only'])
+script='''
+    commit;
+    set transaction read committed;
+    set term ^;
+    execute block as
+        declare n int = 20000;
+    begin
+        while (n>0) do 
+            in autonomous transaction do
+            select :n-1 from rdb$database into n;
+    end
+    ^
+    set term ;^
+    commit;
+'''
+runProgram('isql',[dsn,'-user',user_name,'-password',user_password],script)
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

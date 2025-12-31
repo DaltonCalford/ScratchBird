@@ -1,0 +1,49 @@
+{
+'id': 'bugs.core_3210',
+'qmid': None,
+'tracker_id': 'CORE-3210',
+'title': 'The cursor identified in the UPDATE or DELETE statement is not positioned on a row. no current record for fetch operation in SELECT query',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core3210.fbk',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    select count(*) cnt
+    from (
+        select
+        depozit.number || ' ' ||
+        coalesce(
+                    iif(
+                        nast.bul_id is not null
+                        , coalesce(bulgarians.name,'') || ' ' || coalesce(bulgarians.family,'')
+                        , coalesce(foreigners.name_cyr,foreigners.name_lat)
+                    )
+                ,''
+                ) as name
+        from
+            depozit left join nast on nast.id = depozit.nast_id
+            left join bulgarians on bulgarians.id = nast.bul_id
+            left join foreigners on foreigners.id = nast.for_id
+        order by 1 --- ==> no current record for fetch operation
+    );
+  """,
+ 'expected_stdout': 
+  """
+    CNT                             171
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

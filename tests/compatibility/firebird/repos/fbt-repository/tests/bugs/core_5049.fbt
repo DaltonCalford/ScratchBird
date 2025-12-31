@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_5049',
+'qmid': None,
+'tracker_id': 'CORE-5049',
+'title': 'Regression: incorrect calculation of byte-length for view columns',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Confirmed:
+    -- 1) FAULT on WI-V3.0.0.32208. 
+    -- 2) SUCCESS on LI-V3.0.0.32233, Rev: 62699.
+    create or alter view v_test as
+    select
+       cast(rdb$character_set_name as varchar(2000)) as test_f01
+      ,cast(rdb$character_set_name as varchar(2000)) as test_f02
+      ,cast(rdb$character_set_name as varchar(2000)) as test_f03
+    from
+      rdb$database
+    rows 1;
+    
+    set sqlda_display on;
+    set list on;
+    select * from v_test;
+  """,
+ 'expected_stdout': 
+  """
+    01: sqltype: 448 VARYING Nullable scale: 0 subtype: 0 len: 8000 charset: 4 UTF8
+    02: sqltype: 448 VARYING Nullable scale: 0 subtype: 0 len: 8000 charset: 4 UTF8
+    03: sqltype: 448 VARYING Nullable scale: 0 subtype: 0 len: 8000 charset: 4 UTF8
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions': [('^((?!sqltype).)*$',''),('[ ]+',' '),('[\t]*',' ')]
+}
+]
+}

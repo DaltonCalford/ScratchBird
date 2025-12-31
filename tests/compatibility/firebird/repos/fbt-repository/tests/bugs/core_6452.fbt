@@ -1,0 +1,51 @@
+{
+'id': 'bugs.core_6452',
+'qmid': None,
+'tracker_id': 'CORE-6452',
+'title': 'SIMILAR TO leads to an infinite loop',
+'description':
+ """
+   One more test to check 're2' library.
+   Confirmed on 3.0.8, no problems with 4.0 (checked on 4.0.0.2296).
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set heading off;
+    select
+      1
+    from
+      RDB$DATABASE
+    where
+      '<licenc>
+            <items>
+                <item title="CallCenter" value="false"/>
+                <item title="CRM" value="false"/>
+                <item title="Securities" value="false"/>
+                <item title="Credits" value="false"/>
+                <item title="Registry" value="true"/>
+                <item title="Campaign" value="true"/>
+                <item title="Damages" value="false"/>
+                <item title="Prints" value="false"/>
+                <item title="Online" value="true"/>
+             </items>
+       </licenc>' similar to '%title="_{3,40}" value="true"%';
+  """,
+ 'expected_stdout':
+  """
+    1
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

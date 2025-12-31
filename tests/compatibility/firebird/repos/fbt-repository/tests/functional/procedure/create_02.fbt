@@ -1,0 +1,88 @@
+{
+'id': 'functional.procedure.create.02',
+'qmid': 'functional.procedure.create.create_procedure_02',
+'tracker_id': '',
+'title': 'CREATE PROCEDURE - Input parameters',
+'description': """CREATE PROCEDURE - Input parameters
+
+Dependencies:
+CREATE DATABASE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE PROCEDURE test(
+  p1 SMALLINT, p2 INTEGER, p3 FLOAT, p4 DOUBLE PRECISION, p5 DECIMAL(9,3), p6 NUMERIC(10,4),
+  p7 DATE, p8 TIME, p9 TIMESTAMP, p10 CHAR(40), p11 VARCHAR(60), p12 NCHAR(70))
+AS
+BEGIN
+  POST_EVENT 'Test';
+END ^
+SET TERM ;^
+commit;
+SHOW PROCEDURE test;
+""",
+ 'expected_stdout': """Procedure text:
+=============================================================================
+
+BEGIN
+  POST_EVENT 'Test';
+END
+=============================================================================
+Parameters:
+P1                                INPUT SMALLINT
+P2                                INPUT INTEGER
+P3                                INPUT FLOAT
+P4                                INPUT DOUBLE PRECISION
+P5                                INPUT DECIMAL(9, 3)
+P6                                INPUT NUMERIC(10, 4)
+P7                                INPUT DATE
+P8                                INPUT TIME
+P9                                INPUT TIMESTAMP
+P10                               INPUT CHAR(40)
+P11                               INPUT VARCHAR(60)
+P12                               INPUT CHAR(70)  CHARACTER SET ISO8859_1
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE PROCEDURE test(
+  p1 SMALLINT, p2 INTEGER, p3 FLOAT, p4 DOUBLE PRECISION, p5 DECIMAL(9,3), p6 NUMERIC(10,4),
+  p7 DATE, p8 TIME, p9 TIMESTAMP, p10 CHAR(40), p11 VARCHAR(60), p12 NCHAR(70))
+AS
+BEGIN
+  POST_EVENT 'Test';
+END ^
+SET TERM ;^
+commit;
+SHOW PROCEDURE test;
+""",
+ 'expected_stdout': """Procedure text:
+=============================================================================
+BEGIN
+  POST_EVENT 'Test';
+END
+=============================================================================
+Parameters:
+P1                                INPUT SMALLINT
+P2                                INPUT INTEGER
+P3                                INPUT FLOAT
+P4                                INPUT DOUBLE PRECISION
+P5                                INPUT DECIMAL(9, 3)
+P6                                INPUT NUMERIC(10, 4)
+P7                                INPUT DATE
+P8                                INPUT TIME
+P9                                INPUT TIMESTAMP
+P10                               INPUT CHAR(40)
+P11                               INPUT VARCHAR(60)
+P12                               INPUT CHAR(70) CHARACTER SET ISO8859_1
+"""
+}
+]
+}

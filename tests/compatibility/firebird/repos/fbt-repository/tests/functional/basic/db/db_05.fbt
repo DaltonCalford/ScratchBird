@@ -1,0 +1,54 @@
+{
+'id': 'functional.basic.db.05',
+'qmid': 'functional.basic.db.db_05',
+'tracker_id': '',
+'title': 'Empty DB - RDB$DEPENDENCIES',
+'description': 'Check for correct content of RDB$DEPENDENCIES in empty database.',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    set count on;
+    select * from rdb$dependencies
+    order by
+        rdb$dependent_name
+        ,rdb$depended_on_name
+        ,rdb$field_name
+        ,rdb$dependent_type
+        ,rdb$depended_on_type
+    ;
+  """,
+  'expected_stdout':
+  """
+    Records affected: 0
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    set count on;
+    select * from rdb$dependencies
+    order by
+        rdb$dependent_name
+        ,rdb$depended_on_name
+        ,rdb$field_name
+        ,rdb$dependent_type
+        ,rdb$depended_on_type
+        ,rdb$package_name -- avail. only for FB 3.0+
+    ;
+  """,
+  'expected_stdout':
+  """
+    Records affected: 0
+  """
+}
+]
+}

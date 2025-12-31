@@ -1,0 +1,97 @@
+{
+'id': 'functional.database.alter.03',
+'qmid': '',
+'tracker_id': '',
+'title': 'Alter database: add file with name of this database or previously added files must fail',
+'description': 'Add same file twice must fail',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': """cursor=db_conn.cursor()
+cursor.execute("ALTER DATABASE ADD FILE '$(DATABASE_LOCATION)TEST.G00' STARTING 10000")
+db_conn.commit()
+try:
+  cursor.execute("ALTER DATABASE ADD FILE '$(DATABASE_LOCATION)TEST.G00' STARTING 20000")
+  db_conn.commit()
+except kdb.ProgrammingError, (errno,errmsg):
+  print (errno, errmsg)
+except:
+  print ("Unexpected exception",sys.exc_info()[0])
+  print ("Arguments",sys.exc_info()[1])
+""",
+ 'expected_stdout': '-607 isc_dsql_execute: unsuccessful metadata update. Cannot add file with the same name as the database or added files.'
+},
+{
+ 'firebird_version': '1.5',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': """cursor=db_conn.cursor()
+cursor.execute("ALTER DATABASE ADD FILE '$(DATABASE_LOCATION)TEST.G00' STARTING 10000")
+db_conn.commit()
+try:
+  cursor.execute("ALTER DATABASE ADD FILE '$(DATABASE_LOCATION)TEST.G00' STARTING 20000")
+  db_conn.commit()
+except kdb.ProgrammingError, (errno,errmsg):
+  print (errno, errmsg)
+except:
+  print ("Unexpected exception",sys.exc_info()[0])
+  print ("Arguments",sys.exc_info()[1])
+""",
+ 'expected_stdout': """-607 isc_dsql_execute:
+  unsuccessful metadata update
+  Cannot add file with the same name as the database or added files
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': """cursor=db_conn.cursor()
+cursor.execute("ALTER DATABASE ADD FILE '$(DATABASE_LOCATION)TEST.G00' STARTING 10000")
+db_conn.commit()
+try:
+  cursor=db_conn.cursor()
+  cursor.execute("ALTER DATABASE ADD FILE '$(DATABASE_LOCATION)TEST.G00' STARTING 20000")
+  db_conn.commit()
+except kdb.DatabaseError, e:
+  print (e[0])
+except:
+  print ("Unexpected exception",sys.exc_info()[0])
+  print ("Arguments",sys.exc_info()[1])""",
+ 'expected_stdout': """Error while executing SQL statement:
+- SQLCODE: -607
+- unsuccessful metadata update
+- Cannot add file with the same name as the database or added files
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': """cursor=db_conn.cursor()
+cursor.execute("ALTER DATABASE ADD FILE '$(DATABASE_LOCATION)TEST.G00' STARTING 10000")
+db_conn.commit()
+try:
+  cursor=db_conn.cursor()
+  cursor.execute("ALTER DATABASE ADD FILE '$(DATABASE_LOCATION)TEST.G00' STARTING 20000")
+  db_conn.commit()
+except kdb.DatabaseError, e:
+  print (e[0])
+except:
+  print ("Unexpected exception",sys.exc_info()[0])
+  print ("Arguments",sys.exc_info()[1])""",
+ 'expected_stdout':
+  """
+  Error while executing SQL statement:
+    - SQLCODE: -607
+    - unsuccessful metadata update
+    - ALTER DATABASE failed
+    - Cannot add file with the same name as the database or added files
+  """
+}
+
+]
+}

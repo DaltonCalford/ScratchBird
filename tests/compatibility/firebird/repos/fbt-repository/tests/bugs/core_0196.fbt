@@ -1,0 +1,77 @@
+{
+'id': 'bugs.core_0190',
+'qmid': None,
+'tracker_id': 'CORE-0190',
+'title': "SYSDBA can grant non existent roles",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    drop user tmp$c0196;
+    commit;
+    create user tmp$c0196 password '123';
+    commit;
+    grant no_such_role to tmp$c0196;
+    commit;
+    set count on;
+    set list on;
+    select * from rdb$user_privileges where rdb$user = upper('tmp$c0196') rows 1;
+    commit;
+    drop user tmp$c0196;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+    Records affected: 0
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 28000
+    unsuccessful metadata update
+    -SQL role NO_SUCH_ROLE does not exist
+  """,
+  'substitutions': [
+    ('Statement failed, SQLSTATE = HY000',''),
+    ('record not found for user:.*','')
+  ]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create or alter user tmp$c0196 password '123';
+    commit;
+    grant no_such_role to tmp$c0196;
+    commit;
+    set count on;
+    set list on;
+    select * from rdb$user_privileges where rdb$user = upper('tmp$c0196') rows 1;
+    commit;
+    drop user tmp$c0196;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+    Records affected: 0
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 28000
+    unsuccessful metadata update
+    -GRANT failed
+    -SQL role NO_SUCH_ROLE does not exist
+  """,
+  'substitutions': [
+    ('Statement failed, SQLSTATE = HY000',''),
+    ('record not found for user:.*','')
+  ]
+}
+]
+}

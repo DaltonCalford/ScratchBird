@@ -1,0 +1,18 @@
+{
+'id': 'functional.domain.create.23',
+'qmid': 'functional.domain.create.create_domain_23',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - NATIONAL CHAR',
+'description': 'Simple domain creation based on NATIONAL CHAR datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test NATIONAL CHAR(32767);
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            CHAR(32767) CHARACTER SET ISO8859_1 Nullable
+"""
+}
+]
+}

@@ -1,0 +1,27 @@
+{
+'id': 'functional.domain.create.26',
+'qmid': 'functional.domain.create.create_domain_26',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - BLOB',
+'description': 'Simple domain creation based on BLOB datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test BLOB;
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            BLOB segment 80, subtype UNKNOWN Nullable
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test BLOB;
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            BLOB segment 80, subtype BINARY Nullable
+"""
+}
+]
+}

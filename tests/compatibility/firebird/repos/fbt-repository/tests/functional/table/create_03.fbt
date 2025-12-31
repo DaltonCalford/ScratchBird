@@ -1,0 +1,57 @@
+{
+'id': 'functional.table.create.03',
+'qmid': 'functional.table.create.create_table_03',
+'tracker_id': '',
+'title': 'CREATE TABLE - charset + colations + domain',
+'description': """CREATE TABLE - charset + colations + domain
+
+Dependencies:
+CREATE DATABASE
+CREATE DOMAIN
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE DOMAIN test VARCHAR(32765)[40000];
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE TABLE test(
+ c1 VARCHAR(40) CHARACTER SET CYRL COLLATE CYRL,
+ c2 VARCHAR(40) CHARACTER SET DOS437 COLLATE DB_DEU437,
+ c3 BLOB SUB_TYPE TEXT CHARACTER SET DOS437,
+ c4 test
+);
+SHOW TABLE test;
+""",
+ 'expected_stdout': """C1                              VARCHAR(40) CHARACTER SET CYRL Nullable
+C2                              VARCHAR(40) CHARACTER SET DOS437 COLLATE DB_DEU437 Nullable
+C3                              BLOB segment 80, subtype TEXT CHARACTER SET DOS437 Nullable
+C4                              (TEST) ARRAY OF [1:40000]
+                                VARCHAR(32765) Nullable
+
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE DOMAIN test VARCHAR(32765)[40000];
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE TABLE test(
+ c1 VARCHAR(40) CHARACTER SET CYRL COLLATE CYRL,
+ c2 VARCHAR(40) CHARACTER SET DOS437 COLLATE DB_DEU437,
+ c3 BLOB SUB_TYPE TEXT CHARACTER SET DOS437,
+ c4 test
+);
+SHOW TABLE test;
+""",
+ 'expected_stdout': """C1                              VARCHAR(40) CHARACTER SET CYRL Nullable
+C2                              VARCHAR(40) CHARACTER SET DOS437 Nullable
+                                 COLLATE DB_DEU437
+C3                              BLOB segment 80, subtype TEXT CHARACTER SET DOS437 Nullable
+C4                              (TEST) ARRAY OF [40000]
+                                VARCHAR(32765) Nullable"""
+}
+]
+}

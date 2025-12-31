@@ -1,0 +1,44 @@
+{
+'id': 'bugs.core_6033',
+'qmid': None,
+'tracker_id': 'CORE-6033',
+'title': "SUBSTRING(CURRENT_TIMESTAMP) does not work",
+'description':
+ """
+    Confirmed bug on WI-T4.0.0.1457, got:
+    ===
+      Statement failed, SQLSTATE = 22001
+      arithmetic exception, numeric overflow, or string truncation
+      -string right truncation
+      -expected length 34, actual 38
+    ===
+    Checked on 4.0.0.1479: OK, 1.299s.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^;
+    execute block as
+        declare c varchar(100);
+    begin
+        c = substring(current_timestamp from 1);
+    end
+    ^
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

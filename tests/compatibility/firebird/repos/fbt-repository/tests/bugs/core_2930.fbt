@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_2930',
+'qmid': None,
+'tracker_id': 'CORE-2930',
+'title': 'DROP VIEW drops output parameters of used stored procedures',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """set term !;
+create procedure p1 returns (n integer) as begin suspend; end!
+create view v1 as select * from p1!
+commit!
+set term ;!
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """show procedure p1;
+drop view v1;
+show procedure p1;
+""",
+ 'expected_stdout': """Procedure text:
+=============================================================================
+ begin suspend; end
+=============================================================================
+Parameters:
+N                                 OUTPUT INTEGER
+Procedure text:
+=============================================================================
+ begin suspend; end
+=============================================================================
+Parameters:
+N                                 OUTPUT INTEGER
+"""
+}
+]
+}

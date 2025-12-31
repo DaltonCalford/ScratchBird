@@ -1,0 +1,36 @@
+{
+'id': 'bugs.core_2607',
+'qmid': None,
+'tracker_id': 'CORE-2607',
+'title': 'Introducer (_charset) problems with monitoring and persistent modules',
+'description': 'Usage of introducer (_charset ) is problematic due to usage of different character sets in a single command. The problems are different from version to version, and may be transliteration error, malformed string or just unexpected things.',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'Python',
+ 'test_script': 
+  """\
+c = db_conn.cursor()
+con2 = kdb.connect(dsn=dsn,user=user_name,password=user_password)
+c2 = con2.cursor()
+
+c.execute("select _dos850 '123áé456' from rdb$database")
+c2.execute("select mon$sql_text from mon$statements s where s.mon$sql_text containing '_dos850'")
+#printData(c2)
+for r in c2:
+  print(r[0])
+
+con2.close()
+  """,
+ 'expected_stdout': 
+  """
+    select mon$sql_text from mon$statements s where s.mon$sql_text containing '_dos850'
+    select _dos850 X'313233C3A1C3A9343536' from rdb$database
+  """
+}
+]
+}

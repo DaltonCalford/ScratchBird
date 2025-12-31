@@ -1,0 +1,66 @@
+{
+'id': 'bugs.core_5313',
+'qmid': None,
+'tracker_id': 'CORE-5313',
+'title': 'Data type unknown error with LIST',
+'description': '',
+'min_versions': '3.0.1',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set planonly; 
+    set sqlda_display on; 
+    select list(trim(rdb$relation_name), ?) from rdb$relations;
+  """,
+ 'expected_stdout': 
+  """
+    INPUT message field count: 1
+    01: sqltype: 452 TEXT scale: 0 subtype: 0 len: 3 charset: 3 UNICODE_FSS
+      :  name:   alias:
+      : table:   owner:
+
+    PLAN (RDB$RELATIONS NATURAL)
+
+    OUTPUT message field count: 1
+    01: sqltype: 520 BLOB Nullable scale: 0 subtype: 1 len: 8 charset: 3 UNICODE_FSS
+      :  name: LIST  alias: LIST
+      : table:   owner:
+  """,
+  'expected_stderr':
+  """
+  """
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set planonly; 
+    set sqlda_display on; 
+    select list(trim(rdb$relation_name), ?) from rdb$relations;
+  """,
+ 'expected_stdout': 
+  """
+    INPUT message field count: 1
+    01: sqltype: 452 TEXT scale: 0 subtype: 0 len: 4 charset: 4 UTF8
+      :  name:   alias:
+      : table:   owner:
+
+    PLAN (RDB$RELATIONS NATURAL)
+
+    OUTPUT message field count: 1
+    01: sqltype: 520 BLOB Nullable scale: 0 subtype: 1 len: 8 charset: 4 UTF8
+      :  name: LIST  alias: LIST
+      : table:   owner:
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

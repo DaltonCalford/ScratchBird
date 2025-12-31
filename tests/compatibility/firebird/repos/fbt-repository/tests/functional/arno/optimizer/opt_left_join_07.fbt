@@ -1,0 +1,183 @@
+{
+'id': 'functional.arno.optimizer.opt_left_join_07',
+'qmid': 'functional.arno.optimizer.opt_left_join_07',
+'tracker_id': '',
+'title': '4 JOINed tables with 1 LEFT OUTER JOIN',
+'description': """A INNER JOINed TableD to a LEFT JOINed TableC should be able to access the outer TableB of TableC. Also TableB is INNER JOINed to TableA. Three indexes can and should be used here.
+""",
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE Colors (
+  ColorID INTEGER NOT NULL,
+  ColorName VARCHAR(20)
+);
+
+CREATE TABLE Flowers (
+  FlowerID INTEGER NOT NULL,
+  FlowerName VARCHAR(30),
+  ColorID INTEGER
+);
+
+COMMIT;
+
+/* Value 0 represents -no value- */
+INSERT INTO Colors (ColorID, ColorName) VALUES (0, 'Not defined');
+INSERT INTO Colors (ColorID, ColorName) VALUES (1, 'Red');
+INSERT INTO Colors (ColorID, ColorName) VALUES (2, 'Yellow');
+
+/* insert some data with references */
+INSERT INTO Flowers (FlowerID, FlowerName, ColorID) VALUES (1, 'Rose', 1);
+INSERT INTO Flowers (FlowerID, FlowerName, ColorID) VALUES (2, 'Tulip', 2);
+INSERT INTO Flowers (FlowerID, FlowerName, ColorID) VALUES (3, 'Gerbera', 0);
+
+COMMIT;
+
+/* Normally these indexes are created by the primary/foreign keys,
+   but we don't want to rely on them for this test */
+CREATE UNIQUE ASC INDEX PK_Colors ON Colors (ColorID);
+CREATE UNIQUE ASC INDEX PK_Flowers ON Flowers (FlowerID);
+CREATE ASC INDEX FK_Flowers_Colors ON Flowers (ColorID);
+
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+/* 4 joined tables with 1 LEFT JOIN */
+SELECT
+  f.ColorID,
+  c1.ColorID,
+  c2.ColorID,
+  c3.ColorID
+FROM
+  Flowers f
+  JOIN Colors c1 ON (c1.ColorID = f.ColorID)
+  LEFT JOIN Colors c2 ON (c2.ColorID = c1.ColorID)
+  JOIN Colors c3 ON (c3.ColorID = c1.ColorID);
+""",
+ 'expected_stdout': """PLAN JOIN (JOIN (JOIN (F NATURAL, C1 INDEX (PK_COLORS)), C2 INDEX (PK_COLORS)), C3 INDEX (PK_COLORS))
+
+     COLORID      COLORID      COLORID      COLORID
+============ ============ ============ ============
+
+           1            1            1            1
+           2            2            2            2
+           0            0            0            0
+"""
+}
+
+,# --------------------------------- FB 5.x ------------------------------
+
+{
+ 'firebird_version': '5.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+    CREATE TABLE Colors (
+      ColorID INTEGER NOT NULL,
+      ColorName VARCHAR(20)
+    );
+
+    CREATE TABLE Flowers (
+      FlowerID INTEGER NOT NULL,
+      FlowerName VARCHAR(30),
+      ColorID INTEGER
+    );
+
+    COMMIT;
+
+    /* Value 0 represents -no value- */
+    INSERT INTO Colors (ColorID, ColorName) VALUES (0, 'Not defined');
+    INSERT INTO Colors (ColorID, ColorName) VALUES (1, 'Red');
+    INSERT INTO Colors (ColorID, ColorName) VALUES (2, 'Yellow');
+
+    /* insert some data with references */
+    INSERT INTO Flowers (FlowerID, FlowerName, ColorID) VALUES (1, 'Rose', 1);
+    INSERT INTO Flowers (FlowerID, FlowerName, ColorID) VALUES (2, 'Tulip', 2);
+    INSERT INTO Flowers (FlowerID, FlowerName, ColorID) VALUES (3, 'Gerbera', 0);
+
+    COMMIT;
+
+    /* Normally these indexes are created by the primary/foreign keys,
+       but we don't want to rely on them for this test */
+    CREATE UNIQUE ASC INDEX PK_Colors ON Colors (ColorID);
+    CREATE UNIQUE ASC INDEX PK_Flowers ON Flowers (FlowerID);
+    CREATE ASC INDEX FK_Flowers_Colors ON Flowers (ColorID);
+
+    COMMIT;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    SET PLAN ON;
+    set explain on;
+    /* 4 joined tables with 1 LEFT JOIN */
+    SELECT
+      first 10 -- see letter from dimitr, 09-oct-2022 18:38 
+      f.ColorID,
+      c1.ColorID,
+      c2.ColorID,
+      c3.ColorID
+    FROM
+      Flowers f
+      JOIN Colors c1 ON (c1.ColorID = f.ColorID)
+      LEFT JOIN Colors c2 ON (c2.ColorID = c1.ColorID)
+      JOIN Colors c3 ON (c3.ColorID = c1.ColorID);
+    
+    /*
+    NOTE. Plan up to 5.0.0.763:
+        Select Expression
+            -> First N Records
+                -> Nested Loop Join (inner)
+                    -> Nested Loop Join (outer)
+                        -> Nested Loop Join (inner)
+                            -> Table "FLOWERS" as "F" Full Scan
+                            -> Filter
+                                -> Table "COLORS" as "C1" Access By ID
+                                    -> Bitmap
+                                        -> Index "PK_COLORS" Unique Scan
+                        -> Filter
+                            -> Table "COLORS" as "C2" Access By ID
+                                -> Bitmap
+                                    -> Index "PK_COLORS" Unique Scan
+                    -> Filter
+                        -> Table "COLORS" as "C3" Access By ID
+                            -> Bitmap
+                                -> Index "PK_COLORS" Unique Scan
+
+    */
+
+  """,
+ 'expected_stdout':
+  """
+    Select Expression
+        -> First N Records
+            -> Nested Loop Join (inner)
+                -> Nested Loop Join (outer)
+                    -> Filter
+                        -> Hash Join (inner)
+                            -> Table "FLOWERS" as "F" Full Scan
+                            -> Record Buffer (record length: 25)
+                                -> Table "COLORS" as "C1" Full Scan
+                    -> Filter
+                        -> Table "COLORS" as "C2" Access By ID
+                            -> Bitmap
+                                -> Index "PK_COLORS" Unique Scan
+                -> Filter
+                    -> Table "COLORS" as "C3" Access By ID
+                        -> Bitmap
+                            -> Index "PK_COLORS" Unique Scan
+
+
+         COLORID      COLORID      COLORID      COLORID
+    ============ ============ ============ ============
+
+               1            1            1            1
+               2            2            2            2
+               0            0            0            0
+  """
+}
+
+]
+}

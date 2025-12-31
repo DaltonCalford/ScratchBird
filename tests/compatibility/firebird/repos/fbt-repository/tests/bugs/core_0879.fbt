@@ -1,0 +1,31 @@
+{
+'id': 'bugs.core_0879',
+'qmid': '',
+'tracker_id': 'CORE-879',
+'title': 'Dependencies are not cleared when creation of expression index fails',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    create table tab ( a varchar(10000) );
+    commit;
+    create index ix on tab computed by (upper(a));
+    drop table tab;
+    commit;
+    show table tab;
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -key size exceeds implementation restriction for index "IX"
+    There is no table TAB in this database
+  """
+}
+]
+}

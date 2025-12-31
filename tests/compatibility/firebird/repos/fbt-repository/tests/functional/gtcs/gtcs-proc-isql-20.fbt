@@ -1,0 +1,75 @@
+{
+'id': 'functional.gtcs.gtcs-proc-isql-20',
+'qmid': None,
+'tracker_id': '',
+'title': 'gtcs-proc-isql-20',
+'description':
+ """
+	Original test see in:
+        https://github.com/FirebirdSQL/fbtcs/blob/master/GTCS/tests/PROC_ISQL_20.script
+	SQL script for creating test database ('gtcs_sp1.fbk') and fill it with some data:
+        https://github.com/FirebirdSQL/fbtcs/blob/master/GTCS/tests/PROCS_QA_INIT_ISQL.script
+    Checked on:
+        4.0.0.1803 SS: 1.822s.
+        3.0.6.33265 SS: 0.849s.
+        2.5.9.27149 SC: 0.313s.
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'gtcs_sp1.fbk',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^;
+    create procedure proc_select_insert3 as
+        declare t varchar(5);
+    begin
+        for
+            select sno 
+            from s 
+            where sno NOT IN (select sno from sp) 
+            into :t 
+        do begin
+          insert into sp(sno) values (:t);
+          exit;
+        end
+    end
+    ^
+    set term ;^
+    select 'result-1' as msg, p.* from sp p;
+    execute procedure proc_select_insert3;
+    select 'result-2' as msg, p.* from sp p;
+  """,
+ 'expected_stdout':
+  """
+    MSG      SNO    PNO             QTY
+    result-1 S1     P1              300
+    result-1 S1     P3              400
+    result-1 S2     P1              300
+    result-1 S2     P2              400
+    result-1 S4     P4              300
+    result-1 S4     P5              400
+
+    MSG      SNO    PNO             QTY
+    result-2 S1     P1              300
+    result-2 S1     P3              400
+    result-2 S2     P1              300
+    result-2 S2     P2              400
+    result-2 S4     P4              300
+    result-2 S4     P5              400
+    result-2 S3     <null>       <null>
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[('={3,}', ''),('[ \t]+', ' ')]
+}
+]
+}

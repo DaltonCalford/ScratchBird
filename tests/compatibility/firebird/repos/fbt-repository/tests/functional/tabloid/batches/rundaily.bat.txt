@@ -1,0 +1,1659 @@
+@echo off
+setlocal enabledelayedexpansion enableextensions
+
+set cfg=%~dpn0.conf
+set tmp=%~dpn0.tmp
+
+if not exist !cfg! set cfg=%~dpn0.cfg
+
+echo !date! !time!. Parsing config file !cfg!.
+
+set err_setenv=0
+
+::::::::::::::::::::::::::::::::
+:::: R E A D    C O N G I G ::::
+::::::::::::::::::::::::::::::::
+
+call :readcfg !cfg! !err_setenv!
+
+set tmp=!QA_LOG_FOLDER!\%~n0.tmp
+set tdir_access_error=0
+
+md !QA_LOG_FOLDER! 2>nul
+if exist !tmp! del !tmp!
+if exist !tmp! (
+    set tdir_access_error=1
+) else (
+    dir . 1>nul 2>!tmp!
+    if NOT exist !tmp! (
+        set tdir_access_error=1
+    ) else if exist !tmp! (
+        del !tmp!
+    )
+)
+
+if !tdir_access_error! EQU 1 (
+    echo Temp directory '!QA_LOG_FOLDER!' can not be accessed for file creation/writing/deleting.
+    echo Check parameter 'QA_LOG_FOLDER' in the config file '!cfg!' and run this batch again.
+    goto final
+)
+
+
+set ORIGIN_PATH=%PATH%
+
+set PATH=!FB_SNAPSHOTS_FOLDER!\bin;!SSH_UTILS_FOLDER!;%ORIGIN_PATH%
+
+@rem c:\snapshots\bin\svn; -- excluded from PATH-list, not needed since 30-oct-18
+
+@rem QA_PATH=C:\FirebirdQA
+@rem BUILD_PATH=%QA_PATH%\builds
+@rem REPO_PATH=%QA_PATH%\fbt-repository
+@rem QA_LOG_FOLDER=%QA_PATH%\logs
+
+set FIREBIRD=
+
+md %QA_LOG_FOLDER% 2>nul
+set GLOBAL_TIMESTAMP=
+for /f "delims=." %%a in ('wmic os get localdatetime ^| findstr /i /r /b /c:"[0-9]"') do (
+  set dts=%%a
+  set ymd=!dts:~2,6!
+  set hms=!dts:~8,6!
+
+  @rem set GLOBAL_TIMESTAMP=!ymd!_!hms!
+  set QA_MAIN_LOG=%QA_LOG_FOLDER%\%~n0.!ymd!_!hms!.log
+  set tmp_log=%QA_LOG_FOLDER%\%~n0.!ymd!_!hms!.tmp
+)
+
+for /f %%a in ("!QA_MAIN_LOG!") do (
+  set tmp_log=%%~dpna.tmp
+)
+
+cd %QA_PATH%
+
+call :sho "Intro %~dpnx0, current folder: %cd%" !QA_MAIN_LOG!
+
+if .!TEMP_DIR!.==.. set unknown_var=TEMP
+if .!FIREBIRD_TMP!.==.. set unknown_var=FIREBIRD_TMP
+
+if NOT .!unknown_var!.==.. (
+    (
+        echo ### ERROR ###
+        echo System-wide environment variable '!unknown_var!' must be defined.
+        echo JOB IS TERMINATED.
+    ) > !tmp_log!
+    call :bulksho !tmp_log! !QA_MAIN_LOG!
+    goto final
+) else (
+    (
+        echo Both 'TEMP' and 'FIREBIRD_TMP' variable are *defined*:
+        echo TEMP=!TEMP!
+        echo FIREBIRD_TMP=!FIREBIRD_TMP!
+        echo Parameter 'TempDirectories' will be set to !TEMP_DIR!
+        echo Batch can be continued.
+    )>!tmp_log!
+    call :bulksho !tmp_log! !QA_MAIN_LOG!
+)
+
+@rem #########################################################
+@rem Check whether standard Windows console utility 
+@rem 'certutil.exe' if avaliable (must be so since Windows 7).
+@rem #########################################################
+set /a base64_avail=0
+certutil -? | findstr /i /c:"base64" 1>!tmp_log! 2>&1
+if NOT errorlevel 1 (
+    call :sho "Found utility 'certutil.exe' - will be used to encode e-mail attachments to base64 format." !QA_MAIN_LOG!
+    set /a base64_avail=1
+) else (
+    call :sho "CLI utility 'certutil.exe' is unavaliable e-mail attachments will not created." !QA_MAIN_LOG!
+)
+
+
+"!p7zcmd!" -? 1>!tmp_log! 2>&1
+findstr /m /i /r /c:"7-Zip" !tmp_log! >nul
+if NOT errorlevel 1 (
+    call :sho "Found 7-Zip compression utility '!p7zcmd!'" !QA_MAIN_LOG!
+    findstr /m /i /r /c:"-stl.*archive.*timestamp" !tmp_log! >nul
+    if NOT errorlevel 1 (
+        @rem -stl : set archive timestamp equal to stamp of last modified file
+        set switch_for_arch_stamp=-stl
+    )
+) else (
+    call :sho "Compression utility '!P7ZCMD!' does NOT exist. Check config parameter 'PZ7CMD'. JOB IS TERMINATED." !QA_MAIN_LOG!
+    goto final
+)
+
+del !tmp_log!
+
+for /d %%f in (plink,pscp) do (
+    set ssh_file=!SSH_UTILS_FOLDER!\%%f.exe
+    if NOT exist !ssh_file! (
+        call :sho "One of required utilities: !SSH_UTILS_FOLDER!\%%f.exe does not exist. JOB IS TERMINATED." !QA_MAIN_LOG!
+        goto final
+    )
+)
+
+!GITCMD! --version 1>!tmp_log! 2>&1
+findstr /m /i /c:"git version" !tmp_log! >nul
+if NOT errorlevel 1 (
+    call :sho "Found git executable '!GITCMD!'" !QA_MAIN_LOG!
+    del !tmp_log!
+) else (
+    call :sho "Console executable '!GITCMD!'. Check config parameter 'GITCMD'. JOB IS TERMINATED." !QA_MAIN_LOG!
+    del !tmp_log!
+    goto final
+)
+
+call :sho "Point before main loop on checked major versions = !FB_CHECKED_MAJOR!" !QA_MAIN_LOG!
+
+@rem #+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#
+@rem #+#=#+#                                   #+#+#+#+#
+@rem #+#=#+#       m a i n       l o o p       #+#+#+#+#
+@rem #+#=#+#                                   #+#+#+#+#
+@rem #+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#
+
+for /d %%s in (!FB_CHECKED_MAJOR!) do (
+    set fb_mask=
+    echo.>>!QA_MAIN_LOG!
+    call :sho "Processing FB-builds with mask: !FB_SNAPSHOTS_FOLDER!\Firebird-%%s.?.*-0_x64.7z" !QA_MAIN_LOG!
+
+    if NOT exist !FB_SNAPSHOTS_FOLDER!\Firebird-%%s.?.*-0_x64.7z (
+        call :sho "NOTE: there is NO files with mask '!FB_SNAPSHOTS_FOLDER!\Firebird-%%s.?.*-0_x64.7z'" !QA_MAIN_LOG!
+    )
+
+    for %%f in (!FB_SNAPSHOTS_FOLDER!\Firebird-%%s.?.*-0_x64.7z) do (
+        set build_7z=%%f
+        set bld_size=%%~zf
+        @rem set /a bld_size=!bld_size!/1024/1024
+        
+        @rem Get build number and major version of FB:
+        @rem INPUT: c:\some\path\to\Firebird-4.0.0.1367-0_x64
+        @rem Result: 
+        @rem    build_no = 4.0.0.1367
+        @rem    major_v  = 4.0
+        call :extract_build_info !build_7z! build_no major_v
+
+        call :sho "Check whether '!repo_path!\archive\!build_no!' not yet exists" !QA_MAIN_LOG!
+        if not exist !repo_path!\archive\!build_no! (
+            
+            @rem FB_CHECKED_MODES -- see in .conf: list of server modes that we want to verify: "SS,CS" or similar
+
+            @rem :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+            @rem ::: s e n d     s n a p s h o t     b e f o r e    r u n     t e s t s    :::
+            @rem :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+            if !PACK_AND_SEND_SNAPSHOT! EQU 1 (
+                call :mailsender !QA_MAIN_LOG! "!mail_hdr_subj! snapshot !build_no!, total size !bld_size!" "n/a" !build_7z!
+            ) else (
+                call :sho "SKIP compressing and sending snapshot !build_no!, check config parameter 'PACK_AND_SEND_SNAPSHOT'" !QA_MAIN_LOG!
+            )
+
+            call :sho "Build: !build_no!. Starting checks of all interested server modes: !FB_CHECKED_MODES!" !QA_MAIN_LOG!
+
+            for /f "delims=." %%a in ('wmic os get localdatetime ^| findstr /i /r /b /c:"[0-9]"') do (
+                set dts=%%a
+                @rem for displaying in e-mail subj: DD.MM hh:mi when this subroutine finished
+                set mmdd_beg_all_modes_chk=!dts:~6,2!.!dts:~4,2!
+                set hhmi_beg_all_modes_chk=!dts:~8,2!:!dts:~10,2!
+            )
+            for /d %%m in (!FB_CHECKED_MODES!) do (
+                call :kill_fb_processes !QA_MAIN_LOG!
+                echo.>>!QA_MAIN_LOG!
+
+                set server_mode=%%m
+
+                call :sho "Build: !build_no!. Point before launch tests for server mode: !server_mode!" !QA_MAIN_LOG!
+                call :sho "Going to call routine run_single_fbt_pass %%f %repo_path% !server_mode! !QA_MAIN_LOG!" !QA_MAIN_LOG!
+
+                call :run_single_fbt_pass %build_path% %repo_path% !build_7z! !server_mode! !QA_MAIN_LOG!
+                @rem                             1          2          3              4           5
+
+                call :sho "RETURN from run_single_fbt_pass routine into main code." !QA_MAIN_LOG!
+                call :kill_fb_processes !QA_MAIN_LOG!
+                echo.>>!QA_MAIN_LOG!
+
+                @rem #################################################################
+
+            )
+            @rem for /d %%m in (!FB_CHECKED_MODES!) -- process for every of interested server modes
+            
+            for /f "delims=." %%a in ('wmic os get localdatetime ^| findstr /i /r /b /c:"[0-9]"') do (
+                set dts=%%a
+                @rem for displaying in e-mail subj: DD.MM hh:mi when this subroutine finished
+                set mmdd_end_all_modes_chk=!dts:~6,2!.!dts:~4,2!
+                set hhmi_end_all_modes_chk=!dts:~8,2!:!dts:~10,2!
+            )
+            call :sho "Build: !build_no!. Completed checks of all interested server modes." !QA_MAIN_LOG!
+
+
+            if exist !repo_path!\archive\!build_no! (
+                  
+                  set qa_upload_log=!QA_LOG_FOLDER!\%~n0.upload.log
+                  del !qa_upload_log! 2>nul
+
+                  call :sho "Starting UPLOAD process for build_no=!build_no!." !qa_upload_log!
+                  if .1.==.1. (
+
+
+                      @rem Old batch:
+                      @rem =============
+                      @rem set PACKAGE=%1                                     c:\path\to\Firebird-4.0.0.1367-0_x64.7z
+                      @rem set VERSION=%PACKAGE:~22,-9%    -->    !build_no!  4.0.0.1367 etc
+                      @rem set VER=%VERSION:~0,3%          -->    !major_v!   4.0
+
+                      
+                      @rem See in config for this batch:
+                      @rem SSH_PRIVATE_KEY_FILE=!FB_SNAPSHOTS_FOLDER!\bin\upload.key
+                      @rem SSH_UPLOAD_HOST_DATA=fbadmin@10.121.115.51
+                      @rem SSH_RESULTS_HOME_DIR=/home/fbadmin/prerelease/results
+
+                      set skip_msg=NOTE: IMITATED EXECUTION. Real action is SKIPPED because config parameter SSH_IMITATE_UPLOAD not equal to 0.
+
+
+                      @rem -+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+                      @rem old batch: mv /home/fbadmin/prerelease/results/%VER%.* /home/fbadmin/prerelease/results/archive/
+                      @rem new code:  mv /home/fbadmin/prerelease/results/4.0.*   /home/fbadmin/prerelease/results/archive/
+
+                      set run_cmd=plink -i !SSH_PRIVATE_KEY_FILE! !SSH_UPLOAD_HOST_DATA! mv !SSH_RESULTS_HOME_DIR!/!major_v!.* !SSH_RESULTS_HOME_DIR!/archive/
+                      call :sho "Command: !run_cmd!" !qa_upload_log!
+                      if .!SSH_IMITATE_UPLOAD!.==.0. (
+                          cmd /c !run_cmd! 1>>!qa_upload_log! 2>&1
+                      ) else (
+                          call :sho "!skip_msg!" !qa_upload_log!
+                      )
+
+
+                      @rem -+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+                      @rem old batch: plink -i <upload-key-file> fbadmin@<ip> rm -r /home/fbadmin/prerelease/results/%VER%.*
+                      @rem new code:  plink -i <upload-key-file> fbadmin@<ip> rm -r /home/fbadmin/prerelease/results/4.0.*
+
+                      set run_cmd=plink -i !SSH_PRIVATE_KEY_FILE! !SSH_UPLOAD_HOST_DATA! rm -r !SSH_RESULTS_HOME_DIR!/!major_v!.*
+                      call :sho "Command: !run_cmd!" !qa_upload_log!
+                      if .!SSH_IMITATE_UPLOAD!.==.0. (
+                          cmd /c !run_cmd! 1>>!qa_upload_log! 2>&1
+                      ) else (
+                          call :sho "!skip_msg!" !qa_upload_log!
+                      )
+
+                      @rem -+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+                      @rem old batch: mkdir /home/fbadmin/prerelease/results/%VERSION%
+                      @rem new code:  mkdir /home/fbadmin/prerelease/results/4.0.0.1411
+
+                      set run_cmd=plink -i !SSH_PRIVATE_KEY_FILE! !SSH_UPLOAD_HOST_DATA! mkdir !SSH_RESULTS_HOME_DIR!/!build_no!
+                      call :sho "Command: !run_cmd!" !qa_upload_log!
+                      if .!SSH_IMITATE_UPLOAD!.==.0. (
+                          cmd /c !run_cmd! 1>>!qa_upload_log! 2>&1
+                      ) else (
+                          call :sho "!skip_msg!" !qa_upload_log!
+                      )
+
+
+                      @rem -+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+                      @rem old batch: pscp -i <upload-key-file> -r %REPO_PATH%\archive\%VERSION%\*.html fbadmin@<ip>:/home/fbadmin/prerelease/results/%VERSION%/
+                      @rem new code:  pscp -i <upload-key-file> -r C:\FirebirdQA\fbt-repository\archive\4.0.0.1411\*.html fbadmin@<ip>:/home/fbadmin/prerelease/results/4.0.0.1411/
+
+                      set run_cmd=pscp -i !SSH_PRIVATE_KEY_FILE! -r !repo_path!\archive\!build_no!\*.html !SSH_UPLOAD_HOST_DATA!:!SSH_RESULTS_HOME_DIR!/!build_no!/
+                      call :sho "Command: !run_cmd!" !qa_upload_log!
+                      if .!SSH_IMITATE_UPLOAD!.==.0. (
+                          cmd /c !run_cmd! 1>>!qa_upload_log! 2>&1
+                      ) else (
+                          call :sho "!skip_msg!" !qa_upload_log!
+                      )
+
+                  )
+                  call :sho "Completed upload process for build_no=!build_no!." !qa_upload_log!
+                  type !qa_upload_log! >>!QA_MAIN_LOG!
+
+                  @rem Now we have to send as separate message to e-mail content of !qa_upload_log! -- result of uploadings:
+
+                  @rem ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+                  @rem ::: s e n d     r e s u l t s     o f     u p l o a d i n g    o p s.  :::
+                  @rem ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+                  set mail_subj=!mail_hdr_subj! !build_no! !FB_CHECKED_MODES! !mmdd_beg_all_modes_chk! !hhmi_beg_all_modes_chk! ... !mmdd_end_all_modes_chk! !hhmi_end_all_modes_chk!, upload result:
+                  @rem !ymd!_!hms!
+
+                  findstr /m /i /r /c:"Read.*only[ ]*file[ ]" !qa_upload_log! > nul
+                  if NOT errorlevel 1 (
+                      set mail_subj=!mail_subj! FAILED.
+                  ) else (
+                      findstr /m /i /r /c:"index.html.*100%%" !qa_upload_log! > nul
+                      if NOT errorlevel 1 (
+                          set mail_subj=!mail_subj! SUCCESS.
+                      ) else (
+                          set mail_subj=!mail_subj! UNKNOWN.
+                      )
+                  )
+
+                  call :mailsender !QA_MAIN_LOG! "!mail_subj!" "!qa_upload_log!"
+                  @rem                   1             2              3
+                  del !qa_upload_log!
+
+            )
+            @rem upload results
+
+        ) else (
+            call :sho "***SKIP*** check for build !build_no!: test already was done." !QA_MAIN_LOG!
+        )
+        @rem not exist !repo_path!\archive\!build_no! --> true or false
+
+    )
+    @rem for %%f in (!FB_SNAPSHOTS_FOLDER!\Firebird-%%s.?.*-0_x64.7z) -- unpack snapshot, start FB as application and process tests for all interested server modes
+)
+@rem for /d %%s in (!FB_CHECKED_MAJOR!) 
+
+set PATH=%ORIGIN_PATH%
+
+call :sho "All done. Batch %~dpnx0 is finished." !QA_MAIN_LOG!
+
+goto :final
+
+@rem #+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#
+@rem #+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#
+@rem #+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#+#
+
+:kill_fb_processes
+    setlocal
+    set QA_MAIN_LOG=%1
+    for /f %%a in ("!QA_MAIN_LOG!") do (
+      set tmp_log=%%~dpna.tmp
+    )
+
+    for /d %%p in (fbguard,firebird,fb_inet_server,fbserver,isql,gbak,gstat,fbsvcmgr,fbtracemgr) do (
+        echo.
+        call :sho "Start of loop on processes name list. Searching for instances of: '%%p.exe'" !QA_MAIN_LOG!
+        call :sho "Command: tasklist /fi 'imagename eq %%p.exe'" !QA_MAIN_LOG!
+
+        tasklist /fi "imagename eq %%p.exe" 1>!tmp_log! 2>&1
+
+        @rem ::: NB :::: 
+        @rem tasklist always returns 0 as errorlevel, regardless whether process does exist or no.
+        @rem ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+        findstr /i /m /c:"%%p.exe" !tmp_log! >nul
+        if NOT errorlevel 1 (
+            echo.>>!QA_MAIN_LOG!
+            echo.
+            call :sho "Trying to kill all processes with name '%%p.exe'" !QA_MAIN_LOG!
+            tasklist /fi "imagename eq %%p.exe" 1>!tmp_log! 2>&1
+            call :bulksho !tmp_log! !QA_MAIN_LOG!
+            
+            call :sho "call taskkill /F /IM %%p.exe /T" !QA_MAIN_LOG!
+            call taskkill /F /IM %%p.exe /T 1>!tmp_log! 2>&1
+
+            findstr /i /v /c:"SUCCESS:" !tmp_log!
+            if NOT errorlevel 1 (
+                call :sho "### TASKKILL FAILED ### At least one row in log does NOT contain phrase 'SUCCESS'." !QA_MAIN_LOG!
+
+                @rem https://stackoverflow.com/questions/12528963/taskkill-f-doesnt-kill-a-process
+                call :sho "Perform 2nd attampt: use wmic process ... delete" !QA_MAIN_LOG!
+                
+                wmic process where "name='%%p.exe'" delete 1>>!tmp_log! 2>&1
+
+                @rem Sample output of wmic ... delete:
+                @rem Deleting instance \\FBCOMPILEWIN\ROOT\CIMV2:Win32_Process.Handle="1748"
+                @rem Instance deletion successful.
+                @rem Deleting instance \\FBCOMPILEWIN\ROOT\CIMV2:Win32_Process.Handle="6892"
+                @rem Instance deletion successful.
+                @rem ...
+                for /f "tokens=*" %%w in ('tasklist /fi "imagename eq %%p.exe"') do (
+                    call :sho "### WMIC PROCESS DELETE FAILED ### Found as still alive: %%w" !QA_MAIN_LOG!
+                )
+            ) else (
+                call :sho "Seems to be completed successfully: all rows in log contain phrase 'SUCCESS'." !QA_MAIN_LOG!
+            )
+            call :bulksho !tmp_log! !QA_MAIN_LOG!
+
+            call :sho "Check that kill was successful: process with name '%%p.exe' should NOT exist now." !QA_MAIN_LOG!
+            call :sho "------------------------------------" !QA_MAIN_LOG!
+
+            tasklist /fi "imagename eq %%p.exe" 1>!tmp_log! 2>&1
+
+            call :bulksho !tmp_log! !QA_MAIN_LOG!
+            call :sho "------------------------------------" !QA_MAIN_LOG!
+        ) else (
+            call :sho "Nothing to kill. Process with name '%%p.exe' not found." !QA_MAIN_LOG!
+        )
+        del !tmp_log! 2>nul
+    )
+goto :eof
+
+:run_single_fbt_pass
+    @rem ~~~~~~~~~~~~~~~~~~~~~~~
+    @rem Is used since 03-jan-19
+    @rem ~~~~~~~~~~~~~~~~~~~~~~~
+    @rem  :run_single_fbt_pass %build_path% %repo_path% !build_7z! !server_mode! !QA_MAIN_LOG!
+
+    setlocal
+    set build_path=%1
+    set repo_path=%2
+    set build_7z=%3
+    set server_mode=%4
+    set QA_MAIN_LOG=%5
+
+    set ORIGIN_PATH=!PATH!
+
+    set zip_extraction_success=1
+
+    call :sho "Intro routine run_single_fbt_pass: build_7z=!build_7z!, repo_path=!repo_path!, server_mode=!server_mode!" !QA_MAIN_LOG!
+
+    for /f "delims=." %%a in ('wmic os get localdatetime ^| findstr /i /r /b /c:"[0-9]"') do (
+        set dts=%%a
+        set ymd=!dts:~2,6!
+        set hms=!dts:~8,6!
+        @rem for displaying in e-mail subj: DD.MM hh:mi when this subroutine started
+        set mmdd_beg_single_chk=!dts:~6,2!.!dts:~4,2!
+        set hhmi_beg_single_chk=!dts:~8,2!:!dts:~10,2!
+    )
+
+    for /f %%a in ("!QA_MAIN_LOG!") do (
+        set tmp_log=%%~dpna.tmp
+        set tm2=%%~dpna.tm2
+    )
+    
+    @rem Old batch: set VERSION=%build_7z:~22,-9% -- does not work when FB snapshot relates to Win32: file name has another length.
+
+    @rem Get build number and major version of FB:
+    @rem INPUT: c:\some\path\to\Firebird-4.0.0.1367-0_x64
+    @rem Result: 
+    @rem    build_no = 4.0.0.1367
+    @rem    major_v  = 4.0
+    call :extract_build_info !build_7z! build_no major_v
+
+    set security_suffix=!major_v:~0,1!
+    call :sho "Result of parsing build_7z: build_no=!build_no! ; major_v=!major_v! ; security_suffix=!security_suffix!" !QA_MAIN_LOG!
+
+    @rem Prepare: clean folder for unpacking build.
+    @rem -------------------------------------------
+
+    if exist !build_path! ( 
+        call :sho "Point before REMOVE FOLDER. Command: rmdir /s /q !build_path!" !QA_MAIN_LOG!
+        @echo on
+        rmdir /s /q !build_path! 1>>!QA_MAIN_LOG! 2>&1
+        @echo off
+        call :sho "Point after REMOVE FOLDER." !QA_MAIN_LOG!
+    )
+
+    call :sho "Point before CREATE FOLDER. Command: mkdir !build_path!" !QA_MAIN_LOG!
+    @echo on
+    mkdir !build_path! 1>>!QA_MAIN_LOG! 2>&1
+    cd !build_path! 1>>!QA_MAIN_LOG! 2>&1
+    @echo off
+    call :sho "Point after CREATE FOLDER." !QA_MAIN_LOG!
+
+
+    call :sho "Compressed file integrity check..." !QA_MAIN_LOG!
+    !P7ZCMD! t !build_7z! 1>!tmp_log! 2>&1
+    findstr /i /m /r /c:"Everything.*Ok" !tmp_log! >nul
+    if not errorlevel 1 (
+        call :sho "Integrity check PASSED." !QA_MAIN_LOG!
+    ) else (
+        call :sho "Integrity check FAILED. Check its log:" !QA_MAIN_LOG!
+        type !tmp_log! >> !QA_MAIN_LOG!
+        goto final
+    )
+
+    call :sho "Compressed file extraction..." !QA_MAIN_LOG!
+    call :sho "Current folder: !cd!, command: !P7ZCMD! x -y !build_7z!"  !QA_MAIN_LOG!
+
+    @rem cur dir: C:\FirebirdQA\builds
+    !P7ZCMD! x -y !build_7z! 1>!tmp_log! 2>&1
+
+   
+    @rem If some file from testing FB root is opened now, 7z will output:
+    @rem 1. STDOUT: "Archives with Errors: 1"
+    @rem 2. STDERR: "ERROR: Can not delete output file : Access is denied. : disk:\path\fbclient.dll"
+
+    findstr /i /r /c:"ERROR:" /c:"access.*denied" !tmp_log! 1>nul 2>&1
+    if NOT errorlevel 1 (
+        set zip_extraction_success=0
+        call :sho "##########################################" !QA_MAIN_LOG!
+        call :sho "Detected text related to extraction errors" !QA_MAIN_LOG!
+        call :sho "##########################################" !QA_MAIN_LOG!
+    ) else (
+        findstr /i /m /r /c:"Everything.*Ok" !tmp_log! 1>nul 2>&1
+        if NOT errorlevel 1 (
+            call :sho "Extraction PASSED: find text about SUCCESS, no phrase about some problems." !QA_MAIN_LOG!
+        ) else (
+            call :sho "Could NOT found text about successful completition of extraction." !QA_MAIN_LOG!
+            set zip_extraction_success=0
+        )
+    )
+
+    @rem Result: 'zip_extraction_success' will remain 1ONLY if log of .7z extraction
+    @rem (does not contain "error:" or "access denied") _AND_ (DOES contain "Everything.*Ok").
+
+
+    if !zip_extraction_success! EQU 0 (
+
+        type !tmp_log! >>!QA_MAIN_LOG!
+
+        call :sho "Extraction FAILED. Check its log - see above." !QA_MAIN_LOG!
+        (
+            echo FAIL detected for build_no=!build_7z!, server_mode=!server_mode!
+            echo ###########################################################
+            echo ###   S K I P     F U R T H E R     E X E C U T I O N   ###
+            echo ###########################################################
+        ) > !tmp_log!
+        call :bulksho !tmp_log! !QA_MAIN_LOG!
+
+    ) else (
+
+        if "!major_v!"=="2.5" (
+            
+            set fbc=!build_path!\bin
+            if !server_mode!==SS (
+                set FB_EXE=fbserver.exe
+            ) else (
+                set FB_EXE=fb_inet_server.exe
+            )
+            (
+                echo # Added by %~dpnx0 !date! !time!
+                echo ExternalFileAccess = Full
+                echo TempDirectories=!TEMP_DIR!
+            ) >> !build_path!\firebird.conf
+        ) else (
+            set fbc=!build_path!
+            set fb_exe=firebird.exe
+            @rem ########################################################################################
+            @rem ### FB 3.x and 3.x: initialize security.db, prepare firebird.conf and databases.conf ###
+            @rem ########################################################################################
+
+            call :fb3_init_and_prep_conf !BUILD_PATH! !fbc! !server_mode! !security_suffix! !QA_MAIN_LOG!
+            @rem                               1        2        3                4               5
+            call :sho "Return to main code. FB instance in %BUILD_PATH% is ready for tests." !QA_MAIN_LOG!
+
+        )
+
+        @rem ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+        @rem ::: Here we put at the HEAD of path-list name of dir with fbclient.dll -- this is needed by fbtest :::
+        @rem ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+        set PATH=!fbc!;!PATH!
+
+        @rem set qa_excluded_tests=%QA_PATH%\qa!major_v:~0,1!x-exclude-list.txt
+
+        @rem List of tests that should be SKIPPED for current FB majoer version run:
+        @rem #######################################################################
+        @rem REPO_PATH=!QA_PATH!\fbt-repository
+        @rem This is plain text files: qa2x-exclude-list.txt; qa3x-exclude-list.txt; qa4x-exclude-list.txt 
+
+        set qa_excluded_tests=%REPO_PATH%\tests\qa!major_v:~0,1!x-exclude-list.txt
+
+        for /f %%a in ("!QA_MAIN_LOG!") do (
+            @rem set qa_fbt_result_log=%%~dpna.qa!major_v:~0,1!x-!server_mode!.log
+            @rem C:\...path...\rundaily.190110_022450.3_0_5_33086-SS.log
+            set qa_fbt_result_log=%%~dpna.!build_no:.=_!-!server_mode!.log
+        )
+
+      
+        call :sho "Check PATH: !PATH!" !QA_MAIN_LOG!
+
+        call :sho "List of tests that are EXCLUDED from execution: qa_excluded_tests=!qa_excluded_tests!" !QA_MAIN_LOG!
+        call :sho "Check content:"  !QA_MAIN_LOG!
+        type !qa_excluded_tests! > !tmp_log!
+        call :bulksho !tmp_log! !QA_MAIN_LOG!
+
+        call :sho "Binary to be launched: !fbc!\!fb_exe!" !QA_MAIN_LOG!
+
+        del !tmp_log! 2>nul
+        call :sho "Launching FB server as application: start !fbc!\!fb_exe! -a" !QA_MAIN_LOG!
+        start !fbc!\!fb_exe! -a
+
+        call :sho "Launching FB guardian as application: start !fbc!\fbguard.exe -a" !QA_MAIN_LOG!
+        start !fbc!\fbguard.exe -a
+
+        call :sho "Determine PID of '!fb_exe!'" !QA_MAIN_LOG!
+        wmic process where "name='!fb_exe!'" get ProcessID, ExecutablePath /FORMAT:LIST | findstr /c:"=" | more 1>!tmp_log! 2>&1
+        call :bulksho !tmp_log! !QA_MAIN_LOG!
+
+        call :sho "Determine PID of 'fbguard.exe'" !QA_MAIN_LOG!
+        wmic process where "name='fbguard.exe'" get ProcessID, ExecutablePath /FORMAT:LIST | findstr /c:"=" | more 1>!tmp_log! 2>&1
+        call :bulksho !tmp_log! !QA_MAIN_LOG!
+
+        cd !repo_path!
+
+        call :sho "Current dir: %cd%" !QA_MAIN_LOG!
+
+        @rem cur dir is: C:\FirebirdQA\fbt-repository
+
+        call :sho "Determine Firebird version" !QA_MAIN_LOG!
+        !fbc!\fbsvcmgr localhost:service_mgr user sysdba password masterkey info_server_version 1>>!tmp_log!
+
+        call :sho "Check FB version and currently running processes:" !QA_MAIN_LOG!
+        call :bulksho !tmp_log! !QA_MAIN_LOG!
+
+        if "!major_v!"=="2.5" (
+            call :sho "SKIP basic encryption test for this FB version." !QA_MAIN_LOG!
+        ) else (
+            call :sho "Start basic encryption test for this FB version." !QA_MAIN_LOG!
+            del !tmp_log! 2>nul
+            
+            @rem NOTE: we have to stay in pause while KEEP CONNECTION order encryption/decryption process can finish its work.
+            @rem Here we define duration of this pause, in seconds, by using config parameter ENCRYPTION_DELAY_FOR_NORMAL_FINISH
+            @rem as argument in 'set transaction lock timeout' statement:
+
+            (
+                echo set echo on;
+                echo set bail on;
+                echo set term ^^;
+                echo create or alter procedure tmp_sp_pause as
+                echo begin
+                echo     update employee set emp_no=emp_no order by emp_no rows 1;
+                echo     -- this lead to pause equal to lock_timeout in declared 'outer' transaction:
+                echo     execute statement 'update employee set emp_no=emp_no order by emp_no rows 1' 
+                echo             on external 'localhost:' ^|^| rdb$get_context('SYSTEM', 'DB_NAME'^)
+                echo             as user 'SYSDBA' password 'masterkey' role left(replace( uuid_to_char(gen_uuid(^)^), '-', ''^), 31^)
+                echo     ;
+                echo when any do
+                echo     begin
+                echo     end
+                echo end
+                echo ^^
+                echo set term ;^^
+                echo commit;
+                echo --------------------------------------------
+                echo alter database encrypt with dbcrypt key red;
+                echo --------------------------------------------
+                echo commit;
+                echo set list on;
+                echo.
+                echo -- Check parameter 'ENCRYPTION_DELAY_FOR_NORMAL_FINISH' in %~n0.conf if following
+                echo -- lock_timeout will not be enough for successful completition of enryption process:
+                echo set transaction lock timeout !ENCRYPTION_DELAY_FOR_NORMAL_FINISH!;
+                echo.
+                echo select current_timestamp as pause_started_at from rdb$database;
+                echo execute procedure tmp_sp_pause;
+                echo select current_timestamp as pause_finished_at from rdb$database;
+                echo rollback;
+                echo -- This should issue: "Database encrypted" - without any other text about progress of encryption.
+                echo -- Increase value of config parameter 'ENCRYPTION_DELAY_FOR_NORMAL_FINISH' if it is not so:
+                echo show database;
+            ) > !tm2!
+            !build_path!\isql.exe localhost:encryption_test -user sysdba -pas masterkey -i !tm2! 1>>!tmp_log! 2>&1
+            !build_path!\gstat.exe -h encryption_test | findstr /i /c:"attributes" /c:"crypt" /c:"key hash" /c:"key name" 1>>!tmp_log! 2>&1
+
+            call :sho "Check result of test encryption:" !QA_MAIN_LOG!
+            call :bulksho !tmp_log! !QA_MAIN_LOG!
+
+            del !tmp_log! 2>nul
+            (
+                echo set echo on;
+                echo set bail on;
+                echo alter database decrypt;
+                echo commit;
+                echo set list on;
+                echo.
+                echo -- Check parameter 'ENCRYPTION_DELAY_FOR_NORMAL_FINISH' in %~n0.conf if following
+                echo -- lock_timeout will not be enough for successful completition of deryption process:
+                echo set transaction lock timeout !ENCRYPTION_DELAY_FOR_NORMAL_FINISH!;
+                echo.
+                echo select current_timestamp as pause_started_at from rdb$database;
+                echo execute procedure tmp_sp_pause;
+                echo select current_timestamp as pause_finished_at from rdb$database;
+                echo rollback;
+                echo drop procedure tmp_sp_pause;
+                echo commit;
+                echo -- This should issue: "Database not encrypted" - without any other text about progress of decryption.
+                echo -- Increase value of config parameter 'ENCRYPTION_DELAY_FOR_NORMAL_FINISH' if it is not so:
+                echo show database;
+            ) > !tm2!
+            !build_path!\isql.exe localhost:encryption_test -user sysdba -pas masterkey -i !tm2! 1>>!tmp_log! 2>&1
+            !build_path!\gstat.exe -h encryption_test | findstr /i /c:"attributes" /c:"crypt" /c:"key hash" /c:"key name" 1>>!tmp_log! 2>&1
+        
+            call :sho "Check result of test decryption:" !QA_MAIN_LOG!
+            call :bulksho !tmp_log! !QA_MAIN_LOG!
+
+            del !tmp_log! 2>nul
+            del !tm2! 2>nul
+            call :sho "Finished basic encryption test for this FB version." !QA_MAIN_LOG!
+
+        )
+
+        if !PERFORM_GIT_PULL! EQU 1 (
+            call :sho "Starting !GITCMD! reset --hard  and  !GITCMD! pull, current folder: %cd%:" !QA_MAIN_LOG!
+
+            !GITCMD! reset --hard 1>!tmp_log! 2>&1
+            !GITCMD! pull 1>>!tmp_log! 2>&1
+
+            call :sho "Completed. Check result:" !QA_MAIN_LOG!
+            call :bulksho !tmp_log! !QA_MAIN_LOG!
+        ) else (
+            (
+                echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+                echo xxx ::: NOTE :::  SKIP git reset and git pull xxx
+                echo xxx Parameter 'PERFORM_GIT_PULL' = 0          xxx
+                echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+            ) > !tmp_log!
+            call :bulksho !tmp_log! !QA_MAIN_LOG!
+        )
+
+        @echo on
+        if exist !repo_path!\tmp ( 
+            rmdir /s /q !repo_path!\tmp 1>>!QA_MAIN_LOG! 2>&1
+        )
+        mkdir !repo_path!\tmp 1>>!QA_MAIN_LOG! 2>&1
+        @echo off
+
+
+        @rem #######################################
+        @rem ###   c a l l       f b t _ r u n   ###
+        @rem #######################################
+        @rem current folder is: C:\FirebirdQA\fbt-repository
+
+        
+        @rem set SINGLE_TEST_FOR_DEBUG_ONLY=bugs.core_0070
+
+        set fbt_command=%PYTHON_HOME%\Scripts\fbt_run -b !fbc! -c !fbc!\fbclient.dll -v --skip !qa_excluded_tests! -a !server_mode! !SINGLE_TEST_FOR_DEBUG_ONLY!
+
+        (
+            echo Starting fbt_run for !build_no!-!server_mode!
+            echo Current dir: !CD!
+            echo Command: !fbt_command!
+            echo Log will be written to: !qa_fbt_result_log!
+        ) > !tmp_log!
+        call :bulksho !tmp_log! !QA_MAIN_LOG!
+
+        @rem call %PYTHON_HOME%\Scripts\fbt_run -b !fbc! -v --skip !qa_excluded_tests! -a !server_mode! 1>!qa_fbt_result_log! 2>&1
+
+        @rem ::: NOTE :::
+        @rem Environment must now contain variables TEMP and FIREBIRD_TMP. Both of them must point to EXISTING folder.
+        @rem firebird.conf parameter TempDirectories must point to EXISTING folder,
+        @rem It was assigned to be equal %TEMP% - see above.
+
+        mtee.exe /? 1>!tmp_log! 2>&1
+        findstr /i /m /r /c:"mtee.*splitter" !tmp_log! 1>nul
+        if NOT errorlevel 1 (
+            del !tmp_log!
+            echo !fbt_command! 2^>^&1 ^| mtee.exe /d /t !qa_fbt_result_log! >> !QA_MAIN_LOG!
+            call !fbt_command! 2>&1 | mtee.exe /d /t !qa_fbt_result_log!
+        ) else (
+            del !tmp_log!
+            call !fbt_command! 1^>!qa_fbt_result_log! 2^>^&1 >> !QA_MAIN_LOG!
+        )
+
+        call :sho "Completed fbt_run for !build_no!-!server_mode!" !QA_MAIN_LOG!
+
+       if NOT .!SINGLE_TEST_FOR_DEBUG_ONLY!.==.. (
+           set run_cmd=!PYTHON_HOME!\Scripts\fbt_view.exe -d !REPO_PATH!\results.trf
+           call :sho "Check result, command: !run_cmd!" !QA_MAIN_LOG!
+           cmd /c !run_cmd! > !tmp_log!
+           for /f "tokens=*" %%c in (!tmp_log!) do (
+               @rem do NOT use here: call :sho "..." - troubles with GTR/LSS and output redirection.
+               echo.    %%c
+               echo.    %%c >>!QA_MAIN_LOG!
+           )
+           del !tmp_log!
+       )
+@rem echo 2222222222222
+@rem pause
+
+        call :kill_fb_processes !QA_MAIN_LOG!
+
+        call :sho "Starting fbt_archive save" !QA_MAIN_LOG!
+        
+        call %PYTHON_HOME%\Scripts\fbt_archive save 1>!tmp_log! 2>&1
+        call :bulksho !tmp_log! !QA_MAIN_LOG!
+
+        @rem result: file !REPO_PATH!\archive\!build_no!\0001-Windows64-!server_mode!-XX1.trf has been created
+
+        set arch_saved_name=
+        set fbtv_results=%QA_LOG_FOLDER%\%~n0.fbt_view_results.log
+
+        for /f "tokens=*" %%a in ('dir /b /o-d !REPO_PATH!\archive\!build_no!\*-!server_mode!-*.trf') do (
+            echo a=%%a, arch_saved_name=!arch_saved_name!
+            if .!arch_saved_name!.==.. (       
+                set arch_saved_name=%%~nxa
+                @rem do NOT --- %%~za remains ZERO for unknown reason! --  if %%~za GTR 0 (
+                call :sho "...call fbt_view for !arch_saved_name!" !QA_MAIN_LOG!
+                echo call %PYTHON_HOME%\Scripts\fbt_view !REPO_PATH!\archive\!build_no!\!arch_saved_name!
+                
+                call %PYTHON_HOME%\Scripts\fbt_view !REPO_PATH!\archive\!build_no!\!arch_saved_name! > !tmp_log!
+                
+                if NOT .!curl_bin!.==.. (
+                    copy !tmp_log! !fbtv_results!
+                )
+
+                call :bulksho !tmp_log! !QA_MAIN_LOG!
+                call :sho "...done fbt_view for !arch_saved_name!" !QA_MAIN_LOG!
+
+            )
+        )
+        call :sho "Completed fbt_archive save. Size of !REPO_PATH!\archive\!build_no!\!arch_saved_name!: !arch_saved_size!" !QA_MAIN_LOG!
+
+        call :sho "Starting remove files older than !MAX_AGE_FOR_LOGS! days in '!repo_path!\archive\' folder" !QA_MAIN_LOG!
+
+        forfiles /p "!repo_path!\archive" /c "cmd /c if @isdir==TRUE RMDIR /S /Q @PATH" /d -!MAX_AGE_FOR_LOGS!
+
+        call :sho "Completed remove files older than !MAX_AGE_FOR_LOGS! days in '!repo_path!\archive\' folder" !QA_MAIN_LOG!
+
+
+        cd !repo_path!\archive\!build_no!
+
+        call :sho "Starting fbt_analyze" !QA_MAIN_LOG!
+        
+        @rem ################################################
+        @rem ###    c a l l      f b t _ a n a l y z e    ###
+        @rem ################################################
+
+        call %PYTHON_HOME%\Scripts\fbt_analyze
+
+        @rem result: file !REPO_PATH!\archive\!build_no!\index.html has been created
+
+        set /a analyze_html_size=0
+        for /f %%a in ("!REPO_PATH!\archive\!build_no!\index.html") do (
+            if %%~za GTR 0 (
+                set /a analyze_html_size=%%~za
+            )
+        )
+        call :sho "Completed fbt_analyze. Size of !REPO_PATH!\archive\!build_no!\index.html: !analyze_html_size!" !QA_MAIN_LOG!
+
+        for /f "delims=." %%a in ('wmic os get localdatetime ^| findstr /i /r /b /c:"[0-9]"') do (
+            set dts=%%a
+            @rem for displaying in e-mail subj: DD.MM hh:mi when this subroutine finished
+            set mmdd_end_single_chk=!dts:~6,2!.!dts:~4,2!
+            set hhmi_end_single_chk=!dts:~8,2!:!dts:~10,2!
+        )
+
+        cd %QA_PATH%
+        set PATH=!ORIGIN_PATH!
+
+        call :sho "Return value of PATH to: !path!" !QA_MAIN_LOG!
+
+
+        @rem :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+        @rem ::: s e n d     r e s u l t s     o f     j u s t    c o m p l e t e d     s n a p s h o t  +  s e r v e r m o d e  :::
+        @rem :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+        set passes_cnt=?
+        set fails_cnt=?
+        set errors_cnt=?
+        set untested_cnt=?
+        set skipped_cnt=?
+        for /f "tokens=1-2" %%a in ('findstr /i /r /c:"Passes[:]*[ ]*[0-9]" /c:"Fails[:]*[ ]*[0-9]" /c:"Errors[:]*[ ]*[0-9]" /c:"Untested[:]*[ ]*[0-9]" /c:"Skipped[:]*[ ]*[0-9]" !fbtv_results!') do (
+            set line=%%a
+            set lin2=!line:Passes=!
+            if NOT .!lin2!.==.!line!. (
+                set passes_cnt=%%b
+            )
+            set lin2=!line:Fails=!
+            if NOT .!lin2!.==.!line!. (
+                set fails_cnt=%%b
+            )
+            set lin2=!line:Errors=!
+            if NOT .!lin2!.==.!line!. (
+                set errors_cnt=%%b
+            )
+            set lin2=!line:Untested=!
+            if NOT .!lin2!.==.!line!. (
+                set untested_cnt=%%b
+            )
+            set lin2=!line:Skipped=!
+            if NOT .!lin2!.==.!line!. (
+                set skipped_cnt=%%b
+            )
+        )
+
+        @rem ::: QA fbtest ::: 4.0.0.1421 SS, 22.02 03:49 ... 22.02 05:51, fbt_run results: p=NNN f=NNN e=NNN u=NNN s=NNN
+        set mail_subj=!mail_hdr_subj! !build_no! !server_mode!, !mmdd_beg_single_chk! !hhmi_beg_single_chk! ... !mmdd_end_single_chk! !hhmi_end_single_chk!
+        set mail_subj=!mail_subj!, fbt_run results: p=!passes_cnt! f=!fails_cnt! e=!errors_cnt! u=!untested_cnt! s=!skipped_cnt!
+
+        del !tmp_log! 2>nul
+        if exist "!build_path!\firebird.conf" (
+            (
+                @rem Add changed params from firebird.conf to message BODY:
+                echo.
+                echo Changed parameters in "!build_path!\firebird.conf":
+                echo --------------------------------------------------
+                findstr /r /c:"^^[^^#;]" "!build_path!\firebird.conf"
+                echo --------------------------------------------------
+                echo.
+            ) >> !tmp_log!
+        )
+
+        @rem Add *overall* results of test run to message BODY:
+        (
+            echo.
+            echo Environment variables related to temp files:
+            echo.    TEMP=%TEMP%
+            echo.    FIREBIRD_TMP=%FIREBIRD_TMP%
+            echo.
+            echo Overall results of last test run:
+            echo ---------------------------------
+            type !fbtv_results! 
+            echo ---------------------------------
+            echo.
+            echo Tests that were SKIPPED (file '!qa_excluded_tests!'^):
+            echo -----------------------
+            type !qa_excluded_tests!
+            echo -----------------------
+        ) >>!tmp_log!
+        type !tmp_log! > !fbtv_results!
+
+        set qa_fbt_result_zip=!QA_LOG_FOLDER!\!build_no:.=_!-!server_mode!.results.!ymd!_!hms!.zip
+        set run_cmd=!P7ZCMD! u -mx=9 -tzip !qa_fbt_result_zip! !qa_fbt_result_log! 1^>!tmp_log! 2^>^&1
+
+        call :sho "Preparing .ZIP with results log for being attached to e-mail message." !QA_MAIN_LOG!
+        call :sho "Command !run_cmd!" !QA_MAIN_LOG!
+
+        cmd /c "!run_cmd!"
+        type !tmp_log! >> !QA_MAIN_LOG!
+        del !qa_fbt_result_log!
+
+
+        @rem :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+        @rem ::: s e n d     r e s u l t s     o f     j u s t    c o m p l e t e d     s n a p s h o t  +  s e r v e r m o d e  :::
+        @rem :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+        call :mailsender !QA_MAIN_LOG! "!mail_subj!" "!fbtv_results!" "!qa_fbt_result_zip!"
+        @rem                   1             2              3                   4
+
+        del !qa_fbt_result_zip!
+        del !fbtv_results!
+
+    )
+    @rem zip_extraction_success! EQU 1
+
+    @rem build_7z=C:\Snapshots\Firebird-4.0.?.*-0_x64.7z
+    @rem 
+    call :sho "Leaving routine run_single_fbt_pass. Current folder: %cd%" !QA_MAIN_LOG!
+    (
+        echo.
+        echo ##################################################################################
+        echo.
+    ) >> !QA_MAIN_LOG!
+
+
+endlocal & goto:eof
+
+:fb3_init_and_prep_conf
+    setlocal
+
+    call :sho "Intro routine fb3_init_and_prep_conf: security_suffix=!security_suffix!, server_mode=!server_mode!" !QA_MAIN_LOG!
+
+    @rem Added 10-mar-2018 by Pavel Zotov.
+    @rem Common batch for initializing security database and generating firebird.conf that 
+    @rem will be appropriate to architecture that is to be checked. 
+    @rem Called from qa3x.bat and qa4x.bat
+
+    set BUILD_PATH=%1
+    set fbc=%2
+    set server_mode=%3
+    set security_suffix=%4
+    set QA_MAIN_LOG=%5
+
+    for /f %%a in ("!QA_MAIN_LOG!") do (
+      set init_sql=%%~dpna.!security_suffix!.sql.tmp
+      set init_log=%%~dpna.!security_suffix!.log.tmp
+      set init_err=%%~dpna.!security_suffix!.err.tmp
+      set tmp_log=%%~dpna.tmp
+    )
+
+
+    @rem ------ initialize securityN.fdb ------
+    @rem        ~~~~~~~~~~~~~~~~~~~~~~~~
+    (
+        echo set list on; 
+        echo set count on; 
+        echo set bail on;
+        echo set echo on;
+        echo create or alter user sysdba password 'masterkey' using plugin Srp; 
+        echo commit; 
+        echo select sec$user_name,sec$plugin
+        echo from sec$users
+        echo where upper(sec$user_name^) = upper('SYSDBA'^) and upper(sec$plugin^) = upper('Srp'^)
+        echo ;
+        echo quit;
+    ) > !init_sql!
+    
+    echo !fbc!\isql -user SYSDBA !BUILD_PATH!\security!security_suffix!.fdb -i !init_sql!
+
+    !fbc!\isql -user SYSDBA !BUILD_PATH!\security!security_suffix!.fdb -i !init_sql! 1>!init_log! 2>!init_err!
+
+    del !init_sql!
+    for /f "usebackq" %%A in ("!init_err!") do set errsize=%%~zA
+    if .!errsize!.==.. set errsize=0
+    if !errsize! EQU 0 (
+        del !init_err!
+    )
+
+    findstr /i /r /c:"SEC$PLUGIN.*Srp" !init_log! >nul
+    if not errorlevel 1 (
+        call :sho "Found record for SYSDBA with plugin Srp." !QA_MAIN_LOG!
+        call :sho "Security database has been initialized SUCCESSFULLY." !QA_MAIN_LOG!
+        del !init_log!
+    ) else (
+        call :sho "FAILURE. Record for SYSDBA with plugin Srp was NOT added." !QA_MAIN_LOG!
+        call :sho "Check logs: !init_log!, !init_err!" !QA_MAIN_LOG!
+        type !init_log! >> !QA_MAIN_LOG!
+        type !init_err! >> !QA_MAIN_LOG!
+    )
+
+    @rem ------ make firebird.conf ------
+    if exist !BUILD_PATH!\firebird.conf del !BUILD_PATH!\firebird.conf
+
+    call :sho "Start creation of !BUILD_PATH!\firebird.conf." !QA_MAIN_LOG!
+
+    (
+        echo ##################################################################################
+        echo # Following lines have been added !date! !time! by %~dpnx0
+        echo ##################################################################################
+        if /i .!server_mode!.==.SS. (
+          echo ServerMode = Super
+          echo DefaultDbCachePages = 20000
+        )
+        if /i .!server_mode!.==.SC. (
+          echo ServerMode = SuperClassic
+          echo DefaultDbCachePages = 2048
+        )
+        if /i .!server_mode!.==.CS. (
+          echo ServerMode = Classic
+          echo DefaultDbCachePages = 2048
+        )
+
+        @rem 10-mar-2018. We have to start checking Srp plugin because fdb driver 
+        @rem has ability to connect to database with this auth method.
+        @rem Some tickets (CORE-2004 etc al) are supposed to use Srp.
+
+        echo AuthServer = Legacy_Auth, Srp, Win_Sspi
+        echo UserManager = Legacy_UserManager, Srp
+        @rem 26-sep-2018, Zotov: addded 'Srp256' and 'Win_Sspi' to the list of AuthClient:
+        echo AuthClient = Legacy_Auth, Srp, Srp256, Win_Sspi
+
+        @rem --- disabled 13.04.2019 -- echo WireCrypt = Disabled
+
+        echo ###########################
+        echo # Added 13.04.2019: started implementing tests for verifying DB encryption tasks
+        echo # Encryption demo plugin was supplied by IBSurgeon, see %ENCRYPTION_PLUGIN_FOLDER%
+        echo WireCrypt = Enabled
+        echo KeyHolderPlugin = KeyHolder
+        echo ###########################
+
+        echo TempCacheLimit = 256M
+        echo MaxUnflushedWrites = -1
+        echo MaxUnflushedWriteTime = -1
+
+        echo ExternalFileAccess = Full
+
+        @rem Added 17-06-2018, Zotov:
+        echo # 'UdfAccess' - changed because default value in FB 4.x is *NONE*. Some tests need to create/use/drop UDFs from fbudf.dll
+        echo UdfAccess = Restrict UDF
+
+        echo # 'BugCheckAbort' - changed in order Windows Error Reporting could create post-morten memory dumps if FB crashes
+        echo BugCheckAbort = 1
+
+        @rem Added 23.01.2019, Zotov:
+        echo TempDirectories=!TEMP_DIR!
+
+    ) >> !BUILD_PATH!\firebird.conf
+
+    call :sho "Copying encryption plugin files from !ENCRYPTION_PLUGIN_FOLDER! to !BUILD_PATH!" !QA_MAIN_LOG!
+    xcopy /y /f /s !ENCRYPTION_PLUGIN_FOLDER! !BUILD_PATH! 1>!tmp_log! 2>&1
+    call :bulksho !tmp_log! !QA_MAIN_LOG!
+
+    call :sho "Copying license file from separate folder to !BUILD_PATH!\plugins" !QA_MAIN_LOG!
+    xcopy /y /f /v !ENCRYPTION_LICENSE_FILE! !BUILD_PATH!\plugins\*.* 1>!tmp_log! 2>&1
+    call :bulksho !tmp_log! !QA_MAIN_LOG!
+
+    call :sho "Copying standard employee.fdb to new .fdb for usage in encryption tests, file: %ENCRYPTION_SAMPLE_FDB%" !QA_MAIN_LOG!
+    echo F | xcopy /y /f /v !BUILD_PATH!\examples\empbuild\EMPLOYEE.FDB !BUILD_PATH!\examples\empbuild\%ENCRYPTION_SAMPLE_FDB%
+
+    call :sho "Changed parameters in !build_path!\firebird.conf:" !QA_MAIN_LOG!
+    findstr /m /r /c:"^[^#;]" !build_path!\firebird.conf >nul
+    if NOT errorlevel 1 (
+        @rem ###################################################################
+        @rem ###                  f i r e b i r d . c o n f                  ###
+        @rem ###################################################################
+        for /f "tokens=*" %%a in ('findstr /r /c:"^^[^^#;]" !build_path!\firebird.conf ^| findstr /i /c:"="') do (
+            call :sho "     %%a" !QA_MAIN_LOG!
+        )
+    ) else (
+        call :sho "There are NO uncommented parameters, all of them have DEFAULT values." !QA_MAIN_LOG!
+    )
+
+    if NOT .!FIREBIRD_TMP!.==.. (
+        call :sho "Value of 'FIREBIRD_TMP': !FIREBIRD_TMP!, GTT data will be stored in this folder." !QA_MAIN_LOG!
+    ) else (
+        call :sho "Variable 'FIREBIRD_TMP' undefined, GTT data will be stored in system TEMP folder." !QA_MAIN_LOG!
+    )
+
+
+    findstr /r /c:"^[^#;]" !build_path!\firebird.conf 1>!tmp_log!
+    call :bulksho !tmp_log! !QA_MAIN_LOG!
+
+    call :sho "Creation of !BUILD_PATH!\firebird.conf has been completed." !QA_MAIN_LOG!
+    @rem -------------------------------------------------------------------------------
+
+
+    @rem Code from upd_databases_conf.bat:
+
+    for /f %%a in ("!QA_MAIN_LOG!") do (
+      set dbconf_tmp=%%~dpna.!security_suffix!.conf.tmp
+    )
+    del !dbconf_tmp! 2>nul
+
+    set dbconf_for_tests_run=!BUILD_PATH!\databases.conf
+    findstr /i /m /c:"%~nx0" !dbconf_for_tests_run! 1>nul
+    if errorlevel 1 (
+        call :sho "Start update file !dbconf_for_tests_run!: add 'RemoteAccess = true' for enabling TCP connections to every specified database." !QA_MAIN_LOG!
+        for /f "tokens=*" %%a in (!dbconf_for_tests_run!) do (
+          (
+              echo %%a | findstr /i /c:"remoteaccess" >nul
+              if not errorlevel 1 (
+                  echo ### commented by %~f0: %%a
+                  @rem RemoteAccess = false
+              ) else (
+                  echo %%a
+              )
+          ) >> !dbconf_tmp!
+        )
+
+        (
+            echo # !BUILD_PATH!\examples\empbuild\%ENCRYPTION_SAMPLE_FDB% - added by %~f0
+            echo encryption_test = $(dir_sampleDb^)/%ENCRYPTION_SAMPLE_FDB%
+            echo {
+            echo    KeyHolderPlugin = KeyHolder
+            echo }
+        ) >> !dbconf_tmp!
+
+
+        @rem =====================================================
+        @rem O V E R W R I T I N G     D A T A B A S E S . C O N F 
+        @rem =====================================================
+        type !dbconf_tmp! > !dbconf_for_tests_run!
+        del !dbconf_tmp!
+
+        call :sho "Changed parameters in !dbconf_for_tests_run!:" !QA_MAIN_LOG!
+        findstr /m /r /c:"^[^#;]" !dbconf_for_tests_run! >nul
+        if NOT errorlevel 1 (
+            @rem ###################################################################
+            @rem ###                d a t a b a s e s . c o n f                  ###
+            @rem ###################################################################
+            for /f "tokens=*" %%a in ('findstr /r /c:"^^[^^#;]" !dbconf_for_tests_run! ^| findstr /i /c:"="') do (
+                call :sho "     %%a" !QA_MAIN_LOG!
+            )
+        ) else (
+            call :sho "There are NO uncommented parameters, all of them have DEFAULT values." !QA_MAIN_LOG!
+        )
+    
+    ) else (
+        call :sho "File !dbconf_for_tests_run! was already updated by this batch. SKIP action." !QA_MAIN_LOG!
+    )
+
+    call :sho "Leaving routine fb3_init_and_prep_conf" !QA_MAIN_LOG!
+
+endlocal & goto:eof
+
+:extract_build_info
+    setlocal
+
+    @rem INPUT: C:\Snapshots\Firebird-4.0.0.1411-0_Win32.7z
+    @rem OUTPUT:
+    @rem     build_no = 4.0.0.1411
+    @rem     major_v  = 4.0
+
+    set build_7z=%1
+    call :sho "Intro routine extract_build_info. build_7z=!build_7z!" !QA_MAIN_LOG!
+
+    for /f %%b in ("!build_7z!") do (
+        set bfile=%%~nb
+        @rem Sample: bfile=Firebird-4.0.0.1411-0_x64
+        @rem echo bfile=  ^|!bfile!^|
+        for /f "tokens=2 delims=-_" %%f in ("!bfile!") do (
+            set build_no=%%f
+            for /f "tokens=1-2 delims=." %%g in ("!build_no!") do (
+                @rem Old code: set major_v=!build_no:~0,3!
+                set major_v=%%g.%%h
+            )
+        )
+    )
+    call :sho "Leaving routine extract_build_info. Output result: build_no=!build_no!,  major_v=!major_v!" !QA_MAIN_LOG!
+
+endlocal & set "%~2=%build_no%" & set "%~3=%major_v%"
+
+goto:eof
+
+:mailsender
+    setlocal
+    set QA_MAIN_LOG=%1
+    set mail_subj=%2
+    set mail_body_text_file=%3
+    set mail_attachment_file=%4
+
+    @rem max_size_without_split -- take from .conf
+
+    call :sho "Intro routine mailsender" !QA_MAIN_LOG!
+
+
+    for /f "delims=." %%a in ('wmic os get localdatetime ^| findstr /i /r /b /c:"[0-9]"') do (
+        set dts=%%a
+        set ymd=!dts:~2,6!
+        set hms=!dts:~8,6!
+    )
+    set tmp_log=%QA_LOG_FOLDER%\%~n0.!ymd!_!hms!.0.tmp
+    set tmp=%QA_LOG_FOLDER%\%~n0.!ymd!_!hms!.1.tmp
+    set tm2=%QA_LOG_FOLDER%\%~n0.!ymd!_!hms!.2.tmp
+
+    set left_char=!mail_subj:~0,1!
+    set righ_char=!mail_subj:~-1!
+
+    @rem REMOVE LEADING AND TRAILING DOUBLE QUOTES:
+    @rem ##########################################
+    set result=!left_char:"=!
+    if .!result!.==.. (
+       set result=!righ_char:"=!
+       if .!result!.==.. (
+          set mail_subj=!mail_subj:~1,-1!
+       )
+    )
+
+    if NOT .!curl_bin!.==.. (
+
+        @rem https://curl.haxx.se/mail/lib-2012-01/0121.html
+
+        set dump_eml=%QA_LOG_FOLDER%\%~n0.email.log
+        set curl_cmd=!curl_bin! !curl_opt! --upload-file "!dump_eml!"
+
+        @rem 25.06.2018:
+        @rem We have to remove parenthesis from name of file that will be specified in cUrl "--upload-file" command swicth,
+        @rem otherwise cUrl raises excetption like "curl: (56) Send failure: Connection was aborted" and does NOT send file!
+        set dump_eml=!dump_eml:(=_!
+        set dump_eml=!dump_eml:^)=_!
+
+        call :sho "Start sending e-mail. File with message body: !dump_eml!" !QA_MAIN_LOG!
+
+        set bnd_label=----==--bound.label.!dts!
+
+        @rem set /a analyze_html_size=0
+        @rem for /f %%a in ("!REPO_PATH!\archive\!build_no!\index.html") do (
+        @rem     if %%~za GTR 0 (
+        @rem         set /a analyze_html_size=%%~za
+        @rem     )
+        @rem )
+
+        if exist !mail_attachment_file! (
+            if !base64_avail! EQU 1 (
+                set /a mail_attachment_size=0
+                for /f %%a in ("!mail_attachment_file!") do (
+                    set attach_filepath=%%~dpa
+                    set attach_filepath=!attach_filepath:~0,-1!
+                    set attach_filename=%%~na
+                    set attach_file_ext=%%~xa
+                    set zipname=%%~na.!ymd!
+                    set zipname=!zipname:.=_!
+                    if %%~za GTR 0 (
+                        set /a mail_attachment_size=%%~za
+                    )
+                )
+
+                if !mail_attachment_size! GTR !max_size_without_split! (
+                    set run_cmd=!P7ZCMD! u -mx=0
+                    if !mail_attachment_size! GTR !max_size_without_split! (
+                        set run_cmd=!run_cmd! -v!max_size_without_split!
+                    ) 
+                    set run_cmd=!run_cmd! !QA_LOG_FOLDER!\!zipname! !mail_attachment_file!
+
+                    call :sho "Create compressed file to be sent as attachment:" !QA_MAIN_LOG!
+                    call :sho "Command: !run_cmd!" !QA_MAIN_LOG!
+                    cmd /c !run_cmd!
+
+                    for /f %%x in ('dir /b !QA_LOG_FOLDER!\!zipname!.* ^| findstr !zipname! ^| find /v /c ""') do (
+                       set /a num_of_zip_parts=%%x
+                    )
+                    set attach_filepath=!QA_LOG_FOLDER!
+                    set attach_pattern=!QA_LOG_FOLDER!\!zipname!.*
+                    set attach_mime_type=application/x-7z-compressed
+                ) else (
+                    set /a num_of_zip_parts=1
+                    set attach_pattern=!mail_attachment_file!
+
+                    @rem attach_filepath, attach_filename, attach_file_ext -- already known, see above.
+
+                    set attach_mime_type=text/plain
+                    if /i "!attach_file_ext!"==".zip" (
+                        set attach_mime_type=application/zip
+                    )
+                    if /i "!attach_file_ext!"==".7z" (
+                        set attach_mime_type=application/x-7z-compressed
+                    )
+                )
+                set /a zip_part_no=0
+                
+                echo attach_pattern=!attach_pattern! ; attach_filename=!attach_filename! ; attach_file_ext=!attach_file_ext! >>!QA_MAIN_LOG!
+                echo Check result of "dir /b !attach_pattern! ^| findstr !attach_filename!" >>!QA_MAIN_LOG!
+                dir /b !attach_pattern! | findstr !attach_filename! >> !QA_MAIN_LOG!
+
+                for /f %%a in ('dir /b !attach_pattern! ^| findstr !attach_filename!') do (
+
+                    set /a zip_part_no=!zip_part_no!+1
+                    
+                    call :sho "Sending file %%a, part !zip_part_no! of !num_of_zip_parts!" !QA_MAIN_LOG!
+
+                    if exist !dump_eml! del !dump_eml!
+
+                    (
+                        echo From: ^<!mail_hdr_from!^>
+                        echo To: ^<!mail_hdr_to!^>
+                        if !num_of_zip_parts! GTR 1 (
+                            echo Subject: !mail_subj! // !zip_part_no!/!num_of_zip_parts!
+                        ) else (
+                            echo Subject: !mail_subj!
+                        )
+                        echo MIME-Version: 1.0
+                        echo Content-Type: multipart/mixed;
+                        echo     boundary="!bnd_label!"
+                        echo.
+                        echo.
+                        echo --!bnd_label!
+                        @rem ### BODY of message ###
+                        echo Content-Type: text/plain
+                        echo.
+                    ) > !dump_eml!
+
+                    if exist !mail_body_text_file! (
+                        type !mail_body_text_file! >> !dump_eml!
+                    )
+                    set sending_file=%%~nxa
+                    set zipb64=!QA_LOG_FOLDER!\%%~na.!dts!.b64
+                    set run_cmd=certutil -encode !attach_filepath!\%%a !zipb64! 1^>!tmp! 2^>^&1
+
+                    (
+                        echo Encoding to base64: !sending_file!
+                        echo Command: !run_cmd!
+                    ) > !tmp!
+                    call :bulksho !tmp! !QA_MAIN_LOG!
+
+                    cmd /c "!run_cmd!"
+                    call :bulksho !tmp! !QA_MAIN_LOG!
+
+                    copy !zipb64! !tmp!
+                    
+                    findstr /i /v /r /c:"begin[ ]*cert" /c:"end[ ]*cert" !tmp! > !zipb64!
+                    del !tmp!
+
+                    @rem We have to remove file that was compressed for sending and encoded to base64 just now
+
+                    if NOT .!attach_pattern!.==.!mail_attachment_file!. (
+                        @rem this is PART of compressed .7z file -- we can and have to drop it.
+                        del !QA_LOG_FOLDER!\%%a
+                    )
+
+                    call :sho "File !sending_file! has been encoded to base64." !QA_MAIN_LOG!
+
+                    (
+                        echo --!bnd_label!
+                        echo Content-Disposition: attachment;
+                        echo 	filename="!sending_file!"
+                        echo Content-Transfer-Encoding: base64
+                        echo Content-Type: !attach_mime_type!;
+                        echo 	name="!sending_file!"
+                        echo.
+                    ) >>!dump_eml!
+
+                    @rem :::::::::::::::::::::::::::::::::::::::::::::::
+                    @rem ::: Add stack trace as attachment to e-mail :::
+                    @rem :::::::::::::::::::::::::::::::::::::::::::::::
+                    type !zipb64!>>!dump_eml!
+
+                    del !zipb64!
+
+                    @rem Put final lable at the end of message body: add two dashes before and after label.
+                    echo --!bnd_label!-->>!dump_eml!
+
+                    call :sho "Completed preparing file !dump_eml! for sending." !QA_MAIN_LOG!
+
+                    set /a eml_result=1
+                    
+                    (
+                        echo mail_subj=!mail_subj!
+                        echo Check cURL command:
+                        echo !curl_cmd!
+                    ) > !tmp_log!
+                    call :bulksho !tmp_log! !QA_MAIN_LOG!
+                    call :mail_prepared_eml !QA_MAIN_LOG! "!curl_cmd!"
+                    del !dump_eml!
+
+                )
+                @rem processing .7z files: for /f %%a in ('dir /b !QA_LOG_FOLDER!\!zipname!.* ^| findstr !zipname!')
+
+            )
+            @rem if !base64_avail! EQU 1
+ 
+        ) else (
+
+            (
+                echo From: ^<!mail_hdr_from!^>
+                echo To: ^<!mail_hdr_to!^>
+                echo Subject: !mail_subj!
+                echo MIME-Version: 1.0
+                @rem ### BODY of message ###
+                echo Content-Type: text/plain
+                echo.
+            ) >!dump_eml!
+            if exist !mail_body_text_file! (
+                type !mail_body_text_file! >> !dump_eml!
+            )
+
+            call :mail_prepared_eml !QA_MAIN_LOG! "!curl_cmd!"
+            del !dump_eml!
+
+        )
+        @rem if exist !mail_attachment_file! --> TRUE / FALSE
+
+    )
+    @rem if defined curl_bin
+
+    call :sho "Leaving routine mailsender" !QA_MAIN_LOG!
+
+goto:eof
+
+:mail_prepared_eml
+    setlocal
+    set QA_MAIN_LOG=%1
+    set curl_cmd=%2
+
+    call :sho "Intro routine mail_prepared_eml" !QA_MAIN_LOG!
+
+    for /f "delims=." %%a in ('wmic os get localdatetime ^| findstr /i /r /b /c:"[0-9]"') do (
+        set dts=%%a
+        set ymd=!dts:~2,6!
+        set hms=!dts:~8,6!
+    )
+    set tmp_log=%QA_LOG_FOLDER%\%~n0.!ymd!_!hms!.0.tmp
+    set tmp=%QA_LOG_FOLDER%\%~n0.!ymd!_!hms!.1.tmp
+
+    set left_char=!curl_cmd:~0,1!
+    set righ_char=!curl_cmd:~-1!
+
+    @rem REMOVE LEADING AND TRAILING DOUBLE QUOTES:
+    @rem ##########################################
+    set result=!left_char:"=!
+    if .!result!.==.. (
+       set result=!righ_char:"=!
+       if .!result!.==.. (
+          set curl_cmd=!curl_cmd:~1,-1!
+       )
+    )
+
+    @rem ####################################################################
+    @rem ::: NB ::: cURL sends its output to STDERR rather than in STDOUT :::
+    @rem ####################################################################
+    set /a eml_result=1
+
+    call :sho "Now sending e-mail using command:" !QA_MAIN_LOG!
+    call :sho "---------------------------------" !QA_MAIN_LOG!
+    call :sho "!curl_cmd!" !QA_MAIN_LOG!
+    call :sho "---------------------------------" !QA_MAIN_LOG!
+
+    cmd /c !curl_cmd! 1>!tmp_log! 2>&1
+
+    if NOT errorlevel 1 (
+        findstr /m /i /r /c:"250 .* ok" !tmp_log! >nul
+        if NOT errorlevel 1 (
+            findstr /m /i /c:"SPAM" /c:"BLOCKED" !tmp_log! >nul
+            if NOT errorlevel 1 (
+                (
+                    echo XXXXXXXXXXXXXXXXX
+                    echo XXX ATTENTION XXX Sending could be FAILED: found phrase about spam/blocked in its log.
+                    echo XXXXXXXXXXXXXXXXX
+                )>!tmp!
+            ) else (
+                set /a eml_result=0
+                (
+                    echo +++++++++++++++
+                    echo +++ SUCCESS +++ Message with has been sent OK: found record with retcode = 250 OK.
+                    echo +++++++++++++++
+                )>!tmp!
+            )
+            call :bulksho !tmp! !QA_MAIN_LOG!
+        )
+    ) else (
+        call :sho "### SENDING ERROR ### Check log." !QA_MAIN_LOG!
+    )
+
+    if !eml_result! NEQ 0 (
+        call :sho "Check cURL output:" !QA_MAIN_LOG!
+        for /f "tokens=*" %%a in (!tmp_log!) do (
+            echo !time:~0,8! %%a
+            echo !time:~0,8! %%a >>!QA_MAIN_LOG!
+        )
+        call :sho "ERROR occured while sending alert using cUrl. Check log !tmp_log! and config settings." !QA_MAIN_LOG!
+    )
+    del !tmp_log!
+
+    call :sho "Leaving routine mail_prepared_eml" !QA_MAIN_LOG!
+
+goto:eof
+
+@rem ------------------------------------------------- auxiliary subroutines below ---------------------------------
+:sho
+    setlocal
+    set msg=%1
+    set msg=!msg:`="!
+    set log=%2
+    if .!log!.==.. (
+        echo Internal func sho: missed argument for log file.
+        echo Arg. #1 = ^|%1^|
+        goto final
+    ) 
+
+    set left_char=!msg:~0,1!
+    set righ_char=!msg:~-1!
+
+    @rem REMOVE LEADING AND TRAILING DOUBLE QUOTES:
+    @rem ##########################################
+    set result=!left_char:"=!
+    if .!result!.==.. (
+       set result=!righ_char:"=!
+       if .!result!.==.. (
+          set msg=!msg:~1,-1!
+       )
+    )
+    if .!GLOBAL_TIMESTAMP!.==.. (
+        for /f "delims=." %%a in ('wmic os get localdatetime ^| findstr /i /r /b /c:"[0-9]"') do (
+          set dts=%%a
+          set ymd=!dts:~2,6!
+          set hms=!dts:~8,6!
+          set msg=!ymd!_!hms!. !msg!
+        )
+        if .1.==.0. (
+            set dts=!time!
+            set dts=!dts: =!
+            set dts=10!dts:,=.!
+            set dts=!dts:~-11!
+            set msg=!date! !dts!. !msg!
+        )
+    ) else (
+        set msg=!GLOBAL_TIMESTAMP!. !msg!
+    )
+    echo !msg!
+    echo !msg!>>!log!
+
+endlocal & goto:eof
+
+:bulksho
+    setlocal
+    set tmp=%1
+    set log=%2
+    for /f "tokens=*" %%a in (!tmp!) do (
+       set line=%%a
+       set line=!line:"=`!
+       call :sho "!line!" !log!
+    )
+    del !tmp!
+endlocal & goto:eof
+
+:readcfg
+    set cfg=%1
+    set err_setenv=0
+    @rem ::: NB ::: Space + TAB should be inside `^[ ]` pattern!
+    @rem ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    for /F "tokens=*" %%a in ('findstr /i /r /c:"^[ 	]*[a-z,0-9]" %cfg%') do (
+      if "%%a" neq "" (
+
+        @rem Detect whether value of parameter contain quotes or no. If yes than this
+        @rem value should NOT be changed by removing its whitespaces.
+
+          for /F "tokens=1-2 delims==" %%i in ("%%a") do (
+            @rem echo Parsed: param="%%i" _tmp_val_="%%j"
+            set _tmp_par_=%%i
+            call :trim _tmp_par_ !_tmp_par_!
+
+            if "%%j"=="" (
+              set err_setenv=1
+              echo. && echo ### NO VALUE found for parameter "%%i" ### && echo.
+            ) else (
+              for /F "tokens=1" %%p in ("!_tmp_par_!") do (
+                set _tmp_val_=%%j
+                call :trim _tmp_val_ !_tmp_val_!
+                set %%p=!_tmp_val_!
+              )
+            )
+          )
+      )
+    )
+    set _tmp_par_=
+    set _tmp_val_=
+    set %~2 = %err_setenv%
+    @rem if .%err_setenv%.==.1. goto err_setenv
+
+goto:eof
+
+:trim
+    setLocal
+    @rem EnableDelayedExpansion
+    set Params=%*
+    for /f "tokens=1*" %%a in ("!Params!") do endLocal & set %1=%%b
+goto:eof
+
+
+:haltHelper
+()
+exit /b
+
+:final
+    echo.
+    if defined QA_MAIN_LOG (
+        call :sho "Bye-bye from %~dpnx0" !QA_MAIN_LOG!
+        if defined QA_LOG_FOLDER (
+            set tmp=!QA_LOG_FOLDER!\%~n0.tmp
+        ) else (
+            set tmp=%~dpn0.tmp
+        )
+
+        (
+            echo.
+            echo Check config for %~f0:
+            echo ############
+            for /f "tokens=*" %%c in (!cfg!) do (
+                echo.    %%c
+            )
+            echo ############
+        ) >>!QA_MAIN_LOG!
+
+        call :mailsender !tmp! "!mail_hdr_subj! overall job log" "!QA_MAIN_LOG!"
+        del !tmp! 2>nul
+
+    ) else (
+        echo Bye-bye from %~dpnx0.
+    )
+
+    call :haltHelper 2> nul
+    @echo.

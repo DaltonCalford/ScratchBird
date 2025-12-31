@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_6087',
+'qmid': None,
+'tracker_id': 'CORE-6087',
+'title': "Problem with casting within UNION",
+'description':
+ """
+    Confirmed bug on WI-T4.0.0.1533.
+    Checked on 4.0.0.1534: OK, 1.465s.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+   set list on;
+   select cast(0.1234 as int) as result from rdb$database
+   union all
+   select cast(0.1234 as numeric(18,4)) from rdb$database
+   ;
+  """,
+ 'expected_stdout': 
+  """
+    RESULT                          0.0000
+    RESULT                          0.1234
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

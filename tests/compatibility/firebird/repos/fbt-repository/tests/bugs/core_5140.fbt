@@ -1,0 +1,33 @@
+{
+'id': 'bugs.core_5140',
+'qmid': None,
+'tracker_id': 'CORE-5140',
+'title': 'Wrong error message when user tries to set number of page buffers into not supported value',
+'description': 
+ """
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """\
+runProgram('gfix',['-user',user_name,'-pas',user_password,'-b','1',dsn])
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+    bad parameters on attach or create database
+    -Attempt to set in database number of buffers which is out of acceptable range [50:131072]
+  """,
+  'substitutions': [('range.*', 'range')]
+}
+]
+}

@@ -1,0 +1,26 @@
+{
+'id': 'functional.dml.delete.03',
+'qmid': 'functional.dml.delete.delete_03',
+'tracker_id': '',
+'title': 'DELETE from VIEW',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE tb(id INT);
+CREATE VIEW test (id) AS SELECT id FROM tb;
+INSERT INTO tb VALUES(10);
+INSERT INTO tb VALUES(10);
+INSERT INTO tb VALUES(null);
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """DELETE FROM test WHERE id=10;
+SELECT * FROM tb;""",
+ 'expected_stdout': """          ID
+============
+
+      <null>"""
+}
+]
+}

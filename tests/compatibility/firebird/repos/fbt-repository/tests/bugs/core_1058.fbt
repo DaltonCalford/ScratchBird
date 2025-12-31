@@ -1,0 +1,23 @@
+{
+'id': 'bugs.core_1058',
+'qmid': 'bugs.core_1058',
+'tracker_id': 'CORE-1058',
+'title': "ALTER DOMAIN and ALTER TABLE don't allow to change character set and/or collation",
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE DOMAIN D_TEST AS VARCHAR(100) CHARACTER SET WIN1251;
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER DOMAIN D_TEST TYPE VARCHAR(100) CHARACTER SET UTF8;
+COMMIT;
+SHOW DOMAIN D_TEST;
+""",
+ 'expected_stdout': """D_TEST                          VARCHAR(100) CHARACTER SET UTF8 Nullable
+"""
+}
+]
+}

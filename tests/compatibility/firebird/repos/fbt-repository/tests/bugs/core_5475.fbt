@@ -1,0 +1,662 @@
+{
+'id': 'bugs.core_5475',
+'qmid': None,
+'tracker_id': 'CORE-5475',
+'title': "Provide ability to filter out info and warnings from trace log",
+'description': 
+ """
+   For FB 2.5 we verify that one may to suppress messages like TRACE_INIT/FINI ("log_initfini false")
+   Also, by default no more warnings should appear in the trace.
+
+   For FB 3.0 and above we check that trace log contains only those gdscodes which we expect.
+   Also, trace should NOT contain gdscodes which we explicitly prohibit or which we do not expect 
+   because not empty list in 'include_gds_codes' parameter.
+   Also, we verify that no more TRACE_INIT / TRACE_FINI in trace because log_initfini=false.
+
+   Checked on 2.5.7.27048, 3.0.2.32685, 4.0.0.531 -- all fine.
+
+   01.04.2020. Up to 4.0.0.1820 (~29.03.2020, including) cursor.execute() with SELECT 
+   statement did NOT actually fetch record until we explicitly do futher actions, e.g:
+       for r in cur:
+           print(r[0])
+   For this reason code which did only cur.execute('SELECT <too_long_literal_to_be_fitted> ...' )
+   was useless: it did not lead to any error and trace log did NOT contain any "undesired" gdscodes
+   like 335544914 or 335545033. It was exactly because of THIS rather than "good behaviour" of filter
+   that we specify in the trace config (i.e. include_gdscodes or exclude_gdscodes).
+   It was decided to replace selectable cursor with DML and use value that will violates limits
+   of Firebird implementation (timestamp field, assign value = '01.01.0000' - it can not be used in FB).
+
+   See letter from Vlad, 31-mar-2020 14:29.
+
+   Checked after refactoring (01.04.2020) on:
+        4.0.0.1850 SS: 9.750s.
+        4.0.0.1820 SC: 9.703s.
+        4.0.0.1848 CS: 10.735s.
+        3.0.6.33273 SS: 8.235s.
+        3.0.6.33240 SC: 8.016s.
+        3.0.6.33247 CS: 10.563s.
+ """,
+'min_versions': '2.5.7',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'sql_dialect': 1,
+ 'test_type': 'Python',
+ 'init_script':
+  """
+    recreate table test(
+        id int not null, 
+        x smallint, 
+        y timestamp
+    );
+    commit;
+    insert into test(id, x, y) values( 1, 32767, null);
+    commit;
+  """,
+ 'test_script':
+  """
+import os
+import subprocess
+import time
+from fdb import services
+from subprocess import Popen
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+# Obtain engine version:
+engine = str(db_conn.engine_version) # convert to text because 'float' object has no attribute 'startswith'
+
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+txt = '''# Generated auto, do not edit!
+  <database %[\\\\\\\\/]security?.fdb>
+      enabled false
+  </database>
+
+  <database %[\\\\\\\\/]bugs.core_5475.fdb>
+      enabled        true
+      time_threshold 0
+      log_initfini   false
+      log_errors     true
+      # log_warnings   true
+  </database>
+'''
+
+f_trc_cfg=open( os.path.join(context['temp_directory'],'tmp_trc_5475_25x.cfg'), 'w')
+f_trc_cfg.write(txt)
+flush_and_close( f_trc_cfg )
+
+# ##############################################################
+# S T A R T   T R A C E   i n   S E P A R A T E    P R O C E S S
+# ##############################################################
+
+f_trc_log=open( os.path.join(context['temp_directory'],'tmp_trc_5475_25x.log'), "w")
+f_trc_err=open( os.path.join(context['temp_directory'],'tmp_trc_5475_25x.err'), "w")
+
+p_trace = Popen( [ context['fbsvcmgr_path'], 'localhost:service_mgr', 'action_trace_start' , 'trc_cfg', f_trc_cfg.name],stdout=f_trc_log,stderr=f_trc_err)
+
+time.sleep(1)
+
+# ####################################################
+# G E T  A C T I V E   T R A C E   S E S S I O N   I D
+# ####################################################
+# Save active trace session info into file for further parsing it and obtain session_id back (for stop):
+
+f_trc_lst = open( os.path.join(context['temp_directory'],'tmp_trace_5475_25x.lst'), 'w')
+subprocess.call([context['fbsvcmgr_path'], 'localhost:service_mgr', 'action_trace_list'], stdout=f_trc_lst)
+flush_and_close( f_trc_lst )
+
+trcssn=0
+with open( f_trc_lst.name,'r') as f:
+    for line in f:
+        i=1
+        if 'Session ID' in line:
+            for word in line.split():
+                if i==3:
+                    trcssn=word
+                i=i+1
+            break
+
+# Result: `trcssn` is ID of active trace session. Now we have to terminate it:
+
+#############################################
+# ::::: NB ::::: !HERE 2.5.7 ONLY IS CHECKED! 
+# BRANCH FOR 3.0 SEE BELOW, IN SEPARATE BLOCK
+#############################################
+
+con5 = fdb.connect(dsn=dsn, sql_dialect=1)
+cur5 = con5.cursor()
+try:
+    # Leads to WARNING in trace:
+    # 335544807 : SQL warning code = 301
+    # 335544808 : DATE data type is now called TIMESTAMP
+    cur5.execute( "update test set y = cast('now' as date)" ) 
+except Exception as e:
+    print(e[0])
+con5.close()
+
+
+con6 = fdb.connect(dsn=dsn)
+cur6 = con6.cursor()
+try:
+    # Should raise
+    # 335544347 : validation error for column "TTT"."X", value "*** null ***"
+    # NB: this gdscode was NOT specified neither in include_gds nor in exclude_gds lists.
+    # We do attempt to violate not null and check what does appear in the trace log.
+    cur6.execute('insert into test(id) values(null)')
+except Exception as e:
+    print(e[0])
+con6.close()
+
+
+con7 = fdb.connect(dsn=dsn)
+# Should raise:
+# (warning) 336068855 : Warning: ALL on ALL is not granted to <...>.
+con7.execute_immediate('revoke all on all from tmp$c5475')
+con7.close()
+
+# ####################################################
+# S E N D   R E Q U E S T    T R A C E   T O   S T O P
+# ####################################################
+if trcssn>0:
+    fn_nul = open(os.devnull, 'w')
+    subprocess.call([context['fbsvcmgr_path'], 'localhost:service_mgr', 'action_trace_stop','trc_id', trcssn], stdout=fn_nul)
+    fn_nul.close()
+    time.sleep(1)
+
+p_trace.terminate()
+flush_and_close( f_trc_log )
+flush_and_close( f_trc_err )
+
+# Following file should be EMPTY:
+################
+
+f_list=(f_trc_err,)
+for i in range(len(f_list)):
+   f_name=f_list[i].name
+   with open(f_name,'r') as f:
+       for line in f:
+           if line.split():
+               print("Unexpected STDERR, file "+f_name+": "+line)
+
+# 1. We ALLOW to be logged (and EXPECT because of current test scenario):
+# error 335544347 : validation error for column "TTT"."X", value "*** null ***" 
+
+# 2. We PROHIBIT logging: 
+# 2.1. TRACE INIT / FINI messages
+# 2.2. Any warnings:
+#      "DATE data type is now called TIMESTAMP" // 335544808 - warning
+#      ALL on ALL is not granted to <...>       // 336068855 - warning
+
+# Following gdscodes MUST BE found in the trace log:
+expected_set={'335544347' : 'ERROR_NOT_found'}
+
+# Following gdscodes must NOT present on trace log because we explicitly PROHIBIT them:
+prohibit_set={'335544808' : 'OK_NOT_FOUND', '336068855' : 'OK_NOT_FOUND', 'TRACE_INIT' : 'OK_NOT_FOUND', 'TRACE_FINI' : 'OK_NOT_FOUND'}
+
+with open( f_trc_log.name,'r') as f:
+    for line in f:
+       if line.split():
+           starting_word=line.split()[0]
+           if starting_word in expected_set:
+               expected_set[ starting_word ] = 'OK_FOUND'
+           elif starting_word in prohibit_set:
+               prohibit_set[ starting_word ] = 'ERROR_PROHIBIT'
+
+for k,v in sorted(expected_set.items()):
+    print('expected_token:', k, '; message in trace:', v)
+
+for k,v in sorted(prohibit_set.items()):
+    print('prohibit_token:', k, '; message in trace:', v)
+
+# CLEANUP
+#########
+time.sleep(1)
+cleanup( (f_trc_cfg, f_trc_lst, f_trc_log, f_trc_err) )
+  """,
+ 'expected_stdout': 
+  """
+    Error while executing SQL statement:
+    - SQLCODE: -625
+    - validation error for column "TEST"."ID", value "*** null ***"
+    expected_token: 335544347 ; message in trace: OK_FOUND
+    prohibit_token: 335544808 ; message in trace: OK_NOT_FOUND
+    prohibit_token: 336068855 ; message in trace: OK_NOT_FOUND
+    prohibit_token: TRACE_FINI ; message in trace: OK_NOT_FOUND
+    prohibit_token: TRACE_INIT ; message in trace: OK_NOT_FOUND
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+,
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'sql_dialect': 1,
+ 'test_type': 'Python',
+ 'init_script':
+  """
+    recreate table test(
+        id int generated by default as identity constraint test_pk primary key using index test_id,
+        tiny_num smallint, 
+        dts timestamp,
+        s varchar(4) -- added 01.04.2020
+    );
+    commit;
+    insert into test(id, tiny_num, dts) values(1,32767, null);
+    commit;
+  """,
+ 'test_script':
+  """
+import os
+import subprocess
+import time
+from fdb import services
+from subprocess import Popen
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+# Obtain engine version:
+engine = str(db_conn.engine_version) # convert to text because 'float' object has no attribute 'startswith'
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+
+txt = '''# Generated auto, do not edit!
+  database=%[\\\\\\\\/]security?.fdb
+  {
+      enabled = false
+  }
+  database=%[\\\\\\\\/]bugs.core_5475.fdb
+  {
+      enabled         = true
+      log_connections = true
+      time_threshold  = 0
+      log_initfini    = false
+      log_errors      = true
+      log_warnings    = true
+
+      log_statement_prepare = true
+      log_statement_finish = true
+
+      # 1. We EXPLICITLY ALLOW to be logged (and EXPECT because of current test scenario): 
+      # 1.1) any kind of "arithmetic exc, num ovf, or string trunc" 
+      # 1.2) PK/UK violation
+      # 1.3) (warning) 336068855 : Warning: ALL on ALL is not granted to <...>.
+      include_gds_codes = arith_except,unique_key_violation,336068855
+
+      # We EXPLICITLY PREVENT from logging:
+      # 2.1 "FP divide by zero",
+      # 2.2 "Integer divide by zero" and 
+      # 2.3 (warning) "DATE data type is now called TIMESTAMP" (warning)
+      exclude_gds_codes = 335544772,335544778,335544808
+
+      # We do not prevent (explicitly) but DO NOT expect see in trace following errors:
+      # 1) 335544347 : validation error for column ..., value "*** null ***"
+      # 2) 335544913 : value exceeds the range for valid timestamps
+
+  }
+'''
+
+f_trc_cfg=open( os.path.join(context['temp_directory'],'tmp_trace_5475.cfg'), 'w')
+f_trc_cfg.write(txt)
+flush_and_close( f_trc_cfg )
+
+# ##############################################################
+# S T A R T   T R A C E   i n   S E P A R A T E    P R O C E S S
+# ##############################################################
+
+f_trc_log=open( os.path.join(context['temp_directory'],'tmp_trace_5475.log'), "w")
+f_trc_err=open( os.path.join(context['temp_directory'],'tmp_trace_5475.err'), "w")
+
+p_trace = Popen( [ context['fbsvcmgr_path'], 'localhost:service_mgr', 'action_trace_start' , 'trc_cfg', f_trc_cfg.name],stdout=f_trc_log,stderr=f_trc_err)
+
+time.sleep(1)
+
+# ####################################################
+# G E T  A C T I V E   T R A C E   S E S S I O N   I D
+# ####################################################
+# Save active trace session info into file for further parsing it and obtain session_id back (for stop):
+
+f_trc_lst = open( os.path.join(context['temp_directory'],'tmp_trace_5475.lst'), 'w')
+subprocess.call([context['fbsvcmgr_path'], 'localhost:service_mgr', 'action_trace_list'], stdout=f_trc_lst)
+flush_and_close( f_trc_lst )
+
+trcssn=0
+with open( f_trc_lst.name,'r') as f:
+    for line in f:
+        i=1
+        if 'Session ID' in line:
+            for word in line.split():
+                if i==3:
+                    trcssn=word
+                i=i+1
+            break
+# Result: `trcssn` is ID of active trace session. Now we have to terminate it:
+
+
+con1 = fdb.connect(dsn=dsn)
+cur1 = con1.cursor()
+try:
+    # 335544321 : arithmetic exception, numeric overflow, or string truncation
+    # NOTE. dialect_1: 335544772 : Floating-point divide by zero.  The code attempted to divide a floating-point value by zero.
+    # NOTE. dialect_3: 335544778 : Integer divide by zero.  The code attempted to divide an integer value by an integer divisor of zero.
+    cur1.execute('insert into test( tiny_num ) values( 1/0 )' ) # -------- should raise zero divide
+except Exception as e:
+    print(e[0])
+con1.close()
+
+
+con2 = fdb.connect(dsn=dsn)
+cur2 = con2.cursor()
+try:
+    # Should raise
+    # 335544665 : violation of PRIMARY or UNIQUE KEY constraint "INTEG_10" on table "TEST"
+    # 335545072 : Problematic key value is ("ID" = 1)
+    cur2.execute('insert into test(id,tiny_num) values(?, ?)', (1, 1) )
+except Exception as e:
+    print(e[0])
+con2.close()
+
+
+con3 = fdb.connect(dsn=dsn)
+cur3 = con3.cursor()
+try:
+    # Should raise
+    # 335544321 : arithmetic exception, numeric overflow, or string truncation
+    # 335544916 : numeric value is out of range
+    # (because we attempt to increase smallint value from 32767 for 1)
+    cur3.execute('update test set tiny_num = tiny_num + 1')
+except Exception as e:
+    print(e[0])
+con3.close()
+
+
+con4 = fdb.connect(dsn=dsn)
+cur4 = con4.cursor()
+try:
+    #############################################################
+    ### NB ### CHANGED 01.04.2020 BECAUSE OF NEW BEHAVIOUR IN 4.0
+    #############################################################
+   
+    # Up to 4.0.0.1820 cursor.execute() with SELECT statement did NOT fetch record until
+    # until we explicitly do futher actions, i.e.: for r in cur4: / print(r[0]) etc
+    # Trace log did NOT contain any of 335544914 / 335545033 exactly because of ***THIS***
+    # rather than include_gds_codes filter in its config!
+    # See letter from Vlad, 31-mar-2020 14:29.
+    ##########################################
+    # !! USELESS !! DO NOT USE IT >>> cur4.execute( "select cast('qwerty' as varchar(5)) from rdb$database" )
+    
+    # Decided to try to append into table value with timestamp that is out of avaliable range: 01.01.0000.
+    # This action raises gdscode = 335544913 which does not belong NEITHER to include* not to exclude* lists.
+    # For this reason such gdscode should NOT appear in the trace - it will bechecked at the end of this test.
+    cur4.execute( "insert into test( dts ) values( '01.01.0000' )" ) 
+
+except Exception as e:
+    print(e[0])
+con4.close()
+
+
+con5 = fdb.connect(dsn=dsn, sql_dialect=1)
+cur5 = con5.cursor()
+try:
+    # Leads to WARNING in trace:
+    # 335544807 : SQL warning code = 301
+    # 335544808 : DATE data type is now called TIMESTAMP
+    cur5.execute( "update test set dts = cast('now' as date)" ) 
+except Exception as e:
+    print(e[0])
+con5.close()
+
+
+con6 = fdb.connect(dsn=dsn)
+cur6 = con6.cursor()
+try:
+    # Should raise
+    # 335544347 : validation error for column ..., value "*** null ***"
+    # NB: this gdscode was NOT specified neither in include_gds nor in exclude_gds lists.
+    # We do attempt to violate not null and check what does appear in the trace log.
+    cur6.execute('insert into test(id) values(null)')
+except Exception as e:
+    print(e[0])
+con6.close()
+
+
+con7 = fdb.connect(dsn=dsn)
+# Should raise:
+# (warning) 336068855 : Warning: ALL on ALL is not granted to <...>.
+con7.execute_immediate('revoke all on all from tmp$c5475')
+con7.close()
+
+
+          # 1. We ALLOW to be logged: 
+          # 1.1) any kind of "arithmetic exc, num ovf, or string trunc" 
+          # 1.2) PK/UK violation
+          # 1.3) (warning) 336068855 : Warning: ALL on ALL is not granted to <...>.
+          #include_gds_codes = arith_except,no_dup,336068855
+
+          # We PREVENT from logging:
+          # 2.1 "FP divide by zero",
+          # 2.2 "Integer divide by zero" and 
+          # 2.3 (warning) "DATE data type is now called TIMESTAMP" (warning)
+          #exclude_gds_codes = 335544772,335544778,335544808
+
+
+# Let trace log to be entirely written on disk:
+time.sleep(1)
+
+
+# ####################################################
+# S E N D   R E Q U E S T    T R A C E   T O   S T O P
+# ####################################################
+if trcssn>0:
+    fn_nul = open(os.devnull, 'w')
+    subprocess.call([context['fbsvcmgr_path'], 'localhost:service_mgr', 'action_trace_stop','trc_id', trcssn], stdout=fn_nul)
+    fn_nul.close()
+    # DO NOT REMOVE THIS LINE:
+    time.sleep(1)
+
+p_trace.terminate()
+flush_and_close( f_trc_log )
+flush_and_close( f_trc_err )
+
+# Following file should be EMPTY:
+################
+
+f_list=(f_trc_err,)
+for i in range(len(f_list)):
+   f_name=f_list[i].name
+   with open( f_name,'r') as f:
+       for line in f:
+           if line.split():
+               print("Unexpected STDERR, file "+f_name+": "+line)
+
+
+          # 1. We ALLOW to be logged (and EXPECT because of current test scenario): 
+          # 1.1) "arithmetic exc" caused by numeric overflow // 335544321, 335544916
+          # 1.2) PK/UK violation                             // 335544665
+          # 1.3) ALL on ALL is not granted to <...>          // 336068855 - warning
+          #include_gds_codes = arith_except,unique_key_violation,336068855
+
+          # We PREVENT from logging:
+          # 2.1 "FP divide by zero"                          // 335544772 - occurs when dialect=1
+          # 2.2 "Integer divide by zero"                     // 335544778 - occurs when dialect=3
+          # 2.3 (warning) "DATE data type is now called TIMESTAMP" // 335544808 - warning
+          #exclude_gds_codes = 335544772,335544778,335544808
+
+          # we do not prevent but do not expect to be logged:
+          # 335544347 : validation error for column ..., value "*** null ***"
+          # 335544914 : string right truncation (plus 335545033 : expected length 5, actual 6)
+
+
+# Following gdscodes MUST BE found in the trace log:
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~
+missed_expected_token = 'ERROR: missed expected token which MUST be in the trace log'
+expected_set = \
+    {
+        '335544321' : missed_expected_token
+       ,'335544916' : missed_expected_token
+       ,'335544665' : missed_expected_token
+       ,'336068855' : missed_expected_token
+    }
+
+# Following gdscodes must NOT present on trace log because we explicitly PROHIBIT them:
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+not_found_explicitly_prohibited = 'SUCCESS: no tokens which are explicitly prohibited in exclude_gds_codes list'
+prohibit_set = \
+    {
+        '335544772' : not_found_explicitly_prohibited
+       ,'335544778' : not_found_explicitly_prohibited
+       ,'335544808' : not_found_explicitly_prohibited
+       ,'TRACE_INIT' : not_found_explicitly_prohibited
+       ,'TRACE_FINI' : not_found_explicitly_prohibited
+    }
+
+# Following gdscodes are UNEXPECTED, i.e. we did not prohibit them explicitly
+# but none of them are in include_gds_codes ==> they should NOT appear in the trace:
+not_found_implicitly_prohibited = 'SUCCESS: no tokens which are not in include_gds_codes list.'
+unexpect_set = \
+    {
+        '335544347' : not_found_implicitly_prohibited
+       ,'335544913' : not_found_implicitly_prohibited
+    }
+
+
+with open( f_trc_log.name,'r') as f:
+    for line in f:
+       if line.split():
+           starting_word=line.split()[0]
+           if starting_word in expected_set:
+               expected_set[ starting_word ] = 'SUCCESS: found expected token which MUST be in the trace log.'
+           elif starting_word in prohibit_set:
+               prohibit_set[ starting_word ] = 'ERROR: found token which is EXPLICITLY prohibited in exclude_gds_codes list.'
+           elif starting_word in unexpect_set:
+               unexpect_set[ starting_word ] = 'ERROR: found token NOT from include_gdscodes list (implicitly prohibited).'
+
+for k,v in sorted(expected_set.items()):
+    print('expected_token:', k, '; trace search result:', v)
+
+for k,v in sorted(prohibit_set.items()):
+    print('prohibit_token:', k, '; trace search result:', v)
+
+for k,v in sorted(unexpect_set.items()):
+    print('unexpect_token:', k, '; trace search result:', v)
+
+
+# CLEANUP
+#########
+time.sleep(1)
+cleanup( (f_trc_cfg, f_trc_lst, f_trc_log, f_trc_err) )
+  """,
+ 'expected_stdout': 
+  """
+    Error while executing SQL statement:
+    - SQLCODE: -802
+    - arithmetic exception, numeric overflow, or string truncation
+    - Integer divide by zero.  The code attempted to divide an integer value by an integer divisor of zero.
+
+    Error while executing SQL statement:
+    - SQLCODE: -803
+    - violation of PRIMARY or UNIQUE KEY constraint "TEST_PK" on table "TEST"
+    - Problematic key value is ("ID" = 1)
+
+    Error while executing SQL statement:
+    - SQLCODE: -802
+    - arithmetic exception, numeric overflow, or string truncation
+    - numeric value is out of range
+
+    Error while executing SQL statement:
+    - SQLCODE: -833
+    - value exceeds the range for valid timestamps
+
+    Error while executing SQL statement:
+    - SQLCODE: -625
+    - validation error for column "TEST"."ID", value "*** null ***"
+
+    expected_token: 335544321 ; trace search result: SUCCESS: found expected token which MUST be in the trace log.
+    expected_token: 335544665 ; trace search result: SUCCESS: found expected token which MUST be in the trace log.
+    expected_token: 335544916 ; trace search result: SUCCESS: found expected token which MUST be in the trace log.
+    expected_token: 336068855 ; trace search result: SUCCESS: found expected token which MUST be in the trace log.
+    prohibit_token: 335544772 ; trace search result: SUCCESS: no tokens which are explicitly prohibited in exclude_gds_codes list
+    prohibit_token: 335544778 ; trace search result: SUCCESS: no tokens which are explicitly prohibited in exclude_gds_codes list
+    prohibit_token: 335544808 ; trace search result: SUCCESS: no tokens which are explicitly prohibited in exclude_gds_codes list
+    prohibit_token: TRACE_FINI ; trace search result: SUCCESS: no tokens which are explicitly prohibited in exclude_gds_codes list
+    prohibit_token: TRACE_INIT ; trace search result: SUCCESS: no tokens which are explicitly prohibited in exclude_gds_codes list
+    unexpect_token: 335544347 ; trace search result: SUCCESS: no tokens which are not in include_gds_codes list.
+    unexpect_token: 335544913 ; trace search result: SUCCESS: no tokens which are not in include_gds_codes list.
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

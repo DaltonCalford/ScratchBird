@@ -1,0 +1,46 @@
+{
+'id': 'functional.datatypes.decfloat-df16-alignment',
+'qmid': None,
+'tracker_id': '',
+'title': 'Check proper alignment of decfloat(16) value if it is shown in ISQL when SET LIST ON.',
+'description': 
+ """
+    See CORE-5535 and doc\sql.extensions\README.data_types
+    Test is based on letter to Alex, 02.05.2017, 9:38: 
+    For ISQL 'SET LIST ON' there was auxiliary ("wrong") space character between column name 
+    for decfloat(16) and its value comparing with decfloat(34).
+    FB40CS, build 4.0.0.651: OK, 1.406ss.
+  """,
+'min_versions': '4.0.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+
+    recreate table test(
+         a varchar(1) default '|'
+        ,x34 decfloat(34) default -9.999999999999999999999999999999999E6144
+        ,y16 decfloat(16) default -9.999999999999999E384
+        ,u34 decfloat(34) default 9.999999999999999999999999999999999E6144
+        ,v16 decfloat(16) default 9.999999999999999E384
+        ,w varchar(1) default '|'
+    );
+    commit;
+    insert into test default values returning a,x34,y16,u34,v16,w;
+   """,
+  'expected_stdout':
+ """
+    A                               |
+    X34                             -9.999999999999999999999999999999999E+6144
+    Y16                             -9.999999999999999E+384
+    U34                              9.999999999999999999999999999999999E+6144
+    V16                              9.999999999999999E+384
+    W                               |
+ """
+}
+]
+}

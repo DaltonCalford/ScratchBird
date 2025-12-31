@@ -1,0 +1,22 @@
+{
+'id': 'functional.domain.drop.01',
+'qmid': 'functional.domain.drop.drop_domain_01',
+'tracker_id': '',
+'title': 'DROP DOMAIN',
+'description': """DROP DOMAIN
+
+Dependencies:
+CREATE DATABASE
+CREATE DOMAIN""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': 'CREATE DOMAIN test SMALLINT;',
+ 'test_type': 'ISQL',
+ 'test_script': """DROP DOMAIN test;
+SHOW DOMAIN test;""",
+ 'expected_stderr': 'There is no domain TEST in this database'
+}
+]
+}

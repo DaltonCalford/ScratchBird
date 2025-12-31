@@ -1,0 +1,53 @@
+{
+'id': 'bugs.core_0851',
+'qmid': 'bugs.core_851-250',
+'tracker_id': 'CORE-851',
+'title': 'Field can be used multiple times in multi-segment index definition',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """create table t (i integer);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """create index ti on t(i,i);
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-Field I cannot be used twice in index TI
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """create table t (i integer);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """create index ti on t(i,i);
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+unsuccessful metadata update
+-Field I cannot be used twice in index TI
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """create table t (i integer);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """create index ti on t(i,i);
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-CREATE INDEX TI failed
+-Field I cannot be used twice in index TI
+"""
+}
+]
+}

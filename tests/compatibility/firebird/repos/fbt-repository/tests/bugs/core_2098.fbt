@@ -1,0 +1,33 @@
+{
+'id': 'bugs.core_2098',
+'qmid': 'bugs.core_2098',
+'tracker_id': 'CORE-2098',
+'title': 'View over global temporary table',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1.2',
+ 'platform': 'All',
+ 'init_script': """create global temporary table temptable (
+ id integer);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """recreate view tempview1
+as
+select
+ a.id as id
+from
+ temptable a;
+commit;
+recreate view tempview2
+as
+select
+ a.id + 1 as id
+from
+ temptable a;
+commit;
+"""
+}
+]
+}

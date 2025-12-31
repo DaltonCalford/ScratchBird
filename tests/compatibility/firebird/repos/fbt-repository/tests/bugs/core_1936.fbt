@@ -1,0 +1,89 @@
+{
+'id': 'bugs.core_1936',
+'qmid': None,
+'tracker_id': 'CORE-1936',
+'title': "The log(base, number) built-in function doesn't check parameters and delivers NAN values instead.",
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select log(2, 00) from rdb$database;
+select log(2, -2) from rdb$database;
+select log(0, 1) from rdb$database;
+select log(0, 2) from rdb$database;
+select log(-1, 2) from rdb$database;
+select log(-1, 0) from rdb$database;
+select log(-1, -1) from rdb$database;
+""",
+ 'expected_stdout': """
+                    LOG
+=======================
+
+                    LOG
+=======================
+
+                    LOG
+=======================
+
+                    LOG
+=======================
+
+                    LOG
+=======================
+
+                    LOG
+=======================
+
+                    LOG
+=======================
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+
+expression evaluation not supported
+
+-Argument for LOG must be positive
+
+Statement failed, SQLSTATE = 42000
+
+expression evaluation not supported
+
+-Argument for LOG must be positive
+
+Statement failed, SQLSTATE = 42000
+
+expression evaluation not supported
+
+-Base for LOG must be positive
+
+Statement failed, SQLSTATE = 42000
+
+expression evaluation not supported
+
+-Base for LOG must be positive
+
+Statement failed, SQLSTATE = 42000
+
+expression evaluation not supported
+
+-Base for LOG must be positive
+
+Statement failed, SQLSTATE = 42000
+
+expression evaluation not supported
+
+-Base for LOG must be positive
+
+Statement failed, SQLSTATE = 42000
+
+expression evaluation not supported
+
+-Base for LOG must be positive
+
+"""
+}
+]
+}

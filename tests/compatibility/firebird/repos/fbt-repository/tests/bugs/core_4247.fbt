@@ -1,0 +1,76 @@
+{
+'id': 'bugs.core_4247',
+'qmid': None,
+'tracker_id': 'CORE-4247',
+'title': 'Delete "where current of" cursor fails for tables with newly added fields',
+'description': 'Scenario has been taken from attachment to this ticket',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    create table test_table (id  integer not null, desc varchar(10));
+    alter table test_table add constraint pk_test_table primary key (id);
+    commit;
+    
+    insert into test_table (id, desc) values (1, 'a');
+    insert into test_table (id, desc) values (2, 'b');
+    insert into test_table (id, desc) values (3, 'c');
+    insert into test_table (id, desc) values (4, 'd');
+    insert into test_table (id, desc) values (5, 'e');
+    insert into test_table (id, desc) values (6, 'f');
+    insert into test_table (id, desc) values (7, 'g');
+    insert into test_table (id, desc) values (8, 'h');
+    insert into test_table (id, desc) values (9, 'i');
+    insert into test_table (id, desc) values (10, 'k');
+    commit;
+    
+    alter table test_table add seqno integer;
+    commit;
+    
+    -- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    -- without this update  - everything works
+    update test_table set seqno=id where id>=5;
+    commit;
+     
+    set term ^ ;
+    create or alter procedure test_cursor
+    as
+    declare variable id integer;
+    declare variable desc varchar(10);
+    declare variable seqno integer;
+    begin
+        for
+          select  id, desc, seqno from test_table
+          order by seqno  -- if seqno values are unique - it works. With "order by id" works
+          into
+            :id, :desc, :seqno
+          as cursor data_cursor
+        do begin
+          delete from test_table where current of data_cursor; -- this fails !!!
+          -- with dummy suspend stored procedure works even it does not require to return any results
+          --suspend;
+        end
+    end^
+    set term ; ^
+    
+    commit;
+  """,
+ 'test_script':
+  """
+    execute procedure test_cursor;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_1244',
+'qmid': 'bugs.core_1244',
+'tracker_id': 'CORE-1244',
+'title': 'Server crash on select * from <recursive CTE>',
+'description': 'Simple select from recursive CTE crashes the server when query uses asterisk.',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE ARTICLES (ARTICLEID integer, PARENTID integer);
+COMMIT;
+INSERT INTO ARTICLES VALUES (1,NULL);
+INSERT INTO ARTICLES VALUES (2,1);
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """with recursive
+    Art_Tree as (
+        select A.ArticleID
+          from Articles A
+         where A.ParentID is NULL
+
+union all
+
+select A.ArticleID
+          from Articles A
+               join Art_Tree T on (A.ParentID=T.ArticleID)
+    )
+select *
+  from Art_Tree;
+""",
+ 'expected_stdout': """ARTICLEID
+============
+           1
+           2
+
+"""
+}
+]
+}

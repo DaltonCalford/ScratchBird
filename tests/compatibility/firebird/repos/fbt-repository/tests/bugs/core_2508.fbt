@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_2508',
+'qmid': None,
+'tracker_id': 'CORE-2508',
+'title': 'Tricky index names can defeat the parsing logic when generating a human readable plan',
+'description': 
+ """
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    create table t(a int not null);
+    create index "abc(" on t(a);
+    set planonly;
+    select * from t where a in (0, 1, 2);
+    -- This will produce in 2.5.x:
+    -- PLAN (T INDEX (abc(abc(abc())
+    --                  ^^^ ^^^
+    --                   |   |
+    --                   +---+--- NO commas here!
+    -- Compare with 3.0:
+    -- PLAN (T INDEX (abc(, abc(, abc())
+  """,
+  'expected_stdout':
+  """
+    PLAN (T INDEX (abc(, abc(, abc())
+  """,
+  'expected_stderr':
+  """
+  """
+
+}
+]
+}
+

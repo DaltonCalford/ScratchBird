@@ -1,0 +1,65 @@
+{
+'id': 'bugs.core_2069',
+'qmid': None,
+'tracker_id': 'CORE-2069',
+'title': 'Incorrect VIEW expansion when RDB$DB_KEY is used in view body',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table t1 (n integer);
+
+insert into t1 values (1);
+insert into t1 values (2);
+insert into t1 values (3);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """-- ok
+select a.*
+ from t1 a
+ where a.rdb$db_key = (
+ select b.rdb$db_key
+ from t1 b
+ where n = 1
+);
+
+-- ok
+create view v1 as
+ select a.*
+ from t1 a
+ where a.rdb$db_key = (
+ select b.rdb$db_key
+ from t1 b
+ where n = 1
+);
+
+-- ok
+select * from v1;
+
+-- wrong: returns nothing
+select * from v1 union all select * from v1;
+""",
+ 'expected_stdout': """
+           N
+============
+           1
+
+
+           N
+============
+           1
+
+
+           N
+============
+           1
+           1
+
+"""
+}
+]
+}

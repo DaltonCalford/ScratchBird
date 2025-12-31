@@ -1,0 +1,56 @@
+{
+'id': 'bugs.core_3228',
+'qmid': None,
+'tracker_id': 'CORE-3228',
+'title': 'RIGHT() fails with multibyte text blobs > 1024 chars ',
+'description': '',
+'min_versions': '2.1.4',
+'versions': [
+{
+ 'firebird_version': '2.1.4',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """with q (s) as (
+        select
+            cast(
+                cast('AAA' as char(1021)) || 'ZZZ'
+            as blob sub_type text character set utf8
+        )
+        from rdb$database
+    )
+    select right(s, 3) from q;
+with q (s) as (
+        select
+            cast(
+                cast('AAA' as char(1022)) || 'ZZZ'
+            as blob sub_type text character set utf8
+        )
+        from rdb$database
+    )
+    select right(s, 3) from q;""",
+ 'expected_stdout': """Database:  localhost:C:\fbtest2\tmp\bugs.core_3228.fdb, User: SYSDBA
+SQL> CON> CON> CON> CON> CON> CON> CON> CON>
+            RIGHT
+=================
+              0:3
+==============================================================================
+RIGHT:
+ZZZ
+==============================================================================
+
+SQL> CON> CON> CON> CON> CON> CON> CON> CON>
+            RIGHT
+=================
+              0:8
+==============================================================================
+RIGHT:
+ZZZ
+==============================================================================
+
+SQL>"""
+}
+]
+}

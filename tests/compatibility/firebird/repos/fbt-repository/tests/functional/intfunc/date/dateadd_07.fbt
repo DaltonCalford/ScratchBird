@@ -1,0 +1,32 @@
+{
+'id': 'functional.intfunc.date.dateadd_07',
+'qmid': 'functional.intfunc.date.dateadd_07',
+'tracker_id': '',
+'title': "test de la fonction dateadd  pour l'ajout d'une seconde",
+'description': 'Returns a date/time/timestamp value increased (or decreased, when negative) by the specified amount of time.',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    set sqlda_display on;
+    select dateadd(-1 second to time '12:12:00' ) as tx_1  from rdb$database;
+    select dateadd(second,-1, time '12:12:00' ) as tx_2 from rdb$database;
+  """,
+ 'expected_stdout':
+  """
+    01: sqltype: 560 TIME scale: 0 subtype: 0 len: 4
+    TX_1                            12:11:59.0000
+
+    01: sqltype: 560 TIME scale: 0 subtype: 0 len: 4
+    TX_2                            12:11:59.0000
+  """,
+  'substitutions':[
+      ('^((?!sqltype:|DD_).)*$',''),('[ \t]+',' '),('.*alias:.*','')
+   ]
+}
+]
+}

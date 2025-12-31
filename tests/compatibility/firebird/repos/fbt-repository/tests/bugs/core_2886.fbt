@@ -1,0 +1,39 @@
+{
+'id': 'bugs.core_2886',
+'qmid': None,
+'tracker_id': 'CORE-2886',
+'title': 'Query with "NOT IN <subselect from view>" fails',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE T (ID INTEGER NOT NULL);
+
+CREATE VIEW V( ID) AS select ID from T;
+
+INSERT INTO T (ID) VALUES (1);
+INSERT INTO T (ID) VALUES (2);
+INSERT INTO T (ID) VALUES (3);
+
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT ID FROM T
+WHERE ID NOT IN
+  (SELECT ID FROM V WHERE ID = 1);
+""",
+ 'expected_stdout': """
+          ID
+============
+           2
+           3
+
+"""
+}
+]
+}

@@ -1,0 +1,53 @@
+{
+'id': 'bugs.core_6479',
+'qmid': None,
+'tracker_id': 'CORE-6479',
+'title': 'COMMENT ON USER can only apply comment on user defined by the default usermanager plugin',
+'description':
+ """
+    ::: NOTE :::
+    There is no sense to check for Legacy_UserManarer: comment for user will not be stored in the sec$users for this plugin.
+    Test verifies only Srp. Discussed with Alex, 12.03.2021
+
+    Checked on: 4.0.02386, 3.0.8.33425
+ """,
+'min_versions': '3.0.8',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create or alter user tmp$c6479_srp password '123' using plugin Srp;
+    commit;
+    comment on user tmp$c6479_srp using plugin Srp is 'This is description for Srp-user';
+    --                            ================
+    commit;
+
+    set list on;
+    set count on;
+    select s.sec$user_name, s.sec$plugin, s.sec$description as sec_descr_blob_id
+    from sec$users s
+    where s.sec$user_name  = upper('tmp$c6479_srp')
+    ;
+    drop user tmp$c6479_srp using plugin Srp;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+    SEC$USER_NAME                   TMP$C6479_SRP
+    SEC$PLUGIN                      Srp
+    This is description for Srp-user
+    Records affected: 1
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions': [('SEC_DESCR_BLOB_ID .*', ''),('[\t ]+',' ')]
+}
+]
+}

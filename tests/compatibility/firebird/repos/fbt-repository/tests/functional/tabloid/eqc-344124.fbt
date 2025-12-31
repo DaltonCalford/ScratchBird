@@ -1,0 +1,45 @@
+{
+'id': 'functional.tabloid.eqc-344124',
+'qmid': None,
+'tracker_id': '',
+'title': "Check ability to run selectable SP with input parameter which inserts into GTT (on commit DELETE rows) and then does suspend",
+'description': 'NB: if either a_id, suspend or the insert is removed, or if gtt_test is changed to on commit preserve rows - no crash',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate global temporary table gtt_test (
+        id  integer
+    ) on commit delete rows;
+    
+    set term  ^;
+    create procedure test
+    returns (
+        o_id integer)
+    as
+    begin
+      insert into gtt_test(id) values( 1 + rand() * 100 ) returning sign(id) into o_id;
+      --o_id = 0;
+      suspend;
+    end
+    ^
+    set term ;^
+    commit;
+    
+    set list on;
+    select * from test;
+  """,
+ 'expected_stdout': 
+  """
+    O_ID                            1
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -1,0 +1,99 @@
+{
+'id': 'bugs.core_1716',
+'qmid': None,
+'tracker_id': 'CORE-1716',
+'title': 'Wrong variable initialization in recursive procedures',
+'description': '',
+'min_versions': '2.1.7',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create domain dm_int as integer default 0 not null;
+    commit;
+    
+    -- sample with returned variable
+    set term ^;
+    create procedure sp_test1(a_cnt int)
+    returns (o_cnt int, o_ret dm_int)
+    as
+    begin
+      while (a_cnt>0) do 
+      begin
+        o_cnt = a_cnt;
+        a_cnt = a_cnt-1;
+        for 
+          select o_ret 
+          from sp_test1( :a_cnt ) 
+          into o_ret 
+        do 
+          suspend;
+      end
+      suspend;
+    end
+    ^
+    
+    create procedure sp_test2(a_cnt int)
+    returns (o_cnt int, o_ret dm_int)
+    as
+    declare x dm_int;
+    begin
+      while (a_cnt>0) do 
+      begin
+        o_cnt = a_cnt;
+        a_cnt = a_cnt-1;
+        for 
+          select o_ret 
+          from sp_test2( :a_cnt ) 
+          into o_ret 
+          do begin 
+            o_ret = x; 
+            suspend; 
+          end
+      end
+      o_ret=x;
+      suspend;
+    end
+    ^
+    set term ;^
+    commit;
+    
+    select * from sp_test1(3);
+    select * from sp_test2(3);
+  """,
+ 'expected_stdout': 
+  """
+           O_CNT        O_RET
+    ============ ============
+               3            0
+               3            0
+               3            0
+               3            0
+               2            0
+               2            0
+               1            0
+               1            0
+    
+    
+           O_CNT        O_RET
+    ============ ============
+               3            0
+               3            0
+               3            0
+               3            0
+               2            0
+               2            0
+               1            0
+               1            0
+  """,
+  'substitutions': [('=.*','')]
+}
+]
+}

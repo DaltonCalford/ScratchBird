@@ -1,0 +1,51 @@
+{
+'id': 'bugs.core_3779',
+'qmid': None,
+'tracker_id': 'CORE-3779',
+'title': "Report OS user name in MON$ATTACHMENTS",
+'description': 
+ """
+     We compare values in mon$attachment with those that can be obtained using pure Python calls (without FB).
+     NB: on Windows remote_os_user contains value in lower case ('zotov'), exact value was: 'Zotov'.
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+import os
+import socket
+import getpass
+
+cur=db_conn.cursor()
+cur.execute('select mon$remote_host, mon$remote_os_user from mon$attachments where mon$attachment_id=current_connection')
+for r in cur:
+    if r[0].upper() == socket.gethostname().upper():
+        print('Check of remote_host: passed')
+    else:
+        print('FAILED check remote_host: got |'+r[0]+'| instead of |'+socket.gethostname()+'|')
+
+    if r[1].upper() == getpass.getuser().upper():
+        print('Check of remote_os_user: passed')
+    else:
+        print('FAILED check remote_os_user: got |'+r[1]+'| instead of |'+getpass.getuser()+'|')
+
+cur.close()
+  """,
+ 'expected_stdout': 
+  """
+    Check of remote_host: passed
+    Check of remote_os_user: passed
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -1,0 +1,159 @@
+{
+'id': 'bugs.core_3736',
+'qmid': '',
+'tracker_id': 'CORE-3736',
+'title': 'WITH LOCK clause is allowed for users with read-only rights on some table, thus blocking others from updating this table',
+'description':
+ """
+    Checked on:
+        4.0.0.1635 SS: 1.500s.
+        4.0.0.1633 CS: 2.032s.
+        3.0.5.33180 SS: 1.078s.
+        3.0.5.33178 CS: 1.408s.
+ """,
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set wng off;
+    create or alter user tmp$c3736_ro password 'tmp$c3736_ro'; -- user with read-only access to the table
+    create or alter user tmp$c3736_ud password 'tmp$c3736_ud'; -- user with access for UPDATE and DELETE on the table
+    commit;
+    
+    revoke all on all from tmp$c3736_ro;
+    revoke all on all from tmp$c3736_ud;
+    commit;
+    
+    recreate table t_read_only_for_non_sys(id int);
+    commit;
+    insert into t_read_only_for_non_sys values(1);
+    insert into t_read_only_for_non_sys values(2);
+    insert into t_read_only_for_non_sys values(3);
+    insert into t_read_only_for_non_sys values(4);
+    insert into t_read_only_for_non_sys values(5);
+    commit;
+    
+    grant select on t_read_only_for_non_sys to tmp$c3736_ro;
+    commit;
+    grant update,delete,select on t_read_only_for_non_sys to tmp$c3736_ud;
+    commit;
+    
+    set transaction no wait;
+    
+    update t_read_only_for_non_sys set id = id where id >= 4;
+    
+    set term ^;
+    execute block returns( who_am_i type of column sec$users.sec$user_name, my_action varchar(20), what_i_see int )
+    as
+      declare v_dbname type of column mon$database.mon$database_name;
+      declare v_usr_ro type of column sec$users.sec$user_name = 'tmp$c3736_ro';
+      declare v_pwd_ro varchar(20) = 'tmp$c3736_ro';
+      declare v_connect varchar(255);
+    begin
+      select 'localhost:' || d.mon$database_name
+      from mon$database d
+      into v_dbname;
+    
+      for
+        execute statement 'select current_user, ''select_read_only'', id from t_read_only_for_non_sys' --  for update with lock'
+        on external (v_dbname)
+        as user (v_usr_ro) password (v_pwd_ro)
+        into who_am_i, my_action, what_i_see
+      do 
+        suspend;
+    
+      for
+        execute statement 'select current_user, ''select_with_lock'', id from t_read_only_for_non_sys for update with lock'
+        on external (v_dbname)
+        as user (v_usr_ro) password (v_pwd_ro)
+        into who_am_i, my_action, what_i_see
+      do 
+        suspend;
+    
+    
+    end
+    ^
+    set term ;^
+    rollback;
+    
+    set transaction no wait;
+    
+    update t_read_only_for_non_sys set id = id where id >= 4;
+    
+    set term ^;
+    execute block returns( who_am_i type of column sec$users.sec$user_name, my_action varchar(20), what_i_see int )
+    as
+      declare v_dbname type of column mon$database.mon$database_name;
+      declare v_usr_ud type of column sec$users.sec$user_name = 'tmp$c3736_ud';
+      declare v_pwd_ud varchar(20) = 'tmp$c3736_ud';
+      declare v_connect varchar(255);
+    begin
+      select 'localhost:' || d.mon$database_name
+      from mon$database d
+      into v_dbname;
+    
+      for
+        execute statement 'select current_user, ''select_with_lock'', id from t_read_only_for_non_sys for update with lock'
+        on external (v_dbname)
+        as user (v_usr_ud) password (v_pwd_ud)
+        into who_am_i, my_action, what_i_see
+      do 
+        suspend;
+    
+    end
+    ^
+    set term ;^
+    rollback;
+
+    --                                    ||||||||||||||||||||||||||||
+    -- ###################################|||  FB 4.0+, SS and SC  |||##############################
+    --                                    ||||||||||||||||||||||||||||
+    -- If we check SS or SC and ExtConnPoolLifeTime > 0 (config parameter FB 4.0+) then current
+    -- DB (bugs.core_NNNN.fdb) will be 'captured' by firebird.exe process and fbt_run utility
+    -- will not able to drop this database at the final point of test.
+    -- Moreover, DB file will be hold until all activity in firebird.exe completed and AFTER this
+    -- we have to wait for <ExtConnPoolLifeTime> seconds after it (discussion and small test see
+    -- in the letter to hvlad and dimitr 13.10.2019 11:10).
+    -- This means that one need to kill all connections to prevent from exception on cleanup phase:
+    -- SQLCODE: -901 / lock time-out on wait transaction / object <this_test_DB> is in use
+    -- #############################################################################################
+    delete from mon$attachments where mon$attachment_id != current_connection;
+    commit;    
+
+    -- Do not forget about cleanup - remember that other tests can query sec$users or run `show users`!
+    drop user tmp$c3736_ro;
+    drop user tmp$c3736_ud;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+    WHO_AM_I                        MY_ACTION              WHAT_I_SEE 
+    =============================== ==================== ============ 
+    TMP$C3736_RO                    select_read_only                1 
+    TMP$C3736_RO                    select_read_only                2 
+    TMP$C3736_RO                    select_read_only                3 
+    TMP$C3736_RO                    select_read_only                4 
+    TMP$C3736_RO                    select_read_only                5 
+    
+    
+    WHO_AM_I                        MY_ACTION              WHAT_I_SEE 
+    =============================== ==================== ============ 
+    TMP$C3736_UD                    select_with_lock                1 
+    TMP$C3736_UD                    select_with_lock                2 
+    TMP$C3736_UD                    select_with_lock                3 
+  """,
+ 'expected_stderr': 
+  """
+    335544352 : no permission for UPDATE access to TABLE T_READ_ONLY_FOR_NON_SYS
+    335544878 : concurrent transaction number is 806
+  """,
+  'substitutions':[('^((?!335544352|335544878).)*$',''), ('number is.*', '')]
+}
+]
+}

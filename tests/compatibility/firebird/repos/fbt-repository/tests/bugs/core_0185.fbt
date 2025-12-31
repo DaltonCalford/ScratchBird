@@ -1,0 +1,54 @@
+{
+'id': 'bugs.core_0185',
+'qmid': None,
+'tracker_id': 'CORE-0185',
+'title': "DB crashes if trigger BU deletes own row",
+'description':
+ """
+    Ortiginal test:
+    https://github.com/FirebirdSQL/fbtcs/blob/master/GTCS/tests/CF_ISQL_28.script
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create table test (id integer not null);
+    commit;
+    set term ^ ;
+    create trigger test_bu for test active before update position 0 as
+    begin
+        delete from test where id=old.id;
+    end 
+    ^
+    set term ; ^
+    commit;
+
+    insert into test values (1);
+    insert into test values (2);
+    insert into test values (3);
+    insert into test values (4);
+    insert into test values (5);
+    insert into test values (6);
+    commit;
+
+    update test set id=-1 where id=1;
+    rollback;
+    set list on;
+    select count(*) from test;
+  """,
+ 'expected_stdout': 
+  """
+    COUNT                           6
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 22000
+    no current record for fetch operation
+  """
+}
+]
+}

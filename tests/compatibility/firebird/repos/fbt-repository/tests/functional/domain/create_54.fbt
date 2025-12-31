@@ -1,0 +1,38 @@
+{
+'id': 'functional.domain.create.54',
+'qmid': 'functional.domain.create.create_domain_54',
+'tracker_id': 'CORE-660',
+'title': 'Use of domains for Trigger/SP variable definition',
+'description': """Allow domains to be applied to variables and in/out
+parameters within a trigger or SP""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """create domain d as integer;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """set term !!;
+create procedure sp (i type of d) returns (o type of d)
+as
+  declare variable v type of d;
+begin
+  v = cast(v as type of d);
+end!!
+commit!!
+set term ;!!
+show procedure sp;""",
+ 'expected_stdout': """Procedure text:
+=============================================================================
+  declare variable v type of d;
+begin
+  v = cast(v as type of d);
+end
+=============================================================================
+Parameters:
+I                                 INPUT (TYPE OF D) INTEGER
+O                                 OUTPUT (TYPE OF D) INTEGER
+"""
+}
+]
+}

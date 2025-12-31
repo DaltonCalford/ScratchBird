@@ -1,0 +1,322 @@
+{
+'id': 'bugs.core_1514',
+'qmid': 'bugs.core_1514',
+'tracker_id': 'CORE-1514',
+'title': 'Many new 2.1 built in functions have incorrect NULL semantics',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT ABS(null) from rdb$database;
+SELECT ACOS(null) from rdb$database;
+SELECT ASCII_VAL(null) from rdb$database;
+SELECT ASIN(null) from rdb$database;
+SELECT ATAN(null) from rdb$database;
+SELECT ATAN2(null,null) from rdb$database;
+SELECT BIN_AND(null) from rdb$database;
+SELECT BIN_OR(null) from rdb$database;
+SELECT BIN_XOR(null) from rdb$database;
+SELECT COS(null) from rdb$database;
+SELECT COSH(null) from rdb$database;
+SELECT COT(null) from rdb$database;
+SELECT dateadd(year, null, current_date) from rdb$database;
+SELECT FLOOR(null) from rdb$database;
+SELECT LN(null) from rdb$database;
+SELECT LOG(null,null) from rdb$database;
+SELECT LOG10(null) from rdb$database;
+SELECT MOD(null,null) from rdb$database;
+SELECT SIGN(null) from rdb$database;
+SELECT SIN(null) from rdb$database;
+SELECT SINH(null) from rdb$database;
+SELECT SQRT(null) from rdb$database;
+SELECT TAN(null) from rdb$database;
+SELECT TANH(null) from rdb$database;
+select trunc(1, cast(null as integer)) from rdb$database;""",
+ 'expected_stdout': """
+         ABS
+============
+      <null>
+
+
+                   ACOS
+=======================
+                 <null>
+
+
+ASCII_VAL
+=========
+   <null>
+
+
+                   ASIN
+=======================
+                 <null>
+
+
+                   ATAN
+=======================
+                 <null>
+
+
+                  ATAN2
+=======================
+                 <null>
+
+
+     BIN_AND
+============
+      <null>
+
+
+      BIN_OR
+============
+      <null>
+
+
+     BIN_XOR
+============
+      <null>
+
+
+                    COS
+=======================
+                 <null>
+
+
+                   COSH
+=======================
+                 <null>
+
+
+                    COT
+=======================
+                 <null>
+
+
+    DATEADD
+===========
+     <null>
+
+
+       FLOOR
+============
+      <null>
+
+
+                     LN
+=======================
+                 <null>
+
+
+                    LOG
+=======================
+                 <null>
+
+
+                  LOG10
+=======================
+                 <null>
+
+
+         MOD
+============
+      <null>
+
+
+   SIGN
+=======
+ <null>
+
+
+                    SIN
+=======================
+                 <null>
+
+
+                   SINH
+=======================
+                 <null>
+
+
+                   SQRT
+=======================
+                 <null>
+
+
+                    TAN
+=======================
+                 <null>
+
+
+                   TANH
+=======================
+                 <null>
+
+
+       TRUNC
+============
+      <null>
+
+"""
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT ABS(null) from rdb$database;
+SELECT ACOS(null) from rdb$database;
+SELECT ASCII_VAL(null) from rdb$database;
+SELECT ASIN(null) from rdb$database;
+SELECT ATAN(null) from rdb$database;
+SELECT ATAN2(null,null) from rdb$database;
+SELECT BIN_AND(null,null) from rdb$database;
+SELECT BIN_OR(null,null) from rdb$database;
+SELECT BIN_XOR(null,null) from rdb$database;
+SELECT COS(null) from rdb$database;
+SELECT COSH(null) from rdb$database;
+SELECT COT(null) from rdb$database;
+SELECT dateadd(year, null, current_date) from rdb$database;
+SELECT FLOOR(null) from rdb$database;
+SELECT LN(null) from rdb$database;
+SELECT LOG(null,null) from rdb$database;
+SELECT LOG10(null) from rdb$database;
+SELECT MOD(null,null) from rdb$database;
+SELECT SIGN(null) from rdb$database;
+SELECT SIN(null) from rdb$database;
+SELECT SINH(null) from rdb$database;
+SELECT SQRT(null) from rdb$database;
+SELECT TAN(null) from rdb$database;
+SELECT TANH(null) from rdb$database;
+select trunc(1, cast(null as integer)) from rdb$database;""",
+ 'expected_stdout': """
+         ABS
+============
+      <null>
+
+
+                   ACOS
+=======================
+                 <null>
+
+
+ASCII_VAL
+=========
+   <null>
+
+
+                   ASIN
+=======================
+                 <null>
+
+
+                   ATAN
+=======================
+                 <null>
+
+
+                  ATAN2
+=======================
+                 <null>
+
+
+     BIN_AND
+============
+      <null>
+
+
+      BIN_OR
+============
+      <null>
+
+
+     BIN_XOR
+============
+      <null>
+
+
+                    COS
+=======================
+                 <null>
+
+
+                   COSH
+=======================
+                 <null>
+
+
+                    COT
+=======================
+                 <null>
+
+
+    DATEADD
+===========
+     <null>
+
+
+       FLOOR
+============
+      <null>
+
+
+                     LN
+=======================
+                 <null>
+
+
+                    LOG
+=======================
+                 <null>
+
+
+                  LOG10
+=======================
+                 <null>
+
+
+         MOD
+============
+      <null>
+
+
+   SIGN
+=======
+ <null>
+
+
+                    SIN
+=======================
+                 <null>
+
+
+                   SINH
+=======================
+                 <null>
+
+
+                   SQRT
+=======================
+                 <null>
+
+
+                    TAN
+=======================
+                 <null>
+
+
+                   TANH
+=======================
+                 <null>
+
+
+       TRUNC
+============
+      <null>
+
+"""
+}
+]
+}

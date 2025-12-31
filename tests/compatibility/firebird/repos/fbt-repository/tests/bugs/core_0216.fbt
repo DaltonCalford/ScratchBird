@@ -1,0 +1,46 @@
+{
+'id': 'bugs.core_0216',
+'qmid': None,
+'tracker_id': 'CORE-216',
+'title': 'Too many grants lose privileges',
+'description': """Issuing more than 2000 grants on any one object causes
+an internal buffer flow in generating the access
+control list that actually enforces the rights.""",
+'min_versions': '2.5',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table T (PK integer);
+create table LOG(PK integer);
+""",
+ 'test_type': 'Python',
+ 'test_script': '''c = db_conn.cursor()
+# Create 4000 triggers on table T
+i = 1
+cmd = """create trigger LOGT_%d for T after insert as
+begin
+  insert into log (PK) values (new.pk);
+end
+"""
+while i <= 4000:
+    c.execute(cmd % i)
+    i += 1
+db_conn.commit()
+
+# Grants
+i = 1
+cmd = """GRANT INSERT ON LOG TO TRIGGER LOGT_%d"""
+while i <= 4000:
+    try:
+        c.execute(cmd % i)
+    except Exception as e:
+        print('Error:',e)
+        i = 4000
+    i += 1
+db_conn.commit()
+'''
+}
+]
+}

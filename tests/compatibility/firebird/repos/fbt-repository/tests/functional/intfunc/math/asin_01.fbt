@@ -1,0 +1,21 @@
+{
+'id': 'functional.intfunc.math.asin_01',
+'qmid': 'functional.intfunc.math.asin_01',
+'tracker_id': '',
+'title': 'New Built-in Functions, Firebird 2.1 : ASIN( <number> )',
+'description': """test of ASIN
+
+Returns the arc sine of a number. The argument to ASIN must be in the range -1 to 1. It returns a result in the range -PI/2 to PI/2.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'select asin( 1 ) from rdb$database;',
+ 'expected_stdout': """                   ASIN
+=======================
+      1.570796326794897
+"""
+}
+]
+}

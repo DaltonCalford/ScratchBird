@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_6310',
+'qmid': None,
+'tracker_id': 'CORE-6310',
+'title': 'Varchar length limit is not enforced when assigning string with trailing spaces in MBCS',
+'description':
+ """
+   Confirmed bug on 3.0.6.33289, 4.0.0.1954
+   Checked on 3.0.6.33294, 4.0.0.2000 - works fine.
+ """,
+'min_versions': '3.0.6',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    select char_length(cast(_utf8 '123         ' as varchar(5) character set utf8)) as char_len from rdb$database; 
+  """,
+ 'expected_stdout':
+  """
+    CHAR_LEN                        5
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[ ('[ \t]+',' ') ]
+}
+]
+}

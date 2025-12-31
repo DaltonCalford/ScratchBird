@@ -1,0 +1,19 @@
+{
+'id': 'functional.domain.create.34',
+'qmid': 'functional.domain.create.create_domain_34',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - DEFAULT USER',
+'description': 'Domain creation based on VARCHAR datatype with USER DEFAULT specification.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test VARCHAR(32) DEFAULT USER;
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            VARCHAR(32) Nullable
+                                DEFAULT USER
+"""
+}
+]
+}

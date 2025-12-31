@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_4081',
+'qmid': None,
+'tracker_id': 'CORE-4081',
+'title': 'Regression: Built-in functions and subselect no longer supported in "update or insert" value list',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create table test (uid varchar(64));
+    commit;
+
+    update or insert into test (uid) values ( uuid_to_char(gen_uuid()) )
+    matching (uid);
+
+    update or insert into test (uid)
+    values ( (select uuid_to_char(gen_uuid()) from rdb$database) )
+    matching (uid);
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

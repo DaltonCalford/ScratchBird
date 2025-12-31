@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_1693',
+'qmid': None,
+'tracker_id': 'CORE-1693',
+'title': 'Error in EXECUTE STATEMENT inside CONNECT / TRANSACTION START triggers',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """set term ^ ;
+
+create trigger t_connect on connect
+as
+  declare v integer;
+begin
+ execute statement 'select 1 from rdb$database' into v;
+end ^
+
+set term ; ^
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select 1 from rdb$database;
+""",
+ 'expected_stdout': """
+    CONSTANT
+============
+           1
+
+"""
+}
+]
+}

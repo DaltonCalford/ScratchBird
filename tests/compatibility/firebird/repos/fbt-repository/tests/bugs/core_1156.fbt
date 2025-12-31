@@ -1,0 +1,42 @@
+{
+'id': 'bugs.core_1156',
+'qmid': 'bugs.core_1156',
+'tracker_id': 'CORE-1156',
+'title': 'Prepare fails when having a parameter in a DSQL statement before a sub query',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': """c = db_conn.cursor()
+try:
+  c.prep('select count(*) from rdb$database where ? < (select count(*) from rdb$database)')
+except:
+  print ('Test FAILED in case 1')
+
+try:
+  c.prep('select count(*) from rdb$database where (select count(*) from rdb$database) > ?')
+except:
+  print ('Test FAILED in case 2')
+
+try:
+  c.prep('select count(*) from rdb$database where ? < cast ((select count(*) from rdb$database) as integer)')
+except:
+  print ('Test FAILED in case 3')
+
+try:
+  c.prep('select count(*) from rdb$database where 0 < (select count(*) from rdb$database)')
+except:
+  print ('Test FAILED in case 4')
+
+try:
+  c.prep('select count(*) from rdb$database where cast (? as integer) < (select count(*) from rdb$database)')
+except:
+  print ('Test FAILED in case 5')
+
+"""
+}
+]
+}

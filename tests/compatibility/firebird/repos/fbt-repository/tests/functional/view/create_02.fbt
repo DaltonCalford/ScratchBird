@@ -1,0 +1,44 @@
+{
+'id': 'functional.view.create.02',
+'qmid': 'functional.view.create.create_view_02',
+'tracker_id': '',
+'title': 'CREATE VIEW',
+'description': """CREATE VIEW
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE tb(id INT);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE VIEW test (id,num) AS SELECT id,5 FROM tb;
+SHOW VIEW test;""",
+ 'expected_stdout': """ID                              INTEGER Nullable
+NUM                             Computed by:
+View Source:
+==== ======
+ SELECT id,5 FROM tb
+"""
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE tb(id INT);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE VIEW test (id,num) AS SELECT id,5 FROM tb;
+SHOW VIEW test;""",
+ 'expected_stdout': """ID                              INTEGER Nullable
+NUM                             INTEGER Expression
+View Source:
+==== ======
+ SELECT id,5 FROM tb
+"""
+}
+]
+}

@@ -1,0 +1,72 @@
+{
+'id': 'functional.basic.db.01',
+'qmid': 'functional.basic.db.db_01',
+'tracker_id': '',
+'title': 'Empty DB - RDB$DATABASE content',
+'description': 'Check the correct content of RDB$DATABASE for freh, empty database.',
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set blob all;
+    select * from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    RDB$DESCRIPTION                 <null>
+    RDB$RELATION_ID                 128
+    RDB$SECURITY_CLASS              <null>
+    RDB$CHARACTER_SET_NAME          NONE
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set blob all;
+    select * from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    RDB$DESCRIPTION                 <null>
+    RDB$RELATION_ID                 128
+    RDB$SECURITY_CLASS              SQL$362
+    RDB$CHARACTER_SET_NAME          NONE
+    RDB$LINGER                      <null>
+  """,
+  'substitutions': [
+    ('RDB\$SECURITY_CLASS[ ]+SQL\$.*','')
+  ]
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set blob all;
+    select * from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    RDB$DESCRIPTION                 <null>
+    RDB$RELATION_ID                 128
+    RDB$SECURITY_CLASS              SQL$362
+    RDB$CHARACTER_SET_NAME          NONE
+    RDB$LINGER                      <null>
+    RDB$SQL_SECURITY                <null>
+  """,
+  'substitutions': [
+    ('RDB\$SECURITY_CLASS[ ]+SQL\$.*','')
+  ]
+}
+]
+}

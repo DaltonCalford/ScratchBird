@@ -1,0 +1,29 @@
+{
+'id': 'bugs.core_0086',
+'qmid': 'bugs.core_86',
+'tracker_id': 'CORE-86',
+'title': 'Index bug',
+'description': 'Can not fetch the data when Index is use',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core86.fbk',
+ 'test_type': 'ISQL',
+ 'test_script': """Select * from YLK A where PH = '0021'
+and HPBH = '492'
+and CD = 'MG'
+and JLDW = 'JIAN'
+and JZDW = 'DUN'
+and CK = '8K'
+and HW = '1.8'
+and SH='1.81';""",
+ 'expected_stdout': """ID_YLK PH                           HPBH CD                   JLDW   JZDW   CK               HW                              SH
+============ ==================== ============ ==================== ====== ====== ================ ============ =====================
+         110 0021                          492 MG                   JIAN   DUN    8K               1.8                        1.81000
+
+"""
+}
+]
+}

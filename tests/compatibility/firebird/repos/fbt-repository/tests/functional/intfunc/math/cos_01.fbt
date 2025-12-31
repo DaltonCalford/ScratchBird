@@ -1,0 +1,30 @@
+{
+'id': 'functional.intfunc.math.cos_01',
+'qmid': 'functional.intfunc.math.cos_01',
+'tracker_id': '',
+'title': 'New Built-in Functions, Firebird 2.1 : COS( <number>)',
+'description': """test of COS
+Returns the cosine of a number. The angle is specified in radians and returns a value in the range -1 to 1.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select COS( 14) from rdb$database;
+select COS( 0) from rdb$database;
+
+""",
+ 'expected_stdout': """      COS
+      =======================
+      0.1367372182078336
+      COS
+      =======================
+      1.000000000000000
+
+
+
+
+"""
+}
+]
+}

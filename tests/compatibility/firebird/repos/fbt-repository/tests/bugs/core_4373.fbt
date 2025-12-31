@@ -1,0 +1,62 @@
+{
+'id': 'bugs.core_4373',
+'qmid': None,
+'tracker_id': 'CORE-4373',
+'title': 'Duplicate names in package are not checked',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set term ^ ;
+    
+    create package new_package
+    as
+    begin
+       procedure external_proc;
+       procedure external_proc;
+       procedure external_proc;
+    end^
+    
+    
+    create package body new_package
+    as
+    begin
+      procedure external_proc as
+      begin
+      end
+    
+      procedure internal_proc as
+      begin
+      end
+      procedure internal_proc as
+      begin
+      end
+      procedure internal_proc as
+      begin
+      end
+    end^
+    
+    set term ; ^
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    CREATE PACKAGE NEW_PACKAGE failed
+    -Duplicate PROCEDURE EXTERNAL_PROC
+
+    Statement failed, SQLSTATE = 42000
+    CREATE PACKAGE BODY NEW_PACKAGE failed
+    -Duplicate PROCEDURE INTERNAL_PROC
+  """
+}
+]
+}

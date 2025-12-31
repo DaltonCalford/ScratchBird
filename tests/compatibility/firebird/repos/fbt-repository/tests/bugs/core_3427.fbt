@@ -1,0 +1,33 @@
+{
+'id': 'bugs.core_3427',
+'qmid': '',
+'tracker_id': 'CORE-3427',
+'title': "Server crashing with UTF8 blobs",
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create table tbl (blob_field blob sub_type text character set utf8 collate unicode_ci_ai);
+    -- See ticket: seems that this crash depended on concrete data, so it was decided to copy these text from ticket:
+    insert into tbl values ('крупнейший европейский журнал о компьютерах. Вышел на рынок компьютерных изданий с уникальной концепцией и предназначен для людей, которые интересуются компьютерами, Интернетом, средствами телекоммуникаций, аудио-, видео- и фототехникой. Каждые две недели читателям предлагаются новости индустрии, тесты оборудования и программ, обучающие курсы и практические советы. Издание интересно как новичкам, так и опытным пользователям.');
+    commit;
+    -- Confirmed crash on 2.5.0, fine on 2.5.1 and later (02.04.2015):
+    set list on;
+    select count(*)  cnt
+    from tbl 
+    where blob_field like '%test%';   
+  """,
+ 'expected_stdout': 
+  """
+    CNT                             0 
+  """
+}
+]
+}

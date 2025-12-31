@@ -1,0 +1,112 @@
+{
+'id': 'bugs.core_2881',
+'qmid': None,
+'tracker_id': 'CORE-2881',
+'title': "isql should show packaged procedures and functions categorized per package",
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^;
+    create or alter package p1
+    as
+    begin
+        function f(x int) returns int;
+        procedure p(x int) returns(y int);
+    end
+    ^
+    create package body p1
+    as
+    begin
+        function f(x int) returns int as
+        begin
+        return 22*x;
+        end
+        procedure p(x int) returns(y int) as
+        begin
+        y = 33*x;
+        suspend;
+        end
+    end
+    ^
+    
+    create or alter package p2
+    as
+    begin
+        function f(x int) returns int;
+        procedure p(x int) returns(y int);
+    end
+    ^
+    create package body p2
+    as
+    begin
+        function f(x int) returns int as
+        begin
+        return 222*x;
+        end
+        procedure p(x int) returns(y int) as
+        begin
+        y = 333*x;
+        suspend;
+        end
+    end
+    ^
+    set term ;^
+    commit;
+    
+    show package p1;
+    show package p2;
+  """,
+ 'expected_stdout': 
+  """
+    P1                              
+    Header source:
+    begin
+        function f(x int) returns int;
+        procedure p(x int) returns(y int);
+    end
+    
+    Body source:
+    begin
+        function f(x int) returns int as
+        begin
+        return 22*x;
+        end
+        procedure p(x int) returns(y int) as
+        begin
+        y = 33*x;
+        suspend;
+        end
+    end
+    P2                              
+    Header source:
+    begin
+        function f(x int) returns int;
+        procedure p(x int) returns(y int);
+    end
+    
+    Body source:
+    begin
+        function f(x int) returns int as
+        begin
+        return 222*x;
+        end
+        procedure p(x int) returns(y int) as
+        begin
+        y = 333*x;
+        suspend;
+        end
+    end
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -1,0 +1,28 @@
+{
+'id': 'functional.intfunc.math.trunc_01',
+'qmid': 'functional.intfunc.string.trunc_01',
+'tracker_id': '',
+'title': 'test for TRUNC function',
+'description': """TRUNC( <number> [, <number> ] )
+
+Returns the integral part (up to the specified scale) of a number.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select trunc(-2.8), trunc(2.8)
+       from rdb$database;  -- returns -2, 2
+select trunc(987.65, 1), trunc(987.65, -1)
+       from rdb$database;  -- returns 987.60, 980.00""",
+ 'expected_stdout': """                      TRUNC                 TRUNC
+      ===================== =====================
+                         -2                     2
+
+
+                      TRUNC                 TRUNC
+      ===================== =====================
+                     987.60                980.00"""
+}
+]
+}

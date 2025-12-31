@@ -1,0 +1,86 @@
+{
+'id': 'bugs.core_1179',
+'qmid': None,
+'tracker_id': 'CORE-1179',
+'title': '"CH" and "LL" are not separate spanish alphabet letters since 1994',
+'description': '',
+'min_versions': '2.1.7',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'ISO8859_1',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    recreate table test_utf8(id int, esp varchar(10));
+    commit;
+    
+    insert into test_utf8 values(-2,'CH');
+    insert into test_utf8 values(-1,'LL');
+    insert into test_utf8 values( 1,'C');
+    insert into test_utf8 values( 2,'CA');
+    insert into test_utf8 values( 3,'CZ');
+    insert into test_utf8 values( 5,'D');
+    
+    insert into test_utf8 values( 6,'L');
+    insert into test_utf8 values( 7,'LA');
+    insert into test_utf8 values( 8,'LZ');
+    insert into test_utf8 values(10,'M');
+    commit;
+
+    recreate table test_iso( id int, esp varchar(10) character set ISO8859_1 );
+    commit;
+
+
+    insert into test_iso values(-2,'CH');
+    insert into test_iso values(-1,'LL');
+    insert into test_iso values( 1,'C');
+    insert into test_iso values( 2,'CA');
+    insert into test_iso values( 3,'CZ');
+    insert into test_iso values( 5,'D');
+    
+    insert into test_iso values( 6,'L');
+    insert into test_iso values( 7,'LA');
+    insert into test_iso values( 8,'LZ');
+    insert into test_iso values(10,'M');
+    commit;
+
+    select id, esp from test_utf8 order by esp collate utf8;
+    select id, esp from test_iso order by esp collate es_es;
+  """,
+ 'expected_stdout': 
+  """
+              ID ESP        
+    ============ ========== 
+               1 C          
+               2 CA         
+              -2 CH         
+               3 CZ         
+               5 D          
+               6 L          
+               7 LA         
+              -1 LL         
+               8 LZ         
+              10 M          
+    
+    
+              ID ESP        
+    ============ ========== 
+               1 C          
+               2 CA         
+              -2 CH         
+               3 CZ         
+               5 D          
+               6 L          
+               7 LA         
+              -1 LL         
+               8 LZ         
+              10 M          
+  """,
+  'substitutions': [('=.*','')]
+}
+]
+}

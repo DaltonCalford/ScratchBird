@@ -1,0 +1,41 @@
+{
+'id': 'functional.tabloid.core_3611_aux',
+'qmid': None,
+'tracker_id': 'CORE-3611',
+'title': 'Wrong data while retrieving from CTEs (or derived tables) with same column names',
+'description': 'See another sample in this ticket (by dimitr, 30/Oct/12 07:13 PM)',
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set planonly;
+    with tab as
+    (
+    select 1 as p1
+    from rdb$relations
+    )
+    select f1.p1, f2.p1 as p2
+    from tab f1 cross join tab f2
+    group by f1.p1
+    ;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    Dynamic SQL Error
+    -SQL error code = -104
+    -Invalid expression in the select list (not contained in either an aggregate function or the GROUP BY clause)
+  """
+}
+]
+}

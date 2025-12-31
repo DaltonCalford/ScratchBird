@@ -1,0 +1,68 @@
+{
+'id': 'bugs.gh_6903',
+'qmid': None,
+'tracker_id': '',
+'title': "Unable to create ICU-based collation with locale keywords",
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/6903
+
+    Also: https://github.com/FirebirdSQL/firebird/pull/6914
+          Allow keywords in locales when creating ICU collations
+
+    AFAIU, term 'keywords' here means collation types that can be found here:
+    https://unicode-org.github.io/icu/userguide/collation/api.html
+
+    Checked on WI-T5.0.0.126 (intermediate build, timestamp: 04-aug-2021 12:08); WI-V4.0.1.2556.
+ """,
+'min_versions': '4.0.1',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    -- should PASS:
+    create collation unicode_txt_01 for utf8 from unicode
+      pad space
+      case sensitive
+      accent sensitive
+      'LOCALE=de-u-co-phonebk-ka-shifted'
+    ;
+
+    -- should PASS:
+    create collation unicode_txt_02 for utf8 from unicode
+      'locale=en-u-kr-grek-latn-digit'
+    ;
+
+    -- should PASS:
+    create collation unicode_txt_03 for utf8 from unicode
+      pad space                  
+      case sensitive
+      accent sensitive
+      'LOCALE=el@colCaseFirst=upper'
+    ;
+
+    -- should FAIL!
+    -- See: https://github.com/FirebirdSQL/firebird/pull/6914
+    -- Note by Adriano "I tried ... it worked, but should not"
+    create collation unicode_bad_01 for utf8 from unicode 
+      'LOCALE=pt_BRx'
+    ;
+
+  """,                                                      
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = HY000
+    unsuccessful metadata update
+    -CREATE COLLATION UNICODE_BAD_01 failed
+    -Invalid collation attributes
+  """,
+  'substitutions':[ ('[ \t]+',' ') ]
+}
+]
+}

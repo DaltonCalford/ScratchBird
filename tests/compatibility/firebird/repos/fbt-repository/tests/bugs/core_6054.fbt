@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_6054',
+'qmid': None,
+'tracker_id': 'CORE-6054',
+'title': 'Random crash 64bit fb_inet_server. Possible collation issue',
+'description':
+ """
+   Confirmed bug on WI-V2.5.9.27129. Major versions 3.x and 4.x was not affected.
+   Works fine on WI-V2.5.9.27134.
+ """,
+'min_versions': '2.5.9',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    recreate table c (id int, f1 varchar(32) character set win1251 collate win1251);
+    select * from c where f2 collate win1251_ua = 'x';
+    set count on;
+    select * from c where f1 = _utf8 'x';
+  """,
+ 'expected_stdout': 
+  """
+    Records affected: 0
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42S22
+    Dynamic SQL Error
+    -SQL error code = -206
+    -Column unknown
+    -F2
+    -At line: column:
+  """,
+  'substitutions':[
+    ('-At line[:]{0,1}[\s]+[\d]+,[\s]+column[:]{0,1}[\s]+[\d]+', '-At line: column:')
+  ]
+}
+]
+}

@@ -1,0 +1,100 @@
+{
+'id': 'functional.trigger.alter.07',
+'qmid': 'functional.trigger.alter.alter_trigger_07',
+'tracker_id': '',
+'title': 'ALTER TRIGGER - AFTER INSERT',
+'description': 
+  """
+    ALTER TRIGGER - AFTER INSERT
+
+    Dependencies:
+    CREATE DATABASE
+    CREATE TABLE
+    CREATE TRIGGER
+    SHOW TRIGGER
+
+    Checked on:
+      2.5.9.27115: OK, 0.484s.
+      3.0.4.33021: OK, 1.000s.
+      4.0.0.1143: OK, 2.203s.
+    NB: phrase 'attempted update of read-only column' contains name of table and column ('TEST.ID') on 4.0.x
+  """,
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    CREATE TABLE test( id INTEGER NOT NULL CONSTRAINT unq UNIQUE, text VARCHAR(32));
+    SET TERM ^;
+    CREATE TRIGGER tg FOR test BEFORE UPDATE
+    AS
+    BEGIN
+      new.id=1;
+    END ^
+    SET TERM ;^
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    ALTER TRIGGER tg AFTER INSERT;
+    SHOW TRIGGER tg;
+  """,
+ 'expected_stdout': 
+  """
+    Triggers on Table TEST:
+    TG, Sequence: 0, Type: BEFORE UPDATE, Active
+    AS
+    BEGIN
+      new.id=1;
+    END
+    +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    attempted update of read-only column
+  """,
+  'substitutions':[('\+.*',''),('\=.*',''),('Trigger text.*','')]
+},
+{
+ 'firebird_version': '4.0.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    CREATE TABLE test( id INTEGER NOT NULL CONSTRAINT unq UNIQUE, text VARCHAR(32));
+    SET TERM ^;
+    CREATE TRIGGER tg FOR test BEFORE UPDATE
+    AS
+    BEGIN
+      new.id=1;
+    END ^
+    SET TERM ;^
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    ALTER TRIGGER tg AFTER INSERT;
+    SHOW TRIGGER tg;
+  """,
+ 'expected_stdout': 
+  """
+    Triggers on Table TEST:
+    TG, Sequence: 0, Type: BEFORE UPDATE, Active
+    AS
+    BEGIN
+      new.id=1;
+    END
+    +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    attempted update of read-only column TEST.ID
+  """,
+  'substitutions':[('\+.*',''),('\=.*',''),('Trigger text.*','')]
+}
+]
+}

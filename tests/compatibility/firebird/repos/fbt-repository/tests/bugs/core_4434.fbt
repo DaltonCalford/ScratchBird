@@ -1,0 +1,53 @@
+{
+'id': 'bugs.core_4434',
+'qmid': None,
+'tracker_id': 'CORE-4434',
+'title': "Extend the use of colon prefix for read/assignment OLD/NEW fields and assignment to variables",
+'description':
+ """
+    Checked on:
+        fb30Cs, build 3.0.4.32947: OK, 1.609s.
+        FB30SS, build 3.0.4.32963: OK, 0.843s.
+        FB40CS, build 4.0.0.955: OK, 1.953s.
+        FB40SS, build 4.0.0.967: OK, 1.094s.
+ """,
+'min_versions': '3.0.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table t1(x int, n int);
+    commit;
+    insert into t1(x) values(777);
+    commit;
+
+    set term ^;
+    create trigger t1_bu before update on t1 as
+        declare v int;
+    begin
+        :v = :old.x * 2;
+        :new.n = :v;
+    end
+    ^
+    set term ;^
+    commit;
+    
+    set list on;
+    update t1 set x = -x rows 1;
+    select * from t1;
+
+  """,
+  'expected_stdout':
+  """
+    X                               -777
+    N                               1554
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

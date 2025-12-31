@@ -1,0 +1,64 @@
+{
+'id': 'bugs.gh_6998',
+'qmid': None,
+'tracker_id': '',
+'title': 'Problems with access to RDB$CONFIG table for non-privileged user when he has grant on execution of SP which has necessary access rights (created by SYSDBA with SQL DEFINER clause)',
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/6998
+
+    Confirmed ticket issue on 5.0.0.243.
+    Checked on: 5.0.0.244, 4.0.1.2625, SS/CS, intermediate build (09-oct-2021 06:39).
+ """,
+'min_versions': '4.0.1',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set bail on;
+    set list on;
+    create or alter user tmp$gh_6998 password '123' revoke admin role;
+    commit;
+
+    set term ^;
+    create or alter procedure sp_check_rdb$config_avaliable
+        returns (cnt int)
+        sql security definer
+    as
+    begin
+        select count(*) from rdb$config into cnt;
+        suspend;
+    end
+    ^
+    set term ;^
+    commit;
+
+    grant execute on procedure sp_check_rdb$config_avaliable to user tmp$gh_6998;
+    commit;
+
+    connect '$(DSN)' user tmp$gh_6998 password '123';
+    commit;
+    
+    select current_user as who_am_i, sign(p.cnt) as is_rdb$config_avaliable
+    from sp_check_rdb$config_avaliable p;
+    commit;
+
+    connect '$(DSN)' user sysdba password 'masterkey';
+    drop user tmp$gh_6998;
+    commit;
+  """,                                                      
+ 'expected_stdout': 
+  """
+    WHO_AM_I                        TMP$GH_6998
+    IS_RDB$CONFIG_AVALIABLE         1
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions':[ ('[ \t]+',' ') ]
+}
+]
+}

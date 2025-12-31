@@ -1,0 +1,197 @@
+{
+'id': 'bugs.core_6272',
+'qmid': None,
+'tracker_id': 'CORE-6272',
+'title': "Failed attach to database not traced",
+'description': 
+ """
+    NB: connect to services must be done using LOCAL protocol rather than remote.
+    Otherwise trace log will have only records about connect/disconnect to security.db.
+    NO messages about failed search of non-existing database will appear.
+    This is known bug, see Alex's issue in the tracker, 07-apr-2020 10:39.
+
+    Checked on 4.0.0.1865 SS/CS.
+
+    04-mar-2021.
+    Adapted to be run both on Windows and Linux.
+    NOTE-1. There is difference between Windows and Linux message for gdscode = 335544344:
+        * WINDOWS: 335544344 : I/O error during "CreateFile (open)" operation ...
+        * LINUX:   335544344 : I/O error during "open" operation ...
+    NOTE-2. Some messages can appear in the trace log ONE or TWO times (SS/CS ?).
+    Because of this, we are interested only for at least one occurence of each message
+    rather than for each of them (see 'found_patterns', type: set()).
+ """,
+'min_versions': '4.0.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+import os
+import subprocess
+import time
+import re
+from fdb import services
+from subprocess import Popen
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+# Obtain engine version:
+engine = str(db_conn.engine_version) # convert to text because 'float' object has no attribute 'startswith'
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for f in f_names_list:
+       if type(f) == file:
+          del_name = f.name
+       elif type(f) == str:
+          del_name = f
+       else:
+          print('Unrecognized type of element:', f, ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+    
+#--------------------------------------------
+
+txt = '''
+    database
+    {
+        enabled = true
+        log_connections = true
+        log_errors = true
+        log_initfini = false
+    }
+'''
+
+f_trc_cfg=open( os.path.join(context['temp_directory'],'tmp_trace_6272.cfg'), 'w')
+f_trc_cfg.write(txt)
+flush_and_close( f_trc_cfg )
+
+# ##############################################################
+# S T A R T   T R A C E   i n   S E P A R A T E    P R O C E S S
+# ##############################################################
+
+f_trc_log=open( os.path.join(context['temp_directory'],'tmp_trace_6272.log'), "w")
+f_trc_err=open( os.path.join(context['temp_directory'],'tmp_trace_6272.err'), "w")
+
+# ::: NB ::: DO NOT USE 'localhost:service_mgr' here! Use only local protocol:
+p_trace = Popen( [ context['fbsvcmgr_path'], 'service_mgr', 'action_trace_start' , 'trc_cfg', f_trc_cfg.name],stdout=f_trc_log,stderr=f_trc_err)
+
+time.sleep(1)
+
+# ####################################################
+# G E T  A C T I V E   T R A C E   S E S S I O N   I D
+# ####################################################
+# Save active trace session info into file for further parsing it and obtain session_id back (for stop):
+
+f_trc_lst = open( os.path.join(context['temp_directory'],'tmp_trace_6272.lst'), 'w')
+subprocess.call([ context['fbsvcmgr_path'], 'localhost:service_mgr', 'action_trace_list'], stdout=f_trc_lst)
+flush_and_close( f_trc_lst )
+
+# !!! DO NOT REMOVE THIS LINE !!!
+time.sleep(1)
+
+trcssn=0
+with open( f_trc_lst.name,'r') as f:
+    for line in f:
+        i=1
+        if 'Session ID' in line:
+            for word in line.split():
+                if i==3:
+                    trcssn=word
+                i=i+1
+            break
+
+# Result: `trcssn` is ID of active trace session. Now we have to terminate it:
+
+#------------------------------------------------
+
+try:
+    con = fdb.connect(dsn = 'localhost:non_such_alias')
+except Exception,e:
+    # print('Error:', e)
+    pass
+
+#------------------------------------------------
+
+# Let trace log to be entirely written on disk:
+time.sleep(1)
+
+# ####################################################
+# S E N D   R E Q U E S T    T R A C E   T O   S T O P
+# ####################################################
+if trcssn>0:
+    fn_nul = open(os.devnull, 'w')
+    subprocess.call([ context['fbsvcmgr_path'], 'localhost:service_mgr', 'action_trace_stop','trc_id', trcssn], stdout=fn_nul)
+    fn_nul.close()
+    # DO NOT REMOVE THIS LINE:
+    time.sleep(1)
+
+p_trace.terminate()
+flush_and_close( f_trc_log )
+flush_and_close( f_trc_err )
+
+# Every of following patterns must be found at *least* one time in the trace log:
+allowed_patterns = [ 
+    re.compile('FAILED\s+ATTACH_DATABASE', re.IGNORECASE)
+   ,re.compile('ERROR\s+AT\s+JProvider(:){1,2}attachDatabase', re.IGNORECASE)
+    # ::: NB ::: windows and linux messages *differ* for this gdscode:
+   ,re.compile('335544344\s*(:)?\s+I(/)?O\s+error', re.IGNORECASE)     
+   ,re.compile('335544734\s*(:)\s+?Error\s+while', re.IGNORECASE)
+]
+found_patterns = set()
+
+with open(f_trc_log.name, 'r') as f:
+    for line in f:
+        for p in allowed_patterns:
+            if p.search(line):
+                found_patterns.add( p.pattern )
+
+# cleanup:
+##########
+time.sleep(1)
+cleanup( ( f_trc_log, f_trc_err, f_trc_cfg, f_trc_lst ) )
+
+for p in sorted(found_patterns):
+    print('FOUND pattern: ' + p)
+
+  """,
+ 'expected_stdout': 
+  """
+    FOUND pattern: 335544344\s*(:)?\s+I(/)?O\s+error
+    FOUND pattern: 335544734\s*(:)\s+?Error\s+while
+    FOUND pattern: ERROR\s+AT\s+JProvider(:){1,2}attachDatabase
+    FOUND pattern: FAILED\s+ATTACH_DATABASE
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

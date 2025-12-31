@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_1715',
+'qmid': 'bugs.core_1715',
+'tracker_id': 'CORE-1715',
+'title': 'Incorrect "key size exceeds implementation restriction for index" error',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """create table t1 (
+   t1_id integer not null
+   , vc_50_utf8_utf8 varchar(253) character set utf8 collate utf8
+   , vc_50_utf8_unicode varchar(169) character set utf8 collate unicode
+   , constraint pk_t1_id primary key (t1_id)
+);""",
+ 'test_type': 'ISQL',
+ 'test_script': """create index i_vc_50_utf8_unicode on t1 (vc_50_utf8_unicode);
+create index i_vc_50_utf8_utf8 on t1 (vc_50_utf8_utf8);
+commit;
+show index;
+""",
+ 'expected_stdout': """I_VC_50_UTF8_UNICODE INDEX ON T1(VC_50_UTF8_UNICODE)
+I_VC_50_UTF8_UTF8 INDEX ON T1(VC_50_UTF8_UTF8)
+PK_T1_ID UNIQUE INDEX ON T1(T1_ID)
+"""
+}
+]
+}

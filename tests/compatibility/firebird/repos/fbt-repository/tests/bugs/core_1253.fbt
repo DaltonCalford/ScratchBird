@@ -1,0 +1,30 @@
+{
+'id': 'bugs.core_1253',
+'qmid': 'bugs.core_1253',
+'tracker_id': 'CORE-1253',
+'title': 'LIST(DISTINCT) concatenate VARCHAR values as CHAR',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE T1 (C1 varchar(5));
+COMMIT;
+INSERT INTO T1 VALUES ('1');
+INSERT INTO T1 VALUES ('2');
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """select list(distinct c1) from t1;
+""",
+ 'expected_stdout': """LIST
+=================
+              0:1
+==============================================================================
+LIST:
+1,2
+==============================================================================
+
+"""
+}
+]
+}

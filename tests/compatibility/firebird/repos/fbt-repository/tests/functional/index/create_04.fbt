@@ -1,0 +1,26 @@
+{
+'id': 'functional.index.create.04',
+'qmid': 'functional.index.create.create_index_04',
+'tracker_id': '',
+'title': 'CREATE ASCENDING INDEX',
+'description': """CREATE ASCENDING INDEX
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+SHOW INDEX
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE t( a INTEGER);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE ASCENDING INDEX test ON t(a);
+SHOW INDEX test;""",
+ 'expected_stdout': """TEST INDEX ON T(A)
+"""
+}
+]
+}

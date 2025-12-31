@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_4831',
+'qmid': None,
+'tracker_id': 'CORE-4831',
+'title': 'Revoke all on all from role <R> -- failed with "SQL role <R> does not exist in security database"',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set wng off;
+    create role r_20150608_20h03m;
+    commit;
+    revoke all on all from role r_20150608_20h03m; -- this was failed, possibly due to: http://sourceforge.net/p/firebird/code/61729
+    commit;
+    show grants;
+    commit;
+    drop role r_20150608_20h03m;
+    commit;
+  """,
+ 'expected_stderr':
+  """
+    There is no privilege granted in this database
+  """
+}
+]
+}

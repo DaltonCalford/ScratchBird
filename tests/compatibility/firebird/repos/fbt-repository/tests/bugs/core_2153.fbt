@@ -1,0 +1,33 @@
+{
+'id': 'bugs.core_2153',
+'qmid': None,
+'tracker_id': 'CORE-2153',
+'title': 'SIMILAR TO predicate hangs with "|" option',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select iif( 'avieieavav' similar to '%(av|ie){2,}%', 1, 0) r from rdb$database;
+    select iif( 'avieieieav' similar to '%((av)|(ie)){2,}%', 1, 0) r from rdb$database;
+    select iif( 'eiavieieav' similar to '%(av)|{2,}%', 1, 0) r from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    R                               1
+    R                               1
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    Invalid SIMILAR TO pattern
+  """
+}
+]
+}

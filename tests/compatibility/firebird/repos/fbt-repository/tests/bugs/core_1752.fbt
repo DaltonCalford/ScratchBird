@@ -1,0 +1,65 @@
+{
+'id': 'bugs.core_1752',
+'qmid': None,
+'tracker_id': 'CORE-1752',
+'title': 'Results of a join with different collations depend on the execution plan',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core1752.fbk',
+ 'connection_character_set': 'WIN1252',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    select a.zeitstempel, b.artikelnr
+    from t1 a
+    join t2 b on b.artikelnr = a.artikelnr --collate de_de 
+    order by 1,2
+    ;
+    
+    select a.zeitstempel, b.artikelnr
+    from t1 a
+    join t2 b on b.artikelnr = a.artikelnr collate de_de 
+    order by 1,2
+    ;
+  """,
+ 'expected_stdout': 
+  """
+ZEITSTEMPEL                      ARTIKELNR       
+================================ =============== 
+11997831915bde60630658f7ed147baa           10045 
+1199797956ebe80ac53a54ebd164c707            9930 
+1199798232de53f704854945c17be47e           10005 
+1199799582060cc10385b2eafcdfd567           10045 
+1199799582060cc10385b2eafcdfd567           10056 
+119981802446bba36e437bf0181bb41c            9761 
+119981811832e8ec4bb875a5d54ca202            9510 
+1199823157b3f2d13b93184ab1e3b29d            9703 
+1199827557240a59c5148b42a9374fc9            9920 
+
+
+ZEITSTEMPEL                      ARTIKELNR       
+================================ =============== 
+11997831915bde60630658f7ed147baa           10045 
+1199797956ebe80ac53a54ebd164c707            9930 
+1199798232de53f704854945c17be47e           10005 
+1199799582060cc10385b2eafcdfd567           10045 
+1199799582060cc10385b2eafcdfd567           10056 
+119981802446bba36e437bf0181bb41c            9761 
+119981811832e8ec4bb875a5d54ca202            9510 
+1199823157b3f2d13b93184ab1e3b29d            9703 
+1199827557240a59c5148b42a9374fc9            9920 
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

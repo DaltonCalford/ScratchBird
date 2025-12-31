@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_4281',
+'qmid': None,
+'tracker_id': 'CORE-4281',
+'title': 'FB 3: TYPE OF arguments of stored functions will hang firebird engine if depending domain or column is changed',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create domain testdomain as integer;
+    commit;
+    
+    create function testfunction (arg1 type of testdomain) returns integer as
+    begin
+    end;
+    
+    commit;
+    alter domain testdomain type bigint;
+    commit; 
+    
+    show domain testdomain;
+  """,
+ 'expected_stdout': 
+  """
+    TESTDOMAIN                      BIGINT Nullable
+  """
+}
+]
+}

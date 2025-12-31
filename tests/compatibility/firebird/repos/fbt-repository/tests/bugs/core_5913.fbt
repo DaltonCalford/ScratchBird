@@ -1,0 +1,39 @@
+{
+'id': 'bugs.core_5913',
+'qmid': None,
+'tracker_id': 'CORE-5913',
+'title': "Add context variables with compression and encryption status of current connection",
+'description':
+ """
+    Checked on:
+        3.0.4.33053: OK, 6.375s.
+        4.0.0.1210: OK, 3.125s.
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0.4',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select 
+         iif( rdb$get_context('SYSTEM','WIRE_COMPRESSED') is not null, 'DEFINED', '<NULL>') as ctx_wire_compressed
+        ,iif( rdb$get_context('SYSTEM','WIRE_ENCRYPTED') is not null, 'DEFINED', '<NULL>') as ctx_wire_encrypted
+    from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    CTX_WIRE_COMPRESSED             DEFINED
+    CTX_WIRE_ENCRYPTED              DEFINED
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

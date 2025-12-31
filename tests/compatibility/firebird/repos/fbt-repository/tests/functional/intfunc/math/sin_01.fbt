@@ -1,0 +1,26 @@
+{
+'id': 'functional.intfunc.math.sin_01',
+'qmid': 'functional.intfunc.math.sin_01',
+'tracker_id': '',
+'title': 'test for SIN function',
+'description': """
+
+ SIN( <number> )
+
+
+Returns the sine of an input number that is expressed in radians.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': ' select CAST(SIN(12) AS DECIMAL(18,15)) from rdb$database;',
+ 'expected_stdout': """
+                 CAST
+=====================
+   -0.536572918000435
+
+"""
+}
+]
+}

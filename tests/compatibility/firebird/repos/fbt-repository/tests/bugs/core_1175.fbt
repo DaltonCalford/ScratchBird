@@ -1,0 +1,86 @@
+{
+'id': 'bugs.core_1175',
+'qmid': 'bugs.core_1175',
+'tracker_id': 'CORE-1175',
+'title': 'Error "Data type unknown" when any UDF argument is a built-in function containing a DSQL parameter reference',
+'description':
+  """
+    For FB 2.5 and 3.x - this test uses UDF from ib_udf.
+
+    24.01.2019. Added separate code for running on FB 4.0+.
+    UDF usage is deprecated in FB 4+, see: ".../doc/README.incompatibilities.3to4.txt".
+    Functions div, frac, dow, sdow, getExactTimestampUTC and isLeapYear got safe replacement 
+    in UDR library "udf_compat", see it in folder: ../plugins/udr/
+
+    Checked on:
+        4.0.0.1340: OK, 2.594s.
+        4.0.0.1378: OK, 5.579s.
+
+    NOTE. Build 4.0.0.1172 (date: 25.08.2018) raises here:
+        SQLCODE: -902... expression evaluation not supported... 
+        Invalid data type for division in dialect 3
+        gdscode = 335544569.
+  """,
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """DECLARE EXTERNAL FUNCTION rtrim
+   CSTRING(255)
+   RETURNS CSTRING(255) FREE_IT
+   ENTRY_POINT 'IB_UDF_rtrim' MODULE_NAME 'ib_udf';
+commit;
+""",
+ 'test_type': 'Python',
+ 'test_script': """c = db_conn.cursor()
+try:
+    c.prep('select * from RDB$DATABASE where RDB$CHARACTER_SET_NAME = rtrim(trim(?))')
+    print ('Test PASSED!')
+except Exception,e:
+    print ('Test FAILED!')
+    print (e)
+
+""",
+ 'expected_stdout': """Test PASSED!
+"""
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    -- See declaration sample in plugins\udr\UdfBackwardCompatibility.sql:
+    create function UDR40_frac (
+        val double precision
+    ) returns double precision
+    external name 'udf_compat!UC_frac'
+    engine udr;
+
+    create function UDR40_div (
+        n1 integer,
+        n2 integer
+    ) returns double precision
+    external name 'udf_compat!UC_div'
+    engine udr;
+
+    commit;
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """\
+c = db_conn.cursor()
+try:
+    c.prep( 'select 1 from rdb$database where UDR40_frac( ? ) != UDR40_div( ?, ?) / ? ' )
+    print ( 'Test PASSED!' )
+except Exception,e:
+    print( 'Test FAILED!' )
+    print( e )
+  """,
+ 'expected_stdout': 
+  """
+    Test PASSED!
+  """
+}
+]
+}

@@ -1,0 +1,36 @@
+{
+'id': 'bugs.core_5107',
+'qmid': None,
+'tracker_id': 'CORE-5107',
+'title': 'set autoddl off and sequence of: ( create view V as select * from T; alter view V as select 1 x from rdb$database; drop view V; ) leads to server crash',
+'description': 
+  """
+  """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set autoddl off;
+    commit;
+    recreate table test(id int, x int);
+    create view v_test as select * from test;
+    alter view v_test as select 1 id from rdb$database;
+    drop view v_test;
+    commit;
+    set list on;
+    select 'Done' as msg from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    MSG                             Done
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

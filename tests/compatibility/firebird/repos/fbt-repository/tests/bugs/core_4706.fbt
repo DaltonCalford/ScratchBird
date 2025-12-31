@@ -1,0 +1,37 @@
+{
+'id': 'bugs.core_4706',
+'qmid': None,
+'tracker_id': 'CORE-4706',
+'title': 'ISQL pads blob columns wrongly when the column alias has more than 17 characters',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set blob all;
+    select cast('a' as blob) a, 1, cast('a' as blob) x2345678901234567890, 2 from rdb$database; 
+  """,
+ 'expected_stdout': 
+  """
+                A     CONSTANT X2345678901234567890     CONSTANT 
+              0:2            1                  0:1            2 
+A:  
+a
+X2345678901234567890:  
+a
+  """,
+ 'expected_stderr': 
+  """
+  """,
+ 'substitutions': [('=.*','')]
+}
+]
+}

@@ -1,0 +1,55 @@
+{
+'id': 'bugs.core_5495',
+'qmid': None,
+'tracker_id': 'CORE-5495',
+'title': 'New users or changed passwords in legacy authentication do not work in Firebird 4',
+'description':
+ """
+    Confirmed bug on WI-T4.0.0.546, got:
+       Statement failed, SQLSTATE = 28000
+       Your user name and password are not defined. Ask your database administrator <...>
+    Used config:
+       AuthServer = Legacy_Auth,Srp
+       AuthClient = Legacy_Auth,Srp,Win_Sspi
+       WireCrypt = Disabled
+       UserManager = Srp, Legacy_UserManager
+    Checked on WI-T4.0.0.549 - works fine.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set bail on;
+    create user tmp$c5495 password '123' using plugin Legacy_UserManager;
+    commit;
+    connect '$(DSN)' user tmp$c5495 password '123';
+    --select mon$user,mon$remote_address,mon$remote_protocol,mon$client_version,mon$remote_version,mon$auth_method from mon$attachments 
+    select mon$user,mon$remote_protocol,mon$auth_method from mon$attachments 
+    where mon$attachment_id=current_connection;
+    commit;
+    connect '$(DSN)' user SYSDBA password 'masterkey';
+    commit;
+    drop user tmp$c5495 using plugin Legacy_UserManager;
+    commit;
+  """,
+  'expected_stdout':
+  """
+     MON$USER                        TMP$C5495
+     MON$REMOTE_PROTOCOL             TCP
+     MON$AUTH_METHOD                 Legacy_Auth
+  """,
+  'expected_stderr':
+  """
+  """,
+  'substitutions':[('TCPv.*', 'TCP')]
+}
+]
+}

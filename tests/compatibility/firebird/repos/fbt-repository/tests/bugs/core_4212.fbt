@@ -1,0 +1,42 @@
+{
+'id': 'bugs.core_4212',
+'qmid': None,
+'tracker_id': 'CORE-4212',
+'title': 'Dropping FK on GTT crashes server',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core4212.fbk',
+ 'database_character_set': 'WIN1251',
+ 'connection_character_set': 'WIN1251',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+--  'database': 'Existing',
+--  'database_name': 'core4212-25.fdb',
+
+    set autoddl off;
+    commit;
+    alter table t2 drop constraint t2_fk; 
+    rollback;
+    show table t2;
+  """,
+ 'expected_stdout': 
+  """
+    ID                              VARCHAR(8) Nullable
+    CONSTRAINT T2_FK:
+      Foreign key (ID)    References T1 (ID)
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

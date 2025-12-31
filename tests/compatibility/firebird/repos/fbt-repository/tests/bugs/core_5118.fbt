@@ -1,0 +1,173 @@
+{
+'id': 'bugs.core_5118',
+'qmid': None,
+'tracker_id': 'CORE-5118',
+'title': 'Indices on computed fields are broken after restore (all keys are NULL)',
+'description': 
+ """
+    Confirmed wrong result on: 2.5.9.27117, 3.0.4.33054
+    Works fine on:
+        4.0.0.1455: OK, 3.656s.
+        3.0.5.33109: OK, 2.641s.
+        2.5.9.27129: OK, 1.569s.
+ """,
+'min_versions': '2.5.9',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    recreate table test (
+        id int,
+        x varchar(10),
+        y varchar(10) ,
+        concat_text computed by (x || ' ' || y)
+    );
+    commit;
+
+    insert into test(id, x, y) values (1, 'nom1', 'prenom1');
+    insert into test(id, x, y) values (2, 'nom2', 'prenom2');
+    insert into test(id, x, y) values (3, 'nom3', 'prenom3');
+    commit;
+
+    create index test_concat_text on test computed by ( concat_text );
+    commit;
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import time
+import subprocess
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+tmpsrc = db_conn.database_name
+tmpbkp = os.path.splitext(tmpsrc)[0] + '.fbk'
+tmpres = os.path.splitext(tmpsrc)[0] + '.tmp'
+
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+
+# NB: we have ALWAYS to drop file that is to be target for restoring process,
+# otherwise one can get:
+# Statement failed, SQLSTATE = HY000
+# unsupported on-disk structure for file ...; found 12.0, support 13.0
+# (it will occur if THIS test was already run for older FB major version)
+
+cleanup( (tmpres,) )
+
+f_backup_log=open(os.devnull, 'w')
+f_backup_err=open( os.path.join(context['temp_directory'],'tmp_backup_5118.err'), 'w')
+
+subprocess.call([context['fbsvcmgr_path'],"localhost:service_mgr",
+                  "action_backup",
+                  "dbname",   tmpsrc,
+                  "bkp_file", tmpbkp,
+                  "verbose"
+                ],
+                stdout=f_backup_log, 
+                stderr=f_backup_err
+               )
+flush_and_close( f_backup_log )
+flush_and_close( f_backup_err )
+
+f_restore_log = open( os.path.join(context['temp_directory'],'tmp_restore_5118.log'), 'w')
+f_restore_err = open( os.path.join(context['temp_directory'],'tmp_restore_5118.err'), 'w')
+
+subprocess.call([context['fbsvcmgr_path'],"localhost:service_mgr",
+                  "action_restore",
+                  "bkp_file", tmpbkp,
+                  "dbname",   tmpres,
+                  "res_replace",
+                  "verbose"
+                ],
+                stdout=f_restore_log, 
+                stderr=f_restore_err
+               )
+
+flush_and_close( f_restore_log )
+flush_and_close( f_restore_err )
+
+with open(f_backup_err.name, 'r') as f:
+    for line in f:
+        print( "BACKUP STDERR: "+line )
+
+
+# Result of this filtering should be EMPTY:
+with open( f_restore_err.name,'r') as f:
+    for line in f:
+        print( "RESTORE STDERR: "+line )
+
+
+runProgram( 'isql', [ 'localhost:' + tmpres, '-q' ], 'set list on; set plan on; set count on; select * from test order by concat_text;' )
+
+#####################################################################
+# Cleanup:
+# do NOT remove this pause otherwise some of logs will not be enable for deletion and test will finish with 
+# Exception raised while executing Python test script. exception: WindowsError: 32
+time.sleep(1)
+cleanup( (f_backup_log, f_backup_err, f_restore_log, f_restore_err, tmpbkp, tmpres) )
+  """,
+ 'expected_stdout':
+  """
+    PLAN (TEST ORDER TEST_CONCAT_TEXT)
+
+    ID                              1
+    X                               nom1
+    Y                               prenom1
+    CONCAT_TEXT                     nom1 prenom1
+
+    ID                              2
+    X                               nom2
+    Y                               prenom2
+    CONCAT_TEXT                     nom2 prenom2
+
+    ID                              3
+    X                               nom3
+    Y                               prenom3
+    CONCAT_TEXT                     nom3 prenom3
+
+    Records affected: 3
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

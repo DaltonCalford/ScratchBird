@@ -1,0 +1,43 @@
+{
+'id': 'bugs.core_5427',
+'qmid': None,
+'tracker_id': 'CORE-5427',
+'title': 'Error on field concatenation of System tables',
+'description':
+ """
+    Confirmed bug on WI-T4.0.0.469, got:
+       arithmetic exception, numeric overflow, or string truncation
+       -string right truncation
+       -expected length 75, actual 264
+    Checked on WI-T4.0.0.470 - works fine.
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select 0*char_length(txt) x1, 0*octet_length(txt) x2
+    from (
+      select 'generator '|| r.rdb$generator_name ||' .' as txt from rdb$generators r
+      order by 1 rows 1
+    )
+    ; 
+  """,
+  'expected_stdout':
+  """
+    X1                              0 
+    X2                              0 
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

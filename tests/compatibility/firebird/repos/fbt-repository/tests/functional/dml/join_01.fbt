@@ -1,0 +1,30 @@
+{
+'id': 'functional.dml.join.01',
+'qmid': 'functional.dml.join.join_01',
+'tracker_id': '',
+'title': 'NAMED COLUMNS join',
+'description': """<named columns join> ::=
+<table reference> <join type> JOIN <table reference>
+USING ( <column list> )""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE employee( id_employee INTEGER , prenom VARCHAR(20) ,id_department INTEGER, PRIMARY KEY(id_employee));
+CREATE TABLE department(id_department INTEGER, name VARCHAR(20));
+INSERT INTO department(id_department, name) values(1,'somme');
+INSERT INTO department(id_department, name) values(2,'pas de calais');
+INSERT INTO employee(id_employee, prenom,id_department) VALUES (1,'benoit',1 );
+INSERT INTO employee(id_employee, prenom,id_department) VALUES (2,'tom',2 );""",
+ 'test_type': 'ISQL',
+ 'test_script': 'select employee.prenom , department.name from employee join department using (id_department);',
+ 'expected_stdout': """
+PRENOM               NAME
+==================== ====================
+benoit               somme
+tom                  pas de calais
+
+"""
+}
+]
+}

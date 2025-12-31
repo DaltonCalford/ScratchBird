@@ -1,0 +1,25 @@
+{
+'id': 'functional.intfunc.cast.14',
+'qmid': 'functional.intfunc.cast.cast_14',
+'tracker_id': '',
+'title': 'CAST CHAR -> TIMESTAMP',
+'description': """CAST CHAR -> TIMESTAMP
+Be careful about time format on FB server !
+Universal format is not defined or not documented.
+
+Dependencies:
+CREATE DATABASE
+Basic SELECT""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': "SELECT CAST('10.2.1489 14:34:59.1234' AS TIMESTAMP) FROM rdb$Database;",
+ 'expected_stdout': """                     CAST
+=========================
+
+1489-02-10 14:34:59.1234"""
+}
+]
+}

@@ -1,0 +1,58 @@
+{
+'id': 'bugs.core_6291',
+'qmid': None,
+'tracker_id': 'CORE-6291',
+'title': 'Statement "CREATE DOMAIN [dm_name] as BIGINT" raises "numeric value is out of range" if its default value is -9223372036854775808',
+'description':
+ """
+    Checked on 4.0.0.2100 - all OK.
+    (intermediate snapshot with timestamp: 10.07.20 11:44)
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+
+    create domain dm_bigint_absolute_max as bigint default 9223372036854775807;
+    create domain dm_bigint_absolute_min as bigint default -9223372036854775808;
+    create domain dm_int128_absolute_max as int128 default  170141183460469231731687303715884105727;
+    create domain dm_int128_absolute_min as int128 default -170141183460469231731687303715884105728;
+
+    create table test1(
+        n_bigint_absol_max    bigint default 9223372036854775807
+       ,n_bigint_absol_min    bigint default -9223372036854775808
+       ,n_int128_absol_max    int128 default  170141183460469231731687303715884105727
+       ,n_int128_absol_min    int128 default -170141183460469231731687303715884105728
+       ,n_dm_bigint_absol_max dm_bigint_absolute_max
+       ,n_dm_bigint_absol_min dm_bigint_absolute_min
+       ,n_dm_int128_absol_max dm_int128_absolute_max
+       ,n_dm_int128_absol_min dm_int128_absolute_min
+    );
+    commit;
+
+    insert into test1 default values;
+    select * from test1;
+  """,
+ 'expected_stdout':
+  """
+    N_BIGINT_ABSOL_MAX              9223372036854775807
+    N_BIGINT_ABSOL_MIN              -9223372036854775808
+    N_INT128_ABSOL_MAX                    170141183460469231731687303715884105727
+    N_INT128_ABSOL_MIN                   -170141183460469231731687303715884105728
+    N_DM_BIGINT_ABSOL_MAX           9223372036854775807
+    N_DM_BIGINT_ABSOL_MIN           -9223372036854775808
+    N_DM_INT128_ABSOL_MAX                 170141183460469231731687303715884105727
+    N_DM_INT128_ABSOL_MIN                -170141183460469231731687303715884105728
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[ ('[ \t]+',' ') ]
+}
+]
+}

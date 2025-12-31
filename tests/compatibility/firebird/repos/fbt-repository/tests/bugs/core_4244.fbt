@@ -1,0 +1,48 @@
+{
+'id': 'bugs.core_4244',
+'qmid': None,
+'tracker_id': 'CORE-4244',
+'title': 'Problem with creation procedure which contain adding text in DOS864 charset',
+'description': '',
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^;
+    create or alter procedure sp_test as
+        declare char_one_byte char(1) character set dos864;
+        declare str varchar(1000) character set dos864;
+    begin
+        char_one_byte='A';
+        str='B';
+        str=str||char_one_byte;
+    end
+    ^
+    set term ;^
+    commit;
+    -- Confirmed for 2.1.7:
+    -- Statement failed, SQLCODE = -802
+    -- arithmetic exception, numeric overflow, or string truncation
+    -- -Cannot transliterate character between character sets
+    show proc sp_test;
+  """,
+ 'expected_stdout':
+  """
+    Procedure text:
+        declare char_one_byte char(1) character set dos864;
+        declare str varchar(1000) character set dos864;
+    begin
+        char_one_byte='A';
+        str='B';
+        str=str||char_one_byte;
+    end
+  """,
+ 'substitutions':[('=.*','')]
+}
+]
+}

@@ -1,0 +1,29 @@
+{
+'id': 'bugs.core_2806',
+'qmid': None,
+'tracker_id': 'CORE-2806',
+'title': "Views based on procedures can't be created if the proc's output fields participate in an expression",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """set term ^;
+create procedure p returns(rc int) as begin rc = 1; suspend; end^
+create view v2(dosrc) as select rc * 2 from p^
+commit ^
+show view v2^
+""",
+ 'expected_stdout': """DOSRC                           BIGINT Expression
+View Source:
+==== ======
+ select rc * 2 from p
+"""
+}
+]
+}

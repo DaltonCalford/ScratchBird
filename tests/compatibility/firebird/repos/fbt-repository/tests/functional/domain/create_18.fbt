@@ -1,0 +1,18 @@
+{
+'id': 'functional.domain.create.18',
+'qmid': 'functional.domain.create.create_domain_18',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - VARCHAR',
+'description': 'Simple domain creation based VARCHAR datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test VARCHAR(32765);
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            VARCHAR(32765) Nullable
+"""
+}
+]
+}

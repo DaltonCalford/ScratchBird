@@ -1,0 +1,65 @@
+{
+'id': 'bugs.core_4905',
+'qmid': None,
+'tracker_id': 'CORE-4905',
+'title': 'Invalid internal BLR filter conversion',
+'description': '',
+'min_versions': '2.5.5',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Confirmed: on WI-V2.5.4.26856 output will finish with error:
+    -- ... blr_text, 82,68,    *** blr operator 24308420 is undefined ***
+
+    set term ^;
+    create or alter procedure sp_test(field_name type of column rdb$types.rdb$field_name) as
+    begin
+    end
+    ^
+    set term ;^
+    commit;
+    set list on;
+    set blob all;
+    select cast(p.rdb$procedure_blr as blob sub_type text) sp_blr_blob
+    from rdb$procedures p 
+    where p.rdb$procedure_name = upper('SP_TEST');
+  """,
+ 'expected_stdout': 
+  """
+    blr_version5,blr_begin,    blr_message, 0, 2,0,       blr_column_name, 0, 9, 'R','D','B','$','T','Y','P','E','S', 14, 'R','D','B','$','F','I','E','L','D','_','N','A','M','E',      blr_short, 0,    blr_message, 1, 1,0,       blr_short, 0,    blr_receive, 0,       blr_begin,          blr_stall,          blr_label, 0,             blr_begin,                blr_end,          blr_end,    blr_send, 1,       blr_begin,          blr_assignment,             blr_literal, blr_short, 0, 0,0,            blr_parameter, 1, 0,0,          blr_end,    blr_end, blr_eoc
+  """,
+  'substitutions':[('SP_BLR_BLOB.*','')]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^;
+    create or alter procedure sp_test(field_name type of column rdb$types.rdb$field_name) as
+    begin
+    end
+    ^
+    set term ;^
+    commit;
+    set list on;
+    set blob all;
+    select cast(p.rdb$procedure_blr as blob sub_type text) sp_blr_blob
+    from rdb$procedures p 
+    where p.rdb$procedure_name = upper('SP_TEST');
+  """,
+ 'expected_stdout': 
+  """
+    blr_version5,blr_begin,    blr_message, 0, 2,0,       blr_column_name, 0, 9, 'R','D','B','$','T','Y','P','E','S', 14, 'R','D','B','$','F','I','E','L','D','_','N','A','M','E',      blr_short, 0,    blr_message, 1, 1,0,       blr_short, 0,    blr_receive, 0,       blr_begin,          blr_stall,          blr_label, 0,             blr_begin,                blr_end,          blr_end,    blr_send, 1,       blr_begin,          blr_assignment,             blr_literal, blr_short, 0, 0,0,            blr_parameter, 1, 0,0,          blr_end,    blr_end, blr_eoc
+  """,
+  'substitutions':[('SP_BLR_BLOB.*','')]
+}
+]
+}

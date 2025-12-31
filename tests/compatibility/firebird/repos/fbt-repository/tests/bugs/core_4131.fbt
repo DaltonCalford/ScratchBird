@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_4131',
+'qmid': None,
+'tracker_id': 'CORE-4131',
+'title': 'Error when processing an empty data set by window function, if reading indexed',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    recreate table test(x char(31) character set unicode_fss unique using index test_x);
+    commit;
+    insert into test values('qwerty');
+    commit;
+    
+    set list on;
+    set plan on;
+    select row_number() over(order by x) as rn, x
+    from test 
+    where x = 'qwerty'
+    ;
+    -- 3.0.0.30472:
+    -- cursor identified in the UPDATE or DELETE statement is not positioned on a row. no current record for fetch operation
+  """,
+ 'expected_stdout':
+  """
+    PLAN SORT (TEST INDEX (TEST_X))
+    RN                              1
+    X                               qwerty
+  """
+}
+]
+}

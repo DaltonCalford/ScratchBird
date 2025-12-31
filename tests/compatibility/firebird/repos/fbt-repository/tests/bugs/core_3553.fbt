@@ -1,0 +1,56 @@
+{
+'id': 'bugs.core_3553',
+'qmid': None,
+'tracker_id': 'CORE-3553',
+'title': 'Nested loop plan is chosen instead of the sort merge for joining independent streams using keys of different types',
+'description':
+  """
+    04-apr-2022. Added 'substituions' in order to remove dependency on concrete name of aliases (in this test they dont matter).
+  """,
+'min_versions': '2.1.5',
+'versions': [
+{
+ 'firebird_version': '2.1.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+select count(*)
+from rdb$database d1 join rdb$database d2
+  on cast(d1.rdb$relation_id as char(10)) = cast(d2.rdb$relation_id as char(20));
+""",
+ 'expected_stdout': """Database:  localhost:C:btestnew	mpugs.core_3553.fdb, User: SYSDBA
+SQL> SQL> CON> CON>
+PLAN MERGE (SORT (D2 NATURAL), SORT (D1 NATURAL))
+
+       COUNT
+============
+           1
+
+SQL>"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set planonly;
+    select 1
+    from rdb$database d1
+    join rdb$database d2 on cast(d1.rdb$relation_id as char(10)) = cast(d2.rdb$relation_id as char(20));
+    -- 3.x, 4.x: PLAN HASH (D2 NATURAL, D1 NATURAL)
+    -- 5.x:      PLAN HASH (D2 NATURAL, D1 NATURAL) // since 5.0.0.455 03-apr-2022
+   """,
+ 'expected_stdout':
+   """
+    PLAN HASH
+   """,
+ 'expected_stderr':
+   """
+   """,
+   'substitutions': [('PLAN HASH \(.*', 'PLAN HASH')]
+}
+]
+}

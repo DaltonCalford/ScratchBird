@@ -1,0 +1,42 @@
+{
+'id': 'bugs.core_6328',
+'qmid': None,
+'tracker_id': 'CORE-6328',
+'title': "FB4 Beta 2 may still be using the current date for TIME WITH TIME ZONE and extended wire protocol.",
+'description':
+ """
+    Confirmed bug on 4.0.0.2104 (got TZ_HOUR = -4 instead of expected -5).
+    Checked on 4.0.0.2108 (intermediate build of 17.07.2020 16:34) - works fine.
+ """,
+'min_versions': '4.0.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set bind of time zone to extended;
+    create table test (
+        timecol time with time zone
+    );
+
+    insert into test(timecol) values('11:31:05.0001 america/new_york');
+
+    set list on;
+    select extract(timezone_hour from timecol) as tz_hour, extract(timezone_minute from timecol) as tz_minute
+    from test;
+
+  """,
+ 'expected_stdout':
+  """
+    TZ_HOUR                         -5
+    TZ_MINUTE                       0
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[ ('[ \t]+',' ') ]
+}
+]
+}

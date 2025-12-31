@@ -1,0 +1,44 @@
+{
+'id': 'bugs.gh_6797',
+'qmid': None,
+'tracker_id': '',
+'title': "DECRYPT() must return BLOB if its first argument is blob, otherwise returnted datatype must be VARCHAR with charset NONE",
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/6797
+
+    NOTE: as of current FB 4.x doc, following is wrong: "Functions return ... *varbinary* for all other types."
+    (see note by Alex in the tracker, 11.05.2021 11:17).
+
+    Checked on 4.0.0.2479; 5.0.0.20
+
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set blob all;
+    set list on;
+    set sqlda_display on;
+    set planonly;
+    select
+        decrypt(cast('' as varchar(1)) using aes mode ofb key '0123456701234567' iv '1234567890123456') as decrypt_vchr
+       ,decrypt(cast('' as blob) using aes mode ofb key '0123456701234567' iv '1234567890123456') as decrypt_blob
+    from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    01: sqltype: 448 VARYING scale: 0 subtype: 0 len: 1 charset: 1 OCTETS
+    02: sqltype: 520 BLOB scale: 0 subtype: 0 len: 8
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions':[ ('^((?!(sqltype)).)*$',''), ('[ \t]+',' ') ]
+}
+]
+}

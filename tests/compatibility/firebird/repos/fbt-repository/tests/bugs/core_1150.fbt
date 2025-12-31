@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_1150',
+'qmid': 'bugs.core_1150',
+'tracker_id': 'CORE-1150',
+'title': 'Error conversion error from string " " using outer join on int64 and int fields',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE J (
+    ID INTEGER NOT NULL,
+    CODETABLE INTEGER,
+    CODEVSPTABLE INTEGER
+);
+
+
+CREATE TABLE TT (
+    ID BIGINT NOT NULL
+);
+
+ALTER TABLE TT ADD CONSTRAINT PK_TT PRIMARY KEY (ID);
+
+COMMIT;
+
+INSERT INTO TT(ID) VALUES(1);
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT 1
+  FROM TT T1 LEFT JOIN J ON J.CODETABLE = T1.ID
+       LEFT JOIN TT T2 ON J.CODEVSPTABLE = T2.ID ;
+""",
+ 'expected_stdout': """CONSTANT
+============
+           1
+
+"""
+}
+]
+}

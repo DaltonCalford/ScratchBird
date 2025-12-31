@@ -1,0 +1,65 @@
+{
+'id': 'bugs.core_1724',
+'qmid': None,
+'tracker_id': 'CORE-1724',
+'title': 'Common table expressions cannot be used in computed columns and quantified predicates (IN / ANY / ALL)',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select
+        sign( count(*) ) +
+        (
+          with recursive
+          n as(
+            select 0 i from rdb$database
+            union all
+            select n.i+1 from n
+            where n.i < 10
+          )
+          select avg(i)
+          from n
+        ) s
+    from rdb$pages p
+    where p.rdb$relation_id
+    > all (
+        with recursive
+        n as(
+          select 0 i from rdb$database
+          union all
+          select n.i+1 from n
+          where n.i < 10
+        )
+        select i
+        from n
+    )
+    and p.rdb$page_number
+    not in (
+        with recursive
+        n as(
+          select 0 i from rdb$database
+          union all
+          select n.i+1 from n
+          where n.i < 10
+        )
+        select i
+        from n
+    );
+  """,
+ 'expected_stdout': 
+  """
+    S                               6
+  """
+}
+]
+}

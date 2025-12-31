@@ -1,0 +1,770 @@
+{
+'id': 'functional.session.ext-conn-pool-01',
+'tracker_id': '',
+'title': "External Connections Pool, functionality test 01",
+'description':
+ """
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    ATTENTION! CURRENT FB INSTANCE DOES NOT PARTICIPATE IN THIS TEST WORK! TEMPORARY INSTANCE IS USED!
+    RESULT OF THIS TEST HAS NO "LINK: WITH CURRENTLY CHECKED FB SERVERMODE! DIFF OUTPUT MUST BE CHECKED!
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+    Basic check of External Connections Pool. We verify here following:
+    * ability to reuse connections from ECP in case running ES/EDS by "frequent" attachments
+    * ability to distinguish connect/disconnect from reuse connections within apropriate
+      DB-level trigger (system variable RESETTING = faluse | true)
+    * ability to get information about ECP state: total number of active and idle connections.
+
+    See $FB_HOME/doc/sql.extensions/README.external_connections_pool and CORE-5832.
+    -------------------------------------------------------------------------------------------
+    Test retrieves FB_HOME directory and makes copy of firebird.conf and database.conf files.
+    Then it searches for free TCP port and overwrites content of firebird.conf: this new port 
+    will be specified for RemoveServicePort (see 'TMP_FREE_PORT').
+    Also, parameters for working with External Connections Pool (hereafter: ECP) will be added:
+        ExtConnPoolSize  = <not less than 5>
+        ExtConnPoolLifeTime = <ECP_LIFE>
+    -- where <ECP_LIFE> can be set to 5...10 s (but not less than 3).
+
+    New alias is added to databases.conf for test .fdb which must be created as self-security DB:
+        tmp_ecp_01 = <test_fdb> {
+            SecurityDatabase = tmp_ecp_01
+            RemoteAccess = true
+        }
+    File $FB_HOME/securityN.fdb is copied to the <test_fdb>.
+
+    After this test launches new Firebird instance *as application* (see async. call of Popen()) and make
+    some actions with just created test DB (alias = tmp_ecp_01). Because this DB is self-secutity, we can
+    use it for connect without any conflict with existing FB instance.
+
+    When all needed actions with this DB complete, this FB temporary instance will be stopped.
+    Test does start and stop of this FB instance _two_ times because of checking following ServerMode:
+    * Super
+    * SuperClassic
+    
+    ::: NOTE :::
+    Test does NOT check Servermode = Classic because of unpredictable results when ExtConnPoolLifeTime less than 7s.
+    In some cases number of IDLE connections can differ from one run to another. The reason is remaining unknown.
+    -------------------------------------------------------------------------------------------
+    After FB instance launch, test runs ISQL that connects to <test_fdb> using port <TMP_FREE_PORT> and creates
+    several DB objects:
+        * DB-level triggers on CONNECT / DISCONNECT;
+        * table 'audit' for logging these events, with specifying detailed info: whether current
+          connect/disconnect is caused by SESSION RESET (variable RESETTING is TRUE) or no;
+        * two users who which further perform connect and run several ES/EDS statements:
+            'freq' -- will do ES/EDS 'frequently', i.e. with interval LESS than ExtConnPoolLifeTime;
+            'rare' -- will do ES/EDS 'rarely', with interval GREATER than ExtConnPoolLifeTime;
+        * role 'cleaner_ext_pool' with granting to it system privilege MODIFY_EXT_CONN_POOL, in order
+          to have ability to clear ext pool after final ES/EDS. Grant this role to both 'freq' and 'rare'
+    
+    Then we create several connections for user 'freq' (appending them into a list) and for each of them
+    do ES/EDS. Number of connections is specified by variable ITER_LOOP_CNT. Delay between subsequent
+    ES/EDS for 'freq' is minimal: 1 second.
+    After this, we repeate the same for user 'rare', and use delay between subsequent ES/EDS GREATER
+    than ExtConnPoolLifeTime for <ADD_DELAY_FOR_RARE> seconds.
+    After loop we clear ExtConnPool and close all connections from list.
+    
+    Finally test terminates Firebird application process and queries to the table 'audit' for check results.
+    Number of rows (and unique connection IDs) for user 'freq' must be significantly less than for user 'rare',
+    despite the fact that both of them did the same work. This is because engine held idle connections in the pool
+    and user FREQ could re-use them when ran subsequent ES/EDS.
+
+    ::: CAUTION :::
+    Windows Firewall can block attempt to launch FB as application (dialog window appears in this case).
+    One may need to configure Firewall so that process <FB_HOME>\firebird.exe is enable to operate on any port.
+
+    Perhaps, following command will be useful: netsh advfirewall set privateprofile state off
+
+    Checked on 4.0.0.2235, FB instances were launched as 'Super' and 'SuperClassic'. Time: ~52s.
+
+    22.05.2021: definition of full path and name to security.db was wrong because it supposed that FB major version
+    corresponds to numeric suffix of security database (FB 3.x --> security3.fdb; FB 4.x --> security4.fdb).
+    But in major version FB 5.x currently remains to use security4.fdb.
+    Proper way is either to use Services API (call to get_security_database_path()) or get this info from fbtest
+    built-in context variable context['isc4_path'].
+    Checked on 5.0.0.47 (Linux, Windows).
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import sys
+import os
+import socket
+import platform
+import shutil
+import time
+import datetime
+import tempfile
+import difflib
+import subprocess
+import fdb
+from fdb import services
+
+# POSIX:   '/opt/fb40/lib/libfbclient.so'
+# Windows: r'C:\FB\40SS\fbclient.dll'
+#FB_CLNT = r'C:\FB\40SS\fbclient.dll'
+
+	
+os.environ["ISC_USER"] = 'SYSDBA'
+os.environ["ISC_PASSWORD"] = 'masterkey'
+
+TMP_DBA_PSWD = 'M@$terkeX'
+
+# Ext. Poll size and lifetime:
+ECP_SIZE = 10
+
+# === !!! do NOT set ECP_LIFE less than 4 !!! ===
+# SuperClassic can fail in that case (approx every 40...50 run): mismatch in last column (number of ECP idle connections):
+# Example of diff:
+########################################################################################################
+# - SuperClassic FREQ             2      12 BYE                                               0        7
+# + SuperClassic FREQ             2      12 BYE                                               0        6
+#
+# - SuperClassic FREQ             4      13 RUN DML                                           1        6
+# + SuperClassic FREQ             4      13 RUN DML                                           1        5
+#
+# - SuperClassic FREQ             4      14 MOVE INTO POOL: ACTIVE -> IDLE                    1        6
+# + SuperClassic FREQ             4      14 MOVE INTO POOL: ACTIVE -> IDLE                    1        5
+#
+# - SuperClassic FREQ             4      15 TAKE FROM POOL: IDLE -> ACTIVE                    2        6
+# + SuperClassic FREQ             4      15 TAKE FROM POOL: IDLE -> ACTIVE                    2        5
+########################################################################################################
+#
+ECP_LIFE = 5
+
+# How many seconds will be added to delay = <ECP_LIFE> when user 'RARE' works with database.
+# For Classic it was needed to set this value about 4(!) seconds but this did not help and results remained non-stable
+# For Super and SuperClassic it is enough to add 2 seconds:
+#
+ADD_DELAY_FOR_RARE = 2
+
+# How many connections will be done by users 'FREQ' and (after him) by 'RARE'.
+# Each connection will run _single_ DML using ES/EDS and then immediately is closed
+# Subsequent connection will run its DML after N seconds where:
+# N = 1  -- for user 'FREQ'
+# N = ECP_LIFE + ADD_DELAY_FOR_RARE  -- for user 'RARE'
+#
+ITER_LOOP_CNT = 3
+
+svc = fdb.services.connect(host='localhost', user=user_name, password=user_password)
+FB_HOME = svc.get_home_directory()
+FB_BINS = os.path.join( FB_HOME, 'bin'+os.sep if platform.system() == 'Linux' else '' )
+svc.close()
+SEC_FDB = context['isc4_path']
+
+
+#--------------------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb'):
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          del_name = None
+
+       if os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+def find_free_port():
+    global socket
+    from contextlib import closing
+    # AF_INET - constant represent the address (and protocol) families, used for the first argument to socket()
+    # A pair (host, port) is used for the AF_INET address family, where host is a string representing either a 
+    # hostname in Internet domain notation like 'daring.cwi.nl' or an IPv4 address like '100.50.200.5', and port is an integer.
+    # SOCK_STREAM means that it is a TCP socket.
+    # SOCK_DGRAM means that it is a UDP socket.
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+        s.bind(('', 0))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return s.getsockname()[1]
+
+#--------------------------------------------
+def check_server(address, port):
+    global socket
+    # Create a TCP socket
+    s = socket.socket()
+    try:
+        s.connect((address, port))
+        return True
+    except socket.error, e:
+        return False
+    finally:
+        s.close()
+
+#--------------------------------------------
+
+def do_shutdown_bring_online( FB_BINS, tcp_port, db_name, dba_pwd ):
+    global subprocess
+    subprocess.call( [ os.path.join( FB_BINS, 'gfix'), '-user', 'SYSDBA', '-pas', dba_pwd, '-shut', 'full', '-force', '0', 'localhost/%d:%s' % (tcp_port, db_name) ] )
+    subprocess.call( [ os.path.join( FB_BINS, 'gfix'), '-user', 'SYSDBA', '-online', db_name ] )
+
+#--------------------------------------------
+
+def get_fb_arch(a_dsn):
+   try:
+      con1 = fdb.connect(dsn = a_dsn)
+      con2 = fdb.connect(dsn = a_dsn)
+
+      cur1 = con1.cursor()
+
+      sql=(
+             "select count(distinct a.mon$server_pid), min(a.mon$remote_protocol), max(iif(a.mon$remote_protocol is null,1,0))"
+            +" from mon$attachments a"
+            +" where a.mon$attachment_id in (%s, %s) or upper(a.mon$user) = upper('%s')"
+            % (con1.attachment_id, con2.attachment_id, 'cache writer')
+          )
+
+      cur1.execute(sql)
+      for r in cur1.fetchall():
+          server_cnt=r[0]
+          server_pro=r[1]
+          cache_wrtr=r[2]
+
+      if server_pro == None:
+          fba='Embedded'
+      elif cache_wrtr == 1:
+          fba='SS'
+      elif server_cnt == 2:
+          fba='CS'
+      else:
+
+          f1=con1.db_info(fdb.isc_info_fetches)
+          
+          cur2=con2.cursor()
+          cur2.execute('select 1 from rdb$database')
+          for r in cur2.fetchall():
+             pass
+
+          f2=con1.db_info(fdb.isc_info_fetches)
+
+          fba = 'SC' if f1 ==f2 else 'SS'
+
+      #print(fba, con1.engine_version, con1.version)
+      return fba
+
+   finally:
+      con1.close()
+      con2.close()
+
+#-------------------------------------------------
+
+db_conn.close()
+
+fdb_test = os.path.join(context['temp_directory'],'ext-conn-pool-01.fdb')
+cleanup( (fdb_test,) )
+
+dts = datetime.datetime.now().strftime("%y%m%d_%H%M%S")
+
+fbconf_cur = os.path.join(FB_HOME, 'firebird.conf')
+fbconf_bak = os.path.join(context['temp_directory'], 'firebird_'+dts+'.bak')
+
+dbconf_cur = os.path.join(FB_HOME, 'databases.conf')
+dbconf_bak = os.path.join(context['temp_directory'], 'databases_'+dts+'.bak')
+
+shutil.copy2( SEC_FDB, fdb_test )
+f_init_err = 0
+
+#################################
+TMP_FREE_PORT = find_free_port()
+#################################
+
+#fb_arch = get_fb_arch( dsn )
+
+CHECKED_MODE_LIST=( 'Super,', 'SuperClassic', )
+
+# NO SENSE, ALWAYS DIFFERENT VALUES IN 'IDLE' COLUMN >>> CHECKED_MODE_LIST=('Classic',)
+
+for srvidx,srvmode in enumerate( CHECKED_MODE_LIST ):
+
+    shutil.copy2( fbconf_cur, fbconf_bak )
+    shutil.copy2( dbconf_cur, dbconf_bak )
+
+    cfg_params_to_change= {
+        'ServerMode' : srvmode
+       ,'RemoteServicePort' : str(TMP_FREE_PORT)
+       ,'ExtConnPoolLifeTime' : str(ECP_LIFE)
+       ,'ExtConnPoolSize' : str(ECP_SIZE)
+       ,'DefaultDbCachePages' : '2048'
+       ,'UseFileSystemCache' : 'true'
+       ,'IpcName' : 'fb4x_ipc_ecp'
+       ,'RemoteServiceName' : 'fb4x_svc_ecp'
+       ,'BugcheckAbort' : '1'
+       ,'AuthClient' : 'Srp'
+       ,'AuthServer' : 'Srp'
+    }
+
+    f_fbconf=open( fbconf_cur, 'w')
+    for k,v in sorted(cfg_params_to_change.items()):
+        f_fbconf.write( ''.join( (k, ' = ', v, '\\n') ) )
+    flush_and_close( f_fbconf )
+
+    alias_data=\
+    '''
+        # Added temporarily for executing test ext-conn-pool-01.fbt
+        tmp_ecp_01 = %(fdb_test)s {
+            SecurityDatabase = tmp_ecp_01
+            RemoteAccess = true
+        }
+    ''' % locals()
+
+    f_dbconf=open( dbconf_cur, 'w')
+    f_dbconf.write(alias_data)
+    flush_and_close( f_dbconf )
+
+    ########################################################################
+    ###      L A U N C H      F B     A S     A P P L I C A T I O N      ###
+    ########################################################################
+    fb_process = subprocess.Popen( [ os.path.join( FB_BINS, 'firebird'), '-a'] )
+    time.sleep(2)
+
+    if not check_server('localhost', TMP_FREE_PORT):
+        print('### ERROR ### FB instance not yet started. Increase delay and repeat!')
+
+    if srvidx == 0:
+        # initial creation of test DB
+        #############################
+
+        sql_text=\
+        '''
+            set bail on;
+            set wng off;
+            set echo on;
+
+            connect 'tmp_ecp_01';
+            
+            create or alter user sysdba password '%(TMP_DBA_PSWD)s' using plugin Srp;
+
+            -- !! otherwise next attempt to attach via TCP will fail with Windows
+            -- error 32 process can not access file it is used by another process !!
+            alter database set linger to 0;
+            commit;
+
+            connect 'localhost/%(TMP_FREE_PORT)s:tmp_ecp_01' user sysdba password '%(TMP_DBA_PSWD)s';
+
+            set list on;
+            --select * from mon$database;
+            --commit;
+
+            create or alter user freq password '123' using plugin Srp;
+            create or alter user rare password '123' using plugin Srp;
+            commit;
+
+            create role cleaner_ext_pool
+                set system privileges to MODIFY_EXT_CONN_POOL;
+            commit;
+
+            grant default cleaner_ext_pool to user freq;
+            grant default cleaner_ext_pool to user rare;
+            commit;
+
+            create table audit(
+                 id smallint generated by default as identity constraint pk_audit primary key
+                ,srvmode varchar(12) -- 'Super' / 'SuperClassic' / 'Classic'
+                ,who varchar(10) default current_user -- 'freq' / 'rare' / 'sysdba'
+                ,evt varchar(40) not null
+                ,att smallint default current_connection
+                ,trn smallint default current_transaction
+                ,dts timestamp default 'now'
+                ,pool_active_count smallint
+                ,pool_idle_count smallint
+                ,aux_info varchar(100)
+            );
+
+            create view v_audit as
+            select 
+                srvmode
+               ,who
+               ,att
+               ,id
+               ,evt
+               ,active_cnt
+               ,idle_cnt
+            from (
+                select
+                     srvmode
+                    ,who
+                    ,cast(dense_rank()over(partition by srvmode,who order by att) as smallint) as att
+                    ,cast(dense_rank()over(partition by srvmode,who order by id) as smallint) as id
+                    ,evt
+                    ,trn
+                    ,pool_active_count as active_cnt
+                    ,pool_idle_count as idle_cnt
+                from audit
+            )
+            --order by srvmode, who, att, id
+            order by srvmode, who, id
+            ;
+
+
+            grant select,insert on audit to public;
+            grant select on v_audit to public;
+            commit;
+
+            set term ^;
+            create or alter procedure sys_get_fb_arch (
+                 a_connect_as_user varchar(31) default 'SYSDBA'
+                ,a_connect_with_pwd varchar(31) default '%(TMP_DBA_PSWD)s'
+            ) returns(
+                fb_arch varchar(50)
+            ) as
+                declare cur_server_pid int;
+                declare ext_server_pid int;
+                declare att_protocol varchar(255);
+                declare v_test_sttm varchar(255);
+                declare v_fetches_beg bigint;
+                declare v_fetches_end bigint;
+            begin
+
+                select a.mon$server_pid, a.mon$remote_protocol
+                from mon$attachments a
+                where a.mon$attachment_id = current_connection
+                into cur_server_pid, att_protocol;
+               
+                if ( att_protocol is null ) then
+                    fb_arch = 'Embedded';
+                else
+                    begin
+                        v_test_sttm =
+                            'select a.mon$server_pid' --  + 0*(select 1 from rdb$database)'
+                            ||' from mon$attachments a '
+                            ||' where a.mon$attachment_id = current_connection';
+
+                        execute statement v_test_sttm
+                        on external
+                             'localhost:' || rdb$get_context('SYSTEM', 'DB_NAME')
+                        as
+                            user a_connect_as_user
+                            password a_connect_with_pwd
+                            role left('R' || replace(uuid_to_char(gen_uuid()),'-',''),31)
+                        into ext_server_pid;
+                        
+                        if ( cur_server_pid is distinct from ext_server_pid ) then
+                            fb_arch = 'Classic';
+                        else
+                            begin
+                                select i.mon$page_fetches
+                                from mon$io_stats i
+                                where i.mon$stat_group = 0  -- db_level
+                                into v_fetches_beg;
+
+                                in autonomous transaction do
+                                    select i.mon$page_fetches
+                                    from mon$io_stats i
+                                    where i.mon$stat_group = 0  -- db_level
+                                    into v_fetches_end;
+
+                                fb_arch = iif( v_fetches_beg is not distinct from v_fetches_end, 
+                                               'SuperClassic', 
+                                               'Super'
+                                             );
+                            end
+                    end
+                suspend;
+            end
+            ^
+
+            create or alter trigger trg_aud_bi for audit active before insert sql security definer as
+                declare v_srvmode varchar(30);
+                declare p int;
+            begin
+                new.srvmode = rdb$get_context('USER_SESSION', 'FB_ARCH');
+                if ( new.srvmode is null ) then
+                    begin
+                        -- Here we get current FB server mode. Procedure 'sys_get_fb_arch' does ES/EDS,
+                        -- but is uses SYSDBA account and (because of this) table 'audit' will not be
+                        -- changed in [dis]connect triggers:
+                        new.srvmode = ( select fb_arch from sys_get_fb_arch('SYSDBA', '%(TMP_DBA_PSWD)s') );
+
+                        -- 11.01.2021 22:00: WEIRD! If this statement enabled then .py script HANGS on 2nd iter!
+                        rdb$set_context('USER_SESSION', 'FB_ARCH', new.srvmode);
+                    end
+
+                new.pool_active_count = rdb$get_context('SYSTEM','EXT_CONN_POOL_ACTIVE_COUNT');
+                new.pool_idle_count = rdb$get_context('SYSTEM','EXT_CONN_POOL_IDLE_COUNT');
+            end
+            ^
+
+            create or alter trigger trg_connect inactive on connect sql security definer as
+                declare p smallint;
+            begin
+                if (current_user <> 'SYSDBA') then
+                begin
+                    
+                    insert into audit(
+                        evt
+                    ) values (
+                        iif(resetting, 'TAKE FROM POOL: IDLE -> ACTIVE', 'NEW')
+                    );
+                end
+            end
+            ^
+
+            create or alter trigger trg_disconnect inactive on disconnect sql security definer as
+            begin
+                if (current_user <> 'SYSDBA') then
+                begin    
+                    insert into audit(
+                        evt
+                    ) values (
+                        iif(resetting, 'MOVE INTO POOL: ACTIVE -> IDLE', 'BYE')
+                    );
+                end
+            end
+            ^
+            set term ;^
+            commit;
+            alter trigger trg_connect active;
+            alter trigger trg_disconnect active;
+            grant execute on procedure sys_get_fb_arch to public;
+            commit;
+        ''' % locals()
+
+
+        f_sql_cmd = open( os.path.join(context['temp_directory'],'ecp-resetting-DDL.sql'), 'w')
+        f_sql_cmd.write( sql_text )
+        flush_and_close( f_sql_cmd )
+
+        f_sql_log = open( os.path.splitext(f_sql_cmd.name)[0] + '-init.log', 'w')
+        f_sql_err = open( os.path.splitext(f_sql_cmd.name)[0] + '-init.err', 'w')
+        subprocess.call( [ os.path.join( FB_BINS, 'isql'), '-q', '-i', f_sql_cmd.name, '-user', 'SYSDBA'], stdout=f_sql_log, stderr=f_sql_err )
+        flush_and_close( f_sql_log )
+        flush_and_close( f_sql_err )
+        
+        f_init_err = os.path.getsize(f_sql_err.name)
+
+        with open( f_sql_err.name,'r') as f:
+            for line in f:
+                print("Unexpected STDERR, file " + f_sql_err.name + ": "+line)
+        
+        cleanup( [ i.name for i in (f_sql_cmd, f_sql_log, f_sql_err) ] )
+
+    #< srvidx == 0 (process 1st of srvmode list)
+
+    ##############################################################################
+    do_shutdown_bring_online( FB_BINS, TMP_FREE_PORT, 'tmp_ecp_01', TMP_DBA_PSWD )
+    ##############################################################################
+
+    if f_init_err == 0:
+
+        sql_for_run='''
+            execute block as
+                declare c int;
+            begin
+                execute statement ( q'{ insert into audit( evt ) values( 'RUN DML') }' )
+                on external 'localhost/%(TMP_FREE_PORT)s:' || rdb$get_context('SYSTEM','DB_NAME')
+
+                with autonomous transaction -- <<< !!! THIS IS MANDATORY IF WE WANT TO USE EXT CONN POOL !!! <<<
+                
+                as user current_user password '123'
+                ;
+            end
+        ''' % locals()
+
+        
+        ###########################################################################
+
+        for usr_name in ('freq','rare'):
+            conn_list = []
+            for i in range(0, ITER_LOOP_CNT):
+                conn_list.append( fdb.connect( dsn = 'localhost/%(TMP_FREE_PORT)s:tmp_ecp_01' % locals(), user = usr_name, password = '123' )  )
+
+            for i,c in enumerate(conn_list):
+                
+                # ::: NOTE :::
+                # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+                # On every iteration DIFFERENT connection is used for run ES/EDS, 
+                # but all of them use the same user/password/role, so apropriate
+                # item in the ExtConnPool can be used to run this statement.
+                # But this will be so only for user = 'FREQ' because he does such
+                # actions 'frequently': each (<ECP_LIFE> - 2) seconds.
+                # For user 'RARE' new attachment will be created every time when
+                # he runs ES/EDS because he does that 'rarely' and idle connection
+                # (from his previous iteration) is removed from ExtConnPool due to
+                # expiration of ExtConnPoolLifeTime:
+                # ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+                c.execute_immediate( sql_for_run )
+
+                if i < len(conn_list)-1:
+                    time.sleep( 1 if usr_name == 'freq' else ECP_LIFE + ADD_DELAY_FOR_RARE )
+                else:
+                    c.execute_immediate( 'ALTER EXTERNAL CONNECTIONS POOL CLEAR ALL' )
+
+                c.close()
+
+            ### for c in conn_list:
+            ###     c.close()
+
+        ##############################################################################
+        do_shutdown_bring_online( FB_BINS, TMP_FREE_PORT, 'tmp_ecp_01', TMP_DBA_PSWD )
+        ##############################################################################
+
+        if srvidx == len(CHECKED_MODE_LIST)-1:
+
+            sql_check='''
+                -- set echo on;
+                connect 'localhost/%(TMP_FREE_PORT)s:tmp_ecp_01' user sysdba password '%(TMP_DBA_PSWD)s';
+                set count on;
+                select * from v_audit;
+                --select * from v_audit where who = 'FREQ';
+                --select * from v_audit where who = 'RARE';
+            ''' % locals()
+
+            f_sql_cmd = open( os.path.join(context['temp_directory'],'ext_conn-pool-results.sql'), 'w')
+            f_sql_cmd.write( sql_check )
+            flush_and_close( f_sql_cmd )
+
+            f_sql_log = open( os.path.splitext(f_sql_cmd.name)[0] + '.log', 'w')
+
+            ##################################
+            ###   f i n a l     q u e r y  ###
+            ##################################
+            subprocess.call( [ os.path.join( FB_BINS, 'isql'), '-q', '-pag', '99999', '-i', f_sql_cmd.name ], stdout=f_sql_log, stderr=subprocess.STDOUT )
+            
+            flush_and_close( f_sql_log )
+
+            with open(f_sql_log.name) as f:
+                for line in f:
+                    print(line)
+
+    #< indent 'f_init_err == 0'
+
+    ########################################################################
+    ###    S T O P     T E M P O R A R Y     F B    I N S T A N C E      ###
+    ########################################################################
+
+    fb_process.terminate()
+    time.sleep(2)
+
+    shutil.move( fbconf_bak, fbconf_cur )
+    shutil.move( dbconf_bak, dbconf_cur )
+
+    if f_init_err > 0:
+        break
+
+    if check_server('localhost', TMP_FREE_PORT):
+        print('### ERROR ### FB instance was not yet terminated. Increase delay and repeat!')
+   
+#<indent for srvidx,srvmode in enumerate( ('Super', 'SuperClassic', 'Classic') )
+
+#time.sleep(1)
+f_list=( f_sql_log, f_sql_err, f_sql_cmd )
+
+# Cleanup
+##########
+cleanup( [ i.name for i in f_list ] + [fdb_test] )
+
+  """,
+ 'expected_stdout': 
+  """
+    SRVMODE      WHO            ATT      ID EVT                                      ACTIVE_CNT IDLE_CNT 
+    ============ ========== ======= ======= ======================================== ========== ======== 
+    Super        FREQ             1       1 NEW                                               1        0 
+    Super        FREQ             2       2 NEW                                               1        1 
+    Super        FREQ             3       3 NEW                                               1        2 
+    Super        FREQ             4       4 NEW                                               1        3 
+    Super        FREQ             4       5 RUN DML                                           1        4 
+    Super        FREQ             4       6 MOVE INTO POOL: ACTIVE -> IDLE                    1        4 
+    Super        FREQ             4       7 TAKE FROM POOL: IDLE -> ACTIVE                    2        4 
+    Super        FREQ             1       8 BYE                                               0        6 
+    Super        FREQ             4       9 RUN DML                                           1        5 
+    Super        FREQ             4      10 MOVE INTO POOL: ACTIVE -> IDLE                    1        5 
+    Super        FREQ             4      11 TAKE FROM POOL: IDLE -> ACTIVE                    2        5 
+    Super        FREQ             2      12 BYE                                               0        7 
+    Super        FREQ             4      13 RUN DML                                           1        6 
+    Super        FREQ             4      14 MOVE INTO POOL: ACTIVE -> IDLE                    1        6 
+    Super        FREQ             4      15 TAKE FROM POOL: IDLE -> ACTIVE                    2        6 
+    Super        FREQ             4      16 BYE                                               0        0 
+    Super        FREQ             3      17 BYE                                               0        0 
+    Super        RARE             1       1 NEW                                               1        0 
+    Super        RARE             2       2 NEW                                               1        1 
+    Super        RARE             3       3 NEW                                               1        2 
+    Super        RARE             4       4 NEW                                               1        3 
+    Super        RARE             4       5 RUN DML                                           1        4 
+    Super        RARE             4       6 MOVE INTO POOL: ACTIVE -> IDLE                    1        4 
+    Super        RARE             4       7 TAKE FROM POOL: IDLE -> ACTIVE                    2        4 
+    Super        RARE             4       8 BYE                                               0        0 
+    Super        RARE             1       9 BYE                                               0        0 
+    Super        RARE             5      10 NEW                                               1        0 
+    Super        RARE             5      11 RUN DML                                           1        1 
+    Super        RARE             5      12 MOVE INTO POOL: ACTIVE -> IDLE                    1        1 
+    Super        RARE             5      13 TAKE FROM POOL: IDLE -> ACTIVE                    2        1 
+    Super        RARE             5      14 BYE                                               0        0 
+    Super        RARE             2      15 BYE                                               0        0 
+    Super        RARE             6      16 NEW                                               1        0 
+    Super        RARE             6      17 RUN DML                                           1        1 
+    Super        RARE             6      18 MOVE INTO POOL: ACTIVE -> IDLE                    1        1 
+    Super        RARE             6      19 TAKE FROM POOL: IDLE -> ACTIVE                    2        1 
+    Super        RARE             6      20 BYE                                               0        0 
+    Super        RARE             3      21 BYE                                               0        0 
+    SuperClassic FREQ             1       1 NEW                                               1        0 
+    SuperClassic FREQ             2       2 NEW                                               1        1 
+    SuperClassic FREQ             3       3 NEW                                               1        2 
+    SuperClassic FREQ             4       4 NEW                                               1        3 
+    SuperClassic FREQ             4       5 RUN DML                                           1        4 
+    SuperClassic FREQ             4       6 MOVE INTO POOL: ACTIVE -> IDLE                    1        4 
+    SuperClassic FREQ             4       7 TAKE FROM POOL: IDLE -> ACTIVE                    2        4 
+    SuperClassic FREQ             1       8 BYE                                               0        6 
+    SuperClassic FREQ             4       9 RUN DML                                           1        5 
+    SuperClassic FREQ             4      10 MOVE INTO POOL: ACTIVE -> IDLE                    1        5 
+    SuperClassic FREQ             4      11 TAKE FROM POOL: IDLE -> ACTIVE                    2        5 
+    SuperClassic FREQ             2      12 BYE                                               0        7 
+    SuperClassic FREQ             4      13 RUN DML                                           1        6 
+    SuperClassic FREQ             4      14 MOVE INTO POOL: ACTIVE -> IDLE                    1        6 
+    SuperClassic FREQ             4      15 TAKE FROM POOL: IDLE -> ACTIVE                    2        6 
+    SuperClassic FREQ             4      16 BYE                                               0        0 
+    SuperClassic FREQ             3      17 BYE                                               0        0 
+    SuperClassic RARE             1       1 NEW                                               1        0 
+    SuperClassic RARE             2       2 NEW                                               1        1 
+    SuperClassic RARE             3       3 NEW                                               1        2 
+    SuperClassic RARE             4       4 NEW                                               1        3 
+    SuperClassic RARE             4       5 RUN DML                                           1        4 
+    SuperClassic RARE             4       6 MOVE INTO POOL: ACTIVE -> IDLE                    1        4 
+    SuperClassic RARE             4       7 TAKE FROM POOL: IDLE -> ACTIVE                    2        4 
+    SuperClassic RARE             4       8 BYE                                               0        0 
+    SuperClassic RARE             1       9 BYE                                               0        0 
+    SuperClassic RARE             5      10 NEW                                               1        0 
+    SuperClassic RARE             5      11 RUN DML                                           1        1 
+    SuperClassic RARE             5      12 MOVE INTO POOL: ACTIVE -> IDLE                    1        1 
+    SuperClassic RARE             5      13 TAKE FROM POOL: IDLE -> ACTIVE                    2        1 
+    SuperClassic RARE             5      14 BYE                                               0        0 
+    SuperClassic RARE             2      15 BYE                                               0        0 
+    SuperClassic RARE             6      16 NEW                                               1        0 
+    SuperClassic RARE             6      17 RUN DML                                           1        1 
+    SuperClassic RARE             6      18 MOVE INTO POOL: ACTIVE -> IDLE                    1        1 
+    SuperClassic RARE             6      19 TAKE FROM POOL: IDLE -> ACTIVE                    2        1 
+    SuperClassic RARE             6      20 BYE                                               0        0 
+    SuperClassic RARE             3      21 BYE                                               0        0 
+
+    Records affected: 76
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  #'substitutions':[ ('[ \t]+', ' '), ('[=]+', '') ]
+}
+]
+}

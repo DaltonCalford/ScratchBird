@@ -1,0 +1,73 @@
+{
+'id': 'bugs.core_4841',
+'qmid': None,
+'tracker_id': 'CORE-4841',
+'title': 'Make message about missing password being always displayed as reply on attempt to issue CREATE new login without PASSWORD clause',
+'description':
+  """
+    Checked on 
+        4.0.0.2271 SS; 4.0.0.2265 SS; 4.0.0.2267 CS.
+        3.0.8.33392 SS; 3.0.8.33390 SC; 3.0.7.33388 CS.
+  """,
+'min_versions': '3.0.7',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    -- All following statements must fail with message that contains phrase:
+    -- "Password must be specified when creating user"
+    create user u01;
+    create user u01 using plugin Srp;
+    create user u01 firstname 'john';
+    create user u01 grant admin role;
+    create user u01 inactive;
+    create or alter user u01 tags (password = 'foo');
+    create user password;
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE USER U01 failed
+    -Password must be specified when creating user
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE USER U01 failed
+    -Password must be specified when creating user
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE USER U01 failed
+    -Password must be specified when creating user
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE USER U01 failed
+    -Password must be specified when creating user
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE USER U01 failed
+    -Password must be specified when creating user
+
+    Statement failed, SQLSTATE = HY000
+    Password must be specified when creating user
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE USER PASSWORD failed
+    -Password must be specified when creating user
+  """,
+  'substitutions':[
+    ('[-]?Password', 'Password'),
+  ]
+}
+]
+}

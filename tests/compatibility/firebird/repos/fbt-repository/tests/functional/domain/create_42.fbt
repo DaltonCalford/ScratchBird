@@ -1,0 +1,49 @@
+{
+'id': 'functional.domain.create.42',
+'qmid': 'functional.domain.create.create_domain_42',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - domain name equal to existing datatype',
+'description': """Domain creation must fail (SQLCODE -104) if domain name is equal to datatype name.
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'CREATE DOMAIN INT AS VARCHAR(32);',
+ 'expected_stderr': """Statement failed, SQLCODE = -104
+
+Dynamic SQL Error
+-SQL error code = -104
+-Token unknown - line 1, char 15
+-INT
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'CREATE DOMAIN INT AS VARCHAR(32);',
+ 'expected_stderr': """Statement failed, SQLCODE = -104
+
+Dynamic SQL Error
+-SQL error code = -104
+-Token unknown - line 1, column 15
+-INT
+"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'CREATE DOMAIN INT AS VARCHAR(32);',
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+
+Dynamic SQL Error
+-SQL error code = -104
+-Token unknown - line 1, column 15
+-INT
+"""
+}
+]
+}

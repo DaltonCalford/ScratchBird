@@ -1,0 +1,33 @@
+{
+'id': 'bugs.core_3453',
+'qmid': '',
+'tracker_id': 'CORE-3453',
+'title': "Added not null timestamp col with default causes error on select of old null records",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create table "Temp" ("Dummy" int);
+    commit;
+    insert into "Temp" ("Dummy") values (1);
+    commit;
+    alter table "Temp" add "New" timestamp default '0001-01-01' not null;
+    commit;
+    set list on;
+    select * from "Temp";
+  """,
+ 'expected_stdout': 
+  """
+    Dummy                           1
+    New                             0001-01-01 00:00:00.0000
+  """
+}
+]
+}

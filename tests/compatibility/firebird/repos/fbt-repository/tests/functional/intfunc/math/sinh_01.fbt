@@ -1,0 +1,23 @@
+{
+'id': 'functional.intfunc.math.sinh_01',
+'qmid': 'functional.intfunc.math.sinh_01',
+'tracker_id': '',
+'title': 'test for SINH function',
+'description': """
+
+SINH( <number> )
+
+
+Returns the hyperbolic sine of a number.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': ' select SINH(4) from rdb$database;',
+ 'expected_stdout': """                         SINH
+      =======================
+            27.28991719712775"""
+}
+]
+}

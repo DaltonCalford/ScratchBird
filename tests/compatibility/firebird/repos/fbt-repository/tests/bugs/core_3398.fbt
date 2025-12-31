@@ -1,0 +1,99 @@
+{
+'id': 'bugs.core_3398',
+'qmid': None,
+'tracker_id': 'CORE-3398',
+'title': 'GRANT ADMIN ROLE not accepted',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set list on;
+    drop user john_senior;
+    drop user mick_junior;
+    drop user bill_fauler;
+    drop user bon_scott;
+    commit;
+
+    create user john_senior password '123' grant admin role;
+    commit;
+
+    connect '$(DSN)' user 'JOHN_SENIOR' password '123' role rdb$admin;
+    set list on;
+    select current_user, current_role from rdb$database;
+    commit;
+
+    create user mick_junior password '456' grant admin role; --------- This user is created by JOHN_SENIOR, expected result: SUCCESS.
+    commit;
+
+    connect '$(DSN)' user 'MICK_JUNIOR' password '456' role rdb$admin;
+    select current_user, current_role from rdb$database;
+    commit;
+
+    create user bill_fauler password '789'; --------- This user is created by MICK_JUNIOR, expected result: SUCCESS.
+    commit;
+
+    connect '$(DSN)' user 'BILL_FAULER' password '789' role rdb$admin;
+    select current_user, current_role from rdb$database;
+    commit;
+
+    create user bon_scott password '000'; --------- This user is created by BILL_FAULER, expected result: FAULT (no permission...).
+    commit;
+    
+    connect '$(DSN)' user 'SYSDBA' password 'masterkey';
+
+    drop user john_senior;
+    drop user mick_junior;
+    drop user bill_fauler;
+    drop user bon_scott;
+    commit;
+  """,
+ 'expected_stdout':
+  """
+    USER                            JOHN_SENIOR
+    ROLE                            NONE
+    
+    USER                            MICK_JUNIOR
+    ROLE                            NONE
+    
+    USER                            BILL_FAULER
+    ROLE                            NONE
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 28000
+    add record error
+    -no permission for insert/write access to TABLE USERS
+  """,
+  'substitutions': [
+    ('Statement failed, SQLSTATE = HY000',''),
+    ('record not found for user:.*','')
+  ]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    -- See ticket issue: Alexander Peshkov added a comment - 21/Mar/11 03:10 PM
+    -- Does not require frontporting - FB3 is using another way to access security database 
+  """,
+ 'expected_stdout':
+  """
+  """
+}
+]
+}

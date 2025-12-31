@@ -1,0 +1,22 @@
+{
+'id': 'bugs.core_2427',
+'qmid': None,
+'tracker_id': 'CORE-2427',
+'title': "ALTER VIEW doesn't clear dependencies on old views",
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """create view v1 (n) as select 'ABC' from rdb$database;
+create view v3 (n) as select substring(lower(n) from 1) from v1;
+create view newv (n) as select 'XYZ' from rdb$database;
+alter view v3 (n) as select substring(lower(n) from 1) from newv;
+drop view v1;
+"""
+}
+]
+}

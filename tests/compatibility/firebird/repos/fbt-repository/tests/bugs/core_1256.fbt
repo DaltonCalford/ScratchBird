@@ -1,0 +1,49 @@
+{
+'id': 'bugs.core_1256',
+'qmid': 'bugs.core_1256',
+'tracker_id': 'CORE-1256',
+'title': 'Table columns hide destination variables of RETURNING INTO',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """create table t (n integer) ;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """set term ^;
+
+-- ok
+
+execute block returns (n integer)
+as
+begin
+  insert into t values (1) returning n into :n;
+  suspend;
+end^
+
+-- not ok
+
+execute block returns (n integer)
+as
+begin
+  insert into t values (1) returning n into n;
+  suspend;
+end^
+
+set term ;^
+""",
+ 'expected_stdout': """
+           N
+============
+           1
+
+
+           N
+============
+           1
+
+"""
+}
+]
+}

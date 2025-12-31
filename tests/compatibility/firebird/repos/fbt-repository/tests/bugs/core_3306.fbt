@@ -1,0 +1,67 @@
+{
+'id': 'bugs.core_3306',
+'qmid': None,
+'tracker_id': 'CORE-3306',
+'title': 'Invariant sub-query is treated as variant thus causing multiple invokations of a nested stored procedure',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """SET TERM !!;
+Create Table tt_table(Field1 varchar(100))!!
+Create Or Alter PROCEDURE SPR_TEST (pName Varchar(2000)) RETURNS (sValue Varchar(255)) AS
+BEGIN
+  Insert Into tt_table(field1) values(:pName);
+  sValue=:pName;
+  suspend;
+End!!
+COMMIT!!
+SET TERM ;!!
+Select count(*)
+from rdb$types
+where rdb$field_name like (select sValue From spr_test('SIMSIM'));
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """Select count(*) From tt_table;
+""",
+ 'expected_stdout': """Database:  localhost:C:\Users\win7\Firebird_testsbt-repository	mpugs.core_3306.fdb, User: SYSDBA
+SQL>
+       COUNT
+============
+           1
+
+SQL>"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """SET TERM !!;
+Create Table tt_table(Field1 varchar(100))!!
+Create Or Alter PROCEDURE SPR_TEST (pName Varchar(2000)) RETURNS (sValue Varchar(255)) AS
+BEGIN
+  Insert Into tt_table(field1) values(:pName);
+  sValue=:pName;
+  suspend;
+End!!
+COMMIT!!
+SET TERM ;!!
+Select count(*)
+from rdb$types
+where rdb$field_name like (select sValue From spr_test('SIMSIM'));
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """Select count(*) From tt_table;
+""",
+ 'expected_stdout': """
+                COUNT
+=====================
+                    1
+
+"""
+}
+]
+}

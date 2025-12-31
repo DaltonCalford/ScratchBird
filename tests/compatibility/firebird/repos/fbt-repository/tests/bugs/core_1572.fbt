@@ -1,0 +1,59 @@
+{
+'id': 'bugs.core_1572',
+'qmid': 'bugs.core_1572-250',
+'tracker_id': 'CORE-1572',
+'title': 'Multiple Rows in Singleton Select not reported in a View',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE TABLE1 ( ID1 INTEGER NOT NULL, FIELD1 VARCHAR(20));
+CREATE TABLE TABLE2 ( ID2 INTEGER NOT NULL, FIELD2 VARCHAR(20));
+
+INSERT INTO TABLE1 (ID1, FIELD1) VALUES (1, 'ONE');
+INSERT INTO TABLE2 (ID2, FIELD2) VALUES (2, 'TWO');
+INSERT INTO TABLE2 (ID2, FIELD2) VALUES (3, 'THREE');
+
+CREATE VIEW VIEW_TABLE( ID1, FIELD1, FIELD2) AS
+SELECT TABLE1.ID1, TABLE1.FIELD1, ( SELECT TABLE2.FIELD2 FROM TABLE2 ) FROM TABLE1;
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT * FROM VIEW_TABLE;
+""",
+ 'expected_stdout': """
+         ID1 FIELD1               FIELD2
+============ ==================== ====================
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 21000
+multiple rows in singleton select
+"""
+},
+{
+ 'firebird_version': '2.0.4',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE TABLE1 ( ID1 INTEGER NOT NULL, FIELD1 VARCHAR(20));
+CREATE TABLE TABLE2 ( ID2 INTEGER NOT NULL, FIELD2 VARCHAR(20));
+
+INSERT INTO TABLE1 (ID1, FIELD1) VALUES (1, 'ONE');
+INSERT INTO TABLE2 (ID2, FIELD2) VALUES (2, 'TWO');
+INSERT INTO TABLE2 (ID2, FIELD2) VALUES (3, 'THREE');
+
+CREATE VIEW VIEW_TABLE( ID1, FIELD1, FIELD2) AS
+SELECT TABLE1.ID1, TABLE1.FIELD1, ( SELECT TABLE2.FIELD2 FROM TABLE2 ) FROM TABLE1;
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT * FROM VIEW_TABLE;
+""",
+ 'expected_stdout': """
+         ID1 FIELD1               FIELD2
+============ ==================== ====================
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -811
+multiple rows in singleton select
+"""
+}
+]
+}

@@ -1,0 +1,36 @@
+{
+'id': 'bugs.gh_3886',
+'qmid': None,
+'tracker_id': '',
+'title': 'recreate table T with PK or UK is impossible after duplicate typing w/o commit when ISQL is launched in AUTODDL=OFF mode [CORE3529]',
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/3886
+
+    Checked on 5.0.0.271; 4.0.1.2637; 3.0.8.33524.
+ """,
+'min_versions': '3.0.8',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set autoddl off;
+    --set echo on;
+    recreate table t(id int primary key);
+    recreate table t(id int primary key);
+    commit; 
+    commit; -- yes, 2nd time.
+    exit;
+  """,                                                      
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

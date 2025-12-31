@@ -1,0 +1,68 @@
+{
+'id': 'bugs.core_3419',
+'qmid': None,
+'tracker_id': 'CORE-3419',
+'title': "Recurse leads to hangs/crash server",
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set autoddl off;
+    commit;
+    recreate table test(id int);
+    commit;
+    set term ^;
+    -- This trigger will fire 1001 times before exception raising:
+    create or alter trigger trg_trans_start
+    active on transaction start position 0
+    as
+    begin
+        in autonomous transaction do
+        insert into test(id) values(1);
+    end
+    ^
+    set term ;^
+    commit;
+    set transaction;
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 54001
+    Too many concurrent executions of the same request
+    -At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' line: 5, col: 9
+    At trigger 'TRG_TRANS_START' ...
+  """,
+  'substitutions':[('line: [0-9]+, col: [0-9]+','line: , col: ')]
+}
+]
+}

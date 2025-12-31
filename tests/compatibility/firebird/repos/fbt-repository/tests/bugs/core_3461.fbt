@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_3461',
+'qmid': None,
+'tracker_id': 'CORE-3461',
+'title': 'DDL operations fail after backup/restore',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core3461.fbk',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set autoddl off;
+    set term ^ ;
+    drop table test_tbl ^
+    alter procedure test_proc(id integer) as begin end ^
+    alter table test_tbl2 add id2 integer ^
+    alter procedure test_tbl_proc as
+    declare id integer;
+    declare id2 integer;
+    begin
+      select id, id2 from test_tbl2 into :id, :id2;
+    end ^
+    commit^
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

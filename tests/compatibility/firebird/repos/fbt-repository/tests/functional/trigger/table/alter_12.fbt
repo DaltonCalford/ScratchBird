@@ -1,0 +1,147 @@
+{
+'id': 'functional.trigger.table.alter_12',
+'qmid': 'functional.trigger.alter.alter_trigger_12',
+'tracker_id': '',
+'title': 'ALTER TRIGGER - AS',
+'description': """ALTER TRIGGER - AS
+Try use old prefix in INSERT trigger
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+CREATE TRIGGER
+""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL CONSTRAINT unq UNIQUE,
+                   text VARCHAR(32));
+SET TERM ^;
+CREATE TRIGGER tg FOR test BEFORE INSERT POSITION 1
+AS
+BEGIN
+  new.text=new.text||'tg1 ';
+END ^
+SET TERM ;^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+ALTER TRIGGER tg AS
+BEGIN
+  old.text='altered trigger';
+END ^
+SET TERM ;^""",
+ 'expected_stderr': """Statement failed, SQLCODE = -206
+
+Dynamic SQL Error
+-SQL error code = -206
+-Column unknown
+-OLD.TEXT
+-At line 3, column 7.
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL CONSTRAINT unq UNIQUE,
+                   text VARCHAR(32));
+SET TERM ^;
+CREATE TRIGGER tg FOR test BEFORE INSERT POSITION 1
+AS
+BEGIN
+  new.text=new.text||'tg1 ';
+END ^
+SET TERM ;^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+ALTER TRIGGER tg AS
+BEGIN
+  old.text='altered trigger';
+END ^
+SET TERM ;^""",
+ 'expected_stderr': """Statement failed, SQLCODE = -206
+
+Dynamic SQL Error
+-SQL error code = -206
+-Column unknown
+-OLD.TEXT
+-At line 3, column 7
+"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL CONSTRAINT unq UNIQUE,
+                   text VARCHAR(32));
+SET TERM ^;
+CREATE TRIGGER tg FOR test BEFORE INSERT POSITION 1
+AS
+BEGIN
+  new.text=new.text||'tg1 ';
+END ^
+SET TERM ;^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+ALTER TRIGGER tg AS
+BEGIN
+  old.text='altered trigger';
+END ^
+SET TERM ;^""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42S22
+
+Dynamic SQL Error
+-SQL error code = -206
+-Column unknown
+-OLD.TEXT
+-At line 3, column 7
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    create table test(id integer not null constraint unq unique, text varchar(32));
+    commit;
+    set term ^;
+    create trigger tg for test before insert position 1 as
+    begin
+        new.text=new.text||'tg1 ';
+    end
+    ^
+    set term ;^
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Since WI-T3.0.0.31733 content of STDERR has been changed: source position of
+    -- problematic statement is displayed now on seperate line, like this:
+    -- "-At line 4, column 1"
+    -- Decided to suppress this line.
+    set term ^;
+    alter trigger tg as
+    begin
+        old.text = 'altered trigger';
+    end ^
+    set term ;^
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42S22
+    unsuccessful metadata update
+    -ALTER TRIGGER TG failed
+    -Dynamic SQL Error
+    -SQL error code = -206
+    -Column unknown
+    -OLD.TEXT
+    -At line 4, column 1
+  """,
+  'substitutions': [('At line.*','')]
+}
+]
+}

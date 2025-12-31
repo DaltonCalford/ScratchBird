@@ -1,0 +1,37 @@
+{
+'id': 'functional.intfunc.cast.09',
+'qmid': 'functional.intfunc.cast.cast_09',
+'tracker_id': '',
+'title': 'CAST CHAR -> DATE',
+'description': """CAST CHAR -> DATE
+Be careful about date format on FB server !
+Universal format is not defined or not documented.
+
+Dependencies:
+CREATE DATABASE
+Basic SELECT""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': "SELECT CAST('29.2.2002' AS DATE) FROM rdb$Database;",
+ 'expected_stdout': """       CAST
+===========""",
+ 'expected_stderr': '''Statement failed, SQLCODE = -413
+
+conversion error from string "29.2.2002"'''
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': "SELECT CAST('29.2.2002' AS DATE) FROM rdb$Database;",
+ 'expected_stdout': """       CAST
+===========""",
+ 'expected_stderr': '''Statement failed, SQLSTATE = 22018
+
+conversion error from string "29.2.2002"'''
+}
+]
+}

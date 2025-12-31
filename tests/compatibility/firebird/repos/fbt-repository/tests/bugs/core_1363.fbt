@@ -1,0 +1,24 @@
+{
+'id': 'bugs.core_1363',
+'qmid': None,
+'tracker_id': 'CORE-1363',
+'title': 'ISQL crash when converted-from-double string longer than 23 bytes',
+'description': '',
+'min_versions': '2.5',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select -2.488355210669293e-22 from rdb$database;
+""",
+ 'expected_stdout': """
+               CONSTANT
+=======================
+ -2.488355210669293e-22
+
+"""
+}
+]
+}

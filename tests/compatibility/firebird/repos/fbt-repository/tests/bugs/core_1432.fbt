@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_1432',
+'qmid': None,
+'tracker_id': 'CORE-1432',
+'title': 'Collation not propagated between record formats',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'WIN1250',
+ 'page_size': '4096',
+ 'init_script': """CREATE DOMAIN D_1250 VARCHAR(10) CHARACTER SET WIN1250 COLLATE WIN1250;
+CREATE DOMAIN D_CZ VARCHAR(10) CHARACTER SET WIN1250 COLLATE WIN_CZ;
+
+CREATE TABLE T (I INTEGER, A D_1250);
+INSERT INTO T VALUES(10, 'a');
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET COUNT ON;
+
+SELECT * FROM T WHERE A='A';
+
+ALTER TABLE T ALTER A TYPE D_CZ;
+commit;
+
+SELECT * FROM T WHERE A='A';
+""",
+ 'expected_stdout': """Records affected: 0
+
+           I A
+============ ==========
+          10 a
+
+Records affected: 1
+"""
+}
+]
+}

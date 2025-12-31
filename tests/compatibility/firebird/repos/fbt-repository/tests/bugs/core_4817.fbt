@@ -1,0 +1,106 @@
+{
+'id': 'bugs.core_4817',
+'qmid': None,
+'tracker_id': 'CORE-4817',
+'title': 'ISQL doesn`t show number of affected rows for "MERGE ... WHEN MATCHING" in case when this number surely > 0',
+'description': '',
+'min_versions': '2.5.6',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    -- Section for 2.5 was added 22.05.2016, see:
+    -- https://github.com/FirebirdSQL/firebird/commit/845120fdb9b5934e3af32b5404ffde7ed363724d
+    set term ^;
+    execute block as
+    begin
+      execute statement 'drop sequence g';
+      when any do begin end
+    end^
+    set term ;^
+    commit;
+
+    create sequence g;
+    recreate table s(id int, x int);
+    recreate table t(id int primary key, x int);
+    commit;
+
+    insert into s(id, x) 
+    select i, 2*i 
+    from ( 
+        select first 5 gen_id(g,1) as i from rdb$types 
+        union all
+        select first 0 1 from rdb$database
+    );
+    commit;
+
+    insert into t select * from s;
+
+    set count on;
+
+    -- Following statement issued "Records affected: 0" on builds before 22.05.2016.
+    -- Proper result - since 2.5.6.27014:
+
+    merge into t using s on s.id = t.id 
+        when matched then update set t.x = - 3 * s.x;
+  """,
+ 'expected_stdout':
+  """
+   Records affected: 5
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    recreate table src(id int, x int);
+    commit;
+    
+    insert into src
+    with recursive r as(select 0 i from rdb$database union all select r.i+1 from r where r.i<9)
+    select r.i, r.i * 2 from r;
+    commit;
+    
+    recreate table tgt(id int primary key, x int);
+    commit;
+    
+    set count on;
+    merge into tgt t
+    using (select * from src where id > 1) s on s.id = t.id
+    when not matched then insert values(s.id, s.x); 
+    commit;
+    
+    merge into tgt t
+    using src s on s.id = t.id
+    when matched and s.id in (7,8,9) then update set t.x = -2 * s.x;
+    rollback;
+    
+    merge into tgt t
+    using src s on s.id = t.id
+    when matched and s.id in (0,1,2) then update set t.x = -2 * s.x
+    when not matched and s.id = 0 then insert values(s.id, 1111)
+    when matched and s.id in (3,4,5,6) then update set t.x = - 3 * s.x
+    when not matched and s.id = 1 then insert values(s.id, 2222)
+    when matched then delete
+    ;
+  """,
+ 'expected_stdout':
+  """
+   Records affected: 8
+   Records affected: 3
+   Records affected: 10
+  """
+}
+]
+}

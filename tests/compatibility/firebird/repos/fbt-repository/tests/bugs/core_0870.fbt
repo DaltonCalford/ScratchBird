@@ -1,0 +1,71 @@
+{
+'id': 'bugs.core_0870',
+'qmid': 'bugs.core_870',
+'tracker_id': 'CORE-870',
+'title': 'Engine crashes while trying to backup a logically corrupt db',
+'description': "This test works only for fb 2.1-2.5 and was converted to dummy one for 3.0 as it needs specificaly corrupted database. We don't have such database with ODS 12 required by fb 3.0+",
+'min_versions': '2.1',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import sys
+import subprocess
+import zipfile
+
+db_conn.close()
+
+zf = zipfile.ZipFile( os.path.join(context['files_location'],'core_0870.zip') )
+zf.extractall( context['temp_directory'] )
+zf.close()
+
+# Result: file tmp_core_0870.fdb is extracted into context['temp_directory']
+
+fdb_file="$(DATABASE_LOCATION)tmp_core_0870.fdb"
+
+print ('Starting backup...')
+bkp_file = os.path.join(context['temp_directory'],'tmp_core_0870.fbk')
+
+runProgram('gbak',['-b','-user',user_name,'-password',user_password, 'localhost:'+fdb_file, bkp_file])
+print ('gbak finished...')
+
+if os.path.isfile(bkp_file):
+    print ('Delete backup file...')
+    os.remove(bkp_file)
+    print ('Backup file deleted.')
+
+if os.path.isfile(fdb_file):
+    os.remove(fdb_file)
+
+""",
+ 'expected_stdout': 
+  """
+Starting backup...
+gbak finished...
+Delete backup file...
+Backup file deleted.
+  """,
+ 'expected_stderr': 
+  """
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on; select 'Extracted .fdb file has not supported ODS for using on Firebird 3.0' as msg from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    MSG                             Extracted .fdb file has not supported ODS for using on Firebird 3.0
+  """
+}
+]
+}

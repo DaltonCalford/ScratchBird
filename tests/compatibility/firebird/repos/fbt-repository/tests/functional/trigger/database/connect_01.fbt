@@ -1,0 +1,52 @@
+{
+'id': 'functional.trigger.database.connect_01',
+'qmid': 'functional.trigger.database.connect_01',
+'tracker_id': '',
+'title': 'Trigger on database connect. See also CORE-745',
+'description': 'This tests normal operation of database CONNECT trigger.',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script':
+  """
+	create table LOG (ID integer, MSG varchar(100));
+	create generator LOGID;
+	set term ^;
+	create trigger LOG_BI for LOG active before insert position 0
+	as
+	begin
+	  if (new.ID is null) then
+		new.ID = gen_id(LOGID,1);
+	end
+	^
+
+	create trigger ONCONNECT on connect position 0
+	as
+	begin
+	  insert into LOG (MSG) values ('Connect');
+	end
+	^
+	set term ;^
+	commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+      set list on;
+      select * from LOG;
+  """,
+ 'expected_stdout':
+  """
+	ID                              1
+	MSG                             Connect  
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[
+    ('[ \t]+', ' '),
+  ]
+}
+]
+}

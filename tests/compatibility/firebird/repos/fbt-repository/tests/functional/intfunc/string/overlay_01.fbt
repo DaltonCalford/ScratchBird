@@ -1,0 +1,22 @@
+{
+'id': 'functional.intfunc.string.overlay_01',
+'qmid': 'functional.intfunc.string.overlay_01',
+'tracker_id': '',
+'title': 'test for OVERLAY function',
+'description': """OVERLAY  See below  Returns string1 replacing the substring FROM start FOR length by string2.
+
+
+""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': " select  OVERLAY( 'il fait beau dans le sud  de la france' PLACING 'NORD' FROM 22 for 4 ) from rdb$database;",
+ 'expected_stdout': """      OVERLAY
+      ==========================================
+      il fait beau dans le NORD de la france
+"""
+}
+]
+}

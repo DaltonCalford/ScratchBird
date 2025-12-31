@@ -1,0 +1,43 @@
+{
+'id': 'bugs.core_1712',
+'qmid': None,
+'tracker_id': 'CORE-1712',
+'title': 'Buffer overflow in conversion',
+'description':
+ """
+  Confirmed bug on WI-V2.0.0.12724:
+      * "buffer overrun" when use dialect 1;
+      * "string right truncation" when use dialect 3.
+   Checked on:
+       Windows: 3.0.8.33445, 4.0.0.2416
+       Linux:   3.0.8.33426, 4.0.0.2416
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'sql_dialect': 1,
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table testtable(f1 numeric(15, 2));
+    commit;
+    
+    insert into testtable(f1) values(1e19);
+    commit;
+    
+    set list on;
+    select replace(cast(f1 as varchar(30)),'0','') f1_as_varchar30 from testtable;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+    F1_AS_VARCHAR30                 1.e+19
+  """
+}
+]
+}

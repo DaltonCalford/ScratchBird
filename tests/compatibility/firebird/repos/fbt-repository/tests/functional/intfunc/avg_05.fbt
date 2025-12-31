@@ -1,0 +1,27 @@
+{
+'id': 'functional.intfunc.avg.05',
+'qmid': 'functional.intfunc.avg.avg_05',
+'tracker_id': '',
+'title': 'AVG - DISTINCT',
+'description': """Dependencies:
+CREATE DATABASE
+CREATE TABLE
+INSERT
+Basic SELECT""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL);
+INSERT INTO test VALUES(5);
+INSERT INTO test VALUES(5);
+INSERT INTO test VALUES(7);""",
+ 'test_type': 'ISQL',
+ 'test_script': 'SELECT AVG(DISTINCT id) FROM test;',
+ 'expected_stdout': """                  AVG
+=====================
+
+                    6"""
+}
+]
+}

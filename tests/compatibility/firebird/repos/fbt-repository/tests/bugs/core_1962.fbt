@@ -1,0 +1,61 @@
+{
+'id': 'bugs.core_1962',
+'qmid': None,
+'tracker_id': 'CORE-1962',
+'title': 'Incorrect extraction of MILLISECONDs',
+'description': '',
+'min_versions': '2.1.2',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    --  LI-V2.5.3.26788, WI-V2.5.5.26870: output the same as on 2.1.x (despite on ticket issue that it was fixed)
+    set list on;
+    select extract(millisecond from time '01:00:10.5555') EXTRACTED_MS from rdb$database
+    union all
+    select extract(millisecond from time '00:00:00.0004') from rdb$database
+    union all
+    select extract(millisecond from time '23:59:59.9995') from rdb$database
+    ;
+  """,
+ 'expected_stdout':
+  """
+    EXTRACTED_MS                    556.0
+    EXTRACTED_MS                    0.0
+    EXTRACTED_MS                    1000.0
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set list on;
+    select extract(millisecond from time '01:00:10.5555') EXTRACTED_MS from rdb$database
+    union all
+    select extract(millisecond from time '00:00:00.0004') from rdb$database
+    union all
+    select extract(millisecond from time '23:59:59.9995') from rdb$database
+    ;
+  """,
+ 'expected_stdout':
+  """
+    EXTRACTED_MS                    555.5
+    EXTRACTED_MS                    0.4
+    EXTRACTED_MS                    999.5
+  """
+}
+]
+}

@@ -1,0 +1,88 @@
+{
+'id': 'functional.intfunc.math.rand_01',
+'qmid': 'functional.intfunc.math.rand_01',
+'tracker_id': '',
+'title': 'test for RAND function',
+'description': """
+  RAND()
+  Returns a random number between 0 and 1.""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """create table test( id char(30) );
+
+--on verrifie qu'il y en a pas deux identique
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+
+
+select count(id)  from test group by id;""",
+ 'expected_stdout': """             COUNT
+      ============
+                 1
+                 1
+                 1
+                 1
+                 1
+                 1
+                 1
+                 1
+                 1
+                 1
+                 1
+                 1"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """create table test( id char(30) );
+
+--on verrifie qu'il y en a pas deux identique
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+insert into test values(CAST(rand() AS VARCHAR(255)) );
+
+
+select count(id)  from test group by id;""",
+ 'expected_stdout': """                COUNT
+=====================
+                    1
+                    1
+                    1
+                    1
+                    1
+                    1
+                    1
+                    1
+                    1
+                    1
+                    1
+                    1
+
+"""
+}
+]
+}

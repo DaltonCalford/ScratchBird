@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_1656',
+'qmid': None,
+'tracker_id': 'CORE-1656',
+'title': 'Ability to format UUID from char(16) OCTETS to human readable form and vice versa',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select uuid_to_char(char_to_uuid('93519227-8D50-4E47-81AA-8F6678C096A1')) from rdb$database;
+""",
+ 'expected_stdout': """Database:  localhost:C:btest2	mpugs.core_1656.fdb, User: SYSDBA
+SQL>
+UUID_TO_CHAR
+===============================================================================
+93519227-8D50-4E47-81AA-8F6678C096A1
+
+SQL> SQL>"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select uuid_to_char(char_to_uuid('93519227-8D50-4E47-81AA-8F6678C096A1')) from rdb$database;
+""",
+ 'expected_stdout': """
+UUID_TO_CHAR
+====================================
+93519227-8D50-4E47-81AA-8F6678C096A1
+
+"""
+}
+]
+}

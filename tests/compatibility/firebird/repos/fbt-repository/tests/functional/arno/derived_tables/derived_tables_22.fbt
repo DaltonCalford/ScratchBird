@@ -1,0 +1,76 @@
+{
+'id': 'functional.arno.derived_tables.22',
+'qmid': 'functional.arno.derived_tables.derived_tables_22',
+'tracker_id': '',
+'title': 'Derived table outer reference (triggers)',
+'description': 'NEW/OLD context variables should be available inside the derived table.',
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE TABLEA
+(
+  ID INTEGER NOT NULL,
+  DESCRIPTION VARCHAR(50),
+  PARENTID INTEGER,
+  CONSTRAINT PK_TABLEA PRIMARY KEY (ID),
+  CONSTRAINT FK_TABLEA_TABLEA
+    FOREIGN KEY (PARENTID) REFERENCES TABLEA (ID)
+    ON DELETE NO ACTION ON UPDATE CASCADE
+);
+
+COMMIT;
+
+SET TERM ^^ ;
+CREATE TRIGGER TABLEA_BI FOR TABLEA ACTIVE BEFORE INSERT POSITION 0 AS
+DECLARE PREV_ID INTEGER;
+BEGIN
+  PREV_ID = NULL;
+  SELECT ID FROM (SELECT MAX(a.ID) AS ID FROM TABLEA a WHERE a.ID < NEW.ID) INTO :PREV_ID;
+  NEW.PARENTID = PREV_ID;
+END
+^^
+SET TERM ; ^^
+
+
+SET TERM ^^ ;
+CREATE TRIGGER TABLEA_BU FOR TABLEA ACTIVE BEFORE UPDATE POSITION 0 AS
+DECLARE PREV_ID INTEGER;
+BEGIN
+  PREV_ID = NULL;
+  SELECT ID FROM (SELECT MAX(a.ID) AS ID FROM TABLEA a WHERE a.ID < OLD.ID) INTO :PREV_ID;
+  SELECT ID FROM (SELECT MAX(a.ID) AS ID FROM TABLEA a WHERE a.ID < NEW.ID) INTO :PREV_ID;
+  NEW.PARENTID = PREV_ID;
+END
+^^
+SET TERM ; ^^
+
+
+SET TERM ^^ ;
+CREATE TRIGGER TABLEA_BD FOR TABLEA ACTIVE BEFORE DELETE POSITION 0 AS
+DECLARE PREV_ID INTEGER;
+BEGIN
+  PREV_ID = NULL;
+  SELECT ID FROM (SELECT MAX(a.ID) AS ID FROM TABLEA a WHERE a.ID < OLD.ID) INTO :PREV_ID;
+END
+^^
+SET TERM ; ^^
+
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """INSERT INTO TABLEA (ID, DESCRIPTION) VALUES (1, 'Blue');
+INSERT INTO TABLEA (ID, DESCRIPTION) VALUES (2, 'Red');
+INSERT INTO TABLEA (ID, DESCRIPTION) VALUES (4, 'Green');
+INSERT INTO TABLEA (ID, DESCRIPTION) VALUES (8, 'Yellow');
+COMMIT;
+SELECT * FROM TABLEA;
+""",
+ 'expected_stdout': """          ID DESCRIPTION                                            PARENTID
+============ ================================================== ============
+           1 Blue                                                     <null>
+           2 Red                                                           1
+           4 Green                                                         2
+           8 Yellow                                                        4"""
+}
+]
+}

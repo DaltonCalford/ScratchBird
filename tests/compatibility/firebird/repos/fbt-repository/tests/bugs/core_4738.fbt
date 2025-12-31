@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_4738',
+'qmid': None,
+'tracker_id': 'CORE-4738',
+'title': 'Command "Alter table <T> alter <C> type <domain_>" does not work: "BLR syntax error: expected valid BLR code at offset 15, encountered 255"',
+'description': '',
+'min_versions': '2.0.7',
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create domain dm_id int;
+    commit;
+    
+    create table test(num int);
+    commit;
+    
+    alter table test alter num type dm_id;
+    commit;
+    
+    show table test;
+  """,
+ 'expected_stdout': 
+  """
+    NUM                             (DM_ID) INTEGER Nullable
+  """
+}
+]
+}

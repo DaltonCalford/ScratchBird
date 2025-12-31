@@ -1,0 +1,37 @@
+{
+'id': 'functional.trigger.create.03',
+'qmid': 'functional.trigger.create.create_trigger_03',
+'tracker_id': '',
+'title': 'CREATE TRIGGER BEFORE UPDATE',
+'description': """CREATE TRIGGER BEFORE UPDATE
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': 'CREATE TABLE tb(id INT);',
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE TRIGGER test FOR tb BEFORE UPDATE AS
+BEGIN
+  new.id=1;
+END^
+SET TERM ;^
+SHOW TRIGGER test;
+""",
+ 'expected_stdout': """Triggers on Table TB:
+TEST, Sequence: 0, Type: BEFORE UPDATE, Active
+AS
+BEGIN
+  new.id=1;
+END
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+""",
+  'substitutions':[('\+.*',''),('\=.*',''),('Trigger text.*','')]
+}
+]
+}

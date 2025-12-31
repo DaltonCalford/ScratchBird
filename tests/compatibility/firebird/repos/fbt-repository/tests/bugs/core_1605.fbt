@@ -1,0 +1,52 @@
+{
+'id': 'bugs.core_1605',
+'qmid': None,
+'tracker_id': 'CORE-1605',
+'title': 'Bugcheck 232 (invalid operation) for an aggregated query',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test (id int);
+    
+    set term ^;
+    create or alter procedure sp_test (id int) returns (result int) as
+    begin
+      result = id * id;
+      suspend;
+    end
+    ^
+    
+    set term ;^
+    commit;
+    
+    insert into test values(1);
+    insert into test values(2);
+    insert into test values(3);
+    commit;
+    
+    select
+        sum( id ),
+        sum( (select result from sp_test(id)) )
+    from test
+    group by 2;
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    Dynamic SQL Error
+    -SQL error code = -104
+    -Cannot use an aggregate or window function in a GROUP BY clause
+  """
+}
+]
+}

@@ -1,0 +1,37 @@
+{
+'id': 'bugs.gh_6786',
+'qmid': None,
+'tracker_id': '',
+'title': 'Add session time zone to system context.',
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/6786
+    
+    Test checks only presence of not-null context variable in the 'SYSTEM' namespace,
+    without verifying its value (obviously, it can vary on different machines).
+    Name of context variable: 'SESSION_TIMEZONE'.
+
+    Checked on intermediate build 4.0.0.2453 (timestamp: 04-may-2021 15:53).
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    select iif(rdb$get_context('SYSTEM','SESSION_TIMEZONE') is not null, 'Defined.','UNDEFINED,') as session_tz from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    SESSION_TZ                      Defined.
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions': [('[ \t]+', ' ')]
+}
+]
+}

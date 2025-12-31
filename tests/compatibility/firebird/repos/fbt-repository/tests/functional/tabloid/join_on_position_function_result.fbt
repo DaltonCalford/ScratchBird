@@ -1,0 +1,66 @@
+{
+'id': 'functional.tabloid.join_on_position_function_result',
+'tracker_id': '',
+'title': "Records with NULLs could be lost from resultset.",
+'description':
+ """
+     http://www.sql.ru/forum/actualutils.aspx?action=gotomsg&tid=1009792&msg=14032086
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table t(id int, s varchar(30));
+    commit;
+    insert into t values(1, 'aaa');
+    insert into t values(11, 'bbb');
+    insert into t values(111, 'ccc');
+    insert into t values(12, 'ddd');
+    insert into t values(123, 'eee');
+    insert into t values(1234, 'fff');
+    commit;
+
+    set list on;
+    select t.id, t.s, x.p, position(','||cast(t.id as varchar(11))||',', x.p) k
+    from t
+      left join (select ',123,12,11,' p from rdb$database) x
+      on position(','||cast(t.id as varchar(11))||',', x.p)>0
+    ;
+  """,
+ 'expected_stdout': 
+  """
+    ID                              1
+    S                               aaa
+    P                               <null>
+    K                               <null>
+    ID                              11
+    S                               bbb
+    P                               ,123,12,11,
+    K                               8
+    ID                              111
+    S                               ccc
+    P                               <null>
+    K                               <null>
+    ID                              12
+    S                               ddd
+    P                               ,123,12,11,
+    K                               5
+    ID                              123
+    S                               eee
+    P                               ,123,12,11,
+    K                               1
+    ID                              1234
+    S                               fff
+    P                               <null>
+    K                               <null>
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

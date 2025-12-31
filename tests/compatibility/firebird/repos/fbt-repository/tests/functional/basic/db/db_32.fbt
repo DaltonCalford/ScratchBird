@@ -1,0 +1,24 @@
+{
+'id': 'functional.basic.db.32',
+'qmid': 'functional.basic.db.db_32',
+'tracker_id': '',
+'title': 'Empty DB - RDB$VIEW_RELATIONS',
+'description': 'Check for correct content of RDB$VIEW_RELATIONS in empty database.',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    set count on;
+    select * from rdb$view_relations v order by v.rdb$view_name, v.rdb$relation_name;
+  """,
+  'expected_stdout':
+  """
+    Records affected: 0
+  """
+}
+]
+}

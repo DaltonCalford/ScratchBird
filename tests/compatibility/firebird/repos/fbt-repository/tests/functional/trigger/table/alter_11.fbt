@@ -1,0 +1,46 @@
+{
+'id': 'functional.trigger.alter.11',
+'qmid': 'functional.trigger.alter.alter_trigger_11',
+'tracker_id': '',
+'title': 'ALTER TRIGGER - AS',
+'description': """ALTER TRIGGER - AS
+Test by insert data
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+CREATE TRIGGER
+SHOW TRIGGER
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL CONSTRAINT unq UNIQUE,
+                   text VARCHAR(32));
+SET TERM ^;
+CREATE TRIGGER tg FOR test BEFORE INSERT POSITION 1
+AS
+BEGIN
+  new.text=new.text||'tg1 ';
+END ^
+SET TERM ;^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+ALTER TRIGGER tg AS
+BEGIN
+  new.text='altered trigger';
+END ^
+
+SET TERM ;^
+INSERT INTO test VALUES(0,null);
+SELECT text FROM test;""",
+ 'expected_stdout': """TEXT
+================================
+
+altered trigger
+"""
+}
+]
+}

@@ -1,0 +1,23 @@
+{
+'id': 'functional.intfunc.math.acos_01',
+'qmid': 'functional.intfunc.math.acos_01',
+'tracker_id': '',
+'title': 'New Built-in Functions, Firebird 2.1 : ACOS( <number> )',
+'description': """test of ACOS
+
+Returns the arc cosine of a number. Argument to ACOS must be in the range -1 to 1. Returns a value in the range 0 to PI. er.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'select cast( ACOS( 1 ) AS DECIMAL(18,15)) from rdb$database;',
+ 'expected_stdout': """
+                 CAST
+=====================
+    0.000000000000000
+
+"""
+}
+]
+}

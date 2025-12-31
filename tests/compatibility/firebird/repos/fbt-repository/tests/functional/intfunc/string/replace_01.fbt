@@ -1,0 +1,20 @@
+{
+'id': 'functional.intfunc.string.replace_01',
+'qmid': 'functional.intfunc.string.replace_01',
+'tracker_id': '',
+'title': 'test for REPLACE  function',
+'description': """ REPLACE( <stringtosearch>, <findstring>, <replstring> )
+
+Replaces all occurrences of <findstring> in <stringtosearch> with <replstring>.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': " select REPLACE('toto','o','i') from rdb$database;",
+ 'expected_stdout': """      REPLACE
+      =======
+      titi"""
+}
+]
+}

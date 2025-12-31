@@ -1,0 +1,42 @@
+{
+'id': 'bugs.core_4158',
+'qmid': None,
+'tracker_id': 'CORE-4158',
+'title': 'Regression: LIKE with escape does not work',
+'description': '',
+'min_versions': '2.0.7',
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+    recreate table tab1 (
+      id int constraint pk_tab1 primary key,
+      val varchar(30)
+    );
+    
+    insert into tab1 (id, val) values (1, 'abcdef');
+    insert into tab1 (id, val) values (2, 'abc_ef');
+    insert into tab1 (id, val) values (3, 'abc%ef');
+    insert into tab1 (id, val) values (4, 'abc&%ef'); 
+    insert into tab1 (id, val) values (5, 'abc&_ef');
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select id, val from tab1 where val like 'abc&%ef' escape '&';
+    select id, val from tab1 where val like 'abc&_ef' escape '&';
+  """,
+ 'expected_stdout': 
+  """
+    ID                              3
+    VAL                             abc%ef
+    ID                              2
+    VAL                             abc_ef
+  """
+}
+]
+}

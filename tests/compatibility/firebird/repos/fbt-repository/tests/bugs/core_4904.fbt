@@ -1,0 +1,172 @@
+{
+'id': 'bugs.core_4904',
+'qmid': None,
+'tracker_id': 'CORE-4904',
+'title': 'Index corruption when add data in long-key-indexed field',
+'description': 
+ """
+   In order to check ticket issues this test does following:
+   1. Change on test database FW to OFF - this will increase DML performance.
+   2. Create table with indexed field of length = maximum that is allowed by 
+      current FB implementation (page_size / 4 - 9 bytes).
+   3. Try to insert enough number of records in this table - this should cause
+      runtime exception SQLSTATE = 54000, "Maximum index level reached"
+   4. Start validation of database: index should NOT be corrupted in its report.
+
+   Checked on WI-V3.0.0.32140 (CS, SC); WI-V3.0.0.32157 - official RC1 (SS)
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script':"""\
+
+import os
+import subprocess
+import time
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_name = db_conn.database_name
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb'):
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+
+# Move database to FW = OFF in order to increase speed of insertions and output its header info:
+#####################################################################
+
+f_change_fw_log=open( os.path.join(context['temp_directory'],'tmp_fw_off_4904.log'), 'w')
+subprocess.call([ context['fbsvcmgr_path'], "localhost:service_mgr",
+                  "action_properties",
+                  "prp_write_mode", "prp_wm_async",
+                  "dbname", db_name ],
+                  stdout=f_change_fw_log, stderr=subprocess.STDOUT)
+flush_and_close( f_change_fw_log )
+
+#####################################################################
+# Preparing script for ISQL that will do inserts with long keys:
+
+sql_cmd='''\
+    recreate table test(s varchar(1015)); -- with THIS length of field following EB will get exception very fast.
+    create index test_s on test(s);
+    commit;
+    set term ^;
+    execute block as
+    begin
+      insert into test(s)
+      select rpad('', 1015, uuid_to_char(gen_uuid()) )
+      from rdb$types, rdb$types
+      rows 50000; -- this is extra-huge reserve; exception should raise when about 120-130 rows will be inserted.
+    end
+    ^
+    set term ;^
+    commit;
+'''
+
+f_long_keys_cmd=open( os.path.join(context['temp_directory'],'tmp_isql_4904.sql'), 'w')
+f_long_keys_cmd.write(sql_cmd)
+flush_and_close( f_long_keys_cmd )
+
+#####################################################################
+# Starting ISQL
+
+f_long_keys_log=open( os.path.join(context['temp_directory'],'tmp_isql_4904.log'), 'w')
+subprocess.call([ context['isql_path'] , dsn, "-i", f_long_keys_cmd.name],
+                stdout=f_long_keys_log, stderr=subprocess.STDOUT)
+flush_and_close( f_long_keys_log )
+
+#####################################################################
+# Run validation after ISQL will finish (with runtime exception due to implementation limit exceeding):
+
+f_validation_log=open( os.path.join(context['temp_directory'],'tmp_onval_4904.log'), 'w')
+
+subprocess.call([context['fbsvcmgr_path'], "localhost:service_mgr",
+                 "action_validate","val_lock_timeout","1",
+                 "dbname","$(DATABASE_LOCATION)bugs.core_4904.fdb"],
+                 stdout=f_validation_log, stderr=subprocess.STDOUT)
+
+flush_and_close( f_validation_log )
+
+#####################################################################
+# Output result of ISQL and online validation:
+with open( f_long_keys_log.name,'r') as f:
+    print(f.read())
+
+
+with open( f_validation_log.name,'r') as f:
+    print(f.read())
+
+
+
+# Cleanup:
+##########
+time.sleep(1)
+cleanup( (f_change_fw_log, f_validation_log, f_long_keys_cmd, f_long_keys_log) )
+
+  """,
+ 'expected_stdout':
+  """
+    Statement failed, SQLSTATE = 54000
+    Implementation limit exceeded
+    -Maximum index level reached
+    -At block line: 3, col: 7
+
+    Validation started
+    Relation (TEST)
+    process pointer page    0 of    1
+    Index 1 (TEST_S)
+    Relation (TEST) is ok
+    Validation finished
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[
+    ('[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9]',''),
+    ('Maximum index .* reached', 'Maximum index reached'),
+    ('Relation [0-9]{3,4}','Relation'),
+    ('After line .*', ''),
+    ('-At block line: [\d]+, col: [\d]+', '-At block line')
+  ]
+}
+]
+}

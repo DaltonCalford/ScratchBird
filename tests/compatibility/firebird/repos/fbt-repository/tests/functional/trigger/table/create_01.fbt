@@ -1,0 +1,37 @@
+{
+'id': 'functional.trigger.create.01',
+'qmid': 'functional.trigger.create.create_trigger_01',
+'tracker_id': '',
+'title': 'CREATE TRIGGER',
+'description': """CREATE TRIGGER
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE tb(id INT);
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+/* Tested command: */
+CREATE TRIGGER test FOR tb BEFORE INSERT AS
+BEGIN
+  new.id=1;
+END^
+SET TERM ;^
+SHOW TRIGGER test;""",
+ 'expected_stdout': """Triggers on Table TB:
+TEST, Sequence: 0, Type: BEFORE INSERT, Active
+AS
+BEGIN
+  new.id=1;
+END
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+""",
+  'substitutions':[('\+.*',''),('\=.*',''),('Trigger text.*','')]
+}
+]
+}

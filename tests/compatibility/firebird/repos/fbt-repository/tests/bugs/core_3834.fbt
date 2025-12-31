@@ -1,0 +1,78 @@
+{
+'id': 'bugs.core_3834',
+'qmid': None,
+'tracker_id': 'CORE-3834',
+'title': 'Usage of a NATURAL JOIN with a derived table crashes the server',
+'description':
+  """
+    Field 'stageid' does exist in both tables ('tilemaps' and 'logs'), so it CAN be used here w/o alias prefix.
+    Confirmed crashes for similar queries (differ only in argument in right part of WHERE expression:
+    1) select * from (select * from mon$attachments a) a natural join mon$statements s where mon$stat_id = 0;
+    and
+    2) select * from (select * from mon$attachments a) a natural join mon$statements s where mon$stat_id = ?;
+    WI-V2.5.0.26074: "1)" ==> SQLSTATE = HY004/Data type unknown; "2)" ==> SQLSTATE = 08006/Error reading data from the connection.
+    WI-V2.5.1.26351: the same as WI-V2.5.0.26074
+
+    04-apr-2022. Added 'substituions' in order to remove dependency on concrete name of aliases (in this test they dont matter).
+  """,
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core3834.fbk',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set planonly;
+    select r.revision 
+    from ( select r.revision, r.stageid from tilemaps r ) r 
+    natural join logs g 
+    where stageid = ? -- WI-V2.5.1.26351 had crash here due to non-qualified field reference; checked 24-feb-2015
+    ;
+
+  """,
+ 'expected_stdout': 
+  """
+    PLAN MERGE (SORT (G NATURAL), SORT (R R NATURAL))
+  """,
+ 'expected_stderr': 
+  """
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core3834.fbk',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set planonly;
+    select r.revision 
+    from ( select r.revision, r.stageid from tilemaps r ) r 
+    natural join logs g 
+    where stageid = ?
+    ;
+    -- 3.x, 4.x: PLAN HASH (G NATURAL, R R NATURAL)
+    -- 5.x:      PLAN HASH (R R NATURAL, G NATURAL)  // since 5.0.0.455 03-apr-2022
+    -- (tables with equal cardinality present in the plan in order they are specified in the query; before *reverse* order was used)
+  """,
+ 'expected_stdout': 
+  """
+    PLAN HASH (G NATURAL, R R NATURAL)
+  """,
+ 'expected_stderr': 
+  """
+  """,
+   'substitutions': [('PLAN HASH \(.*', 'PLAN HASH')]
+}
+]
+}

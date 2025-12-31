@@ -1,0 +1,41 @@
+{
+'id': 'bugs.gh_6812',
+'qmid': None,
+'tracker_id': '',
+'title': "BASE64_ENCODE and HEX_ENCODE can exceed maximum widths for VARCHAR",
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/6812
+
+    Confirmed bug on 4.0.0.2489, 5.0.0.40.
+    Checked on 4.0.0.2490, 5.0.0.42 - all OK.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set sqlda_display on;
+    select hex_encode(cast('' as char(32767))) as "enc_01" from rdb$database where 1 <> 1;
+    select base64_encode(cast('' as char(32767))) as "enc_02" from rdb$database where 1 <> 1;
+  """,
+ 'expected_stdout': 
+  """
+    01: sqltype: 520 BLOB scale: 0 subtype: 1 len: 8 charset: 2 ASCII
+    :  name: HEX_ENCODE  alias: enc_01
+    01: sqltype: 520 BLOB scale: 0 subtype: 1 len: 8 charset: 2 ASCII
+    :  name: BASE64_ENCODE  alias: enc_02
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions': [
+      ('^((?!(sqltype|enc)).)*$','')
+     ,('[ \t]+',' ')
+   ]
+}
+]
+}

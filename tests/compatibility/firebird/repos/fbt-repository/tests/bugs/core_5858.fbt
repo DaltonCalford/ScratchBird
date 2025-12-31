@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_5858',
+'qmid': None,
+'tracker_id': 'CORE-5858',
+'title': "Command 'REVOKE ALL ON ALL FROM <anyname>' lead server to crash",
+'description':
+ """
+   Detected/confirmed bug on 4.0.0.1036.
+   Works fine on 4.0.0.1040
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set wng off;
+    set bail on;
+    revoke all on all from any_name_here;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

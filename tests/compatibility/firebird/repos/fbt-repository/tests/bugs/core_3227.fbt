@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_3227',
+'qmid': None,
+'tracker_id': 'CORE-3227',
+'title': 'ASCII_VAL() fails if argument contains multi-byte character anywhere',
+'description': '',
+'min_versions': '2.1.4',
+'versions': [
+{
+ 'firebird_version': '2.1.4',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select ascii_val (cast('Hoplala' as char(12) character set utf8)) from rdb$database;
+select ascii_val (cast('Hopläla' as char(12) character set utf8)) from rdb$database;
+""",
+ 'expected_stdout': """
+ASCII_VAL
+=========
+       72
+
+
+ASCII_VAL
+=========
+       72
+
+"""
+}
+]
+}

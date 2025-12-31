@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_3690',
+'qmid': None,
+'tracker_id': 'CORE-3690',
+'title': 'Wrong warning message for ambiguous query',
+'description': 'NB: dialect 1 allows such queries for backward compatibility reasons',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'sql_dialect': 3,
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    select m.mon$sql_dialect from mon$database m;
+    select 0*rdb$relation_id as id from rdb$database,rdb$database; 
+  """,
+ 'expected_stdout': 
+  """
+    MON$SQL_DIALECT                 3
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42702
+    Dynamic SQL Error
+    -SQL error code = -204
+    -Ambiguous field name between table RDB$DATABASE and table RDB$DATABASE 
+    -RDB$RELATION_ID
+  """
+}
+]
+}

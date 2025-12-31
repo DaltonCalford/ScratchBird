@@ -1,0 +1,67 @@
+{
+'id': 'bugs.core_5570',
+'qmid': '',
+'tracker_id': 'CORE-5570',
+'title': 'Negative infinity (double) shown incorrectly without sign in isql',
+'description': 
+ """ 
+    Bug was in ISQL. We do insert in the table with two DP fields special values which
+    are "-1.#INF" and "1.#INF" (at least in such view they are represented in the trace).
+    These values are defined in Python class Decimal as literals '-Infinity' and 'Infinity'.
+    After this we try to query this table. Expected result: "minus" sign should be shown 
+    leftside of negative infinity.
+
+    Confirmed WRONG output (w/o sign with negative infinity) on 3.0.3.32756, 4.0.0.690.
+    All fine on:
+      3.0.3.32794: OK, 1.235s.
+      4.0.0.713: OK, 1.203s.
+ """,
+'min_versions': '3.0.3',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+      recreate table test(x double precision, y double precision);
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+from decimal import *
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+ 
+x1=Decimal('-Infinity')
+y1=Decimal('Infinity')
+ 
+cur1=db_conn.cursor()
+sql='insert into test(x, y) values(?, ?)'
+ 
+try:
+  cur1.execute( sql, (x1, y1, ) )
+except Exception, e:
+  print(e[0])
+ 
+cur1.close()
+db_conn.commit()
+db_conn.close()
+
+runProgram('isql',[dsn], "set list on; set count on; select * from test;")
+
+  """,
+ 'expected_stdout':
+  """
+    X                               -Infinity
+    Y                               Infinity
+    Records affected: 1
+  """,
+ 'expected_stderr':
+  """
+  """
+},
+]
+}

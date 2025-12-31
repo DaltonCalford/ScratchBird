@@ -1,0 +1,37 @@
+{
+'id': 'bugs.core_6421',
+'qmid': None,
+'tracker_id': 'CORE-6421',
+'title': 'Parameter in offset expression in LAG, LEAD, NTH_VALUE window functions requires explicit cast to BIGINT or INTEGER',
+'description':
+ """
+    Confirmed bug on 4.0.0.2225, got: SQLSTATE = HY004 / Dynamic SQL Error / -SQL error code = -804 / -Data type unknown
+    Checked on intermediate build 4.0.0.2235 (timestamp: 26.10.2020 01:19): all fine.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set planonly;
+
+    select rdb$relation_name, lag(rdb$relation_name, ?) over (order by rdb$relation_name) from rdb$relations;
+    select rdb$relation_name, lead(rdb$relation_name, ?) over (order by rdb$relation_name) from rdb$relations;
+    select rdb$relation_name, nth_value(rdb$relation_name, ?) over (order by rdb$relation_name) from rdb$relations;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions': [( 'PLAN .*', '' )]
+}
+]
+}

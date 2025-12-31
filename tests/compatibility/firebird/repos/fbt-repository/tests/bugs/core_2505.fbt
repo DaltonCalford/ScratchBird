@@ -1,0 +1,50 @@
+{
+'id': 'bugs.core_2505',
+'qmid': None,
+'tracker_id': 'CORE-2505',
+'title': 'Built-in trigonometric functions can produce NaN and Infinity',
+'description': '',
+'min_versions': '2.5',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select asin(2), cot(0) from rdb$database;
+select acos(2) - acos(2) from rdb$database;
+select LOG10(-1) from rdb$database;""",
+ 'expected_stdout': """
+                   ASIN                     COT
+======================= =======================
+
+               SUBTRACT
+=======================
+
+                  LOG10
+=======================
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+
+expression evaluation not supported
+
+-Argument for COT must be different than zero
+
+Statement failed, SQLSTATE = 42000
+
+expression evaluation not supported
+
+-Argument for ACOS must be in the range [-1, 1]
+
+Statement failed, SQLSTATE = 42000
+
+expression evaluation not supported
+
+-Argument for LOG10 must be positive
+
+"""
+}
+]
+}

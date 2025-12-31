@@ -1,0 +1,59 @@
+{
+'id': 'bugs.core_2264',
+'qmid': None,
+'tracker_id': 'CORE-2264',
+'title': 'ALTER DOMAIN with dependencies may leave a transaction handle in inconsistent state causing segmentation faults',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """set term ^ ;
+create domain d integer ^
+create procedure p1 as
+  declare v d;
+begin
+  v = v + v;
+end ^
+commit ^
+show procedure ^
+alter domain d type varchar(11) ^
+alter domain d type varchar(11) ^ -- segmentation fault here
+""",
+ 'expected_stdout': """Procedure Name                    Invalid Dependency, Type
+================================= ======= =====================================
+P1                                        D, Domain
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    create domain d int;
+    set term ^;
+    create or alter procedure p1 as
+      declare v d;
+    begin
+      v = v + v;
+    end
+    ^
+    set term ;^
+    commit;
+    alter domain d type varchar(11);
+    alter domain d type varchar(11); -- segmentation fault here
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

@@ -1,0 +1,29 @@
+{
+'id': 'functional.domain.create.06',
+'qmid': 'functional.domain.create.create_domain_06',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - DOUBLE PRECISION - ARRAY',
+'description': 'Array domain creation based DOUBLE PRECISION datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test DOUBLE PRECISION[7];
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            ARRAY OF [1:7]
+                                DOUBLE PRECISION Nullable
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test DOUBLE PRECISION[7];
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            ARRAY OF [7]
+                                DOUBLE PRECISION Nullable
+"""
+}
+]
+}

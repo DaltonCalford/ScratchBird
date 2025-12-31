@@ -1,0 +1,48 @@
+{
+'id': 'functional.generator.create.02',
+'qmid': 'functional.generator.create.create_generator_02',
+'tracker_id': '',
+'title': 'CREATE GENERATOR - try create gen with same name',
+'description': """CREATE GENERATOR - try create gen with same name
+
+Dependencies:
+CREATE DATABASE
+CREATE GENERATOR
+""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """CREATE GENERATOR test;
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': 'CREATE GENERATOR test;',
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-Generator TEST already exists
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+    CREATE GENERATOR test;
+    commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    CREATE GENERATOR test;
+  """,
+ 'expected_stderr':
+  """Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -CREATE SEQUENCE TEST failed
+    -Sequence TEST already exists
+  """
+}
+]
+}

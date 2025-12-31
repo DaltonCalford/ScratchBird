@@ -1,0 +1,46 @@
+{
+'id': 'bugs.core_5535',
+'qmid': None,
+'tracker_id': 'CORE-5535',
+'title': 'Garbage value in RDB$FIELD_SUB_TYPE in RDB$FUNCTION_ARGUMENTS after altering function',
+'description': '',
+'min_versions': '3.0.2',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create or alter view v_check as
+    select rdb$field_sub_type from rdb$function_arguments where rdb$function_name=upper('test')
+    ;
+    commit;
+
+    set list on;
+    set count on;
+
+    select * from v_check;
+
+    create function test(i int) returns int as begin end;
+    commit;
+    select * from v_check;
+
+    create or alter function test(i int) returns int as begin end;
+    commit;
+    select * from v_check;
+
+  """,
+  'expected_stdout':
+  """
+    Records affected: 0
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$FIELD_SUB_TYPE              <null>
+    Records affected: 2
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$FIELD_SUB_TYPE              <null>
+    Records affected: 2
+  """
+}
+]
+}

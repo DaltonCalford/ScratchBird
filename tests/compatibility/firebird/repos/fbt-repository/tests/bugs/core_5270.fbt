@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_5270',
+'qmid': None,
+'tracker_id': 'CORE-5270',
+'title': 'FBSVCMGR does not produce error while attempting to shutdown a database without specified timeout (prp_force_shutdown N)',
+'description':
+ """
+   Confirmed bug on 4.0.0.258 (no error message is produced), all fine on 4.0.0.316 and 3.0.1.32570
+ """,
+'min_versions': '3.0.1',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script':
+  """
+import os
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_conn.close()
+db_file="$(DATABASE_LOCATION)bugs.core_5270.fdb"
+
+runProgram('fbsvcmgr',['localhost:service_mgr', 'action_properties', 'dbname', db_file, 'prp_shutdown_mode', 'prp_sm_single'])
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    must specify type of shutdown
+  """
+}
+]
+}

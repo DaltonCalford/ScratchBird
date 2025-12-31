@@ -1,0 +1,53 @@
+{
+'id': 'bugs.core_3737',
+'qmid': None,
+'tracker_id': 'CORE-3737',
+'title': 'EXECUTE BLOCK parameters definitions are not respected and may cause wrong behavior related to character sets',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+	set list on;
+	set term ^;
+	execute block returns(len_1252 int, len_utf8 int) as
+		declare s varchar(16) character set utf8 = 'ÃÂÁÀÄÅÇØßÐÑÞÆŠŒŽ'; -- http://en.wikipedia.org/wiki/Windows-1252
+	begin
+		execute statement (
+			'execute block (c varchar(16) character set win1252 = ?) returns (n int) as '
+			|| 'begin '
+			|| '  n = octet_length(c); '
+			|| '  suspend; '
+			|| 'end') (s)
+		into len_1252;
+
+		execute statement (
+			'execute block (c varchar(16) character set utf8 = ?) returns (n int) as '
+			|| 'begin '
+			|| '  n = octet_length(c); '
+			|| '  suspend; '
+			|| 'end') (s)
+		into len_utf8;
+		suspend;
+		
+	end
+	^
+	set term ;^
+	commit;  
+  """,
+ 'expected_stdout': 
+  """
+	LEN_1252                        16
+	LEN_UTF8                        32  
+  """
+}
+]
+}

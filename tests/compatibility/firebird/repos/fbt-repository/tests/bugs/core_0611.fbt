@@ -1,0 +1,37 @@
+{
+'id': 'bugs.core_0611',
+'qmid': None,
+'tracker_id': 'CORE-0611',
+'title': 'SKIP is off by one',
+'description': '',
+'min_versions': '2.1.7',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create table A (id integer not null);
+    commit;
+    insert into A (id) values (1);
+    insert into A (id) values (2);
+    insert into A (id) values (3);
+    commit;
+    set list on;
+    select skip 0 id from a order by id;
+    select skip 2 id from a order by id;
+  """,
+ 'expected_stdout': 
+  """
+    ID                              1
+    ID                              2
+    ID                              3
+    ID                              3
+  """
+}
+]
+}

@@ -1,0 +1,208 @@
+{
+'id': 'bugs.core_2004',
+'qmid': None,
+'tracker_id': 'CORE-2004',
+'title': 'ALTER USER XXX INACTIVE',
+'description': 
+ """
+    We create two users ('foo' and 'bar') and make them immediatelly INACTIVE.
+    One of them has been granted with RDB$ADMIN role, so he will be able to manage of other user access.
+    Then we chek then connect for one of these users (e.g., 'foo') is unable because of his inactive status.
+    After this we change state of FOO to active and verify that he can make connect.
+    When this user successfully establish connect, he will try to :
+    * create and immediatelly drop new user ('rio');
+    * change state of other existing user ('bar') to active.
+    Finally, we check that user 'bar' really can connect now (after he was allowed to do this by 'foo').
+
+    ::: NB :::
+    FB config parameters AuthClient and UserManager must contain 'Srp' plugin in their values.
+
+    Checked on Super and Classic:
+        3.0.4.32924: OK, 3.234s.
+        4.0.0.918: OK, 5.063s.
+ """,
+'min_versions': '3.0.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    create or alter view v_check as
+    select s.sec$user_name, s.sec$active, s.sec$plugin 
+    from rdb$database r
+    left join sec$users s on lower(s.sec$user_name) in (lower('tmp$c2004_foo'), lower('tmp$c2004_bar'), lower('tmp$c2004_rio'))
+    ;
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import sys
+import time
+import subprocess
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+#--------------------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb'):
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if os.path.isfile( f_names_list[i]):
+            os.remove( f_names_list[i] )
+
+#--------------------------------------------
+
+db_conn.close()
+db_name=dsn
+sql_txt='''
+    set list on;
+    commit;
+    connect '%(db_name)s' user SYSDBA password 'masterkey';
+    create or alter user tmp$c2004_foo password '123' inactive using plugin Srp grant admin role;
+
+    -- NB: currently it seems strange that one need to grant rdb$admin to 'foo'
+    -- For what reason this role need to be added if 'foo' does his actions only in security_db ?
+    -- Sent letter to dimitr and alex, 10-mar-18 16:00
+    grant rdb$admin to tmp$c2004_foo;
+
+    create or alter user tmp$c2004_bar password '456' inactive using plugin Srp;
+    commit;
+
+    set count on;
+    select 'init_state' as msg, v.* from v_check v;
+    set count off;
+
+    select 'try to connect as INACTIVE users' as msg from rdb$database;
+    commit;
+
+    connect '%(db_name)s' user tmp$c2004_foo password '123'; -- should fail
+    select current_user as who_am_i from rdb$database;
+    rollback;
+
+    connect '%(db_name)s' user tmp$c2004_bar password '456'; -- should fail
+    select current_user as who_am_i from rdb$database;
+    rollback;
+
+    connect '%(db_name)s' user SYSDBA password 'masterkey';
+
+
+    -- NB: following "alter user" statement must contain "using plugin Srp" clause
+    -- otherwise get:
+    --    Statement failed, SQLSTATE = HY000
+    --    record not found for user: TMP$C2004_BAR
+    
+    alter user tmp$c2004_foo active using plugin Srp;
+    select 'try to connect as user FOO which was just set as active by SYSDBA.' as msg from rdb$database;
+    commit;
+
+    connect '%(db_name)s' user tmp$c2004_foo password '123' role 'RDB$ADMIN'; -- should pass
+    select current_user as who_am_i, current_role as whats_my_role from rdb$database;
+
+
+     -- should pass because foo has admin role:
+    create or alter user tmp$c2004_rio password '123' using plugin Srp;
+    drop user tmp$c2004_rio using plugin Srp;
+
+     -- should pass because foo has admin role:
+    alter user tmp$c2004_bar active using plugin Srp;
+    select 'try to connect as user BAR which was just set as active by FOO.' as msg from rdb$database;
+    commit;
+
+    connect '%(db_name)s' user tmp$c2004_bar password '456'; -- should pass
+    select current_user as who_am_i from rdb$database;
+    commit;
+
+
+    connect '%(db_name)s' user SYSDBA password 'masterkey';
+    select 'try to drop both non-privileged users by SYSDBA.' as msg from rdb$database;
+    drop user tmp$c2004_foo using plugin Srp;
+    drop user tmp$c2004_bar using plugin Srp;
+    commit;
+    set count on;
+
+    select 'final_state' as msg, v.* from v_check v;
+    set count off;
+''' % locals()
+
+
+f_isql_run=open( os.path.join(context['temp_directory'],'tmp_check_2004.sql'), 'w')
+f_isql_run.write( sql_txt )
+f_isql_run.close()
+                  
+f_isql_log=open( os.path.join(context['temp_directory'],'tmp_check_2004.log'), 'w')
+f_isql_err=open( os.path.join(context['temp_directory'],'tmp_check_2004.err'), 'w')
+
+subprocess.call( [ context['isql_path'],  '-q', '-i', f_isql_run.name],  stdout = f_isql_log, stderr=f_isql_err)
+
+flush_and_close( f_isql_log )
+flush_and_close( f_isql_err )
+
+with open(f_isql_log.name,'r') as f:
+  for line in f:
+      if line.rstrip().split():
+          print( 'STDLOG: ', line )
+
+with open(f_isql_err.name,'r') as f:
+  for line in f:
+      if line.rstrip().split():
+          print( 'STDERR: ', line )
+
+# Cleanup:
+##########
+time.sleep(1)
+cleanup( [i.name for i in (f_isql_run, f_isql_log, f_isql_err)] )
+
+  """,
+ 'expected_stdout': 
+  """
+    STDLOG:  MSG                             init_state
+    STDLOG:  SEC$USER_NAME                   TMP$C2004_FOO
+    STDLOG:  SEC$ACTIVE                      <false>
+    STDLOG:  SEC$PLUGIN                      Srp
+    STDLOG:  MSG                             init_state
+    STDLOG:  SEC$USER_NAME                   TMP$C2004_BAR
+    STDLOG:  SEC$ACTIVE                      <false>
+    STDLOG:  SEC$PLUGIN                      Srp
+    STDLOG:  Records affected: 2
+    STDLOG:  MSG                             try to connect as INACTIVE users
+    STDLOG:  MSG                             try to connect as user FOO which was just set as active by SYSDBA.
+    STDLOG:  WHO_AM_I                        TMP$C2004_FOO
+    STDLOG:  WHATS_MY_ROLE                   RDB$ADMIN
+    STDLOG:  MSG                             try to connect as user BAR which was just set as active by FOO.
+    STDLOG:  WHO_AM_I                        TMP$C2004_BAR
+    STDLOG:  MSG                             try to drop both non-privileged users by SYSDBA.
+    STDLOG:  MSG                             final_state
+    STDLOG:  SEC$USER_NAME                   <null>
+    STDLOG:  SEC$ACTIVE                      <null>
+    STDLOG:  SEC$PLUGIN                      <null>
+    STDLOG:  Records affected: 1
+    STDERR:  Statement failed, SQLSTATE = 28000
+    STDERR:  Your user name and password are not defined. Ask your database administrator to set up a Firebird login.
+    STDERR:  Statement failed, SQLSTATE = 28000
+    STDERR:  Your user name and password are not defined. Ask your database administrator to set up a Firebird login.
+    STDERR:  After line 19 in file C:\MIX\firebird\QA\fbt-repo\tmp\tmp_check_2004.sql
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions':[('Use CONNECT or CREATE DATABASE.*',''), ('.*After line.*', '')]
+}
+]
+}

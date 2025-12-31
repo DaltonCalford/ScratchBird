@@ -1,0 +1,18 @@
+{
+'id': 'functional.domain.create.08',
+'qmid': 'functional.domain.create.create_domain_08',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - TIME',
+'description': 'Simple domain creation based TIME datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test TIME;
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            TIME Nullable
+"""
+}
+]
+}

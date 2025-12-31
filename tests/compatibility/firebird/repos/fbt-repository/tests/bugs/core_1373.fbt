@@ -1,0 +1,56 @@
+{
+'id': 'bugs.core_1373',
+'qmid': 'bugs.core_1373',
+'tracker_id': 'CORE-1373',
+'title': "Incorrect result of recursive CTE query when recursive member's SELECT list contains expression using self-referenced fields",
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """RECREATE TABLE Phases
+(Id INT NOT NULL PRIMARY KEY, ParentPhaseId INT);
+
+CREATE GENERATOR GenPhases;
+COMMIT;
+
+INSERT INTO Phases VALUES(491, NULL);
+INSERT INTO Phases VALUES(494, 491);
+INSERT INTO Phases VALUES(495, 491);
+INSERT INTO Phases VALUES(497, 494);
+INSERT INTO Phases VALUES(498, NULL);
+
+-- below i want to renumber Phases table and keep parent-child relation
+SET GENERATOR GenPhases to 0;
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """WITH RECURSIVE
+  Tree (OldPhaseId, OldParentPhaseId, NewPhaseId, NewParentPhaseId) AS
+  (
+    SELECT P.Id, P.ParentPhaseId, GEN_ID(GenPhases, 1), CAST(NULL AS INTEGER)
+      FROM Phases P
+     WHERE P.ParentPhaseId IS NULL
+
+    UNION ALL
+
+    SELECT P.Id, P.ParentPhaseId, GEN_ID(GenPhases, 1), T.NewPhaseId
+      FROM Phases P, Tree T
+     WHERE P.ParentPhaseId = T.OldPhaseId
+  )
+SELECT * FROM Tree;
+
+""",
+ 'expected_stdout': """
+  OLDPHASEID OLDPARENTPHASEID            NEWPHASEID NEWPARENTPHASEID
+============ ================ ===================== ================
+         491           <null>                     1           <null>
+         494              491                     2                1
+         497              494                     3                2
+         495              491                     4                1
+         498           <null>                     5           <null>
+
+"""
+}
+]
+}

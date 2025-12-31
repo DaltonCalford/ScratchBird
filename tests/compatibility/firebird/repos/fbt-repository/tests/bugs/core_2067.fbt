@@ -1,0 +1,51 @@
+{
+'id': 'bugs.core_2067',
+'qmid': None,
+'tracker_id': 'CORE-2067',
+'title': 'GROUP by and RDB$DB_KEY problems',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table t1 (n integer);
+insert into t1 values (1);
+insert into t1 values (2);
+insert into t1 values (3);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """-- First problem: it should be invalid to group by n and select rdb$db_key
+select n, rdb$db_key from t1 group by n;
+
+-- Second problem: error: column unknown DB_KEY is wrong raised
+select n, rdb$db_key from t1 group by 1, 2;
+
+-- Third problem: wrong values for rdb$db_key are returned
+select n, t1.rdb$db_key from t1 group by 1, 2;
+""",
+ 'expected_stdout': """
+           N DB_KEY
+============ ================
+           1 8000000001000000
+           2 8000000002000000
+           3 8000000003000000
+
+
+           N DB_KEY
+============ ================
+           1 8000000001000000
+           2 8000000002000000
+           3 8000000003000000
+
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+Dynamic SQL Error
+-SQL error code = -104
+-Invalid expression in the select list (not contained in either an aggregate function or the GROUP BY clause)
+"""
+}
+]
+}

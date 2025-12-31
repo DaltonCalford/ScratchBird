@@ -1,0 +1,100 @@
+{
+'id': 'bugs.core_2916',
+'qmid': None,
+'tracker_id': 'CORE-2916',
+'title': 'Broken error handling in the case of a conversion error happened during index creation',
+'description': '',
+'min_versions': '2.1.4',
+'versions': [
+{
+ 'firebird_version': '2.1.4',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """create table tab (col date);
+insert into tab (col) values (current_date);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """create index itab on tab computed (cast(col as int));
+commit;
+select * from tab where cast(col as int) is null;
+""",
+ 'expected_stdout': """Database:  localhost:C:btest2	mpugs.core_2916.fdb, User: SYSDBA
+SQL> SQL> SQL>
+        COL
+===========
+SQL>""",
+ 'expected_stderr': """Statement failed, SQLCODE = -413
+
+conversion error from string "2011-05-03"
+
+Statement failed, SQLCODE = -413
+
+conversion error from string "2011-05-03"
+
+""",
+ 'substitutions': [('[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]','2011-05-03')]
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """create table tab (col date);
+insert into tab (col) values (current_date);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """create index itab on tab computed (cast(col as int));
+commit;
+select * from tab where cast(col as int) is null;
+""",
+ 'expected_stdout': """Database:  localhost:C:btest2	mpugs.core_2916.fdb, User: SYSDBA
+SQL> SQL> SQL>
+        COL
+===========
+SQL>""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 22018
+
+conversion error from string "2011-05-03"
+
+Statement failed, SQLSTATE = 22018
+
+conversion error from string "2011-05-03"
+
+""",
+ 'substitutions': [('[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]','2011-05-03')]
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+ """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+ """
+    recreate table tab (col date);
+    insert into tab (col) values ( date '29.02.2004' );
+    commit;
+
+    create index itab on tab computed (cast(col as int));
+    commit;
+    set list on;
+    select * from tab where cast(col as int) is null;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 22018
+    Expression evaluation error for index "***unknown***" on table "TAB"
+    -conversion error from string "2004-02-29"
+    Statement failed, SQLSTATE = 22018
+    conversion error from string "2004-02-29"
+  """
+}
+]
+}

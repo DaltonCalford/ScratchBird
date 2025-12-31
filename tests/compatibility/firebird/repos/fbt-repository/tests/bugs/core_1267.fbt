@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_1267',
+'qmid': 'bugs.core_1267',
+'tracker_id': 'CORE-1267',
+'title': 'Small bug with default value for domains in PSQL',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE DOMAIN BIT AS SMALLINT CHECK (VALUE IN (0,1) OR VALUE IS NULL);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """set term ^;
+
+EXECUTE BLOCK
+RETURNS (
+  ID BIT)
+AS
+BEGIN
+  SUSPEND;
+END ^
+
+set term ;^
+""",
+ 'expected_stdout': """
+     ID
+=======
+ <null>
+
+"""
+}
+]
+}

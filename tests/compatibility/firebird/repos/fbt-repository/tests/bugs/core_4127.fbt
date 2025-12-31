@@ -1,0 +1,82 @@
+{
+'id': 'bugs.core_4127',
+'qmid': None,
+'tracker_id': 'CORE-4127',
+'title': 'Server crashes instead of reporting the error "key size exceeds implementation restriction"',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    recreate table tab1 (col1 int, col2 char(10));
+    create index itab1 on tab1 (col1, col2);
+    commit;
+    insert into tab1 values(1, 'a');
+    commit;
+  """,
+ 'test_script':
+  """
+    set list on;
+    select * from tab1 
+    where col1 = 1 and col2 = rpad('a', 32765)
+    union all
+    select * from tab1 
+    where col1 = 1 and col2 = rpad('a', 32766);
+  """,
+ 'expected_stdout': 
+  """
+    COL1                            1
+    COL2                            a
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 54000
+    arithmetic exception, numeric overflow, or string truncation
+    -Implementation limit exceeded
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    recreate table tab1 (col1 int, col2 char(10));
+    create index itab1 on tab1 (col1, col2);
+    commit;
+    insert into tab1 values(1, 'a');
+    commit;
+  """,
+ 'test_script':
+  """
+    set list on;
+    select * from tab1 
+    where col1 = 1 and col2 = rpad('a', 32765)
+    union all
+    -- This part of query will NOT raise
+    -- Statement failed, SQLSTATE = 54000
+    -- arithmetic exception, numeric overflow, or string truncation
+    -- -Implementation limit exceeded
+    -- since WI-V3.0.0.31981
+    select * from tab1 
+    where col1 = 1 and col2 = rpad('a', 32766);
+  """,
+ 'expected_stdout': 
+  """
+    COL1                            1
+    COL2                            a
+    COL1                            1
+    COL2                            a
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

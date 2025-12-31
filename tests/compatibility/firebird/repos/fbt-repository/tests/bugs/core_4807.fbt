@@ -1,0 +1,42 @@
+{
+'id': 'bugs.core_4807',
+'qmid': '',
+'tracker_id': 'CORE-4807',
+'title': 'Regression: List of aggregation is not checked properly',
+'description': "Field inside subquery not present in GROUP BY clause and therefore can't be used in SELECT list as is (only as argument of some aggregation function).",
+'min_versions': '2.5.5',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set planonly;
+    select t.rdb$field_name, (select 1 from rdb$database), count(*)
+    from rdb$types t
+    group by t.rdb$field_name;
+    
+    select t.rdb$field_name, (select 1 from rdb$database where t.rdb$system_flag=1), count(*)
+    from rdb$types t
+    group by t.rdb$field_name;
+  """,
+ 'expected_stdout': 
+  """
+    PLAN (RDB$DATABASE NATURAL)
+    PLAN SORT ((T NATURAL))
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    Dynamic SQL Error
+    -SQL error code = -104
+    -Invalid expression in the select list (not contained in either an aggregate function or the GROUP BY clause)
+  """,
+  'substitutions':[('SORT \(\(T NATURAL\)\)','SORT (T NATURAL)')]
+}
+]
+}

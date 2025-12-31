@@ -1,0 +1,68 @@
+{
+'id': 'bugs.core_3998',
+'qmid': None,
+'tracker_id': 'CORE-3998',
+'title': 'Parametrized execute statement fails',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5.3',
+ 'platform': 'All',
+ 'init_script':
+  """
+	create table t (
+		id integer not null,
+		dir varchar(100) default '' not null,
+		note varchar(100) default '' not null
+	);
+	commit;
+	insert into t (id, dir, note) values (1, 'a', 'b');
+	commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+	set term ^;
+	execute block
+	as
+	  declare variable dir varchar(100);
+	  declare variable note varchar(100);
+	  declare variable id integer;
+	begin
+	  id = 1;
+	  dir = 'a';
+	  note = 'bbbb';
+
+	  execute statement ('
+		update t set
+		  note = :note
+		where
+		  id = :id and dir = :dir
+	  ')
+	  (
+		id := :id,
+		note := :note,
+		dir := :dir
+	  );
+	end ^
+	set term ;^
+	commit;
+	set list on;
+	select * from t;
+  """,
+ 'expected_stdout':
+  """
+	ID                              1
+	DIR                             a
+	NOTE                            bbbb  
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[
+    ('[ \t]+', ' '),
+  ]
+}
+]
+}

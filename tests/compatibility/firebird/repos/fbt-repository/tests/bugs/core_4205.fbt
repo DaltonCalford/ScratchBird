@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_4205',
+'qmid': None,
+'tracker_id': 'CORE-4205',
+'title': 'ISQL -x does not output the START WITH clause of generators/sequences',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+    recreate sequence tmp_gen_42051 start with 9223372036854775807 increment by -2147483647;
+    recreate sequence tmp_gen_42052 start with -9223372036854775808 increment by 2147483647;
+    recreate sequence tmp_gen_42053 start with 9223372036854775807 increment by  2147483647;
+    recreate sequence tmp_gen_42054 start with -9223372036854775808 increment by -2147483647;
+  """,
+ 'test_type': 'Python',
+ 'test_script':"""db_conn.close()
+runProgram('isql',[dsn,'-x','-user',user_name,'-password',user_password])
+"""
+,
+ 'expected_stdout':
+  """
+    CREATE GENERATOR TMP_GEN_42051 START WITH 9223372036854775807 INCREMENT -2147483647;
+    CREATE GENERATOR TMP_GEN_42052 START WITH -9223372036854775808 INCREMENT 2147483647;
+    CREATE GENERATOR TMP_GEN_42053 START WITH 9223372036854775807 INCREMENT 2147483647;
+    CREATE GENERATOR TMP_GEN_42054 START WITH -9223372036854775808 INCREMENT -2147483647;
+  """,
+  'substitutions':[('^((?!CREATE GENERATOR).)*$','')]
+}
+]
+} 

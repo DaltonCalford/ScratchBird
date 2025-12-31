@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_3548',
+'qmid': None,
+'tracker_id': 'CORE-3548',
+'title': 'GFIX returns an error after correctly shutting down a database',
+'description': 'Affected only local connections',
+'min_versions': '2.5.5',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script':"""db_conn.close()
+runProgram('gfix',['$(DATABASE_LOCATION)bugs.core_3548.fdb','-shut','full','-force','0','-user',user_name,'-password',user_password])
+runProgram('gstat',['$(DATABASE_LOCATION)bugs.core_3548.fdb','-h','-user',user_name,'-password',user_password])
+runProgram('gfix',['$(DATABASE_LOCATION)bugs.core_3548.fdb','-online','-user',user_name,'-password',user_password])
+"""
+,
+ 'expected_stdout':
+  """
+    Attributes		force write, full shutdown
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[('^((?!Attribute|connection).)*$','')]
+}
+]
+} 

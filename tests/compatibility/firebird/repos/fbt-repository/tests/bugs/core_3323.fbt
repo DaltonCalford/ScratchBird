@@ -1,0 +1,295 @@
+{
+'id': 'bugs.core_3323',
+'qmid': None,
+'tracker_id': 'CORE-3323',
+'title': 'Ability to cancel waiting in lock manager',
+'description': 
+ """
+    https://github.com/FirebirdSQL/firebird/issues/3690
+
+    Re-implemented 13-JUL-2022.
+
+    Main code (Python) locks record in the table and asynchronously launches ISQL which starts WAIT-transaction
+    and have to update the same record. This ISQL will lock infinitely until we either kill it or release locked record.
+    After this, main code searches in the MON$STATEMENTS statement that is issued by ISQL for updating record
+    (i.e. we wait for ISQL establish connection and start this 'UPDATE' statement).
+    Number of attempts we search for ISQL in the mon$statements is limited by MAX_ITER_2_FIND_HANGING_ATTACH setting.
+
+    If ISQL record (and its attachment) is successfully found, we start attempts to DELETE this attachment using
+    'DELETE FROM MON$ATTACHMENTS WHERE...' statement.
+    Number of attenmpts to kill ISQL attachment is limited by MAX_ITER_TRY_2_KILL setting.
+
+    After each attempt we run p_hanged_isql.poll() in order to determine whether ISQL process was terminated or not.
+    Each action and its outcome is logged.
+
+    Finally, we analyze logs of hanged ISQL and 'killer' connection (which is created here, in Python code).
+    Log of hanged ISQL must contain messages 'SQLSTATE = 08003', 'connection shutdown' and - for FB 4.x and later -
+    '-Killed by database administrator'.
+
+    Log of 'killer' must have phrase about found attachment (which waits for hanging statement) and line with text
+    that this hanging process was successfully killed.
+
+    ::: NOTE :::
+    Messages that are logged must NOT be changed without apropriate check adjusting (see 'allowed_patterns').
+
+    Confirmed bug on 2.5.0.26074: unable to kill hanged ISQL via 'DELETE FROM MON$ATTACHMENTS'.
+    Checked on 5.0.0.579, 4.0.2.2798, 3.0.10.33605 (all SS and CS); 2.5.9.27156, 2.5.1.26351 (SC).
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    recreate table test(id int);
+    commit;
+    insert into test values(1);
+    commit;
+  """,
+ 'test_type': 'Python',
+ 'test_script':"""\
+import os
+import subprocess
+from subprocess import Popen
+from collections import defaultdict
+import re
+import time
+import datetime
+
+#--------------------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb'):
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def showtime():
+    return ''.join( (datetime.datetime.now().strftime("%H:%M:%S.%f")[:12],'.') )
+
+#--------------------------------------------
+
+def write_and_flush(file_handle, text):
+    global datetime
+    dts = ''.join( (datetime.datetime.now().strftime("%H:%M:%S.%f")[:12],'.') )
+    file_handle.write(dts + " " + text + "\\n")
+    file_handle.flush()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if os.path.isfile( f_names_list[i]):
+            os.remove( f_names_list[i] )
+            if os.path.isfile( f_names_list[i]):
+                print('ERROR: can not remove file ' + f_names_list[i])
+
+#--------------------------------------------
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+engine = db_conn.engine_version
+db_conn.close()
+
+###########################
+###   S E T T I N G S   ###
+###########################
+# Phrase in the statement which must hang (we will looking for this in mon$statements):
+TAG_FOR_SEARCH = 'HANGING STATEMENT'
+
+# Max number of iterations we try to find record of hanged ISQL in the mon$statements:
+MAX_ITER_2_FIND_HANGING_ATTACH = 10
+
+# Max number of times we try to kill hanged ISQL from mon$attachments:
+MAX_ITER_TRY_2_KILL = 10
+###########################
+
+
+con_locker = fdb.connect(dsn = dsn)
+trn_locker = con_locker.trans()
+cur_locker = trn_locker.cursor()
+cur_locker.execute('update test set id = 2')
+
+lock_sql='''
+    set bail on;
+    set echo on;
+    set list on;
+    commit;
+    set transaction wait;
+
+    select 'starting DML with lock-conflict' as "Point_A:" --------------  p o i n t   [ A ]
+          ,id as "id_at_point_A:"
+    from test; 
+
+    update test /* %(TAG_FOR_SEARCH)s */ set id = -id;
+
+    select 'finished DML with lock-conflict' as "Point_B" --------------  p o i n t   [ B ]
+          ,id as "id_at_point_B:"
+    from test; 
+    rollback;
+''' % locals()
+
+f_hanged_sql=open( os.path.join(context['temp_directory'],'tmp_3323_hang.sql'), 'w')
+f_hanged_sql.write(lock_sql)
+f_hanged_sql.close()
+
+f_hanged_log=open( os.path.join(context['temp_directory'],'tmp_3323_hang.log'), "w")
+
+p_hanged_isql = Popen([context['isql_path'], dsn, "-i" , f_hanged_sql.name],stdout=f_hanged_log, stderr=subprocess.STDOUT)
+
+trn_killer = con_locker.trans()
+cur_killer = trn_killer.cursor()
+
+f_killer_log = open( os.path.join(context['temp_directory'],'tmp_3323_killer.log'), 'w')
+
+#stm_killer = "select mon$attachment_id from mon$statements where mon$attachment_id <> current_connection and mon$sql_text containing cast(? as varchar(255))"
+stm_killer = "select mon$attachment_id from mon$statements where mon$attachment_id <> current_connection and mon$sql_text containing ?"
+ps = cur_killer.prep(stm_killer)
+hanging_att = None
+for i in range(0,MAX_ITER_2_FIND_HANGING_ATTACH):
+    write_and_flush(f_killer_log, 'Beg of iter %d. Search for statement that must hang.' % (i,) )
+
+    for r in cur_killer.execute(ps, (TAG_FOR_SEARCH,)):
+        hanging_att = r[0]
+
+    trn_killer.commit()
+
+    if hanging_att is None:
+        write_and_flush(f_killer_log, 'End of iter %d. Statement that must hang not yet found. Take delay...' % (i,) )
+        time.sleep(1)
+    else:
+        write_and_flush(f_killer_log, 'End of iter %d. Found hanging statement, its attachment: %d' % (i, hanging_att) )
+        break
+
+if hanging_att:
+    ps = cur_killer.prep('delete from mon$attachments where mon$attachment_id = ?')
+    for i in range(0,MAX_ITER_TRY_2_KILL):
+        write_and_flush(f_killer_log, 'Beg of iter %d. Trying to delete attachment %d of hanging PID %d' % (i, hanging_att, p_hanged_isql.pid) )
+        cur_killer.execute(ps, (hanging_att,))
+        trn_killer.commit()
+        p_hanged_isql.poll()
+        if p_hanged_isql.returncode is None:
+            # A None value indicates that the process has not terminated yet.
+            if i < MAX_ITER_TRY_2_KILL - 1:
+                write_and_flush(f_killer_log, 'End of iter %d. Hanging process %d is alive. We take delay and then continue loop.' % (i, p_hanged_isql.pid) )
+                time.sleep(1)
+                continue
+            else:
+                write_and_flush(f_killer_log, 'FAIL! All %d iterations passed but hanging process %d is still alive. We forcedly terminate it.' % (MAX_ITER_TRY_2_KILL, p_hanged_isql.pid) )
+                p_hanged_isql.terminate()
+                break
+        else:
+            write_and_flush(f_killer_log, 'End of iter %d. Hanging process %d successfully TERMINATED with retcode = %d.' % (i, p_hanged_isql.pid, p_hanged_isql.returncode) )
+            break
+else:
+    print('FAIL! COULD NOT FIND ATTACHMENT TO BE KILLED.')
+
+
+flush_and_close(f_killer_log)
+flush_and_close(f_hanged_log)
+
+cur_killer.close()
+trn_killer.rollback()
+cur_locker.close()
+trn_locker.rollback()
+con_locker.close()
+
+#---------------------------------------------------
+
+# Checks:
+#########
+
+# Log of handeg ISQL must contain messages:
+#     Statement failed, SQLSTATE = 08003
+#     connection shutdown
+# and [for FB 4.x] -Killed by database administrator.
+#
+hanged_success_patterns = defaultdict(int)
+hanged_success_patterns['SQLSTATE = 08003'] = 0
+hanged_success_patterns['connection shutdown'] = 0
+if engine >= 4.0:
+    hanged_success_patterns['Killed by database administrator'] = 0
+
+hanged_log_lines = []
+with open(f_hanged_log.name, 'r') as f:
+    for line in f:
+        hanged_log_lines.append(line)
+        p = [k for k in hanged_success_patterns.keys() if k in line]
+        if p:
+            hanged_success_patterns[ p[0] ] += 1
+
+if set(hanged_success_patterns.values()) == set([1],):
+    print('HANGED LOG EXPECTED. All patterns found exactly once.')
+else:
+    print('HANGED LOG UNEXPECTED: some patterns either not found or present more than once:')
+    for k,v in hanged_success_patterns.items():
+        print(k,':', v)
+
+    print('Check content of log %s:' % f_hanged_log.name)
+    for p in hanged_log_lines:
+        print(p)
+
+#---------------------------------------------------
+
+# Log of killer must contain:
+#     Found hanging statement, its attachment: 16
+#     Hanging process 4384 successfully TERMINATED
+killer_success_patterns = \
+[
+    'Found hanging statement, its attachment: \\d+',
+    'Hanging process \\d+ successfully TERMINATED'
+]
+killer_success_patterns = [re.compile(p, re.IGNORECASE) for p in killer_success_patterns]
+
+killer_log_patterns = defaultdict(int)
+for p in killer_success_patterns:
+    killer_log_patterns[ p.pattern ] = 0
+
+killer_log_lines = []
+with open(f_killer_log.name, 'r') as f:
+    for line in f:
+        killer_log_lines.append(line)
+        p = [ k for k in killer_success_patterns if k.search(line) ] 
+        if p:
+            killer_log_patterns[ p[0].pattern ] += 1
+
+
+if set(killer_log_patterns.values()) == set([1],):
+    print('KILLER LOG EXPECTED. All patterns found exactly once.')
+else:
+    print('KILLER LOG UNEXPECTED: some patterns either not found or present more than once:')
+    for k,v in killer_log_patterns.items():
+        print(k,':', v)
+
+    print('Check content of log %s:' % f_killer_log.name)
+    for p in killer_log_lines:
+        print(p)
+
+# CLEANUP
+#########
+f_list=(f_hanged_sql,f_killer_log,f_hanged_log)
+cleanup( [f.name for f in f_list] )
+
+  """,
+ 'expected_stdout':
+  """
+    HANGED LOG EXPECTED. All patterns found exactly once.
+    KILLER LOG EXPECTED. All patterns found exactly once.
+  """,
+ 'expected_stderr':
+  """
+  """,
+}
+]
+}

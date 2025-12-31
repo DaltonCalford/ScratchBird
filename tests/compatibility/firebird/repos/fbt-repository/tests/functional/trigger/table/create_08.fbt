@@ -1,0 +1,55 @@
+{
+'id': 'functional.trigger.create.08',
+'qmid': 'functional.trigger.create.create_trigger_08',
+'tracker_id': '',
+'title': 'CREATE TRIGGER AFTER DELETE POSITION 12',
+'description': """CREATE TRIGGER AFTER DELETE POSITION 12
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': 'CREATE TABLE tb(id INT);',
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE TRIGGER test FOR tb AFTER DELETE POSITION 12 AS
+BEGIN
+  old.id=1;
+END^
+SET TERM ;^
+SHOW TRIGGER test;""",
+ 'expected_stdout': """Triggers on Table TB:
+TEST, Sequence: 12, Type: AFTER DELETE, Active
+AS
+BEGIN
+  old.id=1;
+END
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': 'CREATE TABLE tb(id INT);',
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE TRIGGER test FOR tb AFTER DELETE POSITION 12 AS
+BEGIN
+END^
+SET TERM ;^
+SHOW TRIGGER test;""",
+ 'expected_stdout': """Triggers on Table TB:
+TEST, Sequence: 12, Type: AFTER DELETE, Active
+AS
+BEGIN
+END
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+""",
+  'substitutions':[('\+.*',''),('\=.*',''),('Trigger text.*','')]
+}
+]
+}

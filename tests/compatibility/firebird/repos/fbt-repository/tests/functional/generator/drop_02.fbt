@@ -1,0 +1,59 @@
+{
+'id': 'functional.generator.drop.02',
+'qmid': 'functional.generator.drop.drop_generator_02',
+'tracker_id': '',
+'title': 'DROP GENERATOR - in use',
+'description': """DROP GENERATOR
+
+Dependencies:
+CREATE DATABASE
+CREATE GENERATOR
+CREATE PROCEDURE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE GENERATOR test;
+SET TERM ^;
+CREATE PROCEDURE a AS
+DECLARE VARIABLE id INT;
+BEGIN
+  id=GEN_ID(test,1);
+END ^
+SET TERM ;^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': 'DROP GENERATOR test;',
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+
+unsuccessful metadata update
+-cannot delete
+-GENERATOR TEST
+-there are 1 dependencies
+"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """CREATE GENERATOR test;
+SET TERM ^;
+CREATE PROCEDURE a AS
+DECLARE VARIABLE id INT;
+BEGIN
+  id=GEN_ID(test,1);
+END ^
+SET TERM ;^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': 'DROP GENERATOR test;',
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+
+unsuccessful metadata update
+-cannot delete
+-GENERATOR TEST
+-there are 1 dependencies
+"""
+}
+]
+}

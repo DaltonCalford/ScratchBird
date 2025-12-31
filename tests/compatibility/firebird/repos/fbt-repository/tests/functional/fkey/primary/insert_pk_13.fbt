@@ -1,0 +1,156 @@
+{
+'id': 'functional.fkey.primary.insert_pk_13',
+'qmid': 'functional.fkey.primary.ins_13',
+'tracker_id': '',
+'title': 'Check correct work fix with foreign key',
+'description': """Check foreign key work.
+Master transaction deletes record from master_table without commit.
+Detail transaction inserts record in detail_table
+Expected: error primary key field in master_table has been changed.""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE MASTER_TABLE (
+    ID INTEGER PRIMARY KEY,
+    INT_F  INTEGER
+);
+
+CREATE TABLE DETAIL_TABLE (
+    ID    INTEGER PRIMARY KEY,
+    FKEY  INTEGER
+);
+
+ALTER TABLE DETAIL_TABLE ADD CONSTRAINT FK_DETAIL_TABLE FOREIGN KEY (FKEY) REFERENCES MASTER_TABLE (ID);
+COMMIT;
+INSERT INTO MASTER_TABLE (ID, INT_F) VALUES (1, 10);
+COMMIT;""",
+ 'test_type': 'Python',
+ 'test_script': """TPB_master = (
+      chr(kdb.isc_tpb_write)
+    + chr(kdb.isc_tpb_read_committed) + chr(kdb.isc_tpb_rec_version)
+    + chr(kdb.isc_tpb_nowait)
+                  )
+TPB_detail = (
+      chr(kdb.isc_tpb_write)
+    + chr(kdb.isc_tpb_read_committed) + chr(kdb.isc_tpb_rec_version)
+    + chr(kdb.isc_tpb_nowait)
+                  )
+db_conn.begin(tpb=TPB_master)
+cm_1 = db_conn.cursor()
+cm_1.execute('DELETE FROM MASTER_TABLE WHERE ID=1')
+
+#Create second connection for change detail table
+con_detail = kdb.connect(
+     dsn=dsn.encode(),
+     user=user_name.encode(),
+     password=user_password.encode()
+)
+
+try:
+   con_detail.begin(tpb=TPB_detail)
+   cd = con_detail.cursor()
+   cd.execute("INSERT INTO DETAIL_TABLE (ID, FKEY) VALUES (1,1)")
+   con_detail.commit()
+except Exception, e:
+  print (e[0])""",
+ 'expected_stdout': """Error while executing SQL statement:
+- SQLCODE: -901
+- lock conflict on no wait transaction
+- violation of FOREIGN KEY constraint "FK_DETAIL_TABLE" on table "DETAIL_TABLE"
+- Foreign key reference target does not exist
+- Problematic key value is ("FKEY" = 1)
+"""
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    recreate table t_detl(id int);
+    commit;
+    recreate table t_main(
+         id int constraint t_main_pk primary key using index t_main_pk
+    );
+    commit;
+    recreate table t_detl(
+        id int constraint t_detl_pk primary key using index t_detl_pk,
+        master_pk_id int constraint fk_tdetl_tmain references t_main(id) using index fk_tdetl_tmain
+    );
+    commit;
+    insert into t_main(id) values(1);
+    commit;
+  """,
+ 'test_script':
+  """
+    commit;
+    set transaction no wait;
+    set term ^;
+    execute block as
+    begin
+        delete from t_main where id = 1;
+        in autonomous transaction do
+        insert into t_detl(id, master_pk_id) values(100, 1);
+    end
+    ^
+    set term ;^
+  """,
+  'expected_stderr': 
+   """
+    Statement failed, SQLSTATE = 40001
+    lock conflict on no wait transaction
+    -violation of FOREIGN KEY constraint "FK_TDETL_TMAIN" on table "T_DETL"
+    -Foreign key reference target does not exist
+    -Problematic key value is ("MASTER_PK_ID" = 1)
+    -At block line: 5, col: 9
+   """,
+  'substitutions': [ ('-At block line: [\d]+, col: [\d]+', '-At block line') ]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    recreate table t_detl(id int);
+    commit;
+    recreate table t_main(
+         id int constraint t_main_pk primary key using index t_main_pk
+    );
+    commit;
+    recreate table t_detl(
+        id int constraint t_detl_pk primary key using index t_detl_pk,
+        master_pk_id int constraint fk_tdetl_tmain references t_main(id) using index fk_tdetl_tmain
+    );
+    commit;
+    insert into t_main(id) values(1);
+    commit;
+  """,
+ 'test_script':
+  """
+    commit;
+    set transaction no wait;
+    set term ^;
+    execute block as
+    begin
+        delete from t_main where id = 1;
+        in autonomous transaction do
+        insert into t_detl(id, master_pk_id) values(100, 1);
+    end
+    ^
+    set term ;^
+  """,
+  'expected_stderr': 
+   """
+    Statement failed, SQLSTATE = 23000
+    violation of FOREIGN KEY constraint "FK_TDETL_TMAIN" on table "T_DETL"
+    -Foreign key reference target does not exist
+    -Problematic key value is ("MASTER_PK_ID" = 1)
+    -At block line: 5, col: 9
+   """,
+  'substitutions': [ ('-At block line: [\d]+, col: [\d]+', '-At block line') ]
+}
+]
+}

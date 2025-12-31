@@ -1,0 +1,65 @@
+{
+'id': 'bugs.core_3180',
+'qmid': None,
+'tracker_id': 'CORE-3180',
+'title': 'ALTER VIEW with not matched columns in declaration and selection crashs the server',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create view TEST_VIEW (ID) as select 1 from rdb$database;
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """alter view TEST_VIEW (ID) as select 1, 2 from rdb$database;
+COMMIT;
+SHOW VIEW TEST_VIEW;
+
+
+
+""",
+ 'expected_stdout': """Database:  localhost:C:\Users\win7\Firebird_testsbt-repository	mpugs.core_3180.fdb, User: SYSDBA
+SQL> SQL> SQL> ID                              INTEGER Expression
+View Source:
+==== ======
+ select 1 from rdb$database
+SQL> SQL> SQL> SQL>""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 07002
+Dynamic SQL Error
+-SQL error code = -607
+-Invalid command
+-number of columns does not match select list
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create view TEST_VIEW (ID) as select 1 from rdb$database;
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """alter view TEST_VIEW (ID) as select 1, 2 from rdb$database;
+COMMIT;
+SHOW VIEW TEST_VIEW;
+
+
+
+""",
+ 'expected_stdout': """Database:  localhost:C:\Users\win7\Firebird_testsbt-repository	mpugs.core_3180.fdb, User: SYSDBA
+SQL> SQL> SQL> ID                              INTEGER Expression
+View Source:
+==== ======
+ select 1 from rdb$database
+SQL> SQL> SQL> SQL>""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 07002
+unsuccessful metadata update
+-ALTER VIEW TEST_VIEW failed
+-SQL error code = -607
+-Invalid command
+-number of columns does not match select list
+"""
+}
+]
+}

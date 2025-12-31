@@ -1,0 +1,25 @@
+{
+'id': 'functional.database.alter.02',
+'qmid': '',
+'tracker_id': '',
+'title': 'ALter database: adding secondary file with alternate keyword',
+'description': 'Adding secondary file with alternate keyword for database.',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': """cursor=db_conn.cursor()
+cursor.execute("ALTER SCHEMA ADD FILE '$(DATABASE_LOCATION)TEST.G00' STARTING 10000")
+db_conn.commit()
+cursor.execute("SELECT cast(RDB$FILE_NAME as varchar(150)),RDB$FILE_SEQUENCE,RDB$FILE_START,RDB$FILE_LENGTH  FROM RDB$FILES")
+printData(cursor)""",
+ 'expected_stdout': """CAST                                                                                                                                                   RDB$FILE_SEQUENCE RDB$FILE_START RDB$FILE_LENGTH
+------------------------------------------------------------------------------------------------------------------------------------------------------ ----------------- -------------- ---------------
+C:\JOB\QA\FBTEST\TMP\TEST.G00                                                                                                                          1                 10000          0
+""",
+ 'substitutions': [('^.*TEST.G','TEST.G'),('[ ]+','	')]
+}
+]
+}

@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_3312',
+'qmid': None,
+'tracker_id': 'CORE-3312',
+'title': 'Sub-optimal join plan when the slave table depends on the master one via the OR predicate',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLANONLY ON;
+select *
+from rdb$relations r
+  join rdb$security_classes sc
+    on (r.rdb$security_class = sc.rdb$security_class
+      or r.rdb$default_class = sc.rdb$security_class);
+select *
+from rdb$relations r
+  join rdb$security_classes sc
+    on (r.rdb$security_class = sc.rdb$security_class and r.rdb$relation_id = 0)
+      or (r.rdb$default_class = sc.rdb$security_class and r.rdb$relation_id = 1);
+""",
+ 'expected_stdout': """Database:  localhost:C:\Users\win7\Firebird_tests\fbt-repository\tmp\bugs.core_3312.fdb, User: SYSDBA
+SQL> SQL> CON> CON> CON> CON>
+PLAN JOIN (R NATURAL, SC INDEX (RDB$INDEX_7, RDB$INDEX_7))
+SQL> CON> CON> CON> CON>
+PLAN JOIN (R INDEX (RDB$INDEX_1, RDB$INDEX_1), SC INDEX (RDB$INDEX_7, RDB$INDEX_7))
+SQL>"""
+}
+]
+}

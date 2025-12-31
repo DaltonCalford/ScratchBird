@@ -1,0 +1,56 @@
+{
+'id': 'functional.tabloid.bus-3103-windowed-funcs',
+'qmid': None,
+'tracker_id': '',
+'title': 'Query for test MAX()OVER().',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'tabloid-bus-3103.fbk',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    with
+    dx as (
+         select
+            t.cid
+            ,p.pid
+            ,hash(src) + hash(tgt) sth
+            ,datediff(minute from dts0 to dts1 + iif(t.dts1 < t.dts0, 1, 0)) dd
+         from tmove t
+            left join pmove p on t.id = p.tid
+    )
+    ,mx as (
+        select
+            dx.*,
+            nullif( abs( max(dd)over() - max(dd)over(partition by cid, sth) ), 1) ns
+         from dx
+    )
+    select
+        (select name from clist c where c.id  = mx.cid) cnm,
+        count(pid) cnt
+    from   mx
+    where  ns = 0
+    group  by mx.cid
+    having count(pid) > 0;
+  """,
+ 'expected_stdout': 
+  """
+    CNM                             ba        
+    CNT                             13
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions': [('=.*','')]
+}
+]
+}

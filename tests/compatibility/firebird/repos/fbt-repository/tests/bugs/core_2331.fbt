@@ -1,0 +1,29 @@
+{
+'id': 'bugs.core_2331',
+'qmid': None,
+'tracker_id': 'CORE-2331',
+'title': 'ALTER DOMAIN invalid RDB$FIELD_SUB_TYPE',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN TESTDOM VARCHAR(50);
+COMMIT;
+ALTER DOMAIN TESTDOM TYPE VARCHAR(80);
+COMMIT;
+
+SELECT RDB$FIELD_SUB_TYPE FROM RDB$FIELDS WHERE RDB$FIELD_NAME = 'TESTDOM';
+""",
+ 'expected_stdout': """
+RDB$FIELD_SUB_TYPE
+==================
+                 0
+
+"""
+}
+]
+}

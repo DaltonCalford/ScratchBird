@@ -1,0 +1,62 @@
+{
+'id': 'bugs.core_3024',
+'qmid': None,
+'tracker_id': 'CORE-3024',
+'title': 'Error "no current record for fetch operation" after ALTER VIEW',
+'description':
+ """
+   Confirmed error on: WI-V2.5.6.26962 (SC), fixed on: WI-V2.5.6.26963.
+   Checked on WI-V3.0.0.32268 (SS, SC, CS).
+   Checked on fdb version 1.5.
+ """,
+'min_versions': '2.5.6',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script':
+  """\
+db_conn.close()
+
+att1=kdb.connect(dsn=dsn.encode(),user='SYSDBA',password='masterkey')
+att2=kdb.connect(dsn=dsn.encode(),user='SYSDBA',password='masterkey')
+
+trn1=att1.trans()
+
+cur1=trn1.cursor()
+
+cur1.execute("create table t(a int, b int, c int)")   # att_12, tra_4
+cur1.execute("create view v as select a,b from t")
+trn1.commit()
+
+cur1.execute("insert into t values(1,2,3)")           # att_12, tra_5
+cur1.execute("select * from v")
+trn1.commit()
+
+trn2=att2.trans()
+cur2=trn2.cursor()
+cur2.execute("select * from v")                       # att_13, tra_7
+trn2.commit()
+
+cur1.execute("alter view v as select a, b, c from t") # att-12, tra_8
+trn1.commit()
+
+cur2.execute("select * from v")                       # att_13, tra_9
+printData(cur2)
+  """,
+ 'expected_stdout':
+  """
+    A           B           C
+    1           2           3
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[('-','')]
+}
+]
+}

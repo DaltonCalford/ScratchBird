@@ -14,7 +14,7 @@ This directory contains converted PostgreSQL regression tests from the official 
 ```
 postgresql/
 ├── repos/
-│   └── postgres/                  # Git submodule (sparse checkout: src/test/regress/)
+│   └── postgres/                  # Vendored snapshot (sparse checkout via update script)
 │       └── src/test/regress/
 │           ├── sql/              # Test SQL files
 │           └── expected/         # Expected output (.out files)

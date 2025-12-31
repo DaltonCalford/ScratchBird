@@ -1,0 +1,47 @@
+{
+'id': 'bugs.core_3000',
+'qmid': None,
+'tracker_id': 'CORE-3000',
+'title': 'Error on delete user "ADMIN"',
+'description':
+ """
+   Also added sample from core-3110
+ """,
+'min_versions': '2.5.7',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    -- Following users should NOT be created:
+    create user 'ADMIN' password '123';
+    create user 'CHECK' password '123';
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    Dynamic SQL Error
+    -SQL error code = -104
+    -Token unknown
+    -'ADMIN'
+
+    Statement failed, SQLSTATE = 42000
+    Dynamic SQL Error
+    -SQL error code = -104
+    -Token unknown
+    -'CHECK'
+  """,
+  'substitutions':[
+    ('-Token unknown - line.*', '-Token unknown')
+  ]
+}
+]
+}

@@ -1,0 +1,18 @@
+{
+'id': 'functional.domain.create.13',
+'qmid': 'functional.domain.create.create_domain_13',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - NUMERIC',
+'description': 'Simple domain creation based on NUMERIC datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test NUMERIC(18,18);
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            NUMERIC(18, 18) Nullable
+"""
+}
+]
+}

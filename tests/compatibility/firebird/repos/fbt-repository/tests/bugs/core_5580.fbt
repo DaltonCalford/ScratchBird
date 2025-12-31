@@ -1,0 +1,66 @@
+{
+'id': 'bugs.core_5580',
+'qmid': None,
+'tracker_id': 'CORE-5580',
+'title': 'Signature of packaged functions is not checked for mismatch with [NOT] DETERMINISTIC attribute',
+'description': 
+ """
+   Confirmed bug on builds: 3.0.3.32756, 4.0.0.690.
+   Works fine on:
+     3.0.3.32757: OK, 0.812s.
+     4.0.0.693: OK, 1.047s.
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^;
+    recreate package pk1 as
+    begin
+        function f1() returns int deterministic;
+        function f2() returns int not deterministic;
+    end
+    ^
+    recreate package body pk1 as
+    begin
+        function f1() returns int not deterministic as
+        begin
+            return 123;
+        end
+        
+        function f2() returns int not deterministic as
+        begin
+            return 123 * rand();
+        end
+        
+    end
+    ^
+    set term ;^
+    commit;
+
+    set list on;
+
+    select pk1.f1() as f1_result from rdb$database;
+    select pk1.f2() as f2_result  from rdb$database;
+  """,
+  'expected_stdout':
+  """
+  """,
+  'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -RECREATE PACKAGE BODY PK1 failed
+    -Function F1 has a signature mismatch on package body PK1
+    Statement failed, SQLSTATE = 2F000
+    Cannot execute function F1 of the unimplemented package PK1
+    Statement failed, SQLSTATE = 2F000
+    Cannot execute function F2 of the unimplemented package PK1
+  """
+}
+]
+}

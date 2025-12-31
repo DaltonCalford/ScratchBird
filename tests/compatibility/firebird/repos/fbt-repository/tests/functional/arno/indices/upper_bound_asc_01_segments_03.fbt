@@ -1,0 +1,58 @@
+{
+'id': 'functional.arno.indices.upper_bound_asc_01_segments_03',
+'qmid': 'functional.arno.indexes.upper_bound_asc_01_segments_03',
+'tracker_id': '',
+'title': 'ASC single index upper bound',
+'description': 'Check if all 5 values are fetched with "lower than or equal" operator.',
+'versions': [
+{
+ 'firebird_version': '1.5',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE Table_A15 (
+  ID VARCHAR(15)
+);
+
+INSERT INTO Table_A15 (ID) VALUES (NULL);
+INSERT INTO Table_A15 (ID) VALUES ('A');
+INSERT INTO Table_A15 (ID) VALUES ('AA');
+INSERT INTO Table_A15 (ID) VALUES ('AAA');
+INSERT INTO Table_A15 (ID) VALUES ('AAAA');
+INSERT INTO Table_A15 (ID) VALUES ('AAAAB');
+INSERT INTO Table_A15 (ID) VALUES ('AAAB');
+INSERT INTO Table_A15 (ID) VALUES ('AAB');
+INSERT INTO Table_A15 (ID) VALUES ('AB');
+INSERT INTO Table_A15 (ID) VALUES ('B');
+INSERT INTO Table_A15 (ID) VALUES ('BA');
+INSERT INTO Table_A15 (ID) VALUES ('BAA');
+INSERT INTO Table_A15 (ID) VALUES ('BAAA');
+INSERT INTO Table_A15 (ID) VALUES ('BAAAA');
+INSERT INTO Table_A15 (ID) VALUES ('BAAAB');
+
+COMMIT;
+
+CREATE ASC INDEX I_Table_A15_ASC ON Table_A15 (ID);
+
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+SELECT
+  ID
+FROM
+  Table_A15 a15
+WHERE
+  a15.ID <= 'AAAAB';""",
+ 'expected_stdout': """PLAN (A15 INDEX (I_TABLE_A15_ASC))
+
+ID
+===============
+
+A
+AA
+AAA
+AAAA
+AAAAB
+"""
+}
+]
+}

@@ -1,0 +1,62 @@
+{
+'id': 'bugs.core_0116',
+'qmid': 'bugs.core_116-250',
+'tracker_id': 'CORE-116',
+'title': 'CREATE TABLE - no blob for external',
+'description': """CREATE TABLE - blob not allow for external tables
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE""",
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': "create table ext_log external file '$(DATABASE_LOCATION)z.dat' (F1 INT, F2 BLOB SUB_TYPE TEXT);",
+ 'expected_stderr': 
+  """
+    Statement failed, SQLCODE = -607
+    Dynamic SQL Error
+    -SQL error code = -607
+    -Data type BLOB is not supported for EXTERNAL TABLES. Relation 'EXT_LOG', field 'F2'
+  """
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': "create table ext_log external file '$(DATABASE_LOCATION)z.dat' (F1 INT, F2 BLOB SUB_TYPE TEXT);",
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = HY004
+    Dynamic SQL Error
+    -SQL error code = -607
+    -Invalid command
+    -Data type BLOB is not supported for EXTERNAL TABLES. Relation 'EXT_LOG', field 'F2'
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Untill build 3.0.0.31721 STDERR was:
+    -- -Data type BLOB is not supported ... field '<Missing arg #3 - possibly status vector overflow>'
+    -- Since WI-T3.0.0.31733 STDERR became normal - contains name of field. 
+    -- See correction in 'expected_stderr' secsion (23.03.2015).
+    create table ext_log external file '$(DATABASE_LOCATION)z.dat' (F1 INT, F2 BLOB SUB_TYPE TEXT);
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = HY004
+    unsuccessful metadata update
+    -CREATE TABLE EXT_LOG failed
+    -SQL error code = -607
+    -Invalid command
+    -Data type BLOB is not supported for EXTERNAL TABLES. Relation 'EXT_LOG', field 'F2'
+  """
+}
+]
+}

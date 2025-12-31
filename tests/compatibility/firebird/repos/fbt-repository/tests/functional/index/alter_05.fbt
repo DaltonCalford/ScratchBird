@@ -1,0 +1,119 @@
+{
+'id': 'functional.index.alter.05',
+'qmid': 'functional.index.alter.alter_index_05',
+'tracker_id': '',
+'title': 'ALTER INDEX - INACTIVE FOREIGN KEY',
+'description': """ALTER INDEX - INACTIVE FOREIGN KEY
+
+Note !SF 609538
+Bad error message "-Cannot deactivate primary index"
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE with PRIMARY KEY
+CREATE TABLE with FOREIGN KEY""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE pk( a INTEGER NOT NULL,
+                CONSTRAINT pkindx PRIMARY KEY(a)
+              );
+commit;
+CREATE TABLE fk( a INTEGER NOT NULL,
+                 CONSTRAINT fkindx FOREIGN KEY(a) REFERENCES pk(a)
+              );
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': 'ALTER INDEX RDB$FOREIGN2 INACTIVE;',
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+
+unsuccessful metadata update
+-MODIFY RDB$INDICESS failed
+-action cancelled by trigger (3) to preserve data integrity
+-Cannot deactivate primary index"""
+},
+{
+ 'firebird_version': '1.5',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE pk( a INTEGER NOT NULL,
+                CONSTRAINT pkindx PRIMARY KEY(a)
+              );
+commit;
+CREATE TABLE fk( a INTEGER NOT NULL,
+                 CONSTRAINT fkindx FOREIGN KEY(a) REFERENCES pk(a)
+              );
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': 'ALTER INDEX fkindx INACTIVE;',
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+
+unsuccessful metadata update
+-MODIFY RDB$INDICESS failed
+-action cancelled by trigger (3) to preserve data integrity
+-Cannot deactivate primary index"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE pk( a INTEGER NOT NULL,
+                CONSTRAINT pkindx PRIMARY KEY(a)
+              );
+commit;
+CREATE TABLE fk( a INTEGER NOT NULL,
+                 CONSTRAINT fkindx FOREIGN KEY(a) REFERENCES pk(a)
+              );
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': 'ALTER INDEX fkindx INACTIVE;',
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+
+unsuccessful metadata update
+-MODIFY RDB$INDICES failed
+-action cancelled by trigger (2) to preserve data integrity
+-Cannot deactivate index used by an integrity constraint"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE pk( a INTEGER NOT NULL,
+                CONSTRAINT pkindx PRIMARY KEY(a)
+              );
+commit;
+CREATE TABLE fk( a INTEGER NOT NULL,
+                 CONSTRAINT fkindx FOREIGN KEY(a) REFERENCES pk(a)
+              );
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': 'ALTER INDEX fkindx INACTIVE;',
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+
+unsuccessful metadata update
+-MODIFY RDB$INDICES failed
+-action cancelled by trigger (2) to preserve data integrity
+-Cannot deactivate index used by an integrity constraint"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE pk( a INTEGER NOT NULL,
+                CONSTRAINT pkindx PRIMARY KEY(a)
+              );
+commit;
+CREATE TABLE fk( a INTEGER NOT NULL,
+                 CONSTRAINT fkindx FOREIGN KEY(a) REFERENCES pk(a)
+              );
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': 'ALTER INDEX fkindx INACTIVE;',
+ 'expected_stderr': """Statement failed, SQLSTATE = 27000
+unsuccessful metadata update
+-ALTER INDEX FKINDX failed
+-action cancelled by trigger (2) to preserve data integrity
+-Cannot deactivate index used by an integrity constraint
+
+"""
+}
+]
+}

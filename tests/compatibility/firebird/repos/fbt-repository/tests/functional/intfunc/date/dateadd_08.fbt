@@ -1,0 +1,28 @@
+{
+'id': 'functional.intfunc.date.dateadd_08',
+'qmid': 'functional.intfunc.date.dateadd_08',
+'tracker_id': 'CORE-1387',
+'title': 'Dateadd milliseconds',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select dateadd(-1 millisecond to time '12:12:00:0000' ) as test from rdb$database;
+select dateadd(millisecond,-1, time '12:12:00:0000' ) as test from rdb$database;
+""",
+ 'expected_stdout': """
+         TEST
+=============
+12:11:59.9990
+
+
+         TEST
+=============
+12:11:59.9990
+
+"""
+}
+]
+}

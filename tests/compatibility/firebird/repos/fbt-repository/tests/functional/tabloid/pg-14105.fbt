@@ -1,0 +1,76 @@
+{
+'id': 'functional.tabloid.pg-14105',
+'tracker_id': '',
+'title': "Check ability to compile query with combination of full and right join. Taken from PG bug library.",
+'description':
+ """
+   Original issue ( http://www.postgresql.org/message-id/20160420194758.22924.80319@wrigleys.postgresql.org ):
+   ===
+      create table a as (select 1 as id);
+      select *
+      from ((
+             a as a1
+             full join (select 1 as id) as tt
+             on (a1.id = tt.id)
+            )
+            right join (select 1 as id) as tt2
+            on (coalesce(tt.id) = tt2.id)
+           )
+      ;
+      ERROR:  XX000: failed to build any 2-way joins
+      LOCATION:  standard_join_search, allpaths.c:1832
+
+
+      It works on PostgreSQL 9.2.13., returning:
+       id | id | id 
+      ----+----+----
+        1 |  1 |  1
+      (1 row)
+    ===
+    PS. NOTE on strange form of COALESCE: "coalesce(tt.id)" - it has only single argument.
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table a(id int);
+    commit;
+
+    insert into a values(1);
+    commit;
+
+    set list on;
+
+    select *
+    from (
+        select a1.id as a1_id, tt.id as tt_id, tt2.id as tt2_id
+        from 
+            (
+               a as a1
+               full join ( select 1 as id from rdb$database ) as tt 
+                    on ( a1.id = tt.id )
+            )
+            right join (select 1 as id from rdb$database) as tt2
+            	  -- https://www.drupal.org/node/336712
+                  --  When used with one argument, it will return NULL if that argument is NULL; 
+                  -- therefore, in such cases, using it is perfectly useless.
+                  on ( coalesce(tt.id,tt.id) = tt2.id )
+    )
+    ;
+  """,
+ 'expected_stdout': 
+  """
+    A1_ID                           1
+    TT_ID                           1
+    TT2_ID                          1
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -1,0 +1,28 @@
+{
+'id': 'functional.intfunc.date.dateadd_06',
+'qmid': 'functional.intfunc.date.dateadd_06',
+'tracker_id': '',
+'title': "test de la fonction dateadd  pour l'ajout de minute a une heure",
+'description': 'Returns a date/time/timestamp value increased (or decreased, when negative) by the specified amount of time.',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select dateadd(-1 minute to time '12:12:00' ) as yesterday from rdb$database;
+select dateadd(minute,-1, time '12:12:00' ) as yesterday from rdb$database;
+""",
+ 'expected_stdout': """
+    YESTERDAY
+=============
+12:11:00.0000
+
+
+    YESTERDAY
+=============
+12:11:00.0000
+
+"""
+}
+]
+}

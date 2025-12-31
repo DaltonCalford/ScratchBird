@@ -1,0 +1,57 @@
+{
+'id': 'bugs.core_6529',
+'qmid': None,
+'tracker_id': 'CORE-6529',
+'title': 'Error "no current record for fetch operation" when sorting by a international string',
+'description':
+ """
+    Confirmed bug on 4.0.0.2394, got:
+        - SQLCODE: -508 / - no current record for fetch operation / -508 / 335544348
+    Checked on 4.0.0.2401 - all OK.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'init_script':
+  """
+
+  """,
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+db_conn.execute_immediate('recreate table t (f varchar(32765) character set win1251)')
+db_conn.commit()
+
+cur = db_conn.cursor()
+
+cur.execute( "insert into t(f) values(?)", ('W' * 1000,) )
+# no commit here!
+
+try:
+    cur.execute('select f from t order by 1')
+    for r in cur:
+        pass
+    print('Passed.')
+except Exception,e:
+    print('Exception in cursor:')
+    print( '-' * 30 )
+    for x in e:
+        print(x)
+    print( '-' * 30 )
+finally:
+    cur.close()
+    db_conn.close()
+
+  """,
+ 'expected_stdout': 
+  """
+    Passed.
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

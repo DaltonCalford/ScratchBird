@@ -1,0 +1,50 @@
+{
+'id': 'bugs.core_2660',
+'qmid': None,
+'tracker_id': 'CORE-2660',
+'title': "COUNT(*) incorrectly returns 0 when a condition of an outer join doesn't match",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select b.*
+  from rdb$database a
+  left join (
+    select count(*) c
+      from rdb$database
+  ) b on 1 = 0;""",
+ 'expected_stdout': """
+           C
+============
+      <null>
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select b.*
+  from rdb$database a
+  left join (
+    select count(*) c
+      from rdb$database
+  ) b on 1 = 0;""",
+ 'expected_stdout': """
+                    C
+=====================
+               <null>
+
+"""
+}
+]
+}

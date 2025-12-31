@@ -1,0 +1,26 @@
+{
+'id': 'functional.domain.create.29',
+'qmid': 'functional.domain.create.create_domain_29',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - BLOB SEGMENT SIZE',
+'description': 'Domain creation based on BLOB datatype with SEGMENT SIZE specification.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test BLOB SEGMENT SIZE 244;
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            BLOB segment 244, subtype UNKNOWN Nullable
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test BLOB SEGMENT SIZE 244;
+SHOW DOMAIN test;""",
+ 'expected_stdout': 'TEST                            BLOB segment 244, subtype BINARY Nullable'
+}
+]
+}

@@ -1,0 +1,99 @@
+{
+'id': 'bugs.core_4653',
+'qmid': None,
+'tracker_id': 'CORE-4653',
+'title': 'Crash on infinite mutual SP calls (instead of "Too many concurrent executions of the same request.")',
+'description': '20150108: crach every even run, WI-T3.0.0.31529, Win XP SP3',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    set term ^;
+    create or alter procedure p03(a_i int) returns (z int) as
+    begin
+      z = 0 ;
+      suspend;
+    end^
+    commit^
+
+    create or alter procedure p02(a_i int) returns (z int) as
+    begin
+      z = (select z from p03(:a_i)) + 1;
+      suspend;
+    end^
+    commit^
+
+    create or alter procedure p03(a_i int) returns (z int) as
+    begin
+      z = (select z from p02(:a_i)) + 1;
+      suspend;
+    end^
+    commit^
+
+    create or alter procedure p01(a_i int) returns (z int) as
+    begin
+      z = (select z from p02(:a_i)) + 1;
+      suspend;
+    end^
+    commit^
+    set term ;^
+  """,
+ 'test_script':
+  """
+  -- 07.03.2015: updated expected_stderr - it was changed and now is identical in 2.5 & 3.0
+  -- Old stderr:
+  -- Statement failed, SQLSTATE = HY001
+  -- Stack overflow.  The resource requirements of the runtime stack have exceeded the memory available to it.
+
+  select * from p01(1);
+  """,
+
+ 'expected_stdout':
+  """
+               Z
+    ============
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 54001
+    Too many concurrent executions of the same request
+    -At procedure 'P03' line: 3, col: 3
+    At procedure 'P02' line: 3, col: 3
+    At procedure 'P03' line: 3, col: 3
+    At procedure 'P02' line: 3, col: 3
+    At procedure 'P03' line: 3, col: 3
+    At procedure 'P02' line: 3, col: 3
+    At procedure 'P03' line: 3, col: 3
+    At procedure 'P02' line: 3, col: 3
+    At procedure 'P03' line: 3, col: 3
+    At procedure 'P02' line: 3, col: 3
+    At procedure 'P03' line: 3, col: 3
+    At procedure 'P02' line: 3, col: 3
+    At procedure 'P03' line: 3, col: 3
+    At procedure 'P02' line: 3, col: 3
+    At procedure 'P03' line: 3, col: 3
+    At procedure 'P02' line: 3, col: 3
+    At procedure 'P03' line: 3, col: 3
+    At procedure 'P02' line: 3, col: 3
+    At procedure 'P03' line: 3, col: 3
+    At procedure 'P02' line: 3, col: 3
+    At procedure 'P03' line: 3, col: 3
+    At procedure 'P02' line: 3, col: 3
+    At procedure 'P03' line: 3, col: 3
+    At procedure 'P02' line: 3, col: 3
+    At procedure 'P03' line: 3, col: 3
+    At procedure 'P02' line: 3, col: 3
+    At procedure 'P03' line: 3, col: 3
+    At procedure 'P02' line: 3, col: 3
+    At procedure 'P03' line: 3, col: 3
+    At p...
+  """,
+  'substitutions': [('=.*',''),('line.*',''),('col.*','')]
+}
+]
+}

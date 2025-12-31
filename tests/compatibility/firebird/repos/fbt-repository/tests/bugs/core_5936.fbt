@@ -1,0 +1,165 @@
+{
+'id': 'bugs.core_5936',
+'qmid': None,
+'tracker_id': 'CORE-5936',
+'title': "Firebird crashes, related to Bugcheck 165 (cannot find tip page)",
+'description':
+ """
+    NB. Ticket title: "Firebird server segfaults in the end of database backup" - has nothing to the actual reason of segfault.
+    Confirmed crash on:
+        * 2.5.8.27089 SuperClassic
+        * 2.5.9.27117 Classic and SuperClassic (build date: 29-sep-2018 - is earlier than fix: 08-oct-2018)
+
+    Got in firebird.log:
+        Access violation.
+            The code attempted to access a virtual
+            address without privilege to do so.
+        Operating system call ReleaseSemaphore failed. Error code 6
+
+    NOTE-1: custom transaction TPB required for this ticket: fdb.isc_tpb_concurrency, fdb.isc_tpb_wait
+
+    NOTE-2: current title of ticket ("Firebird server segfaults in the end of database backup") has no relation to backup action.
+    I left here only first two words from it :-)
+    
+    Bug was fixed by one-line change in FB source, see:
+    https://github.com/FirebirdSQL/firebird/commit/676a52625c074ef15e197e7b7538755195a66905
+
+    Checked on:
+        2.5.9.27119 SS: OK, 0.858s.
+        2.5.9.27129 CS/SC: OK, 15...19s
+        3.0.5.33123: OK, 4.174s.
+        3.0.2.32658: OK, 3.309s.
+        4.0.0.1501: OK, 5.602s.
+        4.0.0.1421: OK, 6.920s.
+
+    15.04.2021. Adapted for run both on Windows and Linux. Checked on:
+      Windows: 4.0.0.2416
+      Linux:   4.0.0.2416
+ """,
+'min_versions': '2.5.9',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import subprocess
+import fdb
+from fdb import services
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+GEN_ROWS=17000 # ----- minimal value needed for making FB to crash
+
+THIS_FDB=db_conn.database_name
+db_conn.close()
+
+
+svc = services.connect(host = 'localhost', user = user_name, password = user_password)
+
+# Disable Forced Writes:
+########################
+svc.set_write_mode( THIS_FDB, services.WRITE_BUFFERED)
+svc.close()
+
+ddl_script=\
+'''
+    create table a (id int);
+    create index idx_a on a computed by (id);
+    commit;
+    set term ^;
+    create procedure p_gen_tx(n int) as
+        declare i int = 0;
+    begin
+        while (i < n) do
+            in autonomous transaction do
+                i = i + 1;
+    end ^
+    set term ;^
+    commit;
+'''
+
+f_ddl_script = open( os.path.join(context['temp_directory'],'tmp_5936_ddl.sql'), 'w')
+f_ddl_script.write( ddl_script )
+f_ddl_script.close()
+
+subprocess.call( [context['isql_path'], dsn, '-i', f_ddl_script.name ] )
+
+os.remove( f_ddl_script.name )
+
+#----------------------------------------------------
+
+con1 = fdb.connect( dsn = dsn )
+
+custom_tpb = fdb.TPB()
+custom_tpb.isolation_level = fdb.isc_tpb_concurrency
+custom_tpb.lock_resolution = fdb.isc_tpb_wait
+ 
+tx1 = con1.trans( default_tpb = custom_tpb )
+tx1.begin()
+
+cur1 = tx1.cursor()
+cur1.execute( "select current_transaction, rdb$get_context('SYSTEM', 'ISOLATION_LEVEL') from rdb$database" )
+for r in cur1:
+    pass
+
+#-------------------------------------------
+
+con2 = fdb.connect( dsn = dsn )
+tx2 = con2.trans( default_tpb = custom_tpb )
+tx2.begin()
+cur2 = tx2.cursor()
+cur2.callproc( 'p_gen_tx', (GEN_ROWS,) )
+tx2.commit()
+
+tx2.begin()
+cur2.execute( 'insert into a values(current_transaction)' )
+tx2.commit()
+
+tx2.begin()
+cur2.execute( 'set statistics index idx_a' )
+tx2.commit()
+
+tx2.begin()
+cur2.execute( 'select * from a where id > 0')
+for r in cur2:
+    pass
+
+tx2.commit()
+
+tx2.begin()
+cur2.callproc( 'p_gen_tx', (GEN_ROWS,) )
+tx2.commit()
+
+#--------------------------------------------
+
+tx1.commit()
+cur1.execute( 'select * from a where id > 0')
+for r in cur1:
+    pass # ----------- WI-V2.5.8.27089 crashed here
+
+print('Query completed.')
+tx1.commit()
+
+con1.close()
+con2.close()
+print('All fine.')
+
+  """,
+ 'expected_stdout':
+  """
+    Query completed.
+    All fine.
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

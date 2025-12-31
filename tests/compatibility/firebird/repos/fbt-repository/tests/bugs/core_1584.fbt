@@ -1,0 +1,81 @@
+{
+'id': 'bugs.core_1584',
+'qmid': 'bugs.core_1584-250',
+'tracker_id': 'CORE-1584',
+'title': 'Server crashed or bugcheck when inserting in monitoring tables.',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    insert into mon$statements(
+        mon$statement_id
+        ,mon$attachment_id
+        ,mon$transaction_id
+        ,mon$state
+        ,mon$timestamp
+        ,mon$sql_text
+        ,mon$stat_id
+    ) values(
+        1
+        ,current_connection
+        ,current_transaction
+        ,1
+        ,'now'
+        ,null
+        ,1
+    );
+    set list on;
+    select 1 as x from rdb$database;
+  """,
+ 'expected_stdout':
+  """
+    X                               1
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLCODE = -817
+    operation not supported
+  """
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    insert into mon$statements(
+        mon$statement_id
+        ,mon$attachment_id
+        ,mon$transaction_id
+        ,mon$state
+        ,mon$timestamp
+        ,mon$sql_text
+        ,mon$stat_id
+    ) values(
+        1
+        ,current_connection
+        ,current_transaction
+        ,1
+        ,'now'
+        ,null
+        ,1
+    );
+    set list on;
+    select 1 as x from rdb$database;
+  """,
+ 'expected_stdout':
+  """
+    X                               1
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    operation not supported
+  """
+}
+]
+}

@@ -1,0 +1,28 @@
+{
+'id': 'functional.table.alter.11',
+'qmid': 'functional.table.alter.alter_table_11',
+'tracker_id': '',
+'title': 'ALTER TABLE - DROP CONSTRAINT - UNIQUE',
+'description': """ALTER TABLE - DROP CONSTRAINT - UNIQUE
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+SHOW TABLE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL CONSTRAINT unq UNIQUE,
+                   text VARCHAR(32));
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER TABLE test DROP CONSTRAINT unq;
+SHOW TABLE test;""",
+ 'expected_stdout': """ID                              INTEGER Not Null
+TEXT                            VARCHAR(32) Nullable
+"""
+}
+]
+}

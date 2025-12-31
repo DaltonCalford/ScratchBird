@@ -1,0 +1,46 @@
+{
+'id': 'bugs.core_6254',
+'qmid': None,
+'tracker_id': 'CORE-6254',
+'title': 'AV in engine when using SET TRANSACTION and ON TRANSACTION START trigger uses EXECUTE STATEMENT against current transaction',
+'description':
+ """
+    Confirmed crash on: WI-V3.0.6.33251; WI-T4.0.0.1779
+    Checked on: 3.0.6.33252; WI-T4.0.0.1782 - works fine.
+ """,
+'min_versions': '3.0.6',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set term ^;
+    create or alter trigger trg_tx_start on transaction start as
+        declare tx int;
+    begin
+        execute statement ('select current_transaction from rdb$database') into tx;
+    end
+    ^
+    set term ;^
+    commit;
+
+    set transaction;
+    select sign(current_transaction) as s from rdb$database;
+    commit; -- this raised AV
+  """,
+ 'expected_stdout':
+  """
+    S                               1
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

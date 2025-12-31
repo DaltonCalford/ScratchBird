@@ -1,0 +1,52 @@
+{
+'id': 'bugs.core_2755',
+'qmid': None,
+'tracker_id': 'CORE-2755',
+'title': 'SIMILAR TO works wrongly',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select
+    case when 'ab' SIMILAR TO 'ab|cd|efg' then 'ok' else 'bad' end as ab,
+    case when 'efg' SIMILAR TO 'ab|cd|efg' then 'ok' else 'bad' end as efg,
+    case when 'a' SIMILAR TO 'ab|cd|efg' then 'bad' else 'ok' end as a
+  from rdb$database;
+
+""",
+ 'expected_stdout': """
+AB           EFG          A
+============ ============ ============
+ok           ok           ok
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select
+    case when 'ab' SIMILAR TO 'ab|cd|efg' then 'ok' else 'bad' end as ab,
+    case when 'efg' SIMILAR TO 'ab|cd|efg' then 'ok' else 'bad' end as efg,
+    case when 'a' SIMILAR TO 'ab|cd|efg' then 'bad' else 'ok' end as a
+  from rdb$database;
+
+""",
+ 'expected_stdout': """
+AB     EFG    A
+====== ====== ======
+ok     ok     ok
+
+"""
+}
+]
+}

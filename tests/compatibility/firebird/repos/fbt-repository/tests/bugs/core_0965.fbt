@@ -1,0 +1,70 @@
+{
+'id': 'bugs.core_0965',
+'qmid': 'bugs.core_965-250',
+'tracker_id': 'CORE-965',
+'title': 'Many aggregate functions within a single select list may cause a server crash',
+'description': 'This test may crash the server.',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """create table tagg (col varchar(30000)) ;
+
+insert into tagg (col) values ('0123456789') ;
+commit ;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select 1 from (
+  select col as f1, min(col) as f2, max(col) as f3
+   from tagg
+  group by 1
+) ;
+""",
+ 'expected_stdout': """
+    CONSTANT
+============
+           1
+"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """create table tagg (col varchar(30000)) ;
+
+insert into tagg (col) values ('0123456789') ;
+commit ;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select 1 from (
+  select col as f1, min(col) as f2, max(col) as f3
+   from tagg
+  group by 1
+) ;
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 54000
+Implementation limit exceeded
+-block size exceeds implementation restriction
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """create table tagg (col varchar(30000)) ;
+
+insert into tagg (col) values ('0123456789') ;
+commit ;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select 1 from (
+  select col as f1, min(col) as f2, max(col) as f3
+   from tagg
+  group by 1
+) ;
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -904
+Implementation limit exceeded
+-block size exceeds implementation restriction
+"""
+}
+]
+}

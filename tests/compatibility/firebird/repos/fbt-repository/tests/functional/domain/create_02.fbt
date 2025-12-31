@@ -1,0 +1,18 @@
+{
+'id': 'functional.domain.create.02',
+'qmid': 'functional.domain.create.create_domain_02',
+'tracker_id': '',
+'title': 'Simple domain creation based INTEGER datatype.',
+'description': 'Simple domain creation based INTEGER datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test INTEGER;
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            INTEGER Nullable
+"""
+}
+]
+}

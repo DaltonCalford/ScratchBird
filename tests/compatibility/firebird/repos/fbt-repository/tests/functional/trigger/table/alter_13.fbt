@@ -1,0 +1,139 @@
+{
+'id': 'functional.trigger.table.alter_13',
+'qmid': 'functional.trigger.alter.alter_trigger_13',
+'tracker_id': '',
+'title': 'ALTER TRIGGER - AS',
+'description': """ALTER TRIGGER - AS
+Try use new prefix in DELETE trigger
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+CREATE TRIGGER
+""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL CONSTRAINT unq UNIQUE,
+                   text VARCHAR(32));
+SET TERM ^;
+CREATE TRIGGER tg FOR test BEFORE DELETE POSITION 1
+AS
+BEGIN
+  old.text='tg';
+END ^
+SET TERM ;^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+ALTER TRIGGER tg AS
+BEGIN
+  new.text='altered trigger';
+END ^
+SET TERM ;^""",
+ 'expected_stderr': """Statement failed, SQLCODE = -206
+
+Dynamic SQL Error
+-SQL error code = -206
+-Column unknown
+-NEW.TEXT
+-At line 3, column 7.
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL CONSTRAINT unq UNIQUE,
+                   text VARCHAR(32));
+SET TERM ^;
+CREATE TRIGGER tg FOR test BEFORE DELETE POSITION 1
+AS
+BEGIN
+END ^
+SET TERM ;^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+ALTER TRIGGER tg AS
+BEGIN
+  new.text='altered trigger';
+END ^
+SET TERM ;^""",
+ 'expected_stderr': """Statement failed, SQLCODE = -206
+Dynamic SQL Error
+-SQL error code = -206
+-Column unknown
+-NEW.TEXT
+-At line 3, column 7"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL CONSTRAINT unq UNIQUE,
+                   text VARCHAR(32));
+SET TERM ^;
+CREATE TRIGGER tg FOR test BEFORE DELETE POSITION 1
+AS
+BEGIN
+END ^
+SET TERM ;^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+ALTER TRIGGER tg AS
+BEGIN
+  new.text='altered trigger';
+END ^
+SET TERM ;^""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42S22
+Dynamic SQL Error
+-SQL error code = -206
+-Column unknown
+-NEW.TEXT
+-At line 3, column 7"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    create table test( id integer not null constraint unq unique, text varchar(32));
+    commit;
+    set term ^;
+    create trigger tg for test before delete position 1 as
+    begin
+    end ^
+    set term ;^
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Since WI-T3.0.0.31733 content of STDERR has been changed: source position of
+    -- problematic statement is displayed now on seperate line, like this:
+    -- "-At line 4, column 1"
+    -- Decided to suppress this line.
+    set term ^;
+    alter trigger tg as
+    begin
+      new.text='altered trigger';
+    end ^
+    set term ;^
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42S22
+    unsuccessful metadata update
+    -ALTER TRIGGER TG failed
+    -Dynamic SQL Error
+    -SQL error code = -206
+    -Column unknown
+    -NEW.TEXT
+    -At line 4, column 5
+  """,
+  'substitutions': [('At line.*','')]
+}
+]
+}

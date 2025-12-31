@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_6294',
+'qmid': None,
+'tracker_id': 'CORE-6294',
+'title': "Negative 128-bit integer constants are not accepted in DEFAULT clause",
+'description':
+ """
+   Checked on 4.0.0.2104
+ """,
+'min_versions': '4.0.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    create domain dm_test as numeric(20,2) default -9999999999999999991; 
+    create table test (x dm_test, y numeric(20,2) default -9999999999999999991);
+    set sqlda_display on;
+    insert into test default values returning x as field_x, y as field_y;
+  """,
+ 'expected_stdout':
+  """
+    01: sqltype: 32752 INT128 Nullable scale: -2 subtype: 1 len: 16
+      : name: X alias: FIELD_X
+    02: sqltype: 32752 INT128 Nullable scale: -2 subtype: 1 len: 16
+      : name: Y alias: FIELD_Y
+
+    FIELD_X                                               -9999999999999999991.00
+    FIELD_Y                                               -9999999999999999991.00
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[ ('^((?!sqltype|FIELD_).)*$',''), ('[ \t]+',' ') ]
+}
+]
+}

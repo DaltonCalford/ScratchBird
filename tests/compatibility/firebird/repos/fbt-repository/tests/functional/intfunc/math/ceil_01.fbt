@@ -1,0 +1,30 @@
+{
+'id': 'functional.intfunc.math.ceil_01',
+'qmid': 'functional.intfunc.math.ceil_01',
+'tracker_id': '',
+'title': 'New Built-in Functions, Firebird 2.1 : CEIL( <number>)',
+'description': """test of CEIL
+Returns a value representing the smallest integer that is greater than or equal to the input argument.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """select CEIL( 2.1) from rdb$database;
+select CEIL( -2.1) from rdb$database;
+
+""",
+ 'expected_stdout': """   CEIL
+=====================
+   3
+   CEIL
+=====================
+   -2
+
+
+
+
+"""
+}
+]
+}

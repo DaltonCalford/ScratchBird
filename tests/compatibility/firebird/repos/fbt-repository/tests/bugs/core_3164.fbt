@@ -1,0 +1,62 @@
+{
+'id': 'bugs.core_3164',
+'qmid': None,
+'tracker_id': 'CORE-3164',
+'title': 'Parameterized requests involving blob fields fails when connected using charset UTF8',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    create table test(fb blob);
+    commit;
+    insert into test values(rpad('', 7, 'foo') );
+    insert into test values(rpad('', 8, 'bar') );
+    commit;
+
+    set list on;
+
+    set term ^;
+    execute block returns(n int) as
+      declare v_blob blob;
+    begin
+
+      for
+          select fb from test
+          into v_blob
+      do
+          begin
+            execute statement ('select octet_length(fb) from test where fb starting with ?') (:v_blob) into n;
+            suspend;
+          end
+    end
+    ^
+    set term ;^
+    -- Confirmed for 2.5.0 (WI-V2.5.0.26074):
+    -- Statement failed, SQLSTATE = 22001
+    -- arithmetic exception, numeric overflow, or string truncation
+    -- -string right truncation
+    -- (instead of output N = 8 for second record)
+    -- Seems to be relatoed to core-3353 // Predicate (blob_field LIKE ?) describes the parameter as VARCHAR(30) rather than as BLOB
+    -- because of SQLDA content:
+    -- In 2.5.0: sqltype: 449 VARYING   Nullable sqlscale: 0 sqlsubtype: 4 sqllen: 28
+    -- In 2.5.1: sqltype: 521 BLOB     Nullable sqlscale: 0 sqlsubtype: 0 sqllen: 8
+  """,
+ 'expected_stdout':
+  """
+    N                               7
+    N                               8
+  """
+}
+]
+}

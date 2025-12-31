@@ -1,0 +1,82 @@
+{
+'id': 'bugs.core_3431',
+'qmid': '',
+'tracker_id': 'CORE-3431',
+'title': "ISQL pads UTF-8 data incorrectly",
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+	set term ^;
+	create or alter procedure p1 returns (
+	  c1 char(5) character set utf8,
+	  c2 char(10) character set utf8,
+	  vc1 varchar(5) character set utf8,
+	  vc2 varchar(10) character set utf8
+	)
+	as
+	begin
+	  vc1 = '12345';
+	  c1 = vc1;
+	  c2 = vc1;
+	  vc2 = vc1;
+	  suspend;
+
+	  vc1 = 'áé';
+	  c1 = vc1;
+	  c2 = vc1;
+	  vc2 = vc1;
+	  suspend;
+
+	  vc1 = '123';
+	  c1 = vc1;
+	  c2 = vc1;
+	  vc2 = vc1;
+	  suspend;
+
+	  vc1 = '12345';
+	  c1 = vc1;
+	  c2 = vc1;
+	  vc2 = vc1;
+	  suspend;
+
+	  vc1 = '1234';
+	  c1 = vc1;
+	  c2 = vc1;
+	  vc2 = vc1;
+	  suspend;
+
+	  vc1 = 'áéíóú';
+	  c1 = vc1;
+	  c2 = vc1;
+	  vc2 = vc1;
+	  suspend;
+	end
+	^
+	set term ;^
+	commit;
+
+	-- Padding in WI-T3.0.0.31767 looks OK: checked output on NotePad++ 6.6.9
+	select * from p1;
+  """,
+ 'expected_stdout': 
+  """
+	C1     C2         VC1    VC2
+	====== ========== ====== ==========
+	12345  12345      12345  12345
+	áé     áé         áé     áé
+	123    123        123    123
+	12345  12345      12345  12345
+	1234   1234       1234   1234
+	áéíóú  áéíóú      áéíóú  áéíóú
+  """
+}
+]
+}

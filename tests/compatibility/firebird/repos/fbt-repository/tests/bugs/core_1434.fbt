@@ -1,0 +1,66 @@
+{
+'id': 'bugs.core_1434',
+'qmid': 'bugs.core_1434',
+'tracker_id': 'CORE-1434',
+'title': 'Incorrect result with EXECUTE STATEMENT and VARCHAR columns',
+'description': 'Last two bytes of VARCHAR columns are lost.',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.0.2',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on; 
+    set term ^;
+    execute block returns (res varchar(31))
+     as
+     begin
+        for execute statement
+            'select cast(rdb$relation_name as varchar(24)) '
+            || ' from rdb$relations r where r.rdb$system_flag = 1 and r.rdb$relation_name NOT starting with ''MON$'''
+            || '  order by rdb$relation_id rows 30'
+            into :res
+        do
+            suspend;
+    end
+    ^
+    set term ;^
+  """,
+ 'expected_stdout':
+  """
+    RES                             RDB$PAGES               
+    RES                             RDB$DATABASE            
+    RES                             RDB$FIELDS              
+    RES                             RDB$INDEX_SEGMENTS      
+    RES                             RDB$INDICES             
+    RES                             RDB$RELATION_FIELDS     
+    RES                             RDB$RELATIONS           
+    RES                             RDB$VIEW_RELATIONS      
+    RES                             RDB$FORMATS             
+    RES                             RDB$SECURITY_CLASSES    
+    RES                             RDB$FILES               
+    RES                             RDB$TYPES               
+    RES                             RDB$TRIGGERS            
+    RES                             RDB$DEPENDENCIES        
+    RES                             RDB$FUNCTIONS           
+    RES                             RDB$FUNCTION_ARGUMENTS  
+    RES                             RDB$FILTERS             
+    RES                             RDB$TRIGGER_MESSAGES    
+    RES                             RDB$USER_PRIVILEGES     
+    RES                             RDB$TRANSACTIONS        
+    RES                             RDB$GENERATORS          
+    RES                             RDB$FIELD_DIMENSIONS    
+    RES                             RDB$RELATION_CONSTRAINTS
+    RES                             RDB$REF_CONSTRAINTS     
+    RES                             RDB$CHECK_CONSTRAINTS   
+    RES                             RDB$LOG_FILES           
+    RES                             RDB$PROCEDURES          
+    RES                             RDB$PROCEDURE_PARAMETERS
+    RES                             RDB$CHARACTER_SETS      
+    RES                             RDB$COLLATIONS          
+  """
+}
+]
+}

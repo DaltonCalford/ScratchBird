@@ -1,0 +1,46 @@
+{
+'id': 'functional.datatypes.decfloat-loose-accuracy',
+'qmid': None,
+'tracker_id': '',
+'title':'Test for preseving accuracy when evaluate sum of values with huge dfference in magnitude.',
+'description': 
+ """
+    Wide range of terms can lead to wrong result of sum.
+    https://en.wikipedia.org/wiki/Decimal_floating_point
+    https://en.wikipedia.org/wiki/Kahan_summation_algorithm
+ """,
+'min_versions': '4.0.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select
+         1
+        +cast(1e33 as decfloat)
+        -cast(1e33 as decfloat)
+        as addition_with_e33
+    from rdb$database;
+
+    select
+         1
+        +cast(1e34 as decfloat)
+        -cast(1e34 as decfloat)
+        as addition_with_e34
+    from rdb$database;
+
+  """,
+  'expected_stdout':
+  """
+    ADDITION_WITH_E33                                                        1
+    ADDITION_WITH_E34                                                     0E+1
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

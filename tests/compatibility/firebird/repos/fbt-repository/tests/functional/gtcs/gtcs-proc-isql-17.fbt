@@ -1,0 +1,60 @@
+{
+'id': 'functional.gtcs.gtcs-proc-isql-17',
+'qmid': None,
+'tracker_id': '',
+'title': 'gtcs-proc-isql-17',
+'description':
+ """
+	Original test see in:
+        https://github.com/FirebirdSQL/fbtcs/blob/master/GTCS/tests/PROC_ISQL_17.script
+	SQL script for creating test database ('gtcs_sp1.fbk') and fill it with some data:
+        https://github.com/FirebirdSQL/fbtcs/blob/master/GTCS/tests/PROCS_QA_INIT_ISQL.script
+    Checked on:
+        4.0.0.1803 SS: 1.822s.
+        3.0.6.33265 SS: 0.849s.
+        2.5.9.27149 SC: 0.313s.
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'gtcs_sp1.fbk',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^;
+    create procedure insert_sno (sno varchar(5)) as
+        declare c int;
+    begin
+        select count(*) from sp where sno = :sno into :c;
+        if (c = 0 ) then
+            insert into sp(sno) values(:sno);
+    end
+    ^
+    set term ;^
+    execute procedure insert_sno 'S10';
+    select p.* from sp p;
+  """,
+ 'expected_stdout':
+  """
+    SNO    PNO             QTY
+    S1     P1              300
+    S1     P3              400
+    S2     P1              300
+    S2     P2              400
+    S4     P4              300
+    S4     P5              400
+    S10    <null>       <null>
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[('={3,}', ''),('[ \t]+', ' ')]
+}
+]
+}

@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_2339',
+'qmid': None,
+'tracker_id': 'CORE-2339',
+'title': 'Incorrect result for the derived expression based on aggregate and computation',
+'description':
+ """
+ 27.07.2021: changed output form using SET LIST ON, added subst. to remove dependency on the number of inner spaces.
+ Checked on:
+    5.0.0.113 SS: 1.025s.
+    5.0.0.88 SS: 1.028s.
+    4.0.1.2539 SS: 0.942s.
+    3.0.8.33476 SS: 2.076s.
+    2.5.9.27152 SC: 0.170s.
+ """,
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    select * from ( select sum(1)*1 as "sum_1_multiplied_for_1" from rdb$database );
+    -- result is NULL instead of 1
+  """,
+ 'expected_stdout':
+  """
+    sum_1_multiplied_for_1 1
+  """,
+  'substitutions':[ ('[ \t]+',' ') ]
+}
+]
+}

@@ -1,0 +1,88 @@
+{
+'id': 'bugs.core_5291',
+'qmid': None,
+'tracker_id': 'CORE-5291',
+'title': 'Error messages differ when regular user tries to RESTORE database, depending on his default role and (perhaps) system privilege USE_GBAK_UTILITY',
+'description':
+ """
+   Works fine on 4.0.0.316.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+    set wng off;
+    create or alter user tmp$c5291_1 password '123' revoke admin role;
+    create or alter user tmp$c5291_2 password '456' revoke admin role;
+    commit;
+    revoke all on all from tmp$c5291_1;
+    revoke all on all from tmp$c5291_2;
+    commit;
+    create role role_for_use_gbak_utility set system privileges to USE_GBAK_UTILITY, SELECT_ANY_OBJECT_IN_DATABASE;
+    commit;
+    grant default role_for_use_gbak_utility to user tmp$c5291_2;
+    commit; 
+  """,
+ 'test_type': 'Python',
+ 'test_script':
+  """
+import os
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_conn.close()
+tmpfbk=os.path.join(context['temp_directory'],'tmp_core_5291.fbk')
+tmpres1=os.path.join(context['temp_directory'],'tmp_core_5291_1.tmp')
+tmpres2=os.path.join(context['temp_directory'],'tmp_core_5291_2.tmp')
+
+runProgram('gbak',['-b', dsn, tmpfbk])
+
+runProgram('gbak',['-se', 'localhost:service_mgr', '-rep', tmpfbk, tmpres1, '-user', 'tmp$c5291_1', '-pas', '123'])
+runProgram('gbak',['-rep', tmpfbk, 'localhost:' + tmpres2, '-user', 'tmp$c5291_1', '-pas', '123'])
+
+runProgram('gbak',['-se', 'localhost:service_mgr', '-rep', tmpfbk, tmpres1, '-user', 'tmp$c5291_2', '-pas', '456'])
+runProgram('gbak',['-rep', tmpfbk, 'localhost:' + tmpres2, '-user', 'tmp$c5291_2', '-pas', '456'])
+
+runProgram('isql',[dsn],'drop user tmp$c5291_1; drop user tmp$c5291_2;')
+
+f_list=[tmpfbk, tmpres1, tmpres2]
+
+for i in range(len(f_list)):
+   if os.path.isfile(f_list[i]):
+       os.remove(f_list[i])
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    gbak: ERROR:no permission for CREATE access to DATABASE
+    gbak: ERROR:    failed to create database
+    gbak: ERROR:    Exiting before completion due to errors
+    gbak:Exiting before completion due to errors
+
+    gbak: ERROR:no permission for CREATE access to DATABASE
+    gbak: ERROR:failed to create database localhost
+    gbak:Exiting before completion due to errors
+
+    gbak: ERROR:no permission for CREATE access to DATABASE
+    gbak: ERROR:    failed to create database
+    gbak: ERROR:    Exiting before completion due to errors
+    gbak:Exiting before completion due to errors
+
+    gbak: ERROR:no permission for CREATE access to DATABASE
+    gbak: ERROR:failed to create database localhost
+    gbak:Exiting before completion due to errors
+  """,
+  'substitutions':[
+      ('gbak: ERROR:no permission for CREATE access to DATABASE.*', 'gbak: ERROR:no permission for CREATE access to DATABASE'),
+      ('gbak: ERROR:    failed to create database.*', 'gbak: ERROR:    failed to create database'),
+      ('gbak: ERROR:failed to create database localhost:.*', 'gbak: ERROR:failed to create database localhost')
+   ]
+}
+]
+}

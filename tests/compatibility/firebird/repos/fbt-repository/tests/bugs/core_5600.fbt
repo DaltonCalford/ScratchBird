@@ -1,0 +1,69 @@
+{
+'id': 'bugs.core_5600',
+'qmid': None,
+'tracker_id': 'CORE-5600',
+'title': 'Invalid blob id when add a new blob column of type text and update another field',
+'description':
+ """
+     Reproduced bug on WI-V3.0.3.32813, WI-T4.0.0.767.
+     All fine on WI-T4.0.0.778.
+ """,
+'min_versions': '3.0.3',
+'versions': [
+{
+ 'firebird_version': '3.0.3',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set bail on;
+    recreate table operation (
+        id bigint not null,
+        name blob sub_type text character set utf8 default '' not null,
+        d_value double precision default 0 not null
+    );
+
+    alter table operation add constraint operation_pk_1 primary key ( id );
+
+    insert into operation(id, name, d_value )
+    select row_number()over() , 'foo', 1
+    from rdb$types 
+    rows 3
+    ;
+    commit;
+
+    alter table operation add surname blob sub_type text character set utf8 default 'bar' not null;
+
+    update operation set id=-id where id=2;
+
+    -- NB: do _not_ put "COMMIT;" here!
+
+    set blob all;
+    set list on;
+    select
+         id
+        ,name as blob_id_1
+        ,surname as blob_id_2
+    from operation where abs(id) in (1,2,3);
+  """,
+  'expected_stdout':
+  """
+    ID                              1
+    foo
+    bar
+
+    ID                              -2
+    foo
+    bar
+
+    ID                              3
+    foo
+    bar
+  """,
+  'expected_stderr':
+  """
+  """,
+  'substitutions':[('BLOB_ID_.*','')]
+}
+]
+}

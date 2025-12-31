@@ -1,0 +1,56 @@
+{
+'id': 'bugs.gh_6740',
+'qmid': None,
+'tracker_id': '',
+'title': 'Allow parenthesized query expression for standard-compliance',
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/6740
+
+    NOTE. Queries which do not use `WITH` clause now can be enclosed in parenthesis,
+    but this leads to reduced number of max parts of UNIONed query, from 255 to 128.
+
+    Checked on 5.0.0.88.
+ """,
+'min_versions': '5.0',
+'versions': [
+{
+ 'firebird_version': '5.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script':
+  """
+# NB! Max limit of unioned-parts is 128 rather than 255!
+########################
+NUM_OF_UNIONED_PARTS=128
+########################
+
+unioned_query = '('
+for i in range(0,NUM_OF_UNIONED_PARTS):
+  unioned_query = ''.join( (unioned_query, 'select %d ' % (i+1) + ('as i ' if i==0 else '') + 'from rdb$database') )
+  if i < NUM_OF_UNIONED_PARTS-1:
+      unioned_query = ''.join( (unioned_query, ' union all (') )
+
+unioned_query = ''.join( (unioned_query, ')' * NUM_OF_UNIONED_PARTS) )
+unioned_query += ';'
+
+#print(unioned_query)
+
+cur = db_conn.cursor()
+cur.execute(unioned_query)
+total = 0
+for r in cur:
+    total += r[0]
+cur.close()
+print(total)
+  """,
+ 'expected_stdout': 
+  """
+    8256
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

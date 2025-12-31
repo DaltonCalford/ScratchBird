@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_1130',
+'qmid': 'bugs.core_1130',
+'tracker_id': '',
+'title': 'Bad optimization -- <procedure> left join <subquery> (or <view>)',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.0.1',
+ 'platform': 'All',
+ 'init_script': """SET TERM ^;
+create procedure p
+  returns (r int)
+as
+begin
+  r = 1;
+  suspend;
+end
+^
+SET TERM ;^
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+select *
+from p
+  left join ( select rdb$relation_id from rdb$relations ) r
+    on p.r = r.rdb$relation_id;
+
+""",
+ 'expected_stdout': """PLAN JOIN (P NATURAL, R RDB$RELATIONS INDEX (RDB$INDEX_1))
+
+           R RDB$RELATION_ID
+============ ===============
+           1               1
+
+"""
+}
+]
+}

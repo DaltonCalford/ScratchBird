@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_3291',
+'qmid': None,
+'tracker_id': 'CORE-3291',
+'title': 'New pseudocolumn (RDB$RECORD_VERSION) to get number of the transaction that created a record version',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set list on;
+    recreate table test(id int);
+    insert into test values(1) returning current_transaction - rdb$record_version as diff_ins;
+    commit;
+    update test set id=-id returning current_transaction - rdb$record_version as diff_upd;
+    commit;
+    delete from test returning sign(current_transaction - rdb$record_version) as diff_del;
+  """,
+ 'expected_stdout':
+  """
+    DIFF_INS                        0
+    DIFF_UPD                        0
+    DIFF_DEL                        1
+  """
+}
+]
+}

@@ -1,0 +1,39 @@
+{
+'id': 'bugs.core_1492',
+'qmid': 'bugs.core_1492',
+'tracker_id': 'CORE-1492',
+'title': "BLOB isn't compatible with [VAR]CHAR in COALESCE",
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    recreate table t (id int primary key, b blob sub_type text );
+    commit;
+
+    insert into t(id, b) values (1, NULL);
+    insert into t(id, b) values (2, 'QWER');
+    commit;
+
+    set list on;
+    select coalesce(b, '') as b_blob
+    from t
+    order by id;
+  """,
+ 'expected_stdout':
+  """
+    B_BLOB                          0:1
+    B_BLOB                          82:1e0
+    QWER
+  """,
+  'substitutions':[('B_BLOB.*','B_BLOB')]
+}
+]
+}

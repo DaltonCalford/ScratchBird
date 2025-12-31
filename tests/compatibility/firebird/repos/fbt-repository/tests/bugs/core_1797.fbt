@@ -1,0 +1,69 @@
+{
+'id': 'bugs.core_1797',
+'qmid': None,
+'tracker_id': 'CORE-1797',
+'title': 'OLD/NEW.RDB$DB_KEY returns incorrect result in triggers',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table t (n integer) ;
+create table x (c char(8) character set octets);
+set term ^ ;
+create trigger t_ai for t after insert
+as
+begin
+  insert into x values (new.rdb$db_key);
+end ^
+set term ; ^
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """insert into t values (1) returning rdb$db_key;
+
+select rdb$db_key from t;
+select * from x;
+
+insert into t values (2) returning rdb$db_key;
+
+select rdb$db_key from t;
+select * from x;
+""",
+ 'expected_stdout': """
+DB_KEY
+================
+8000000001000000
+
+
+DB_KEY
+================
+8000000001000000
+
+
+C
+================
+8000000001000000
+
+
+DB_KEY
+================
+8000000002000000
+
+
+DB_KEY
+================
+8000000001000000
+8000000002000000
+
+
+C
+================
+8000000001000000
+8000000002000000
+
+"""
+}
+]
+}

@@ -1,0 +1,18 @@
+{
+'id': 'functional.domain.create.21',
+'qmid': 'functional.domain.create.create_domain_21',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - NCHAR',
+'description': 'Simple domain creation based on NCHAR datatype.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test NCHAR(32767);
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            CHAR(32767) CHARACTER SET ISO8859_1 Nullable
+"""
+}
+]
+}

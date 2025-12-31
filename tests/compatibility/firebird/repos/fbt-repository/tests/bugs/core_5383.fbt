@@ -1,0 +1,157 @@
+{
+'id': 'bugs.core_5383',
+'qmid': None,
+'tracker_id': 'CORE-5383',
+'title': 'Dependencies in Package not recognised',
+'description':
+ """
+   Confirmed bug on: 3.0.2.32620 and 4.0.0.420
+   WOrks fine on 3.0.2.32625 and 4.0.0.440
+ """,
+'min_versions': '3.0.2',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+
+    recreate package pg_03 as begin end;
+    recreate package pg_02 as begin end;
+    recreate package pg_01 as begin end;
+    commit;
+
+    recreate table test01 (id1 int primary key, f01 int);
+    recreate table test02 (id2 int primary key, f02 int);
+    recreate table test03 (id3 int primary key, f03 int);
+    commit;
+
+    insert into test01(id1, f01) values(1, 111);
+    insert into test02(id2, f02) values(1, 222);
+    insert into test03(id3, f03) values(1, 333);
+    commit;
+
+    set term ^;
+    create package body pg_01 as
+    begin
+        procedure p01(i_x int) returns (o_y int) as
+        begin
+            --  dependencies is created for test01 
+            select id1 from test01 into :o_y;
+        end
+    end
+    ^
+
+    create package body pg_02 as
+    begin
+        procedure p01(i_x int) returns (o_y int)  as
+        begin
+            --  dependencies is created for test01 and test02 and test03 
+            select id1 from test01 into :o_y;
+            select id2 from test02 into :o_y;
+            select id3 from test03 into :o_y;
+        end
+    end
+    ^
+
+    recreate package pg_03 as 
+    begin 
+      procedure p01(i_x int) returns (o_y int);
+      procedure p02(i_x int) returns (o_y int);
+      procedure p03(i_x int) returns (o_y int);
+    end
+    ^
+
+    create package body pg_03
+    as
+    begin
+        procedure p01(i_x int) returns (o_y int) as
+        begin
+            -- no dependencies is created !!! 
+            select f01 from test01 where id1 = :i_x into :o_y;
+        end
+        
+        procedure p02(i_x int) returns (o_y int) as
+        begin
+            -- no dependencies is created !!! 
+            select f02 from test02 where id2 = :i_x into :o_y;
+        end
+        
+        procedure p03(i_x int) returns (o_y int) as
+        begin
+            --  dependencies is only created for test03 
+            select f03 from test03 where id3 = :i_x into :o_y;
+        end
+    end
+    ^
+    set term ;^
+    commit;
+
+    drop package pg_01;
+    drop package pg_02;
+
+    -- Following two drops PASSED WITHOUT ERROR on WI-V3.0.2.32620 and WI-T4.0.0.420 (BUG!).
+    -- Expected STDERR:
+    --   Statement failed, SQLSTATE = 42000
+    --   unsuccessful metadata update
+    --   -cannot delete
+    --   -COLUMN TEST01.ID1 (TEST02,ID2)
+    --   -there are 1 dependencies
+    drop table test01;
+    drop table test02;
+    commit;
+
+    set count on;
+    select distinct rdb$dependent_name, rdb$depended_on_name from rdb$dependencies d;
+
+    -- Following two statements issued on WI-V3.0.2.32620 and WI-T4.0.0.420:
+    --   Statement failed, SQLSTATE = 2F000
+    --   Error while parsing procedure PG_03.P01's (PG_03.P02's) BLR
+    --   -table TEST01 (TEST02) is not defined
+    -- Expected STDOUT: 
+    --   O_Y = 111 and O_Y = 222
+    execute procedure pg_03.p01(1);
+    execute procedure pg_03.p02(1);
+
+    execute procedure pg_03.p03(1);
+  """,
+  'expected_stdout':
+  """
+
+     RDB$DEPENDENT_NAME              PG_03                                                                                        
+     RDB$DEPENDED_ON_NAME            TEST01                                                                                       
+
+     RDB$DEPENDENT_NAME              PG_03                                                                                        
+     RDB$DEPENDED_ON_NAME            TEST02                                                                                       
+
+     RDB$DEPENDENT_NAME              PG_03                                                                                        
+     RDB$DEPENDED_ON_NAME            TEST03                                                                                       
+
+     Records affected: 3
+
+     O_Y                             111
+     O_Y                             222
+     O_Y                             333
+  """,
+  'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -cannot delete
+    -COLUMN TEST01.ID1
+    -there are 1 dependencies
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -cannot delete
+    -COLUMN TEST02.ID2
+    -there are 1 dependencies
+  """
+}
+]
+}

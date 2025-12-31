@@ -1,0 +1,25 @@
+{
+'id': 'functional.index.create.07',
+'qmid': 'functional.index.create.create_index_07',
+'tracker_id': '',
+'title': 'CREATE INDEX - Multi column',
+'description': """CREATE INDEX - Multi column
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+SHOW INDEX""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE t( a INTEGER, b INT, c INT, d INT);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE INDEX test ON t(a,b,c,d);
+SHOW INDEX test;""",
+ 'expected_stdout': 'TEST INDEX ON T(A, B, C, D)'
+}
+]
+}

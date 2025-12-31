@@ -1,0 +1,64 @@
+{
+'id': 'bugs.core_4067',
+'qmid': None,
+'tracker_id': 'CORE-4067',
+'title': 'Creating external function (udf) to not existing dll - and then procedure with it - crash server',
+'description':
+ """
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """\
+import os
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_conn.close()
+
+tmpfdb_1=os.path.join(context['temp_directory'],'tmp_4067_1.fdb')
+
+sql_chk=\
+'''
+    set sql dialect 1;
+    create database 'localhost:%(tmpfdb_1)s' page_size 4096 default character set win1251 collation win1251;
+    set list on;
+    select mon$sql_dialect as x from mon$database;
+''' % locals()
+
+f_list=[tmpfdb_1]
+
+# Cleanup BEFORE running script:
+################
+
+for i in range(len(f_list)):
+    if os.path.isfile(f_list[i]):
+        os.remove(f_list[i])
+
+runProgram('isql',['-q'], sql_chk)
+
+# Final cleanup:
+################
+
+for i in range(len(f_list)):
+    if os.path.isfile(f_list[i]):
+        os.remove(f_list[i])
+
+  """,
+ 'expected_stdout': 
+  """
+    X                               1
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

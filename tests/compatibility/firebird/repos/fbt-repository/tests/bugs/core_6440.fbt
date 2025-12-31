@@ -1,0 +1,66 @@
+{
+'id': 'bugs.core_6440',
+'qmid': '',
+'tracker_id': 'CORE-6440',
+'title': 'Expression indexes containing COALESCE inside cannot be matched by the optimizer after migration from v2.5 to v3.0',
+'description':
+  """
+    Confirmed bug on 3.0.7.33388 (wrong plans of queris specified in the ticked; need to RESTORE database from 2.5 on 3.x).
+    Test uses .fbk that was created on FB 2.5.9, file: core6440-ods11.fbk
+
+    Checked on 4.0.0.2269; 3.0.8.33390 -- all OK.
+  """,
+'versions': [
+{
+ 'firebird_version': '3.0.8',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core6440-ods11.fbk',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set planonly;
+    --set echo on;
+
+    --Uses a proper index: PLAN (TEST INDEX (PK_TEST))
+    select * from test where field_1 = 1;
+
+
+
+    --Uses a proper index: PLAN (TEST INDEX (TEST_IDX4))
+    select * from test where (UPPER(FIELD_2)) = 'TEST1';
+
+
+
+    --Doesn't uses a proper index: PLAN (TEST NATURAL)
+    select * from test where (UPPER(COALESCE(FIELD_2,''))) = 'TEST1';
+
+
+
+    --Uses PLAN (TEST INDEX (TEST_IDX2))
+    select * from test where (UPPER(FIELD_2)||UPPER(FIELD_3)) = 'TEST1TEST1_1';
+
+
+
+    --Doesn't uses a proper index: PLAN (TEST NATURAL)
+    select * from test where (UPPER(COALESCE(FIELD_2,''))||UPPER(COALESCE(FIELD_3,''))) = 'TEST1TEST1_1';
+
+  """,
+ 'expected_stdout':
+  """
+    PLAN (TEST INDEX (PK_TEST))
+
+    PLAN (TEST INDEX (TEST_IDX4))
+
+    PLAN (TEST INDEX (TEST_IDX3))
+
+    PLAN (TEST INDEX (TEST_IDX2))
+
+    PLAN (TEST INDEX (TEST_IDX1))
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

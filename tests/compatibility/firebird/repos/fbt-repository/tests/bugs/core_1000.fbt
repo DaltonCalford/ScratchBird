@@ -1,0 +1,46 @@
+{
+'id': 'bugs.core_1000',
+'qmid': None,
+'tracker_id': 'CORE-1000',
+'title': 'Incorrect results when left join on subquery with constant column',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE A (
+    ID INTEGER
+);
+
+CREATE TABLE B (
+    ID INTEGER
+);
+
+insert into A (id) values (1);
+insert into A (id) values (2);
+insert into A (id) values (3);
+
+insert into B (id) values (1);
+insert into B (id) values (2);
+
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select a.id, b.id, bexists
+from a
+  left join (select id, 1 bexists from b) b on (a.id=b.id);
+
+""",
+ 'expected_stdout': """
+          ID           ID      BEXISTS
+============ ============ ============
+           1            1            1
+           2            2            1
+           3       <null>       <null>
+
+"""
+}
+]
+}

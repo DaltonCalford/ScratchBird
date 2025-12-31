@@ -1,0 +1,42 @@
+{
+'id': 'bugs.core_4005',
+'qmid': None,
+'tracker_id': 'CORE-4005',
+'title': 'wrong error message with recursive CTE',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    with recursive
+    c1 as (
+        select 0 as i from rdb$database
+        union all
+        select i + 1 from c1 where i < 1
+    )
+    ,c2 as (
+        select i, 0 as j from c1
+        union all
+        select j * 10 + c1.i, c2.j + 1
+        from c1 c1
+        join c2 c2 on c2.j < 1
+    )
+    select count(i) as cnt from c2
+    ;
+  """,
+ 'expected_stdout': 
+  """
+    CNT                             6
+  """
+}
+]
+}

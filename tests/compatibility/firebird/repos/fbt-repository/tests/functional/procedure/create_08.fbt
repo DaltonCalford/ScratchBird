@@ -1,0 +1,70 @@
+{
+'id': 'functional.procedure.create.08',
+'qmid': 'functional.procedure.create.create_procedure_08',
+'tracker_id': '',
+'title': 'CREATE PROCEDURE - COMMIT in SP is not alowed',
+'description': """CREATE PROCEDURE - COMMIT in SP is not alowed
+
+Dependencies:
+CREATE DATABASE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE PROCEDURE test RETURNS(id INT)AS
+BEGIN
+  COMMIT;
+END ^
+SET TERM ;^
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -104
+
+Dynamic SQL Error
+-SQL error code = -104
+-Token unknown - line 3, char 3
+-COMMIT
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE PROCEDURE test RETURNS(id INT)AS
+BEGIN
+  COMMIT;
+END ^
+SET TERM ;^
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -104
+
+Dynamic SQL Error
+-SQL error code = -104
+-Token unknown - line 3, column 3
+-COMMIT
+"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE PROCEDURE test RETURNS(id INT)AS
+BEGIN
+  COMMIT;
+END ^
+SET TERM ;^
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+
+Dynamic SQL Error
+-SQL error code = -104
+-Token unknown - line 3, column 3
+-COMMIT
+"""
+}
+]
+}

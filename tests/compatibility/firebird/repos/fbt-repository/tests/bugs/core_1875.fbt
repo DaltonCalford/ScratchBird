@@ -1,0 +1,69 @@
+{
+'id': 'bugs.core_1875',
+'qmid': None,
+'tracker_id': 'CORE-1875',
+'title': 'Error on script with current_date',
+'description':
+ """
+    Confirmed bug on: 2.1.0.17798, result was:
+    ===
+        Statement failed, SQLCODE = -902
+        Unable to complete network request to host "localhost".
+        -Error reading data from the connection.
+        Connection rejected by remote interface
+    ===
+    Works fine on: 2.1.1.17910.
+    Also checked on:
+        build 2.5.9.27107: OK, 0.391s.
+        build 3.0.4.32924: OK, 2.610s.
+        build 4.0.0.916: OK, 1.515s.
+    PS. 
+    It seems that bug was somehow related to "if" statement. For example, following statements:
+        select 1 from new_table nt where nt.data_reg = cast(current_date as date) into c;
+    or:
+        select 1 from rdb$database
+        where not exists(
+            select 1 from new_table nt where nt.data_reg = cast(current_date as date)
+        )
+        into c;
+    -- finished without errors.
+ """,
+'min_versions': '2.1.0',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+    recreate table new_table (
+        data_reg timestamp -- can be used in this test instead of type 'date' (result the same: 2.1.0 crashes)
+    );
+    commit;
+  """,
+ 'test_script':
+  """
+    set list on;
+    set term ^;
+    execute block returns(msg varchar(10)) as
+        declare c int;
+    begin
+        if ( exists( select 1 from new_table nt where nt.data_reg = cast(current_date as date) ) ) then
+            begin
+            end
+        msg = 'Done';
+        suspend;
+    end
+    ^
+    set term ;^
+  """,
+ 'expected_stdout': 
+  """
+    MSG                             Done
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

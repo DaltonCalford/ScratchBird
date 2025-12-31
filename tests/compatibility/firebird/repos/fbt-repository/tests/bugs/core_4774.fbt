@@ -1,0 +1,76 @@
+{
+'id': 'bugs.core_4774',
+'qmid': None,
+'tracker_id': 'CORE-4774',
+'title': 'Table aliasing is unnecessary required when doing UPDATE ... RETURNING RDB$ pseudo-columns',
+'description':
+"""
+    NB. After fix #6815 execution plan contains 'Local_Table' (FB 5.0+) for DML with RETURNING clauses:
+        "When such a statement is executed, Firebird should execute the statement to completion
+         and collect all requested data in a type of temporary table, once execution is complete,
+         fetches are done against this temporary table"
+
+    See https://github.com/FirebirdSQL/firebird/issues/6815 for details:
+""",
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    recreate table t(id int, x int);
+    commit;
+    insert into t values(1, 100);
+    commit;
+    set planonly;
+    insert into t(id, x) values(2, 200) returning rdb$db_key;
+    delete from t where id=1 returning rdb$db_key;
+    update t set x=-x where id=2 returning rdb$db_key;
+    update t set x=-x where id=2 returning rdb$record_version; 
+  """,
+ 'expected_stdout':
+  """
+    PLAN (T NATURAL)
+    PLAN (T NATURAL)
+    PLAN (T NATURAL)
+  """
+},
+# ---------------------------- 5.x ------------------------------
+{
+ 'firebird_version': '5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    recreate table t(id int, x int);
+    commit;
+    insert into t values(1, 100);
+    commit;
+    set planonly;
+    insert into t(id, x) values(2, 200) returning rdb$db_key;
+    delete from t where id=1 returning rdb$db_key;
+    update t set x=-x where id=2 returning rdb$db_key;
+    update t set x=-x where id=2 returning rdb$record_version; 
+  """,
+ 'expected_stdout':
+  """
+    PLAN (T NATURAL)
+    PLAN (Local_Table NATURAL)
+
+    PLAN (T NATURAL)
+    PLAN (Local_Table NATURAL)
+
+    PLAN (T NATURAL)
+    PLAN (Local_Table NATURAL)
+  """
+}
+]
+}

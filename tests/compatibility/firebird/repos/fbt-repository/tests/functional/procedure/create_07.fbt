@@ -1,0 +1,93 @@
+{
+'id': 'functional.procedure.create.07',
+'qmid': 'functional.procedure.create.create_procedure_07',
+'tracker_id': '',
+'title': 'CREATE PROCEDURE - try create SP with same name',
+'description': """CREATE PROCEDURE - try create SP with same name
+
+Dependencies:
+CREATE DATABASE
+CREATE PROCEDURE
+""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """SET TERM ^;
+CREATE PROCEDURE test RETURNS(id INT)AS
+BEGIN
+  ID=4;
+  SUSPEND;
+END ^
+SET TERM ;^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE PROCEDURE test RETURNS(id INT)AS
+BEGIN
+  ID=5;
+  SUSPEND;
+END ^
+SET TERM ;^
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+
+unsuccessful metadata update
+-Procedure TEST already exists
+"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """SET TERM ^;
+CREATE PROCEDURE test RETURNS(id INT)AS
+BEGIN
+  ID=4;
+  SUSPEND;
+END ^
+SET TERM ;^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE PROCEDURE test RETURNS(id INT)AS
+BEGIN
+  ID=5;
+  SUSPEND;
+END ^
+SET TERM ;^
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+
+unsuccessful metadata update
+-Procedure TEST already exists
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """SET TERM ^;
+CREATE PROCEDURE test RETURNS(id INT)AS
+BEGIN
+  ID=4;
+  SUSPEND;
+END ^
+SET TERM ;^
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE PROCEDURE test RETURNS(id INT)AS
+BEGIN
+  ID=5;
+  SUSPEND;
+END ^
+SET TERM ;^
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-CREATE PROCEDURE TEST failed
+-Procedure TEST already exists
+"""
+}
+]
+}

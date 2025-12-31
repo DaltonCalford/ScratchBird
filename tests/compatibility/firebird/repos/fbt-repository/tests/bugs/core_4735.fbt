@@ -1,0 +1,48 @@
+{
+'id': 'bugs.core_4735',
+'qmid': None,
+'tracker_id': 'CORE-4735',
+'title': "Expression 'where bool_field IS true | false' should also use index as 'where bool_field = true | false' (if such index exists)",
+'description':
+ """
+    Changed expected PLAN of execution after dimitr's letter 28.01.2019 17:28: 
+    'is NOT <bool>' and 'is distinct from <bool>' should use  PLAN NATURAL.
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    recreate table test(x boolean, unique(x) using index test_x);
+    commit;
+
+    set plan on;
+    select 1 from test where x = true ;
+    select 1 from test where x is true ;
+    select 0 from test where x = false ;
+    select 0 from test where x is false ;
+    select 1 from test where x is not true ; -- this must have plan NATURAL, 26.01.2019
+    select 1 from test where x is distinct from true ; -- this must have plan NATURAL, 26.01.2019
+    select 1 from test where x is not false ; -- this must have plan NATURAL, 26.01.2019
+    select 1 from test where x is distinct from false ; -- this must have plan NATURAL, 26.01.2019
+  """,
+ 'expected_stdout':
+  """
+    PLAN (TEST INDEX (TEST_X))
+    PLAN (TEST INDEX (TEST_X))
+    PLAN (TEST INDEX (TEST_X))
+    PLAN (TEST INDEX (TEST_X))
+    PLAN (TEST NATURAL)
+    PLAN (TEST NATURAL)
+    PLAN (TEST NATURAL)
+    PLAN (TEST NATURAL)
+  """
+}
+]
+}

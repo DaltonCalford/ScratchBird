@@ -1,0 +1,31 @@
+{
+'id': 'functional.dml.update_or_insert.01',
+'qmid': 'functional.dml.update_or_insert.update_or_insert_01',
+'tracker_id': '',
+'title': 'UPDATE OR INSERT',
+'description': 'Simple UPDATE OR INSERT',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': 'CREATE TABLE TMPTEST( id INTEGER , name VARCHAR(20) , PRIMARY KEY(id));',
+ 'test_type': 'ISQL',
+ 'test_script': """UPDATE OR INSERT INTO TMPTEST(id, name) VALUES (1,'bob' );
+select name from TMPTEST where id =1;
+UPDATE OR INSERT INTO TMPTEST(id, name) VALUES (1,'ivan' );
+select name from TMPTEST where id =1;
+""",
+ 'expected_stdout': """
+NAME
+====================
+bob
+
+
+NAME
+====================
+ivan
+
+"""
+}
+]
+}

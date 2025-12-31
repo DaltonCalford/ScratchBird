@@ -1,0 +1,900 @@
+{
+'id': 'bugs.core_2650',
+'qmid': None,
+'tracker_id': 'CORE-2650',
+'title': 'Improve sorting performance when long VARCHARs are involved',
+'description':
+ """
+   Test verifies trivial queries with persistent and computed columns, predicates, views,
+   expressions without reference to any column and datatypes which have no symmetrical
+   transformation from value to a key (decfloat, time-with-timezone and varchar with non-default collation).
+   
+   It is supposed that default value of InlineSortThreshold parameter is 1000.
+   No changes in the firebird.conf reuired.
+
+   This test most probably will be added by some new examples later.
+   
+   Thanks to dimitr for lot of explanations (e-mail discussion was 28.12.2020).
+
+   Checked on 4.0.0.2303 SS/CS.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set bail on;
+    recreate view v_unioned as select 1 id from rdb$database;
+    commit;
+
+    recreate table test(
+        id int
+        ,f01 int
+        ,f02 int
+        ,txt_short varchar(998)
+        ,txt_broad varchar(999)
+        ,computed_id_dup computed by( id*2 )
+        ,computed_ts_dup computed by ( txt_short || txt_short )
+        ,computed_tb_dup computed by ( txt_broad || txt_broad )
+        ,computed_guid   computed by ( lpad('', 2000, uuid_to_char(gen_uuid()) ) )
+        ,computed_ts_left computed by( left(txt_short,10) ) 
+        ,computed_tb_left computed by( left(txt_broad,10) ) 
+    );
+    commit;
+
+    set plan on;
+    set explain on;
+    -- set echo on;
+
+    --##########################  p e r s i s t e n t    c o l u m n s   ##################################
+
+    -- Must not use refetch because length of non-key column is less than default threshold:
+    select txt_short from test a01 order by id;
+
+    -- Must USE refetch because length of non-key column is greater than default threshold:
+    select txt_broad from test a02 order by id;
+    
+    -- MUST use refethc regardless on length of column because 'ROWS <N>' presents (!):
+    select txt_short from test a03 order by id rows 1;
+
+
+    -- ##########################  c o m p u t e d    c o l u m n s   #####################################
+
+    -- does NOT use refetch because computed column is based on txt_short which has length < threshold:
+    select id, computed_ts_dup from test order by id;
+
+    -- must use refetch because computed column is based on txt_broad which has length >= threshold:
+    select id, computed_tb_dup from test order by id;
+
+    -- ######################  p r e d i c a t e s,   e x c e p t    E X I S T S   ########################
+
+    select id from test a04 where '' in (select txt_short from test x04 where txt_short = '' order by id) ;
+
+    select id from test a05 where '' in (select txt_broad from test x05 where txt_broad = '' order by id) ;
+
+
+    select id from test a06 where '' not in (select txt_short from test x06 where txt_short>'' order by id) ;
+
+    select id from test a07 where '' not in (select txt_broad from test x07 where txt_broad>'' order by id) ;
+
+
+    select id from test a08 where '' > all (select id from test x08 where txt_short>'' order by id) ;
+
+    select id from test a09 where '' > all (select id from test x09 where txt_broad>'' order by id) ;
+
+
+    select id from test a10 where '' <> any (select id from test x10 where txt_short>'' order by id) ;
+
+    select id from test a11 where '' <> any (select id from test x11 where txt_broad>'' order by id) ;
+
+    -- ########################################   e x i s t s   ###########################################
+    
+    -- Predicate "EXISTS" must turn on refetching regardless of record length, but only when "WHERE" has column which not present in "ORDER BY"
+    select id,txt_short from test a12 where exists(select 1 from test x12 where txt_short>'' order by id) ; -- MUST use refetch
+
+    -- does NOT use refetch: "order by" list contains the single element: ID, and it is the same field that 'computed_id_dup' relies on.
+    select id,txt_short from test a13 where exists(select 1 from test x13 where computed_id_dup > 0  order by id) ;
+
+    -- ### NB ### Must use refetch! See letter from dimitr 28.12.2020 14:49, reply for:
+    -- "select id,txt_short from test a14 where exists(select 1 from test x14 where computed_ts_dup > '' order by computed_ts_left);"
+    -- Sort procedure will get:
+    -- a KEY = result of evaluating 'computed_id_dup';
+    -- a VAL = value of the field 'ID' which is base for computing 'computed_id_dup'
+    -- Thus sorter will have a field which not equals to a key, which leads to refetch.
+    select id,txt_short from test a14 where exists(select 1 from test x14 where computed_id_dup > 0  order by computed_id_dup ) ;
+
+    -- does NOT use refetch: all persistent columns from "WHERE" expr (f01, f02) belongs to "order by" list:
+    select id,txt_short from test a15 where exists(select 1 from test x15 where f02>0 and f01>0 order by f01, f02);
+
+    -- must use refetch: one of coulmns from "where" expr (id) does not belong to "order by" list:
+    select id,txt_short from test a16 where exists(select 1 from test x16 where id>0 and f01>0 order by f01, f02);
+
+    -- must use refetch: computed column in "where" expr does not belong to "order by" list:
+    select id,txt_short from test a17 where exists(select 1 from test x17 where computed_id_dup > 0 order by f01);
+
+    -- does NOT use refetch: computed column "computed_guid" does not rely on any other columns in the table:
+    select id,txt_short from test a18 where exists(select 1 from test x18 where computed_guid > '' order by f01);
+
+
+    -- must use refetch both in anchor and recursive parts:
+    with recursive
+    r as (
+        select a19.id, a19.txt_short
+        from test a19
+        where not exists(select * from test x where x.txt_short < a19.txt_short order by id)
+        UNION ALL
+        select i.id, i.txt_short
+        from test i
+        join r on i.id > r.id
+        and not exists( select * from test x where x.txt_short between r.txt_short and i.txt_short order by id )
+    )
+    select * from r;
+    commit;
+
+
+    -- ######################################   v i e w s    ###########################################
+
+    recreate view v_unioned as
+    select id, txt_broad from test
+    union all
+    select -1, 'qwerty' 
+    from rdb$database rows 0;
+
+    -- does NOT use refetch because view is based on UNION:
+    select txt_broad from v_unioned v01 order by id;
+    commit;
+    
+    -- #################################   e x p r e s s i o n s    #####################################
+
+    -- must use refetch because expression is based on column which has length >= threshold
+    -- (even if final length of expression result is much less than threshold):
+    select left(txt_broad, 50) as txt from test a21 order by id;
+
+    -- does NOT use refetch because expression is based on column which has length < threshold
+    -- (even if final length of expression result is much bigger than threshold):
+    select left( txt_short || txt_short, 2000) as txt from test a22 order by id;
+    commit;
+
+    
+    -- ###########  n o n - s y m m e t r i c a l     k e y - v a l u e     d a t a t y p e s   #########
+
+    -- Following data types in common case have no ability to get column value from a key:
+    -- * International type text has a computed key
+    -- * Different decimal float values sometimes have same keys
+    -- * Date/time with time zones too.
+    -- Because of this, a field of any such datatype that is specified in "order by" list, must also be involved
+    -- in the non-key fields and sort will deal with such "concatenated" list.
+    -- If total length of such list not exceeds InlineSortThreshold then sort will be done without refetch.
+    -- Otherwise refetch will occur.
+    -- See src\jrd\opt.cpp, OPT_gen_sort() and explanation fro dimitr: letter 28.12.2020 16:44.
+
+    recreate table test_ns_01(
+        id decfloat
+        ,txt_short varchar(983)
+    );
+
+    recreate table test_ns_02(
+        id decfloat
+        ,txt_short varchar(982)
+    );
+
+    select * from test_ns_01 a23 order by id; -- must use refetch
+
+    select * from test_ns_02 a24 order by id; -- must NOT use refetch
+
+    commit;
+
+    ------------------------------------------
+    recreate table test_ns_03(
+        id time with time zone
+        ,txt_short varchar(991)
+    );
+
+    recreate table test_ns_04(
+        id time with time zone
+        ,txt_short varchar(990)
+    );
+
+    select * from test_ns_03 order by id; -- must use refetch
+
+    select * from test_ns_04 order by id; -- must NOT use refetch
+    ------------------------------------------
+
+    recreate table test_ns_05(
+        id varchar(1) character set utf8 collate unicode_ci_ai
+        ,txt_short varchar(993)
+    );
+
+    recreate table test_ns_06(
+        id varchar(1) character set utf8 collate unicode_ci_ai
+        ,txt_short varchar(992)
+    );
+
+    select * from test_ns_05 order by id; -- must use refetch
+
+    select * from test_ns_06 order by id; -- must NOT use refetch
+
+
+  """,
+ 'expected_stdout':
+  """
+    Select Expression
+        -> Sort (record length: 1036, key length: 8)
+            -> Table "TEST" as "A01" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Table "TEST" as "A02" Full Scan
+
+    Select Expression
+        -> First N Records
+            -> Refetch
+                -> Sort (record length: 28, key length: 8)
+                    -> Table "TEST" as "A03" Full Scan
+
+    Select Expression
+        -> Sort (record length: 1036, key length: 8)
+            -> Table "TEST" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Table "TEST" Full Scan
+
+    Select Expression
+        -> Filter
+            -> Sort (record length: 1036, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "X04" Full Scan
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "A04" Full Scan
+
+    Select Expression
+        -> Filter
+            -> Refetch
+                -> Sort (record length: 28, key length: 8)
+                    -> Filter
+                        -> Table "TEST" as "X05" Full Scan
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "A05" Full Scan
+
+    Select Expression
+        -> Sort (record length: 1036, key length: 8)
+            -> Filter
+                -> Table "TEST" as "X06" Full Scan
+    Select Expression
+        -> Sort (record length: 1036, key length: 8)
+            -> Filter
+                -> Table "TEST" as "X06" Full Scan
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "A06" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "X07" Full Scan
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "X07" Full Scan
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "A07" Full Scan
+
+    Select Expression
+        -> Filter
+            -> Sort (record length: 1036, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "X08" Full Scan
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "A08" Full Scan
+
+    Select Expression
+        -> Filter
+            -> Refetch
+                -> Sort (record length: 28, key length: 8)
+                    -> Filter
+                        -> Table "TEST" as "X09" Full Scan
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "A09" Full Scan
+
+    Select Expression
+        -> Filter
+            -> Sort (record length: 1036, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "X10" Full Scan
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "A10" Full Scan
+
+    Select Expression
+        -> Filter
+            -> Refetch
+                -> Sort (record length: 28, key length: 8)
+                    -> Filter
+                        -> Table "TEST" as "X11" Full Scan
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "A11" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "X12" Full Scan
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "A12" Full Scan
+
+    Select Expression
+        -> Sort (record length: 28, key length: 8)
+            -> Filter
+                -> Table "TEST" as "X13" Full Scan
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "A13" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 36, key length: 12)
+                -> Filter
+                    -> Table "TEST" as "X14" Full Scan
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "A14" Full Scan
+
+    Select Expression
+        -> Sort (record length: 36, key length: 16)
+            -> Filter
+                -> Table "TEST" as "X15" Full Scan
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "A15" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 36, key length: 16)
+                -> Filter
+                    -> Table "TEST" as "X16" Full Scan
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "A16" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "X17" Full Scan
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "A17" Full Scan
+
+    Select Expression
+        -> Sort (record length: 28, key length: 8)
+            -> Filter
+                -> Table "TEST" as "X18" Full Scan
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "A18" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "R X" Full Scan
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "R X" Full Scan
+    Select Expression
+        -> Recursion
+            -> Filter
+                -> Table "TEST" as "R A19" Full Scan
+            -> Filter
+                -> Table "TEST" as "R I" Full Scan
+
+    Select Expression
+        -> Sort (record length: 1052, key length: 8)
+            -> First N Records
+                -> Union
+                    -> Table "TEST" as "V01 TEST" Full Scan
+                    -> Table "RDB$DATABASE" as "V01 RDB$DATABASE" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Table "TEST" as "A21" Full Scan
+
+    Select Expression
+        -> Sort (record length: 1036, key length: 8)
+            -> Table "TEST" as "A22" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 44, key length: 24)
+                -> Table "TEST_NS_01" as "A23" Full Scan
+
+    Select Expression
+        -> Sort (record length: 1052, key length: 24)
+            -> Table "TEST_NS_02" as "A24" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 36, key length: 12)
+                -> Table "TEST_NS_03" Full Scan
+
+    Select Expression
+        -> Sort (record length: 1036, key length: 12)
+            -> Table "TEST_NS_04" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 36, key length: 12)
+                -> Table "TEST_NS_05" Full Scan
+
+    Select Expression
+        -> Sort (record length: 1036, key length: 12)
+            -> Table "TEST_NS_06" Full Scan
+
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+
+,# ---------------------------- FB 5.x ------------------------------
+
+{
+ 'firebird_version': '5.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set bail on;
+    recreate view v_unioned as select 1 id from rdb$database;
+    commit;
+
+    recreate table test(
+        id int
+        ,f01 int
+        ,f02 int
+        ,txt_short varchar(998)
+        ,txt_broad varchar(999)
+        ,computed_id_dup computed by( id*2 )
+        ,computed_ts_dup computed by ( txt_short || txt_short )
+        ,computed_tb_dup computed by ( txt_broad || txt_broad )
+        ,computed_guid   computed by ( lpad('', 2000, uuid_to_char(gen_uuid()) ) )
+        ,computed_ts_left computed by( left(txt_short,10) ) 
+        ,computed_tb_left computed by( left(txt_broad,10) ) 
+    );
+    commit;
+
+    set plan on;
+    set explain on;
+    -- set echo on;
+
+    --##########################  p e r s i s t e n t    c o l u m n s   ##################################
+
+    -- Must not use refetch because length of non-key column is less than default threshold:
+    select txt_short from test a01 order by id;
+
+    -- Must USE refetch because length of non-key column is greater than default threshold:
+    select txt_broad from test a02 order by id;
+    
+    -- MUST use refethc regardless on length of column because 'ROWS <N>' presents (!):
+    select txt_short from test a03 order by id rows 1;
+
+
+    -- ##########################  c o m p u t e d    c o l u m n s   #####################################
+
+    -- does NOT use refetch because computed column is based on txt_short which has length < threshold:
+    select id, computed_ts_dup from test order by id;
+
+    -- must use refetch because computed column is based on txt_broad which has length >= threshold:
+    select id, computed_tb_dup from test order by id;
+
+    -- ######################  p r e d i c a t e s,   e x c e p t    E X I S T S   ########################
+
+    select id from test a04 where '' in (select txt_short from test x04 where txt_short = '' order by id) ;
+
+    select id from test a05 where '' in (select txt_broad from test x05 where txt_broad = '' order by id) ;
+
+
+    select id from test a06 where '' not in (select txt_short from test x06 where txt_short>'' order by id) ;
+
+    select id from test a07 where '' not in (select txt_broad from test x07 where txt_broad>'' order by id) ;
+
+
+    select id from test a08 where '' > all (select id from test x08 where txt_short>'' order by id) ;
+
+    select id from test a09 where '' > all (select id from test x09 where txt_broad>'' order by id) ;
+
+
+    select id from test a10 where '' <> any (select id from test x10 where txt_short>'' order by id) ;
+
+    select id from test a11 where '' <> any (select id from test x11 where txt_broad>'' order by id) ;
+
+    -- ########################################   e x i s t s   ###########################################
+    
+    -- Predicate "EXISTS" must turn on refetching regardless of record length, but only when "WHERE" has column which not present in "ORDER BY"
+    select id,txt_short from test a12 where exists(select 1 from test x12 where txt_short>'' order by id) ; -- MUST use refetch
+
+    -- does NOT use refetch: "order by" list contains the single element: ID, and it is the same field that 'computed_id_dup' relies on.
+    select id,txt_short from test a13 where exists(select 1 from test x13 where computed_id_dup > 0  order by id) ;
+
+    -- ### NB ### Must use refetch! See letter from dimitr 28.12.2020 14:49, reply for:
+    -- "select id,txt_short from test a14 where exists(select 1 from test x14 where computed_ts_dup > '' order by computed_ts_left);"
+    -- Sort procedure will get:
+    -- a KEY = result of evaluating 'computed_id_dup';
+    -- a VAL = value of the field 'ID' which is base for computing 'computed_id_dup'
+    -- Thus sorter will have a field which not equals to a key, which leads to refetch.
+    select id,txt_short from test a14 where exists(select 1 from test x14 where computed_id_dup > 0  order by computed_id_dup ) ;
+
+    -- does NOT use refetch: all persistent columns from "WHERE" expr (f01, f02) belongs to "order by" list:
+    select id,txt_short from test a15 where exists(select 1 from test x15 where f02>0 and f01>0 order by f01, f02);
+
+    -- must use refetch: one of coulmns from "where" expr (id) does not belong to "order by" list:
+    select id,txt_short from test a16 where exists(select 1 from test x16 where id>0 and f01>0 order by f01, f02);
+
+    -- must use refetch: computed column in "where" expr does not belong to "order by" list:
+    select id,txt_short from test a17 where exists(select 1 from test x17 where computed_id_dup > 0 order by f01);
+
+    -- does NOT use refetch: computed column "computed_guid" does not rely on any other columns in the table:
+    select id,txt_short from test a18 where exists(select 1 from test x18 where computed_guid > '' order by f01);
+
+
+    -- must use refetch both in anchor and recursive parts:
+    with recursive
+    r as (
+        select a19.id, a19.txt_short
+        from test a19
+        where not exists(select * from test x where x.txt_short < a19.txt_short order by id)
+        UNION ALL
+        select i.id, i.txt_short
+        from test i
+        join r on i.id > r.id
+        and not exists( select * from test x where x.txt_short between r.txt_short and i.txt_short order by id )
+    )
+    select * from r;
+    commit;
+
+
+    -- ######################################   v i e w s    ###########################################
+
+    recreate view v_unioned as
+    select id, txt_broad from test
+    union all
+    select -1, 'qwerty' 
+    from rdb$database rows 0;
+
+    -- does NOT use refetch because view is based on UNION:
+    select txt_broad from v_unioned v01 order by id;
+    commit;
+    
+    -- #################################   e x p r e s s i o n s    #####################################
+
+    -- must use refetch because expression is based on column which has length >= threshold
+    -- (even if final length of expression result is much less than threshold):
+    select left(txt_broad, 50) as txt from test a21 order by id;
+
+    -- does NOT use refetch because expression is based on column which has length < threshold
+    -- (even if final length of expression result is much bigger than threshold):
+    select left( txt_short || txt_short, 2000) as txt from test a22 order by id;
+    commit;
+
+    
+    -- ###########  n o n - s y m m e t r i c a l     k e y - v a l u e     d a t a t y p e s   #########
+
+    -- Following data types in common case have no ability to get column value from a key:
+    -- * International type text has a computed key
+    -- * Different decimal float values sometimes have same keys
+    -- * Date/time with time zones too.
+    -- Because of this, a field of any such datatype that is specified in "order by" list, must also be involved
+    -- in the non-key fields and sort will deal with such "concatenated" list.
+    -- If total length of such list not exceeds InlineSortThreshold then sort will be done without refetch.
+    -- Otherwise refetch will occur.
+    -- See src\jrd\opt.cpp, OPT_gen_sort() and explanation fro dimitr: letter 28.12.2020 16:44.
+
+    recreate table test_ns_01(
+        id decfloat
+        ,txt_short varchar(983)
+    );
+
+    recreate table test_ns_02(
+        id decfloat
+        ,txt_short varchar(982)
+    );
+
+    select * from test_ns_01 a23 order by id; -- must use refetch
+
+    select * from test_ns_02 a24 order by id; -- must NOT use refetch
+
+    commit;
+
+    ------------------------------------------
+    recreate table test_ns_03(
+        id time with time zone
+        ,txt_short varchar(991)
+    );
+
+    recreate table test_ns_04(
+        id time with time zone
+        ,txt_short varchar(990)
+    );
+
+    select * from test_ns_03 order by id; -- must use refetch
+
+    select * from test_ns_04 order by id; -- must NOT use refetch
+    ------------------------------------------
+
+    recreate table test_ns_05(
+        id varchar(1) character set utf8 collate unicode_ci_ai
+        ,txt_short varchar(993)
+    );
+
+    recreate table test_ns_06(
+        id varchar(1) character set utf8 collate unicode_ci_ai
+        ,txt_short varchar(992)
+    );
+
+    select * from test_ns_05 order by id; -- must use refetch
+
+    select * from test_ns_06 order by id; -- must NOT use refetch
+
+
+  """,
+ 'expected_stdout':
+  """
+    Select Expression
+        -> Sort (record length: 1036, key length: 8)
+            -> Table "TEST" as "A01" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Table "TEST" as "A02" Full Scan
+
+    Select Expression
+        -> First N Records
+            -> Refetch
+                -> Sort (record length: 28, key length: 8)
+                    -> Table "TEST" as "A03" Full Scan
+
+    Select Expression
+        -> Sort (record length: 1036, key length: 8)
+            -> Table "TEST" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Table "TEST" Full Scan
+
+    Sub-query (invariant)
+        -> Filter
+            -> Sort (record length: 1036, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "X04" Full Scan
+    Select Expression
+        -> Filter (preliminary)
+            -> Table "TEST" as "A04" Full Scan
+
+    Sub-query (invariant)
+        -> Filter
+            -> Refetch
+                -> Sort (record length: 28, key length: 8)
+                    -> Filter
+                        -> Table "TEST" as "X05" Full Scan
+    Select Expression
+        -> Filter (preliminary)
+            -> Table "TEST" as "A05" Full Scan
+
+    Select Expression
+        -> Sort (record length: 1036, key length: 8)
+            -> Filter
+                -> Table "TEST" as "X06" Full Scan
+    Select Expression
+        -> Sort (record length: 1036, key length: 8)
+            -> Filter
+                -> Table "TEST" as "X06" Full Scan
+    Select Expression
+        -> Filter (preliminary)
+            -> Table "TEST" as "A06" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "X07" Full Scan
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "X07" Full Scan
+    Select Expression
+        -> Filter (preliminary)
+            -> Table "TEST" as "A07" Full Scan
+
+    Sub-query (invariant)
+        -> Filter
+            -> Sort (record length: 1036, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "X08" Full Scan
+    Select Expression
+        -> Filter (preliminary)
+            -> Table "TEST" as "A08" Full Scan
+
+    Sub-query (invariant)
+        -> Filter
+            -> Refetch
+                -> Sort (record length: 28, key length: 8)
+                    -> Filter
+                        -> Table "TEST" as "X09" Full Scan
+    Select Expression
+        -> Filter (preliminary)
+            -> Table "TEST" as "A09" Full Scan
+
+    Sub-query (invariant)
+        -> Filter
+            -> Sort (record length: 1036, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "X10" Full Scan
+    Select Expression
+        -> Filter (preliminary)
+            -> Table "TEST" as "A10" Full Scan
+
+    Sub-query (invariant)
+        -> Filter
+            -> Refetch
+                -> Sort (record length: 28, key length: 8)
+                    -> Filter
+                        -> Table "TEST" as "X11" Full Scan
+    Select Expression
+        -> Filter (preliminary)
+            -> Table "TEST" as "A11" Full Scan
+
+    Sub-query (invariant)
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "X12" Full Scan
+    Select Expression
+        -> Filter (preliminary)
+            -> Table "TEST" as "A12" Full Scan
+
+    Sub-query (invariant)
+        -> Sort (record length: 28, key length: 8)
+            -> Filter
+                -> Table "TEST" as "X13" Full Scan
+    Select Expression
+        -> Filter (preliminary)
+            -> Table "TEST" as "A13" Full Scan
+
+    Sub-query (invariant)
+        -> Refetch
+            -> Sort (record length: 36, key length: 12)
+                -> Filter
+                    -> Table "TEST" as "X14" Full Scan
+    Select Expression
+        -> Filter (preliminary)
+            -> Table "TEST" as "A14" Full Scan
+
+    Sub-query (invariant)
+        -> Sort (record length: 36, key length: 16)
+            -> Filter
+                -> Table "TEST" as "X15" Full Scan
+    Select Expression
+        -> Filter (preliminary)
+            -> Table "TEST" as "A15" Full Scan
+
+    Sub-query (invariant)
+        -> Refetch
+            -> Sort (record length: 36, key length: 16)
+                -> Filter
+                    -> Table "TEST" as "X16" Full Scan
+    Select Expression
+        -> Filter (preliminary)
+            -> Table "TEST" as "A16" Full Scan
+
+    Sub-query (invariant)
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "X17" Full Scan
+    Select Expression
+        -> Filter (preliminary)
+            -> Table "TEST" as "A17" Full Scan
+
+    Sub-query (invariant)
+        -> Sort (record length: 28, key length: 8)
+            -> Filter
+                -> Table "TEST" as "X18" Full Scan
+    Select Expression
+        -> Filter (preliminary)
+            -> Table "TEST" as "A18" Full Scan
+
+    Sub-query
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "R X" Full Scan
+    Sub-query
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Filter
+                    -> Table "TEST" as "R X" Full Scan
+    Select Expression
+        -> Recursion
+            -> Filter
+                -> Table "TEST" as "R A19" Full Scan
+            -> Filter
+                -> Table "TEST" as "R I" Full Scan
+
+    Select Expression
+        -> Sort (record length: 1052, key length: 8)
+            -> First N Records
+                -> Union
+                    -> Table "TEST" as "V01 TEST" Full Scan
+                    -> Table "RDB$DATABASE" as "V01 RDB$DATABASE" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 28, key length: 8)
+                -> Table "TEST" as "A21" Full Scan
+
+    Select Expression
+        -> Sort (record length: 1036, key length: 8)
+            -> Table "TEST" as "A22" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 44, key length: 24)
+                -> Table "TEST_NS_01" as "A23" Full Scan
+
+    Select Expression
+        -> Sort (record length: 1052, key length: 24)
+            -> Table "TEST_NS_02" as "A24" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 36, key length: 12)
+                -> Table "TEST_NS_03" Full Scan
+
+    Select Expression
+        -> Sort (record length: 1036, key length: 12)
+            -> Table "TEST_NS_04" Full Scan
+
+    Select Expression
+        -> Refetch
+            -> Sort (record length: 36, key length: 12)
+                -> Table "TEST_NS_05" Full Scan
+
+    Select Expression
+        -> Sort (record length: 1036, key length: 12)
+            -> Table "TEST_NS_06" Full Scan
+
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+
+]
+}

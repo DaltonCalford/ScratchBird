@@ -1,0 +1,90 @@
+{
+'id': 'bugs.core_0800',
+'qmid': None,
+'tracker_id': 'CORE-0800',
+'title': 'Easy metadata extract improvements',
+'description': 
+ """
+   Domain DDL: move its CHECK clause from 'create' to 'alter' statement.
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'init_script':
+  """
+    set term ^;
+    execute block as
+    begin
+      begin
+        execute statement 'drop domain dm_test';
+        when any do begin end
+      end
+      begin
+        execute statement 'drop collation name_coll';
+        when any do begin end
+      end
+    end^
+    set term ;^
+    commit;
+
+    create collation name_coll for utf8 from unicode no pad case insensitive accent insensitive;
+    commit;
+
+    create domain dm_test varchar(20) 
+       character set utf8 
+       default 'foo' 
+       not null 
+       check (value in ('foo', 'rio', 'bar'))
+       collate name_coll
+       ;
+    commit;
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """\
+import os
+import subprocess
+
+db_conn.close()
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+db_file="$(DATABASE_LOCATION)bugs.core_0800.fdb"
+
+f_extract_meta = open( os.path.join(context['temp_directory'],'tmp_meta_0800_init.sql'), 'w')
+subprocess.call( [context['isql_path'], dsn, "-x", "-ch", "utf8"],
+                 stdout = f_extract_meta,
+                 stderr = subprocess.STDOUT
+               )
+f_extract_meta.close()
+
+with open( f_extract_meta.name, 'r') as f:
+    for line in f:
+        if 'ALTER DOMAIN' in line.upper():
+            print( line )
+
+###############################
+# Cleanup.
+
+f_list=[]
+f_list.append(f_extract_meta)
+
+for i in range(len(f_list)):
+    if os.path.isfile(f_list[i].name):
+        os.remove(f_list[i].name)
+
+  """,
+ 'expected_stdout':
+  """
+    ALTER DOMAIN DM_TEST ADD CONSTRAINT
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

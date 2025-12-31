@@ -1,0 +1,122 @@
+{
+'id': 'bugs.core_0088',
+'qmid': 'bugs.core_88',
+'tracker_id': 'CORE-88',
+'title': 'Join on diffrent datatypes',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE TEST_A (
+    ID INTEGER NOT NULL PRIMARY KEY,
+    SNUM CHAR(10) UNIQUE
+);
+
+CREATE TABLE TEST_B (
+    ID INTEGER NOT NULL PRIMARY KEY,
+    NUM NUMERIC(15,2) UNIQUE
+);
+
+commit;
+
+INSERT INTO TEST_A (ID, SNUM) VALUES (1, '01');
+INSERT INTO TEST_A (ID, SNUM) VALUES (2, '02');
+INSERT INTO TEST_A (ID, SNUM) VALUES (3, '03');
+INSERT INTO TEST_A (ID, SNUM) VALUES (5, '05');
+
+commit;
+
+INSERT INTO TEST_B (ID, NUM) VALUES (1, 1);
+INSERT INTO TEST_B (ID, NUM) VALUES (2, 2);
+INSERT INTO TEST_B (ID, NUM) VALUES (3, 3);
+INSERT INTO TEST_B (ID, NUM) VALUES (4, 4);
+
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+
+SELECT * FROM test_b WHERE num NOT IN (SELECT snum FROM test_a) ;
+
+SELECT * FROM test_b WHERE num IN (SELECT snum FROM test_a) ;
+
+""",
+ 'expected_stdout': """PLAN (TEST_A NATURAL)
+PLAN (TEST_B NATURAL)
+
+          ID                   NUM
+============ =====================
+           4                  4.00
+
+PLAN (TEST_A NATURAL)
+PLAN (TEST_B NATURAL)
+
+          ID                   NUM
+============ =====================
+           1                  1.00
+           2                  2.00
+           3                  3.00
+
+"""
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE TEST_A (
+    ID INTEGER NOT NULL PRIMARY KEY,
+    SNUM CHAR(10) UNIQUE
+);
+
+CREATE TABLE TEST_B (
+    ID INTEGER NOT NULL PRIMARY KEY,
+    NUM NUMERIC(15,2) UNIQUE
+);
+
+commit;
+
+INSERT INTO TEST_A (ID, SNUM) VALUES (1, '01');
+INSERT INTO TEST_A (ID, SNUM) VALUES (2, '02');
+INSERT INTO TEST_A (ID, SNUM) VALUES (3, '03');
+INSERT INTO TEST_A (ID, SNUM) VALUES (5, '05');
+
+commit;
+
+INSERT INTO TEST_B (ID, NUM) VALUES (1, 1);
+INSERT INTO TEST_B (ID, NUM) VALUES (2, 2);
+INSERT INTO TEST_B (ID, NUM) VALUES (3, 3);
+INSERT INTO TEST_B (ID, NUM) VALUES (4, 4);
+
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+
+SELECT * FROM test_b WHERE num NOT IN (SELECT snum FROM test_a) ;
+
+SELECT * FROM test_b WHERE num IN (SELECT snum FROM test_a) ;
+
+""",
+ 'expected_stdout': """
+PLAN (TEST_A NATURAL)
+PLAN (TEST_A NATURAL)
+PLAN (TEST_B NATURAL)
+
+          ID                   NUM
+============ =====================
+           4                  4.00
+
+
+PLAN (TEST_A NATURAL)
+PLAN (TEST_B NATURAL)
+
+          ID                   NUM
+============ =====================
+           1                  1.00
+           2                  2.00
+           3                  3.00
+
+"""
+}
+]
+}

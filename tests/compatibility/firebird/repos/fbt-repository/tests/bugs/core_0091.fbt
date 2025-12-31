@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_0091',
+'qmid': 'bugs.core_91',
+'tracker_id': 'CORE-91',
+'title': 'Recreate and self-referencing indexes',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """recreate table t2 (
+    i integer not null primary key,
+    p integer references t2(i) on delete set null
+ );
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select * from t2;
+insert into t2 values (1, null);
+delete from t2 where i=1;
+commit;
+
+recreate table t2 (
+    i integer not null primary key,
+    p integer references t2(i) on delete set null
+ );
+commit;
+select * from t2;
+insert into t2 values (1, null);
+delete from t2 where i=1;
+commit;
+"""
+}
+]
+}

@@ -1,0 +1,48 @@
+{
+'id': 'bugs.core_0610',
+'qmid': None,
+'tracker_id': 'CORE-0610',
+'title': 'FIRST is applied before aggregation',
+'description': '',
+'min_versions': '2.1.7',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create table A (id integer not null);
+    create table B (id integer not null, A integer not null, v integer);
+    commit;
+    insert into A (id) values (1);
+    insert into A (id) values (2);
+    insert into A (id) values (3);
+    insert into B (id, A, v) values (1, 1, 1);
+    insert into B (id, A, v) values (2, 1, 1);
+    insert into B (id, A, v) values (3, 2, 2);
+    insert into B (id, A, v) values (4, 2, 2);
+    insert into B (id, A, v) values (5, 3, 3);
+    insert into B (id, A, v) values (6, 3, 3);
+    commit;
+    set list on;
+    select first 1 count(*) from a;
+    select first 2 a.id, sum(b.v) from A,B where a.id = b.a
+    group by a.id
+    order by a.id;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+    COUNT                           3
+    ID                              1
+    SUM                             2
+    ID                              2
+    SUM                             4
+  """
+}
+]
+}

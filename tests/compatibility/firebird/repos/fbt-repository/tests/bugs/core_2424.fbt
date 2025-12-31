@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_2424',
+'qmid': None,
+'tracker_id': 'CORE-2424',
+'title': 'Make CREATE VIEW infer column names for views involving a GROUP BY clause or derived table',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """create view V as select d.rdb$relation_id from rdb$database d group by d.rdb$relation_id;
+show view v;
+recreate view V as select a from (select 1 a from rdb$database);
+show view v;
+""",
+ 'expected_stdout': """Database:  localhost:C:\fbtest2\tmp\bugs.core_2424.fdb, User: SYSDBA
+SQL> SQL> RDB$RELATION_ID                 SMALLINT Expression
+View Source:
+==== ======
+ select d.rdb$relation_id from rdb$database d group by d.rdb$relation_id
+SQL> SQL> A                               INTEGER Expression
+View Source:
+==== ======
+ select a from (select 1 a from rdb$database)
+SQL>"""
+}
+]
+}

@@ -1,0 +1,42 @@
+{
+'id': 'bugs.core_3447',
+'qmid': None,
+'tracker_id': 'CORE-3447',
+'title': 'Collation is not installed with icu > 4.2',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    recreate table test(
+        name1 varchar(32) character set utf8 collate ucs_basic,
+        name2 varchar(32) character set utf8 collate unicode,
+        name3 varchar(32) character set utf8 collate unicode_ci,
+        name4 varchar(32) character set utf8 collate unicode_ci_ai
+    );
+    commit;
+    show table test;
+    -- Passed on: WI-V2.5.5.26871, WI-T3.0.0.31844; LI-V2.5.3.26788, LI-T3.0.0.31842
+  """,
+ 'expected_stdout':
+  """
+    NAME1                           VARCHAR(32) CHARACTER SET UTF8 Nullable
+                                     COLLATE UCS_BASIC
+    NAME2                           VARCHAR(32) CHARACTER SET UTF8 Nullable
+                                     COLLATE UNICODE
+    NAME3                           VARCHAR(32) CHARACTER SET UTF8 Nullable
+                                     COLLATE UNICODE_CI
+    NAME4                           VARCHAR(32) CHARACTER SET UTF8 Nullable
+                                     COLLATE UNICODE_CI_AI
+  """
+}
+]
+}

@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_3523',
+'qmid': None,
+'tracker_id': 'CORE-3523',
+'title': 'SIMILAR TO: False matches on descending ranges',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select 1 from rdb$database where 'm' similar to '[p-k]'
+union
+select 2 from rdb$database where 'z' similar to '[p-k]'
+union
+select 3 from rdb$database where 'm' not similar to '[p-k]'
+union
+select 4 from rdb$database where 'z' not similar to '[p-k]';
+
+""",
+ 'expected_stdout': """SQL>
+    CONSTANT
+============
+           3
+           4
+
+SQL>"""
+}
+]
+}

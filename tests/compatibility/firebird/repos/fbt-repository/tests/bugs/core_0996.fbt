@@ -1,0 +1,24 @@
+{
+'id': 'bugs.core_0996',
+'qmid': 'bugs.core_996',
+'tracker_id': 'CORE-996',
+'title': 'Keyword AS not recognized in clause FROM',
+'description': 'The sentence SELECT * FROM <table> AS <alias> is not recognized correct.',
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE T1 (ID1 INTEGER NOT NULL);
+INSERT INTO T1 VALUES (1);
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT ID1 from T1 AS BLA;
+""",
+ 'expected_stdout': """         ID1
+============
+           1
+"""
+}
+]
+}

@@ -1,0 +1,23 @@
+{
+'id': 'functional.intfunc.math.mod_01',
+'qmid': 'functional.intfunc.math.mod_01',
+'tracker_id': '',
+'title': 'test for MOD function',
+'description': """
+MOD( <number>, <number> )
+
+ Modulo: MOD(X, Y) returns the remainder part of the division of X by Y.
+""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': ' select MOD(11,10) from rdb$database;',
+ 'expected_stdout': """               MOD
+      ============
+                 1
+"""
+}
+]
+}

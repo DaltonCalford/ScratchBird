@@ -1,0 +1,68 @@
+{
+'id': 'functional.intfunc.misc.decode_01',
+'qmid': 'functional.intfunc.misc.decode_01',
+'tracker_id': '',
+'title': 'test de la fonction decode',
+'description': 'decode is a shortcut for a case when else expreession.',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SET ECHO OFF;
+CREATE  TABLE TMPTEST( id INTEGER );
+
+insert into TMPTEST(id)
+values(1);
+insert into TMPTEST(id)
+values(2);
+insert into TMPTEST(id)
+values(3);
+insert into TMPTEST(id)
+values(4);
+insert into TMPTEST(id)
+values(5);
+
+-- count doit etre egal a 0 dans ce cas
+select decode(id,1,'un',2,'deux',3,'trois','plus grand') from TMPTEST;""",
+ 'expected_stdout': """      CASE
+      ==========
+      un
+      deux
+      trois
+      plus grand
+      plus grand"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SET ECHO OFF;
+CREATE  TABLE TMPTEST( id INTEGER );
+
+insert into TMPTEST(id)
+values(1);
+insert into TMPTEST(id)
+values(2);
+insert into TMPTEST(id)
+values(3);
+insert into TMPTEST(id)
+values(4);
+insert into TMPTEST(id)
+values(5);
+
+-- count doit etre egal a 0 dans ce cas
+select decode(id,1,'un',2,'deux',3,'trois','plus grand') from TMPTEST;""",
+ 'expected_stdout': """DECODE
+==========
+un
+deux
+trois
+plus grand
+plus grand
+
+"""
+}
+]
+}

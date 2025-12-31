@@ -1,0 +1,255 @@
+{
+'id': 'bugs.core_4094',
+'qmid': None,
+'tracker_id': 'CORE-4094',
+'title': "Wrong parameters order in trace output",
+'description': 
+ """
+   WI-V2.5.2.26540: confirmed wrong parameters sequence in trace log: 1,4,3,2.
+
+   ::: NB ::: 07-jun-2016.
+
+   WI-T4.0.0.238 will issue in trace log following parametrized statement:
+   ===
+   with recursive role_tree as (     
+     select rdb$relation_name as nm, 0 as ur from rdb$user_privileges         
+     where 
+         rdb$privilege = 'M' and rdb$field_name = 'D' 
+         and rdb$user = ?  and rdb$user_type = 8     
+     union all     
+     select rdb$role_name as nm, 1 as ur from rdb$roles         
+     where rdb$role_name =...
+
+   param0 = varchar(93), "SYSDBA"
+   param1 = varchar(93), "NONE"
+   ===
+
+   This statement will issued BEFORE our call of stored procedure, so we have to analyze
+   lines from trace only AFTER we found pattern 'execute procedure sp_test'.
+
+ """,
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    set term ^;
+    create or alter procedure sp_test(a int, b int, c int, d int) as
+        declare n int;
+    begin
+          execute statement (
+              'select
+                  (select 123 from rdb$database where rdb$relation_id=:a)
+              from rdb$database
+              cross join
+              (
+                  select 123 as pdk 
+                  from rdb$database 
+                  where rdb$relation_id=:b and rdb$relation_id=:c and rdb$relation_id=:d
+              )
+              rows 1'
+          ) 
+          ( a := :a, b := :b, c := :c, d := :d )
+          into n;
+    end
+    ^
+    set term ;^
+    commit;
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """\
+import os
+import time
+import subprocess
+from subprocess import Popen
+import re
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+engine = str(db_conn.engine_version)
+db_conn.close()
+
+#---------------------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb'):
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if os.path.isfile( f_names_list[i]):
+            os.remove( f_names_list[i] )
+            if os.path.isfile( f_names_list[i]):
+                print('ERROR: can not remove file ' + f_names_list[i])
+
+#--------------------------------------------
+
+# Minimal delay after we issue command fbsvcmgr action_trace_start
+# and before we launch execution of checked code
+###########################################
+min_delay_after_trace_start = 1
+
+# Minimal delay after we finish connection to database
+# and before issuing command to stop trace
+##########################################
+min_delay_before_trace_stop = 1
+
+# Minimal delay for trace log be flushed on disk after
+# we issue command 'fbsvcmgr action_trace_stop':
+###############################
+min_delay_after_trace_stop = 1
+
+def make_trace_config( engine, f_trccfg ):
+
+    txt25 = '''\
+    <database %[\\\\\\\\/]bugs.core_4094.fdb>
+      enabled true
+      time_threshold 0 
+      log_statement_start true
+    </database>
+    '''
+
+    # NOTES ABOUT TRACE CONFIG FOR 3.0:
+    # 1) Header contains `database` clause in different format vs FB 2.5: its data must be enclosed with '{' '}'
+    # 2) Name and value must be separated by EQUALITY sign ('=') in FB-3 trace.conf, otherwise we get runtime error:
+    #    element "<. . .>" have no attribute value set
+    
+
+    txt30 = '''\
+    database=%[\\\\\\\\/]bugs.core_4094.fdb
+    {
+      enabled = true
+      time_threshold = 0
+      log_statement_start = true
+    }
+    '''
+
+    if engine.startswith('2.5'):
+        f_trccfg.write(txt25)
+    else:
+        f_trccfg.write(txt30)
+
+    return
+
+def stop_trace_session():
+
+    # Save active trace session info into file for further parsing it and obtain session_id back (for stop):
+    global os, subprocess
+    global flush_and_close
+
+    f_trclst=open( os.path.join(context['temp_directory'],'tmp_trace_4094.lst'), 'w')
+    subprocess.call([context['fbsvcmgr_path'], "localhost:service_mgr", "action_trace_list"],
+                     stdout=f_trclst,
+                     stderr=subprocess.STDOUT
+                   )
+    flush_and_close( f_trclst )
+    
+    trcssn=0
+    with open( f_trclst.name,'r') as f:
+        for line in f:
+            if 'Session ID' in line:
+                trcssn=line.split()[2]
+                break
+    
+    # Result: `trcssn` is ID of active trace session. Now we have to terminate it:
+    f_trclst=open(f_trclst.name,'a')
+    f_trclst.seek(0,2)
+    subprocess.call([context['fbsvcmgr_path'], "localhost:service_mgr", "action_trace_stop", "trc_id",trcssn],
+                     stdout=f_trclst, stderr=subprocess.STDOUT
+                   )
+    flush_and_close( f_trclst )
+
+    os.remove(f_trclst.name)
+
+    return
+                       
+##########  r u n   #########
+
+# Make trace config:
+
+f_trccfg=open( os.path.join(context['temp_directory'],'tmp_trace_4094.cfg'), 'w')
+make_trace_config( engine, f_trccfg )
+flush_and_close( f_trccfg )
+
+f_trclog=open( os.path.join(context['temp_directory'],'tmp_trace_4094.log'), 'w')
+
+#####################################################
+# Starting trace session in new child process (async.):
+
+# Execute a child program in a new process, redirecting STDERR to the same target as of STDOUT:
+p_trace=Popen( [ context['fbsvcmgr_path'], "localhost:service_mgr",
+                 "action_trace_start",
+                 "trc_cfg", f_trccfg.name
+               ],
+               stdout=f_trclog,
+               stderr=subprocess.STDOUT
+             )
+
+# If this delay is too low then trace log will be EMPTY (got on 2.5 SS and Cs).
+time.sleep( min_delay_after_trace_start )
+
+####################################################
+# Make connection to database and perform script that 
+# calls two functions: standalone and packaged:
+####################################################
+
+runProgram('isql',[dsn, '-n', '-q'], "execute procedure sp_test( 1, 2, 3, 4);" )
+
+# do NOT remove this otherwise trace log can contain only message about its start before being closed!
+time.sleep(min_delay_before_trace_stop)
+
+#####################################################
+# Getting ID of launched trace session and STOP it:
+
+stop_trace_session()
+time.sleep(min_delay_after_trace_stop)
+
+# Terminate child process of launched trace session (though it should already be killed):
+p_trace.terminate()
+flush_and_close( f_trclog )
+
+
+#############
+# O U T P U T
+#############
+spcall_pattern=re.compile("execute procedure ")
+params_pattern = re.compile("param[0-9]{1} = ")
+flag=0
+with open( f_trclog.name,'r') as f:
+    for line in f:
+        if spcall_pattern.match(line):
+            flag=1
+        if flag==1 and params_pattern.match(line):
+            print(line)
+
+# Cleanup.
+##########
+cleanup( [i.name for i in (f_trclog,f_trccfg) ] )
+
+  """,
+ 'expected_stdout':
+  """
+    param0 = smallint, "1"
+    param1 = smallint, "2"
+    param2 = smallint, "3"
+    param3 = smallint, "4"
+  """
+}
+]
+}

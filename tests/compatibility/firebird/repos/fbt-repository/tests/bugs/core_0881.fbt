@@ -1,0 +1,51 @@
+{
+'id': 'bugs.core_0881',
+'qmid': 'bugs.core_881-250',
+'tracker_id': 'CORE-881',
+'title': "Singleton isn't respected in COMPUTED BY expressions",
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """create table t1 (n integer);
+create table t2 (n integer, c computed by ((select n from t1)));
+
+insert into t1 values (1);
+insert into t1 values (2);
+insert into t2 values (1);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select * from t2;
+""",
+ 'expected_stdout': """N            C
+============ ============
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 21000
+multiple rows in singleton select
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """create table t1 (n integer);
+create table t2 (n integer, c computed by ((select n from t1)));
+
+insert into t1 values (1);
+insert into t1 values (2);
+insert into t2 values (1);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select * from t2;
+""",
+ 'expected_stdout': """N            C
+============ ============
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -811
+multiple rows in singleton select
+"""
+}
+]
+}

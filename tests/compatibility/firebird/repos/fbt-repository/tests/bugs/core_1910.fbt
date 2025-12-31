@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_1910',
+'qmid': None,
+'tracker_id': 'CORE-1910',
+'title': "Not valid fields in MERGE's insert clause are allowed",
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create table t1 (n integer, x integer);
+create table t2 (a integer, b integer);
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """merge into t1 t1
+  using (select * from t2) t2
+    on t1.n = t2.a
+    when matched then
+      update set x = t2.b
+    when not matched then
+      insert (a, x) values (1, 2); -- "a" is not a field of t1
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42S22
+Dynamic SQL Error
+-SQL error code = -206
+-Column unknown
+-A
+-At line 7, column 15
+""",
+ 'substitutions': [('column.*','')]
+}
+]
+}

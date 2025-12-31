@@ -1,0 +1,36 @@
+{
+'id': 'bugs.core_5193',
+'qmid': None,
+'tracker_id': 'CORE-5193',
+'title': "Precedence problem with operator IS",
+'description':
+  """
+      Checked on WI-V3.0.1.32518,  WI-T4.0.0.184
+  """,
+'min_versions': '3.0.1',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select not false is true is unknown as boo1 from rdb$database;
+    select not false = true is not unknown as boo2  from rdb$database;
+    select not unknown and not unknown is not unknown as boo3  from rdb$database;
+    select not not unknown is not unknown  as boo4 from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    BOO1                            <true>
+    BOO2                            <true>
+    BOO3                            <null>
+    BOO4                            <false>
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -263,18 +263,18 @@ make check
 ### Phase 1: Repository Setup (1-2 hours)
 
 **Action Items:**
-1. Clone test repositories as git submodules or subtrees
+1. Vendor test repository snapshots (one-way updates)
 2. Create `/tests/compatibility/` directory structure:
    ```
    tests/compatibility/
    ├── firebird/
-   │   ├── fbt-repository/     # Submodule
+   │   ├── fbt-repository/     # Vendored snapshot
    │   └── selected_tests/     # Curated test subset
    ├── mysql/
-   │   ├── mysql-test/         # Submodule or copied files
+   │   ├── mysql-test/         # Vendored snapshot (sparse checkout via update script)
    │   └── selected_tests/
    └── postgresql/
-       ├── regress/            # Submodule or copied files
+       ├── regress/            # Vendored snapshot (sparse checkout via update script)
        └── selected_tests/
    ```
 
@@ -421,20 +421,15 @@ add_test(NAME compat_firebird_cte
 
 ## Immediate Next Steps
 
-### Step 1: Clone Test Repositories (1 hour)
+### Step 1: Refresh Test Repositories (1 hour)
 
 ```bash
-cd /home/dcalford/CliWork/ScratchBird/tests/compatibility
-
-# FirebirdSQL
-git submodule add https://github.com/FirebirdSQL/fbt-repository firebird/fbt-repository
-
-# MySQL
-git submodule add https://github.com/mysql/mysql-server mysql/mysql-server
-
-# PostgreSQL
-git submodule add https://github.com/postgres/postgres postgresql/postgres
+cd /home/dcalford/CliWork/ScratchBird
+./tests/compatibility/scripts/update_test_repos.sh
 ```
+
+This script performs shallow clones and sparse checkouts, then syncs the
+relevant test paths into the vendored `tests/compatibility/*/repos/` trees.
 
 ### Step 2: Extract Recursive CTE Tests (2-4 hours)
 

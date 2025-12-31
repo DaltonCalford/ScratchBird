@@ -1,0 +1,37 @@
+{
+'id': 'bugs.core_2204',
+'qmid': None,
+'tracker_id': 'CORE-2204',
+'title': 'constraints on sp output parameters are checked even when the sp returns zero rows',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create domain dm_boo as integer not null check (value = 0 or value = 1);
+    set term ^;
+    create procedure test returns (b dm_boo) as
+    begin
+        if (1 = 0) then
+            suspend;
+    end
+    ^
+    set term ;^
+    commit;
+    set count on;
+    select * from test;
+  """,
+ 'expected_stdout': 
+  """
+    Records affected: 0
+  """
+}
+]
+}

@@ -1,0 +1,22 @@
+{
+'id': 'bugs.core_1152',
+'qmid': 'bugs.core_1152',
+'tracker_id': 'CORE-1152',
+'title': 'cannot erase a table with check constraints referencing more than a single columns',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test(
+int1 INTEGER,
+int2 INTEGER,
+CHECK(int1 IS NULL OR int2 IS NULL)
+);
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """DROP TABLE test;
+"""
+}
+]
+}

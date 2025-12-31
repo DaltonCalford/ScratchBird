@@ -1,0 +1,35 @@
+{
+'id': 'bugs.core_1334',
+'qmid': 'bugs.core_1334',
+'tracker_id': 'CORE-1334',
+'title': 'Joins with NULL RDB$DB_KEY crash the server',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """create table t1 (id integer primary key);
+create table t2 (id integer references t1);
+COMMIT;
+insert into t1 values (1);
+insert into t1 values (2);
+insert into t2 values (2);
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """select *
+  from t1
+  left join t2
+    on (t2.id = t1.id)
+  left join t2 t3
+    on (t3.rdb$db_key = t2.rdb$db_key);
+""",
+ 'expected_stdout': """
+          ID           ID           ID
+============ ============ ============
+           1       <null>       <null>
+           2            2            2
+
+"""
+}
+]
+}

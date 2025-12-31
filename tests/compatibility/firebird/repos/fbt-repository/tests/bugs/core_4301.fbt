@@ -1,0 +1,47 @@
+{
+'id': 'bugs.core_4301',
+'qmid': None,
+'tracker_id': 'CORE-4301',
+'title': 'Non-ASCII data in SEC$USERS is not read correctly',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    -- Note: this test differs from ticket: instead of add COMMENTS to users
+    -- it only defines their `firstname` attribute, because sec$users.sec$description
+    -- can be displayed only when plugin UserManager = Srp.
+    -- Field `firstname` is defined as: 
+    -- VARCHAR(32) CHARACTER SET UNICODE_FSS COLLATE UNICODE_FSS 
+    -- we can put in it max 16 non-ascii characters
+    create or alter user u30a password 'u30a' firstname 'Полиграф Шариков';
+    create or alter user u30b password 'u30b' firstname 'Léopold Frédéric';
+    commit;
+    set list on;
+    select u.sec$user_name, u.sec$first_name
+    from sec$users u
+    where upper(u.sec$user_name) in (upper('u30a'), upper('u30b')); 
+    commit;
+    drop user u30a;
+    drop user u30b;
+  """,
+ 'expected_stdout':
+  """
+    SEC$USER_NAME                   U30A                                                                                                                        
+    SEC$FIRST_NAME                  Полиграф Шариков
+    SEC$USER_NAME                   U30B                                                                                                                        
+    SEC$FIRST_NAME                  Léopold Frédéric
+  """
+}
+]
+}

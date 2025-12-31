@@ -1,0 +1,69 @@
+{
+'id': 'bugs.core_4255',
+'qmid': None,
+'tracker_id': 'CORE-4255',
+'title': 'Parametrized queries using RDB$DB_KEY do not work',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- test by Mark:
+    recreate table dbkeytest
+    (
+        id integer primary key,
+        seen boolean default false
+    );
+    commit;
+    insert into dbkeytest (id) values (1);
+    insert into dbkeytest (id) values (2);
+    insert into dbkeytest (id) values (3);
+    insert into dbkeytest (id) values (4);
+    commit;
+    
+    -- actual test:
+    set term ^;
+    execute block
+    as
+        declare thekey char(8);
+        declare theid integer;
+    begin
+        for select id, rdb$db_key from dbkeytest into theid, thekey do
+        begin
+            execute statement ('update dbkeytest set seen = true where rdb$db_key = ?') (thekey);
+        end
+    end
+    ^
+    set term ;^
+    commit;
+    
+    select * from dbkeytest; 
+
+    -- one else test (suggested by Dmitry) in this ticket:
+    select 1 x from rdb$database where rdb$db_key = cast((select rdb$db_key from rdb$database) as varchar(8)); 
+  """,
+ 'expected_stdout': 
+  """
+              ID    SEEN
+    ============ =======
+               1 <true>
+               2 <true>
+               3 <true>
+               4 <true>
+
+               X
+    ============
+               1
+  """,
+  'substitutions': [('=.*','')]
+}
+]
+}

@@ -1,0 +1,66 @@
+{
+'id': 'bugs.core_4084',
+'qmid': None,
+'tracker_id': 'CORE-4084',
+'title': 'Regression: Group by fails if subselect-column is involved',
+'description': '',
+'min_versions': '2.0',
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set planonly;
+    select
+        iif(d is null, 10, 0) + sys as sys,
+        count(*)
+    from (
+        select
+            ( select d.rdb$relation_id from rdb$database d ) as d,
+            coalesce(r.rdb$system_flag, 0) as sys
+        from rdb$relations r
+    )
+    group by 1;
+  """,
+ 'expected_stdout':
+  """
+    PLAN (D NATURAL)
+    PLAN (R NATURAL)
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set planonly;
+    select
+        iif(d is null, 10, 0) + sys as sys,
+        count(*)
+    from (
+        select
+            ( select d.rdb$relation_id from rdb$database d ) as d,
+            coalesce(r.rdb$system_flag, 0) as sys
+        from rdb$relations r
+    )
+    group by 1;
+  """,
+ 'expected_stdout':
+  """
+    PLAN (D NATURAL)
+    PLAN SORT (R NATURAL)
+  """
+}
+]
+}

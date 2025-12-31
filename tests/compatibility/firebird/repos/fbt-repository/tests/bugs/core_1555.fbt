@@ -1,0 +1,107 @@
+{
+'id': 'bugs.core_1555',
+'qmid': 'bugs.core_1555',
+'tracker_id': '',
+'title': "'select ...from...where...not in (select...from...)' no results",
+'description': '',
+'min_versions': '2.1.7',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^ ;
+    create or alter procedure tst1 returns (boxes integer) as
+    begin
+      boxes=1;
+      suspend;
+      boxes=2;
+      suspend;
+    end
+    ^
+    set term ;^
+    commit;
+    
+    recreate table frrates1 (
+      frrates1 integer not null,
+      boxes integer,
+      primary key(frrates1)
+    );
+    commit;
+    
+    create index idx_frrates1_boxes on frrates1 (boxes);
+    commit;
+    
+    recreate table schedpkgs1 (
+      schedpkgs1 integer not null,
+      schedule integer,
+      frrates1 integer,
+      primary key (schedpkgs1)
+    );
+    commit;
+    
+    create index idx_schedpkgs1_schedule on schedpkgs1 (schedule);
+    commit;
+    
+    
+    insert into frrates1 (frrates1, boxes) values (11, 1);
+    insert into frrates1 (frrates1, boxes) values (12, 2);
+    commit;
+    
+    insert into schedpkgs1 (schedpkgs1, schedule, frrates1) values(21, 16651, 11);
+    insert into schedpkgs1 (schedpkgs1, schedule, frrates1) values(22, 16651, null);
+    commit;
+
+    ---------------------------
+
+    set list on;
+
+    select fr.boxes
+      from schedpkgs1 sp
+      join frrates1 fr on fr.frrates1=sp.frrates1
+      where sp.schedule = 16651;
+    
+   
+    select boxes
+      from tst1
+      where boxes not in (select fr.boxes
+                               from schedpkgs1 sp
+                               join frrates1 fr on fr.frrates1=sp.frrates1
+                               where sp.schedule = 16651);
+    
+   
+    select boxes
+      from tst1
+      where boxes not in (select fr.boxes
+                               from schedpkgs1 sp
+                               join frrates1 fr on fr.frrates1=sp.frrates1
+                               where sp.schedule = 16651 and fr.boxes>0);
+    
+    
+    select f2.boxes
+      from frrates1 f2
+      where f2.boxes not in (select fr.boxes
+                                  from schedpkgs1 sp
+                                  join frrates1 fr on fr.frrates1=sp.frrates1
+                                  where sp.schedule = 16651);
+    
+    select f2.boxes
+      from frrates1 f2
+      where f2.boxes not in (select fr.boxes
+                                  from schedpkgs1 sp
+                                  join frrates1 fr on fr.frrates1=sp.frrates1
+                                  where sp.schedule = 16651 and fr.boxes>0);
+  """,
+ 'expected_stdout': 
+  """
+    BOXES                           1
+    BOXES                           2
+    BOXES                           2
+    BOXES                           2
+    BOXES                           2
+  """
+}
+]
+}

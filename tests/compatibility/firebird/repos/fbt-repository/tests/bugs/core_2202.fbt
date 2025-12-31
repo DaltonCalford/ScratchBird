@@ -1,0 +1,55 @@
+{
+'id': 'bugs.core_2202',
+'qmid': None,
+'tracker_id': 'CORE-2202',
+'title': 'RDB$VIEW_RELATIONS is not cleaned when altering a view',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+    recreate table table_1 (id integer);
+    recreate table table_2 (id integer);
+    recreate table table_3 (id integer);
+    
+    create or alter view vw_table(id) as
+    select id from table_1;
+    commit;
+    
+    create or alter view vw_table(id) as
+    select id from table_2;
+    commit;
+    
+    create or alter view vw_table(id) as
+    select id
+    from table_3;
+    commit;
+  """,
+ 'test_script': 
+  """
+    set list on;
+    set width vew_name 31;
+    set width rel_name 31;
+    set width ctx_name 31;
+    select
+         rdb$view_name as vew_name
+        ,rdb$relation_name as rel_name
+        ,rdb$view_context
+        ,rdb$context_name as ctx_name
+    from rdb$view_relations rv;
+  """,
+ 'expected_stdout': 
+  """
+    VEW_NAME                        VW_TABLE                                                                                     
+    REL_NAME                        TABLE_3                                                                                      
+    RDB$VIEW_CONTEXT                1
+    CTX_NAME                        TABLE_3                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      
+  """
+}
+]
+}

@@ -1,0 +1,48 @@
+{
+'id': 'functional.domain.alter.02',
+'qmid': 'functional.domain.alter.alter_domain_02',
+'tracker_id': '',
+'title': 'ALTER DOMAIN - DROP DEFAULT',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': "CREATE DOMAIN test VARCHAR(63) DEFAULT 'test string';",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER DOMAIN test DROP DEFAULT;
+COMMIT;
+SELECT RDB$FIELD_NAME, RDB$DEFAULT_SOURCE FROM rdb$fields WHERE RDB$FIELD_NAME='TEST';
+""",
+ 'expected_stdout': """RDB$FIELD_NAME                  RDB$DEFAULT_SOURCE
+=============================== ==================
+
+TEST                                        <null>
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    create domain test varchar(63) default 'test string';
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    alter domain test drop default;
+    commit;
+    set list on;
+    select rdb$field_name, rdb$default_source
+    from rdb$fields
+    where rdb$field_name = upper('test');
+  """,
+ 'expected_stdout': 
+  """
+    RDB$FIELD_NAME                  TEST
+    RDB$DEFAULT_SOURCE              <null>
+  """
+}
+]
+}

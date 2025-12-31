@@ -1,0 +1,82 @@
+{
+'id': 'bugs.core_6487',
+'qmid': None,
+'tracker_id': 'CORE-6487',
+'title': 'FETCH ABSOLUTE and RELATIVE beyond bounds of cursor should always position immediately before-first or after-last',
+'description':
+"""
+  Confirmed bug on 4.0.0.2365, 3.0.8.33415.
+  Checked on 4.0.0.2369, 3.0.8.33416 - works OK.
+""",
+'min_versions': '3.0.8',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set heading off;
+    set term ^;
+    execute block returns(id int, rc int) as
+        declare c scroll cursor for
+        (
+            select  1 id from rdb$database union all
+            select  2 id from rdb$database union all
+            select  3 id from rdb$database
+        )
+        ;
+    begin
+        open c;
+        fetch absolute 9223372036854775807 from c;
+
+        fetch relative -(9223372036854775807-2) from c;
+        id = c.id;
+        rc = row_count;
+        suspend;
+        
+        close c;
+    end
+    ^
+
+    execute block returns(id int, rc int) as
+        declare c scroll cursor for
+        (
+            select  1 id from rdb$database union all
+            select  2 id from rdb$database union all
+            select  3 id from rdb$database
+        )
+        ;
+    begin
+        open c;
+        fetch absolute -9223372036854775808 from c;
+
+        fetch relative (9223372036854775806) from c;
+        id = c.id;
+        rc = row_count;
+        suspend;
+        
+        close c;
+    end
+    ^
+    set term ;^
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = HY109
+    Cursor C is not positioned in a valid record
+    -At block line: 14, col: 5
+
+    Statement failed, SQLSTATE = HY109
+    Cursor C is not positioned in a valid record
+    -At block line: 14, col: 5
+  """,
+ 'substitutions':[
+    ('-At block line:.*', '-At block line')
+  ]
+}
+]
+}

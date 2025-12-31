@@ -1,0 +1,97 @@
+{
+'id': 'bugs.core_1810',
+'qmid': None,
+'tracker_id': 'CORE-1810',
+'title': "Usernames with '.' character",
+'description': '',
+'min_versions': '2.1.7',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'user_name': 'john.smith',
+ 'user_password': 'john',
+ 'page_size': '4096',
+ 'init_script': """create role repl_admin;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """-- grant repl_admin to john.smith;
+grant repl_admin to "john.smith";
+commit;
+
+select rdb$user from rdb$user_privileges where rdb$relation_name = 'REPL_ADMIN';
+
+""",
+ 'expected_stdout': """
+RDB$USER
+===============================================================================
+JOHN.SMITH
+
+""",
+ 'resources': ['dotname']
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    set wng off;
+    recreate table test(id int, x int, y int, z int);
+    commit;
+    insert into test values(1, 100, 200, 300);
+    commit;
+    drop user "$.$";
+    commit;
+    create role "#.#";
+    commit;
+    create user "$.$" password '123';
+    commit;              
+
+    revoke all on all from "$.$";
+    grant "#.#" to "$.$";
+    grant select on test to "#.#";
+    commit;
+
+    connect '$(DSN)' user "$.$" password '123' role "#.#";
+    commit;
+
+    select 
+        current_user, 
+        current_role, 
+        iif( upper(a.mon$remote_protocol) starting with upper('TCP'), 'YES', 'NO!') is_remote_connection
+    from rdb$database m 
+    join mon$attachments a on a.mon$attachment_id = current_connection
+    ;
+
+    select * from test;
+    commit;
+
+    connect '$(DSN)' user 'SYSDBA' password 'masterkey';
+    commit;
+    drop user "$.$";
+    commit;
+  """,
+ 'expected_stdout':
+  """
+    USER                            $.$
+    ROLE                            #.#
+    IS_REMOTE_CONNECTION            YES
+    
+    ID                              1
+    X                               100
+    Y                               200
+    Z                               300
+  """,
+  'substitutions': [
+    ('Statement failed, SQLSTATE.*',''),
+    ('record not found for user:.*','')
+  ]
+}
+]
+}

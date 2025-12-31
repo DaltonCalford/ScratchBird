@@ -1,0 +1,33 @@
+{
+'id': 'bugs.core_0929',
+'qmid': 'bugs.core_929',
+'tracker_id': 'CORE-929',
+'title': 'Bug in DSQL parameter',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE TEST (MYDATE DATE NOT NULL PRIMARY KEY);
+COMMIT;
+
+INSERT INTO TEST VALUES (CURRENT_DATE);
+INSERT INTO TEST VALUES (CURRENT_DATE + 1);
+INSERT INTO TEST VALUES (CURRENT_DATE + 2);
+INSERT INTO TEST VALUES (CURRENT_DATE + 3);
+COMMIT;
+
+""",
+ 'test_type': 'Python',
+ 'test_script': """c = db_conn.cursor()
+try:
+  c.prep('SELECT * FROM TEST WHERE MYDATE + CAST(? AS INTEGER) >= ?')
+except Exception,e:
+  print ('Test FAILED')
+  print (e)
+
+"""
+}
+]
+}

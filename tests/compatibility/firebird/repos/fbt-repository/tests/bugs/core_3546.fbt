@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_3546',
+'qmid': None,
+'tracker_id': 'CORE-3546',
+'title': 'Aliases for the RETURNING clause',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    recreate table t(id int, x int default 123, y int default 456);
+    commit;
+    set list on;
+    insert into t(id) values(1) returning x+y as i234567890123456789012345678901;
+    insert into t(id) values(2) returning x-y    "/** That's result of (x-y) **/";
+  """,
+ 'expected_stdout':
+  """
+    I234567890123456789012345678901 579
+    /** That's result of (x-y) **/  -333
+  """
+}
+]
+}

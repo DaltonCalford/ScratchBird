@@ -1,0 +1,99 @@
+{
+'id': 'bugs.core_0389',
+'qmid': None,
+'tracker_id': 'CORE-389',
+'title': 'NULLS FIRST does not work with unions',
+'description': '',
+'min_versions': '2.0.7',
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+    create table t(x int);
+    insert into t values(2222);
+    insert into t values(222 );
+    insert into t values(22);
+    insert into t values(2);
+    insert into t values(null);
+    insert into t values(null);
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    select distinct x
+    from t
+    
+    union all
+    
+    select distinct x
+    from t
+    
+    order by 1 nulls first
+    ;
+    --------------------------
+    select distinct x
+    from t
+    
+    union all
+    
+    select distinct x
+    from t
+    
+    order by 1 desc nulls first
+    ;
+    --------------------------
+    select x
+    from t
+
+    union
+
+    select x
+    from t
+
+    order by 1 nulls first
+    ;
+  """,
+ 'expected_stdout': 
+  """
+               X 
+    ============ 
+          <null> 
+          <null> 
+               2 
+               2 
+              22 
+              22 
+             222 
+             222 
+            2222 
+            2222 
+    
+    
+               X 
+    ============ 
+          <null> 
+          <null> 
+            2222 
+            2222 
+             222 
+             222 
+              22 
+              22 
+               2 
+               2 
+
+               X 
+    ============ 
+          <null> 
+               2 
+              22 
+             222 
+            2222
+  """,
+  'substitutions': [('=.*','')]
+}
+]
+}

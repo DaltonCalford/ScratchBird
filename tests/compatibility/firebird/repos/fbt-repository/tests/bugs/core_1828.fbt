@@ -1,0 +1,37 @@
+{
+'id': 'bugs.core_1828',
+'qmid': None,
+'tracker_id': 'CORE-1828',
+'title': 'Error with ABS in dialect 1',
+'description': '',
+'min_versions': '2.5',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'sql_dialect': 1,
+ 'init_script': """CREATE TABLE TEST (MYNUM INTEGER);
+COMMIT;
+INSERT INTO TEST (MYNUM) VALUES (1);
+INSERT INTO TEST (MYNUM) VALUES (-1);
+INSERT INTO TEST (MYNUM) VALUES (2147483647);
+INSERT INTO TEST (MYNUM) VALUES (-2147483648);
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': 'SELECT ABS(MYNUM) FROM TEST;',
+ 'expected_stdout': """
+                    ABS
+=======================
+      1.000000000000000
+      1.000000000000000
+      2147483647.000000
+      2147483648.000000
+
+"""
+}
+]
+}

@@ -1,0 +1,84 @@
+{
+'id': 'bugs.core_1559',
+'qmid': 'bugs.core_1559-250',
+'tracker_id': 'CORE-1559',
+'title': "Dropping NOT NULL contranint doesn'have the desired effect",
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """create table t (n integer constraint c not null);
+COMMIT;
+insert into t values (null);
+COMMIT;
+alter table t drop constraint c;
+COMMIT;
+insert into t values (null);
+COMMIT;
+SELECT * FROM t;
+""",
+ 'expected_stdout': """
+           N
+============
+      <null>
+
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 23000
+validation error for column N, value "*** null ***"
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """create table t (n integer constraint c not null);
+COMMIT;
+insert into t values (null);
+COMMIT;
+alter table t drop constraint c;
+COMMIT;
+insert into t values (null);
+COMMIT;
+SELECT * FROM t;
+""",
+ 'expected_stdout': """
+           N
+============
+      <null>
+
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -625
+validation error for column N, value "*** null ***"
+"""
+},
+{
+ 'firebird_version': '2.5.3',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """create table t (n integer constraint c not null);
+COMMIT;
+insert into t values (null);
+COMMIT;
+alter table t drop constraint c;
+COMMIT;
+insert into t values (null);
+COMMIT;
+SELECT * FROM t;
+""",
+ 'expected_stdout': """Database:  localhost:C:\Users\win7\Firebird_tests\fbt-repository\tmp\bugs.core_1559.fdb, User: SYSDBA
+SQL> SQL> SQL> SQL> SQL> SQL> SQL> SQL> SQL>
+           N
+============
+      <null>
+
+SQL>""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 23000
+validation error for column "T"."N", value "*** null ***"
+"""
+
+}
+]
+}

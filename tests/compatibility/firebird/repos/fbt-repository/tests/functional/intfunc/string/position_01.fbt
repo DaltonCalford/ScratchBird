@@ -1,0 +1,23 @@
+{
+'id': 'functional.intfunc.string.position_01',
+'qmid': 'functional.intfunc.string.position_01',
+'tracker_id': '',
+'title': 'test for POSITION function',
+'description': """POSITION( <string> IN <string> )
+
+POSITION(X IN Y) returns the position of the substring X in the string Y. Returns 0 if X is not found within Y.
+""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """ select position('beau' IN 'il fait beau dans le nord' ) from rdb$database;
+
+""",
+ 'expected_stdout': """          POSITION
+      ============
+                 9"""
+}
+]
+}

@@ -1,0 +1,52 @@
+{
+'id': 'bugs.core_2872',
+'qmid': None,
+'tracker_id': 'CORE-2872',
+'title': 'EVL_expr: invalid operation (232)',
+'description':
+ """
+    Confirmed on WI-V2.5.0.26074 and 2.5.7.27027, got:
+    ===
+      Statement failed, SQLSTATE = XX000
+      internal Firebird consistency check (EVL_expr: invalid operation (232), file: evl.cpp line: 1207)
+      After line 2 in file c2872.sql
+      Statement failed, SQLSTATE = XX000
+      internal Firebird consistency check (can't continue after bugcheck)
+    ===
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    set count on;
+    select 1 as i 
+    from rdb$database
+    where count(*) >= all (select count(*) from rdb$database)
+    ;
+    select 1 as k 
+    from rdb$database
+    where count(*) = (select count(*) from rdb$database)
+    ;
+  """,
+ 'expected_stdout': 
+  """
+    Records affected: 0
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    Dynamic SQL Error
+    -SQL error code = -104
+    -Cannot use an aggregate or window function in a WHERE clause, use HAVING (for aggregate only) instead
+  """
+}
+]
+}

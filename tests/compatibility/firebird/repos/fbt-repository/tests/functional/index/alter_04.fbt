@@ -1,0 +1,98 @@
+{
+'id': 'functional.index.alter.04',
+'qmid': 'functional.index.alter.alter_index_04',
+'tracker_id': '',
+'title': 'ALTER INDEX - INACTIVE PRIMARY KEY',
+'description': """ALTER INDEX - INACTIVE PRIMARY KEY
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE with PRIMARY KEY
+""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE t( a INTEGER NOT NULL,
+                CONSTRAINT pkindx PRIMARY KEY(a)
+              );
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': 'ALTER INDEX RDB$PRIMARY1 INACTIVE;',
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+
+unsuccessful metadata update
+-MODIFY RDB$INDICESS failed
+-action cancelled by trigger (3) to preserve data integrity
+-Cannot deactivate primary index
+"""
+},
+{
+ 'firebird_version': '1.5',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE t( a INTEGER NOT NULL,
+                CONSTRAINT pkindx PRIMARY KEY(a)
+              );
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': 'ALTER INDEX pkindx INACTIVE;',
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+
+unsuccessful metadata update
+-MODIFY RDB$INDICESS failed
+-action cancelled by trigger (3) to preserve data integrity
+-Cannot deactivate primary index"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE t( a INTEGER NOT NULL,
+                CONSTRAINT pkindx PRIMARY KEY(a)
+              );
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': 'ALTER INDEX pkindx INACTIVE;',
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+
+unsuccessful metadata update
+-MODIFY RDB$INDICES failed
+-action cancelled by trigger (3) to preserve data integrity
+-Cannot deactivate index used by a PRIMARY/UNIQUE constraint"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE t( a INTEGER NOT NULL,
+                CONSTRAINT pkindx PRIMARY KEY(a)
+              );
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': 'ALTER INDEX pkindx INACTIVE;',
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+
+unsuccessful metadata update
+-MODIFY RDB$INDICES failed
+-action cancelled by trigger (3) to preserve data integrity
+-Cannot deactivate index used by a PRIMARY/UNIQUE constraint"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE t( a INTEGER NOT NULL,
+                CONSTRAINT pkindx PRIMARY KEY(a)
+              );
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': 'ALTER INDEX pkindx INACTIVE;',
+ 'expected_stderr': """Statement failed, SQLSTATE = 27000
+unsuccessful metadata update
+-ALTER INDEX PKINDX failed
+-action cancelled by trigger (3) to preserve data integrity
+-Cannot deactivate index used by a PRIMARY/UNIQUE constraint
+
+"""
+}
+]
+}

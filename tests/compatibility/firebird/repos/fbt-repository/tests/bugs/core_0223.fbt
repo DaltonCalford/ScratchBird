@@ -1,0 +1,108 @@
+{
+'id': 'bugs.core_0223',
+'qmid': None,
+'tracker_id': 'CORE-0223',
+'title': "ALTER TABLE altering to VARCHAR",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    recreate table test1(x int);
+    --create index test1_x on test1(x);
+
+    insert into test1 values(2000000000);
+    insert into test1 values(100000000);
+    insert into test1 values(50000000);
+    commit;
+
+    select * from test1 order by x;
+    commit;
+
+    alter table test1 alter x type varchar(5);
+    alter table test1 alter x type varchar(9);
+
+    alter table test1 alter x type varchar(11);
+
+    -- Here values must be sorted as TEXT:
+    select * from test1 order by x;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+    X                               50000000
+    X                               100000000
+    X                               2000000000
+
+    X                               100000000
+    X                               2000000000
+    X                               50000000
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -New size specified for column X must be at least 11 characters.
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -New size specified for column X must be at least 11 characters.
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    recreate table test1(x int);
+    --create index test1_x on test1(x);
+
+    insert into test1 values(2000000000);
+    insert into test1 values(100000000);
+    insert into test1 values(50000000);
+    commit;
+
+    select * from test1 order by x;
+    commit;
+
+    alter table test1 alter x type varchar(5);
+    alter table test1 alter x type varchar(9);
+
+    alter table test1 alter x type varchar(11);
+
+    -- Here values must be sorted as TEXT:
+    select * from test1 order by x;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+    X                               50000000
+    X                               100000000
+    X                               2000000000
+
+    X                               100000000
+    X                               2000000000
+    X                               50000000
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -ALTER TABLE TEST1 failed
+    -New size specified for column X must be at least 11 characters.
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -ALTER TABLE TEST1 failed
+    -New size specified for column X must be at least 11 characters.
+  """
+}
+]
+}

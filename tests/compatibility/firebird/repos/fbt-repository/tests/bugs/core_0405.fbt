@@ -1,0 +1,86 @@
+{
+'id': 'bugs.core_0405',
+'qmid': None,
+'tracker_id': 'CORE-0405',
+'title': 'Garbage vs indices/constraints',
+'description':
+  """
+    Confirmed bug on 3.0.4.32924, got:
+        DatabaseError:
+        Error while commiting transaction:
+        - SQLCODE: -803
+        - attempt to store duplicate value (visible to active transactions) in unique index "TEST_X"
+        -803
+        335544349
+        ----------------------------------------------------
+    :: NB ::
+    No error on Firebird 4.0 (any: SS,SC, CS).
+    Works OK on: 4.0.0.838
+  """,
+'min_versions': '3.0.4',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import sys
+import fdb
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_conn.close()
+
+con=fdb.connect( dsn=dsn, no_gc=1 )
+#print( con.firebird_version )
+
+con.execute_immediate('recreate table test(x int)')
+con.commit()
+cur=con.cursor()
+
+stm='insert into test( x ) values( ? )'
+val = [ (2,), (3,), (3,), (2,) ]
+cur.executemany(  stm, val )
+
+cur.execute('select x from test order by x')
+for r in cur:
+    print(r[0])
+
+cur.execute('delete from test')
+
+cur.execute('select count(*) from test')
+for r in cur:
+    print(r[0])
+
+con.execute_immediate('create unique index test_x on test(x)')
+con.commit()
+
+
+cur.execute("select rdb$index_name from rdb$indices where rdb$relation_name='TEST'")
+for r in cur:
+    print( r[0].rstrip()  )
+
+con.close()
+
+  """,
+ 'expected_stdout':
+  """
+    2
+    2
+    3
+    3
+    0
+    TEST_X
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

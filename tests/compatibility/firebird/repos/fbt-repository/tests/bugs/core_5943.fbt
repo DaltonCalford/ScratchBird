@@ -1,0 +1,48 @@
+{
+'id': 'bugs.core_5943',
+'qmid': None,
+'tracker_id': 'CORE-5943',
+'title': "Server crashes preparing a query with both DISTINCT/ORDER BY and non-field expression in the select list",
+'description':
+ """
+    We run query from ticket and check that it does completed OK with issuing data and 'Records affected: 1'.
+    Confirmed bug on: 3.0.4.33053, 4.0.0.1172
+    Works fine on:
+        2.5.9.27119: OK, 0.468s.
+        3.0.5.33084: OK, 1.484s.
+        4.0.0.1249: OK, 2.453s.
+ """,
+'min_versions': '2.5.9',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set count on;
+    select distinct 
+        '0' as f01
+       ,a.mon$server_pid as f02
+    from mon$attachments a
+    order by a.mon$server_pid, a.mon$server_pid
+    ;
+  """,
+ 'expected_stdout': 
+  """
+    F01                             0
+    F02                             2344
+    Records affected: 1
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions':[('F02\s+\d+','F02')]
+
+}
+]
+}

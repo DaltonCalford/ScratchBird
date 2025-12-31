@@ -1,0 +1,63 @@
+{
+'id': 'bugs.core_4321',
+'qmid': None,
+'tracker_id': 'CORE-4321',
+'title': 'Regression: ISQL does not destroy the SQL statement',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    -- NB: 2.1.7 FAILED, output contains '4' for select count(*) ...
+    set list on
+    select 1 x from rdb$database;
+    select 1 x from rdb$database;
+    select 1 x from rdb$database;
+    select 1 x from rdb$database;
+    
+    select count(*) c from mon$statements s 
+    where s.mon$sql_text containing 'select 1 x' -- 08-may-2017: need for 4.0 Classic! Currently there is also query with RDB$AUTH_MAPPING data in mon$statements
+    ;
+    commit;
+    select count(*) c from mon$statements s 
+    where s.mon$sql_text containing 'select 1 x'
+    ;
+    
+    select 1 x from rdb$database;
+    select 1 x from rdb$database;
+    select 1 x from rdb$database;
+    select 1 x from rdb$database;
+    
+    select count(*) c from mon$statements s 
+    where s.mon$sql_text containing 'select 1 x'
+    ;
+    commit;
+    
+    select count(*) c from mon$statements s 
+    where s.mon$sql_text containing 'select 1 x'
+    ;
+  """,
+ 'expected_stdout':
+  """
+    X                               1
+    X                               1
+    X                               1
+    C                               1
+    C                               1
+    X                               1
+    X                               1
+    X                               1
+    X                               1
+    C                               1
+    C                               1
+  """
+}
+]
+}

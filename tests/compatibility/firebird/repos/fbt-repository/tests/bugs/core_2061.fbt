@@ -1,0 +1,19 @@
+{
+'id': 'bugs.core_2061',
+'qmid': None,
+'tracker_id': 'CORE-2061',
+'title': 'ALTER VIEW WITH CHECK OPTION crashes the engin',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """create or alter view v as select * from rdb$database where 1 = 0 with check option;
+alter view v as select * from rdb$database where 1 = 1 with check option;
+"""
+}
+]
+}

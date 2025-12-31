@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_2291',
+'qmid': None,
+'tracker_id': 'CORE-2291',
+'title': 'BUGCHECK 284 (cannot restore singleton select data (284), file: rse.cpp ...)',
+'description': '',
+'min_versions': '2.0.6',
+'versions': [
+{
+ 'firebird_version': '2.0.6',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """recreate table t (id int, f2 char(16));
+commit;
+
+insert into t values (1, '0123456798012345');
+insert into t values (2, '0123456798012345');
+commit;
+
+alter table t drop f2;
+commit;
+
+update t set id = 3 where id = 2;
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM !!;
+execute block returns (id int)
+as
+begin
+  select t1.id from t t1 left join t t2 on t1.id = t2.id - 2
+   where t2.id = 3
+    into :id;
+  suspend;
+end !!
+""",
+ 'expected_stdout': """
+          ID
+============
+           1
+
+"""
+}
+]
+}

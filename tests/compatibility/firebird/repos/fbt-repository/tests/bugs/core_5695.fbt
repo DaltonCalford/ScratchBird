@@ -1,0 +1,55 @@
+{
+'id': 'bugs.core_5695',
+'tracker_id': 'CORE-5695',
+'title': 'Position function does not consider the collation for blob',
+'description':
+ """
+    Confirmed bug on 3.0.3.32837, 4.0.0.800
+    Checked on:
+        FB30SS, build 3.0.3.32876: OK, 1.094s.
+        FB40SS, build 4.0.0.852: OK, 1.109s.
+ """,
+'min_versions': '3.0.3',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;        
+    set blob all;
+    set term ^;
+    execute block returns (res smallint) as
+        declare blb blob sub_type 1 segment size 80 collate unicode_ci;
+        declare txt varchar(255) collate unicode_ci;
+    begin
+        -- pure ASCII strings:
+        blb = 'A';
+        txt = 'a';
+        res = position(txt, blb);
+        suspend;
+        -- strings with NON-ascii characters:
+        blb=  'ŁÁTÉÇØΙΚΌΛΑΟΣ';
+        txt = 'Łátéçøικόλαος';
+        res = position(txt, blb);
+        suspend;
+    end
+    ^
+    set term ;^  
+  """,
+ 'expected_stdout': 
+  """
+    RES                             1
+    RES                             1  
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

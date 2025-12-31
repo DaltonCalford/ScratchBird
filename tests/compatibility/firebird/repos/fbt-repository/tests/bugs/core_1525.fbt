@@ -1,0 +1,60 @@
+{
+'id': 'bugs.core_1525',
+'qmid': 'bugs.core_1525',
+'tracker_id': '',
+'title': 'Computed field + index not working in WHERE',
+'description': '',
+'min_versions': '2.0.7',
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create table test_1 (
+      id integer not null,
+      last_day date,
+      comp_last_day computed by (coalesce(last_day, cast('2999-12-31' as date)))
+    );
+    
+     
+    insert into test_1 values (1, '2007-10-10');
+    insert into test_1 values (2, null);
+    commit;
+    
+    set list on;
+
+    select *
+    from test_1
+    where cast ('2007-09-09' as date) < comp_last_day;
+
+    create index idx_1 on test_1 computed by ( coalesce(last_day, cast('2999-12-31' as date)) );
+    commit;
+    set plan on;
+
+    select *
+    from test_1
+    where cast ('2007-09-09' as date) < comp_last_day;
+  """,
+ 'expected_stdout': 
+  """
+    ID                              1
+    LAST_DAY                        2007-10-10
+    COMP_LAST_DAY                   2007-10-10
+    ID                              2
+    LAST_DAY                        <null>
+    COMP_LAST_DAY                   2999-12-31
+    
+    PLAN (TEST_1 INDEX (IDX_1))
+    
+    ID                              1
+    LAST_DAY                        2007-10-10
+    COMP_LAST_DAY                   2007-10-10
+    ID                              2
+    LAST_DAY                        <null>
+    COMP_LAST_DAY                   2999-12-31
+  """
+}
+]
+}

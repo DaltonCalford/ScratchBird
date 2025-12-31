@@ -1,0 +1,47 @@
+{
+'id': 'bugs.core_3924',
+'qmid': None,
+'tracker_id': 'CORE-3924',
+'title': 'Bugcheck 291 (cannot find record back version) if GTT is modified concurrently using at least one read-committed read-only transaction',
+'description': '',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5.3',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """
+    recreate global temporary table gt(f01 int) on commit preserve rows;
+    commit;
+    insert into gt values(1);
+    commit;
+    set transaction read only read committed record_version;
+    delete from gt;
+    set term ^;
+    execute block as 
+    begin 
+        in autonomous transaction 
+        do update gt set f01=-1; 
+    end
+    ^
+    set term ;^
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 40001
+    deadlock
+    -update conflicts with concurrent update
+    -At block line: 1, col: 53
+  """,
+ 'substitutions': [
+   ('-concurrent.*',''),
+   ('-At block line: [\d]+, col: [\d]+', '-At block line')
+ ]
+}
+]
+}

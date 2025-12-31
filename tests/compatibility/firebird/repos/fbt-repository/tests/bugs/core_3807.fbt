@@ -1,0 +1,53 @@
+{
+'id': 'bugs.core_3807',
+'qmid': None,
+'tracker_id': 'CORE-3807',
+'title': 'Error "Invalid expression in the select list" can be unexpectedly raised if a string literal is used inside a GROUP BY clause in a multi-byte connection',
+'description': '',
+'min_versions': '2.1.5',
+'versions': [
+{
+ 'firebird_version': '2.1.5',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select
+    'Current time is ' || cast(a.t as varchar(15))
+from
+    (select '16:06:03.0000' t from rdb$database) a
+group by
+    'Current time is ' || cast(a.t as varchar(15));
+""",
+ 'expected_stdout': """Database:  localhost:C:btestnew	mpugs.core_3807.fdb, User: SYSDBA
+SQL> CON> CON> CON> CON> CON>
+CONCATENATION
+===============================================================================
+Current time is 16:06:03.0000
+
+SQL>"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select
+    'Current time is ' || cast(a.t as varchar(15))
+from
+    (select '16:06:03.0000' t from rdb$database) a
+group by
+    'Current time is ' || cast(a.t as varchar(15));
+""",
+ 'expected_stdout': """
+CONCATENATION
+===============================
+Current time is 16:06:03.0000
+
+"""
+}
+]
+}

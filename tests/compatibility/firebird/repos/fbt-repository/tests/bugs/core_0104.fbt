@@ -1,0 +1,81 @@
+{
+'id': 'bugs.core_0104',
+'qmid': 'bugs.core_104-250',
+'tracker_id': 'CORE-104',
+'title': 'Dropping and recreating a table in the same txn disables PK',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """create table test (acolumn int not null primary key);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET AUTODDL OFF;
+
+drop table test;
+create table test (acolumn int not null primary key);
+
+commit;
+
+insert into test values (1);
+insert into test values (1);
+
+commit;
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 23000
+violation of PRIMARY or UNIQUE KEY constraint "INTEG_4" on table "TEST"
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """create table test (acolumn int not null primary key);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET AUTODDL OFF;
+
+drop table test;
+create table test (acolumn int not null primary key);
+
+commit;
+
+insert into test values (1);
+insert into test values (1);
+
+commit;
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -803
+violation of PRIMARY or UNIQUE KEY constraint "INTEG_4" on table "TEST"
+-Problematic key value is ("ACOLUMN" = 1)
+"""
+},
+{
+ 'firebird_version': '2.5.3',
+ 'platform': 'All',
+ 'init_script': """create table test (acolumn int not null primary key);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET AUTODDL OFF;
+
+drop table test;
+create table test (acolumn int not null primary key);
+
+commit;
+
+insert into test values (1);
+insert into test values (1);
+
+commit;
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 23000
+violation of PRIMARY or UNIQUE KEY constraint "INTEG_4" on table "TEST"
+-Problematic key value is ("ACOLUMN" = 1)
+"""
+}
+]
+}

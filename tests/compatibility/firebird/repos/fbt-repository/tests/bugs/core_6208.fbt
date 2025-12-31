@@ -1,0 +1,269 @@
+{
+'id': 'bugs.core_6208',
+'qmid': None,
+'tracker_id': 'CORE-6208',
+'title': 'Grant lost in security.db after backup/restore cycle',
+'description': 
+ """
+    Ticket shows scenario with local protocol which allows security.db to be overwritten.
+    This can not be done when we work using remote protocol, but we can exploit ability
+    to change security DB. This is done by specifying parameter SecurityDatabase in databases.conf
+    and its value is equal to alias of test database that we use:
+        tmp_6208 = <path__and_name_of_test_database> {
+            SecurityDatabase = tmp_6208
+        }
+    
+    Test DB is named here 'fdb_init' and it is created by file copy of $FB_HOME\securityN.db
+    Then file 'databases.conf' as adjusted so that SecurityDatabase will point to this test DB.
+    After this we can connect to $fdb_ini, create user (his name: 'TMP6208DBA') and give him 
+    privilege to create database.
+
+    Futher, we make backup of this test DB and restore it. New database name is 'fdb_rest'.
+    After this, we change state of test DB to full shutdown and overwrite it by $fdb_rest.
+    Finaly, we make connection to this DB (that was just overwritten) and check that output
+    of 'show grants' command contains:
+
+        GRANT CREATE DATABASE TO USER TMP6208DBA
+
+    Confirmed lost of grant on 4.0.0.1691 (build 14-dec-2019).
+
+    26.08.2020.
+    IT CRUSIAL FOR THIS TEST DO MAKE ALL RESTORE AND FURTHER ACTIONS IN LOCAL/EMBEDDED PROTOCOL.
+    Discissed with Alex, see letter 24.08.2020 19:49.
+
+    Main problem is in SuperClassic: after restore finish, we can not connect to this DB by TCP,
+    error is
+        "Statement failed, SQLSTATE = 08006 / Error occurred during login, please check server firebird.log for details"
+    Server log contains in this case: "Srp Server / connection shutdown / Database is shutdown."
+
+    Checked initially on 4.0.0.1712 SC: 11s, 4.0.0.1714 SS, CS (7s, 16s).
+    Checked again 26.08.2020 on 4.0.0.2173 SS/CS/SC.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': """
+import os
+import sys
+import time
+import subprocess
+import shutil
+from subprocess import PIPE
+from fdb import services
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+this_db = db_conn.database_name
+fb_vers = str(db_conn.engine_version)[:1] # character for security.db file: engine = 4.0  --> '4'
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for f in f_names_list:
+       if type(f) == file:
+          del_name = f.name
+       elif type(f) == str:
+          del_name = f
+       else:
+          print('Unrecognized type of element:', f, ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+    
+#--------------------------------------------
+
+def svc_get_fb_log( fb_home, f_fb_log ):
+
+  global subprocess
+  subprocess.call( [ fb_home + "fbsvcmgr",
+                     "localhost:service_mgr",
+                     "action_get_fb_log"
+                   ],
+                   stdout=f_fb_log, stderr=subprocess.STDOUT
+                 )
+  return
+
+svc = services.connect(host='localhost', user= user_name, password= user_password)
+fb_home = svc.get_home_directory()
+svc.close()
+dbconf = os.path.join(fb_home, 'databases.conf')
+dbcbak = os.path.join(fb_home, 'databases.bak')
+
+sec_db = context['isc4_path']
+
+fdb_init = os.path.join(context['temp_directory'],'tmp_6208_initial.fdb')
+fdb_bkup = os.path.join(context['temp_directory'],'tmp_6208_initial.fbk')
+fdb_rest = os.path.join(context['temp_directory'],'tmp_6208_restored.fdb')
+
+cleanup( (fdb_init, fdb_rest) )
+
+shutil.copy2( sec_db, fdb_init )
+
+# Resut: fb_home is full path to FB instance home (with trailing slash).
+shutil.copy2( dbconf, dbcbak)
+
+alias_data=\
+'''
+    # Added temporarily for executing test core_6208.fbt
+    tmp_6208 = %(fdb_init)s {
+        # RemoteAccess = true
+        SecurityDatabase = tmp_6208
+    }
+''' % locals()
+
+f_dbconf=open( dbconf,'a', buffering = 0)
+f_dbconf.seek(0, 2)
+f_dbconf.write(alias_data)
+flush_and_close( f_dbconf )
+
+sql_init=\
+'''
+    set bail on;
+    create or alter user tmp6208dba password '123' using plugin Srp;
+    grant create database to user tmp6208dba;
+    alter database set linger to 0;
+    commit;
+'''
+runProgram('isql',[ fdb_init ], sql_init)
+
+#########################################################################
+
+f_backup_log = open( os.path.join(context['temp_directory'],'tmp_6208.backup.log'), 'w', buffering = 0)
+f_backup_err = open( ''.join( (os.path.splitext(f_backup_log.name)[0], '.err' ) ), 'w', buffering = 0)
+
+subprocess.call( [ context['gfix_path'], '-h', '54321', fdb_init ], stdout = f_backup_log, stderr = f_backup_err)
+subprocess.call( [ context['gstat_path'], '-h', fdb_init ], stdout = f_backup_log, stderr = f_backup_err)
+subprocess.call( [ context['gbak_path'], '-b', fdb_init, fdb_bkup, '-v', '-st', 'tdrw' ], stdout = f_backup_log, stderr = f_backup_err)
+
+flush_and_close( f_backup_log )
+flush_and_close( f_backup_err )
+
+########################################################################
+
+cleanup( (fdb_rest,) )
+
+f_restore_log = open( os.path.join(context['temp_directory'],'tmp_6208.restore.log'), 'w', buffering = 0)
+f_restore_err = open( ''.join( (os.path.splitext(f_restore_log.name)[0], '.err' ) ), 'w', buffering = 0)
+
+subprocess.call( [ context['gbak_path'], '-c', fdb_bkup, fdb_rest, '-v', '-st', 'tdrw' ], stdout = f_restore_log, stderr = f_restore_err)
+
+flush_and_close( f_restore_log )
+flush_and_close( f_restore_err )
+
+########################################################################
+
+runProgram('gfix',['-shut', 'full', '-force', '0', fdb_init] )
+runProgram('gfix',['-shut', 'full', '-force', '0', fdb_rest] )
+
+shutil.move( fdb_rest, fdb_init )
+
+runProgram('gfix',['-online', fdb_init] )
+
+sql_chk=\
+'''
+    set bail on;
+    set list on;
+    -- set echo on;
+	-- ##########################
+    -- SuperClassic:
+    -- Statement failed, SQLSTATE = 08006
+    -- Error occurred during login, please check server firebird.log for details
+    -- firebird.log:
+	-- Srp Server
+	-- connection shutdown
+	-- Database is shutdown.
+	-- ##########################
+    -- connect 'localhost:%(fdb_init)s' user tmp6208dba password '123';
+    connect '%(fdb_init)s' user tmp6208dba password '123';
+    select
+         d.mon$owner as "mon$database.mon$owner"
+        ,d.mon$sec_database as "mon$database.mon$sec_database"
+        ,r.rdb$linger as "rdb$database.rdb$linger"
+        --,a.mon$remote_protocol as "mon$attachments.mon$remote_protocol"
+        ,current_user as whoami
+    from mon$database d
+    join mon$attachments a on a.mon$attachment_id = current_connection
+    cross join rdb$database r
+
+    ;
+
+    select
+        s.sec$user_name as "sec$users.sec_user"
+       ,c.sec$user_type as "sec$db_creators.sec$user_type"
+    from sec$users s
+    left join sec$db_creators c on s.sec$user_name = c.sec$user
+    where sec$user_name = upper('TMP6208DBA');
+    rollback;
+
+    connect '%(fdb_init)s';
+    drop user tmp6208dba using plugin Srp;
+    commit;
+''' % locals()
+
+f_chk_sql = open( os.path.join(context['temp_directory'],'tmp_6208_chk.sql'), 'w', buffering = 0)
+f_chk_sql.write(sql_chk)
+flush_and_close( f_chk_sql )
+
+f_chk_log = open( os.path.join(context['temp_directory'],'tmp_6208_chk.log'), 'w', buffering = 0)
+subprocess.call( [context['isql_path'], "-q", "-i", f_chk_sql.name ], stdout = f_chk_log, stderr = subprocess.STDOUT)
+flush_and_close( f_chk_log )
+
+#######runProgram('isql',[ fdb_init ], 'drop user tmp6208dba using plugin Srp; commit;')
+
+f_shut_log = open( os.path.join(context['temp_directory'],'tmp_6208_shut.log'), 'w', buffering = 0)
+subprocess.call( [ context['gfix_path'], "-shut", "full", "-force", "0",  fdb_init ], stdout = f_shut_log, stderr = subprocess.STDOUT)
+subprocess.call( [ context['gstat_path'], "-h", fdb_init ], stdout = f_shut_log, stderr = subprocess.STDOUT)
+flush_and_close( f_shut_log )
+
+
+# Restore previous content:
+shutil.move( dbcbak, dbconf )
+
+with open(f_chk_log.name,'r') as f:
+   for line in f:
+      print(line)
+
+
+# cleanup:
+##########
+time.sleep(1)
+cleanup( (f_backup_log, f_backup_err, f_restore_log, f_restore_err, f_chk_sql, f_chk_log, f_shut_log, fdb_init, fdb_bkup) )
+
+""",
+ 'expected_stdout': 
+  """
+    mon$database.mon$owner          SYSDBA
+    mon$database.mon$sec_database   Self
+    rdb$database.rdb$linger         0
+    WHOAMI                          TMP6208DBA
+    sec$users.sec_user              TMP6208DBA
+    sec$db_creators.sec$user_type   8
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions':[ ('\t+', ' ') ]
+}
+]
+}

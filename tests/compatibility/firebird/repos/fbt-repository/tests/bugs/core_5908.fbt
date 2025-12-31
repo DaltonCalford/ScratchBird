@@ -1,0 +1,68 @@
+{
+'id': 'bugs.core_5908',
+'qmid': None,
+'tracker_id': 'CORE-5908',
+'title': 'Enhance dynamic libraries loading related error messages',
+'description': 
+ """
+   We intentionally try to load unit from non-existent UDR module with name "udrcpp_foo".
+   Message 'module not found' issued BEFORE fix - without any detalization.
+   Current output should contain phrase: 'UDR module not loaded'.
+   Filtering is used for prevent output of localized message about missed UDR library.
+
+   Checked on:
+       3.0.4.33053: OK, 13.968s.
+       4.0.0.1210: OK, 2.375s.
+   Thanks to Alex for suggestion about test implementation.
+ """,
+'min_versions': '3.0.4',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script':"""\
+import re
+
+udr_sp_ddl='''
+    create or alter procedure gen_foo2 (
+        start_n integer not null,
+        end_n integer not null
+    ) returns( n integer not null )
+        external name 'udrcpp_foo!gen_rows'
+        engine udr
+'''
+
+allowed_patterns = (
+     re.compile('\.*module\s+not\s+(found|loaded)\.*', re.IGNORECASE),
+)
+
+try:
+    db_conn.execute_immediate( udr_sp_ddl )
+    db_conn.commit() # --------------------- this will fail with message about missed UDR livrary file.
+except Exception,e:
+    ##############################################################################
+    # We parse exception object and allow for output only such lines from it
+    # that relate to missed MODULE, and no other text (localization can be here!):
+    ##############################################################################
+    for i in e[0].split('\\n'):
+        match2some = filter( None, [ p.search(i) for p in allowed_patterns ] )
+        if match2some:
+            print( (' '.join(i.split()).upper()) )
+finally:
+    db_conn.close()
+
+  """,
+ 'expected_stdout':
+  """
+    - UDR MODULE NOT LOADED
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

@@ -1,0 +1,80 @@
+{
+'id': 'bugs.core_5533',
+'qmid': None,
+'tracker_id': 'CORE-5533',
+'title': 'Crash on 3.0 and 4.0 when DB contains database-level trigger',
+'description': 
+ """
+   Confirmed bug on WI-T4.0.0.633.
+   Checked on WI-T4.0.0.638, WI-V3.0.3.32721 -- both on SS and CS.
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set bail on;
+    set list on;
+    set term ^;
+    execute block as
+    begin
+        begin
+            execute statement 'drop trigger trg_tx_start';
+        when any do begin end
+        end
+    end
+    ^
+    set term ;^
+    commit;
+
+    recreate table tlog (ID integer default current_transaction, msg varchar(20));
+
+    set term ^;
+    create trigger trg_tx_start inactive on transaction start position 0
+    as
+    begin
+      execute statement ('insert into tlog(msg) values(?)') ('Tx start');
+    end
+    ^
+    set term ;^
+    commit;
+
+    set autoddl off;
+    select count(distinct id) id_distinct_count_0 from tlog;
+    alter trigger trg_tx_start active;
+    commit;
+
+    set term ^;
+    execute block as
+        declare c int;
+    begin
+        begin
+            execute statement 'drop trigger trg_tx_start';
+        when any do begin end
+        end
+    end
+    ^
+    set term ;^
+    commit;
+
+    select count(distinct id) id_distinct_count_1 from tlog;
+    commit;
+    select count(distinct id) id_distinct_count_2 from tlog;
+    quit; 
+
+  """,
+  'expected_stdout':
+  """
+    ID_DISTINCT_COUNT_0             0
+    ID_DISTINCT_COUNT_1             1
+    ID_DISTINCT_COUNT_2             1
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

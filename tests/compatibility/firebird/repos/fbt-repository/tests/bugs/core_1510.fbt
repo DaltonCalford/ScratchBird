@@ -1,0 +1,55 @@
+{
+'id': 'bugs.core_1510',
+'qmid': None,
+'tracker_id': 'CORE-1510',
+'title': 'Bad XSQLVAR [NULL flags] for (2*COALESCE(NULL,NULL))',
+'description': '',
+'min_versions': '2.1.7',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set sqlda_display;
+    select 2*COALESCE(NULL,NULL) from RDB$DATABASE;
+    select 2*IIF(NULL is NULL, NULL, NULL) from RDB$DATABASE;
+    -- Confirmed on 2.0.7:
+    -- 01: sqltype: 580 INT64	 		 sqlscale: 0 sqlsubtype: 0 sqllen: 8
+    -- (no 'Nullable' flag in this row)
+  """,
+ 'expected_stdout':
+  """
+    01: sqltype: 581 INT64	 Nullable sqlscale: 0 sqlsubtype: 0 sqllen: 8
+    01: sqltype: 581 INT64	 Nullable sqlscale: 0 sqlsubtype: 0 sqllen: 8
+  """,
+  'substitutions':[('^((?!sqltype).)*$','')]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set sqlda_display;
+    select 2*COALESCE(NULL,NULL) from RDB$DATABASE;
+    select 2*IIF(NULL is NULL, NULL, NULL) from RDB$DATABASE;
+  """,
+ 'expected_stdout':
+  """
+    01: sqltype: 580 INT64 Nullable scale: 0 subtype: 0 len: 8
+    01: sqltype: 580 INT64 Nullable scale: 0 subtype: 0 len: 8
+  """,
+  'substitutions':[('^((?!sqltype).)*$',''),('[ ]+',' '),('[\t]*',' '),('charset:.*','')]
+}
+]
+}

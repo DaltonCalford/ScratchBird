@@ -1,0 +1,43 @@
+{
+'id': 'bugs.core_4752',
+'qmid': None,
+'tracker_id': 'CORE-4752',
+'title': 'EXECUTE STATEMENT using BLOB parameters results in "Invalid BLOB ID" error',
+'description': '',
+'min_versions': '2.5.5',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    recreate table tb(id int, b1 blob);
+    commit;
+    insert into tb(id) values(1);
+    insert into tb(id) values(2);
+    insert into tb(id) values(3);
+    commit;
+    
+    set term ^;
+    execute block as
+        declare v_stt varchar(255);
+        declare v_blob_a blob = 'qwertyuioplkjhgfdsazxcvbnm';
+        declare v_blob_b blob = '1234567890asdfghjklmnbvcxz';
+    begin
+        v_stt = 'update tb set b1 = case when id in (1,2) then cast(? as blob) else cast(? as blob) end';
+        execute statement ( v_stt ) ( v_blob_a, v_blob_b );
+    end
+    ^
+    set term ;^ 
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

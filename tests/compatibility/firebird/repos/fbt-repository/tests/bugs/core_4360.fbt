@@ -1,0 +1,39 @@
+{
+'id': 'bugs.core_4360',
+'qmid': None,
+'tracker_id': 'CORE-4360',
+'title': 'SELECT from derived table which contains GROUP BY on field with literal value returns wrong result',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'NONE',
+ 'connection_character_set': 'NONE',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+select c from( select 'a' c from rdb$database group by 'a' );
+select c from( select 123 c from rdb$database group by 1 );
+select c from( select dateadd(999 millisecond to timestamp '31.12.9999 23:59:59') c from rdb$database group by 1 );
+  """,
+ 'expected_stdout':
+  """
+C
+======
+a
+           C
+============
+         123
+                        C
+=========================
+9999-12-31 23:59:59.9990
+  """
+}
+]
+}

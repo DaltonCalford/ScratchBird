@@ -1,0 +1,24 @@
+{
+'id': 'functional.generator.drop.01',
+'qmid': 'functional.generator.drop.drop_generator_01',
+'tracker_id': '',
+'title': 'DROP GENERATOR',
+'description': """DROP GENERATOR
+
+Dependencies:
+CREATE DATABASE
+CREATE GENERATOR""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE GENERATOR test;
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """DROP GENERATOR test;
+SHOW GENERATOR TEST;""",
+ 'expected_stderr': """There is no generator TEST in this database
+"""
+}
+]
+}

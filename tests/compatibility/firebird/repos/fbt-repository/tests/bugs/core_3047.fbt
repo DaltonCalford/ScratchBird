@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_3047',
+'qmid': None,
+'tracker_id': 'CORE-3047',
+'title': 'Wrong logic is used to resolve EXECUTE BLOCK parameters collations',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'WIN1252',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    -- In 2.5 (checked on WI-V2.5.5.26861):
+    -- Statement failed, SQLSTATE = HY004
+    -- Dynamic SQL Error
+    -- -SQL error code = -204
+    -- -Data type unknown
+    -- -COLLATION WIN_PTBR for CHARACTER SET UTF8 is not defined
+    -- (See ticket issue: "WIN_PTBR is tried to be resolved agains database charset instead of client charset: incorrect") 
+    -- In 3.0.0.31827 (WI- and LI-) works fine:
+    set term ^;
+    execute block returns (c varchar(10) collate win_ptbr) as 
+    begin
+    end
+    ^
+    set term ;^
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

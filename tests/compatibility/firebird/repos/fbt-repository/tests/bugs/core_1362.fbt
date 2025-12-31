@@ -1,0 +1,57 @@
+{
+'id': 'bugs.core_1362',
+'qmid': None,
+'tracker_id': 'CORE-1362',
+'title': 'Too large numbers cause positive infinity to be inserted into database',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test (col1 double precision);
+    commit;
+    -- this should PASS:
+    insert into test values( 1.79769313486231570E+308 );
+    -- this is too big, should raise exception:
+    insert into test values( 1.79769313486232e+308 );
+    commit;
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 22003
+    arithmetic exception, numeric overflow, or string truncation
+    -numeric value is out of range
+  """
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test (col1 double precision);
+    commit;
+    -- this should PASS:
+    insert into test values( 1.79769313486231570E+308 );
+    -- this is too big, should raise exception:
+    insert into test values( 1.79769313486232e+308 );
+    commit;
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 22003
+    Floating-point overflow.  The exponent of a floating-point operation is greater than the magnitude allowed.
+  """
+}
+]
+}

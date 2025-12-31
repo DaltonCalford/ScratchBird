@@ -1,0 +1,70 @@
+{
+'id': 'functional.exception.create.02',
+'qmid': 'functional.exception.create.create_exception_02',
+'tracker_id': '',
+'title': 'CREATE EXCEPTION - try create Exception with the same name',
+'description': """CREATE EXCEPTION - try create Exception with the same name
+
+Dependencies:
+CREATE DATABASE
+CREATE EXCEPTION
+Basic SELECT
+""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE EXCEPTION test 'A1';
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': "CREATE EXCEPTION test 'message to show';",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+
+unsuccessful metadata update
+-DEFINE EXCEPTION failed
+-attempt to store duplicate value (visible to active transactions) in unique index "RDB$INDEX_23"
+"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """CREATE EXCEPTION test 'A1';
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': "CREATE EXCEPTION test 'message to show';",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-Exception TEST already exists
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """CREATE EXCEPTION test 'A1';
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': "CREATE EXCEPTION test 'message to show';",
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-CREATE EXCEPTION TEST failed
+-Exception TEST already exists
+
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE EXCEPTION test 'A1';
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': "CREATE EXCEPTION test 'message to show';",
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+unsuccessful metadata update
+-DEFINE EXCEPTION failed
+-attempt to store duplicate value (visible to active transactions) in unique index "RDB$INDEX_23"
+-Problematic key value is ("RDB$EXCEPTION_NAME" = 'TEST')
+"""
+}
+]
+}

@@ -1,0 +1,363 @@
+{
+'id': 'functional.basic.db.11',
+'qmid': 'functional.basic.db.db_11',
+'tracker_id': '',
+'title': 'New DB - RDB$FUNCTION_ARGUMENTS',
+'description': 
+ """
+    Check for correct content of RDB$FUNCTION_ARGUMENTS in a new database.
+    Checked on:
+        2.5.9.27126: OK, 0.656s.
+        3.0.5.33086: OK, 1.156s.
+        4.0.0.1378: OK, 5.344s.
+ """,
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set count on;
+    select *
+    from rdb$function_arguments fa
+    order by fa.rdb$function_name, fa.rdb$argument_position;
+  """,
+ 'expected_stdout': 
+ """
+
+    RDB$FUNCTION_NAME               RDB$GET_CONTEXT                                                                              
+    RDB$ARGUMENT_POSITION           0
+    RDB$MECHANISM                   -1
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_LENGTH                255
+    RDB$FIELD_SUB_TYPE              0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             0
+    RDB$CHARACTER_LENGTH            255
+
+    RDB$FUNCTION_NAME               RDB$GET_CONTEXT                                                                              
+    RDB$ARGUMENT_POSITION           1
+    RDB$MECHANISM                   5
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_LENGTH                80
+    RDB$FIELD_SUB_TYPE              0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             0
+    RDB$CHARACTER_LENGTH            80
+
+    RDB$FUNCTION_NAME               RDB$GET_CONTEXT                                                                              
+    RDB$ARGUMENT_POSITION           2
+    RDB$MECHANISM                   5
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_LENGTH                80
+    RDB$FIELD_SUB_TYPE              0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             0
+    RDB$CHARACTER_LENGTH            80
+
+    RDB$FUNCTION_NAME               RDB$SET_CONTEXT                                                                              
+    RDB$ARGUMENT_POSITION           0
+    RDB$MECHANISM                   0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SUB_TYPE              0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             0
+    RDB$CHARACTER_LENGTH            0
+
+    RDB$FUNCTION_NAME               RDB$SET_CONTEXT                                                                              
+    RDB$ARGUMENT_POSITION           1
+    RDB$MECHANISM                   5
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_LENGTH                80
+    RDB$FIELD_SUB_TYPE              0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             0
+    RDB$CHARACTER_LENGTH            80
+
+    RDB$FUNCTION_NAME               RDB$SET_CONTEXT                                                                              
+    RDB$ARGUMENT_POSITION           2
+    RDB$MECHANISM                   5
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_LENGTH                80
+    RDB$FIELD_SUB_TYPE              0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             0
+    RDB$CHARACTER_LENGTH            80
+
+    RDB$FUNCTION_NAME               RDB$SET_CONTEXT                                                                              
+    RDB$ARGUMENT_POSITION           3
+    RDB$MECHANISM                   5
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_LENGTH                255
+    RDB$FIELD_SUB_TYPE              0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             0
+    RDB$CHARACTER_LENGTH            255
+
+
+    Records affected: 7
+
+ """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set count on;
+    select *
+    from rdb$function_arguments fa
+    order by fa.rdb$function_name, fa.rdb$argument_position;
+  """,
+ 'expected_stdout': 
+ """
+    Records affected: 0
+ """
+}
+, # ------------------------ 4.x --------------------------
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set count on;
+    select *
+    from rdb$function_arguments fa
+    order by fa.rdb$function_name, fa.rdb$argument_position;
+  """,
+ 'expected_stdout': 
+ """
+    RDB$FUNCTION_NAME               DATABASE_VERSION                                                                                                                                                                                                                                            
+    RDB$ARGUMENT_POSITION           0
+    RDB$MECHANISM                   <null>
+    RDB$FIELD_TYPE                  <null>
+    RDB$FIELD_SCALE                 <null>
+    RDB$FIELD_LENGTH                <null>
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$PACKAGE_NAME                RDB$TIME_ZONE_UTIL                                                                                                                                                                                                                                          
+    RDB$ARGUMENT_NAME               <null>
+    RDB$FIELD_SOURCE                RDB$DBTZ_VERSION                                                                                                                                                                                                                                            
+    RDB$DEFAULT_VALUE               <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$COLLATION_ID                <null>
+    RDB$NULL_FLAG                   1
+    RDB$ARGUMENT_MECHANISM          <null>
+    RDB$FIELD_NAME                  <null>
+    RDB$RELATION_NAME               <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$DESCRIPTION                 <null>
+
+    Records affected: 1
+ """
+}
+, # ------------------------ 5.x --------------------------
+{
+ 'firebird_version': '5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set count on;
+    select *
+    from rdb$function_arguments fa
+    order by fa.rdb$function_name, fa.rdb$argument_position;
+  """,
+ 'expected_stdout': 
+ """
+
+    RDB$FUNCTION_NAME               DATABASE_VERSION                                                                                                                                                                                                                                            
+    RDB$ARGUMENT_POSITION           0
+    RDB$MECHANISM                   <null>
+    RDB$FIELD_TYPE                  <null>
+    RDB$FIELD_SCALE                 <null>
+    RDB$FIELD_LENGTH                <null>
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$PACKAGE_NAME                RDB$TIME_ZONE_UTIL                                                                                                                                                                                                                                          
+    RDB$ARGUMENT_NAME               <null>
+    RDB$FIELD_SOURCE                RDB$DBTZ_VERSION                                                                                                                                                                                                                                            
+    RDB$DEFAULT_VALUE               <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$COLLATION_ID                <null>
+    RDB$NULL_FLAG                   1
+    RDB$ARGUMENT_MECHANISM          <null>
+    RDB$FIELD_NAME                  <null>
+    RDB$RELATION_NAME               <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$DESCRIPTION                 <null>
+
+    RDB$FUNCTION_NAME               START_SESSION                                                                                                                                                                                                                                               
+    RDB$ARGUMENT_POSITION           0
+    RDB$MECHANISM                   <null>
+    RDB$FIELD_TYPE                  <null>
+    RDB$FIELD_SCALE                 <null>
+    RDB$FIELD_LENGTH                <null>
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$PACKAGE_NAME                RDB$PROFILER                                                                                                                                                                                                                                                
+    RDB$ARGUMENT_NAME               <null>
+    RDB$FIELD_SOURCE                RDB$PROFILE_SESSION_ID                                                                                                                                                                                                                                      
+    RDB$DEFAULT_VALUE               <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$COLLATION_ID                <null>
+    RDB$NULL_FLAG                   1
+    RDB$ARGUMENT_MECHANISM          <null>
+    RDB$FIELD_NAME                  <null>
+    RDB$RELATION_NAME               <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$DESCRIPTION                 <null>
+
+    RDB$FUNCTION_NAME               START_SESSION                                                                                                                                                                                                                                               
+    RDB$ARGUMENT_POSITION           1
+    RDB$MECHANISM                   <null>
+    RDB$FIELD_TYPE                  <null>
+    RDB$FIELD_SCALE                 <null>
+    RDB$FIELD_LENGTH                <null>
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$PACKAGE_NAME                RDB$PROFILER                                                                                                                                                                                                                                                
+    RDB$ARGUMENT_NAME               DESCRIPTION                                                                                                                                                                                                                                                 
+    RDB$FIELD_SOURCE                RDB$SHORT_DESCRIPTION                                                                                                                                                                                                                                       
+    RDB$DEFAULT_VALUE               f:1e0
+    BLOB display set to subtype 1. This BLOB: subtype = 2
+    RDB$DEFAULT_SOURCE              f:1e1
+    default null
+    RDB$COLLATION_ID                <null>
+    RDB$NULL_FLAG                   0
+    RDB$ARGUMENT_MECHANISM          <null>
+    RDB$FIELD_NAME                  <null>
+    RDB$RELATION_NAME               <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$DESCRIPTION                 <null>
+
+    RDB$FUNCTION_NAME               START_SESSION                                                                                                                                                                                                                                               
+    RDB$ARGUMENT_POSITION           2
+    RDB$MECHANISM                   <null>
+    RDB$FIELD_TYPE                  <null>
+    RDB$FIELD_SCALE                 <null>
+    RDB$FIELD_LENGTH                <null>
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$PACKAGE_NAME                RDB$PROFILER                                                                                                                                                                                                                                                
+    RDB$ARGUMENT_NAME               FLUSH_INTERVAL                                                                                                                                                                                                                                              
+    RDB$FIELD_SOURCE                RDB$SECONDS_INTERVAL                                                                                                                                                                                                                                        
+    RDB$DEFAULT_VALUE               f:1e2
+    BLOB display set to subtype 1. This BLOB: subtype = 2
+    RDB$DEFAULT_SOURCE              f:1e3
+    default null
+    RDB$COLLATION_ID                <null>
+    RDB$NULL_FLAG                   0
+    RDB$ARGUMENT_MECHANISM          <null>
+    RDB$FIELD_NAME                  <null>
+    RDB$RELATION_NAME               <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$DESCRIPTION                 <null>
+
+    RDB$FUNCTION_NAME               START_SESSION                                                                                                                                                                                                                                               
+    RDB$ARGUMENT_POSITION           3
+    RDB$MECHANISM                   <null>
+    RDB$FIELD_TYPE                  <null>
+    RDB$FIELD_SCALE                 <null>
+    RDB$FIELD_LENGTH                <null>
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$PACKAGE_NAME                RDB$PROFILER                                                                                                                                                                                                                                                
+    RDB$ARGUMENT_NAME               ATTACHMENT_ID                                                                                                                                                                                                                                               
+    RDB$FIELD_SOURCE                RDB$ATTACHMENT_ID                                                                                                                                                                                                                                           
+    RDB$DEFAULT_VALUE               f:1e4
+    BLOB display set to subtype 1. This BLOB: subtype = 2
+    RDB$DEFAULT_SOURCE              f:1e5
+    default current_connection
+    RDB$COLLATION_ID                <null>
+    RDB$NULL_FLAG                   1
+    RDB$ARGUMENT_MECHANISM          <null>
+    RDB$FIELD_NAME                  <null>
+    RDB$RELATION_NAME               <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$DESCRIPTION                 <null>
+
+    RDB$FUNCTION_NAME               START_SESSION                                                                                                                                                                                                                                               
+    RDB$ARGUMENT_POSITION           4
+    RDB$MECHANISM                   <null>
+    RDB$FIELD_TYPE                  <null>
+    RDB$FIELD_SCALE                 <null>
+    RDB$FIELD_LENGTH                <null>
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$PACKAGE_NAME                RDB$PROFILER                                                                                                                                                                                                                                                
+    RDB$ARGUMENT_NAME               PLUGIN_NAME                                                                                                                                                                                                                                                 
+    RDB$FIELD_SOURCE                RDB$FILE_NAME2                                                                                                                                                                                                                                              
+    RDB$DEFAULT_VALUE               f:1e6
+    BLOB display set to subtype 1. This BLOB: subtype = 2
+    RDB$DEFAULT_SOURCE              f:1e7
+    default null
+    RDB$COLLATION_ID                <null>
+    RDB$NULL_FLAG                   0
+    RDB$ARGUMENT_MECHANISM          <null>
+    RDB$FIELD_NAME                  <null>
+    RDB$RELATION_NAME               <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$DESCRIPTION                 <null>
+
+    RDB$FUNCTION_NAME               START_SESSION                                                                                                                                                                                                                                               
+    RDB$ARGUMENT_POSITION           5
+    RDB$MECHANISM                   <null>
+    RDB$FIELD_TYPE                  <null>
+    RDB$FIELD_SCALE                 <null>
+    RDB$FIELD_LENGTH                <null>
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$PACKAGE_NAME                RDB$PROFILER                                                                                                                                                                                                                                                
+    RDB$ARGUMENT_NAME               PLUGIN_OPTIONS                                                                                                                                                                                                                                              
+    RDB$FIELD_SOURCE                RDB$SHORT_DESCRIPTION                                                                                                                                                                                                                                       
+    RDB$DEFAULT_VALUE               f:1e8
+    BLOB display set to subtype 1. This BLOB: subtype = 2
+    RDB$DEFAULT_SOURCE              f:1e9
+    default null
+    RDB$COLLATION_ID                <null>
+    RDB$NULL_FLAG                   0
+    RDB$ARGUMENT_MECHANISM          <null>
+    RDB$FIELD_NAME                  <null>
+    RDB$RELATION_NAME               <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$DESCRIPTION                 <null>
+
+
+    Records affected: 7
+ """
+}
+]
+}

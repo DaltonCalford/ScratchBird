@@ -1,0 +1,49 @@
+{
+'id': 'bugs.core_3038',
+'qmid': None,
+'tracker_id': 'CORE-3038',
+'title': 'Wrong resultset',
+'description': 'The insert failed because a column definition includes validation constraints. validation error for variable',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create domain money as numeric(15,4);
+    commit;
+
+    create table cl_cashprice (id integer not null, price money not null);
+    commit;
+
+    set term ^ ;
+    create procedure testp (i_id integer, i_price type of column cl_cashprice.price)
+    as
+      declare variable goodsprice money;
+    begin
+      goodsprice = null;
+      if (:goodsprice is not null)
+        then goodsprice = 6;
+    end^
+    set term ; ^
+    commit;
+
+    execute procedure testp(1, 6);
+    commit; 
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

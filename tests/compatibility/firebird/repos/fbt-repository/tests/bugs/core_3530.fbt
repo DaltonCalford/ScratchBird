@@ -1,0 +1,71 @@
+{
+'id': 'bugs.core_3530',
+'qmid': None,
+'tracker_id': 'CORE-3530',
+'title': 'BETWEEN operand/clause not supported for COMPUTED columns -- "feature is not supported"',
+'description':
+ """
+   Checked on WI-V3.0.2.32670, WI-T4.0.0.503 - all fine.
+ """,
+'min_versions': '3.0.2',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test2(id int);
+    commit;
+
+    recreate table test(
+        x int,
+        y int 
+    );
+
+    recreate table test2(
+        id int,
+        z computed by 
+        (
+           coalesce( (  select sum( 
+                                     case 
+                                         when (x = -1) then 
+                                            999 
+                                          else 
+                                            (coalesce(x, 0) - coalesce(y, 0)) 
+                                     end 
+                                  ) 
+                        from test
+                        where x = test2.id
+                      ), 
+                      0
+                    )
+        )
+    );
+    commit;
+
+    set plan on;
+    set count on;
+    --set echo on;
+    -- Before 3.0.2 following statement failed with:
+    -- Statement failed, SQLSTATE = 0A000
+    -- feature is not supported
+    select * from test2 where z between 1 and 2;
+  """,
+  'expected_stdout':
+  """
+    PLAN (TEST NATURAL)
+    PLAN (TEST NATURAL)
+    PLAN (TEST NATURAL)
+    PLAN (TEST2 NATURAL)
+    Records affected: 0
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

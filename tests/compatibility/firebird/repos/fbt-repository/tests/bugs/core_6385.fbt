@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_6385',
+'qmid': '',
+'tracker_id': '',
+'title': 'Wrong line and column information after IF statement',
+'description':
+  """
+    DO NOT make indentation or excessive empty lines in the code that is executed by ISQL.
+    Checked on 4.0.0.2170.
+  """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+set term ^;
+execute block
+as
+    declare n integer;
+begin
+    if (1 = 1) then
+        n = 1;
+    n = n / 0;
+end^
+set term ;^
+  """,
+  'expected_stdout':
+  """
+  """,
+  'expected_stderr':
+  """
+-At block line: 7, col: 5
+  """,
+  'substitutions':[ ('^((?!At\s+block\s+line).)*$',''), ('[ \t]+',' ') ]
+}
+]
+}

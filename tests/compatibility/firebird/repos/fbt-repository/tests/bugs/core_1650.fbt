@@ -1,0 +1,29 @@
+{
+'id': 'bugs.core_1650',
+'qmid': None,
+'tracker_id': 'CORE-1650',
+'title': 'Infinite row generation in "select gen_id(..) from rdb$database" with "group by"',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """create generator g;
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select first 10 1, gen_id(g, 1 )
+from rdb$database
+group by 1,2;
+""",
+ 'expected_stdout': """
+    CONSTANT                GEN_ID
+============ =====================
+           1                     3
+
+"""
+}
+]
+}

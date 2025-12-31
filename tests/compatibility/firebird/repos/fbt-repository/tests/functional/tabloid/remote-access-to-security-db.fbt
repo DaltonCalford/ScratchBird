@@ -1,0 +1,44 @@
+{
+'id': 'functional.tabloid.remote-access-to-security-db',
+'tracker_id': '',
+'title': "Verify ability to make REMOTE connect to security.db ",
+'description':
+ """
+   This test verifies only ability to make REMOTE connect to security.db 
+   Line "RemoteAccess = false" in file $FB_HOME/databases.conf should be COMMENTED.
+   On the host that run tests this must is done BEFORE launch all testsby calling 
+   batch file "upd_databases_conf.bat" (see \FirebirdQA\qa3x.bat; qa4x.bat).
+   Checked 28.06.2016 on 4.0.0.267
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+db_conn.close()
+sql_chk='''
+connect 'localhost:security.db';
+set list on;
+select mon$attachment_name,mon$remote_protocol from mon$attachments where mon$attachment_id = current_connection;
+'''
+runProgram('isql',['-q'],sql_chk)
+  """,
+ 'expected_stdout': 
+  """
+    MON$ATTACHMENT_NAME             security.db
+    MON$REMOTE_PROTOCOL             TCP
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions':[('TCPv4','TCP'),('TCPv6','TCP')]
+}
+]
+}

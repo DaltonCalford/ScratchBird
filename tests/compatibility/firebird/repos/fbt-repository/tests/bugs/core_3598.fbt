@@ -1,0 +1,253 @@
+{
+'id': 'bugs.core_3598',
+'qmid': None,
+'tracker_id': 'CORE-3598',
+'title': "TRACE: add statistics of actions that were after transaction finished",
+'description':
+ """
+    Test verifies only FB 3.0 and above.
+    Three tables are created: permanent, GTT with on commit PRESERVE rows and on commit DELETE rows.
+
+    Trace config is created with *prohibition* of any activity related to security<N>.fdb
+    but allow to log transactions-related events (commits and rollbacks) for working database.
+    Trace is started before furthe actions.
+
+    Then we launch ISQL and apply two DML for each of these tables:
+    1) insert row + commit;
+    2) insert row + rollback.
+
+    Finally (after ISQL will finish), we stop trace and parse its log.
+    For *each* table TWO lines with performance statristics must exist: both for COMMIT and ROLLBACK events.
+    Checked on Windows and Linux, builds:
+        4.0.0.2377 SS: 7.741s.
+        4.0.0.2377 CS: 8.746s.
+        3.0.8.33420 SS: 6.784s.
+        3.0.8.33420 CS: 8.262s.
+ """,
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'init_script':
+  """
+    recreate table tfix(id int);
+    recreate global temporary table gtt_ssn(id int) on commit preserve rows;
+    recreate global temporary table gtt_tra(id int) on commit delete rows;
+  """,
+ 'test_script':
+  """\
+import os
+import subprocess
+from subprocess import Popen
+import time
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+# Obtain engine version:
+engine = str(db_conn.engine_version)
+db_file = db_conn.database_name
+db_conn.close()
+
+#---------------------------------------------
+
+def flush_and_close(file_handle):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb'):
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+# NOTES ABOUT TRACE CONFIG FOR 3.0:
+# 1) Header contains `database` clause in different format vs FB 2.5: its data must be enclosed with '{' '}'
+# 2) Name and value must be separated by EQUALITY sign ('=') in FB-3 trace.conf, otherwise we get runtime error:
+#    element "<. . .>" have no attribute value set
+
+txt30 = '''# Trace config, format for 3.0. Generated auto, do not edit!
+    database='%[\\\\\\\\/](security[[:digit:]].fdb)|(security.db)
+    {
+        enabled = false
+    }
+
+    database=%[\\\\\\\\/]bugs.core_3598.fdb
+    {
+        enabled = true
+        time_threshold = 0 
+        log_initfini = false
+        log_transactions = true
+        # log_statement_finish = true
+        print_perf = true
+    }
+'''
+
+f_trccfg=open( os.path.join(context['temp_directory'],'tmp_trace_3598.cfg'), 'w')
+if engine.startswith('2.5'):
+    f_trccfg.write(txt25)
+else:
+    f_trccfg.write(txt30)
+flush_and_close( f_trccfg )
+
+#####################################################
+# Starting trace session in new child process (async.):
+
+f_trclog = open( os.path.join(context['temp_directory'],'tmp_trace_3598.log'), 'w')
+# Execute a child program in a new process, redirecting STDERR to the same target as of STDOUT:
+p_trace=Popen([context['fbsvcmgr_path'], "localhost:service_mgr", "action_trace_start", "trc_cfg", f_trccfg.name], stdout=f_trclog, stderr=subprocess.STDOUT)
+
+# Wait! Trace session is initialized not instantly!
+time.sleep(1)
+
+#####################################################
+# Running ISQL with test commands:
+
+sqltxt=\
+'''
+	set autoddl off;
+	set echo on;
+	set count on;
+	set bail on;
+	connect '%(dsn)s';
+    insert into tfix(id) values(1);
+    commit;
+    insert into tfix(id) values(2);
+    rollback;
+    insert into gtt_ssn(id) values(1);
+    commit;
+    insert into gtt_ssn(id) values(2);
+    rollback;
+    insert into gtt_tra(id) values(1);
+    commit;
+    insert into gtt_tra(id) values(2);
+    rollback;
+''' % dict(globals(), **locals())
+
+f_run_sql = open( os.path.join(context['temp_directory'],'tmp_run_5685.sql'), 'w')
+f_run_sql.write( sqltxt )
+flush_and_close( f_run_sql )
+
+f_run_log = open( os.path.join(context['temp_directory'],'tmp_run_5685.log'), 'w')
+
+subprocess.call( [ context['isql_path'],'-q', '-i', f_run_sql.name ],
+                     stdout = f_run_log,
+                     stderr = subprocess.STDOUT
+                   )
+
+flush_and_close( f_run_log )
+
+# do NOT remove this otherwise trace log can contain only message about its start before being closed!
+time.sleep(2)
+
+#####################################################
+# Getting ID of launched trace session and STOP it:
+
+# Save active trace session info into file for further parsing it and obtain session_id back (for stop):
+f_trclst=open( os.path.join(context['temp_directory'],'tmp_trace_3598.lst'), 'w')
+subprocess.call([context['fbsvcmgr_path'], "localhost:service_mgr", "action_trace_list"],stdout=f_trclst, stderr=subprocess.STDOUT)
+flush_and_close( f_trclst )
+
+trcssn=0
+with open( f_trclst.name,'r') as f:
+    for line in f:
+        i=1
+        if 'Session ID' in line:
+            for word in line.split():
+                if i==3:
+                    trcssn=word
+                i=i+1
+            break
+
+# Result: `trcssn` is ID of active trace session. Now we have to terminate it:
+f_trclst=open(f_trclst.name,'a')
+f_trclst.seek(0,2)
+subprocess.call([context['fbsvcmgr_path'], "localhost:service_mgr", "action_trace_stop","trc_id",trcssn],stdout=f_trclst, stderr=subprocess.STDOUT)
+flush_and_close( f_trclst )
+
+# 23.02.2021. DELAY FOR AT LEAST 1 SECOND REQUIRED HERE!
+# Otherwise trace log can remain empty.
+time.sleep(1)
+
+# Terminate child process of launched trace session (though it should already be killed):
+p_trace.terminate()
+flush_and_close( f_trclog )
+
+###################################################################
+
+# Output log of trace session, with filtering only interested info:
+
+# Pwerformance header text (all excessive spaces will be removed before comparison - see below):
+perf_header='Table                             Natural     Index    Update    Insert    Delete   Backout     Purge   Expunge'
+
+checked_events= {
+    ') COMMIT_TRANSACTION' : 'commit'
+    ,') ROLLBACK_TRANSACTION' : 'rollback'
+    ,') EXECUTE_STATEMENT' : 'execute_statement'
+    ,') START_TRANSACTION' : 'start_transaction'
+}
+
+i,k = 0,0
+watched_event = ''
+with open( f_trclog.name,'r') as f:
+    for line in f:
+        k += 1
+        e = ''.join( [v.upper() for x,v in checked_events.items() if x in line] )
+        watched_event = e if e else watched_event
+
+        if ' ms,' in line and ('fetch' in line or 'mark' in line): # One of these *always* must be in trace statistics.
+            print('Statement statistics detected for %s' % watched_event)
+            i =  i +1
+        if ' '.join(line.split()).upper() == ' '.join(perf_header.split()).upper():
+            print('Found performance block header')
+        if line.startswith('TFIX') or line.startswith('GTT_SSN') or line.startswith('GTT_TRA'):
+            print('Found table statistics for %s' % line.split()[0] )
+
+# Cleanup:
+##########
+time.sleep(1)
+cleanup( (f_trccfg, f_trclst,f_trclog,f_run_log,f_run_sql) )
+
+  """,
+ 'expected_stdout': 
+  """
+    Statement statistics detected for COMMIT
+    Statement statistics detected for ROLLBACK
+    Found performance block header
+    Found table statistics for TFIX
+    Statement statistics detected for COMMIT
+    Statement statistics detected for ROLLBACK
+    Found performance block header
+    Found table statistics for GTT_SSN
+    Statement statistics detected for COMMIT
+    Statement statistics detected for ROLLBACK
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

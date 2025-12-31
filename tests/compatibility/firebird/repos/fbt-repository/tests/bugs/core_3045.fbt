@@ -1,0 +1,48 @@
+{
+'id': 'bugs.core_3045',
+'qmid': None,
+'tracker_id': 'CORE-3045',
+'title': '"conversion error from string" after change of field type from BIGINT to VARCHAR(21)',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE TEST1(
+  ID INTEGER,
+  TEST_FIELD BIGINT,
+
+  PRIMARY KEY(ID)
+);
+
+COMMIT;
+
+INSERT INTO TEST1(ID, TEST_FIELD)
+VALUES(1, 234);
+
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER TABLE TEST1
+  ALTER TEST_FIELD TYPE VARCHAR(21);
+
+COMMIT;
+
+SELECT ID, TEST_FIELD
+FROM TEST1
+WHERE TEST_FIELD = 'A';
+SELECT ID, TEST_FIELD
+FROM TEST1
+WHERE TEST_FIELD != 'A';
+""",
+ 'expected_stdout': """
+          ID TEST_FIELD
+============ =====================
+           1 234
+
+"""
+}
+]
+}

@@ -1,0 +1,82 @@
+{
+'id': 'bugs.core_4578',
+'qmid': None,
+'tracker_id': 'CORE-4578',
+'title': 'INPUT file not properly closed',
+'description': 
+ """
+   Confirmed bug in ISQL 3.0.0.31374 (Beta1 release): script that has been performed by "IN" command
+   is NOT deleted by "shell del ..." and can be used again, so the output will be:
+   ID                              1
+   <path>\tmp_4578_in.sql
+   ID                              1
+
+ """,
+'min_versions': '2.5.4',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'Windows',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script':
+  """\
+
+import os
+import subprocess
+import time
+
+db_conn.close()
+
+txt_in = '''set list on;
+recreate table test(id int);
+commit;
+insert into test values(1);
+select id from test;
+commit;
+'''
+tmp_input_sql=open( os.path.join(context['temp_directory'],'tmp_4578_in.sql'), 'w')
+tmp_input_sql.write(txt_in)
+tmp_input_sql.close()
+
+sql_main_file=open( os.path.join(context['temp_directory'],'tmp_4578_go.sql'), 'w')
+
+sql_main_file.write("set bail on;\\n" )
+sql_main_file.write("in "+tmp_input_sql.name+";\\n" )
+sql_main_file.write("shell del "+tmp_input_sql.name+" 2>nul;\\n" )
+sql_main_file.write("in "+tmp_input_sql.name+";\\n" )
+
+sql_main_file.close()
+
+sql_main_log=open( os.path.join(context['temp_directory'],'tmp_isql_4578.log'), 'w')
+p_isql = subprocess.call([ "isql" , dsn, "-user" , "SYSDBA" , "-password", "masterkey", "-i", sql_main_file.name ], stdout=sql_main_log, stderr=subprocess.STDOUT)
+sql_main_log.close()
+
+time.sleep(1)
+
+with open( sql_main_log.name,'r') as f:
+      print(f.read())
+f.close()
+
+# do NOT remove this pause otherwise log of trace will not be enable for deletion and test will finish with 
+# Exception raised while executing Python test script. exception: WindowsError: 32
+time.sleep(1)
+
+os.remove(sql_main_log.name)
+os.remove(sql_main_file.name)
+
+  """,
+ 'expected_stdout':
+  """
+    ID                              1
+    Unable to open
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[('Unable to open.*','Unable to open')]
+}
+]
+}

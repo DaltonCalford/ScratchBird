@@ -1,0 +1,40 @@
+{
+'id': 'functional.procedure.alter.01',
+'qmid': 'functional.procedure.alter.alter_procedure_01',
+'tracker_id': '',
+'title': 'ALTER PROCEDURE - Simple ALTER',
+'description': """ALTER PROCEDURE - Simple ALTER
+
+Dependencies:
+CREATE DATABASE
+CREATE PROCEDURE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """SET TERM ^;
+CREATE PROCEDURE test RETURNS (id INTEGER)AS
+BEGIN
+  id=1;
+END ^
+SET TERM ;^
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+ALTER PROCEDURE test RETURNS (id INTEGER)AS
+BEGIN
+  id=2;
+END ^
+SET TERM ;^
+commit;
+EXECUTE PROCEDURE test;
+""",
+ 'expected_stdout': """          ID
+============
+           2
+"""
+}
+]
+}

@@ -1,0 +1,27 @@
+{
+'id': 'bugs.core_2888',
+'qmid': None,
+'tracker_id': 'CORE-2888',
+'title': 'A memory corruption cause incorrect query evaluation and may crash the server',
+'description': '',
+'min_versions': '2.1.4',
+'versions': [
+{
+ 'firebird_version': '2.1.4',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """select 1 from rdb$database where 1 in (select (select current_connection from rdb$database) from rdb$database);
+select 1 from rdb$database where 1 in (select (select 1 from rdb$database) from rdb$database);
+""",
+ 'expected_stdout': """Database:  localhost:C:\fbtest2\tmp\bugs.core_2888.fdb, User: SYSDBA
+SQL> SQL>
+    CONSTANT
+============
+           1
+
+SQL>"""
+}
+]
+}

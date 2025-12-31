@@ -1,0 +1,49 @@
+{
+'id': 'bugs.core_152',
+'qmid': 'bugs.core_152',
+'tracker_id': 'CORE-152',
+'title': 'Sqlsubtype incorrect on timestamp math, constant arithmetic',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """set sqlda_display;
+
+select current_timestamp - current_timestamp from rdb$database;
+
+""",
+ 'expected_stdout': """INPUT  SQLDA version: 1 sqln: 10 sqld: 0
+
+OUTPUT SQLDA version: 1 sqln: 20 sqld: 1
+01: sqltype: 580 INT64	 		 sqlscale: -9 sqlsubtype: 1 sqllen: 8
+  :  name: (8)SUBTRACT  alias: (8)SUBTRACT
+  : table: (0)  owner: (0)
+
+             SUBTRACT
+=====================
+          0.000000000
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set sqlda_display;
+    set list on;
+    select current_timestamp - current_timestamp dts_diff from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    01: sqltype: 580 INT64 scale: -9 subtype: 1 len: 8
+    :  name: SUBTRACT  alias: DTS_DIFF
+    DTS_DIFF 0.000000000
+  """,
+  'substitutions': [('^((?!sqltype|DTS_DIFF).)*$',''),('[ ]+',' '),('[\t]*',' ')]
+}
+]
+}

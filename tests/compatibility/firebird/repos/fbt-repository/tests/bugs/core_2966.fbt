@@ -1,0 +1,64 @@
+{
+'id': 'bugs.core_2966',
+'qmid': None,
+'tracker_id': 'CORE-2966',
+'title': 'Wrong results or unexpected errors while sorting a large data set',
+'description': '',
+'min_versions': '2.1.6;2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.1.6',
+ 'platform': 'All',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """create table t (col varchar(32000));
+commit;
+set term !!;
+execute block
+as
+  declare variable i integer;
+begin
+  i=0;
+  while (i < 200000) do begin
+    insert into t (col) values(mod(:i, 10));
+    i= i+1;
+  end
+end!!
+set term ;!!
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """select col from t group by 1;
+select cast(col as integer) from t group by 1;
+""",
+ 'expected_stdout': """
+COL
+===============================================================================
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+
+
+        CAST
+============
+           0
+           1
+           2
+           3
+           4
+           5
+           6
+           7
+           8
+           9
+
+"""
+}
+]
+}

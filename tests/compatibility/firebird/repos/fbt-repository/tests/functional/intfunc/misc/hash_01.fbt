@@ -1,0 +1,22 @@
+{
+'id': 'functional.intfunc.misc.hash_01',
+'qmid': 'functional.intfunc.misc.hash_01',
+'tracker_id': '',
+'title': 'test for HASH',
+'description': """ Returns a HASH of a value.
+
+HASH( <value> )
+
+""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': " select hash('toto') from rdb$database;",
+ 'expected_stdout': """                       HASH
+      =====================
+                     505519"""
+}
+]
+}

@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_3176',
+'qmid': None,
+'tracker_id': 'CORE-3176',
+'title': 'View with "subselect" column join table and not use index',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE TMP
+(
+  ID Integer NOT NULL,
+  CONSTRAINT PK_TMP_1 PRIMARY KEY (ID)
+);
+COMMIT;
+CREATE VIEW TMP_VIEW (ID1, ID2)
+AS
+SELECT 1,(SELECT 1 FROM RDB$DATABASE) FROM RDB$DATABASE;
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+SELECT * FROM tmp_view TV LEFT JOIN tmp T ON T.id=TV.id2;
+""",
+ 'expected_stdout': """Database:  localhost:C:\Users\win7\Firebird_tests\fbt-repository\tmp\bugs.core_3176.fdb, User: SYSDBA
+SQL> SQL>
+PLAN (TV RDB$DATABASE NATURAL)
+PLAN (TV RDB$DATABASE NATURAL)
+PLAN JOIN (TV RDB$DATABASE NATURAL, T INDEX (PK_TMP_1))
+
+         ID1          ID2           ID
+============ ============ ============
+           1            1       <null>
+
+SQL>"""
+}
+]
+}

@@ -1,0 +1,36 @@
+{
+'id': 'bugs.core_4351',
+'qmid': None,
+'tracker_id': 'CORE-4351',
+'title': 'Incorrect default value when adding a new column',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    recreate table test(id int);
+    commit;
+    insert into test values(1);
+    commit;
+    alter table test add pwd varchar(50) character set utf8 default 'MdX8fLruCUQ=' not null collate utf8;
+    commit;
+    set list on;
+    select * from test;
+    -- WI-V2.1.7.18553: pwd = 'MdX'
+  """,
+ 'expected_stdout':
+  """
+    ID                              1
+    PWD                             MdX8fLruCUQ=
+  """
+}
+]
+}

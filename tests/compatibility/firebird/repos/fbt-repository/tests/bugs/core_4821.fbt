@@ -1,0 +1,211 @@
+{
+'id': 'bugs.core_4821',
+'qmid': None,
+'tracker_id': 'CORE-4821',
+'title': 'grant create database to ROLE does not work: "no permission for CREATE access to DATABASE ..."',
+'description': 
+ """
+    ::: NOTE ::: Test requires that databases.conf contains 'RemoteAccess = true' for security.db
+    This line is added there by scenario '<QA_HOME>\rundaily.bat' every time when check new FB snapshot.
+    
+    We make connection to security.db and create there user and role, with granting this role to user.
+    (so, ROLE also is stored in the security.db).
+    Then we grant privilege to create DB to just created role.
+    After this we check that:
+    * user can NOT create database if 'ROLE <this_role>' missed in the 'create database' statement;
+    * user _CAN_ create database when issues: create database ... user ... password ... ROLE <this_role>
+
+    Then we create backup of just created database and check that:
+    * user can NOT restore it until specifying '-ROLE <this_role>' in gbak command line;
+    * user _CAN_ restore database when issues: gbak -rep ... -user ... -pas ... -ROLE <this_role>;
+    * the same pair of checks is performed for fbsvcmgr invocation;
+    
+    Finally, we connect again to security.db and drop <this_role>. After this restore must not be allowed
+    even when "ROLE <this_role>" is specified in commands gbak or fbsvcmgr.
+
+    Checked on:
+        4.0.0.1713 SS: 5.250s.
+        4.0.0.1346 SC: 5.734s.
+        4.0.0.1691 CS: 9.875s.
+        3.0.5.33218 SS: 4.313s.
+        3.0.5.33084 SC: 4.031s.
+        3.0.5.33212 CS: 7.672s.
+
+   13.04.2021. Adapted for run both on Windows and Linux. Checked on:
+      Windows: 3.0.8.33445, 4.0.0.2416
+      Linux:   3.0.8.33426, 4.0.0.2416
+ """,
+'min_versions': '3.0.5',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'test_script': """
+import os
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+this_db = db_conn.database_name
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f,
+    # first do f.flush(), and
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          print('type(f_names_list[i])=',type(f_names_list[i]))
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+fdb_test1 = os.path.join(context['temp_directory'],'tmp_4821_test1.fdb')
+fdb_test2 = os.path.join(context['temp_directory'],'tmp_4821_test2.fdb')
+fbk_name = os.path.join(context['temp_directory'],'tmp_4821_test2.fbk')
+fdb_restored_using_gbak = os.path.join(context['temp_directory'],'tmp_4821_restored.gbak.fdb')
+fdb_restored_using_smgr = os.path.join(context['temp_directory'],'tmp_4821_restored.smgr.fdb')
+fdb_restored_unexpected = os.path.join(context['temp_directory'],'tmp_4821_restored.wo_grant.fdb')
+
+f_list = [fdb_test1, fdb_test2, fbk_name, fdb_restored_using_gbak, fdb_restored_using_smgr, fdb_restored_unexpected]
+cleanup( f_list )
+
+sql_init=\
+'''
+    set wng off;
+    set bail on;
+    set term ^;
+    execute block as
+    begin
+        execute statement 'drop role tmp$db_creator';
+        when any do begin end
+    end^
+    set term ;^
+    commit;
+    create role tmp$db_creator;
+    commit;
+    create or alter user tmp$c4821_boss password '123' using plugin Srp;
+    revoke all on all from tmp$c4821_boss;
+    grant create database to role tmp$db_creator;
+    grant tmp$db_creator to tmp$c4821_boss;
+    commit;
+    --show grants;
+'''
+
+runProgram('isql', [ 'localhost:security.db' ], sql_init)
+
+sql_test=\
+'''
+    create database 'localhost:%(fdb_test1)s' user tmp$c4821_boss password '123';
+    select mon$database_name as created_db_name from mon$database;
+    rollback;
+    create database 'localhost:%(fdb_test2)s' user tmp$c4821_boss password '123' role tmp$db_creator;
+    set list on;
+    select mon$database_name as created_db_name from mon$database;
+''' % locals()
+
+runProgram('isql', [ '-q' ], sql_test)
+
+# Must PASS because user tmp$c4821_boss is the owner of this DB:
+runProgram('gbak', [ '-b', 'localhost:' + fdb_test2, fbk_name, '-user', 'tmp$c4821_boss', '-pas', '123'] )
+
+# Must FAIL because we do not specify role, with text:
+# "gbak: ERROR:no permission for CREATE access to DATABASE ... / gbak: ERROR:failed to create database localhost:tmp_4821_restored.gbak.fdb"
+runProgram('gbak', [ '-rep', fbk_name, 'localhost:'+fdb_restored_using_gbak, '-user', 'tmp$c4821_boss', '-pas', '123'] )
+
+# Must PASS because we DO specify role:
+runProgram('gbak', [ '-rep', fbk_name, 'localhost:'+fdb_restored_using_gbak, '-user', 'tmp$c4821_boss', '-pas', '123', '-role', 'tmp$db_creator'] )
+
+runProgram('isql', [ 'localhost:'+fdb_restored_using_gbak ], 'set list on; select mon$database_name as fdb_restored_using_gbak from mon$database;')
+
+# Must FAIL because we do not specify role, with text: "no permission for CREATE access to DATABASE ... / failed to create database tmp_4821_restored.smgr.fdb"
+runProgram('fbsvcmgr', [ 'localhost:service_mgr', 'user', 'tmp$c4821_boss', 'password', '123', 'action_restore', 'res_replace', 'bkp_file', fbk_name, 'dbname', fdb_restored_using_smgr ] )
+
+# Must PASS because we DO specify role:
+runProgram('fbsvcmgr', [ 'localhost:service_mgr', 'user', 'tmp$c4821_boss', 'password', '123', 'role', 'tmp$db_creator', 'action_restore', 'res_replace', 'bkp_file', fbk_name, 'dbname', fdb_restored_using_smgr ] )
+
+runProgram('isql', [ 'localhost:'+fdb_restored_using_smgr ], 'set list on; select mon$database_name as fdb_restored_using_smgr from mon$database;')
+
+
+# ATTENTION: now we DROP role and check that after this action user tmp$c4821_boss will not be allowed to restore DB
+#############################
+runProgram('isql', [ 'localhost:security.db' ], 'drop role tmp$db_creator; commit;')
+
+# Must FAIL because there is no more role which was allowed to create DB
+# Error text: "gbak: ERROR:no permission for CREATE ... TMP_4821_RESTORED.WO_GRANT.FDB"
+runProgram('gbak', [ '-rep', fbk_name, 'localhost:'+fdb_restored_unexpected, '-user', 'tmp$c4821_boss', '-pas', '123', '-role', 'tmp$db_creator'] )
+
+# Must FAIL (because of the same reason), with text: "no permission for CREATE access to DATABASE TMP_4821_RESTORED.WO_GRANT.FDB"
+runProgram('fbsvcmgr', [ 'localhost:service_mgr', 'user', 'tmp$c4821_boss', 'password', '123', 'role', 'tmp$db_creator', 'action_restore', 'res_replace', 'bkp_file', fbk_name, 'dbname', fdb_restored_unexpected ] )
+
+# CLEANUP:
+##########
+
+sql_fini=\
+'''
+    drop user tmp$c4821_boss using plugin Srp;
+    commit;
+'''
+runProgram('isql', [ 'localhost:security.db' ], sql_fini)
+
+cleanup( f_list )
+  
+""",
+ 'expected_stdout': 
+  """
+    CREATED_DB_NAME                 /opt/scripts/qa-rundaily/dbg-repo/tmp/tmp_4821_test2.fdb
+    FDB_RESTORED_USING_GBAK         /opt/scripts/qa-rundaily/dbg-repo/tmp/tmp_4821_restored.gbak.fdb
+    FDB_RESTORED_USING_SMGR         /opt/scripts/qa-rundaily/dbg-repo/tmp/tmp_4821_restored.smgr.fdb
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 28000
+    no permission for CREATE access to DATABASE
+    gbak: ERROR:no permission for CREATE access to DATABASE
+    gbak: ERROR:failed to create database
+    gbak:Exiting before completion due to errors
+    no permission for CREATE access to DATABASE
+    -failed to create database
+    -Exiting before completion due to errors
+    gbak: ERROR:no permission for CREATE access to DATABASE
+    gbak: ERROR:failed to create database
+    gbak:Exiting before completion due to errors
+    no permission for CREATE access to DATABASE
+    -failed to create database
+    -Exiting before completion due to errors  
+  """,
+  'substitutions': [
+      ('no permission for CREATE access to DATABASE .*', 'no permission for CREATE access to DATABASE')
+     ,('gbak: ERROR:failed to create database .*', 'gbak: ERROR:failed to create database')
+     ,('-failed to create database .*', '-failed to create database')
+     ,('CREATED_DB_NAME .*', 'CREATED_DB_NAME')
+     ,('FDB_RESTORED_USING_GBAK .*', 'FDB_RESTORED_USING_GBAK')
+     ,('FDB_RESTORED_USING_SMGR .*', 'FDB_RESTORED_USING_SMGR')
+  ]
+}
+]
+}

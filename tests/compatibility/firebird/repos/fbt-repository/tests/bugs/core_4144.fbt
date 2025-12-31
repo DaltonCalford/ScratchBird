@@ -1,0 +1,31 @@
+{
+'id': 'bugs.core_4144',
+'qmid': None,
+'tracker_id': 'CORE-4144',
+'title': 'Error "context already in use (BLR error)" when preparing a query with UNION',
+'description': '',
+'min_versions': '2.1.6',
+'versions': [
+{
+ 'firebird_version': '2.1.6',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """set heading off;
+select n
+  from
+  (
+     select d.rdb$relation_id as n from rdb$database d
+     union all
+     select d.rdb$relation_id as n from rdb$database d
+  )
+union all
+select cast(1 as bigint) from rdb$database d;
+""",
+ 'expected_stdout': """128
+128
+1
+"""
+}
+]
+}

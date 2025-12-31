@@ -1,0 +1,53 @@
+{
+'id': 'bugs.core_2036',
+'qmid': None,
+'tracker_id': 'CORE-2036',
+'title': 'Parameters order of EXECUTE BLOCK statement is reversed if called from EXECUTE STATEMENT',
+'description':
+  """
+    2.5.9.27107: OK, 0.328s.
+    3.0.4.32924: OK, 0.906s.
+    4.0.0.918: OK, 1.110s.
+  """,
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set term ^;
+    execute block returns(p1 int, p2 int, p3 int) as
+        declare s varchar(255);
+    begin
+        s =    'execute block ( i1 int = ?, i2 int = ?, i3 int = ? ) returns(o1 int, o2 int, o3 int) as '
+            || 'begin '
+            || '    o1 = i1 * 2; '
+            || '    o2 = i2 * 4; '
+            || '    o3 = i3 * 8; '
+            || '    suspend; '
+            || 'end '
+        ;
+        execute statement (s) (654, 543, 432) into p1, p2, p3;
+        suspend;
+    end
+    ^
+    set term ^;
+   """,
+ 'expected_stdout': 
+  """
+    P1                              1308
+    P2                              2172
+    P3                              3456
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

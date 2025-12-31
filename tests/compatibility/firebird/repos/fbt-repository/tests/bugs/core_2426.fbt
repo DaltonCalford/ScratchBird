@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_2426',
+'qmid': None,
+'tracker_id': 'CORE-2426',
+'title': 'Alter table not respecting collation',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """-- create domain A_DOMAIN VARCHAR(14) CHARacter SET WIN1252 COLLATE WINPT_BR;
+create domain A_DOMAIN VARCHAR(14) CHARacter SET WIN1252;
+create domain B_DOMAIN VARCHAR(14) CHARacter SET ISO8859_1 COLLATE PT_BR;
+
+create table t (FIELD_A VARCHAR(14) CHARacter SET WIN1252 not null COLLATE WIN1252);
+alter table t alter field_a type b_domain;
+alter table t add primary key (FIELD_A);
+
+create table t2 (FK B_DOMAIN REFERENCES t(FIELD_A));
+show table t; -- colattion changes to de_de
+""",
+ 'expected_stdout': """FIELD_A                         (B_DOMAIN) VARCHAR(14) CHARACTER SET ISO8859_1 Not Null
+                                 COLLATE PT_BR
+CONSTRAINT INTEG_2:
+  Primary key (FIELD_A)
+"""
+}
+]
+}

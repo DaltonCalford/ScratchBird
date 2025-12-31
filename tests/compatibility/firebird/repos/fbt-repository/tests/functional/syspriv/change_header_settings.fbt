@@ -1,0 +1,214 @@
+{
+'id': 'functional.syspriv.change_header_settings',
+'tracker_id': '',
+'title': 'Check ability to change some database header attributes by non-sysdba user who is granted with necessary system privileges.',
+'description':
+ """
+   Checked on 4.0.0.262.
+   NB: attributes should be changed one at a time, i.e. one fbsvcmgr call should change only ONE atribute.
+ """,
+'min_versions': '4.0.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+    set wng off;
+    set bail on;
+    set list on;
+    set count on;
+
+    create or alter view v_check as
+    select 
+         current_user as who_ami
+        ,r.rdb$role_name
+        ,rdb$role_in_use(r.rdb$role_name) as RDB_ROLE_IN_USE
+        ,r.rdb$system_privileges
+    from mon$database m cross join rdb$roles r;
+    commit;
+
+    create or alter user u01 password '123' revoke admin role;
+    revoke all on all from u01;
+
+    create or alter trigger trg_connect active on connect as
+    begin
+    end;
+    commit;
+
+    recreate table att_log (
+        att_id int,
+        att_name varchar(255),
+        att_user varchar(255),
+        att_addr varchar(255),
+        att_prot varchar(255),
+        att_dts timestamp default 'now'
+    );
+
+    commit;
+
+    grant select on v_check to public;
+    grant all on att_log to public;
+    commit;
+
+    set term ^;
+    execute block as
+    begin
+      execute statement 'drop role role_for_change_header_settings';
+      when any do begin end
+    end
+    ^
+    create or alter trigger trg_connect active on connect as
+    begin
+      if ( upper(current_user) <> upper('SYSDBA') ) then
+         in autonomous transaction do
+         insert into att_log(att_id, att_name, att_user, att_prot)
+         select
+              mon$attachment_id
+             ,mon$attachment_name
+             ,mon$user
+             ,mon$remote_protocol
+         from mon$attachments
+         where mon$user = current_user
+         ;
+    end
+    ^
+    set term ;^
+    commit;
+
+    -- NB: Privilege 'IGNORE_DB_TRIGGERS' is needed when we return database to ONLINE
+    -- and this DB has DB-level trigger.
+    create role role_for_change_header_settings 
+        set system privileges to CHANGE_HEADER_SETTINGS, USE_GFIX_UTILITY, IGNORE_DB_TRIGGERS;
+    commit;
+    grant default role_for_change_header_settings to user u01;
+    commit;
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+import os
+import subprocess
+
+db_file = db_conn.database_name
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f, 
+    # first do f.flush(), and 
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+    
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for f in f_names_list:
+       if type(f) == file:
+          del_name = f.name
+       elif type(f) == str:
+          del_name = f
+       else:
+          print('Unrecognized type of element:', f, ' - can not be treated as file.')
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+    
+#--------------------------------------------
+
+
+# Check that current non-sysdba user:
+# 1) can SKIP db-level trigger firing:
+# 2) IS granted with role 'role_for_change_header_settings':
+
+runProgram('isql',[dsn,'-nod','-user','U01', '-pas', '123'], 'set list on; set count on; select * from att_log; select * from v_check;')
+
+f_hdr_props_log = open( os.path.join(context['temp_directory'],'tmp_syspriv_hdr_props.log'), 'w')
+subprocess.call( [context['fbsvcmgr_path'],"localhost:service_mgr",
+                  "user","U01", "password", "123",
+                  "action_properties",
+                  "dbname", db_file,
+                  "prp_sweep_interval", "54321",
+                 ],
+                 stdout=f_hdr_props_log,
+                 stderr=subprocess.STDOUT
+               )
+
+subprocess.call( [context['fbsvcmgr_path'],"localhost:service_mgr",
+                  "user","U01", "password", "123",
+                  "action_properties",
+                  "dbname", db_file,
+                  "prp_set_sql_dialect", "1",
+                 ],
+                 stdout=f_hdr_props_log,
+                 stderr=subprocess.STDOUT
+               )
+
+subprocess.call( [context['fbsvcmgr_path'],"localhost:service_mgr",
+                  "user","U01", "password", "123",
+                  "action_properties",
+                  "dbname", db_file,
+                  "prp_write_mode", "prp_wm_async"
+                 ],
+                 stdout=f_hdr_props_log,
+                 stderr=subprocess.STDOUT
+               )
+
+flush_and_close( f_hdr_props_log )
+
+# Checks
+########
+
+sql_chk='''
+    set list on; 
+    set count on; 
+    select m.mon$sweep_interval, m.mon$sql_dialect, m.mon$forced_writes from mon$database m; 
+'''
+runProgram('isql',[dsn,'-nod','-user','U01', '-pas', '123'], sql_chk)
+
+
+# Must be EMPTY:
+################
+with open( f_hdr_props_log.name,'r') as f:
+    for line in f:
+        print('DB SHUTDOWN LOG: '+line.upper())
+
+
+# Cleanup:
+##########
+cleanup( (f_hdr_props_log,) )
+
+  """,
+  'expected_stdout':
+  """
+    Records affected: 0
+    WHO_AMI                         U01
+    RDB$ROLE_NAME                   RDB$ADMIN
+    RDB_ROLE_IN_USE                 <false>
+    RDB$SYSTEM_PRIVILEGES           FFFFFFFFFFFFFFFF
+    WHO_AMI                         U01
+    RDB$ROLE_NAME                   ROLE_FOR_CHANGE_HEADER_SETTINGS
+    RDB_ROLE_IN_USE                 <true>
+    RDB$SYSTEM_PRIVILEGES           00E0000000000000
+    Records affected: 2
+    MON$SWEEP_INTERVAL              54321
+    MON$SQL_DIALECT                 1
+    MON$FORCED_WRITES               0
+    Records affected: 1
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

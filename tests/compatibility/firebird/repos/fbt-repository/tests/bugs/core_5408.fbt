@@ -1,0 +1,39 @@
+{
+'id': 'bugs.core_5408',
+'qmid': None,
+'tracker_id': 'CORE-5408',
+'title': 'Result of boolean expression can not be concatenated with string literal',
+'description':
+ """
+   Checked on WI-T4.0.0.466 - works fine.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    select (true = true)|| 'aaa' as "(true=true) concat 'aaa'" from rdb$database;
+    select (true is true)|| 'aaa' as "(true is true) concat 'aaa'" from rdb$database;
+    select 'aaa' || (true = true) as "'aaa' concat (true = true)" from rdb$database;
+    select 'aaa' || (true is true) as "'aaa' concat (true is true)" from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    (true=true) concat 'aaa'        TRUEaaa
+    (true is true) concat 'aaa'     TRUEaaa
+    'aaa' concat (true = true)      aaaTRUE
+    'aaa' concat (true is true)     aaaTRUE
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

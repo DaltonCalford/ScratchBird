@@ -1,0 +1,74 @@
+{
+'id': 'bugs.core_5753',
+'qmid': None,
+'tracker_id': 'CORE-5753',
+'title': 'Parser allows to use GRANT OPTION for FUNCTION and PACKAGE',
+'description':
+ """
+    Confirmed bug on: 4.0.0.890; 3.0.4.32912
+    Works fine on:
+        3.0.4.32917: OK, 0.937s.
+        4.0.0.907: OK, 1.187s.
+ """,
+'min_versions': '3.0.4',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    
+    set term ^;
+    create or alter procedure sp_test as
+    begin
+    end
+    ^
+    create or alter function sa_func(a int) returns bigint as
+    begin
+      return a * a;
+    end
+    ^
+    recreate package pg_test as
+    begin
+        function pg_func(a int) returns bigint;
+    end
+    ^
+    create package body pg_test as
+    begin
+        function pg_func(a int) returns bigint as
+        begin
+            return a * a;
+        end
+    end
+    ^
+    set term ;^
+    commit;
+
+    -- following two statements have to raise error (but did not before fix):
+    grant execute on procedure sp_test to function sa_func with grant option;
+    grant execute on procedure sp_test to package pg_test with grant option;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -GRANT failed
+    -Dynamic SQL Error
+    -Using GRANT OPTION on functions not allowed
+
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -GRANT failed
+    -Dynamic SQL Error
+    -Using GRANT OPTION on packages not allowed
+  """
+}
+]
+}

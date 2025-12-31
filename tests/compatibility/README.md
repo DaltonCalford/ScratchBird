@@ -22,7 +22,7 @@ This directory contains comprehensive SQL compatibility tests from three major d
 ```
 tests/compatibility/
 ├── firebird/                    # Firebird compatibility tests
-│   ├── repos/                  # Original test repository (submodule)
+│   ├── repos/                  # Original test repository (vendored snapshot)
 │   ├── converted/              # 2,826 converted SQL tests
 │   ├── expected/               # Expected output files
 │   ├── scripts/                # Conversion scripts
@@ -30,7 +30,7 @@ tests/compatibility/
 │   └── README.md
 │
 ├── mysql/                       # MySQL compatibility tests
-│   ├── repos/                  # Original test repository (submodule)
+│   ├── repos/                  # Original test repository (vendored snapshot)
 │   ├── converted/              # 8,841 converted SQL tests
 │   ├── expected/               # Expected output files
 │   ├── scripts/                # Conversion scripts
@@ -38,7 +38,7 @@ tests/compatibility/
 │   └── README.md
 │
 ├── postgresql/                  # PostgreSQL compatibility tests
-│   ├── repos/                  # Original test repository (submodule)
+│   ├── repos/                  # Original test repository (vendored snapshot)
 │   ├── converted/              # 238 converted SQL tests
 │   ├── expected/               # Expected output files
 │   ├── scripts/                # Conversion scripts
@@ -57,7 +57,7 @@ tests/compatibility/
 ├── scripts/                     # Global test scripts
 │   ├── convert_all_tests_parallel.sh    # Convert all tests
 │   ├── generate_test_manifests.py       # Generate test catalogs
-│   └── update_test_repos.sh             # Update test repositories
+│   └── update_test_repos.sh             # Refresh vendored test repositories
 │
 ├── results/                     # Test execution results
 │   └── conversion_report_*.txt          # Conversion reports
@@ -69,7 +69,7 @@ tests/compatibility/
 
 ### 1. Update Test Repositories
 
-Pull the latest tests from official repositories:
+Refresh the latest tests from official repositories:
 
 ```bash
 ./scripts/update_test_repos.sh
@@ -182,20 +182,13 @@ Example:
 
 ## Repository Management
 
-Test repositories are managed as git submodules:
+Test repositories are vendored snapshots (no git submodules). Refresh them with:
 
 ```bash
-# Initialize submodules
-git submodule update --init --recursive
-
-# Update to latest versions
 ./scripts/update_test_repos.sh
-
-# Check current versions
-git submodule status
 ```
 
-Repositories use sparse checkout to minimize disk usage:
+The update script uses shallow clones and sparse checkout to minimize disk usage:
 - **MySQL:** Only `mysql-test/` directory (~812 MB vs 1.3 GB full repo)
 - **PostgreSQL:** Only `src/test/regress/` directory (~18 MB vs 152 MB full repo)
 

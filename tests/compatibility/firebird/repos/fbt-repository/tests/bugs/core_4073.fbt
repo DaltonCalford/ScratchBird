@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_4073',
+'qmid': None,
+'tracker_id': 'CORE-4073',
+'title': 'Constant columns getting empty value with subselect from procedure',
+'description': '',
+'min_versions': '2.1.7',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+    create domain d_vc10 varchar(10);
+    commit;
+    set term ^;
+    create or alter procedure P_TEST returns (TEXT D_VC10) as
+    begin
+      TEXT = '12345'; suspend;
+    end^
+    set term ;^
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select A, TEXT from (select '2' as A, TEXT from P_TEST);
+  """,
+ 'expected_stdout':
+  """
+    A                               2
+    TEXT                            12345
+  """
+}
+]
+}

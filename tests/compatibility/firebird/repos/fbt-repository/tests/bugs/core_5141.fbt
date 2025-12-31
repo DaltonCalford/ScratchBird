@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_5141',
+'qmid': None,
+'tracker_id': 'CORE-5141',
+'title': 'Field definition allows several NOT NULL clauses',
+'description': '',
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Confirmed: 
+    -- * wrong behavour: WI-V3.0.0.32378 Firebird 3.0
+    -- * proper result (compiler errror): WI-T4.0.0.32390 Firebird 4.0.
+    recreate table t1 (a integer not null not null not null);
+    recreate table t2 (a integer unique not null not null references t2(a));
+    recreate table t3 (a integer unique not null references t2(a) not null);
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    SQL error code = -637
+    -duplicate specification of NOT NULL - not supported
+
+    Statement failed, SQLSTATE = 42000
+    SQL error code = -637
+    -duplicate specification of NOT NULL - not supported
+
+    Statement failed, SQLSTATE = 42000
+    SQL error code = -637
+    -duplicate specification of NOT NULL - not supported
+  """
+}
+]
+}

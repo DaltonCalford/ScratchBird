@@ -1,0 +1,28 @@
+{
+'id': 'functional.table.alter.10',
+'qmid': 'functional.table.alter.alter_table_10',
+'tracker_id': '',
+'title': 'ALTER TABLE - DROP CONSTRAINT - PRIMARY KEY',
+'description': """ALTER TABLE - DROP CONSTRAINT - PRIMARY KEY
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+SHOW TABLE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL CONSTRAINT pk PRIMARY KEY,
+                   text VARCHAR(32));
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER TABLE test DROP CONSTRAINT pk;
+SHOW TABLE test;""",
+ 'expected_stdout': """ID                              INTEGER Not Null
+TEXT                            VARCHAR(32) Nullable
+"""
+}
+]
+}

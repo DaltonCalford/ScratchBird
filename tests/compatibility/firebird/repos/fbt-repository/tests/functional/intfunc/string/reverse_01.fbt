@@ -1,0 +1,21 @@
+{
+'id': 'functional.intfunc.string.reverse_01',
+'qmid': 'functional.intfunc.string.reverse_01',
+'tracker_id': '',
+'title': 'test for REVERSE function',
+'description': """  REVERSE( <value> )
+
+ Returns a string in reverse order. Useful function for creating an expression index that indexes strings from right to left.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': " select REVERSE('DRON') from rdb$database;",
+ 'expected_stdout': """
+      REVERSE
+      =======
+      NORD"""
+}
+]
+}

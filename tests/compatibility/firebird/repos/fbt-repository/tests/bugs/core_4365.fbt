@@ -1,0 +1,40 @@
+{
+'id': 'bugs.core_4365',
+'qmid': None,
+'tracker_id': 'CORE-4365',
+'title': 'Equality predicate distribution does not work for some complex queries',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+  """,
+ 'test_script': 
+  """
+    set planonly;
+    select *
+    from (
+      select r.rdb$relation_id as id
+      from rdb$relations r
+        join (
+          select g1.rdb$generator_id as id from rdb$generators g1
+          union all
+          select g2.rdb$generator_id as id from rdb$generators g2
+        ) rf on rf.id = r.rdb$relation_id
+        left join rdb$procedures p on p.rdb$procedure_id = rf.id
+    ) x
+    where id = 1;
+  """,
+ 'expected_stdout':
+  """
+    PLAN JOIN (JOIN (X RF G1 INDEX (RDB$INDEX_46), X RF G2 INDEX (RDB$INDEX_46), X R INDEX (RDB$INDEX_1)), X P INDEX (RDB$INDEX_22))
+  """,
+  'substitutions':[('RDB\$INDEX_[0-9]+','RDB\$INDEX')]
+}
+]
+}

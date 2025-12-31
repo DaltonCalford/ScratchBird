@@ -1,0 +1,28 @@
+{
+'id': 'bugs.core_4262',
+'qmid': None,
+'tracker_id': 'CORE-4262',
+'title': 'Context parsing error with derived tables and CASE functions',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """set planonly;
+select col as col1, col as col2
+from (
+    select case when exists (select 1 from rdb$database ) then 1 else 0 end as col
+    from rdb$relations
+);
+""",
+ 'expected_stdout':
+"""
+PLAN (RDB$DATABASE NATURAL)
+PLAN (RDB$RELATIONS NATURAL)
+"""
+}
+]
+}

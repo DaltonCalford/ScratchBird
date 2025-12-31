@@ -1,0 +1,42 @@
+{
+'id': 'bugs.core_6474',
+'qmid': None,
+'tracker_id': 'CORE-6474',
+'title': 'Report replica mode through isc_database_info, MON$DATABASE and SYSTEM context',
+'description':
+"""
+  Text verifies only ability to query replication-related info from mon$database and system context namespace.
+  Query to isc_database_info does not perform.
+
+  Checked on 4.0.0.2342.
+
+  11.10.2021: adjusted output because variable 'REPLICA_MODE' now returns as NULL rather than empty string.
+  Checked on 4.0.1.2628, 5.0.0.249.
+  See commits:
+      https://github.com/FirebirdSQL/firebird/commit/1ab406491282f06d8d8d7df260b500310b157aa1
+      https://github.com/FirebirdSQL/firebird/commit/bedaf9d235c81f76a0ef170ed81dc1e7f47adbfa
+""",
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select mon$replica_mode as mon_replica_mode from mon$database;
+    select '>' || rdb$get_context('SYSTEM','REPLICA_MODE') || '<' as ctx_replica_mode from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    MON_REPLICA_MODE                0
+    CTX_REPLICA_MODE                <null>
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions':[ ('[ \t]+',' ') ]
+}
+]
+}

@@ -1,0 +1,27 @@
+{
+'id': 'functional.database.create.05',
+'qmid': '',
+'tracker_id': '',
+'title': 'CREATE DATABASE with PAGE_SIZE=4096: check actual size of page in the created database.',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """ 
+    set list on;
+    select mon$page_size as page_size from mon$database;
+  """,
+ 'expected_stdout': 
+  """        
+    PAGE_SIZE                       4096
+  """,
+  'substitutions': [ ('^((?!PAGE_SIZE).)*$','') ]
+
+}
+]
+}

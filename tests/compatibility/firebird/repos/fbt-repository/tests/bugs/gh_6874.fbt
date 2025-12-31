@@ -1,0 +1,40 @@
+{
+'id': 'bugs.gh_6874',
+'qmid': None,
+'tracker_id': '',
+'title': 'Literal 65536 (interpreted as int) can not be multiplied by itself w/o cast if result more than 2^63-1',
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/6874
+
+    Confirmed need to explicitly cast literal 65536 on: 5.0.0.88, 4.0.1.2523 (otherwise get SQLSTATE = 22003).
+    Checked on: 5.0.0.113, 4.0.1.2539 -- all OK.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set list on;
+    set sqlda_display on;
+    select 65536*65536*65536*65536 as "multiply_result_1" from rdb$database;
+    select -65536*-65536*-65536*-65536 as "multiply_result_2" from rdb$database;
+  """,                                                      
+ 'expected_stdout': 
+  """
+    01: sqltype: 32752 INT128 scale: 0 subtype: 0 len: 16
+    multiply_result_1                18446744073709551616
+
+    01: sqltype: 32752 INT128 scale: 0 subtype: 0 len: 16
+    multiply_result_2                18446744073709551616
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions':[('^((?!sqltype:|multiply_result).)*$',''),('[ \t]+',' '),('.*alias:.*','')]
+}
+]
+}

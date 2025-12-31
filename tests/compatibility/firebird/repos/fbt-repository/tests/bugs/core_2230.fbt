@@ -1,0 +1,72 @@
+{
+'id': 'bugs.core_2230',
+'qmid': None,
+'tracker_id': 'CORE-2230',
+'title': 'Implement domain check of input parameters of execute block',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE DOMAIN DOM1 AS INTEGER NOT NULL CHECK (value in (0, 1));
+""",
+ 'test_type': 'Python',
+ 'test_script': """c = db_conn.cursor()
+cmd = c.prep('execute block (x DOM1 = ?) returns (y integer) as begin y = x; suspend; end')
+
+c.execute(cmd,[1])
+printData(c)
+
+try:
+  c.execute(cmd,[10])
+  printData(c)
+except kdb.DatabaseError,e:
+  print (e[0])
+else:
+  print ('Test Failed')
+""",
+ 'expected_stdout': """Y
+-----------
+1
+Y
+-----------
+Cursor.fetchone:
+- SQLCODE: -625
+- validation error for CAST, value "10"
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE DOMAIN DOM1 AS INTEGER NOT NULL CHECK (value in (0, 1));
+""",
+ 'test_type': 'Python',
+ 'test_script': """c = db_conn.cursor()
+cmd = c.prep('execute block (x DOM1 = ?) returns (y integer) as begin y = x; suspend; end')
+
+c.execute(cmd,[1])
+printData(c)
+
+try:
+  c.execute(cmd,[10])
+  printData(c)
+except kdb.DatabaseError,e:
+  print (e[0])
+else:
+  print ('Test Failed')
+""",
+ 'expected_stdout': """Y
+-----------
+1
+Y
+-----------
+Cursor.fetchone:
+- SQLCODE: -625
+- validation error for variable X, value "10"
+"""
+}
+]
+}

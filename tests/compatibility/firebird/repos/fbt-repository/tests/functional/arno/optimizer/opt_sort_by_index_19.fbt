@@ -1,0 +1,162 @@
+{
+'id': 'functional.arno.optimizer.opt_sort_by_index_19',
+'qmid': 'functional.arno.optimizer.opt_sort_by_index_19',
+'tracker_id': '',
+'title': 'ORDER BY ASC using index (multi) and WHERE clause',
+'description': """WHERE X = 1 ORDER BY Y
+When multi-segment index is present with X as first and Y as second this index can be used.""",
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE Table_53 (
+  ID1 INTEGER,
+  ID2 INTEGER
+);
+
+SET TERM ^^ ;
+CREATE PROCEDURE PR_FillTable_53
+AS
+DECLARE VARIABLE FillID INTEGER;
+DECLARE VARIABLE FillID1 INTEGER;
+BEGIN
+  FillID = 1;
+  WHILE (FillID <= 50) DO
+  BEGIN
+    FillID1 = (FillID / 10) * 10;
+    INSERT INTO Table_53
+      (ID1, ID2)
+    VALUES
+      (:FillID1, :FillID - :FillID1);
+    FillID = FillID + 1;
+  END
+  INSERT INTO Table_53 (ID1, ID2) VALUES (0, NULL);
+  INSERT INTO Table_53 (ID1, ID2) VALUES (NULL, 0);
+  INSERT INTO Table_53 (ID1, ID2) VALUES (NULL, NULL);
+END
+^^
+SET TERM ; ^^
+
+COMMIT;
+
+EXECUTE PROCEDURE PR_FillTable_53;
+
+COMMIT;
+
+CREATE ASC INDEX I_Table_53_ID1_ASC ON Table_53 (ID1);
+CREATE DESC INDEX I_Table_53_ID1_DESC ON Table_53 (ID1);
+CREATE ASC INDEX I_Table_53_ID2_ASC ON Table_53 (ID2);
+CREATE DESC INDEX I_Table_53_ID2_DESC ON Table_53 (ID2);
+CREATE ASC INDEX I_Table_53_ID1_ID2_ASC ON Table_53 (ID1, ID2);
+CREATE DESC INDEX I_Table_53_ID1_ID2_DESC ON Table_53 (ID1, ID2);
+CREATE ASC INDEX I_Table_53_ID2_ID1_ASC ON Table_53 (ID2, ID1);
+CREATE DESC INDEX I_Table_53_ID2_ID1_DESC ON Table_53 (ID2, ID1);
+
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+SELECT
+  t53.ID2,
+  t53.ID1
+FROM
+  Table_53 t53
+WHERE
+  t53.ID1 = 30
+ORDER BY
+  t53.ID2 ASC;""",
+ 'expected_stdout': """PLAN (T53 ORDER I_TABLE_53_ID2_ID1_ASC INDEX (I_TABLE_53_ID1_ASC))
+
+         ID2          ID1
+============ ============
+
+           0           30
+           1           30
+           2           30
+           3           30
+           4           30
+           5           30
+           6           30
+           7           30
+           8           30
+           9           30
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    create or alter procedure pr_filltable_53 as begin end;
+    commit;
+    
+    recreate table table_53 (
+      id1 integer,
+      id2 integer
+    );
+    
+    set term ^;
+    create or alter procedure pr_filltable_53
+    as
+    declare variable fillid integer;
+    declare variable fillid1 integer;
+    begin
+      fillid = 1;
+      while (fillid <= 50) do
+      begin
+        fillid1 = (fillid / 10) * 10;
+        insert into table_53
+          (id1, id2)
+        values
+          (:fillid1, :fillid - :fillid1);
+        fillid = fillid + 1;
+      end
+      insert into table_53 (id1, id2) values (0, null);
+      insert into table_53 (id1, id2) values (null, 0);
+      insert into table_53 (id1, id2) values (null, null);
+    end
+    ^
+    set term ;^
+    commit;
+    
+    execute procedure pr_filltable_53;
+    commit;
+    
+    create asc index i_table_53_id1_asc on table_53 (id1);
+    create desc index i_table_53_id1_desc on table_53 (id1);
+    create asc index i_table_53_id2_asc on table_53 (id2);
+    create desc index i_table_53_id2_desc on table_53 (id2);
+    create asc index i_table_53_id1_id2_asc on table_53 (id1, id2);
+    create desc index i_table_53_id1_id2_desc on table_53 (id1, id2);
+    create asc index i_table_53_id2_id1_asc on table_53 (id2, id1);
+    create desc index i_table_53_id2_id1_desc on table_53 (id2, id1);
+    
+    commit;
+
+    set planonly;
+    select
+      t53.id2,
+      t53.id1
+    from table_53 t53
+    where t53.id1 = 30
+    order by t53.id2 asc
+    ;
+    -- Checked on WI-V3.0.0.32060:
+    -- PLAN (T53 ORDER I_TABLE_53_ID1_ID2_ASC)
+    -- Explained:
+    --    Select Expression
+    --        -> Filter
+    --            -> Table "TABLE_53" as "T53" Access By ID
+    --                -> Index "I_TABLE_53_ID1_ID2_ASC" Range Scan (partial match: 1/2)
+  """,
+ 'expected_stdout':
+  """
+    PLAN (T53 ORDER I_TABLE_53_ID1_ID2_ASC)
+  """
+}
+]
+}

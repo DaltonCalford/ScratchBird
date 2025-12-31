@@ -1,0 +1,33 @@
+{
+'id': 'bugs.core_2741',
+'qmid': None,
+'tracker_id': 'CORE-2741',
+'title': 'Naive metadata extraction code in isql is defeated by "check" keyword typed in mixed case',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create domain dm_int int cHeCk(vAlUE<>0);
+    create domain dm_dts timestamp cHeCk(valUe<>cUrrent_timEstamp);
+    commit;
+    show domain dm_int;
+    show domain dm_dts;
+  """,
+ 'expected_stdout': 
+  """
+    DM_INT                          INTEGER Nullable
+                                    cHeCk(vAlUE<>0)
+    DM_DTS                          TIMESTAMP Nullable
+                                    cHeCk(valUe<>cUrrent_timEstamp)
+  """
+}
+]
+}

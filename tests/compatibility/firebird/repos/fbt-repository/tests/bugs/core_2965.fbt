@@ -1,0 +1,50 @@
+{
+'id': 'bugs.core_2965',
+'qmid': None,
+'tracker_id': 'CORE-2965',
+'title': 'Incorrect ROW_COUNT value after SINGULAR condition',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'test_type': 'ISQL',
+ 'test_script': """set term !!;
+execute block
+returns(rcount integer)
+as
+declare tmpint integer;
+begin
+   select rdb$relation_id from rdb$database into tmpint;
+   if (SINGULAR(select rdb$relation_id from rdb$database where rdb$relation_id is null)) then begin end
+   rcount = row_count;
+   suspend;
+end!!
+execute block
+returns(rcount integer)
+as
+declare tmpint integer;
+begin
+   select rdb$relation_id from rdb$database into tmpint;
+   if (SINGULAR(select * from rdb$relation_fields)) then begin end
+   rcount = row_count;
+   suspend;
+end!!""",
+ 'expected_stdout': """
+      RCOUNT
+============
+           1
+
+
+      RCOUNT
+============
+           1
+
+"""
+}
+]
+}

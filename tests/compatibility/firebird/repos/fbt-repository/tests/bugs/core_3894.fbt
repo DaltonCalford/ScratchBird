@@ -1,0 +1,47 @@
+{
+'id': 'bugs.core_3894',
+'qmid': None,
+'tracker_id': 'CORE-3894',
+'title': 'Wrong numbers in error message for decreasing char/varchar columns',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set autoddl off;
+    recreate table test(id int);
+    commit;
+
+    alter table test add s01 varchar(8188) character set utf8;
+    commit;
+
+    alter table test alter column s01 type varchar(8189) character set utf8;
+    alter table test alter column s01 type varchar(8190) character set utf8;
+    alter table test alter column s01 type varchar(8189) character set utf8;
+    commit;
+
+    show table test;
+  """,
+ 'expected_stdout':
+  """
+    ID                              INTEGER Nullable 
+    S01                             VARCHAR(8190) CHARACTER SET UTF8 Nullable 
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -ALTER TABLE TEST failed
+    -New size specified for column S01 must be at least 8190 characters.
+  """
+}
+]
+}

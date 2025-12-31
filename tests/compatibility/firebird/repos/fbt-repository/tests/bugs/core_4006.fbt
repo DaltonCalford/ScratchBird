@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_4006',
+'qmid': None,
+'tracker_id': 'CORE-4006',
+'title': 'using a result from a procedure in a substring expression leads to server crash',
+'description': '',
+'min_versions': '2.1.7',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^ ;
+    create or alter procedure p_str_rpos
+    returns (
+        result integer)
+    as
+    begin
+       result=14;
+      suspend;
+    end^
+    set term ; ^
+    commit;
+
+    set list on;
+    select substring('somestringwith \ no meaning' from 1 for result) r
+    from p_str_rpos; 
+  """,
+ 'expected_stdout':
+  """
+    R                               somestringwith
+  """
+}
+]
+}

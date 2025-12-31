@@ -1,0 +1,90 @@
+{
+'id': 'functional.gtcs.division-by-zero-corrupts-db',
+'qmid': None,
+'tracker_id': '',
+'title': 'GTCS/tests/CF_ISQL_29. Zero divide in SP can crash database when call this SP several times.',
+'description':
+ """
+	::: NB ::: 
+	### Name of original test has no any relation with actual task of this test: ###
+    https://github.com/FirebirdSQL/fbtcs/blob/master/GTCS/tests/CF_ISQL_29.script
+
+    Issue in original test:
+    Division by 0 corrupt database
+
+    Checked on: 4.0.0.1803 SS; 3.0.6.33265 SS; 2.5.9.27149 SC.
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^ ;
+    create procedure spx_aux_test (par1 bigint) returns (ret1 bigint)
+    as
+        declare lok1 bigint ;
+        declare itmpvar integer;
+    begin
+        begin
+            lok1=2;
+            itmpvar = 1/0;
+            when any do
+            begin
+                exception;
+            end
+        end
+    end
+    ^
+    commit
+    ^
+    set term ;^
+
+    connect '$(DSN)' user 'SYSDBA' password 'masterkey'; -- this is done in original script.
+
+    set term ^;
+    create or alter procedure spx_aux_test (par1 bigint) returns (ret1 bigint)
+    as
+        declare lok1 bigint ;
+        declare itmpvar integer;
+    begin
+        begin
+            lok1=2;
+            itmpvar = 1/0;
+        end
+    end
+    ^
+    commit
+    ^
+    set term ;^
+
+    execute procedure spx_aux_test (1);
+    execute procedure spx_aux_test (1);
+    execute procedure spx_aux_test (1);
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 22012
+    arithmetic exception, numeric overflow, or string truncation
+    -Integer divide by zero.  The code attempted to divide an integer value by an integer divisor of zero.
+
+    Statement failed, SQLSTATE = 22012
+    arithmetic exception, numeric overflow, or string truncation
+    -Integer divide by zero.  The code attempted to divide an integer value by an integer divisor of zero.
+
+    Statement failed, SQLSTATE = 22012
+    arithmetic exception, numeric overflow, or string truncation
+    -Integer divide by zero.  The code attempted to divide an integer value by an integer divisor of zero.
+  """,
+  'substitutions':[ ('-At procedure \'SPX_AUX_TEST\' line: .*',''), ('[ \t]+', ' ') ]
+}
+]
+}

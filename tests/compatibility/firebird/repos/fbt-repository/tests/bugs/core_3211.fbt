@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_3211',
+'qmid': None,
+'tracker_id': 'CORE-3211',
+'title': 'String truncation occurs when selecting from a view containing NOT IN inside',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE T ( ID integer, FIELD1 varchar(30) );
+COMMIT;
+CREATE VIEW VT ( ID )
+AS
+  select T1.ID from T as T1 where T1.FIELD1 not in ( select T2.FIELD1 from T as T2 where T2.FIELD1 = 'system1' )
+;
+COMMIT;
+INSERT INTO T (ID, FIELD1) VALUES (1, 'system');
+INSERT INTO T (ID, FIELD1) VALUES (2, 'system');
+INSERT INTO T (ID, FIELD1) VALUES (3, 'system');
+INSERT INTO T (ID, FIELD1) VALUES (4, 'system');
+INSERT INTO T (ID, FIELD1) VALUES (5, 'system');
+COMMIT;""",
+ 'test_type': 'ISQL',
+ 'test_script': 'select * from VT;',
+ 'expected_stdout': """Database:  localhost:C:\Users\win7\Firebird_tests\fbt-repository\tmp\bugs.core_3211.fdb, User: SYSDBA
+SQL>
+          ID
+============
+           1
+           2
+           3
+           4
+           5
+
+SQL>"""
+}
+]
+}

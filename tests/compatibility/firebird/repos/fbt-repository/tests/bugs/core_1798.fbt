@@ -1,0 +1,24 @@
+{
+'id': 'bugs.core_1798',
+'qmid': 'bugs.core_1798',
+'tracker_id': '',
+'title': 'RDB$DB_KEY evaluates to NULL in INSERT ... RETURNING',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1.1',
+ 'platform': 'All',
+ 'init_script': """create table t (n integer);
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """insert into t values (1) returning rdb$db_key;
+""",
+ 'expected_stdout': """
+DB_KEY
+================
+8000000001000000
+
+"""
+}
+]
+}

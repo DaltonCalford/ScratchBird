@@ -1,0 +1,145 @@
+{
+'id': 'functional.arno.optimizer.opt_sort_by_index_10',
+'qmid': 'functional.arno.optimizer.opt_sort_by_index_10',
+'tracker_id': '',
+'title': 'ORDER BY ASC using index (multi)',
+'description': """ORDER BY X, Y
+When more fields are given in ORDER BY clause try to use a compound index.""",
+'versions': [
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE Table_53 (
+  ID1 INTEGER,
+  ID2 INTEGER
+);
+
+SET TERM ^^ ;
+CREATE PROCEDURE PR_FillTable_53
+AS
+DECLARE VARIABLE FillID INTEGER;
+DECLARE VARIABLE FillID1 INTEGER;
+BEGIN
+  FillID = 1;
+  WHILE (FillID <= 50) DO
+  BEGIN
+    FillID1 = (FillID / 10) * 10;
+    INSERT INTO Table_53
+      (ID1, ID2)
+    VALUES
+      (:FillID1, :FillID - :FillID1);
+    FillID = FillID + 1;
+  END
+  INSERT INTO Table_53 (ID1, ID2) VALUES (0, NULL);
+  INSERT INTO Table_53 (ID1, ID2) VALUES (NULL, 0);
+  INSERT INTO Table_53 (ID1, ID2) VALUES (NULL, NULL);
+END
+^^
+SET TERM ; ^^
+
+COMMIT;
+
+EXECUTE PROCEDURE PR_FillTable_53;
+
+COMMIT;
+
+CREATE ASC INDEX I_Table_53_ID1_ASC ON Table_53 (ID1);
+CREATE DESC INDEX I_Table_53_ID1_DESC ON Table_53 (ID1);
+CREATE ASC INDEX I_Table_53_ID2_ASC ON Table_53 (ID2);
+CREATE DESC INDEX I_Table_53_ID2_DESC ON Table_53 (ID2);
+CREATE ASC INDEX I_Table_53_ID1_ID2_ASC ON Table_53 (ID1, ID2);
+CREATE DESC INDEX I_Table_53_ID1_ID2_DESC ON Table_53 (ID1, ID2);
+CREATE ASC INDEX I_Table_53_ID2_ID1_ASC ON Table_53 (ID2, ID1);
+CREATE DESC INDEX I_Table_53_ID2_ID1_DESC ON Table_53 (ID2, ID1);
+
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET PLAN ON;
+SELECT
+  t53.ID1, t53.ID2
+FROM
+  Table_53 t53
+WHERE
+  t53.ID1 = 40
+ORDER BY
+  t53.ID1 ASC, t53.ID2 ASC;""",
+ 'expected_stdout': """PLAN (T53 ORDER I_TABLE_53_ID1_ID2_ASC INDEX (I_TABLE_53_ID1_ASC))
+
+         ID1          ID2
+============ ============
+
+          40            0
+          40            1
+          40            2
+          40            3
+          40            4
+          40            5
+          40            6
+          40            7
+          40            8
+          40            9
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+    recreate table test_idx (
+      id1 integer,
+      id2 integer
+    );
+    insert into test_idx(id1, id2)
+    select (r/10)*10, r - (r/10)*10
+    from (select row_number()over() r from rdb$types rows 50);
+    insert into test_idx (id1, id2) values (0, null);
+    insert into test_idx (id1, id2) values (null, 0);
+    insert into test_idx (id1, id2) values (null, null);
+    commit;
+    
+    create asc  index idx_id1_asc      on test_idx(id1);
+    create desc index idx_id1_desc     on test_idx(id1);
+    create asc  index idx_id2_asc      on test_idx(id2);
+    create desc index idx_id2_desc     on test_idx(id2);
+    create asc  index idx_id1_id2_asc  on test_idx(id1, id2);
+    create desc index idx_id1_id2_desc on test_idx(id1, id2);
+    create asc  index idx_id2_id1_asc  on test_idx(id2, id1);
+    create desc index idx_id2_id1_desc on test_idx(id2, id1);
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    -- Queries with RANGE index scan now have in the plan only "ORDER"
+    -- clause (index navigation) without bitmap building.
+    -- See: http://tracker.firebirdsql.org/browse/CORE-1550
+    -- ("the same index should never appear in both ORDER and INDEX parts of the same plan item")
+
+    set plan on;
+    select t.id1, t.id2
+    from test_idx t
+    where t.id1 = 40  -----------------\
+                                        --- must navigate through the leaf level of idx_id1_id2_asc, *without* bitmap! 
+    order by  t.id1 asc, t.id2 asc; ---/
+  """,
+ 'expected_stdout':
+  """
+  PLAN (T ORDER IDX_ID1_ID2_ASC)
+
+         ID1          ID2
+          40            0
+          40            1
+          40            2
+          40            3
+          40            4
+          40            5
+          40            6
+          40            7
+          40            8
+          40            9
+  """,
+ 'substitutions': [('=.*','')]
+}
+]
+}

@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_3475',
+'qmid': None,
+'tracker_id': 'CORE-3475',
+'title': 'Parameters inside the CAST function are described as not nullable',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set planonly;
+    set sqlda_display;
+    select cast(null as int) v1, cast(? as int) v2 from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    01: sqltype: 496 LONG Nullable scale: 0 subtype: 0 len: 4
+    01: sqltype: 496 LONG Nullable scale: 0 subtype: 0 len: 4
+    02: sqltype: 496 LONG Nullable scale: 0 subtype: 0 len: 4
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions': [('^((?!sqltype).)*$',''),('[ ]+',' '),('[\t]*',' ')]
+}
+]
+}

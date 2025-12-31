@@ -1,0 +1,18 @@
+{
+'id': 'functional.domain.create.37',
+'qmid': 'functional.domain.create.create_domain_37',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - NOT NULL',
+'description': 'Domain creation based on VARCHAR datatype with NOT NULL specification.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test VARCHAR(32) NOT NULL;
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            VARCHAR(32) Not Null
+"""
+}
+]
+}

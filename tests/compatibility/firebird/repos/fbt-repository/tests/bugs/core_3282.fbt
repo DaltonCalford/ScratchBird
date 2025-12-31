@@ -1,0 +1,31 @@
+{
+'id': 'bugs.core_3282',
+'qmid': None,
+'tracker_id': 'CORE-3282',
+'title': 'EXECUTE STATEMENT parses the SQL text using wrong charset',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core3282.fbk',
+ 'connection_character_set': 'UTF8',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    execute procedure TESTSP; -- 2.5.0 only: get "Malformed string" when connect with cset=utf8, confirmed 26.02.2015
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

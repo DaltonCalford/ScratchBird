@@ -1,0 +1,100 @@
+PACK_AND_SEND_SNAPSHOT=0
+PERFORM_GIT_PULL=1
+
+FB_SNAPSHOTS_FOLDER=C:\Users\Zotov\snapshots
+
+FB_CHECKED_MAJOR=4.0
+FB_CHECKED_MODES=CS,SS
+
+#FB_CHECKED_MAJOR=3.0
+#FB_CHECKED_MODES=SS,CS
+
+# DEBUG ONLY: single test for quick check.
+# Make this parameter commented when debug is completed.
+
+#SINGLE_TEST_FOR_DEBUG_ONLY=bugs.core_0070
+#SINGLE_TEST_FOR_DEBUG_ONLY=bugs.core_4748
+#SINGLE_TEST_FOR_DEBUG_ONLY=bugs.core_0932
+#SINGLE_TEST_FOR_DEBUG_ONLY=bugs.core_1885
+SINGLE_TEST_FOR_DEBUG_ONLY=bugs.core_4811
+
+QA_PATH=C:\FirebirdQA
+
+# Folder where FB builds are created and packed to .7z packages:
+BUILD_PATH=!QA_PATH!\builds
+
+# Home folder for fbtest framework:
+REPO_PATH=!QA_PATH!\fbt-repository
+
+# Folder with encryption plugin files, ***EXCLUDING*** license config DbCrypt.conf:
+# *** NOTE *** do NOT include DbCrypt.conf into this folder or its compressed file!
+ENCRYPTION_PLUGIN_FOLDER=C:\FirebirdQA\IBSurgeon-encryption-demo.win64
+
+# Path and name of file that contains license for usage encryption plugin.
+# This file should be stored SEPARATELY from all other encryption plugin files.
+# and should NOT be included in any published archieve!
+ENCRYPTION_LICENSE_FILE=C:\FirebirdQA\IBSurgeon-encryption-DbCrypt.conf\DbCrypt.conf 
+
+# Name of employee.fdb copy for encryption tests, for alias value in databases.conf 
+# (will be created in the same folder that employee.fdb):
+ENCRYPTION_SAMPLE_FDB=emp_encryption.fdb
+
+# Delay in seconds that must be done in ISQL after it issues ALTER DATABASE ENCRYPT/DECRYPT command.
+# This value will be used in SET TRANSACTION LOCK_TIMEOUT' statement for making pause befor exit from ISQL:
+ENCRYPTION_DELAY_FOR_NORMAL_FINISH=5
+
+
+TEMP=C:\TEMP
+FIREBIRD_TMP=C:\TEMP
+TEMP_DIR=!TEMP!
+
+PYTHON_HOME=C:\Python27
+
+# folder where all logs will be stored:
+QA_LOG_FOLDER=!QA_PATH!\logs
+
+# number of days to store logs in QA_LOG_FOLDER:
+MAX_AGE_FOR_LOGS=10
+
+# folder with plink, pscp etc:
+SSH_UTILS_FOLDER=C:\Snapshots\bin\ssh
+
+SSH_PRIVATE_KEY_FILE=C:\Snapshots\bin\upload.key
+SSH_UPLOAD_HOST_DATA=fbadmin@10.121.115.51
+SSH_RESULTS_HOME_DIR=/home/fbadmin/prerelease/results
+
+
+# folder with console binary of 7z compressor:
+P7ZCMD=C:\Users\Zotov\util\7za.exe
+
+# folder with git.exe:
+GITCMD=C:\Snapshots\bin\git\cmd\git.exe
+
+# Should UPLOAD be just imitated or one need ACTUAL to do this ?
+# 0 - do actual upload
+# 1 - imitate (for debug only or when host-receiver has a problem)
+SSH_IMITATE_UPLOAD=1
+
+#curl_bin=C:\Users\Zotov\util\cUrl759\AMD64\CURL.EXE
+
+# NB: curl 7.59 has bug: it does not allow too upload text with size greater than 16383 bytes
+curl_bin=C:\Users\Zotov\util\cUrl763\bin\curl.exe
+
+mail_hdr_subj=::: QA fbtest :::
+
+
+# !!! gmail does not allow to sent .7z !!!
+#mail_hdr_from=firebirdtest.win@gmail.com
+#mail_smtp_url=smtps://smtp.gmail.com:465
+
+mail_smtp_url=smtps://smtp.yandex.ru:465
+mail_hdr_from=firebirdtest.win@yandex.ru
+mail_pwd_from=FBtestb0x
+
+mail_hdr_to=firebirdtest.win@yandex.ru
+
+curl_opt=--verbose --url "!mail_smtp_url!" --ssl-reqd --mail-from "!mail_hdr_from!" --mail-rcpt "!mail_hdr_to!" --user "!mail_hdr_from!:!mail_pwd_from!" --insecure
+
+# max size of attachment that can be sent without splitting it
+# (depends on mail receiver settings):
+max_size_without_split=15000000

@@ -1,0 +1,64 @@
+{
+'id': 'bugs.core_0076',
+'qmid': None,
+'tracker_id': 'CORE-0076',
+'title': "Invalid ROW_COUNT variable value after DELETE",
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create or alter procedure test_del as begin end;
+    
+    recreate table test (
+        a integer not null,
+        constraint test_pk primary key (a)
+    );
+    insert into test (a) values (1);
+    insert into test (a) values (2);
+    insert into test (a) values (3);
+    insert into test (a) values (4);
+    insert into test (a) values (5);
+    insert into test (a) values (6);
+    insert into test (a) values (7);
+    insert into test (a) values (8);
+    insert into test (a) values (9);
+    insert into test (a) values (10);
+    commit;
+    
+    set list on;
+    select count(*) as cnt from test where a between 4 and 7;
+    
+    set term ^;
+    create or alter procedure test_del (l integer, r integer) returns (rc integer) as
+    begin
+        delete from test where a between :l and :r;
+        rc = row_count;
+        suspend;
+    end
+    ^
+    set term ;^
+    execute procedure test_del (4, 7);
+    select * from test;
+  """,
+ 'expected_stdout': 
+  """
+    CNT                             4
+    RC                              4
+    A                               1
+    A                               2
+    A                               3
+    A                               8
+    A                               9
+    A                               10
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

@@ -1,0 +1,32 @@
+{
+'id': 'bugs.core_4461',
+'qmid': '',
+'tracker_id': 'CORE-4461',
+'title': 'nbackup prints error messages to stdout instead stderr',
+'description': '',
+'min_versions': '2.5.4',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script':
+  """
+   -- NB: line `Failure: Database error` exists only in 2.5.x output.
+  """,
+ 'test_type': 'Python',
+ 'test_script': "runProgram('nbackup',['-user','nonExistentFoo','-pas','invalidBar','-L',dsn])",
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+  [
+   PROBLEM ON "attach database".
+   Your user name and password are not defined. Ask your database administrator to set up a Firebird login.
+   SQLCODE:-902
+  ]
+  """,
+  'substitutions':[('Failure: Database error','')]
+}
+]
+}

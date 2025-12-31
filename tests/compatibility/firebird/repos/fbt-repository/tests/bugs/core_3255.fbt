@@ -1,0 +1,74 @@
+{
+'id': 'bugs.core_3255',
+'qmid': None,
+'tracker_id': 'CORE-3255',
+'title': 'The server could crash using views with GROUP BY',
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """SET TERM !;
+create table t1 (
+  n1 integer
+)!
+
+create view v1 (x, n1) as
+  select 'a', n1
+    from t1
+group by 1, n1!
+
+insert into t1 values (1)!
+insert into t1 values (1)!
+insert into t1 values (2)!
+insert into t1 values (2)!
+insert into t1 values (3)!
+
+commit!
+
+create or alter procedure p1 returns (x varchar(1), n1 integer)
+as
+begin
+  for select x, n1 from v1 into x, n1 do
+      suspend;
+end!
+
+create or alter procedure p2 returns (x varchar(1), n1 integer)
+as
+begin
+  for select n1 from t1 into n1 do
+  begin
+  end
+
+  for select n1, x from v1 into n1, x do
+      suspend;
+end!
+
+commit!
+SET TERM ;!
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select * from p2;
+select * from p1;
+""",
+ 'expected_stdout': """Database:  localhost:C:\Users\win7\Firebird_tests\fbt-repository\tmp\bugs.core_3255.fdb, User: SYSDBA
+SQL>
+X                N1
+====== ============
+a                 1
+a                 2
+a                 3
+
+SQL>
+X                N1
+====== ============
+a                 1
+a                 2
+a                 3
+
+SQL>"""
+}
+]
+}

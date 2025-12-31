@@ -1,0 +1,60 @@
+{
+'id': 'bugs.core_0583',
+'qmid': None,
+'tracker_id': 'CORE-583',
+'title': 'before triggers are firing after checks',
+'description':
+ """
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test1 (i int, constraint test1_chk check (i between 1 and 5));
+    commit;
+
+    set term ^;
+    create trigger test1_bi for test1 active before insert position 0 as 
+    begin
+       new.i=6;
+    end
+    ^
+
+    create trigger test1_bu for test1 active before update position 0 as 
+    begin
+       new.i=7;
+    end
+    ^
+    set term ;^
+    commit;
+
+    set count on;
+    insert into test1 values (2);
+    select * from test1;
+    update test1 set i=2 where i = 6;
+    select * from test1;
+  """,
+  'expected_stdout':
+  """
+    Records affected: 0
+    Records affected: 0
+    Records affected: 0
+    Records affected: 0
+  """,
+  'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 23000
+    Operation violates CHECK constraint TEST1_CHK on view or table TEST1
+    -At trigger 'CHECK_3'
+  """,
+  'substitutions':[('-At trigger.*', '-At trigger')]
+}
+]
+}

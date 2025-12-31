@@ -1,0 +1,45 @@
+{
+'id': 'bugs.core_6453',
+'qmid': None,
+'tracker_id': 'CORE-6453',
+'title': 'EXECUTE STATEMENT fails on FB 4.x if containing time/timestamp with time zone parameters',
+'description':
+ """
+    Confirmed bug on 4.0.0.2265
+    Checked on 4.0.0.2303; 3.0.8.33393; 2.5.9.27152
+ """,
+'min_versions': '2.5',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set term ^;
+    execute block as
+        declare sttm varchar(100);
+        declare result varchar(100);
+    begin
+        sttm = 'select current_time from rdb$database';
+        execute statement sttm into result;
+
+        sttm = 'select current_timestamp from rdb$database';
+        execute statement sttm into result;
+    end
+    ^
+    set term ;^ 
+
+  """,
+ 'expected_stdout':
+  """
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

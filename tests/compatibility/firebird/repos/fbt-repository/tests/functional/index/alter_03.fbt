@@ -1,0 +1,60 @@
+{
+'id': 'functional.index.alter.03',
+'qmid': 'functional.index.alter.alter_index_03',
+'tracker_id': '',
+'title': 'ALTER INDEX - INACTIVE UNIQUE INDEX',
+'description': """ALTER INDEX - INACTIVE UNIQUE INDEX
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+CREATE INDEX
+Basic SELECT
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE t( a INTEGER);
+CREATE UNIQUE INDEX i ON t(a);""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER INDEX i INACTIVE;
+COMMIT;
+SELECT RDB$INDEX_NAME, RDB$INDEX_INACTIVE FROM RDB$INDICES WHERE RDB$INDEX_NAME='I';""",
+ 'expected_stdout': """RDB$INDEX_NAME                  RDB$INDEX_INACTIVE
+=============================== ==================
+
+I                                                1
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+    create table test( a integer);
+    create unique index test_idx_unq on test(a);
+    commit;
+  """,
+ 'test_script': 
+  """
+    alter index test_idx_unq inactive;
+    commit;
+    set list on;
+    select
+        rdb$index_name as idx_name
+        ,rdb$index_inactive as is_inactive
+        ,r.rdb$unique_flag as is_unique
+    from rdb$indices r
+    where rdb$index_name=upper('test_idx_unq');
+  """,
+ 'expected_stdout': 
+  """
+    IDX_NAME                        TEST_IDX_UNQ                                                                                 
+    IS_INACTIVE                     1
+    IS_UNIQUE                       1
+  """
+}
+]
+}

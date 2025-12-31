@@ -1,0 +1,96 @@
+{
+'id': 'functional.role.create.01',
+'qmid': 'functional.role.create.create_role_01',
+'tracker_id': '',
+'title': 'CREATE ROLE',
+'description': 
+ """
+    CREATE ROLE
+    Dependencies:
+    CREATE DATABASE
+    Basic SELECT
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create role test;
+    commit;
+    set list on;
+    select * from rdb$roles order by rdb$role_name;
+  """,
+ 'expected_stdout': 
+  """
+     RDB$ROLE_NAME                   RDB$ADMIN
+     RDB$OWNER_NAME                  SYSDBA
+     RDB$DESCRIPTION                 <null>
+     RDB$SYSTEM_FLAG                 4
+
+     RDB$ROLE_NAME                   TEST
+     RDB$OWNER_NAME                  SYSDBA
+     RDB$DESCRIPTION                 <null>
+     RDB$SYSTEM_FLAG                 0
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create role test;
+    commit;
+    set list on;
+    select * from rdb$roles order by rdb$role_name;
+  """,
+ 'expected_stdout': 
+  """
+    RDB$ROLE_NAME                   RDB$ADMIN
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$SECURITY_CLASS              SQLnnnn
+    
+    RDB$ROLE_NAME                   TEST
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 0
+    RDB$SECURITY_CLASS              SQLnnnn
+  """,
+  'substitutions': [('SQL\$.*', 'SQLnnnn')]
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create role test;
+    commit;
+    set list on;
+    select * from rdb$roles order by rdb$role_name;
+  """,
+ 'expected_stdout': 
+  """
+    RDB$ROLE_NAME                   RDB$ADMIN
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$SECURITY_CLASS              SQLnnnn
+    RDB$SYSTEM_PRIVILEGES           FFFFFFFFFFFFFFFF
+
+    RDB$ROLE_NAME                   TEST
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 0
+    RDB$SECURITY_CLASS              SQLnnnn
+    RDB$SYSTEM_PRIVILEGES           0000000000000000
+  """,
+  'substitutions': [('SQL\$.*', 'SQLnnnn')]
+}
+]
+}

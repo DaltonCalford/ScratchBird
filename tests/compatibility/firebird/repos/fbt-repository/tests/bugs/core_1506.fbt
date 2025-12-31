@@ -1,0 +1,102 @@
+{
+'id': 'bugs.core_1506',
+'qmid': None,
+'tracker_id': 'CORE-1506',
+'title': 'Server crash with isc_dsql_execute_immediate and zero length string',
+'description': 
+ """
+    Confirmed on 2.1.0.17798, got:
+        Error while executing SQL statement:
+        \n- SQLCODE: -902
+        \n- Unable to complete network request to host "localhost".
+        \n- Error reading data from the connection.
+        -902, 335544721)
+    firebird.log contains only this:
+        CSPROG	Sat Mar 10 19:13:29 2018
+        	INET/inet_error: read errno = 10054
+
+    Checked on:
+        2.5.9.27107: OK, 0.297s.
+        3.0.4.32924: OK, 1.562s.
+        4.0.0.918: OK, 1.735s.
+
+    NB: FB 3.+ contain TWO messages with almost the same text about SQLSTATE = -104. 
+    Second line is filtered out - see 'substitutions' section.
+    ----------------
+    12.11.21, 14.11.21: separated code for 5.0.0 and 4.0.1 after fixed #6966, commits:
+       5b7d0c7a64cf9873534acfffeb997718bab89800
+       e4ae6ebe5ac8ed08996bf79a653597476232b4ae
+
+    19.11.21: code for FB 3.x now is the same as for FB 4.x+, see commit:
+       d2b4b6d4c9f84a64bcbf4042308135ad1b1ac804
+
+    Since this fix status vector contains 5 lines (was: 3):
+    A. STDERR before fix (checked on WI-T5.0.0.304):
+        1 Error while executing SQL statement:
+        2 - SQLCODE: -104
+        3 - Unexpected end of command
+    B. STDERR after fix (checked on WI-T5.0.0.309, WI-V4.0.1.2660):
+        1 Error while executing SQL statement:
+        + - SQLCODE: -104
+        + - Dynamic SQL Error
+        2 - SQL error code = -104
+        3 - Unexpected end of command - line 1, column 1
+
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+try:
+    db_conn.execute_immediate('')
+except Exception, e:
+    print( e[0] )
+  """,
+ 'expected_stdout': 
+  """
+    Error while executing SQL statement:
+    - SQLCODE: -104
+    - Unexpected end of command
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions': [('- SQL error code.*', '')]
+},
+
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'Python',
+ 'test_script': 
+  """
+try:
+    db_conn.execute_immediate('')
+except Exception, e:
+    print( e[0] )
+  """,
+ 'expected_stdout': 
+  """
+    Error while executing SQL statement:
+    - SQLCODE: -104
+    - Dynamic SQL Error
+    - SQL error code = -104
+    - Unexpected end of command
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions': [('end of command.*', 'end of command')]
+}
+]
+}

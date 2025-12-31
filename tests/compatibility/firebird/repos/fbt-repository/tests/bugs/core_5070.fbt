@@ -1,0 +1,74 @@
+{
+'id': 'bugs.core_5070',
+'qmid': None,
+'tracker_id': 'CORE-5070',
+'title': 'Compound index cannot be used for filtering in some ORDER/GROUP BY queries',
+'description':
+  """
+     Execution plan is the same for all avaliable FB 3.0+ builds, since Beta1.
+     For this reason min_version = 3.0.0 rather than 3.0.5
+     Checked on:
+         3.0.4.33034: OK, 2.375s.
+         3.0.5.33084: OK, 1.422s.
+         3.0.4.33053: OK, 2.469s.
+         4.0.0.1172: OK, 5.344s.
+         4.0.0.1340: OK, 2.531s.
+         4.0.0.1249: OK, 2.594s.
+  """,
+'min_versions': '3.0.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test1 (
+        ia integer not null,
+        id integer not null, 
+        it integer not null, 
+        dt date not null, 
+        constraint test1_pk_ia_id primary key (ia,id)
+    );
+
+    set plan on;
+    set explain on;
+
+    select * 
+    from test1 
+    where 
+        ia=1 and dt='01/01/2015' and it=1 
+    order by id
+    ; 
+
+
+    select id 
+    from test1 
+    where 
+        ia=1 and dt='01/01/2015' and it=1 
+    group by id 
+    ;
+
+  """,
+ 'expected_stdout':
+  """
+    Select Expression
+        -> Filter
+            -> Table "TEST1" Access By ID
+                -> Index "TEST1_PK_IA_ID" Range Scan (partial match: 1/2)
+
+    Select Expression
+        -> Aggregate
+            -> Filter
+                -> Table "TEST1" Access By ID
+                    -> Index "TEST1_PK_IA_ID" Range Scan (partial match: 1/2)
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

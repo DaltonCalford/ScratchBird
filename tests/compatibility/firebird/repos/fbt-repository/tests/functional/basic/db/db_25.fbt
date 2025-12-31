@@ -1,0 +1,73 @@
+{
+'id': 'functional.basic.db.25',
+'qmid': 'functional.basic.db.db_25',
+'tracker_id': '',
+'title': 'Empty DB - RDB$ROLES',
+'description': 'Check for correct content of RDB$ROLES in empty database.',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select * from RDB$ROLES;
+  """,
+ 'expected_stdout': 
+  """
+    RDB$ROLE_NAME                   RDB$ADMIN
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 4
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set count on;
+    -- NB: rdb$role_name is UNIQUE column.
+    select * from rdb$roles order by rdb$role_name;
+  """,
+ 'expected_stdout': 
+  """
+    RDB$ROLE_NAME                   RDB$ADMIN
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$SECURITY_CLASS              SQL$162
+
+    Records affected: 1
+  """,
+  'substitutions':[('RDB\$SECURITY_CLASS\s+SQL.*', 'RDB\$SECURITY_CLASS SQL'), ('[\t ]+', ' ')]
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set count on;
+    -- NB: rdb$role_name is UNIQUE column.
+    select * from rdb$roles order by rdb$role_name;
+  """,
+ 'expected_stdout': 
+  """
+    RDB$ROLE_NAME                   RDB$ADMIN
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$SECURITY_CLASS              SQL$383
+    RDB$SYSTEM_PRIVILEGES           FFFFFFFFFFFFFFFF
+
+    Records affected: 1
+  """,
+  'substitutions':[('RDB\$SECURITY_CLASS\s+SQL.*', 'RDB\$SECURITY_CLASS SQL'), ('[\t ]+', ' ')]
+}
+]
+}

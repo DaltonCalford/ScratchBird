@@ -1,0 +1,79 @@
+{
+'id': 'functional.index.create.10',
+'qmid': 'functional.index.create.create_index_10',
+'tracker_id': '',
+'title': 'CREATE INDEX - try create index with same name',
+'description': """CREATE INDEX - try create index with same name
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+INSERT
+SHOW INDEX
+""",
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE t( a INTEGER);
+CREATE INDEX test ON t(a);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': 'CREATE INDEX test ON t(a);',
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+
+unsuccessful metadata update
+-STORE RDB$INDICES failed
+-attempt to store duplicate value (visible to active transactions) in unique index "RDB$INDEX_5"
+"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE t( a INTEGER);
+CREATE INDEX test ON t(a);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': 'CREATE INDEX test ON t(a);',
+ 'expected_stderr': """Statement failed, SQLSTATE = 42S11
+unsuccessful metadata update
+-Index TEST already exists
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE t( a INTEGER);
+CREATE INDEX test ON t(a);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': 'CREATE INDEX test ON t(a);',
+ 'expected_stderr': """Statement failed, SQLSTATE = 42S11
+unsuccessful metadata update
+-CREATE INDEX TEST failed
+-Index TEST already exists
+
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE t( a INTEGER);
+CREATE INDEX test ON t(a);
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': 'CREATE INDEX test ON t(a);',
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+unsuccessful metadata update
+-STORE RDB$INDICES failed
+-attempt to store duplicate value (visible to active transactions) in unique index "RDB$INDEX_5"
+-Problematic key value is ("RDB$INDEX_NAME" = 'TEST')
+"""
+}
+]
+}

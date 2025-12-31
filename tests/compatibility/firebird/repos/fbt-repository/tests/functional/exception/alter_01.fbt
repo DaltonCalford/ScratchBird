@@ -1,0 +1,58 @@
+{
+'id': 'functional.exception.alter.01',
+'qmid': 'functional.exception.alter.alter_exception_01',
+'tracker_id': '',
+'title': 'ALTER EXCEPTION',
+'description': """ALTER EXCEPTION
+
+Dependencies:
+CREATE DATABASE
+CREATE EXCEPTION
+Basic SELECT""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': "CREATE EXCEPTION test 'message to show';",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER EXCEPTION test 'new message';
+COMMIT;
+SELECT RDB$EXCEPTION_NAME, RDB$EXCEPTION_NUMBER, cast(RDB$MESSAGE as varchar(15)) FROM RDB$EXCEPTIONS;""",
+ 'expected_stdout': """RDB$EXCEPTION_NAME              RDB$EXCEPTION_NUMBER CAST
+=============================== ==================== ===============
+
+TEST                                               1 new message
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script': 
+  """
+    create exception test 'message to show';
+    commit;
+  """,
+ 'test_script': 
+  """
+    alter exception test 'new message';
+    commit;
+
+    set list on;
+    set width exc_name 31;
+    set width exc_msg 80;
+    select
+        e.rdb$exception_name exc_name
+        ,e.rdb$exception_number exc_number
+        ,e.rdb$message exc_msg
+    from rdb$exceptions e;
+  """,
+ 'expected_stdout': 
+  """
+    EXC_NAME                        TEST
+    EXC_NUMBER                      1
+    EXC_MSG                         new message
+  """
+}
+]
+}

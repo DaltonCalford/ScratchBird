@@ -1,0 +1,50 @@
+{
+'id': 'bugs.core_5713',
+'qmid': None,
+'tracker_id': 'CORE-5713',
+'title': 'Field alias disapears in complex query',
+'description':
+ """
+    Checked on:
+        3.0.3.32882: OK, 1.328s.
+        4.0.0.855: OK, 1.625s.
+ """,
+'min_versions': '3.0.3',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    set list on;
+    select a1, a2
+    from (
+      select 1 a1, 2 a2
+      from rdb$database
+    )
+    group by 1, 2
+
+    union all
+
+    select 1 a1, coalesce(cast(null as varchar(64)), 0) a2
+    from rdb$database;
+
+  """,
+ 'expected_stdout': 
+  """
+    A1                              1
+    A2                              2
+
+    A1                              1
+    A2                              0
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -1,0 +1,68 @@
+{
+'id': 'bugs.core_4767',
+'qmid': None,
+'tracker_id': 'CORE-4767',
+'title': "CREATE USER ... TAGS ( attr = 'prefix #suffix' ): suffix will be removed from storage because of character '#' in the value of attribute",
+'description':
+ """
+    Checked on:
+        FB30SS, build 3.0.4.32985: OK, 0.985s.
+        FB40SS, build 4.0.0.1000: OK, 1.281s.
+ """,
+'min_versions': '3.0.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    create or alter view v_user_tags as
+    select
+         a.sec$key tag
+        ,a.sec$value val
+    from sec$users u
+    left join sec$user_attributes a on u.sec$user_name = a.sec$user_name
+    where upper(u.sec$user_name) = upper('tmp$c4767') and upper(u.sec$plugin) = upper('Srp')
+    ;
+    commit;
+
+    create or alter user tmp$c4767 password '123' using plugin Srp  tags (
+        attr00001='attr #00001'
+       ,attr00002='#'
+       ,attr00003='##'
+       ,attr00004='$'
+       ,attr00005='$$'
+    );
+    commit;
+
+    select * from v_user_tags;
+    commit;
+
+    drop user tmp$c4767 using plugin Srp;
+    commit;
+  """,
+  'expected_stdout':
+  """
+    TAG                             ATTR00001
+    VAL                             attr #00001
+
+    TAG                             ATTR00002
+    VAL                             #
+
+    TAG                             ATTR00003
+    VAL                             ##
+
+    TAG                             ATTR00004
+    VAL                             $
+
+    TAG                             ATTR00005
+    VAL                             $$
+  """,
+  'expected_stderr':
+  """
+  """
+}
+]
+}

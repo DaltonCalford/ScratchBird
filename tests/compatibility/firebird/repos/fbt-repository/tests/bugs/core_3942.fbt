@@ -1,0 +1,55 @@
+{
+'id': 'bugs.core_3942',
+'qmid': None,
+'tracker_id': 'CORE-3942',
+'title': "Restore from gbak backup using service doesn't report an error",
+'description':
+ """
+     Checked on:
+       WI-V2.5.6.26994 SC
+       WI-V3.0.0.32474 SS/SC/CS
+       LI-T4.0.0.130 // 11.04.2016
+       WI-T4.0.0.132 // 12.04.2016
+ """,
+'min_versions': '2.5',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """import os
+db_conn.close()
+fdb='$(DATABASE_LOCATION)bugs.core_3942.fdb'
+fbk = os.path.join(context['temp_directory'],'tmp.core_3942.fbk')
+runProgram('gbak',['-b','-user',user_name,'-password',user_password,dsn,fbk])
+print ('Trying to overwrite existing database file using gbak -se...')
+runProgram('gbak',['-c','-se','localhost:service_mgr','-user',user_name,'-password',user_password,fbk,fdb])
+print ('Trying to overwrite existing database file using fbsvcmgr...')
+runProgram('fbsvcmgr',['localhost:service_mgr','user','SYSDBA','password','masterkey','action_restore','dbname',fdb,'bkp_file',fbk])
+if os.path.isfile(fbk):
+    os.remove(fbk)
+  """,
+ 'expected_stdout':
+  """
+    Trying to overwrite existing database file using gbak -se...
+    Trying to overwrite existing database file using fbsvcmgr...
+  """,
+ 'expected_stderr':
+  """
+    gbak: ERROR:database C:/FBTESTING/qa/fbt-repo/tmp/bugs.core_3942.fdb already exists.  To replace it, use the -REP switch
+    gbak: ERROR:    Exiting before completion due to errors
+    gbak:Exiting before completion due to errors
+    database C:/FBTESTING/qa/fbt-repo/tmp/bugs.core_3942.fdb already exists.  To replace it, use the -REP switch
+
+  """,
+  'substitutions':[('gbak: ERROR:.*database.*already exists.*','gbak: ERROR:database already exists.*'),
+                   ('database.*already exists.*',''),
+                   ('-Exiting before completion due to errors','')
+  ]
+}
+]
+}

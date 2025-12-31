@@ -1,0 +1,27 @@
+{
+'id': 'bugs.core_1329',
+'qmid': 'bugs.core_1329',
+'tracker_id': 'CORE-1329',
+'title': 'size of alias name in a table',
+'description': """Bug with size of alias name in a table (but still minor that 31 characters)
+""",
+'versions': [
+{
+ 'firebird_version': '2.0.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE TABLE BIG_TABLE_1234567890123 (COD INTEGER NOT NULL PRIMARY KEY);
+COMMIT;
+SELECT
+BIG_TABLE_1234567890123.COD
+FROM
+BIG_TABLE_1234567890123
+JOIN (SELECT
+      BIG_TABLE_1234567890123.COD
+      FROM
+      BIG_TABLE_1234567890123) BIG_TABLE_1234567890123_ ON
+BIG_TABLE_1234567890123.COD = BIG_TABLE_1234567890123_.COD;
+"""
+}
+]
+}

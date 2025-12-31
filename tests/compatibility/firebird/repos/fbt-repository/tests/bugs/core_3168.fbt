@@ -1,0 +1,264 @@
+{
+'id': 'bugs.core_3168',
+'qmid': None,
+'tracker_id': 'CORE-3168',
+'title': "exclude_filter doesn't work for <services></section> section of the Trace facility",
+'description': 
+ """
+    Note. It was encountered that FBSVCMGR does NOT wait for OS completes writing of its output on disk,
+       (see CORE-4896), so we use delays - see calls of time.sleep().
+
+    Correct work was checked on: WI-V2.5.5.26916 (SS, SC) and WI-V3.0.0.31948 (SS, SC, CS)
+    Refactored 17.12.2016 after encountering CORE-5424 ("restore process is impossible when trace ..."):
+    added checking of STDERR logs for all fbsvcmgr actions.
+
+    -----------------------------------------
+    Updated 27.03.2017: moved artificial delay (1 sec) at proper place.
+    It should be just after
+    subprocess.call('fbsvcmgr', 'localhost:service_mgr', 'action_trace_stop', ...)
+    and BEFORE 'p_trace.terminate()' command.
+    -----------------------------------------
+
+    Test time (approx):
+    2.5.7.27030: SC = 3" 
+    3.0.232644 and 4.0.0.463:  SS = SC = 6"; CS = 15"
+    Checked on 2.5.8.27056, CLASSIC server: 3.6" (27-03-2017)
+
+    13.04.2021. Adapted for run both on Windows and Linux. Checked on:
+       Windows: 3.0.8.33445, 4.0.0.2416
+       Linux:   3.0.8.33426, 4.0.0.2416
+
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'Python',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+import os
+import subprocess
+import time
+from fdb import services
+from subprocess import Popen
+
+os.environ["ISC_USER"] = user_name
+os.environ["ISC_PASSWORD"] = user_password
+
+# Obtain engine version:
+engine = str(db_conn.engine_version) # convert to text because 'float' object has no attribute 'startswith'
+db_conn.close()
+
+#--------------------------------------------
+
+def flush_and_close( file_handle ):
+    # https://docs.python.org/2/library/os.html#os.fsync
+    # If you're starting with a Python file object f,
+    # first do f.flush(), and
+    # then do os.fsync(f.fileno()), to ensure that all internal buffers associated with f are written to disk.
+    global os
+
+    file_handle.flush()
+    if file_handle.mode not in ('r', 'rb') and file_handle.name != os.devnull:
+        # otherwise: "OSError: [Errno 9] Bad file descriptor"!
+        os.fsync(file_handle.fileno())
+    file_handle.close()
+
+#--------------------------------------------
+
+def cleanup( f_names_list ):
+    global os
+    for i in range(len( f_names_list )):
+       if type(f_names_list[i]) == file:
+          del_name = f_names_list[i].name
+       elif type(f_names_list[i]) == str:
+          del_name = f_names_list[i]
+       else:
+          print('Unrecognized type of element:', f_names_list[i], ' - can not be treated as file.')
+          print('type(f_names_list[i])=',type(f_names_list[i]))
+          del_name = None
+
+       if del_name and os.path.isfile( del_name ):
+           os.remove( del_name )
+
+#--------------------------------------------
+
+
+# ::: NB ::: Trace config file format in 3.0 differs from 2.5 one:
+# 1) header section must be enclosed in "[" and "]",
+# 2) parameter-value pairs must be separated with '=' sign:
+#    services
+#    {
+#      parameter =  value
+#    }
+
+if engine.startswith('2.5'):
+    txt = '''# Generated auto, do not edit!
+    <services>
+       enabled true
+       log_services true
+
+       # This should prevent appearance of messages like "List Trace Session(s)" or "Start Trace Session(s)":
+       exclude_filter "%(List|LIST|list|Start|START|start)[[:WHITESPACE:]]+(Trace|TRACE|trace)[[:WHITESPACE:]]+(Session|SESSION|session)%"
+
+       # This should work even if we filter out messages about list/start trace session(s)
+       # (and test also check corret work of THIS filter beside previous `exclude`):
+       # include_filter "Database Stats"
+    </services>
+    '''
+else:
+    txt = '''# Generated auto, do not edit!
+    services
+    {
+       enabled = true
+       log_services = true
+
+       # This should prevent appearance of messages like "List Trace Session(s)" or "Start Trace Session(s)":
+       exclude_filter = "%(List|LIST|list|Start|START|start)[[:WHITESPACE:]]+(Trace|TRACE|trace)[[:WHITESPACE:]]+(Session|SESSION|session)%"
+       
+       # This should work even if we filter out messages about list/start trace session(s)
+       # (and test also check corret work of THIS filter beside previous `exclude`):
+       # include_filter = "Database Stats"
+    }
+    '''
+
+f_trc_cfg=open( os.path.join(context['temp_directory'],'tmp_trace_3168.cfg'), 'w')
+f_trc_cfg.write(txt)
+f_trc_cfg.close()
+
+# Instead of using 'start /min cmd /c fbsvcmgr ... 1>%2 2>&1' deciced to exploite Popen in order to run asynchronous process
+# without opening separate window. Output is catched into `trclog` file, which will be closed after call fbsvcmgr with argument
+# 'action_trace_stop' (see below):
+# See also:
+# https://docs.python.org/2/library/subprocess.html
+# http://stackoverflow.com/questions/11801098/calling-app-from-subprocess-call-with-arguments
+
+# ##############################################################
+# S T A R T   T R A C E   i n   S E P A R A T E    P R O C E S S
+# ##############################################################
+
+f_trc_log=open( os.path.join(context['temp_directory'],'tmp_trace_3168.log'), "w")
+f_trc_err=open( os.path.join(context['temp_directory'],'tmp_trace_3168.err'), "w")
+
+p_trace = Popen([ context['fbsvcmgr_path'], 'localhost:service_mgr', 'action_trace_start' , 'trc_cfg', f_trc_cfg.name],stdout=f_trc_log,stderr=f_trc_err)
+
+thisdb='$(DATABASE_LOCATION)bugs.core_3168.fdb'
+tmpbkp='$(DATABASE_LOCATION)bugs.core_3168_fbk.tmp'
+tmpres='$(DATABASE_LOCATION)bugs.core_3168_new.tmp'
+
+f_run_log=open( os.path.join(context['temp_directory'],'tmp_action_3168.log'), 'w')
+f_run_err=open( os.path.join(context['temp_directory'],'tmp_action_3168.err'), 'w')
+
+subprocess.call( [ context['fbsvcmgr_path'], 'localhost:service_mgr','action_properties','dbname', thisdb,'prp_sweep_interval', '1234321'], stdout=f_run_log,stderr=f_run_err)
+subprocess.call( [ context['fbsvcmgr_path'], 'localhost:service_mgr','action_db_stats', 'dbname',  thisdb, 'sts_hdr_pages'], stdout=f_run_log,stderr=f_run_err)
+subprocess.call( [ context['fbsvcmgr_path'], 'localhost:service_mgr','action_backup', 'dbname', thisdb, 'bkp_file', tmpbkp], stdout=f_run_log,stderr=f_run_err)
+subprocess.call( [ context['fbsvcmgr_path'], 'localhost:service_mgr','action_restore', 'bkp_file', tmpbkp, 'dbname', tmpres, 'res_replace'], stdout=f_run_log,stderr=f_run_err)
+
+flush_and_close( f_run_log )
+flush_and_close( f_run_err )
+
+# do NOT try to get FB log! It can contain non-ascii messages which lead to runtime fault of fbtest!
+# (see CORE-5418):
+# runProgram(context['fbsvcmgr_path'],['localhost:service_mgr','action_get_fb_log'])
+
+
+# ####################################################
+# G E T  A C T I V E   T R A C E   S E S S I O N   I D
+# ####################################################
+# Save active trace session info into file for further parsing it and obtain session_id back (for stop):
+
+f_trc_lst = open( os.path.join(context['temp_directory'],'tmp_trace_3168.lst'), 'w')
+subprocess.call([context['fbsvcmgr_path'], 'localhost:service_mgr', 'action_trace_list'], stdout=f_trc_lst)
+flush_and_close( f_trc_lst )
+
+# !!! DO NOT REMOVE THIS LINE !!!
+time.sleep(1)
+
+trcssn=0
+with open( f_trc_lst.name,'r') as f:
+    for line in f:
+        i=1
+        if 'Session ID' in line:
+            for word in line.split():
+                if i==3:
+                    trcssn=word
+                i=i+1
+            break
+# Result: `trcssn` is ID of active trace session. Now we have to terminate it:
+
+# ####################################################
+# S E N D   R E Q U E S T    T R A C E   T O   S T O P
+# ####################################################
+
+fn_nul = open(os.devnull, 'w')
+subprocess.call([context['fbsvcmgr_path'], 'localhost:service_mgr', 'action_trace_stop','trc_id', trcssn], stdout=fn_nul)
+fn_nul.close()
+
+# ::: NB ::: Artificial delay, Added 27.03.2017.
+# Do NOT remove this line otherwise record with 'database restore' may not appear 
+# in the final trace log (file buffer is flushed not instantly).
+time.sleep(1) 
+
+
+# Doc about Popen.terminate():
+# https://docs.python.org/2/library/subprocess.html
+# Stop the child. On Posix OSs the method sends SIGTERM to the child.
+# On Windows the Win32 API function TerminateProcess() is called to stop the child.
+
+# Doc about Win API TerminateProcess() function:
+# https://msdn.microsoft.com/en-us/library/windows/desktop/ms686714%28v=vs.85%29.aspx
+# The terminated process cannot exit until all pending I/O has been completed or canceled.
+# TerminateProcess is ____asynchronous____; it initiates termination and returns immediately.
+#                         ^^^^^^^^^^^^
+
+p_trace.terminate()
+flush_and_close(f_trc_log)
+flush_and_close(f_trc_err)
+
+# Should be EMPTY:
+with open( f_trc_err.name,'r') as f:
+  for line in f:
+    if line.split():
+       print('fbsvcmgr(1) unexpected STDERR: '+line.upper() )
+
+# Should be EMPTY:
+with open( f_run_err.name,'r') as f:
+  for line in f:
+    if line.split():
+       print('fbsvcmgr(2) unexpected STDERR: '+line.upper() )
+
+# Output log of trace for comparing it with expected.
+# ::: NB ::: Content if trace log is converted to UPPER case in order to reduce change of mismatching with
+# updated trace output in some future versions:
+
+with open( f_trc_log.name,'r') as f:
+  for line in f:
+    if line.split():
+      print(line.upper())
+
+# CLEANUP
+#########
+time.sleep(1)
+cleanup( (f_trc_cfg, f_trc_lst, f_trc_log, f_trc_err, f_run_log, f_run_err, tmpbkp, tmpres) )
+
+  """,
+ 'expected_stdout': 
+  """
+    "DATABASE PROPERTIES"
+    "DATABASE STATS"
+    "BACKUP DATABASE"
+    "RESTORE DATABASE"
+  """,
+ 'expected_stderr': 
+  """
+  """,
+  'substitutions': [
+    ('^((?!ERROR|ELEMENT|PROPERTIES|STATS|BACKUP|RESTORE).)*$','')
+  ]
+}
+]
+}

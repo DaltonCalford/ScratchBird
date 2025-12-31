@@ -1,0 +1,27 @@
+{
+'id': 'bugs.core_4417',
+'qmid': None,
+'tracker_id': 'CORE-4417',
+'title': 'gbak: cannot commit index ; primary key with german umlaut',
+'description': 'Test verifies only ability to restore database w/o errors.',
+'min_versions': '2.5.3',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core4417-ods-11_2.fbk',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    -- Confirmed crash of restoring on WI-V2.5.2.26540: message about abnnormal program termination appeared.
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

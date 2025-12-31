@@ -1,0 +1,66 @@
+{
+'id': 'bugs.core_6144',
+'qmid': None,
+'tracker_id': 'CORE-6144',
+'title': 'Inconsistent behaviour of the NEW context variable in AFTER UPDATE OR DELETE triggers',
+'description':
+ """
+    Confirmed problem on: 4.0.0.1607, 3.0.5.33171 and 2.5.9.27143: new.v was assigned to 1 in AD trigger.
+    Checked on:
+        build 4.0.0.1614: OK, 1.472s.
+        build 3.0.5.33172: OK, 0.802s.
+        build 2.5.9.27144: OK, 0.376s.
+ """,
+'min_versions': '2.5.9',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    create table test (id integer not null primary key); 
+    commit; 
+
+    insert into test (id) values (1); 
+    commit; 
+    alter table test add v integer default 1 not null; 
+    commit; 
+    insert into test (id) values (2); 
+    commit;
+    create exception exc_not_null_in_AD_trigger 'new.v is NOT null in AD trigger ?!'; 
+    commit;
+
+    set term ^; 
+    create or alter trigger test_null for test after update or delete as 
+    begin 
+        if (new.v is not null) then -- new.v should be NULL if the trigger runs after DELETE statement 
+        begin
+            rdb$set_context('USER_SESSION', 'AD_TRIGGER_NEW_V', new.v);
+            exception exc_not_null_in_AD_trigger;
+        end
+    end
+    ^
+    set term ;^ 
+    commit; 
+
+    delete from test where id = 2; -- no errors 
+    delete from test where id = 1; -- trigger throws exception 
+
+    set list on;
+    select rdb$get_context('USER_SESSION', 'AD_TRIGGER_NEW_V') as "new_v value in AD trigger:"
+    from rdb$database;
+  """,
+ 'expected_stdout': 
+  """
+    new_v value in AD trigger:      <null>
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -1,0 +1,89 @@
+{
+'id': 'bugs.core_1271',
+'qmid': 'bugs.core_1271-250',
+'tracker_id': 'CORE-1271',
+'title': 'Ceation of invalid procedures/triggers allowed',
+'description': """invalid procedures/triggers (with invalid plans, for example) was allowed to be created
+""",
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^;
+    create procedure p returns (out int) as
+    begin
+        for
+            select rdb$relation_id
+            from rdb$relations
+            plan (rdb$relations order rdb$index_1)
+            order by rdb$description
+            into :out
+        do
+            suspend;
+    end
+    ^
+    commit^
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 2F000
+    Error while parsing procedure P's BLR
+    -index RDB$INDEX_1 cannot be used in the specified plan
+  """
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """
+SET TERM !!;
+create procedure p returns (out int)
+as
+begin
+  for select rdb$relation_id
+    from rdb$relations
+    PLAN (RDB$RELATIONS ORDER RDB$INDEX_1)
+    order by rdb$description
+    into :out
+  do
+    suspend;
+end
+!!
+
+commit!!
+""",
+ 'expected_stderr': """Statement failed, SQLSTATE = 2F000
+index RDB$INDEX_1 cannot be used in the specified plan
+-Error while parsing procedure P's BLR
+"""
+},
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """
+SET TERM !!;
+create procedure p returns (out int)
+as
+begin
+  for select rdb$relation_id
+    from rdb$relations
+    PLAN (RDB$RELATIONS ORDER RDB$INDEX_1)
+    order by rdb$description
+    into :out
+  do
+    suspend;
+end
+!!
+
+commit!!
+""",
+ 'expected_stderr': """Statement failed, SQLCODE = -284
+index RDB$INDEX_1 cannot be used in the specified plan
+"""
+}
+]
+}

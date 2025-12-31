@@ -1,0 +1,50 @@
+{
+'id': 'functional.exception.drop.02',
+'qmid': 'functional.exception.drop.drop_exception_02',
+'tracker_id': '',
+'title': 'DROP EXCEPTION',
+'description': 'Create exception and SP that uses it. Then try to drop exception - this attempt must FAIL.',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+    create exception exc_test 'message to show';
+    commit;
+    set term ^;
+    create procedure sp_test as
+    begin
+      exception exc_test;
+    end ^
+    set term ;^
+    commit;
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    drop exception exc_test;
+    commit;
+    set list on;
+    set count on;
+    select e.rdb$exception_name, d.rdb$dependent_name 
+    from rdb$exceptions e join rdb$dependencies d on e.rdb$exception_name = d.rdb$depended_on_name
+    where e.rdb$exception_name = upper('exc_test');
+  """,
+ 'expected_stdout': 
+  """
+    RDB$EXCEPTION_NAME              EXC_TEST
+    RDB$DEPENDENT_NAME              SP_TEST
+    Records affected: 1
+  """,
+ 'expected_stderr': 
+  """
+    Statement failed, SQLSTATE = 42000
+    unsuccessful metadata update
+    -cannot delete
+    -EXCEPTION EXC_TEST
+    -there are 1 dependencies
+  """
+}
+]
+}

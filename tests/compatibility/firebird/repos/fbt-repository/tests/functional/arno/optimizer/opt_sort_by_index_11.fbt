@@ -1,0 +1,315 @@
+{
+'id': 'functional.arno.optimizer.opt_sort_by_index_11',
+'qmid': None,
+'tracker_id': '',
+'title': 'ORDER BY ASC using index (multi)',
+'description':
+ """
+   ORDER BY X, Y
+   When more fields are given in ORDER BY clause try to use a compound index.
+
+   Refactored 26-feb-2016: use common code for 2.5 and 3.0 with checking that 
+   actual plan matches expected one that is defined in differ variables: plan_25 & plan_30.
+   If actual plan will differ from expected message about this will contain BOTH plans
+   (actual and expected), otherwise only text about matching will appear - but NO plan content
+   because it depends on FB version.
+
+   Checked on WI-V2.5.6.26970
+   3.0.0.32358 -- plan was invalid
+   3.0.2.32708, 4.0.0.572 -- changed expected plan string after letter from dimitr, 21-mar-2017 09:08
+
+   22.12.2019.
+   1. Denied from common code for all major versions, it was a bad idea: we need EXPLAINED PLAN here
+      and this set of rows must be displayed explicitly, without just showing brief result of comparison.
+      For this reason separate sections for each majoer FB version was returned.
+   2. Added several other statements in order to have more different plans.
+      Checked on:
+        4.0.0.1693 SS: 1.283s.
+        3.0.5.33215 SS: 0.664s.
+        2.5.9.27149 SC: 0.282s.
+
+   25.07.2020: removed section for 4.0 because expected size must be equal in both major FB version, as it is given for 3.0.
+   (letter from dimitr, 25.07.2020 12:42). Checked on 3.0.7.33348, 4.0.0.2119
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create or alter procedure sp_fill_data as begin end;
+    recreate table test (
+        id1 int,
+        id2 int
+    );
+
+    set term ^;
+    create or alter procedure sp_fill_data
+    as
+        declare x int;
+        declare y int;
+    begin
+        x = 1;
+        while (x <= 50) do
+        begin
+            y = (x / 10) * 10;
+            insert into test(id1, id2) values(:y, :x - :y);
+            x = x + 1;
+        end
+        insert into test (id1, id2) values (0, null);
+        insert into test (id1, id2) values (null, 0);
+        insert into test (id1, id2) values (null, null);
+    end
+    ^
+    set term ;^
+    commit;
+
+    execute procedure sp_fill_data;
+    commit;
+
+    create asc  index test_id1_asc on test (id1);
+    create desc index test_id1_des on test (id1);
+    
+    create asc  index test_id2_asc on test (id2);
+    create desc index test_id2_des on test (id2);
+    
+    create asc  index test_id1_id2_asc on test (id1, id2);
+    create desc index test_id1_id2_des on test (id1, id2);
+
+    create asc  index test_id2_id1_asc on test (id2, id1);
+    create desc index test_id2_id1_des on test (id2, id1);
+    commit;
+
+    set planonly;
+
+    select t.id2, t.id1
+    from test t
+    where t.id1 = 30 and t.id2 >= 5
+    order by t.id2 asc, t.id1 asc
+    ;
+
+    select t.id2, t.id1
+    from test t
+    where t.id1 = 30 and t.id2 <= 5 
+    order by t.id2 desc, t.id1 desc
+    ;
+
+    select t.id2, t.id1
+    from test t
+    where t.id1 >= 30 and t.id2 = 5 
+    order by t.id2 asc, t.id1 asc
+    ;
+
+    select t.id2, t.id1
+    from test t
+    where t.id1 <= 30 and t.id2 = 5 
+    order by t.id2 desc, t.id1 desc
+    ;
+
+
+
+    select t.id2, t.id1
+    from test t
+    where t.id1 <= 30 and t.id2 <= 5
+    order by t.id2 asc, t.id1 asc
+    ;
+
+    select t.id2, t.id1
+    from test t
+    where t.id1 <= 30 and t.id2 <= 5 
+    order by t.id2 desc, t.id1 desc
+    ;
+
+    select t.id2, t.id1
+    from test t
+    where t.id1 >= 30 and t.id2 >= 5 
+    order by t.id2 asc, t.id1 asc
+    ;
+
+    select t.id2, t.id1
+    from test t
+    where t.id1 >= 30 and t.id2 >= 5 
+    order by t.id2 desc, t.id1 desc
+    ;
+
+  """,
+ 'expected_stdout': 
+  """
+    PLAN (T ORDER TEST_ID2_ID1_ASC INDEX (TEST_ID1_ID2_ASC))
+    PLAN (T ORDER TEST_ID2_ID1_DES INDEX (TEST_ID1_ID2_ASC))
+    PLAN (T ORDER TEST_ID2_ID1_ASC INDEX (TEST_ID2_ID1_ASC))
+    PLAN (T ORDER TEST_ID2_ID1_DES INDEX (TEST_ID2_ID1_ASC))
+    PLAN (T ORDER TEST_ID2_ID1_ASC INDEX (TEST_ID2_ASC, TEST_ID1_ASC))
+    PLAN (T ORDER TEST_ID2_ID1_DES INDEX (TEST_ID2_ASC, TEST_ID1_ASC))
+    PLAN (T ORDER TEST_ID2_ID1_ASC INDEX (TEST_ID2_ASC, TEST_ID1_ASC))
+    PLAN (T ORDER TEST_ID2_ID1_DES INDEX (TEST_ID2_ASC, TEST_ID1_ASC))
+  """,
+ 'expected_stderr': 
+  """
+  """
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create or alter procedure sp_fill_data as begin end;
+    recreate table test (
+        id1 int,
+        id2 int
+    );
+
+    set term ^;
+    create or alter procedure sp_fill_data
+    as
+        declare x int;
+        declare y int;
+    begin
+        x = 1;
+        while (x <= 50) do
+        begin
+            y = (x / 10) * 10;
+            insert into test(id1, id2) values(:y, :x - :y);
+            x = x + 1;
+        end
+        insert into test (id1, id2) values (0, null);
+        insert into test (id1, id2) values (null, 0);
+        insert into test (id1, id2) values (null, null);
+    end
+    ^
+    set term ;^
+    commit;
+
+    execute procedure sp_fill_data;
+    commit;
+
+    create asc  index test_id1_asc on test (id1);
+    create desc index test_id1_des on test (id1);
+    
+    create asc  index test_id2_asc on test (id2);
+    create desc index test_id2_des on test (id2);
+    
+    create asc  index test_id1_id2_asc on test (id1, id2);
+    create desc index test_id1_id2_des on test (id1, id2);
+
+    create asc  index test_id2_id1_asc on test (id2, id1);
+    create desc index test_id2_id1_des on test (id2, id1);
+    commit;
+
+    set explain on;
+    set planonly;
+
+    select t.id2, t.id1
+    from test t
+    where t.id1 = 30 and t.id2 >= 5
+    order by t.id2 asc, t.id1 asc
+    ;
+
+    select t.id2, t.id1
+    from test t
+    where t.id1 = 30 and t.id2 <= 5 
+    order by t.id2 desc, t.id1 desc
+    ;
+
+    select t.id2, t.id1
+    from test t
+    where t.id1 >= 30 and t.id2 = 5 
+    order by t.id2 asc, t.id1 asc
+    ;
+
+    select t.id2, t.id1
+    from test t
+    where t.id1 <= 30 and t.id2 = 5 
+    order by t.id2 desc, t.id1 desc
+    ;
+
+
+
+    select t.id2, t.id1
+    from test t
+    where t.id1 <= 30 and t.id2 <= 5
+    order by t.id2 asc, t.id1 asc
+    ;
+
+    select t.id2, t.id1
+    from test t
+    where t.id1 <= 30 and t.id2 <= 5 
+    order by t.id2 desc, t.id1 desc
+    ;
+
+    select t.id2, t.id1
+    from test t
+    where t.id1 >= 30 and t.id2 >= 5 
+    order by t.id2 asc, t.id1 asc
+    ;
+
+    select t.id2, t.id1
+    from test t
+    where t.id1 >= 30 and t.id2 >= 5 
+    order by t.id2 desc, t.id1 desc
+    ;
+
+  """,
+ 'expected_stdout': 
+  """
+    Select Expression
+        -> Sort (record length: 36, key length: 16)
+            -> Filter
+                -> Table "TEST" as "T" Access By ID
+                    -> Bitmap
+                        -> Index "TEST_ID1_ID2_ASC" Range Scan (lower bound: 2/2, upper bound: 1/2)
+
+    Select Expression
+        -> Sort (record length: 36, key length: 16)
+            -> Filter
+                -> Table "TEST" as "T" Access By ID
+                    -> Bitmap
+                        -> Index "TEST_ID1_ID2_ASC" Range Scan (lower bound: 1/2, upper bound: 2/2)
+
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "T" Access By ID
+                -> Index "TEST_ID2_ID1_ASC" Range Scan (lower bound: 2/2, upper bound: 1/2)
+
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "T" Access By ID
+                -> Index "TEST_ID2_ID1_DES" Range Scan (lower bound: 2/2, upper bound: 1/2)
+
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "T" Access By ID
+                -> Index "TEST_ID2_ID1_ASC" Range Scan (upper bound: 1/2)
+                    -> Bitmap
+                        -> Index "TEST_ID1_ASC" Range Scan (upper bound: 1/1)
+
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "T" Access By ID
+                -> Index "TEST_ID2_ID1_DES" Range Scan (lower bound: 1/2)
+                    -> Bitmap
+                        -> Index "TEST_ID1_ASC" Range Scan (upper bound: 1/1)
+
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "T" Access By ID
+                -> Index "TEST_ID2_ID1_ASC" Range Scan (lower bound: 1/2)
+                    -> Bitmap
+                        -> Index "TEST_ID1_ASC" Range Scan (lower bound: 1/1)
+
+    Select Expression
+        -> Filter
+            -> Table "TEST" as "T" Access By ID
+                -> Index "TEST_ID2_ID1_DES" Range Scan (upper bound: 1/2)
+                    -> Bitmap
+                        -> Index "TEST_ID1_ASC" Range Scan (lower bound: 1/1)
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

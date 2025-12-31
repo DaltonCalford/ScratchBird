@@ -1,0 +1,41 @@
+{
+'id': 'bugs.core_3972',
+'qmid': None,
+'tracker_id': 'CORE-3972',
+'title': 'Allow the selection of SQL_INT64, SQL_DATE and SQL_TIME in dialect 1',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'sql_dialect': 1,
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    recreate table t1 (n1 numeric(12,3));
+    commit;
+    insert into t1 values (1.23);
+    insert into t1 values (10.23);
+    insert into t1 values (3.567);
+    commit;
+    set list on;
+    select mon$sql_dialect from mon$database;
+    select n1, n1 / 2 from t1; 
+  """,
+  'expected_stdout': 
+  """
+    MON$SQL_DIALECT                 1
+    N1                              1.230
+    DIVIDE                          0.6150000000000000
+    N1                              10.230
+    DIVIDE                          5.115000000000000
+    N1                              3.567
+    DIVIDE                          1.783500000000000
+  """
+}
+]
+}

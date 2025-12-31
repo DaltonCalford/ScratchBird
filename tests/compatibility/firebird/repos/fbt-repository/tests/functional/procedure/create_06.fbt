@@ -1,0 +1,43 @@
+{
+'id': 'functional.procedure.create.06',
+'qmid': 'functional.procedure.create.create_procedure_06',
+'tracker_id': '',
+'title': 'CREATE PROCEDURE - PSQL Stataments - SUSPEND',
+'description': """CREATE PROCEDURE - PSQL Stataments - SUSPEND
+
+Dependencies:
+CREATE DATABASE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+CREATE PROCEDURE test RETURNS(id INT)AS
+BEGIN
+  ID=4;
+  SUSPEND;
+  ID=5;
+  SUSPEND;
+END ^
+SET TERM ;^
+commit;
+SHOW PROCEDURE test;
+""",
+ 'expected_stdout': """Procedure text:
+=============================================================================
+
+BEGIN
+  ID=4;
+  SUSPEND;
+  ID=5;
+  SUSPEND;
+END
+=============================================================================
+Parameters:
+ID                                OUTPUT INTEGER
+"""
+}
+]
+}

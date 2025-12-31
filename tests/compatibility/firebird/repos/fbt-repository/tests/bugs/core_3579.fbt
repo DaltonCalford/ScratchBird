@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_3579',
+'qmid': None,
+'tracker_id': 'CORE-3579',
+'title': 'Can not drop table when computed field depends on later created another field',
+'description': '',
+'min_versions': '2.5.2',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'core3579.fbk',
+ 'database_character_set': 'NONE',
+ 'connection_character_set': 'NONE',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    drop table Test; 
+    show table;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+   There are no tables in this database
+  """
+}
+]
+}

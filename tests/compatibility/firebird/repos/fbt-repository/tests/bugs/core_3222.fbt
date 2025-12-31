@@ -1,0 +1,43 @@
+{
+'id': 'bugs.core_3222',
+'qmid': None,
+'tracker_id': 'CORE-3222',
+'title': """View with "WITH CHECK OPTION" doesn't like TRIM function in WHERE""",
+'description': '',
+'min_versions': '2.5.1',
+'versions': [
+{
+ 'firebird_version': '2.5.1',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': """CREATE TABLE Foo (
+  Bar INTEGER,
+  Str CHAR(31)
+);
+COMMIT;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE VIEW VIEW_Foo (
+     Bar
+) AS SELECT
+     Bar
+  FROM Foo
+  WHERE(Trim(Str) = 'test')
+WITH CHECK OPTION
+;
+COMMIT;
+SHOW VIEW VIEW_Foo;
+""",
+ 'expected_stdout': """Database:  localhost:C:\Users\win7\Firebird_tests\fbt-repository\tmp\bugs.core_3222.fdb, User: SYSDBA
+SQL> CON> CON> CON> CON> CON> CON> CON> SQL> SQL> BAR                             INTEGER Nullable
+View Source:
+==== ======
+ SELECT
+     Bar
+  FROM Foo
+  WHERE(Trim(Str) = 'test')
+WITH CHECK OPTION
+SQL>"""
+}
+]
+}

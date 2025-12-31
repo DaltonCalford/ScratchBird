@@ -1,0 +1,44 @@
+{
+'id': 'bugs.core_4093',
+'qmid': None,
+'tracker_id': 'CORE-4093',
+'title': 'Server crashes while converting an overscaled numeric to a string',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set heading off;
+    select cast(cast(0 as numeric(18, 15)) * cast(0 as numeric(18, 15)) * cast(0 as numeric(18, 15)) as varchar (41)) from rdb$database;
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 22018
+    conversion error from string "0.000000000000000000000000000000000000000000000"
+  """
+},
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    set heading off;
+    select cast( cast(0 as numeric(38, 38)) * cast(0 as numeric(38, 38)) * cast(0 as numeric(38, 38)) as varchar(100) ) from rdb$database;
+    select cast( cast(0 as numeric(38, 38)) * cast(0 as numeric(38, 38)) * cast(0 as numeric(38, 38)) as numeric(38, 38) ) from rdb$database;
+  """,
+ 'expected_stdout':
+  """
+    0E-114
+    0.00000000000000000000000000000000000000
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}

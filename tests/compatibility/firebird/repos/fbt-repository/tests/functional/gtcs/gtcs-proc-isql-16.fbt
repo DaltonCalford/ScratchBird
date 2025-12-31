@@ -1,0 +1,68 @@
+{
+'id': 'functional.gtcs.gtcs-proc-isql-16',
+'qmid': None,
+'tracker_id': '',
+'title': 'gtcs-proc-isql-16',
+'description':
+ """
+	Original test see in:
+        https://github.com/FirebirdSQL/fbtcs/blob/master/GTCS/tests/PROC_ISQL_16.script
+	SQL script for creating test database ('gtcs_sp1.fbk') and fill it with some data:
+        https://github.com/FirebirdSQL/fbtcs/blob/master/GTCS/tests/PROCS_QA_INIT_ISQL.script
+    Checked on:
+        4.0.0.1803 SS: 1.822s.
+        3.0.6.33265 SS: 0.849s.
+        2.5.9.27149 SC: 0.313s.
+ """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database': 'Restore',
+ 'backup_file': 'gtcs_sp1.fbk',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^;
+    create procedure proc_insert (a char(5), b char(20), c char(6), d smallint, e char(15)) as
+    begin
+    insert into p values (:a, :b, :c, :d, :e);
+    end
+    ^
+    set term ;^
+    select 'point-1' as msg, p.* from p;
+    execute procedure proc_insert 'P15', null , 'Pink', null, 'Hoboken';
+    insert into p values ('P16', null, null, null, 'Varanasi');
+    select 'point-2' as msg, p.* from p;
+  """,
+ 'expected_stdout':
+  """
+    MSG     PNO    PNAME                COLOR        WEIGHT CITY
+    point-1 P1     Nut                  Red              12 London
+    point-1 P2     Bolt                 Green            17 Paris
+    point-1 P3     Screw                Blue             17 Rome
+    point-1 P4     Screw                Red              14 London
+    point-1 P5     Cam                  Blue             12 Paris
+    point-1 P6     Cog                  Red              19 London
+
+    MSG     PNO    PNAME                COLOR        WEIGHT CITY
+    point-2 P1     Nut                  Red              12 London
+    point-2 P2     Bolt                 Green            17 Paris
+    point-2 P3     Screw                Blue             17 Rome
+    point-2 P4     Screw                Red              14 London
+    point-2 P5     Cam                  Blue             12 Paris
+    point-2 P6     Cog                  Red              19 London
+    point-2 P15    <null>               Pink         <null> Hoboken
+    point-2 P16    <null>               <null>       <null> Varanasi
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions':[('={3,}', ''),('[ \t]+', ' ')]
+}
+]
+}

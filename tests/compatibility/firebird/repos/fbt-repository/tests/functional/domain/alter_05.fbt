@@ -1,0 +1,47 @@
+{
+'id': 'functional.domain.alter.05',
+'qmid': 'functional.domain.alter.alter_domain_05',
+'tracker_id': '',
+'title': "ALTER DOMAIN - Alter domain that doesn't exists",
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': 'CREATE DOMAIN test VARCHAR(63);',
+ 'test_type': 'ISQL',
+ 'test_script': 'ALTER DOMAIN notexists DROP CONSTRAINT;',
+ 'expected_stderr': """Statement failed, SQLCODE = -607
+
+unsuccessful metadata update
+-Domain not found
+"""
+},
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'init_script': 'CREATE DOMAIN test VARCHAR(63);',
+ 'test_type': 'ISQL',
+ 'test_script': 'ALTER DOMAIN notexists DROP CONSTRAINT;',
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+
+unsuccessful metadata update
+-Domain not found
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 'CREATE DOMAIN test VARCHAR(63);',
+ 'test_type': 'ISQL',
+ 'test_script': 'ALTER DOMAIN notexists DROP CONSTRAINT;',
+ 'expected_stderr': """Statement failed, SQLSTATE = 42000
+unsuccessful metadata update
+-ALTER DOMAIN NOTEXISTS failed
+-Domain not found
+
+"""
+}
+]
+}

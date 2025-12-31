@@ -1,0 +1,22 @@
+{
+'id': 'functional.intfunc.string.position_02',
+'qmid': 'functional.intfunc.string.position_02',
+'tracker_id': 'CORE-1511',
+'title': 'Test Position',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """SELECT POSITION('beau','beau,il fait beau') C1,POSITION('beau','beau,il fait beau',2) C2 FROM RDB$DATABASE;
+""",
+ 'expected_stdout': """
+          C1           C2
+============ ============
+           1           14
+
+"""
+}
+]
+}

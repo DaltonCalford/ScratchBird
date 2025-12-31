@@ -1,0 +1,42 @@
+{
+'id': 'bugs.gh_6889',
+'qmid': None,
+'tracker_id': '',
+'title': 'error no permision occurred while ALTER USER SET TAGS on snapshot build WI-V3.0.8.33482',
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/6889
+
+    Checked on:
+        5.0.0.113;   5.0.0.88
+        4.0.1.2539;  4.0.1.2523
+        3.0.8.33487; 3.0.8.33476
+ """,
+'min_versions': '3.0.8',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    create or alter user tmp$gh_6889 password '123' using plugin Srp;
+    commit;
+
+    connect '$(DSN)' user tmp$gh_6889 password '123';
+    alter current user set tags ( active2 = 'TRUE' );
+    commit;
+
+    connect '$(DSN)' user sysdba password 'masterkey';
+    drop user tmp$gh_6889 using plugin Srp;
+    commit;
+  """,                                                      
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

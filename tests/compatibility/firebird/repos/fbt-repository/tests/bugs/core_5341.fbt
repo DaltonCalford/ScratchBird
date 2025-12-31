@@ -1,0 +1,59 @@
+{
+'id': 'bugs.core_5341',
+'qmid': None,
+'tracker_id': 'CORE-5341',
+'title': "User collate doesn't work with blobs",
+'description':
+ """
+   Reproduced bug on 3.0.1.32594.
+   All fine on WI-V3.0.1.32596, WI-T4.0.0.366.
+ """,
+'min_versions': '3.0.1',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'connection_character_set': 'WIN1251',
+ 'platform': 'All',
+ 'init_script':
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set term ^;
+    execute block as
+    begin
+      execute statement 'drop collation pxw_cyrl_ci_ai';
+      when any do begin end
+    end
+    ^
+    set term ;^
+    commit;
+
+    create collation pxw_cyrl_ci_ai for win1251 from pxw_cyrl case insensitive accent insensitive;
+    commit;
+
+    set list on;
+    set count on;
+
+    with A as(
+      select cast('update' as blob sub_type text) as blob_id from rdb$database
+      union all
+      select 'UPDATE' from rdb$database
+    )
+    select * from a 
+    where blob_id collate PXW_CYRL_CI_AI like '%update%';
+  """,
+  'expected_stdout':
+  """
+    update
+    UPDATE
+    Records affected: 2
+  """,
+  'expected_stderr':
+  """
+  """,
+  'substitutions':[('BLOB_ID.*', '')]
+}
+]
+}

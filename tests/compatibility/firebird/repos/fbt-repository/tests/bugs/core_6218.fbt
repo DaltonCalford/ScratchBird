@@ -1,0 +1,62 @@
+{
+'id': 'bugs.core_6218',
+'qmid': None,
+'tracker_id': 'CORE-6218',
+'title': 'COUNT(DISTINCT <DECFLOAT_FIELD>) leads FB to crash when there are duplicate values of this field',
+'description':
+ """
+    Checked on 4.0.0.1731
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test(n decfloat);
+    commit;
+
+    insert into test values( 0 );
+    insert into test values( 0 );
+    commit;
+
+    set list on;
+    set explain on;
+
+    select n as n_grouped_from_test0 from test group by 1; --- [ 1 ]
+    select distinct n as n_uniq_from_test0 from test; -- [ 2 ]
+    select count(distinct n) as count_uniq_from_test0 from test; -- [ 3 ] 
+  """,
+ 'expected_stdout': 
+  """
+    Select Expression
+        -> Aggregate
+            -> Sort (record length: 68, key length: 24)
+                -> Table "TEST" Full Scan
+
+    N_GROUPED_FROM_TEST0                                                     0
+
+
+
+    Select Expression
+        -> Unique Sort (record length: 68, key length: 24)
+            -> Table "TEST" Full Scan
+
+    N_UNIQ_FROM_TEST0                                                        0
+
+
+
+    Select Expression
+        -> Aggregate
+            -> Table "TEST" Full Scan
+
+    COUNT_UNIQ_FROM_TEST0           1
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

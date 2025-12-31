@@ -1,0 +1,71 @@
+{
+'id': 'bugs.core_5854',
+'qmid': None,
+'tracker_id': 'CORE-5854',
+'title': 'Very poor "similar to" performance',
+'description':
+ """
+     Confirmed normal work (evaluation for less than 10 ms) on WI-T4.0.0.1598.
+     Quantifier value was increased to 1000, string 'abcd.abc' is used for pattern search.
+
+     ::: NOTE :::
+     doc\sql.extensions\README.similar_to.txt:
+     Since FB 4 the repeat factor low/high values could not be greater than 1000.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    set count on;
+
+    set term ^;
+    execute block as
+    begin
+        rdb$set_context( 'USER_SESSION','DTS_START', cast('now' as timestamp) );
+        rdb$set_context( 'USER_SESSION','MAX_THRESHOLD_MS', 100 );
+        --                                                    ^
+        --                                                    |
+        --                                      #############################
+        --                                      MAX ALLOWED EXECUTION TIME,MS
+        --                                      #############################
+    end
+    ^
+    set term ;^
+
+    select iif ('abcd.abc' similar to '[[:ALPHA:].]{1,1000}.ab' ,1,0) result 
+    from rdb$database 
+    ;
+
+    set count off;
+    select 
+        iif( evaluated_ms <= max_allowed_ms
+            ,'acceptable'
+            ,'TOO LONG: ' || evaluated_ms || ' ms - this is more then threshold = ' || max_allowed_ms || ' ms'
+           ) as duration
+    from (
+        select 
+             datediff( millisecond from cast(rdb$get_context( 'USER_SESSION','DTS_START') as timestamp) to current_timestamp ) evaluated_ms
+            ,cast( rdb$get_context( 'USER_SESSION','MAX_THRESHOLD_MS' ) as int ) as max_allowed_ms
+        from rdb$database
+    );
+  """,
+ 'expected_stdout': 
+  """
+    RESULT                          0
+    Records affected: 1
+    DURATION                        acceptable
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

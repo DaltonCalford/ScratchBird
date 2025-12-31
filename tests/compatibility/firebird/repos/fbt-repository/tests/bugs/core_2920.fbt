@@ -1,0 +1,59 @@
+{
+'id': 'bugs.core_2920',
+'qmid': None,
+'tracker_id': 'CORE-2920',
+'title': 'Incorrect execution of volatile SQL statements inside EXECUTE STATEMENT',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5.0',
+ 'platform': 'All',
+ 'database_character_set': 'UTF8',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """create table bugtest (id int);
+insert into bugtest (id) values (123);
+set term !!;
+create procedure p_bugtest (in_id int)
+  returns (cnt int)
+as
+  declare predicate varchar(1000);
+begin
+  if (:in_id is null) then
+    predicate = ' ? is null';
+  else
+    predicate = ' id = ?';
+
+  execute statement ('select count(*) from bugtest where' || predicate) (:in_id)
+  into :cnt;
+end!!
+set term !!;
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """execute procedure p_bugtest (123);
+-- cnt = 1
+execute procedure p_bugtest (null);
+-- cnt = 1
+execute procedure p_bugtest (123);
+-- cnt = 1
+""",
+ 'expected_stdout': """
+         CNT
+============
+           1
+
+
+         CNT
+============
+           1
+
+
+         CNT
+============
+           1
+
+"""
+}
+]
+}

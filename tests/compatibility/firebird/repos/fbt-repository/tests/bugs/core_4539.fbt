@@ -1,0 +1,47 @@
+{
+'id': 'bugs.core_4539',
+'qmid': None,
+'tracker_id': 'CORE-4539',
+'title': 'Server does not accept the right plan',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  """,
+ 'test_script':
+  """
+    recreate table horse(
+        id int primary key
+       ,color_id int, name varchar(10)
+    );
+    recreate table color(
+        id int
+        ,name varchar(10)
+    );
+    commit;
+    create index color_name on color(name);
+    commit;
+    
+    -------------
+    -- Confirmed on WI-T3.0.0.31374 Firebird 3.0 Beta 1
+    -- Statement failed, SQLSTATE = 42000
+    -- index COLOR_NAME cannot be used in the specified plan
+    set planonly;
+    select count(*)
+    from horse h
+    join color c on h.color_id = c.id
+    where h.name = c.name
+    plan join (h natural, c index (color_name));
+  """,
+  'expected_stdout':
+  """
+    PLAN JOIN (H NATURAL, C INDEX (COLOR_NAME))
+  """
+}
+]
+}

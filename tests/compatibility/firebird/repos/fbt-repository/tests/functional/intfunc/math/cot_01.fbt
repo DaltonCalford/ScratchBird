@@ -1,0 +1,21 @@
+{
+'id': 'functional.intfunc.math.cot_01',
+'qmid': 'functional.intfunc.math.cot_01',
+'tracker_id': '',
+'title': 'test de la fonction cot',
+'description': 'returns 1 / tan(argument)',
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'select cast(COT(1) AS DECIMAL(18,15)) from rdb$database;',
+ 'expected_stdout': """
+                 CAST
+=====================
+    0.642092615934331
+
+"""
+}
+]
+}

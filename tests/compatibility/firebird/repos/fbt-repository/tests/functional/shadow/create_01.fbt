@@ -1,0 +1,75 @@
+{
+'id': 'functional.shadow.create_01',
+'qmid': 'functional.shadow.create.create_shadow_01',
+'tracker_id': '',
+'title': 'CREATE SHADOW',
+'description':
+  """
+    CREATE SHADOW
+
+    Dependencies:
+    CREATE DATABASE
+  """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE SHADOW 1 '$(DATABASE_LOCATION)TEST.SHD';
+SHOW DATABASE;""",
+ 'expected_stdout': """Database: localhost:/home/job/qa/fbtest/tmp/functional.shadow.create_01.fdb
+        Owner: SYSDBA
+ Shadow 1: "/home/job/qa/fbtest/tmp/TEST.SHD" auto
+PAGE_SIZE 4096
+Number of DB pages allocated = 164
+Sweep interval = 20000
+Forced Writes are ON
+Transaction - oldest = 1
+Transaction - oldest active = 2
+Transaction - oldest snapshot = 2
+Transaction - Next = 5
+ODS = 11.2
+Default Character set: NONE
+""",
+ 'substitutions': [('^.*TEST.SHD','TEST.SHD'),('^Forced Writes are.*',''),('^Transaction -.*',''),('^Number of DB pages allocated.*','')]
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create shadow 1 '$(DATABASE_LOCATION)test_defaults.shd';
+    commit;
+    -- SHOW DATABASE -- Removed from here because this test must verify only ability to create shadow.
+    set list on;
+    set count on;
+    select
+        --right(trim(rdb$file_name), char_length('test_defaults.shd')) as file_name
+        iif( replace(rdb$file_name,'\\','/') containing replace('$(DATABASE_LOCATION)','\','/')
+             and 
+             upper(right( trim(rdb$file_name), char_length('test_defaults.shd') )) = upper('test_defaults.shd')
+            ,'OK'
+            ,'BAD: ' || rdb$file_name
+           ) check_shd_file_name
+       ,rdb$file_sequence as file_sequence
+       ,rdb$file_start as file_start
+       ,rdb$file_length as file_length
+       ,rdb$file_flags as file_flags
+       ,rdb$shadow_number as shadow_number
+    from rdb$files;
+  """,
+ 'expected_stdout': 
+  """
+    CHECK_SHD_FILE_NAME             OK
+    FILE_SEQUENCE                   0
+    FILE_START                      0
+    FILE_LENGTH                     0
+    FILE_FLAGS                      1
+    SHADOW_NUMBER                   1
+    Records affected: 1
+  """
+}
+]
+}

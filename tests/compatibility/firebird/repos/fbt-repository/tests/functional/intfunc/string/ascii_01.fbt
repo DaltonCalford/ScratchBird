@@ -1,0 +1,22 @@
+{
+'id': 'functional.intfunc.string.ascii_01',
+'qmid': 'functional.intfunc.string.ascii_char_01',
+'tracker_id': '',
+'title': 'New Built-in Functions, Firebird 2.1 : ASCII_CHAR( <number> )',
+'description': """test of ASCII_CHAR
+
+Returns the ASCII character with the specified code. The argument to ASCII_CHAR must be in the range 0 to 255. The result is returned in character set NONE.""",
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'select ASCII_CHAR( 065 ) from rdb$database;',
+ 'expected_stdout': """ASCII_CHAR
+==========
+A
+
+"""
+}
+]
+}

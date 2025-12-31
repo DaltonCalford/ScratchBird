@@ -1,0 +1,34 @@
+{
+'id': 'bugs.gh_7048',
+'qmid': None,
+'tracker_id': '',
+'title': 'Release of user savepoint releases too much',
+'description':
+ """
+    https://github.com/FirebirdSQL/firebird/issues/7048
+
+    Confirmed bug on 4.0.1.2668
+    Checked on 4.0.1.2672 - all fine.
+ """,
+'min_versions': '4.0.1',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script':
+  """
+    savepoint a;
+    savepoint b;
+    release savepoint b;
+    release savepoint a;
+  """,                                                      
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

@@ -1,0 +1,27 @@
+{
+'id': 'functional.domain.create.39',
+'qmid': 'functional.domain.create.create_domain_39',
+'tracker_id': '',
+'title': 'CREATE DOMAIN - COLLATE',
+'description': 'Domain creation based on VARCHAR datatype with COLLATE specification.',
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test VARCHAR(32) CHARACTER SET DOS437 COLLATE DB_ITA437;
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            VARCHAR(32) CHARACTER SET DOS437 COLLATE DB_ITA437 Nullable
+"""
+},
+{
+ 'firebird_version': '2.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': """CREATE DOMAIN test VARCHAR(32) CHARACTER SET DOS437 COLLATE DB_ITA437;
+SHOW DOMAIN test;""",
+ 'expected_stdout': """TEST                            VARCHAR(32) CHARACTER SET DOS437 Nullable
+                                 COLLATE DB_ITA437"""
+}
+]
+}

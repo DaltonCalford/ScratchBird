@@ -1,0 +1,34 @@
+{
+'id': 'bugs.core_6251',
+'qmid': None,
+'tracker_id': 'CORE-6251',
+'title': 'Regression: crash when built-in function LEFT() or RIGHT() missed 2nd argument (number of characters to be taken)',
+'description':
+ """
+    Confirmed crash on: 4.0.0.1773; 3.0.6.33247
+    Checked on: 4.0.0.1779; 3.0.6.33251 - works fine.
+ """,
+'min_versions': '3.0.6',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    recreate table test( s varchar(10) );
+    commit;
+    insert into test(s) values('1');
+    select 1 from test f where right( f.s ) = '1';
+  """,
+ 'expected_stderr':
+  """
+    Statement failed, SQLSTATE = 39000
+    function RIGHT could not be matched
+  """
+}
+]
+}

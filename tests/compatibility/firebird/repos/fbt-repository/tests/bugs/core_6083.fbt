@@ -1,0 +1,66 @@
+{
+'id': 'bugs.core_6083',
+'qmid': None,
+'tracker_id': 'CORE-6083',
+'title': "USING PLUGIN clause does not work in RECREATE USER",
+'description':
+ """
+    Confirmed bug on WI-T4.0.0.1530, got:
+    ===
+        Statement failed, SQLSTATE = 23000
+        add record error
+        -violation of PRIMARY or UNIQUE KEY constraint "INTEG_5" on table "PLG$SRP"
+        -Problematic key value is ("PLG$USER_NAME" = 'TMP$C6083')
+    ===
+    Checked on 4.0.0.1532, SS and CS: OK, 2.085s.
+ """,
+'min_versions': '4.0',
+'versions': [
+{
+ 'firebird_version': '4.0',
+ 'platform': 'All',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    -- Following code should NOT raise any output: neither in STDOUT nor in STDERR.
+    set bail on;
+    set term ^;
+    execute block as
+    begin
+       begin
+           -- Here we 'silently drop' user if it remained after previous (failed) run of this test.
+           -- Exception about non-existent user will be suppressed:
+           execute statement( 'drop user tmp$c6083 using plugin Srp' ) with autonomous transaction;
+       when any do
+           begin
+           end
+       end
+    end
+    ^
+    set term ;^
+    commit;
+
+    recreate user tmp$c6083 password '123' using plugin Srp;
+    recreate user tmp$c6083 password '456' using plugin Srp; -- THIS (second) statement raised error before ticket was fixed.
+    commit;
+
+    connect '$(DSN)' user tmp$c6083 password '456'; -- here we want to be sure that user was created SUCCESSFULLY.
+    commit;
+
+    connect '$(DSN)' user sysdba password 'masterkey';
+
+    drop user tmp$c6083 using plugin Srp;
+    commit;
+  """,
+ 'expected_stdout': 
+  """
+  """,
+ 'expected_stderr': 
+  """
+  """
+}
+]
+}

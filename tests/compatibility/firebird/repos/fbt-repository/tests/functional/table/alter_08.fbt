@@ -1,0 +1,27 @@
+{
+'id': 'functional.table.alter.08',
+'qmid': 'functional.table.alter.alter_table_08',
+'tracker_id': '',
+'title': 'ALTER TABLE - DROP',
+'description': """ALTER TABLE - DROP
+
+Dependencies:
+CREATE DATABASE
+CREATE TABLE
+SHOW TABLE
+""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE test( id INTEGER NOT NULL,
+                   text VARCHAR(32));
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """ALTER TABLE test DROP text;
+SHOW TABLE test;""",
+ 'expected_stdout': """ID                              INTEGER Not Null
+"""
+}
+]
+}

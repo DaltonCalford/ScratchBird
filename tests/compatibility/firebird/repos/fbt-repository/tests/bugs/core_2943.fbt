@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_2943',
+'qmid': None,
+'tracker_id': 'CORE-2943',
+'title': 'parsing error recursive query with two recursive parts',
+'description': '',
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    with recursive
+    tree (NAME) as (
+      select r.rdb$relation_name from rdb$relations r
+      union all
+      select r2.rdb$relation_name || tree.NAME from rdb$relations r2, tree
+      where 1 = 0
+    ),
+    tree_2 as (
+        select c.rdb$character_set_name from rdb$character_sets c
+        union all
+        select c2.rdb$character_set_name from rdb$character_sets c2, tree_2
+        where 1 = 0
+    )
+    select * from tree, tree_2 where NAME=upper('RDB$PAGES') and RDB$CHARACTER_SET_NAME=upper('NONE');
+  """,
+ 'expected_stdout': 
+  """
+    NAME                            RDB$PAGES
+    RDB$CHARACTER_SET_NAME          NONE
+  """
+}
+]
+}

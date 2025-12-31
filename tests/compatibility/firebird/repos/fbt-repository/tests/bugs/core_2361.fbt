@@ -1,0 +1,102 @@
+{
+'id': 'bugs.core_2361',
+'qmid': None,
+'tracker_id': 'CORE-2361',
+'title': 'String truncation reading 8859-1 Spanish column using isc_dsql_fetch with UTF-8 connection..',
+'description': '',
+'min_versions': '',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'database_character_set': 'ISO8859_1',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """create table "'Master by Reseller$'" (
+    "Tier" VARCHAR(20) CHARACTER SET ISO8859_1 COLLATE ES_ES_CI_AI
+);
+
+commit;
+
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('(blank)');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('Approved');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('Bronze');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('DMR');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('Domestic Distributor');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('End-User');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('Evaluation');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('Gold');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('New');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('Silver');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('VAM');
+
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select case when 1 = 0 then '(blank)' else "'Master by Reseller$'"."Tier" end from "'Master by Reseller$'";
+""",
+ 'expected_stdout': """
+CASE
+===============================================================================
+(blank)
+Approved
+Bronze
+DMR
+Domestic Distributor
+End-User
+Evaluation
+Gold
+New
+Silver
+VAM
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'database_character_set': 'ISO8859_1',
+ 'connection_character_set': 'UTF8',
+ 'page_size': '4096',
+ 'init_script': """create table "'Master by Reseller$'" (
+    "Tier" VARCHAR(20) CHARACTER SET ISO8859_1 COLLATE ES_ES_CI_AI
+);
+
+commit;
+
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('(blank)');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('Approved');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('Bronze');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('DMR');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('Domestic Distributor');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('End-User');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('Evaluation');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('Gold');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('New');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('Silver');
+insert into "'Master by Reseller$'" ( "Tier" ) VALUES ('VAM');
+
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """select case when 1 = 0 then '(blank)' else "'Master by Reseller$'"."Tier" end from "'Master by Reseller$'";
+""",
+ 'expected_stdout': """
+CASE
+====================
+(blank)
+Approved
+Bronze
+DMR
+Domestic Distributor
+End-User
+Evaluation
+Gold
+New
+Silver
+VAM
+
+"""
+}
+]
+}

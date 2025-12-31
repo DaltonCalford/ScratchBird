@@ -1,0 +1,77 @@
+{
+'id': 'bugs.core_1306',
+'qmid': 'bugs.core_1306',
+'tracker_id': 'CORE-1306',
+'title': 'Indices not used for views',
+'description': '',
+'min_versions': None,
+'versions': [
+{
+ 'firebird_version': '2.1',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE "TABLE" (ID INTEGER NOT NULL PRIMARY KEY);
+
+COMMIT;
+
+INSERT INTO "TABLE" (ID) VALUES (1);
+INSERT INTO "TABLE" (ID) VALUES (2);
+INSERT INTO "TABLE" (ID) VALUES (3);
+
+COMMIT;
+
+CREATE VIEW "VIEW" AS SELECT * FROM "TABLE";
+
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """set plan on;
+
+SELECT * FROM "TABLE" WHERE ID = 1
+UNION ALL
+SELECT * FROM "VIEW" WHERE ID = 1 ;
+""",
+ 'expected_stdout': """
+PLAN (TABLE INDEX (RDB$PRIMARY1))
+PLAN (VIEW TABLE INDEX (RDB$PRIMARY1))
+
+          ID
+============
+           1
+           1
+
+"""
+},
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'init_script': """CREATE TABLE "TABLE" (ID INTEGER NOT NULL PRIMARY KEY);
+
+COMMIT;
+
+INSERT INTO "TABLE" (ID) VALUES (1);
+INSERT INTO "TABLE" (ID) VALUES (2);
+INSERT INTO "TABLE" (ID) VALUES (3);
+
+COMMIT;
+
+CREATE VIEW "VIEW" AS SELECT * FROM "TABLE";
+
+commit;""",
+ 'test_type': 'ISQL',
+ 'test_script': """set plan on;
+
+SELECT * FROM "TABLE" WHERE ID = 1
+UNION ALL
+SELECT * FROM "VIEW" WHERE ID = 1 ;
+""",
+ 'expected_stdout': """
+PLAN (TABLE INDEX (RDB$PRIMARY1), VIEW TABLE INDEX (RDB$PRIMARY1))
+
+          ID
+============
+           1
+           1
+
+"""
+}
+]
+}

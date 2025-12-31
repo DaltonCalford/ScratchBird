@@ -1,0 +1,38 @@
+{
+'id': 'bugs.core_1055',
+'qmid': 'bugs.core_1055',
+'tracker_id': 'CORE-1055',
+'title': 'Wrong parameter matching for self-referenced procedures',
+'description': '',
+'versions': [
+{
+ 'firebird_version': '2.0.1',
+ 'platform': 'All',
+ 'init_script': """SET TERM ^;
+
+create procedure PN (p1 int)
+as
+begin
+  execute procedure PN (:p1);
+end ^
+
+SET TERM ;^
+
+commit;
+""",
+ 'test_type': 'ISQL',
+ 'test_script': """SET TERM ^;
+
+alter procedure PN (p1 int, p2 int)
+as
+begin
+  execute procedure PN (:p1, :p2);
+end^
+
+SET TERM ;^
+
+commit;
+"""
+}
+]
+}

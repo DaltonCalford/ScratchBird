@@ -1,0 +1,100 @@
+{
+'id': 'bugs.core_4447',
+'qmid': None,
+'tracker_id': 'CORE-4447',
+'title': 'Positioned UPDATE statement prohibits index usage for the subsequent cursor field references',
+'description': '',
+'min_versions': '3.0',
+'versions': [
+{
+ 'firebird_version': '3.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  recreate table ts(id int, x int, y int, z int, constraint ts_pk_id primary key (id) );
+  recreate table tt(x int, y int, z int, constraint tt_pk_xy primary key (x,y) );
+  commit;
+
+  insert into ts
+  select row_number()over(), rand()*10, rand()*10, rand()*10
+  from rdb$types;
+  commit;
+
+  insert into tt select distinct x,y,0 from ts;
+  commit; 
+  """,
+ 'test_script':
+  """
+  set planonly;
+  set term ^;
+  execute block as
+  begin
+    for select id,x,y,z from ts as cursor c
+    do begin
+       update ts set id = id where current of c; -- <<<<<<<<<<<<<<< ::: NB ::: we lock record in source using "current of" clause
+       update tt t set t.z = t.z + c.z where t.x=c.x and t.y = c.y;
+    end
+  end
+  ^ set term ;^
+  set planonly;
+  """,
+ 'expected_stdout':
+  """
+  PLAN (T INDEX (TT_PK_XY))
+  PLAN (C TS NATURAL)
+  """,
+ 'expected_stderr':
+  """
+  """
+}
+, # -------------------------- 5.x since 5.0.0.905 -------------------------
+
+{
+ 'firebird_version': '5.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'init_script':
+  """
+  recreate table ts(id int, x int, y int, z int, constraint ts_pk_id primary key (id) );
+  recreate table tt(x int, y int, z int, constraint tt_pk_xy primary key (x,y) );
+  commit;
+
+  insert into ts
+  select row_number()over(), rand()*10, rand()*10, rand()*10
+  from rdb$types;
+  commit;
+
+  insert into tt select distinct x,y,0 from ts;
+  commit; 
+  """,
+ 'test_script':
+  """
+  set planonly;
+  set term ^;
+  execute block as
+  begin
+    for select id,x,y,z from ts as cursor c
+    do begin
+       update ts set id = id where current of c; -- <<<<<<<<<<<<<<< ::: NB ::: we lock record in source using "current of" clause
+       update tt t set t.z = t.z + c.z where t.x=c.x and t.y = c.y;
+    end
+  end
+  ^ set term ;^
+  set planonly;
+  """,
+ 'expected_stdout':
+  """
+  -- line 6, column 8
+  PLAN (T INDEX (TT_PK_XY))
+  -- line 5, column 5
+  PLAN (C TS NATURAL)
+  """,
+ 'expected_stderr':
+  """
+  """,
+  'substitutions': [('-- line(:)? \d+, col(umn)?(:)? \d+', '-- line, column')]
+
+}
+]
+}

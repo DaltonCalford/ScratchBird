@@ -1,0 +1,37 @@
+{
+'id': 'functional.intfunc.cast.03',
+'qmid': 'functional.intfunc.cast.cast_03',
+'tracker_id': '',
+'title': 'CAST Numeric -> DATE',
+'description': """Convert from number to date is not (yet) supported
+
+CAST Numeric -> DATE
+
+Dependencies:
+CREATE DATABASE
+Basic SELECT""",
+'versions': [
+{
+ 'firebird_version': '1.0',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'SELECT CAST(CAST(1.25001 AS INT) AS DATE) FROM rdb$Database;',
+ 'expected_stdout': """CAST
+===========""",
+ 'expected_stderr': '''Statement failed, SQLCODE = -413
+
+conversion error from string "1"'''
+},
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 'SELECT CAST(CAST(1.25001 AS INT) AS DATE) FROM rdb$Database;',
+ 'expected_stdout': """CAST
+===========""",
+ 'expected_stderr': '''Statement failed, SQLSTATE = 22018
+
+conversion error from string "1"'''
+}
+]
+}

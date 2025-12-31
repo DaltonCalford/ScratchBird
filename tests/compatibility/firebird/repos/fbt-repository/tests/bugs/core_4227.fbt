@@ -1,0 +1,28 @@
+{
+'id': 'bugs.core_4227',
+'qmid': None,
+'tracker_id': 'CORE-4227',
+'title': 'Regression: Wrong evaluation of BETWEEN and boolean expressions due to parser conflict',
+'description': '',
+'min_versions': '2.0',
+'versions': [
+{
+ 'firebird_version': '2.0.7',
+ 'platform': 'All',
+ 'page_size': '4096',
+ 'init_script': 
+  """
+  """,
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    set list on;
+    select 1 x from rdb$database where rdb$relation_id between 1 and 500 and rdb$description is null;
+  """,
+ 'expected_stdout': 
+  """
+    X                               1
+  """
+}
+]
+}

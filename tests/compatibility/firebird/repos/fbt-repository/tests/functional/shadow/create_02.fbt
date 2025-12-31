@@ -1,0 +1,57 @@
+{
+'id': 'functional.shadow.create_02',
+'qmid': 'functional.shadow.create.create_shadow_02',
+'tracker_id': '',
+'title': 'CREATE SHADOW',
+'description':
+  """
+    CREATE SHADOW
+
+    Dependencies:
+    CREATE DATABASE
+  """,
+'min_versions': '2.5.0',
+'versions': [
+{
+ 'firebird_version': '2.5',
+ 'platform': 'All',
+ 'test_type': 'ISQL',
+ 'test_script': 
+  """
+    create shadow 1 manual conditional '$(DATABASE_LOCATION)TEST.SHD' file '$(DATABASE_LOCATION)TEST.S00' starting at page 1000;
+    commit;
+    set list on;
+    set count on;
+    select 
+        right(trim(rdb$file_name), char_length('test.s??')) as file_name
+       ,rdb$file_sequence as file_sequence
+       ,rdb$file_start as file_start
+       ,rdb$file_length as file_length
+       ,rdb$file_flags as file_flags
+       ,rdb$shadow_number as shadow_number
+    from rdb$files;
+  """,
+ 'expected_stdout': 
+  """
+    FILE_NAME                       TEST.SHD
+    FILE_SEQUENCE                   0
+    FILE_START                      0
+    FILE_LENGTH                     0
+    FILE_FLAGS                      5
+    SHADOW_NUMBER                   1
+
+    FILE_NAME                       TEST.S00
+    FILE_SEQUENCE                   1
+    FILE_START                      1000
+    FILE_LENGTH                     0
+    FILE_FLAGS                      5
+    SHADOW_NUMBER                   1
+
+    Records affected: 2
+ """,
+ 'expected_stderr':
+  """
+  """
+}
+]
+}
