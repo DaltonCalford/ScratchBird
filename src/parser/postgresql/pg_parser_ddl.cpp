@@ -1469,6 +1469,7 @@ void Parser::parseAlterStmt() {
 
     auto emit_object_path = [&](const std::vector<std::string>& components) {
         emitByte(static_cast<uint8_t>(core::PathType::ABSOLUTE));
+        emitByte(0);  // no_search_path flag (reserved)
         if (components.size() > std::numeric_limits<uint8_t>::max()) {
             error("Object path has too many components");
             emitByte(0);
@@ -1833,7 +1834,6 @@ void Parser::parseDropStmt() {
             flags |= 0x04;
         }
 
-        for (const auto& schema_name : schemas) {
         auto normalize_path = [](const std::string& path) {
             std::vector<std::string> parts;
             std::string current;
@@ -1861,6 +1861,7 @@ void Parser::parseDropStmt() {
             return normalized;
         };
 
+        for (const auto& schema_name : schemas) {
             emit(sblr::Opcode::EXTENDED_OPCODE);
             emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_SCHEMA));
             emitByte(flags);

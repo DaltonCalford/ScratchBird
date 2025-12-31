@@ -13,6 +13,7 @@
 #include "scratchbird/sblr/bytecode_generator_v2.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "unit/test_user_helpers.h"
 #include <cstdio>
 #include <filesystem>
 #include <sstream>
@@ -53,6 +54,7 @@ protected:
         ASSERT_NE(catalog_, nullptr) << "CatalogManager is null";
 
         // Create a test schema
+        EnsureUser(catalog_, "test_user");
         status = catalog_->createSchema("test", "test_user", test_schema_id_, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to create test schema";
     }
@@ -567,6 +569,42 @@ TEST_F(BytecodeGeneratorV2Test, CreateIndex) {
     auto result = generateBytecode("CREATE INDEX idx_test ON products (id)");
     // May fail due to missing table, but should generate bytecode structure
     // Just verify it doesn't crash
+}
+
+TEST_F(BytecodeGeneratorV2Test, AlterTableAddColumn) {
+    ErrorContext ctx;
+    std::vector<CatalogManager::ColumnInfo> columns;
+
+    CatalogManager::ColumnInfo id_col;
+    id_col.column_name = "id";
+    id_col.data_type = static_cast<uint16_t>(DataType::INT32);
+    id_col.nullable = false;
+    columns.push_back(id_col);
+
+    ID table_id;
+    auto status = catalog_->createTable(test_schema_id_, "users", columns, table_id, 0, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to create users table";
+    EXPECT_NE(table_id, ID{});
+
+    auto result = generateBytecode("ALTER TABLE users ADD COLUMN age INT");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    size_t offset = findOpcodeOffset(result.bytecode(), Opcode::ALTER_TABLE);
+    ASSERT_LT(offset, result.bytecode().size());
+    offset += 1;
+    ASSERT_LE(offset + 4, result.bytecode().size());
+    uint32_t name_len = sblr::readInt32(&result.bytecode()[offset]);
+    offset += 4;
+    ASSERT_LE(offset + name_len, result.bytecode().size());
+
+    std::string table_name(result.bytecode().begin() + offset,
+                           result.bytecode().begin() + offset + name_len);
+    offset += name_len;
+    ASSERT_LT(offset, result.bytecode().size());
+    uint8_t action = result.bytecode()[offset];
+
+    EXPECT_EQ(action, 0);
+    EXPECT_EQ(table_name, "test.users");
 }
 
 // =============================================================================

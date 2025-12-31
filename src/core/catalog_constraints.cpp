@@ -11,6 +11,14 @@
 
 namespace scratchbird::core
 {
+namespace {
+std::pair<ID, std::string> makeConstraintNameKey(const ID& table_id,
+                                                 const std::string& name,
+                                                 bool name_is_delimited)
+{
+    return {table_id, name_is_delimited ? name : IdentifierUtils::toUpper(name)};
+}
+} // namespace
 
 // P1-9: Create a constraint
 auto CatalogManager::createConstraint(const ConstraintInfo& constraint,
@@ -35,19 +43,30 @@ auto CatalogManager::createConstraint(const ConstraintInfo& constraint,
     new_constraint.created_time = static_cast<uint64_t>(std::time(nullptr));
 
     // Check for duplicate constraint name on the same table
-    auto name_key = std::make_pair(constraint.table_id, constraint.constraint_name);
-    auto name_it = constraint_name_lookup_.find(name_key);
-    if (name_it != constraint_name_lookup_.end())
+    for (const auto& [id, info] : constraints_cache_)
     {
-        std::string error_msg = "Constraint with name '" + constraint.constraint_name +
-                                "' already exists on this table";
-        SET_ERROR_CONTEXT(ctx, Status::DUPLICATE_OBJECT, error_msg.c_str());
-        return Status::DUPLICATE_OBJECT;
+        if (info.table_id != constraint.table_id)
+        {
+            continue;
+        }
+        if (IdentifierUtils::namesConflict(constraint.constraint_name,
+                                           constraint.name_is_delimited,
+                                           info.constraint_name,
+                                           info.name_is_delimited))
+        {
+            std::string error_msg = "Constraint with name '" + constraint.constraint_name +
+                                    "' already exists on this table";
+            SET_ERROR_CONTEXT(ctx, Status::DUPLICATE_OBJECT, error_msg.c_str());
+            return Status::DUPLICATE_OBJECT;
+        }
     }
 
     // Add to cache
     constraints_cache_[constraint_id_out] = new_constraint;
     table_constraints_.insert({constraint.table_id, constraint_id_out});
+    auto name_key = makeConstraintNameKey(constraint.table_id,
+                                          constraint.constraint_name,
+                                          constraint.name_is_delimited);
     constraint_name_lookup_[name_key] = constraint_id_out;
 
     Status persist_status = writeConstraintRecord(new_constraint, ctx);
@@ -77,11 +96,12 @@ auto CatalogManager::createConstraint(const ConstraintInfo& constraint,
 }
 
 // P1-9: Get a constraint by ID
-auto CatalogManager::getConstraint(const ID& constraint_id,
-                                   ConstraintInfo& constraint_out,
-                                   ErrorContext* ctx) -> Status
+// Internal helper (assumes constraints_cache_mutex_ already held)
+auto CatalogManager::getConstraintInternal(const ID& constraint_id,
+                                            ConstraintInfo& constraint_out,
+                                            ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(constraints_cache_mutex_);
+    // NO LOCK - caller must hold constraints_cache_mutex_
 
     auto it = constraints_cache_.find(constraint_id);
     if (it == constraints_cache_.end())
@@ -94,6 +114,14 @@ auto CatalogManager::getConstraint(const ID& constraint_id,
     return Status::OK;
 }
 
+auto CatalogManager::getConstraint(const ID& constraint_id,
+                                   ConstraintInfo& constraint_out,
+                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(constraints_cache_mutex_);
+    return getConstraintInternal(constraint_id, constraint_out, ctx);
+}
+
 // P1-9: Get a constraint by name and table
 auto CatalogManager::getConstraintByName(const ID& table_id,
                                         const std::string& constraint_name,
@@ -102,23 +130,50 @@ auto CatalogManager::getConstraintByName(const ID& table_id,
 {
     std::lock_guard<std::mutex> lock(constraints_cache_mutex_);
 
-    auto name_key = std::make_pair(table_id, constraint_name);
+    auto name_key = makeConstraintNameKey(table_id, constraint_name,
+                                          false /*search_delimited*/);
     auto it = constraint_name_lookup_.find(name_key);
-    if (it == constraint_name_lookup_.end())
+    if (it != constraint_name_lookup_.end())
+    {
+        auto cache_it = constraints_cache_.find(it->second);
+        if (cache_it != constraints_cache_.end())
+        {
+            constraint_out = cache_it->second;
+            return Status::OK;
+        }
+    }
+
+    ConstraintInfo match{};
+    bool found = false;
+    for (const auto& [id, info] : constraints_cache_)
+    {
+        if (info.table_id != table_id)
+        {
+            continue;
+        }
+        if (IdentifierUtils::namesMatch(constraint_name, false /*search_delimited*/,
+                                        info.constraint_name,
+                                        info.name_is_delimited))
+        {
+            if (found)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::AMBIGUOUS_COLUMN,
+                                  "Ambiguous constraint name");
+                return Status::AMBIGUOUS_COLUMN;
+            }
+            match = info;
+            found = true;
+        }
+    }
+
+    if (!found)
     {
         std::string error_msg = "Constraint '" + constraint_name + "' not found on table";
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, error_msg.c_str());
         return Status::NOT_FOUND;
     }
 
-    auto cache_it = constraints_cache_.find(it->second);
-    if (cache_it == constraints_cache_.end())
-    {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Constraint not found");
-        return Status::NOT_FOUND;
-    }
-
-    constraint_out = cache_it->second;
+    constraint_out = match;
     return Status::OK;
 }
 
@@ -133,7 +188,9 @@ auto CatalogManager::findConstraintByNameGlobal(const std::string& constraint_na
     std::vector<const ConstraintInfo*> matches;
     for (const auto& [constraint_id, constraint] : constraints_cache_)
     {
-        if (constraint.constraint_name == constraint_name)
+        if (IdentifierUtils::namesMatch(constraint_name, false /*search_delimited*/,
+                                        constraint.constraint_name,
+                                        constraint.name_is_delimited))
         {
             matches.push_back(&constraint);
         }
@@ -221,7 +278,8 @@ auto CatalogManager::updateConstraint(const ID& constraint_id,
     }
 
     ConstraintInfo old_info = it->second;
-    auto old_key = std::make_pair(old_info.table_id, old_info.constraint_name);
+    auto old_key = makeConstraintNameKey(old_info.table_id, old_info.constraint_name,
+                                         old_info.name_is_delimited);
 
     // Update constraint (preserve ID and creation time)
     ConstraintInfo new_info = updated_constraint;
@@ -230,16 +288,27 @@ auto CatalogManager::updateConstraint(const ID& constraint_id,
 
     bool name_changed = false;
     std::pair<ID, std::string> new_key;
-    if (!IdentifierUtils::namesMatch(new_info.constraint_name, false /*search_delimited*/,
-                                     old_info.constraint_name, false /*stored_delimited*/))
+    if (!IdentifierUtils::namesMatch(new_info.constraint_name, new_info.name_is_delimited,
+                                     old_info.constraint_name, old_info.name_is_delimited))
     {
-        new_key = std::make_pair(new_info.table_id, new_info.constraint_name);
-        auto name_it = constraint_name_lookup_.find(new_key);
-        if (name_it != constraint_name_lookup_.end() && name_it->second != constraint_id)
+        for (const auto& [id, info] : constraints_cache_)
         {
-            SET_ERROR_CONTEXT(ctx, Status::DUPLICATE_OBJECT, "Constraint name already exists on table");
-            return Status::DUPLICATE_OBJECT;
+            if (id == constraint_id || info.table_id != new_info.table_id)
+            {
+                continue;
+            }
+            if (IdentifierUtils::namesConflict(new_info.constraint_name,
+                                               new_info.name_is_delimited,
+                                               info.constraint_name,
+                                               info.name_is_delimited))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DUPLICATE_OBJECT,
+                                  "Constraint name already exists on table");
+                return Status::DUPLICATE_OBJECT;
+            }
         }
+        new_key = makeConstraintNameKey(new_info.table_id, new_info.constraint_name,
+                                        new_info.name_is_delimited);
         constraint_name_lookup_.erase(old_key);
         constraint_name_lookup_[new_key] = constraint_id;
         name_changed = true;
@@ -266,32 +335,21 @@ auto CatalogManager::updateConstraint(const ID& constraint_id,
 }
 
 // P1-9: Drop a constraint
-auto CatalogManager::dropConstraint(const ID& constraint_id,
-                                   ErrorContext* ctx) -> Status
+// Internal helper (assumes foreign_keys_cache_mutex_, constraints_cache_mutex_, and dependency_cache_mutex_ already held)
+auto CatalogManager::dropConstraintInternal(const ID& constraint_id,
+                                             ErrorContext* ctx) -> Status
 {
+    // NO LOCK - caller must hold foreign_keys_cache_mutex_, constraints_cache_mutex_, and dependency_cache_mutex_
+
     // Phase 2: Check if this is a Foreign Key constraint first
     // FKs are tracked separately in foreign_keys_cache_
-    {
-        std::lock_guard<std::mutex> fk_lock(foreign_keys_cache_mutex_);
-        auto fk_it = foreign_keys_cache_.find(constraint_id);
-        if (fk_it != foreign_keys_cache_.end()) {
-            // This is an FK - drop the lock and delegate to dropForeignKey
-            // (dropForeignKey manages its own locking)
-        }
-        else {
-            // Not an FK, continue with regular constraint drop below
-        }
+    auto fk_it = foreign_keys_cache_.find(constraint_id);
+    if (fk_it != foreign_keys_cache_.end()) {
+        // This is an FK - use internal version
+        return dropForeignKeyInternal(constraint_id, ctx);
     }
 
-    // Try dropping as FK (handles its own locking)
-    Status fk_status = dropForeignKey(constraint_id, ctx);
-    if (fk_status == Status::OK) {
-        return Status::OK;
-    }
-
-    // Not an FK or FK drop failed - try as regular constraint
-    std::lock_guard<std::mutex> lock(constraints_cache_mutex_);
-
+    // Not an FK - try as regular constraint
     auto it = constraints_cache_.find(constraint_id);
     if (it == constraints_cache_.end())
     {
@@ -302,7 +360,8 @@ auto CatalogManager::dropConstraint(const ID& constraint_id,
     const ConstraintInfo& constraint = it->second;
 
     // Remove from name lookup
-    auto name_key = std::make_pair(constraint.table_id, constraint.constraint_name);
+    auto name_key = makeConstraintNameKey(constraint.table_id, constraint.constraint_name,
+                                          constraint.name_is_delimited);
     constraint_name_lookup_.erase(name_key);
 
     // Remove from table constraints multimap
@@ -331,6 +390,13 @@ auto CatalogManager::dropConstraint(const ID& constraint_id,
     DEBUG_LOG_DB("Dropped constraint " << constraint.constraint_name);
 
     return Status::OK;
+}
+
+auto CatalogManager::dropConstraint(const ID& constraint_id,
+                                   ErrorContext* ctx) -> Status
+{
+    std::scoped_lock lock(foreign_keys_cache_mutex_, constraints_cache_mutex_, dependency_cache_mutex_);
+    return dropConstraintInternal(constraint_id, ctx);
 }
 
 // P1-9: Enable/disable a constraint

@@ -28,6 +28,10 @@ const char* pathTypeToString(PathType type) {
 std::string schemaPathToString(const SchemaPath& path, const StringPool& pool) {
     std::ostringstream ss;
 
+    if (path.no_search_path) {
+        ss << "!:";
+    }
+
     // Add prefix based on type
     switch (path.type) {
         case PathType::CURRENT:
@@ -57,7 +61,8 @@ std::string schemaPathToString(const SchemaPath& path, const StringPool& pool) {
 
 bool canStartSchemaPath(const ParserState& state) {
     TokenType type = state.current().type;
-    return type == TokenType::DOT ||
+    return type == TokenType::EXCLAIM_COLON ||
+           type == TokenType::DOT ||
            type == TokenType::DOUBLE_DOT ||
            type == TokenType::IDENTIFIER;
 }
@@ -69,6 +74,13 @@ bool canStartSchemaPath(const ParserState& state) {
 SchemaPath parseSchemaPath(ParserState& state) {
     SchemaPath path;
     SourceLocation start = state.currentLocation();
+    bool no_search_path = false;
+
+    if (state.check(TokenType::EXCLAIM_COLON)) {
+        no_search_path = true;
+        state.advance();
+    }
+    path.no_search_path = no_search_path;
 
     // Check what we're starting with
     if (state.check(TokenType::DOT)) {

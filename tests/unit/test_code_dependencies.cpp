@@ -16,6 +16,7 @@ protected:
     Database *db = nullptr;
     CatalogManager *catalog = nullptr;
     ID schema_id;
+    ID system_user_id_{};
 
     void SetUp() override
     {
@@ -35,6 +36,8 @@ protected:
         CatalogManager::SchemaInfo schema_info;
         ASSERT_EQ(catalog->getSchema("PUBLIC", schema_info, &ctx), Status::OK);
         schema_id = schema_info.schema_id;
+
+        system_user_id_ = catalog->getSystemUserId(&ctx);
     }
 
     void TearDown() override
@@ -81,7 +84,7 @@ protected:
         info.function_id = generateUuidV7();
         info.schema_id = schema_id;
         info.name = func_name;
-        info.owner_id = SecurityConstants::makeSystemUserID();
+        info.owner_id = system_user_id_;
         info.return_type = DataType::INT32;
         info.or_replace = false;
         info.deterministic = false;
@@ -109,7 +112,7 @@ protected:
         info.procedure_id = generateUuidV7();
         info.schema_id = schema_id;
         info.name = proc_name;
-        info.owner_id = SecurityConstants::makeSystemUserID();
+        info.owner_id = system_user_id_;
         info.or_replace = false;
         info.sql_security = CatalogManager::ProcedureInfo::SqlSecurity::DEFINER;
         info.source_text = body;
@@ -481,7 +484,7 @@ TEST_F(StoredCodeDependencyTest, DropPackageFailsIfDependentExists)
     func.function_id = generateUuidV7();
     func.schema_id = schema_id;
     func.name = "pkg_func";
-    func.owner_id = SecurityConstants::makeSystemUserID();
+    func.owner_id = system_user_id_;
     func.return_type = DataType::INT32;
     func.source_text = "select 1";
     ASSERT_EQ(catalog->registerFunction(func, &ctx), Status::OK);
@@ -511,7 +514,7 @@ TEST_F(StoredCodeDependencyTest, DropUDRFailsIfDependentExists)
     proc.procedure_id = generateUuidV7();
     proc.schema_id = schema_id;
     proc.name = "proc_udr";
-    proc.owner_id = SecurityConstants::makeSystemUserID();
+    proc.owner_id = system_user_id_;
     proc.source_text = "select 1";
     ASSERT_EQ(catalog->registerProcedure(proc, &ctx), Status::OK);
 

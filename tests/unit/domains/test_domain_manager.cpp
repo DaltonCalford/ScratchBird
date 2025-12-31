@@ -1,6 +1,7 @@
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "unit/test_user_helpers.h"
 #include <iostream>
 #include "gtest/gtest.h"
 #include <cstdio>
@@ -46,6 +47,7 @@ TEST(DomainManagerTest, Comprehensive) {
         // Create a schema first (using catalog manager)
         ID schema_id;
         auto* catalog = db.catalog_manager();
+        EnsureUser(catalog, "test_user");
         status = catalog->createSchema("test_schema", "test_user", schema_id, &ctx);
         ASSERT_EQ(status, Status::OK);
 
@@ -251,4 +253,3 @@ TEST(DomainManagerTest, Comprehensive) {
     std::cout << "Domain Manager Phase 1 is fully functional.\n";
     std::cout << "========================================\n";
 }
-

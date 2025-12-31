@@ -1598,14 +1598,15 @@ Statement* Parser::parseAlterDatabase() {
         return stmt;
     }
 
-    if (matchKeyword(TokenType::KW_OWNER)) {
-        consume(TokenType::KW_TO, "Expected TO after OWNER");
-        stmt->action = ast::AlterDatabaseAction::SET_OWNER;
-        stmt->owner = parseIdentifier();
-        return stmt;
-    }
+    // TODO: Add OWNER keyword support
+    // if (matchKeyword(TokenType::KW_OWNER)) {
+    //     consume(TokenType::KW_TO, "Expected TO after OWNER");
+    //     stmt->action = ast::AlterDatabaseAction::SET_OWNER;
+    //     stmt->owner = parseIdentifier();
+    //     return stmt;
+    // }
 
-    error("ALTER DATABASE supports only RENAME TO or OWNER TO in Firebird parser");
+    error("ALTER DATABASE supports only RENAME TO in Firebird parser");
     return stmt;
 }
 

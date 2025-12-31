@@ -523,8 +523,9 @@ TEST_F(SchemaPathResolutionTest, ExecutorTruncateTableUsesCurrentSchema)
     scratchbird::sblr::Executor executor(db_);
     executor.setConnectionContext(conn_.get());
     auto result = executor.execute(bytecode);
+
     EXPECT_FALSE(result.success());
-    EXPECT_NE(result.error().find("Table not found"), std::string::npos);
+    EXPECT_NE(result.error().find("Object not found"), std::string::npos);
 }
 
 TEST_F(SchemaPathResolutionTest, ExecutorCreateIndexUsesCurrentSchema)

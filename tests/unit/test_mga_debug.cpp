@@ -8,6 +8,7 @@
 #include "scratchbird/core/gpid.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/page_manager.h"
+#include "unit/test_user_helpers.h"
 #include <cstring>
 #include <filesystem>
 #include <vector>
@@ -86,6 +87,7 @@ TEST_F(MGADebugTest, DebugInsertTuple)
     std::cerr << "DEBUG: Creating schema...\n";
     ErrorContext ctx;
     ID schema_id;
+    EnsureUser(catalog, "test_user");
     Status status = catalog->createSchema("test_schema", "test_user", schema_id, &ctx);
     std::cerr << "DEBUG: createSchema returned status=" << static_cast<int>(status) << "\n";
 

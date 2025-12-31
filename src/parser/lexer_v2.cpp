@@ -796,6 +796,10 @@ Token Lexer::scanOperator() {
         advanceN(2);
         return Token::makeOperator(start, 2, TokenType::HASH_ARROW);
     }
+    if (c == '!' && n == ':') {
+        advanceN(2);
+        return Token::makePunctuation(start, 2, TokenType::EXCLAIM_COLON);
+    }
     if (c == '<' && n == '>') {
         advanceN(2);
         return Token::makeOperator(start, 2, TokenType::NOT_EQUAL);
@@ -989,6 +993,7 @@ const char* tokenTypeToString(TokenType type) {
         case TokenType::SEMICOLON: return "SEMICOLON";
         case TokenType::DOT: return "DOT";
         case TokenType::DOUBLE_DOT: return "DOUBLE_DOT";
+        case TokenType::EXCLAIM_COLON: return "EXCLAIM_COLON";
         case TokenType::COLON: return "COLON";
         // Gatekeeper keywords
         case TokenType::KW_SELECT: return "KW_SELECT";

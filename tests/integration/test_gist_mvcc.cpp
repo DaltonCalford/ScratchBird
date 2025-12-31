@@ -572,6 +572,12 @@ TEST_F(GiSTMVCCTest, GarbageCollectionDeadEntries)
         dead_tids.push_back(tid);
     }
 
+    // Advance OIT (Oldest Interesting Transaction) past all delete transactions
+    // This ensures xmax < OIT for garbage collection to work
+    uint64_t current_xid = txn_mgr_->getCurrentXid();
+    status = txn_mgr_->setOldestXid(current_xid, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to set oldest XID: " << ctx.message;
+
     // Run garbage collection
     uint64_t entries_removed = 0;
     uint64_t pages_modified = 0;

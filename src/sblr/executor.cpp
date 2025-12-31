@@ -51,6 +51,7 @@
 #include "scratchbird/catalog/emulation_view_generator.h"
 #include "scratchbird/sblr/query_result_cache.h"  // P2-19: Query Result Caching
 #include <nlohmann/json.hpp>
+#include <array>
 #include <sstream>
 #include <iomanip>
 #include <iostream>
@@ -97,9 +98,13 @@ namespace scratchbird
                                                            std::string& server_out,
                                                            std::string& database_out,
                                                            core::ErrorContext* ctx);
+            std::string stripRootPrefixForDisplay(const std::string& schema_path);
             core::Status buildObjectPathFromName(const std::string& qualified_name,
                                                  core::ObjectPath& path,
                                                  core::ErrorContext* ctx);
+            bool isTableScopedType(core::CatalogManager::ObjectType type);
+            bool resolveEmulatedRootPath(const core::ConnectionContext* conn_ctx,
+                                         std::string& root_path_out);
         }
 
         // ===== Numeric Type Coercion Helper =====
@@ -1742,6 +1747,7 @@ namespace scratchbird
                     !conn_ctx->autocommitSuspended() &&
                     !is_txn_control)
                 {
+                    LOG_INFO(EXECUTOR, "Autocommit after statement");
                     core::ErrorContext auto_err;
                     auto status = conn_ctx->commit(&auto_err);
                     if (status != core::Status::OK)
@@ -1866,6 +1872,7 @@ namespace scratchbird
         {
             core::ObjectPath path;
             path.type = static_cast<core::PathType>(readByte());
+            path.no_search_path = (readByte() != 0);
             uint8_t count = readByte();
             path.components.reserve(count);
             for (uint8_t i = 0; i < count; ++i)
@@ -1877,7 +1884,8 @@ namespace scratchbird
 
         core::Status Executor::resolveSchemaIdForName(const std::string& schema_path,
                                                       core::ID& schema_id_out,
-                                                      core::ErrorContext* ctx)
+                                                      core::ErrorContext* ctx,
+                                                      bool allow_search_path)
         {
             schema_id_out = core::ID{};
 
@@ -1966,6 +1974,13 @@ namespace scratchbird
                     schema_id_out = ctx_schema;
                     return core::Status::OK;
                 }
+                if (!allow_search_path)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                      "Current schema not set");
+                    return core::Status::NOT_FOUND;
+                }
+
                 const auto& paths = conn_ctx_->search_path();
                 bool attempted = false;
                 for (const auto& entry : paths)
@@ -2006,8 +2021,15 @@ namespace scratchbird
                 }
             }
 
+            if (!allow_search_path)
+            {
+                SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                  "Current schema not set");
+                return core::Status::NOT_FOUND;
+            }
+
             core::CatalogManager::SchemaInfo schema_info;
-            auto status = catalog->getSchema("PUBLIC", schema_info, ctx);
+            auto status = catalog->getSchema("root", schema_info, ctx);
             if (status != core::Status::OK)
             {
                 return status;
@@ -2019,7 +2041,8 @@ namespace scratchbird
         core::Status Executor::resolveSchemaIdForQualifiedName(const std::string& qualified_name,
                                                                std::string& object_name_out,
                                                                core::ID& schema_id_out,
-                                                               core::ErrorContext* ctx)
+                                                               core::ErrorContext* ctx,
+                                                               bool allow_search_path)
         {
             object_name_out.clear();
             schema_id_out = core::ID{};
@@ -2031,69 +2054,487 @@ namespace scratchbird
                 return core::Status::INVALID_ARGUMENT;
             }
 
-            std::string schema_path;
-            if (qualified_name.find('/') != std::string::npos)
+            auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+            if (!catalog)
             {
-                // Normalize slash-delimited schema paths to dot-delimited paths.
-                std::vector<std::string> components;
-                size_t start = 0;
-                while (start < qualified_name.size())
-                {
-                    while (start < qualified_name.size() && qualified_name[start] == '/')
-                    {
-                        ++start;
-                    }
-                    if (start >= qualified_name.size())
-                    {
-                        break;
-                    }
-                    size_t end = qualified_name.find('/', start);
-                    if (end == std::string::npos)
-                    {
-                        end = qualified_name.size();
-                    }
-                    components.emplace_back(qualified_name.substr(start, end - start));
-                    start = end + 1;
-                }
-
-                if (!components.empty())
-                {
-                    object_name_out = components.back();
-                    components.pop_back();
-                }
-
-                if (!components.empty())
-                {
-                    schema_path = components.front();
-                    for (size_t i = 1; i < components.size(); ++i)
-                    {
-                        schema_path.push_back('.');
-                        schema_path.append(components[i]);
-                    }
-                }
-            }
-            else
-            {
-                size_t dot_pos = qualified_name.rfind('.');
-                if (dot_pos != std::string::npos)
-                {
-                    schema_path = qualified_name.substr(0, dot_pos);
-                    object_name_out = qualified_name.substr(dot_pos + 1);
-                }
-                else
-                {
-                    object_name_out = qualified_name;
-                }
+                SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
+                                  "Catalog manager not available");
+                return core::Status::INTERNAL_ERROR;
             }
 
-            if (object_name_out.empty())
+            core::ObjectPath path;
+            auto status = buildObjectPathFromName(qualified_name, path, ctx);
+            if (status != core::Status::OK)
+            {
+                return status;
+            }
+
+            if (path.components.empty())
             {
                 SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
                                   "Object name is empty");
                 return core::Status::INVALID_ARGUMENT;
             }
 
-            return resolveSchemaIdForName(schema_path, schema_id_out, ctx);
+            object_name_out = path.components.back();
+
+            std::vector<std::string> schema_components;
+            if (path.components.size() > 1)
+            {
+                schema_components.assign(path.components.begin(), path.components.end() - 1);
+            }
+
+            auto current_schema = [&]() -> core::ID {
+                if (current_schema_set_)
+                {
+                    return current_schema_id_;
+                }
+                if (conn_ctx_)
+                {
+                    core::ID ctx_schema = conn_ctx_->getCurrentSchemaId();
+                    if (!isZeroUuid(ctx_schema))
+                    {
+                        return ctx_schema;
+                    }
+                }
+                return core::ID{};
+            };
+
+            if (schema_components.empty())
+            {
+                if (path.type == core::PathType::CURRENT)
+                {
+                    core::ID schema_id = current_schema();
+                    if (!isZeroUuid(schema_id))
+                    {
+                        schema_id_out = schema_id;
+                        return core::Status::OK;
+                    }
+                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                      "Current schema not set");
+                    return core::Status::NOT_FOUND;
+                }
+                if (path.type == core::PathType::UNQUALIFIED)
+                {
+                    core::ID schema_id = current_schema();
+                    if (!isZeroUuid(schema_id))
+                    {
+                        schema_id_out = schema_id;
+                        return core::Status::OK;
+                    }
+                    if (!allow_search_path || path.no_search_path)
+                    {
+                        SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                          "Current schema not set");
+                        return core::Status::NOT_FOUND;
+                    }
+                    return resolveSchemaIdForName(std::string(), schema_id_out, ctx, allow_search_path);
+                }
+                if (path.type == core::PathType::PARENT)
+                {
+                    core::ID schema_id = current_schema();
+                    if (isZeroUuid(schema_id))
+                    {
+                        SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                          "Current schema not set");
+                        return core::Status::NOT_FOUND;
+                    }
+                    core::CatalogManager::SchemaInfo schema_info;
+                    status = catalog->getSchema(schema_id, schema_info, ctx);
+                    if (status != core::Status::OK)
+                    {
+                        return status;
+                    }
+                    if (isZeroUuid(schema_info.parent_schema_id))
+                    {
+                        SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                          "Current schema has no parent");
+                        return core::Status::NOT_FOUND;
+                    }
+                    schema_id_out = schema_info.parent_schema_id;
+                    return core::Status::OK;
+                }
+                if (path.type == core::PathType::ABSOLUTE)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Schema path is empty");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+            }
+
+            core::ObjectPath schema_path;
+            schema_path.type = path.type;
+            schema_path.no_search_path = path.no_search_path;
+            schema_path.components = std::move(schema_components);
+
+            core::CatalogManager::ResolveOptions opts;
+            if (conn_ctx_)
+            {
+                opts.dialect_tag = conn_ctx_->dialect_tag();
+            }
+            opts.allow_search_path = allow_search_path && !path.no_search_path;
+
+            core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+            status = catalog->resolveObjectPath(schema_path,
+                                                core::CatalogManager::ObjectType::SCHEMA,
+                                                opts,
+                                                schema_id_out,
+                                                resolved_type,
+                                                ctx);
+            return status;
+        }
+
+        core::Status Executor::resolveObjectIdForQualifiedName(
+            const std::string& qualified_name,
+            core::CatalogManager::ObjectType expected_type,
+            core::ID& object_id_out,
+            core::CatalogManager::ObjectType& resolved_type_out,
+            core::CatalogManager::ResolvedObject* resolved_out,
+            core::ErrorContext* ctx,
+            bool allow_search_path)
+        {
+            object_id_out = core::ID{};
+            resolved_type_out = core::CatalogManager::ObjectType::UNKNOWN;
+
+            if (qualified_name.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                  "Object name is empty");
+                return core::Status::INVALID_ARGUMENT;
+            }
+
+            auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+            if (!catalog)
+            {
+                SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
+                                  "Catalog manager not available");
+                return core::Status::INTERNAL_ERROR;
+            }
+
+            core::ObjectPath path;
+            auto status = buildObjectPathFromName(qualified_name, path, ctx);
+            if (status != core::Status::OK)
+            {
+                return status;
+            }
+
+            if (isTableScopedType(expected_type) &&
+                path.type == core::PathType::ABSOLUTE &&
+                path.components.size() == 2)
+            {
+                path.type = core::PathType::UNQUALIFIED;
+            }
+
+            std::string emulated_root;
+            bool enforce_root = resolveEmulatedRootPath(conn_ctx_, emulated_root);
+            if (enforce_root && emulated_root.empty() &&
+                path.type == core::PathType::ABSOLUTE)
+            {
+                SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                  "Emulated schema root not set");
+                return core::Status::NOT_FOUND;
+            }
+
+            if (enforce_root && path.type == core::PathType::ABSOLUTE && !emulated_root.empty())
+            {
+                core::ObjectPath root_path;
+                status = buildObjectPathFromName(emulated_root, root_path, ctx);
+                if (status != core::Status::OK)
+                {
+                    return status;
+                }
+
+                bool has_root = path.components.size() >= root_path.components.size();
+                if (has_root)
+                {
+                    for (size_t i = 0; i < root_path.components.size(); ++i)
+                    {
+                        if (!core::IdentifierUtils::namesMatch(
+                                path.components[i], false /*search_delimited*/,
+                                root_path.components[i], false /*stored_delimited*/))
+                        {
+                            has_root = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (!has_root)
+                {
+                    std::vector<std::string> merged = root_path.components;
+                    merged.insert(merged.end(), path.components.begin(), path.components.end());
+                    path.components.swap(merged);
+                }
+            }
+
+            bool search_path_allowed = allow_search_path && !path.no_search_path;
+
+            core::CatalogManager::ResolveOptions opts;
+            if (conn_ctx_)
+            {
+                opts.dialect_tag = conn_ctx_->dialect_tag();
+            }
+            opts.allow_search_path = search_path_allowed;
+
+            auto resolve_by_id = [&](const core::ID& object_id,
+                                     core::CatalogManager::ObjectType object_type) -> core::Status {
+                object_id_out = object_id;
+                resolved_type_out = object_type;
+                if (resolved_out)
+                {
+                    auto resolve_status = catalog->resolveObjectId(object_id, *resolved_out, ctx);
+                    if (resolve_status != core::Status::OK)
+                    {
+                        return resolve_status;
+                    }
+                }
+                return core::Status::OK;
+            };
+
+            if (isTableScopedType(expected_type) && path.components.size() < 2)
+            {
+                std::string object_name = path.components.front();
+
+                auto current_schema = [&]() -> core::ID {
+                    if (current_schema_set_)
+                    {
+                        return current_schema_id_;
+                    }
+                    if (conn_ctx_)
+                    {
+                        core::ID ctx_schema = conn_ctx_->getCurrentSchemaId();
+                        if (!isZeroUuid(ctx_schema))
+                        {
+                            return ctx_schema;
+                        }
+                    }
+                    return core::ID{};
+                };
+
+                auto get_parent_schema = [&](const core::ID& schema_id, core::ID& parent_out) -> core::Status {
+                    core::CatalogManager::SchemaInfo info;
+                    auto schema_status = catalog->getSchema(schema_id, info, ctx);
+                    if (schema_status != core::Status::OK)
+                    {
+                        return schema_status;
+                    }
+                    parent_out = info.parent_schema_id;
+                    if (isZeroUuid(parent_out))
+                    {
+                        SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                          "Current schema has no parent");
+                        return core::Status::NOT_FOUND;
+                    }
+                    return core::Status::OK;
+                };
+
+                auto find_in_schema = [&](const core::ID& schema_id,
+                                          core::ID& found_id,
+                                          core::CatalogManager::ResolvedObject& found_obj,
+                                          int& matches) -> core::Status {
+                    core::CatalogManager::ResolveFilter filter;
+                    filter.object_type = expected_type;
+                    filter.filter_schema_id = true;
+                    filter.schema_id = schema_id;
+
+                    std::vector<core::CatalogManager::ResolvedObject> objects;
+                    auto list_status = catalog->listResolvedObjects(filter, objects, ctx);
+                    if (list_status != core::Status::OK)
+                    {
+                        return list_status;
+                    }
+
+                    for (const auto& obj : objects)
+                    {
+                        if (core::IdentifierUtils::namesMatch(
+                                object_name, false /*search_delimited*/,
+                                obj.object_name, false /*stored_delimited*/))
+                        {
+                            if (matches == 0)
+                            {
+                                found_id = obj.object_id;
+                                found_obj = obj;
+                            }
+                            matches++;
+                        }
+                    }
+                    return core::Status::OK;
+                };
+
+                core::ID found_id;
+                core::CatalogManager::ResolvedObject found_obj;
+                int matches = 0;
+
+                if (path.type == core::PathType::CURRENT)
+                {
+                    core::ID schema_id = current_schema();
+                    if (isZeroUuid(schema_id))
+                    {
+                        SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                          "Current schema not set");
+                        return core::Status::NOT_FOUND;
+                    }
+                    status = find_in_schema(schema_id, found_id, found_obj, matches);
+                }
+                else if (path.type == core::PathType::PARENT)
+                {
+                    core::ID schema_id = current_schema();
+                    if (isZeroUuid(schema_id))
+                    {
+                        SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                          "Current schema not set");
+                        return core::Status::NOT_FOUND;
+                    }
+                    core::ID parent_schema{};
+                    status = get_parent_schema(schema_id, parent_schema);
+                    if (status == core::Status::OK)
+                    {
+                        status = find_in_schema(parent_schema, found_id, found_obj, matches);
+                    }
+                }
+                else if (path.type == core::PathType::UNQUALIFIED)
+                {
+                    core::ID schema_id = current_schema();
+                    if (!isZeroUuid(schema_id))
+                    {
+                        status = find_in_schema(schema_id, found_id, found_obj, matches);
+                        if (status != core::Status::OK)
+                        {
+                            return status;
+                        }
+                        if (matches > 1)
+                        {
+                            SET_ERROR_CONTEXT(ctx, core::Status::AMBIGUOUS_COLUMN,
+                                              "Ambiguous object name in current schema");
+                            return core::Status::AMBIGUOUS_COLUMN;
+                        }
+                        if (matches == 1)
+                        {
+                            return resolve_by_id(found_id, expected_type);
+                        }
+                    }
+
+                    if (!search_path_allowed)
+                    {
+                        if (isZeroUuid(schema_id))
+                        {
+                            SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                              "Current schema not set");
+                            return core::Status::NOT_FOUND;
+                        }
+                    }
+                    else
+                    {
+                        std::vector<std::string> search_paths = {"public"};
+                        if (conn_ctx_)
+                        {
+                            const auto& paths = conn_ctx_->search_path();
+                            if (!paths.empty())
+                            {
+                                search_paths = paths;
+                            }
+                        }
+
+                        std::string root_upper;
+                        if (enforce_root && !emulated_root.empty())
+                        {
+                            root_upper = core::IdentifierUtils::toUpper(emulated_root);
+                        }
+
+                        for (const auto& entry : search_paths)
+                        {
+                            if (entry.empty())
+                            {
+                                continue;
+                            }
+                            std::string normalized_entry = normalizeSchemaPath(entry);
+                            if (normalized_entry.empty())
+                            {
+                                continue;
+                            }
+                            if (enforce_root && !emulated_root.empty())
+                            {
+                                std::string entry_upper =
+                                    core::IdentifierUtils::toUpper(normalized_entry);
+                                if (entry_upper != root_upper &&
+                                    entry_upper.rfind(root_upper + ".", 0) != 0)
+                                {
+                                    normalized_entry = emulated_root + "." + normalized_entry;
+                                }
+                            }
+
+                            core::CatalogManager::SchemaInfo schema_info;
+                            auto schema_status = catalog->getSchema(normalized_entry, schema_info, ctx);
+                            if (schema_status == core::Status::NOT_FOUND)
+                            {
+                                continue;
+                            }
+                            if (schema_status != core::Status::OK)
+                            {
+                                return schema_status;
+                            }
+
+                            status = find_in_schema(schema_info.schema_id, found_id, found_obj, matches);
+                            if (status != core::Status::OK)
+                            {
+                                return status;
+                            }
+                            if (matches > 1)
+                            {
+                                SET_ERROR_CONTEXT(ctx, core::Status::AMBIGUOUS_COLUMN,
+                                                  "Ambiguous object name in search path");
+                                return core::Status::AMBIGUOUS_COLUMN;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Table-scoped object requires table name");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+
+                if (status != core::Status::OK)
+                {
+                    return status;
+                }
+                if (matches == 0)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND, "Object not found");
+                    return core::Status::NOT_FOUND;
+                }
+                if (matches > 1)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::AMBIGUOUS_COLUMN,
+                                      "Ambiguous object name");
+                    return core::Status::AMBIGUOUS_COLUMN;
+                }
+
+                if (resolved_out)
+                {
+                    *resolved_out = found_obj;
+                }
+                return resolve_by_id(found_id, expected_type);
+            }
+
+            status = catalog->resolveObjectPath(path, expected_type, opts,
+                                                object_id_out, resolved_type_out, ctx);
+            if (status != core::Status::OK)
+            {
+                return status;
+            }
+
+            if (resolved_out)
+            {
+                auto resolve_status = catalog->resolveObjectId(object_id_out, *resolved_out, ctx);
+                if (resolve_status != core::Status::OK)
+                {
+                    return resolve_status;
+                }
+            }
+
+            return core::Status::OK;
         }
 
         Value Executor::pop()
@@ -2180,6 +2621,7 @@ namespace scratchbird
             }
 
             std::string table_name = readString();
+            LOG_INFO(EXECUTOR, "CREATE TABLE start: %s", table_name.c_str());
 
             // Read BEGIN_LIST opcode for columns
             if (readByte() != static_cast<uint8_t>(Opcode::BEGIN_LIST))
@@ -2476,34 +2918,41 @@ namespace scratchbird
                 tablespace_id = ts_info.tablespace_id;
             }
 
-            // Get schema - use current schema if set, otherwise use PUBLIC
             core::CatalogManager::SchemaInfo schema_info;
-            core::Status status;
-            if (current_schema_set_)
+            core::ErrorContext schema_ctx;
+            core::ID schema_id;
+            std::string resolved_table_name;
+            core::Status status = resolveSchemaIdForQualifiedName(table_name, resolved_table_name,
+                                                                  schema_id, &schema_ctx, false);
+            if (status != core::Status::OK)
             {
-                status = db_->catalog_manager()->getSchema(current_schema_id_, schema_info, nullptr);
-                if (status != core::Status::OK)
+                std::string err_msg = "Schema not found for table '" + table_name + "'";
+                if (!schema_ctx.message.empty())
                 {
-                    error("Failed to get current schema");
+                    err_msg += ": " + schema_ctx.message;
                 }
+                error(err_msg);
             }
-            else
-            {
-                status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
-                if (status != core::Status::OK)
-                {
-                    error("Failed to get default schema");
-                }
-            }
+            LOG_INFO(EXECUTOR, "CREATE TABLE schema resolved: %s", resolved_table_name.c_str());
 
-            // Check CREATE permission on schema (skip for system/emulated schemas)
-            bool skip_permission_check = current_schema_set_;  // Emulation schemas bypass normal permissions
+            status = db_->catalog_manager()->getSchema(schema_id, schema_info, nullptr);
+            if (status != core::Status::OK)
+            {
+                error("Failed to get schema for table '" + table_name + "'");
+            }
+            LOG_INFO(EXECUTOR, "CREATE TABLE schema loaded: %s", schema_info.schema_name.c_str());
+
+            // Check CREATE permission on schema (skip for system/emulated schemas and embedded mode)
+            const auto& user_id = getCurrentUserID();
+            bool skip_permission_check = current_schema_set_ || (user_id == core::ID{});
             if (!skip_permission_check && !checkPermission(schema_info.schema_id,
                                core::CatalogManager::PermissionObjectType::SCHEMA,
                                static_cast<uint32_t>(core::CatalogManager::Privilege::CREATE)))
             {
                 error("Permission denied: CREATE on schema " + schema_info.schema_name);
             }
+            LOG_INFO(EXECUTOR, "CREATE TABLE permission check passed: %s",
+                     schema_info.schema_name.c_str());
 
             // Create sequences for IDENTITY columns BEFORE creating table (ALPHA Phase 1 - IDENTITY Columns Phase 3)
             for (auto& col_info : columns)
@@ -2511,7 +2960,7 @@ namespace scratchbird
                 if (col_info.is_identity)
                 {
                     // Generate sequence name: <table>_<column>_seq
-                    std::string seq_name = table_name + "_" + col_info.column_name + "_seq";
+                    std::string seq_name = resolved_table_name + "_" + col_info.column_name + "_seq";
 
                     // Create sequence with default values
                     status = db_->catalog_manager()->createSequence(
@@ -2543,19 +2992,32 @@ namespace scratchbird
 
             // Create table in catalog
             core::ID table_id;
-            status = db_->catalog_manager()->createTable(schema_info.schema_id, table_name, columns,
+            LOG_INFO(EXECUTOR, "CREATE TABLE catalog createTable call: %s",
+                     resolved_table_name.c_str());
+            status = db_->catalog_manager()->createTable(schema_info.schema_id, resolved_table_name,
+                                                         columns,
                                                          table_id, tablespace_id, nullptr);
             if (status != core::Status::OK)
             {
                 error("Failed to create table");
             }
+            LOG_INFO(EXECUTOR, "CREATE TABLE catalog entry created: %s", resolved_table_name.c_str());
 
             // Create pending FK constraints (ALPHA Phase A - FK Constraints)
             for (const auto& fk : pending_fks)
             {
-                // Look up parent table (assume same schema)
+                // Look up parent table
                 core::CatalogManager::TableInfo parent_table;
-                status = db_->catalog_manager()->getTable(schema_info.schema_id, fk.parent_table, parent_table, nullptr);
+                core::ErrorContext parent_ctx;
+                core::ID parent_table_id;
+                core::CatalogManager::ObjectType resolved_type;
+                status = resolveObjectIdForQualifiedName(
+                    fk.parent_table, core::CatalogManager::ObjectType::TABLE,
+                    parent_table_id, resolved_type, nullptr, &parent_ctx, false);
+                if (status == core::Status::OK)
+                {
+                    status = db_->catalog_manager()->getTable(parent_table_id, parent_table, &parent_ctx);
+                }
                 if (status != core::Status::OK)
                 {
                     error("FK parent table not found: " + fk.parent_table);
@@ -2582,7 +3044,7 @@ namespace scratchbird
                 else
                 {
                     // Auto-generate FK name: table_fk_col1_col2_..._ref (Phase C: composite FK support)
-                    fk_name = table_name + "_fk";
+                    fk_name = resolved_table_name + "_fk";
                     for (const auto& col : fk.child_columns)
                     {
                         fk_name += "_" + col;
@@ -2612,6 +3074,8 @@ namespace scratchbird
                     error("Failed to create foreign key constraint: " + fk_name);
                 }
             }
+
+            LOG_INFO(EXECUTOR, "CREATE TABLE completed: %s", resolved_table_name.c_str());
         }
 
         void Executor::executeCreateIndex()
@@ -2696,17 +3160,25 @@ namespace scratchbird
                 predicate_string = readString();
             }
 
-            // Get default schema (PUBLIC)
-            core::CatalogManager::SchemaInfo schema_info;
-            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            core::ErrorContext schema_ctx;
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &schema_ctx, false);
             if (status != core::Status::OK)
             {
-                error("Failed to get default schema");
+                std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                if (!schema_ctx.message.empty())
+                {
+                    err_msg += ": " + schema_ctx.message;
+                }
+                error(err_msg);
             }
 
             // Get table ID by name
             core::CatalogManager::TableInfo table_info;
-            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info, nullptr);
+            status = db_->catalog_manager()->getTable(table_id, table_info, nullptr);
             if (status != core::Status::OK)
             {
                 error("Table not found: " + table_name);
@@ -3759,17 +4231,29 @@ namespace scratchbird
             bool if_exists = (flags & 0x01) != 0;
             bool cascade = (flags & 0x02) != 0;
 
-            // Get current schema (default to 'PUBLIC')
-            core::CatalogManager::SchemaInfo schema_info;
-            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            core::ErrorContext ctx;
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &ctx, false);
             if (status != Status::OK)
             {
-                throw std::runtime_error("Failed to get schema PUBLIC");
+                if (if_exists && status == Status::NOT_FOUND)
+                {
+                    return;
+                }
+                std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                throw std::runtime_error(err_msg);
             }
 
             // Check if table exists
             core::CatalogManager::TableInfo table_info;
-            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name.c_str(), table_info, nullptr);
+            status = db_->catalog_manager()->getTable(table_id, table_info, nullptr);
             if (status != Status::OK)
             {
                 if (if_exists)
@@ -3797,7 +4281,6 @@ namespace scratchbird
             QueryResultCacheManager::getInstance().invalidateTable(table_info.table_id);
 
             // Drop the table using catalog manager
-            ErrorContext ctx;
             status = db_->catalog_manager()->dropTable(table_info.table_id, cascade, &ctx);
             if (status != Status::OK)
             {
@@ -3815,61 +4298,28 @@ namespace scratchbird
             // Read IF EXISTS flag
             uint8_t if_exists = bytecode_[pc_++];
 
-            // Note: CatalogManager requires table_id + index_name or index_id
-            // For DROP INDEX by name only, we need to search through all tables
-            // This is a known limitation - for now we search all schemas
-
-            // Try to find the index by searching all schemas and tables
             ErrorContext ctx;
-            core::CatalogManager::SchemaInfo schema_info;
-            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            core::ID index_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                index_name, core::CatalogManager::ObjectType::INDEX,
+                index_id, resolved_type, nullptr, &ctx, false);
             if (status != Status::OK)
             {
-                if (if_exists)
+                if (if_exists && status == Status::NOT_FOUND)
                 {
-                    // IF EXISTS specified and schema doesn't exist
                     return;
                 }
-                throw std::runtime_error("Failed to get schema PUBLIC");
-            }
-
-            // Get all tables in schema
-            std::vector<core::CatalogManager::TableInfo> tables;
-            status = db_->catalog_manager()->listTables(schema_info.schema_id, tables, nullptr);
-            if (status != Status::OK)
-            {
-                throw std::runtime_error("Failed to list tables");
-            }
-
-            // Search all tables for the index
-            bool found = false;
-            core::ID found_index_id;
-            for (const auto &table : tables)
-            {
-                // Try to get the index from this table
-                core::CatalogManager::IndexInfo index_info;
-                status = db_->catalog_manager()->getIndex(table.table_id, index_name, index_info, nullptr);
-                if (status == Status::OK)
+                std::string err_msg = "Failed to resolve index '" + index_name + "'";
+                if (!ctx.message.empty())
                 {
-                    // Found it!
-                    found = true;
-                    found_index_id = index_info.index_id;
-                    break;
+                    err_msg += ": " + ctx.message;
                 }
-            }
-
-            if (!found)
-            {
-                if (if_exists)
-                {
-                    // IF EXISTS specified, silently succeed
-                    return;
-                }
-                throw std::runtime_error("Index does not exist: " + index_name);
+                throw std::runtime_error(err_msg);
             }
 
             // Drop the index using catalog manager
-            status = db_->catalog_manager()->dropIndex(found_index_id, &ctx);
+            status = db_->catalog_manager()->dropIndex(index_id, &ctx);
             if (status != Status::OK)
             {
                 throw std::runtime_error("Failed to drop index: " + ctx.message);
@@ -3889,16 +4339,23 @@ namespace scratchbird
 
             // Get table from catalog
             core::ErrorContext ctx;
-            core::CatalogManager::SchemaInfo schema_info;
-            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &ctx, false);
             if (status != Status::OK)
             {
-                throw std::runtime_error("Failed to get schema PUBLIC");
+                std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                throw std::runtime_error(err_msg);
             }
 
             core::CatalogManager::TableInfo table_info;
-            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name,
-                                                       table_info, &ctx);
+            status = db_->catalog_manager()->getTable(table_id, table_info, &ctx);
             if (status != Status::OK)
             {
                 throw std::runtime_error("Table not found: " + table_name);
@@ -4017,6 +4474,7 @@ namespace scratchbird
             if (!has_uuid)
             {
                 core::CatalogManager::ResolveOptions opts;
+                opts.allow_search_path = false;
                 core::CatalogManager::ObjectType resolved_type =
                     core::CatalogManager::ObjectType::UNKNOWN;
                 core::ErrorContext err_ctx;
@@ -4085,6 +4543,7 @@ namespace scratchbird
             if (!has_uuid)
             {
                 core::CatalogManager::ResolveOptions opts;
+                opts.allow_search_path = false;
                 core::CatalogManager::ObjectType resolved_type =
                     core::CatalogManager::ObjectType::UNKNOWN;
                 core::ErrorContext err_ctx;
@@ -4109,6 +4568,7 @@ namespace scratchbird
             core::ID target_schema_id{};
             {
                 core::CatalogManager::ResolveOptions opts;
+                opts.allow_search_path = false;
                 core::CatalogManager::ObjectType resolved_type =
                     core::CatalogManager::ObjectType::UNKNOWN;
                 core::ErrorContext err_ctx;
@@ -4421,7 +4881,10 @@ namespace scratchbird
             }
             if (status == core::Status::NOT_FOUND)
             {
+                // Create emulation type with default version and empty mapping rules
                 status = db_->catalog_manager()->createEmulationType(dialect,
+                                                                     1, 0,  // version 1.0
+                                                                     "",    // empty mapping rules
                                                                      type_info.emulation_type_id,
                                                                      &ctx);
                 if (status != core::Status::OK)
@@ -4463,7 +4926,7 @@ namespace scratchbird
                     }
                     error(err_msg);
                 }
-                server_info.emulation_server_id = server_id;
+                server_info.server_id = server_id;
                 server_info.server_name = server;
                 server_info.emulation_type_id = type_info.emulation_type_id;
             }
@@ -4474,7 +4937,7 @@ namespace scratchbird
 
             core::CatalogManager::EmulatedDatabaseInfo db_info;
             status = db_->catalog_manager()->getEmulatedDatabaseByName(
-                server_info.emulation_server_id, db_name, db_info, &ctx);
+                server_info.server_id, db_name, db_info, &ctx);
             if (status == core::Status::OK)
             {
                 if (if_not_exists)
@@ -4495,7 +4958,7 @@ namespace scratchbird
 
             core::ID emulated_db_id;
             status = db_->catalog_manager()->createEmulatedDatabase(
-                db_name, server_info.emulation_server_id, schema_id,
+                db_name, server_info.server_id, schema_id,
                 std::string(), emulated_db_id, &ctx);
             if (status != core::Status::OK)
             {
@@ -4576,7 +5039,7 @@ namespace scratchbird
 
             core::CatalogManager::EmulatedDatabaseInfo db_info;
             status = db_->catalog_manager()->getEmulatedDatabaseByName(
-                server_info.emulation_server_id, db_name, db_info, &ctx);
+                server_info.server_id, db_name, db_info, &ctx);
             if (status != core::Status::OK)
             {
                 if (status == core::Status::NOT_FOUND && if_exists)
@@ -4752,18 +5215,25 @@ namespace scratchbird
             uint8_t mode_byte = bytecode_[pc_++];
             bool is_sync = (mode_byte == 1);
 
-            // Get default schema (PUBLIC)
-            core::CatalogManager::SchemaInfo schema_info;
             ErrorContext ctx;
-            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, &ctx);
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &ctx, false);
             if (status != Status::OK)
             {
-                throw std::runtime_error("Schema not found: PUBLIC");
+                std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                throw std::runtime_error(err_msg);
             }
 
             // Get table info
             core::CatalogManager::TableInfo table_info;
-            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info, &ctx);
+            status = db_->catalog_manager()->getTable(table_id, table_info, &ctx);
             if (status != Status::OK)
             {
                 throw std::runtime_error("Table not found: " + table_name);
@@ -4831,7 +5301,7 @@ namespace scratchbird
             ErrorContext ctx;
             core::ID schema_id;
             std::string resolved_name;
-            auto status = resolveSchemaIdForQualifiedName(sequence_name, resolved_name, schema_id, &ctx);
+            auto status = resolveSchemaIdForQualifiedName(sequence_name, resolved_name, schema_id, &ctx, false);
             if (status != Status::OK)
             {
                 std::string err_msg = "Schema not found for sequence '" + sequence_name + "'";
@@ -4890,15 +5360,10 @@ namespace scratchbird
             // Look up sequence ID by name
             core::ID sequence_id;
             core::ErrorContext ctx;
-            core::ID schema_id;
-            std::string resolved_name;
-            auto status = resolveSchemaIdForQualifiedName(sequence_name, resolved_name, schema_id, &ctx);
-            if (status == core::Status::OK)
-            {
-                status = db_->catalog_manager()->getSequenceIdByName(schema_id, resolved_name,
-                                                                     sequence_id, &ctx);
-            }
-
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                sequence_name, core::CatalogManager::ObjectType::SEQUENCE,
+                sequence_id, resolved_type, nullptr, &ctx, false);
             if (status != core::Status::OK)
             {
                 std::string err_msg = "Sequence not found: '" + sequence_name + "'";
@@ -4936,15 +5401,10 @@ namespace scratchbird
             // Look up sequence ID by name
             core::ID sequence_id;
             core::ErrorContext ctx;
-            core::ID schema_id;
-            std::string resolved_name;
-            auto status = resolveSchemaIdForQualifiedName(sequence_name, resolved_name, schema_id, &ctx);
-            if (status == core::Status::OK)
-            {
-                status = db_->catalog_manager()->getSequenceIdByName(schema_id, resolved_name,
-                                                                     sequence_id, &ctx);
-            }
-
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                sequence_name, core::CatalogManager::ObjectType::SEQUENCE,
+                sequence_id, resolved_type, nullptr, &ctx, false);
             if (status != core::Status::OK)
             {
                 std::string err_msg = "Sequence not found: '" + sequence_name + "'";
@@ -4998,7 +5458,7 @@ namespace scratchbird
             core::ErrorContext ctx;
             core::ID schema_id;
             std::string resolved_view_name;
-            auto status = resolveSchemaIdForQualifiedName(view_name, resolved_view_name, schema_id, &ctx);
+            auto status = resolveSchemaIdForQualifiedName(view_name, resolved_view_name, schema_id, &ctx, false);
             if (status != core::Status::OK)
             {
                 std::string err_msg = "Schema not found for view '" + view_name + "'";
@@ -5316,9 +5776,11 @@ namespace scratchbird
             }
 
             core::ErrorContext ctx;
-            core::ID schema_id;
-            std::string resolved_view_name;
-            auto status = resolveSchemaIdForQualifiedName(view_name, resolved_view_name, schema_id, &ctx);
+            core::ID view_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                view_name, core::CatalogManager::ObjectType::VIEW,
+                view_id, resolved_type, nullptr, &ctx, false);
             if (status != core::Status::OK)
             {
                 if (if_exists && status == core::Status::NOT_FOUND)
@@ -5326,7 +5788,7 @@ namespace scratchbird
                     std::cout << "NOTICE: view \"" << view_name << "\" does not exist, skipping" << std::endl;
                     return;
                 }
-                std::string err_msg = "Schema not found for view '" + view_name + "'";
+                std::string err_msg = "Failed to resolve view '" + view_name + "'";
                 if (!ctx.message.empty())
                 {
                     err_msg += ": " + ctx.message;
@@ -5334,21 +5796,8 @@ namespace scratchbird
                 error(err_msg);
             }
 
-            core::CatalogManager::ViewInfo view_info;
-            status = db_->catalog_manager()->getView(schema_id, resolved_view_name, view_info, &ctx);
-
-            if (status == core::Status::NOT_FOUND)
-            {
-                if (if_exists)
-                {
-                    std::cout << "NOTICE: view \"" << view_name << "\" does not exist, skipping" << std::endl;
-                    return;
-                }
-                error("View not found: " + view_name);
-            }
-
             // Drop view (dependency checking and cleanup now handled by dropView)
-            status = db_->catalog_manager()->dropView(view_info.view_id, cascade, &ctx);
+            status = db_->catalog_manager()->dropView(view_id, cascade, &ctx);
             if (status != core::Status::OK)
             {
                 std::string err_msg = "Failed to drop view '" + view_name + "'";
@@ -5382,12 +5831,14 @@ namespace scratchbird
 
             // Look up view ID and verify it's materialized
             core::ErrorContext ctx;
-            core::ID schema_id;
-            std::string resolved_view_name;
-            auto status = resolveSchemaIdForQualifiedName(view_name, resolved_view_name, schema_id, &ctx);
+            core::ID view_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                view_name, core::CatalogManager::ObjectType::VIEW,
+                view_id, resolved_type, nullptr, &ctx);
             if (status != core::Status::OK)
             {
-                std::string err_msg = "Schema not found for view '" + view_name + "'";
+                std::string err_msg = "Failed to resolve view '" + view_name + "'";
                 if (!ctx.message.empty())
                 {
                     err_msg += ": " + ctx.message;
@@ -5397,7 +5848,7 @@ namespace scratchbird
 
             // Get view info to verify it's materialized and get table ID
             core::CatalogManager::ViewInfo view_info;
-            status = db_->catalog_manager()->getView(schema_id, resolved_view_name, view_info, &ctx);
+            status = db_->catalog_manager()->getViewById(view_id, view_info, &ctx);
 
             if (status != core::Status::OK)
             {
@@ -5434,9 +5885,9 @@ namespace scratchbird
             // Compile and execute the view definition using Parser V2 pipeline
             QueryCompilerV2 view_compiler(db_);
             core::ID zero_id{};
-            if (std::memcmp(&schema_id, &zero_id, sizeof(core::ID)) != 0)
+            if (std::memcmp(&view_info.schema_id, &zero_id, sizeof(core::ID)) != 0)
             {
-                view_compiler.setCurrentSchema(schema_id);
+                view_compiler.setCurrentSchema(view_info.schema_id);
             }
             auto compile_result = view_compiler.compile(view_info.definition);
 
@@ -5689,15 +6140,10 @@ namespace scratchbird
             // Look up sequence ID by name
             core::ID sequence_id;
             core::ErrorContext ctx;
-            core::ID schema_id;
-            std::string resolved_name;
-            auto status = resolveSchemaIdForQualifiedName(sequence_name, resolved_name, schema_id, &ctx);
-            if (status == core::Status::OK)
-            {
-                status = db_->catalog_manager()->getSequenceIdByName(schema_id, resolved_name,
-                                                                     sequence_id, &ctx);
-            }
-
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                sequence_name, core::CatalogManager::ObjectType::SEQUENCE,
+                sequence_id, resolved_type, nullptr, &ctx);
             if (status != core::Status::OK)
             {
                 std::string err_msg = "Sequence not found: '" + sequence_name + "'";
@@ -5739,15 +6185,10 @@ namespace scratchbird
             // Look up sequence ID by name
             core::ID sequence_id;
             core::ErrorContext ctx;
-            core::ID schema_id;
-            std::string resolved_name;
-            auto status = resolveSchemaIdForQualifiedName(sequence_name, resolved_name, schema_id, &ctx);
-            if (status == core::Status::OK)
-            {
-                status = db_->catalog_manager()->getSequenceIdByName(schema_id, resolved_name,
-                                                                     sequence_id, &ctx);
-            }
-
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                sequence_name, core::CatalogManager::ObjectType::SEQUENCE,
+                sequence_id, resolved_type, nullptr, &ctx);
             if (status != core::Status::OK)
             {
                 std::string err_msg = "Sequence not found: '" + sequence_name + "'";
@@ -5787,15 +6228,10 @@ namespace scratchbird
             // Look up sequence ID by name
             core::ID sequence_id;
             core::ErrorContext ctx;
-            core::ID schema_id;
-            std::string resolved_name;
-            auto status = resolveSchemaIdForQualifiedName(sequence_name, resolved_name, schema_id, &ctx);
-            if (status == core::Status::OK)
-            {
-                status = db_->catalog_manager()->getSequenceIdByName(schema_id, resolved_name,
-                                                                     sequence_id, &ctx);
-            }
-
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                sequence_name, core::CatalogManager::ObjectType::SEQUENCE,
+                sequence_id, resolved_type, nullptr, &ctx);
             if (status != core::Status::OK)
             {
                 std::string err_msg = "Sequence not found: '" + sequence_name + "'";
@@ -5918,13 +6354,15 @@ namespace scratchbird
             // Read online flag (1 byte)
             bool online = (readByte() != 0);
 
-            // Get default schema (PUBLIC)
-            core::CatalogManager::SchemaInfo schema_info;
             core::ErrorContext err_ctx;
-            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, &err_ctx);
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &err_ctx, false);
             if (status != core::Status::OK)
             {
-                std::string err_msg = "Failed to get default schema";
+                std::string err_msg = "Failed to resolve table '" + table_name + "'";
                 if (!err_ctx.message.empty())
                 {
                     err_msg += ": " + err_ctx.message;
@@ -5935,8 +6373,7 @@ namespace scratchbird
 
             // Resolve table name to table ID
             core::CatalogManager::TableInfo table_info;
-            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info,
-                                                       &err_ctx);
+            status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
             if (status != core::Status::OK)
             {
                 std::string err_msg = "Failed to find table '" + table_name + "'";
@@ -5994,30 +6431,30 @@ namespace scratchbird
 
             std::string table_name = readString();
 
-            // Get schema - use current schema if set, otherwise use PUBLIC
-            core::CatalogManager::SchemaInfo schema_info;
-            core::Status status;
-            if (current_schema_set_) {
-                status = db_->catalog_manager()->getSchema(current_schema_id_, schema_info, nullptr);
-                if (status != core::Status::OK) {
-                    error("Failed to get current schema for INSERT");
+            core::ErrorContext err_ctx;
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
                 }
-            } else {
-                status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
-                if (status != core::Status::OK) {
-                    error("Failed to get default schema");
-                }
+                error(err_msg);
             }
 
             // Get table from catalog
             core::CatalogManager::TableInfo table_info;
-            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info,
-                                                      nullptr);
+            status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
             if (status != core::Status::OK)
             {
                 error("Table not found: " + table_name);
             }
-            core::ID table_id = table_info.table_id;
+            table_id = table_info.table_id;
 
             // Security: Check INSERT permission on table
             // In embedded mode (no current user set), we skip permission checks to avoid deadlocks
@@ -6604,7 +7041,6 @@ namespace scratchbird
 
             // Wave 2: Fire BEFORE INSERT triggers
             std::vector<core::CatalogManager::TriggerInfo> before_triggers;
-            core::ErrorContext err_ctx;
             auto trigger_status = db_->catalog_manager()->listTriggersForTable(
                 table_id,
                 core::CatalogManager::TriggerEvent::INSERT,
@@ -7045,23 +7481,30 @@ namespace scratchbird
 
             std::string table_name = readString();
 
-            // Get default schema (PUBLIC)
-            core::CatalogManager::SchemaInfo schema_info;
-            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            core::ErrorContext err_ctx;
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &err_ctx);
             if (status != core::Status::OK)
             {
-                error("Failed to get default schema");
+                std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
             }
 
             // Get table from catalog
             core::CatalogManager::TableInfo table_info;
-            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info,
-                                                      nullptr);
+            status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
             if (status != core::Status::OK)
             {
                 error("Table not found: " + table_name);
             }
-            core::ID table_id = table_info.table_id;
+            table_id = table_info.table_id;
 
             // Check UPDATE permission on table (VERIFIED mode - security-critical)
             // SECURITY ENHANCEMENT (MEDIUM-1): Use VERIFIED mode for UPDATE (data modification operation)
@@ -7075,7 +7518,6 @@ namespace scratchbird
             if (!has_table_update)
             {
                 // Check column-level UPDATE permissions
-                core::ErrorContext err_ctx;
                 const auto& user_id = getCurrentUserID();
                 status = db_->catalog_manager()->getAccessibleColumns(
                     user_id, table_info.table_id,
@@ -7825,23 +8267,30 @@ namespace scratchbird
 
             std::string table_name = readString();
 
-            // Get default schema (PUBLIC)
-            core::CatalogManager::SchemaInfo schema_info;
-            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            core::ErrorContext err_ctx;
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &err_ctx);
             if (status != core::Status::OK)
             {
-                error("Failed to get default schema");
+                std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
             }
 
             // Get table from catalog
             core::CatalogManager::TableInfo table_info;
-            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info,
-                                                      nullptr);
+            status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
             if (status != core::Status::OK)
             {
                 error("Table not found: " + table_name);
             }
-            core::ID table_id = table_info.table_id;
+            table_id = table_info.table_id;
 
             // Check DELETE permission on table (VERIFIED mode - security-critical)
             // SECURITY ENHANCEMENT (MEDIUM-1): Use VERIFIED mode for DELETE (data loss operation)
@@ -8164,18 +8613,26 @@ namespace scratchbird
             // Read target table name
             std::string target_table_str = readString();
 
-            // Get default schema (PUBLIC)
-            core::CatalogManager::SchemaInfo schema_info;
-            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            core::ErrorContext err_ctx;
+            core::ID target_table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                target_table_str, core::CatalogManager::ObjectType::TABLE,
+                target_table_id, resolved_type, nullptr, &err_ctx);
             if (status != core::Status::OK)
             {
-                error("Failed to get default schema");
+                std::string err_msg = "Failed to resolve table '" + target_table_str + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
                 return;
             }
 
             // Get target table metadata
             core::CatalogManager::TableInfo target_table_info;
-            status = db_->catalog_manager()->getTable(schema_info.schema_id, target_table_str, target_table_info, nullptr);
+            status = db_->catalog_manager()->getTable(target_table_id, target_table_info, &err_ctx);
             if (status != core::Status::OK)
             {
                 error("Target table not found: " + target_table_str);
@@ -8211,7 +8668,22 @@ namespace scratchbird
 
             // Get source table metadata
             core::CatalogManager::TableInfo source_table_info;
-            status = db_->catalog_manager()->getTable(schema_info.schema_id, source_table_str, source_table_info, nullptr);
+            core::ID source_table_id;
+            status = resolveObjectIdForQualifiedName(
+                source_table_str, core::CatalogManager::ObjectType::TABLE,
+                source_table_id, resolved_type, nullptr, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to resolve table '" + source_table_str + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+                return;
+            }
+
+            status = db_->catalog_manager()->getTable(source_table_id, source_table_info, &err_ctx);
             if (status != core::Status::OK)
             {
                 error("Source table not found: " + source_table_str);
@@ -8643,17 +9115,25 @@ namespace scratchbird
                         (column_name.empty() ? "" : ", column: " + column_name) +
                         ", sample rate: " + std::to_string(sample_rate));
 
-            // Get table ID from catalog
-            core::CatalogManager::SchemaInfo schema_info;
-            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
+            core::ErrorContext err_ctx;
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &err_ctx);
             if (status != core::Status::OK)
             {
-                error("Failed to get default schema");
+                std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
                 return;
             }
 
             core::CatalogManager::TableInfo table_info;
-            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info, nullptr);
+            status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
             if (status != core::Status::OK)
             {
                 error("Table not found: " + table_name);
@@ -9117,17 +9597,24 @@ namespace scratchbird
                       "Use a subquery like: SELECT (SELECT MAX(col) FROM table)");
             }
 
-            // Look up schema and table info from catalog
-            core::CatalogManager::SchemaInfo schema_info;
             core::ErrorContext err_ctx;
-            auto status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, &err_ctx);
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                current_table_, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &err_ctx);
             if (status != core::Status::OK)
             {
-                error("Failed to get PUBLIC schema for scalar aggregate");
+                std::string err_msg = "Failed to resolve table '" + current_table_ + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
             }
 
             core::CatalogManager::TableInfo table_info;
-            status = db_->catalog_manager()->getTable(schema_info.schema_id, current_table_, table_info, &err_ctx);
+            status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
             if (status != core::Status::OK)
             {
                 error("Table not found for scalar aggregate: " + current_table_);
@@ -11739,44 +12226,51 @@ namespace scratchbird
                 return;
             }
 
-            // Get current schema (or default to PUBLIC) and table info
-            core::CatalogManager::SchemaInfo schema_info;
-            core::Status status;
-            if (current_schema_set_)
-            {
-                status = db_->catalog_manager()->getSchema(current_schema_id_, schema_info, nullptr);
-                if (status != core::Status::OK)
-                {
-                    error("Failed to get current schema for SELECT");
-                }
-            }
-            else
-            {
-                status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
-                if (status != core::Status::OK)
-                {
-                    error("Failed to get default schema");
-                }
-            }
+            core::ErrorContext err_ctx;
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            core::CatalogManager::ResolvedObject resolved_table;
+            core::Status status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, &resolved_table, &err_ctx);
 
             core::CatalogManager::TableInfo table_info;
-            status = db_->catalog_manager()->getTable(schema_info.schema_id, table_name, table_info,
-                                                      nullptr);
-            if (status != core::Status::OK)
+            if (status == core::Status::OK)
+            {
+                status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    error("Table not found: " + table_name);
+                }
+            }
+            else if (status == core::Status::NOT_FOUND)
             {
                 // ALPHA Phase 1 - Views: Check if this is a view instead of a table
-                core::CatalogManager::ViewInfo view_info;
-                core::ErrorContext view_ctx;
-                auto view_status = db_->catalog_manager()->getView(schema_info.schema_id, table_name, view_info, &view_ctx);
-
+                core::ID view_id;
+                core::CatalogManager::ResolvedObject resolved_view;
+                auto view_status = resolveObjectIdForQualifiedName(
+                    table_name, core::CatalogManager::ObjectType::VIEW,
+                    view_id, resolved_type, &resolved_view, &err_ctx);
                 if (view_status == core::Status::OK)
                 {
-                    // This is a view - execute the view's SELECT query
-                    executeViewQuery(view_info, select_items, is_select_star);
-                    return;
+                    core::CatalogManager::ViewInfo view_info;
+                    if (db_->catalog_manager()->getViewById(view_id, view_info, &err_ctx) == core::Status::OK)
+                    {
+                        executeViewQuery(view_info, select_items, is_select_star);
+                        return;
+                    }
                 }
 
                 error("Table or view not found: " + table_name);
+            }
+            else
+            {
+                std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
             }
 
             // Check SELECT permission on table (skip for emulated schemas)
@@ -13014,6 +13508,10 @@ namespace scratchbird
                 conflict_error_code = static_cast<int32_t>(readInt32());
             }
 
+            LOG_INFO(EXECUTOR, "SET AUTOCOMMIT: mode=%u action=%u",
+                     static_cast<unsigned>(mode_byte),
+                     static_cast<unsigned>(action));
+
             if (action == sblr::TransactionConflictAction::DEFAULT)
             {
                 action = sblr::TransactionConflictAction::ROLLBACK;
@@ -13150,13 +13648,14 @@ namespace scratchbird
             std::string procedure_name = readString();
 
             core::ErrorContext err_ctx;
-            core::ID schema_id;
-            std::string resolved_table_name;
-            auto status = resolveSchemaIdForQualifiedName(table_name, resolved_table_name,
-                                                          schema_id, &err_ctx);
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &err_ctx);
             if (status != core::Status::OK)
             {
-                std::string err_msg = "Schema not found for table '" + table_name + "'";
+                std::string err_msg = "Failed to resolve table '" + table_name + "'";
                 if (!err_ctx.message.empty())
                 {
                     err_msg += ": " + err_ctx.message;
@@ -13166,7 +13665,7 @@ namespace scratchbird
 
             // Get table from catalog
             core::CatalogManager::TableInfo table_info;
-            status = db_->catalog_manager()->getTable(schema_id, resolved_table_name, table_info, &err_ctx);
+            status = db_->catalog_manager()->getTable(table_id, table_info, &err_ctx);
             if (status != core::Status::OK)
             {
                 error("Table not found: " + table_name);
@@ -13176,7 +13675,7 @@ namespace scratchbird
             core::CatalogManager::TriggerInfo trigger_info;
             trigger_info.trigger_name = trigger_name;
             trigger_info.table_id = table_info.table_id;
-            trigger_info.table_name = resolved_table_name;
+            trigger_info.table_name = table_info.table_name;
             trigger_info.timing = timing;
             trigger_info.event = event;
             trigger_info.granularity = granularity;
@@ -13206,35 +13705,21 @@ namespace scratchbird
             std::string table_name = readString();
 
             core::ErrorContext err_ctx;
-            core::ID schema_id;
-            std::string resolved_table_name;
-            auto status = resolveSchemaIdForQualifiedName(table_name, resolved_table_name,
-                                                          schema_id, &err_ctx);
-            if (status != core::Status::OK)
-            {
-                error("Schema not found for table '" + table_name + "'");
-            }
-
-            core::CatalogManager::TableInfo table_info;
-            status = db_->catalog_manager()->getTable(schema_id, resolved_table_name, table_info, &err_ctx);
-            if (status != core::Status::OK)
-            {
-                error("Table not found: " + table_name);
-            }
-
-            core::CatalogManager::TriggerInfo trigger_info;
-            status = db_->catalog_manager()->getTriggerByName(trigger_name, trigger_info, &err_ctx);
+            std::string qualified_trigger = table_name.empty()
+                ? trigger_name
+                : table_name + "." + trigger_name;
+            core::ID trigger_id;
+            core::CatalogManager::ObjectType resolved_type;
+            core::CatalogManager::ResolvedObject resolved_trigger;
+            auto status = resolveObjectIdForQualifiedName(
+                qualified_trigger, core::CatalogManager::ObjectType::TRIGGER,
+                trigger_id, resolved_type, &resolved_trigger, &err_ctx, false);
             if (status != core::Status::OK)
             {
                 error("Trigger '" + trigger_name + "' not found");
             }
 
-            if (trigger_info.table_id != table_info.table_id)
-            {
-                error("Trigger '" + trigger_name + "' not found on table '" + table_name + "'");
-            }
-
-            status = db_->catalog_manager()->dropTrigger(trigger_name, &err_ctx);
+            status = db_->catalog_manager()->dropTrigger(resolved_trigger.object_name, &err_ctx);
             if (status != core::Status::OK)
             {
                 std::string err_msg = "Failed to drop trigger";
@@ -21657,7 +22142,12 @@ namespace scratchbird
             auto status = db_->catalog_manager()->getFunction(function_name, function_info, &err_ctx);
             if (status != core::Status::OK)
             {
-                error("Function not found: " + function_name);
+                std::string msg = "Function not found: " + function_name;
+                if (!err_ctx.message.empty())
+                {
+                    msg += ": " + err_ctx.message;
+                }
+                error(msg);
             }
 
             // Check EXECUTE permission
@@ -21818,7 +22308,12 @@ namespace scratchbird
             auto status = db_->catalog_manager()->getProcedure(procedure_name, procedure_info, &err_ctx);
             if (status != core::Status::OK)
             {
-                error("Procedure not found: " + procedure_name);
+                std::string msg = "Procedure not found: " + procedure_name;
+                if (!err_ctx.message.empty())
+                {
+                    msg += ": " + err_ctx.message;
+                }
+                error(msg);
             }
 
             // Check EXECUTE permission
@@ -22945,37 +23440,17 @@ namespace scratchbird
             // Call catalog manager
             core::ID user_id;
 
-            // Phase 2.1: Get default schema ID from connection context or use PUBLIC
             core::ID default_schema_id;
-            if (conn_ctx_)
+            core::ErrorContext schema_ctx;
+            auto schema_status = resolveSchemaIdForName("", default_schema_id, &schema_ctx);
+            if (schema_status != core::Status::OK)
             {
-                default_schema_id = conn_ctx_->getCurrentSchemaId();
-                // If connection context schema is not set, use PUBLIC schema
-                core::ID zero_id;
-                std::memset(&zero_id, 0, sizeof(zero_id));
-                if (std::memcmp(&default_schema_id, &zero_id, sizeof(core::ID)) == 0)
+                std::string err_msg = "Failed to resolve default schema";
+                if (!schema_ctx.message.empty())
                 {
-                    core::CatalogManager::SchemaInfo public_schema;
-                    auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", public_schema, nullptr);
-                    if (schema_status == core::Status::OK)
-                    {
-                        default_schema_id = public_schema.schema_id;
-                    }
+                    err_msg += ": " + schema_ctx.message;
                 }
-            }
-            else
-            {
-                // Fallback to PUBLIC schema when no connection context
-                core::CatalogManager::SchemaInfo public_schema;
-                auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", public_schema, nullptr);
-                if (schema_status == core::Status::OK)
-                {
-                    default_schema_id = public_schema.schema_id;
-                }
-                else
-                {
-                    std::memset(&default_schema_id, 0, sizeof(default_schema_id));
-                }
+                error(err_msg);
             }
 
             core::ErrorContext err_ctx;
@@ -23288,58 +23763,29 @@ namespace scratchbird
             core::ID object_id;
             if (object_type == core::CatalogManager::PermissionObjectType::TABLE)
             {
-                // WP-5 EXEC-M10/L5: Parse schema-qualified name (schema.table)
-                std::string schema_name;
-                std::string table_name = object_name;
-                size_t dot_pos = object_name.find('.');
-                if (dot_pos != std::string::npos)
+                core::ID table_id;
+                core::CatalogManager::ObjectType resolved_type;
+                auto get_obj_status = resolveObjectIdForQualifiedName(
+                    object_name, core::CatalogManager::ObjectType::TABLE,
+                    table_id, resolved_type, nullptr, &err_ctx);
+                if (get_obj_status != core::Status::OK)
                 {
-                    schema_name = object_name.substr(0, dot_pos);
-                    table_name = object_name.substr(dot_pos + 1);
-                }
-
-                // Resolve schema ID
-                core::ID schema_id;
-                if (!schema_name.empty())
-                {
-                    // Use explicit schema from qualified name
-                    core::CatalogManager::SchemaInfo schema_info;
-                    auto schema_status = db_->catalog_manager()->getSchema(schema_name, schema_info, &err_ctx);
-                    if (schema_status != core::Status::OK)
+                    std::string err_msg = "Table '" + object_name + "' not found";
+                    if (!err_ctx.message.empty())
                     {
-                        error("Schema '" + schema_name + "' not found");
+                        err_msg += ": " + err_ctx.message;
                     }
-                    schema_id = schema_info.schema_id;
-                }
-                else
-                {
-                    // No schema qualifier - use connection context or PUBLIC
-                    if (conn_ctx_)
-                    {
-                        schema_id = conn_ctx_->getCurrentSchemaId();
-                    }
-                    // If not set, use PUBLIC schema
-                    core::ID zero_id;
-                    std::memset(&zero_id, 0, sizeof(zero_id));
-                    if (std::memcmp(&schema_id, &zero_id, sizeof(core::ID)) == 0)
-                    {
-                        core::CatalogManager::SchemaInfo public_schema;
-                        auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", public_schema, nullptr);
-                        if (schema_status == core::Status::OK)
-                        {
-                            schema_id = public_schema.schema_id;
-                        }
-                    }
+                    error(err_msg);
                 }
 
                 core::CatalogManager::TableInfo table_info;
-                auto get_obj_status = db_->catalog_manager()->getTable(
-                    schema_id, table_name, table_info, &err_ctx);
-                if (get_obj_status != core::Status::OK)
+                auto table_status = db_->catalog_manager()->getTable(
+                    table_id, table_info, &err_ctx);
+                if (table_status != core::Status::OK)
                 {
                     error("Table '" + object_name + "' not found");
                 }
-                object_id = table_info.table_id;
+                object_id = table_id;
 
                 // Security Check: Only superusers or object owners can grant
                 if (conn_ctx_ && !conn_ctx_->isSuperuser())
@@ -23358,95 +23804,97 @@ namespace scratchbird
             else if (object_type == core::CatalogManager::PermissionObjectType::SCHEMA)
             {
                 // WP-5 EXEC-M7: Schema object lookup
-                core::CatalogManager::SchemaInfo schema_info;
-                auto get_obj_status = db_->catalog_manager()->getSchema(object_name, schema_info, &err_ctx);
+                core::ID schema_id;
+                core::CatalogManager::ObjectType resolved_type;
+                auto get_obj_status = resolveObjectIdForQualifiedName(
+                    object_name, core::CatalogManager::ObjectType::SCHEMA,
+                    schema_id, resolved_type, nullptr, &err_ctx);
                 if (get_obj_status != core::Status::OK)
                 {
-                    error("Schema '" + object_name + "' not found");
+                    std::string err_msg = "Schema '" + object_name + "' not found";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
                 }
-                object_id = schema_info.schema_id;
+                object_id = schema_id;
             }
             else if (object_type == core::CatalogManager::PermissionObjectType::SEQUENCE)
             {
                 // WP-5 EXEC-M7: Sequence object lookup
                 core::ID seq_id;
-                core::ID schema_id;
-                std::string resolved_name;
-                auto get_obj_status = resolveSchemaIdForQualifiedName(object_name, resolved_name,
-                                                                      schema_id, &err_ctx);
-                if (get_obj_status == core::Status::OK)
-                {
-                    get_obj_status = db_->catalog_manager()->getSequenceIdByName(schema_id, resolved_name,
-                                                                                 seq_id, &err_ctx);
-                }
+                core::CatalogManager::ObjectType resolved_type;
+                auto get_obj_status = resolveObjectIdForQualifiedName(
+                    object_name, core::CatalogManager::ObjectType::SEQUENCE,
+                    seq_id, resolved_type, nullptr, &err_ctx);
                 if (get_obj_status != core::Status::OK)
                 {
-                    error("Sequence '" + object_name + "' not found");
+                    std::string err_msg = "Sequence '" + object_name + "' not found";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
                 }
                 object_id = seq_id;
             }
             else if (object_type == core::CatalogManager::PermissionObjectType::FUNCTION)
             {
                 // WP-5 EXEC-M7: Function object lookup
-                core::CatalogManager::FunctionInfo func_info;
-                core::ID schema_id;
-                std::string resolved_name;
-                auto get_obj_status = resolveSchemaIdForQualifiedName(object_name, resolved_name,
-                                                                      schema_id, &err_ctx);
-                if (get_obj_status == core::Status::OK)
-                {
-                    get_obj_status = db_->catalog_manager()->getFunction(resolved_name, func_info, &err_ctx);
-                }
+                core::ID function_id;
+                core::CatalogManager::ObjectType resolved_type;
+                auto get_obj_status = resolveObjectIdForQualifiedName(
+                    object_name, core::CatalogManager::ObjectType::FUNCTION,
+                    function_id, resolved_type, nullptr, &err_ctx);
                 if (get_obj_status != core::Status::OK)
                 {
-                    error("Function '" + object_name + "' not found");
+                    std::string err_msg = "Function '" + object_name + "' not found";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
                 }
-                if (func_info.schema_id != schema_id)
-                {
-                    error("Function '" + object_name + "' not found");
-                }
-                object_id = func_info.function_id;
+                object_id = function_id;
             }
             else if (object_type == core::CatalogManager::PermissionObjectType::PROCEDURE)
             {
                 // WP-5 EXEC-M7: Procedure object lookup
-                core::CatalogManager::ProcedureInfo proc_info;
-                core::ID schema_id;
-                std::string resolved_name;
-                auto get_obj_status = resolveSchemaIdForQualifiedName(object_name, resolved_name,
-                                                                      schema_id, &err_ctx);
-                if (get_obj_status == core::Status::OK)
-                {
-                    get_obj_status = db_->catalog_manager()->getProcedure(resolved_name, proc_info, &err_ctx);
-                }
+                core::ID procedure_id;
+                core::CatalogManager::ObjectType resolved_type;
+                auto get_obj_status = resolveObjectIdForQualifiedName(
+                    object_name, core::CatalogManager::ObjectType::PROCEDURE,
+                    procedure_id, resolved_type, nullptr, &err_ctx);
                 if (get_obj_status != core::Status::OK)
                 {
-                    error("Procedure '" + object_name + "' not found");
+                    std::string err_msg = "Procedure '" + object_name + "' not found";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
                 }
-                if (proc_info.schema_id != schema_id)
-                {
-                    error("Procedure '" + object_name + "' not found");
-                }
-                object_id = proc_info.procedure_id;
+                object_id = procedure_id;
             }
             else if (object_type == core::CatalogManager::PermissionObjectType::VIEW)
             {
                 // WP-5 EXEC-M7: View object lookup
-                core::ID schema_id;
-                std::string resolved_name;
-                auto get_obj_status = resolveSchemaIdForQualifiedName(object_name, resolved_name,
-                                                                      schema_id, &err_ctx);
-                core::CatalogManager::ViewInfo view_info;
-                if (get_obj_status == core::Status::OK)
-                {
-                    get_obj_status = db_->catalog_manager()->getView(schema_id, resolved_name,
-                                                                     view_info, &err_ctx);
-                }
+                core::ID view_id;
+                core::CatalogManager::ObjectType resolved_type;
+                auto get_obj_status = resolveObjectIdForQualifiedName(
+                    object_name, core::CatalogManager::ObjectType::VIEW,
+                    view_id, resolved_type, nullptr, &err_ctx);
                 if (get_obj_status != core::Status::OK)
                 {
-                    error("View '" + object_name + "' not found");
+                    std::string err_msg = "View '" + object_name + "' not found";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
                 }
-                object_id = view_info.view_id;
+                object_id = view_id;
             }
             else
             {
@@ -23584,58 +24032,29 @@ namespace scratchbird
             core::ID object_id;
             if (object_type == core::CatalogManager::PermissionObjectType::TABLE)
             {
-                // WP-5 EXEC-M10/L5: Parse schema-qualified name (schema.table)
-                std::string schema_name;
-                std::string table_name = object_name;
-                size_t dot_pos = object_name.find('.');
-                if (dot_pos != std::string::npos)
+                core::ID table_id;
+                core::CatalogManager::ObjectType resolved_type;
+                auto get_obj_status = resolveObjectIdForQualifiedName(
+                    object_name, core::CatalogManager::ObjectType::TABLE,
+                    table_id, resolved_type, nullptr, &err_ctx);
+                if (get_obj_status != core::Status::OK)
                 {
-                    schema_name = object_name.substr(0, dot_pos);
-                    table_name = object_name.substr(dot_pos + 1);
-                }
-
-                // Resolve schema ID
-                core::ID schema_id;
-                if (!schema_name.empty())
-                {
-                    // Use explicit schema from qualified name
-                    core::CatalogManager::SchemaInfo schema_info;
-                    auto schema_status = db_->catalog_manager()->getSchema(schema_name, schema_info, &err_ctx);
-                    if (schema_status != core::Status::OK)
+                    std::string err_msg = "Table '" + object_name + "' not found";
+                    if (!err_ctx.message.empty())
                     {
-                        error("Schema '" + schema_name + "' not found");
+                        err_msg += ": " + err_ctx.message;
                     }
-                    schema_id = schema_info.schema_id;
-                }
-                else
-                {
-                    // No schema qualifier - use connection context or PUBLIC
-                    if (conn_ctx_)
-                    {
-                        schema_id = conn_ctx_->getCurrentSchemaId();
-                    }
-                    // If not set, use PUBLIC schema
-                    core::ID zero_id;
-                    std::memset(&zero_id, 0, sizeof(zero_id));
-                    if (std::memcmp(&schema_id, &zero_id, sizeof(core::ID)) == 0)
-                    {
-                        core::CatalogManager::SchemaInfo public_schema;
-                        auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", public_schema, nullptr);
-                        if (schema_status == core::Status::OK)
-                        {
-                            schema_id = public_schema.schema_id;
-                        }
-                    }
+                    error(err_msg);
                 }
 
                 core::CatalogManager::TableInfo table_info;
-                auto get_obj_status = db_->catalog_manager()->getTable(
-                    schema_id, table_name, table_info, &err_ctx);
-                if (get_obj_status != core::Status::OK)
+                auto table_status = db_->catalog_manager()->getTable(
+                    table_id, table_info, &err_ctx);
+                if (table_status != core::Status::OK)
                 {
                     error("Table '" + object_name + "' not found");
                 }
-                object_id = table_info.table_id;
+                object_id = table_id;
 
                 // Security Check: Only superusers or object owners can revoke
                 if (conn_ctx_ && !conn_ctx_->isSuperuser())
@@ -23654,95 +24073,97 @@ namespace scratchbird
             else if (object_type == core::CatalogManager::PermissionObjectType::SCHEMA)
             {
                 // WP-5 EXEC-M7: Schema object lookup
-                core::CatalogManager::SchemaInfo schema_info;
-                auto get_obj_status = db_->catalog_manager()->getSchema(object_name, schema_info, &err_ctx);
+                core::ID schema_id;
+                core::CatalogManager::ObjectType resolved_type;
+                auto get_obj_status = resolveObjectIdForQualifiedName(
+                    object_name, core::CatalogManager::ObjectType::SCHEMA,
+                    schema_id, resolved_type, nullptr, &err_ctx);
                 if (get_obj_status != core::Status::OK)
                 {
-                    error("Schema '" + object_name + "' not found");
+                    std::string err_msg = "Schema '" + object_name + "' not found";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
                 }
-                object_id = schema_info.schema_id;
+                object_id = schema_id;
             }
             else if (object_type == core::CatalogManager::PermissionObjectType::SEQUENCE)
             {
                 // WP-5 EXEC-M7: Sequence object lookup
                 core::ID seq_id;
-                core::ID schema_id;
-                std::string resolved_name;
-                auto get_obj_status = resolveSchemaIdForQualifiedName(object_name, resolved_name,
-                                                                      schema_id, &err_ctx);
-                if (get_obj_status == core::Status::OK)
-                {
-                    get_obj_status = db_->catalog_manager()->getSequenceIdByName(schema_id, resolved_name,
-                                                                                 seq_id, &err_ctx);
-                }
+                core::CatalogManager::ObjectType resolved_type;
+                auto get_obj_status = resolveObjectIdForQualifiedName(
+                    object_name, core::CatalogManager::ObjectType::SEQUENCE,
+                    seq_id, resolved_type, nullptr, &err_ctx);
                 if (get_obj_status != core::Status::OK)
                 {
-                    error("Sequence '" + object_name + "' not found");
+                    std::string err_msg = "Sequence '" + object_name + "' not found";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
                 }
                 object_id = seq_id;
             }
             else if (object_type == core::CatalogManager::PermissionObjectType::FUNCTION)
             {
                 // WP-5 EXEC-M7: Function object lookup
-                core::CatalogManager::FunctionInfo func_info;
-                core::ID schema_id;
-                std::string resolved_name;
-                auto get_obj_status = resolveSchemaIdForQualifiedName(object_name, resolved_name,
-                                                                      schema_id, &err_ctx);
-                if (get_obj_status == core::Status::OK)
-                {
-                    get_obj_status = db_->catalog_manager()->getFunction(resolved_name, func_info, &err_ctx);
-                }
+                core::ID function_id;
+                core::CatalogManager::ObjectType resolved_type;
+                auto get_obj_status = resolveObjectIdForQualifiedName(
+                    object_name, core::CatalogManager::ObjectType::FUNCTION,
+                    function_id, resolved_type, nullptr, &err_ctx);
                 if (get_obj_status != core::Status::OK)
                 {
-                    error("Function '" + object_name + "' not found");
+                    std::string err_msg = "Function '" + object_name + "' not found";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
                 }
-                if (func_info.schema_id != schema_id)
-                {
-                    error("Function '" + object_name + "' not found");
-                }
-                object_id = func_info.function_id;
+                object_id = function_id;
             }
             else if (object_type == core::CatalogManager::PermissionObjectType::PROCEDURE)
             {
                 // WP-5 EXEC-M7: Procedure object lookup
-                core::CatalogManager::ProcedureInfo proc_info;
-                core::ID schema_id;
-                std::string resolved_name;
-                auto get_obj_status = resolveSchemaIdForQualifiedName(object_name, resolved_name,
-                                                                      schema_id, &err_ctx);
-                if (get_obj_status == core::Status::OK)
-                {
-                    get_obj_status = db_->catalog_manager()->getProcedure(resolved_name, proc_info, &err_ctx);
-                }
+                core::ID procedure_id;
+                core::CatalogManager::ObjectType resolved_type;
+                auto get_obj_status = resolveObjectIdForQualifiedName(
+                    object_name, core::CatalogManager::ObjectType::PROCEDURE,
+                    procedure_id, resolved_type, nullptr, &err_ctx);
                 if (get_obj_status != core::Status::OK)
                 {
-                    error("Procedure '" + object_name + "' not found");
+                    std::string err_msg = "Procedure '" + object_name + "' not found";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
                 }
-                if (proc_info.schema_id != schema_id)
-                {
-                    error("Procedure '" + object_name + "' not found");
-                }
-                object_id = proc_info.procedure_id;
+                object_id = procedure_id;
             }
             else if (object_type == core::CatalogManager::PermissionObjectType::VIEW)
             {
                 // WP-5 EXEC-M7: View object lookup
-                core::ID schema_id;
-                std::string resolved_name;
-                auto get_obj_status = resolveSchemaIdForQualifiedName(object_name, resolved_name,
-                                                                      schema_id, &err_ctx);
-                core::CatalogManager::ViewInfo view_info;
-                if (get_obj_status == core::Status::OK)
-                {
-                    get_obj_status = db_->catalog_manager()->getView(schema_id, resolved_name,
-                                                                     view_info, &err_ctx);
-                }
+                core::ID view_id;
+                core::CatalogManager::ObjectType resolved_type;
+                auto get_obj_status = resolveObjectIdForQualifiedName(
+                    object_name, core::CatalogManager::ObjectType::VIEW,
+                    view_id, resolved_type, nullptr, &err_ctx);
                 if (get_obj_status != core::Status::OK)
                 {
-                    error("View '" + object_name + "' not found");
+                    std::string err_msg = "View '" + object_name + "' not found";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
                 }
-                object_id = view_info.view_id;
+                object_id = view_id;
             }
             else
             {
@@ -24423,18 +24844,25 @@ namespace scratchbird
                 }
             }
 
-            // Look up schema and table first
-            core::CatalogManager::SchemaInfo schema_info;
-            auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
-            if (schema_status != core::Status::OK)
-            {
-                error("Failed to get schema PUBLIC");
-            }
-
             core::CatalogManager::TableInfo table_info;
             core::ErrorContext err_ctx;
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto schema_status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &err_ctx, false);
+            if (schema_status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
             auto get_status = db_->catalog_manager()->getTable(
-                schema_info.schema_id, table_name, table_info, &err_ctx);
+                table_id, table_info, &err_ctx);
 
             if (get_status != core::Status::OK)
             {
@@ -24488,18 +24916,25 @@ namespace scratchbird
             bool if_exists = flags & 0x01;
             bool cascade = flags & 0x02;
 
-            // Look up schema and table first
-            core::CatalogManager::SchemaInfo schema_info;
-            auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
-            if (schema_status != core::Status::OK)
-            {
-                error("Failed to get schema PUBLIC");
-            }
-
             core::CatalogManager::TableInfo table_info;
             core::ErrorContext err_ctx;
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto schema_status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &err_ctx, false);
+            if (schema_status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
             auto get_status = db_->catalog_manager()->getTable(
-                schema_info.schema_id, table_name, table_info, &err_ctx);
+                table_id, table_info, &err_ctx);
 
             if (get_status != core::Status::OK)
             {
@@ -24545,17 +24980,25 @@ namespace scratchbird
             uint8_t action = readByte();
 
             // Look up schema and table first
-            core::CatalogManager::SchemaInfo schema_info;
-            auto schema_status = db_->catalog_manager()->getSchema("PUBLIC", schema_info, nullptr);
-            if (schema_status != core::Status::OK)
-            {
-                error("Failed to get schema PUBLIC");
-            }
-
             core::CatalogManager::TableInfo table_info;
             core::ErrorContext err_ctx;
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto schema_status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &err_ctx);
+            if (schema_status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to resolve table '" + table_name + "'";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
             auto get_status = db_->catalog_manager()->getTable(
-                schema_info.schema_id, table_name, table_info, &err_ctx);
+                table_id, table_info, &err_ctx);
 
             if (get_status != core::Status::OK)
             {
@@ -24755,18 +25198,41 @@ namespace scratchbird
             // Get catalog manager
             auto* catalog = db_->catalog_manager();
 
-            // For now, we only support the current database (PUBLIC schema)
-            // In the future, this will support multiple databases/schemas
-            core::CatalogManager::SchemaInfo schema_info;
-            auto schema_status = catalog->getSchema("PUBLIC", schema_info, nullptr);
+            core::ErrorContext err_ctx;
+            core::ID schema_id;
+            core::Status schema_status = core::Status::OK;
+            if (database_name.empty())
+            {
+                schema_status = resolveSchemaIdForName(database_name, schema_id, &err_ctx);
+            }
+            else
+            {
+                core::CatalogManager::ObjectType resolved_type;
+                schema_status = resolveObjectIdForQualifiedName(
+                    database_name, core::CatalogManager::ObjectType::SCHEMA,
+                    schema_id, resolved_type, nullptr, &err_ctx);
+            }
             if (schema_status != core::Status::OK)
             {
-                error("Failed to get schema PUBLIC");
+                std::string err_msg = database_name.empty()
+                    ? "Failed to resolve default schema"
+                    : "Schema not found: " + database_name;
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            core::CatalogManager::SchemaInfo schema_info;
+            schema_status = catalog->getSchema(schema_id, schema_info, &err_ctx);
+            if (schema_status != core::Status::OK)
+            {
+                error("Failed to resolve schema for SHOW TABLES");
             }
 
             // Get all tables in the schema
             std::vector<core::CatalogManager::TableInfo> tables;
-            core::ErrorContext err_ctx;
             auto status = catalog->listTables(schema_info.schema_id, tables, &err_ctx);
             if (status != core::Status::OK)
             {
@@ -24779,8 +25245,22 @@ namespace scratchbird
                 current_result_set_ = std::make_unique<ResultSet>();
             }
 
-            // Add column: Tables_in_PUBLIC (or database name if specified)
-            std::string column_name = "Tables_in_" + (database_name.empty() ? "PUBLIC" : database_name);
+            // Add column: Tables_in_<schema>
+            std::string schema_path;
+            std::string display_schema = database_name;
+            if (catalog->getSchemaPath(schema_info.schema_id, schema_path, &err_ctx) == core::Status::OK)
+            {
+                display_schema = stripRootPrefixForDisplay(schema_path);
+                if (display_schema.empty())
+                {
+                    display_schema = schema_path.empty() ? "root" : schema_path;
+                }
+            }
+            if (display_schema.empty())
+            {
+                display_schema = "root";
+            }
+            std::string column_name = "Tables_in_" + display_schema;
             current_result_set_->addColumn(column_name, core::DataType::VARCHAR);
 
             // Add rows (filter by LIKE pattern if provided)
@@ -24862,17 +25342,24 @@ namespace scratchbird
             // Get catalog manager
             auto* catalog = db_->catalog_manager();
 
-            // Look up table in PUBLIC schema
-            core::CatalogManager::SchemaInfo schema_info;
-            auto schema_status = catalog->getSchema("PUBLIC", schema_info, nullptr);
-            if (schema_status != core::Status::OK)
-            {
-                error("Failed to get schema PUBLIC");
-            }
-
             core::CatalogManager::TableInfo table_info;
             core::ErrorContext err_ctx;
-            auto table_status = catalog->getTable(schema_info.schema_id, table_name, table_info, &err_ctx);
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto schema_status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &err_ctx);
+            if (schema_status != core::Status::OK)
+            {
+                std::string err_msg = "Table '" + table_name + "' not found";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            auto table_status = catalog->getTable(table_id, table_info, &err_ctx);
             if (table_status != core::Status::OK)
             {
                 error("Table '" + table_name + "' not found");
@@ -24973,17 +25460,24 @@ namespace scratchbird
             // Get catalog manager
             auto* catalog = db_->catalog_manager();
 
-            // Look up table in PUBLIC schema
-            core::CatalogManager::SchemaInfo schema_info;
-            auto schema_status = catalog->getSchema("PUBLIC", schema_info, nullptr);
-            if (schema_status != core::Status::OK)
-            {
-                error("Failed to get schema PUBLIC");
-            }
-
             core::CatalogManager::TableInfo table_info;
             core::ErrorContext err_ctx;
-            auto table_status = catalog->getTable(schema_info.schema_id, table_name, table_info, &err_ctx);
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto schema_status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &err_ctx);
+            if (schema_status != core::Status::OK)
+            {
+                std::string err_msg = "Table '" + table_name + "' not found";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            auto table_status = catalog->getTable(table_id, table_info, &err_ctx);
             if (table_status != core::Status::OK)
             {
                 error("Table '" + table_name + "' not found");
@@ -25132,17 +25626,24 @@ namespace scratchbird
             // Get catalog manager
             auto* catalog = db_->catalog_manager();
 
-            // Look up table in PUBLIC schema
-            core::CatalogManager::SchemaInfo schema_info;
-            auto schema_status = catalog->getSchema("PUBLIC", schema_info, nullptr);
-            if (schema_status != core::Status::OK)
-            {
-                error("Failed to get schema PUBLIC");
-            }
-
             core::CatalogManager::TableInfo table_info;
             core::ErrorContext err_ctx;
-            auto table_status = catalog->getTable(schema_info.schema_id, table_name, table_info, &err_ctx);
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto schema_status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &err_ctx);
+            if (schema_status != core::Status::OK)
+            {
+                std::string err_msg = "Table '" + table_name + "' not found";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            auto table_status = catalog->getTable(table_id, table_info, &err_ctx);
             if (table_status != core::Status::OK)
             {
                 error("Table '" + table_name + "' not found");
@@ -25234,17 +25735,24 @@ namespace scratchbird
             // Get catalog manager
             auto* catalog = db_->catalog_manager();
 
-            // Look up table in PUBLIC schema
-            core::CatalogManager::SchemaInfo schema_info;
-            auto schema_status = catalog->getSchema("PUBLIC", schema_info, nullptr);
-            if (schema_status != core::Status::OK)
-            {
-                error("Failed to get schema PUBLIC");
-            }
-
             core::CatalogManager::TableInfo table_info;
             core::ErrorContext err_ctx;
-            auto table_status = catalog->getTable(schema_info.schema_id, table_name, table_info, &err_ctx);
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto schema_status = resolveObjectIdForQualifiedName(
+                table_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &err_ctx);
+            if (schema_status != core::Status::OK)
+            {
+                std::string err_msg = "Table '" + table_name + "' not found";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            auto table_status = catalog->getTable(table_id, table_info, &err_ctx);
             if (table_status != core::Status::OK)
             {
                 error("Table '" + table_name + "' not found");
@@ -25339,17 +25847,24 @@ namespace scratchbird
             // Get catalog manager
             auto* catalog = db_->catalog_manager();
 
-            // Look up table in PUBLIC schema
-            core::CatalogManager::SchemaInfo schema_info;
-            auto schema_status = catalog->getSchema("PUBLIC", schema_info, nullptr);
-            if (schema_status != core::Status::OK)
-            {
-                error("Failed to get schema PUBLIC");
-            }
-
             core::CatalogManager::TableInfo table_info;
             core::ErrorContext err_ctx;
-            auto table_status = catalog->getTable(schema_info.schema_id, object_name, table_info, &err_ctx);
+            core::ID table_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto schema_status = resolveObjectIdForQualifiedName(
+                object_name, core::CatalogManager::ObjectType::TABLE,
+                table_id, resolved_type, nullptr, &err_ctx);
+            if (schema_status != core::Status::OK)
+            {
+                std::string err_msg = "Table '" + object_name + "' not found";
+                if (!err_ctx.message.empty())
+                {
+                    err_msg += ": " + err_ctx.message;
+                }
+                error(err_msg);
+            }
+
+            auto table_status = catalog->getTable(table_id, table_info, &err_ctx);
             if (table_status != core::Status::OK)
             {
                 error("Table '" + object_name + "' not found");
@@ -25374,7 +25889,17 @@ namespace scratchbird
             current_result_set_->addColumn("Value", core::DataType::VARCHAR);
 
             current_result_set_->addRow({Value::makeVarchar("Table Name"), Value::makeVarchar(table_info.table_name)});
-            current_result_set_->addRow({Value::makeVarchar("Schema"), Value::makeVarchar("PUBLIC")});
+            std::string schema_path;
+            std::string display_schema = "root";
+            if (catalog->getSchemaPath(table_info.schema_id, schema_path, &err_ctx) == core::Status::OK)
+            {
+                display_schema = stripRootPrefixForDisplay(schema_path);
+                if (display_schema.empty())
+                {
+                    display_schema = schema_path.empty() ? "root" : schema_path;
+                }
+            }
+            current_result_set_->addRow({Value::makeVarchar("Schema"), Value::makeVarchar(display_schema)});
             current_result_set_->addRow({Value::makeVarchar("Column Count"), Value::makeVarchar(std::to_string(columns.size()))});
 
             // Add column info
@@ -25438,46 +25963,75 @@ namespace scratchbird
             core::ErrorContext err_ctx;
 
             core::CatalogManager::TriggerInfo trigger_info;
-            auto status = catalog->getTriggerByName(object_name, trigger_info, &err_ctx);
+            core::ObjectPath name_path;
+            auto path_status = buildObjectPathFromName(object_name, name_path, &err_ctx);
+            if (path_status != core::Status::OK)
+            {
+                error("Trigger '" + object_name + "' not found");
+            }
+
+            core::ID trigger_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                object_name, core::CatalogManager::ObjectType::TRIGGER,
+                trigger_id, resolved_type, nullptr, &err_ctx);
             if (status != core::Status::OK)
             {
-                core::CatalogManager::DatabaseTriggerInfo db_trigger;
-                status = catalog->getDatabaseTriggerByName(object_name, db_trigger, &err_ctx);
-                if (status != core::Status::OK)
+                if (status == core::Status::NOT_FOUND &&
+                    name_path.type == core::PathType::UNQUALIFIED &&
+                    name_path.components.size() == 1)
                 {
-                    error("Trigger '" + object_name + "' not found");
+                    core::CatalogManager::DatabaseTriggerInfo db_trigger;
+                    status = catalog->getDatabaseTriggerByName(object_name, db_trigger, &err_ctx);
+                    if (status != core::Status::OK)
+                    {
+                        error("Trigger '" + object_name + "' not found");
+                    }
+
+                    if (!current_result_set_)
+                    {
+                        current_result_set_ = std::make_unique<ResultSet>();
+                    }
+                    current_result_set_->addColumn("Property", core::DataType::VARCHAR);
+                    current_result_set_->addColumn("Value", core::DataType::VARCHAR);
+
+                    current_result_set_->addRow({Value::makeVarchar("Trigger Name"),
+                                                 Value::makeVarchar(db_trigger.trigger_name)});
+                    current_result_set_->addRow({Value::makeVarchar("Scope"),
+                                                 Value::makeVarchar("DATABASE")});
+                    current_result_set_->addRow({Value::makeVarchar("Event"),
+                                                 Value::makeVarchar(dbTriggerEventToString(db_trigger.event))});
+                    current_result_set_->addRow({Value::makeVarchar("Position"),
+                                                 Value::makeVarchar(std::to_string(db_trigger.position))});
+                    current_result_set_->addRow({Value::makeVarchar("Active"),
+                                                 Value::makeVarchar(db_trigger.active ? "YES" : "NO")});
+                    current_result_set_->addRow({Value::makeVarchar("Procedure"),
+                                                 Value::makeVarchar(db_trigger.procedure_name)});
+                    current_result_set_->addRow({Value::makeVarchar("Body"),
+                                                 Value::makeVarchar("Redacted")});
+
+                    std::string comment;
+                    if (catalog->getComment(db_trigger.trigger_id, comment, &err_ctx) == core::Status::OK)
+                    {
+                        current_result_set_->addRow({Value::makeVarchar("Comment"),
+                                                     Value::makeVarchar(comment)});
+                    }
+
+                    return;
                 }
 
-                if (!current_result_set_)
+                std::string err_msg = "Trigger '" + object_name + "' not found";
+                if (!err_ctx.message.empty())
                 {
-                    current_result_set_ = std::make_unique<ResultSet>();
+                    err_msg += ": " + err_ctx.message;
                 }
-                current_result_set_->addColumn("Property", core::DataType::VARCHAR);
-                current_result_set_->addColumn("Value", core::DataType::VARCHAR);
+                error(err_msg);
+            }
 
-                current_result_set_->addRow({Value::makeVarchar("Trigger Name"),
-                                             Value::makeVarchar(db_trigger.trigger_name)});
-                current_result_set_->addRow({Value::makeVarchar("Scope"),
-                                             Value::makeVarchar("DATABASE")});
-                current_result_set_->addRow({Value::makeVarchar("Event"),
-                                             Value::makeVarchar(dbTriggerEventToString(db_trigger.event))});
-                current_result_set_->addRow({Value::makeVarchar("Position"),
-                                             Value::makeVarchar(std::to_string(db_trigger.position))});
-                current_result_set_->addRow({Value::makeVarchar("Active"),
-                                             Value::makeVarchar(db_trigger.active ? "YES" : "NO")});
-                current_result_set_->addRow({Value::makeVarchar("Procedure"),
-                                             Value::makeVarchar(db_trigger.procedure_name)});
-                current_result_set_->addRow({Value::makeVarchar("Body"),
-                                             Value::makeVarchar("Redacted")});
-
-                std::string comment;
-                if (catalog->getComment(db_trigger.trigger_id, comment, &err_ctx) == core::Status::OK)
-                {
-                    current_result_set_->addRow({Value::makeVarchar("Comment"),
-                                                 Value::makeVarchar(comment)});
-                }
-
-                return;
+            status = catalog->getTrigger(trigger_id, trigger_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                error("Trigger '" + object_name + "' not found");
             }
 
             if (!current_result_set_)
@@ -25545,18 +26099,10 @@ namespace scratchbird
 
             auto* catalog = db_->catalog_manager();
             core::ErrorContext err_ctx;
-            core::ID schema_id;
-            std::string resolved_name;
-            auto schema_status = resolveSchemaIdForQualifiedName(object_name, resolved_name,
-                                                                 schema_id, &err_ctx);
-            if (schema_status != core::Status::OK)
-            {
-                error("Procedure '" + object_name + "' not found");
-            }
 
             core::CatalogManager::ProcedureInfo proc_info;
-            auto status = catalog->getProcedure(resolved_name, proc_info, &err_ctx);
-            if (status != core::Status::OK || proc_info.schema_id != schema_id)
+            auto status = catalog->getProcedure(object_name, proc_info, &err_ctx);
+            if (status != core::Status::OK)
             {
                 error("Procedure '" + object_name + "' not found");
             }
@@ -25570,7 +26116,7 @@ namespace scratchbird
             current_result_set_->addColumn("Value", core::DataType::VARCHAR);
 
             std::string schema_path;
-            if (catalog->getSchemaPath(schema_id, schema_path, &err_ctx) != core::Status::OK)
+            if (catalog->getSchemaPath(proc_info.schema_id, schema_path, &err_ctx) != core::Status::OK)
             {
                 schema_path.clear();
             }
@@ -25613,18 +26159,10 @@ namespace scratchbird
 
             auto* catalog = db_->catalog_manager();
             core::ErrorContext err_ctx;
-            core::ID schema_id;
-            std::string resolved_name;
-            auto schema_status = resolveSchemaIdForQualifiedName(object_name, resolved_name,
-                                                                 schema_id, &err_ctx);
-            if (schema_status != core::Status::OK)
-            {
-                error("Function '" + object_name + "' not found");
-            }
 
             core::CatalogManager::FunctionInfo func_info;
-            auto status = catalog->getFunction(resolved_name, func_info, &err_ctx);
-            if (status != core::Status::OK || func_info.schema_id != schema_id)
+            auto status = catalog->getFunction(object_name, func_info, &err_ctx);
+            if (status != core::Status::OK)
             {
                 error("Function '" + object_name + "' not found");
             }
@@ -25638,7 +26176,7 @@ namespace scratchbird
             current_result_set_->addColumn("Value", core::DataType::VARCHAR);
 
             std::string schema_path;
-            if (catalog->getSchemaPath(schema_id, schema_path, &err_ctx) != core::Status::OK)
+            if (catalog->getSchemaPath(func_info.schema_id, schema_path, &err_ctx) != core::Status::OK)
             {
                 schema_path.clear();
             }
@@ -25685,15 +26223,16 @@ namespace scratchbird
 
             core::CatalogManager::ViewInfo view_info;
             core::ErrorContext err_ctx;
-            core::ID schema_id;
-            std::string resolved_name;
-            auto schema_status = resolveSchemaIdForQualifiedName(object_name, resolved_name,
-                                                                 schema_id, &err_ctx);
+            core::ID view_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto schema_status = resolveObjectIdForQualifiedName(
+                object_name, core::CatalogManager::ObjectType::VIEW,
+                view_id, resolved_type, nullptr, &err_ctx);
             if (schema_status != core::Status::OK)
             {
                 error("View '" + object_name + "' not found");
             }
-            auto view_status = catalog->getView(schema_id, resolved_name, view_info, &err_ctx);
+            auto view_status = catalog->getViewById(view_id, view_info, &err_ctx);
             if (view_status != core::Status::OK)
             {
                 error("View '" + object_name + "' not found");
@@ -25709,7 +26248,7 @@ namespace scratchbird
             current_result_set_->addColumn("Value", core::DataType::VARCHAR);
 
             std::string schema_path;
-            if (catalog->getSchemaPath(schema_id, schema_path, &err_ctx) != core::Status::OK)
+            if (catalog->getSchemaPath(view_info.schema_id, schema_path, &err_ctx) != core::Status::OK)
             {
                 schema_path.clear();
             }
@@ -25753,25 +26292,11 @@ namespace scratchbird
             }
 
             core::ErrorContext err_ctx;
-            core::ObjectPath path;
-            path.type = core::PathType::UNQUALIFIED;
-            path.components.push_back(object_name);
-
-            core::CatalogManager::ResolveOptions opts;
-            if (conn_ctx_)
-            {
-                opts.dialect_tag = conn_ctx_->dialect_tag();
-            }
-
             core::ID domain_id;
             core::CatalogManager::ObjectType resolved_type;
-            auto resolve_status = catalog->resolveObjectPath(
-                path,
-                core::CatalogManager::ObjectType::DOMAIN,
-                opts,
-                domain_id,
-                resolved_type,
-                &err_ctx);
+            auto resolve_status = resolveObjectIdForQualifiedName(
+                object_name, core::CatalogManager::ObjectType::DOMAIN,
+                domain_id, resolved_type, nullptr, &err_ctx);
             if (resolve_status != core::Status::OK)
             {
                 error("Domain '" + object_name + "' not found");
@@ -26005,15 +26530,18 @@ namespace scratchbird
             // Look up sequence (generator is Firebird terminology for sequence)
             core::CatalogManager::SequenceInfo seq_info;
             core::ErrorContext err_ctx;
-            core::ID schema_id;
-            std::string resolved_name;
-            auto schema_status = resolveSchemaIdForQualifiedName(object_name, resolved_name,
-                                                                 schema_id, &err_ctx);
+            core::ID sequence_id;
+            core::CatalogManager::ObjectType resolved_type;
+            core::CatalogManager::ResolvedObject resolved_seq;
+            auto schema_status = resolveObjectIdForQualifiedName(
+                object_name, core::CatalogManager::ObjectType::SEQUENCE,
+                sequence_id, resolved_type, &resolved_seq, &err_ctx);
             if (schema_status != core::Status::OK)
             {
                 error("Generator/Sequence '" + object_name + "' not found");
             }
-            auto seq_status = catalog->getSequence(schema_id, resolved_name, seq_info, &err_ctx);
+            auto seq_status = catalog->getSequence(resolved_seq.schema_id, resolved_seq.object_name,
+                                                    seq_info, &err_ctx);
             if (seq_status != core::Status::OK)
             {
                 error("Generator/Sequence '" + object_name + "' not found");
@@ -26086,7 +26614,17 @@ namespace scratchbird
                 // Show specific schema
                 core::CatalogManager::SchemaInfo schema_info;
                 core::ErrorContext err_ctx;
-                auto status = catalog->getSchema(object_name, schema_info, &err_ctx);
+                core::ID schema_id;
+                core::CatalogManager::ObjectType resolved_type;
+                auto status = resolveObjectIdForQualifiedName(
+                    object_name, core::CatalogManager::ObjectType::SCHEMA,
+                    schema_id, resolved_type, nullptr, &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    error("Schema '" + object_name + "' not found");
+                }
+
+                status = catalog->getSchema(schema_id, schema_info, &err_ctx);
                 if (status != core::Status::OK)
                 {
                     error("Schema '" + object_name + "' not found");
@@ -26314,25 +26852,11 @@ namespace scratchbird
 
             if (!object_name.empty())
             {
-                core::ObjectPath path;
-                path.type = core::PathType::UNQUALIFIED;
-                path.components.push_back(object_name);
-
-                core::CatalogManager::ResolveOptions opts;
-                if (conn_ctx_)
-                {
-                    opts.dialect_tag = conn_ctx_->dialect_tag();
-                }
-
                 core::ID object_id;
                 core::CatalogManager::ObjectType resolved_type;
-                auto status = catalog->resolveObjectPath(
-                    path,
-                    core::CatalogManager::ObjectType::UNKNOWN,
-                    opts,
-                    object_id,
-                    resolved_type,
-                    &err_ctx);
+                auto status = resolveObjectIdForQualifiedName(
+                    object_name, core::CatalogManager::ObjectType::UNKNOWN,
+                    object_id, resolved_type, nullptr, &err_ctx);
                 if (status != core::Status::OK)
                 {
                     error("Object '" + object_name + "' not found");
@@ -26572,17 +27096,18 @@ namespace scratchbird
 
             if (!object_name.empty())
             {
-                core::ID schema_id;
-                std::string resolved_name;
-                auto schema_status = resolveSchemaIdForQualifiedName(object_name, resolved_name,
-                                                                     schema_id, &err_ctx);
+                core::ID table_id;
+                core::CatalogManager::ObjectType resolved_type;
+                auto schema_status = resolveObjectIdForQualifiedName(
+                    object_name, core::CatalogManager::ObjectType::TABLE,
+                    table_id, resolved_type, nullptr, &err_ctx);
                 if (schema_status != core::Status::OK)
                 {
                     error("Table '" + object_name + "' not found");
                 }
 
                 core::CatalogManager::TableInfo table_info;
-                if (catalog->getTable(schema_id, resolved_name, table_info, &err_ctx) != core::Status::OK)
+                if (catalog->getTable(table_id, table_info, &err_ctx) != core::Status::OK)
                 {
                     error("Table '" + object_name + "' not found");
                 }
@@ -26756,76 +27281,64 @@ namespace scratchbird
                                       core::CatalogManager::ObjectType& type_out) -> core::Status {
                 object_id_out = core::ID{};
                 type_out = core::CatalogManager::ObjectType::UNKNOWN;
-
-                core::ID schema_id;
-                std::string resolved_name;
-                auto schema_status = resolveSchemaIdForQualifiedName(name, resolved_name,
-                                                                     schema_id, &err_ctx);
-                if (schema_status != core::Status::OK)
-                {
-                    return schema_status;
-                }
-
-                int matches = 0;
-                auto set_match = [&](const core::ID& id, core::CatalogManager::ObjectType type) {
-                    if (matches == 0)
-                    {
-                        object_id_out = id;
-                        type_out = type;
-                    }
-                    ++matches;
+                const std::array<core::CatalogManager::ObjectType, 8> candidates = {
+                    core::CatalogManager::ObjectType::TABLE,
+                    core::CatalogManager::ObjectType::VIEW,
+                    core::CatalogManager::ObjectType::SEQUENCE,
+                    core::CatalogManager::ObjectType::FUNCTION,
+                    core::CatalogManager::ObjectType::PROCEDURE,
+                    core::CatalogManager::ObjectType::PACKAGE,
+                    core::CatalogManager::ObjectType::TRIGGER,
+                    core::CatalogManager::ObjectType::SCHEMA
                 };
 
-                core::CatalogManager::TableInfo table_info;
-                if (catalog->getTable(schema_id, resolved_name, table_info, &err_ctx) == core::Status::OK)
+                int matches = 0;
+                core::ID found_id{};
+                core::CatalogManager::ObjectType found_type = core::CatalogManager::ObjectType::UNKNOWN;
+
+                for (auto candidate : candidates)
                 {
-                    set_match(table_info.table_id, core::CatalogManager::ObjectType::TABLE);
-                }
-                core::CatalogManager::ViewInfo view_info;
-                if (catalog->getView(schema_id, resolved_name, view_info, &err_ctx) == core::Status::OK)
-                {
-                    set_match(view_info.view_id, core::CatalogManager::ObjectType::VIEW);
-                }
-                core::CatalogManager::SequenceInfo seq_info;
-                if (catalog->getSequence(schema_id, resolved_name, seq_info, &err_ctx) == core::Status::OK)
-                {
-                    set_match(seq_info.sequence_id, core::CatalogManager::ObjectType::SEQUENCE);
-                }
-                core::CatalogManager::FunctionInfo func_info;
-                if (catalog->getFunction(resolved_name, func_info, &err_ctx) == core::Status::OK &&
-                    func_info.schema_id == schema_id)
-                {
-                    set_match(func_info.function_id, core::CatalogManager::ObjectType::FUNCTION);
-                }
-                core::CatalogManager::ProcedureInfo proc_info;
-                if (catalog->getProcedure(resolved_name, proc_info, &err_ctx) == core::Status::OK &&
-                    proc_info.schema_id == schema_id)
-                {
-                    set_match(proc_info.procedure_id, core::CatalogManager::ObjectType::PROCEDURE);
-                }
-                core::CatalogManager::PackageInfo pkg_info;
-                if (catalog->getPackageByName(schema_id, resolved_name, pkg_info, &err_ctx) == core::Status::OK)
-                {
-                    set_match(pkg_info.package_id, core::CatalogManager::ObjectType::PACKAGE);
-                }
-                core::CatalogManager::TriggerInfo trig_info;
-                if (catalog->getTriggerByName(resolved_name, trig_info, &err_ctx) == core::Status::OK)
-                {
-                    set_match(trig_info.trigger_id, core::CatalogManager::ObjectType::TRIGGER);
-                }
-                core::CatalogManager::DatabaseTriggerInfo db_trig_info;
-                if (catalog->getDatabaseTriggerByName(resolved_name, db_trig_info, &err_ctx) == core::Status::OK)
-                {
-                    set_match(db_trig_info.trigger_id, core::CatalogManager::ObjectType::TRIGGER);
-                }
-                core::CatalogManager::SchemaInfo schema_info;
-                if (catalog->getSchema(resolved_name, schema_info, &err_ctx) == core::Status::OK)
-                {
-                    set_match(schema_info.schema_id, core::CatalogManager::ObjectType::SCHEMA);
+                    core::ID candidate_id;
+                    core::CatalogManager::ObjectType resolved_type;
+                    core::ErrorContext type_ctx;
+                    auto status = resolveObjectIdForQualifiedName(
+                        name, candidate, candidate_id, resolved_type, nullptr, &type_ctx);
+                    if (status == core::Status::OK)
+                    {
+                        if (matches == 0)
+                        {
+                            found_id = candidate_id;
+                            found_type = candidate;
+                        }
+                        ++matches;
+                        continue;
+                    }
+                    if (status == core::Status::AMBIGUOUS_COLUMN)
+                    {
+                        SET_ERROR_CONTEXT(&err_ctx, status, "Ambiguous object name");
+                        return status;
+                    }
                 }
 
                 if (matches == 0)
                 {
+                    core::ObjectPath path;
+                    auto path_status = buildObjectPathFromName(name, path, &err_ctx);
+                    if (path_status != core::Status::OK)
+                    {
+                        return path_status;
+                    }
+                    if (path.type == core::PathType::UNQUALIFIED && path.components.size() == 1)
+                    {
+                        core::CatalogManager::DatabaseTriggerInfo db_trig_info;
+                        if (catalog->getDatabaseTriggerByName(name, db_trig_info, &err_ctx) == core::Status::OK)
+                        {
+                            object_id_out = db_trig_info.trigger_id;
+                            type_out = core::CatalogManager::ObjectType::TRIGGER;
+                            return core::Status::OK;
+                        }
+                    }
+
                     SET_ERROR_CONTEXT(&err_ctx, core::Status::NOT_FOUND, "Object not found");
                     return core::Status::NOT_FOUND;
                 }
@@ -26835,6 +27348,8 @@ namespace scratchbird
                     return core::Status::AMBIGUOUS_COLUMN;
                 }
 
+                object_id_out = found_id;
+                type_out = found_type;
                 return core::Status::OK;
             };
 
@@ -26920,76 +27435,64 @@ namespace scratchbird
                                       core::CatalogManager::ObjectType& type_out) -> core::Status {
                 object_id_out = core::ID{};
                 type_out = core::CatalogManager::ObjectType::UNKNOWN;
-
-                core::ID schema_id;
-                std::string resolved_name;
-                auto schema_status = resolveSchemaIdForQualifiedName(name, resolved_name,
-                                                                     schema_id, &err_ctx);
-                if (schema_status != core::Status::OK)
-                {
-                    return schema_status;
-                }
-
-                int matches = 0;
-                auto set_match = [&](const core::ID& id, core::CatalogManager::ObjectType type) {
-                    if (matches == 0)
-                    {
-                        object_id_out = id;
-                        type_out = type;
-                    }
-                    ++matches;
+                const std::array<core::CatalogManager::ObjectType, 8> candidates = {
+                    core::CatalogManager::ObjectType::TABLE,
+                    core::CatalogManager::ObjectType::VIEW,
+                    core::CatalogManager::ObjectType::SEQUENCE,
+                    core::CatalogManager::ObjectType::FUNCTION,
+                    core::CatalogManager::ObjectType::PROCEDURE,
+                    core::CatalogManager::ObjectType::PACKAGE,
+                    core::CatalogManager::ObjectType::TRIGGER,
+                    core::CatalogManager::ObjectType::SCHEMA
                 };
 
-                core::CatalogManager::TableInfo table_info;
-                if (catalog->getTable(schema_id, resolved_name, table_info, &err_ctx) == core::Status::OK)
+                int matches = 0;
+                core::ID found_id{};
+                core::CatalogManager::ObjectType found_type = core::CatalogManager::ObjectType::UNKNOWN;
+
+                for (auto candidate : candidates)
                 {
-                    set_match(table_info.table_id, core::CatalogManager::ObjectType::TABLE);
-                }
-                core::CatalogManager::ViewInfo view_info;
-                if (catalog->getView(schema_id, resolved_name, view_info, &err_ctx) == core::Status::OK)
-                {
-                    set_match(view_info.view_id, core::CatalogManager::ObjectType::VIEW);
-                }
-                core::CatalogManager::SequenceInfo seq_info;
-                if (catalog->getSequence(schema_id, resolved_name, seq_info, &err_ctx) == core::Status::OK)
-                {
-                    set_match(seq_info.sequence_id, core::CatalogManager::ObjectType::SEQUENCE);
-                }
-                core::CatalogManager::FunctionInfo func_info;
-                if (catalog->getFunction(resolved_name, func_info, &err_ctx) == core::Status::OK &&
-                    func_info.schema_id == schema_id)
-                {
-                    set_match(func_info.function_id, core::CatalogManager::ObjectType::FUNCTION);
-                }
-                core::CatalogManager::ProcedureInfo proc_info;
-                if (catalog->getProcedure(resolved_name, proc_info, &err_ctx) == core::Status::OK &&
-                    proc_info.schema_id == schema_id)
-                {
-                    set_match(proc_info.procedure_id, core::CatalogManager::ObjectType::PROCEDURE);
-                }
-                core::CatalogManager::PackageInfo pkg_info;
-                if (catalog->getPackageByName(schema_id, resolved_name, pkg_info, &err_ctx) == core::Status::OK)
-                {
-                    set_match(pkg_info.package_id, core::CatalogManager::ObjectType::PACKAGE);
-                }
-                core::CatalogManager::TriggerInfo trig_info;
-                if (catalog->getTriggerByName(resolved_name, trig_info, &err_ctx) == core::Status::OK)
-                {
-                    set_match(trig_info.trigger_id, core::CatalogManager::ObjectType::TRIGGER);
-                }
-                core::CatalogManager::DatabaseTriggerInfo db_trig_info;
-                if (catalog->getDatabaseTriggerByName(resolved_name, db_trig_info, &err_ctx) == core::Status::OK)
-                {
-                    set_match(db_trig_info.trigger_id, core::CatalogManager::ObjectType::TRIGGER);
-                }
-                core::CatalogManager::SchemaInfo schema_info;
-                if (catalog->getSchema(resolved_name, schema_info, &err_ctx) == core::Status::OK)
-                {
-                    set_match(schema_info.schema_id, core::CatalogManager::ObjectType::SCHEMA);
+                    core::ID candidate_id;
+                    core::CatalogManager::ObjectType resolved_type;
+                    core::ErrorContext type_ctx;
+                    auto status = resolveObjectIdForQualifiedName(
+                        name, candidate, candidate_id, resolved_type, nullptr, &type_ctx);
+                    if (status == core::Status::OK)
+                    {
+                        if (matches == 0)
+                        {
+                            found_id = candidate_id;
+                            found_type = candidate;
+                        }
+                        ++matches;
+                        continue;
+                    }
+                    if (status == core::Status::AMBIGUOUS_COLUMN)
+                    {
+                        SET_ERROR_CONTEXT(&err_ctx, status, "Ambiguous object name");
+                        return status;
+                    }
                 }
 
                 if (matches == 0)
                 {
+                    core::ObjectPath path;
+                    auto path_status = buildObjectPathFromName(name, path, &err_ctx);
+                    if (path_status != core::Status::OK)
+                    {
+                        return path_status;
+                    }
+                    if (path.type == core::PathType::UNQUALIFIED && path.components.size() == 1)
+                    {
+                        core::CatalogManager::DatabaseTriggerInfo db_trig_info;
+                        if (catalog->getDatabaseTriggerByName(name, db_trig_info, &err_ctx) == core::Status::OK)
+                        {
+                            object_id_out = db_trig_info.trigger_id;
+                            type_out = core::CatalogManager::ObjectType::TRIGGER;
+                            return core::Status::OK;
+                        }
+                    }
+
                     SET_ERROR_CONTEXT(&err_ctx, core::Status::NOT_FOUND, "Object not found");
                     return core::Status::NOT_FOUND;
                 }
@@ -26999,6 +27502,8 @@ namespace scratchbird
                     return core::Status::AMBIGUOUS_COLUMN;
                 }
 
+                object_id_out = found_id;
+                type_out = found_type;
                 return core::Status::OK;
             };
 
@@ -27037,15 +27542,15 @@ namespace scratchbird
                 core::ID object_id;
                 core::CatalogManager::ObjectType object_type;
                 auto status = resolve_object(object_name, object_id, object_type);
-            if (status != core::Status::OK)
-            {
-                std::string msg = "Object '" + object_name + "' not found";
-                if (!err_ctx.message.empty())
+                if (status != core::Status::OK)
                 {
-                    msg += ": " + err_ctx.message;
+                    std::string msg = "Object '" + object_name + "' not found";
+                    if (!err_ctx.message.empty())
+                    {
+                        msg += ": " + err_ctx.message;
+                    }
+                    error(msg);
                 }
-                error(msg);
-            }
 
                 status = catalog->getDependenciesFor(object_id, deps, &err_ctx);
                 if (status != core::Status::OK)
@@ -27076,17 +27581,18 @@ namespace scratchbird
 
             auto* catalog = db_->catalog_manager();
             core::ErrorContext err_ctx;
-            core::ID schema_id;
-            std::string resolved_name;
-            auto schema_status = resolveSchemaIdForQualifiedName(object_name, resolved_name,
-                                                                 schema_id, &err_ctx);
+            core::ID package_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto schema_status = resolveObjectIdForQualifiedName(
+                object_name, core::CatalogManager::ObjectType::PACKAGE,
+                package_id, resolved_type, nullptr, &err_ctx);
             if (schema_status != core::Status::OK)
             {
                 error("Package '" + object_name + "' not found");
             }
 
             core::CatalogManager::PackageInfo pkg_info;
-            auto status = catalog->getPackageByName(schema_id, resolved_name, pkg_info, &err_ctx);
+            auto status = catalog->getPackage(package_id, pkg_info, &err_ctx);
             if (status != core::Status::OK)
             {
                 error("Package '" + object_name + "' not found");
@@ -27101,7 +27607,7 @@ namespace scratchbird
             current_result_set_->addColumn("Value", core::DataType::VARCHAR);
 
             std::string schema_path;
-            if (catalog->getSchemaPath(schema_id, schema_path, &err_ctx) != core::Status::OK)
+            if (catalog->getSchemaPath(pkg_info.schema_id, schema_path, &err_ctx) != core::Status::OK)
             {
                 schema_path.clear();
             }
@@ -27515,25 +28021,12 @@ namespace scratchbird
                 return;
             }
 
-            core::ObjectPath path;
-            path.type = core::PathType::UNQUALIFIED;
-            path.components.push_back(object_name);
-
-            core::CatalogManager::ResolveOptions opts;
-            if (conn_ctx_)
-            {
-                opts.dialect_tag = conn_ctx_->dialect_tag();
-            }
-
             core::ID object_id;
             core::CatalogManager::ObjectType object_type;
             core::ErrorContext err_ctx;
-            auto status = catalog->resolveObjectPath(path,
-                                                     core::CatalogManager::ObjectType::UNKNOWN,
-                                                     opts,
-                                                     object_id,
-                                                     object_type,
-                                                     &err_ctx);
+            auto status = resolveObjectIdForQualifiedName(
+                object_name, core::CatalogManager::ObjectType::UNKNOWN,
+                object_id, object_type, nullptr, &err_ctx);
             if (status == core::Status::OK)
             {
                 core::CatalogManager::ResolvedObject resolved;
@@ -33231,10 +33724,10 @@ namespace scratchbird
                 if (!catalog) { return schema_id; }
                 core::CatalogManager::SchemaInfo schema_info;
                 core::ErrorContext ctx;
-                if (catalog->getSchema("PUBLIC", schema_info, &ctx) == core::Status::OK)
-                {
-                    schema_id = schema_info.schema_id;
-                }
+            if (catalog->getSchema("root", schema_info, &ctx) == core::Status::OK)
+            {
+                schema_id = schema_info.schema_id;
+            }
                 return schema_id;
             }
 
@@ -33294,7 +33787,7 @@ namespace scratchbird
             }
 
             std::string joinSchemaComponents(const std::vector<std::string>& components,
-                                             size_t start_index = 0)
+                                             size_t start_index)
             {
                 std::string joined;
                 for (size_t i = start_index; i < components.size(); ++i)
@@ -33545,6 +34038,139 @@ namespace scratchbird
                 return core::Status::OK;
             }
 
+            bool isTableScopedType(core::CatalogManager::ObjectType type)
+            {
+                switch (type)
+                {
+                    case core::CatalogManager::ObjectType::INDEX:
+                    case core::CatalogManager::ObjectType::TRIGGER:
+                    case core::CatalogManager::ObjectType::CONSTRAINT:
+                    case core::CatalogManager::ObjectType::COLUMN:
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+
+            bool resolveEmulatedRootPath(const core::ConnectionContext* conn_ctx,
+                                         std::string& root_path_out)
+            {
+                root_path_out.clear();
+                if (!conn_ctx)
+                {
+                    return false;
+                }
+
+                std::string dialect = scratchbird::core::IdentifierUtils::toUpper(
+                    conn_ctx->dialect_tag());
+                if (dialect.empty() || dialect == "SCRATCHBIRD")
+                {
+                    return false;
+                }
+
+                std::string expected_prefix = "REMOTE.EMULATED." + dialect;
+                const auto& paths = conn_ctx->search_path();
+                if (!paths.empty())
+                {
+                    std::string candidate = normalizeSchemaPath(paths.front());
+                    std::string candidate_upper =
+                        scratchbird::core::IdentifierUtils::toUpper(candidate);
+                    if (candidate_upper == expected_prefix ||
+                        candidate_upper.rfind(expected_prefix + ".", 0) == 0)
+                    {
+                        root_path_out = candidate;
+                    }
+                }
+
+                return true;
+            }
+
+            core::Status findFunctionById(core::CatalogManager* catalog,
+                                           const core::ID& function_id,
+                                           core::CatalogManager::FunctionInfo& info_out,
+                                           core::ErrorContext* ctx)
+            {
+                if (!catalog)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
+                                      "Catalog manager not available");
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                std::vector<core::CatalogManager::FunctionInfo> functions;
+                auto status = catalog->listFunctions(functions, ctx);
+                if (status != core::Status::OK)
+                {
+                    return status;
+                }
+
+                for (const auto& func : functions)
+                {
+                    if (func.function_id == function_id)
+                    {
+                        info_out = func;
+                        return core::Status::OK;
+                    }
+                }
+
+                SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND, "Function not found");
+                return core::Status::NOT_FOUND;
+            }
+
+            core::Status findProcedureById(core::CatalogManager* catalog,
+                                            const core::ID& procedure_id,
+                                            core::CatalogManager::ProcedureInfo& info_out,
+                                            core::ErrorContext* ctx)
+            {
+                if (!catalog)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
+                                      "Catalog manager not available");
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                std::vector<core::CatalogManager::ProcedureInfo> procedures;
+                auto status = catalog->listProcedures(procedures, ctx);
+                if (status != core::Status::OK)
+                {
+                    return status;
+                }
+
+                for (const auto& proc : procedures)
+                {
+                    if (proc.procedure_id == procedure_id)
+                    {
+                        info_out = proc;
+                        return core::Status::OK;
+                    }
+                }
+
+                SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND, "Procedure not found");
+                return core::Status::NOT_FOUND;
+            }
+
+            std::string stripRootPrefixForDisplay(const std::string& schema_path)
+            {
+                if (schema_path.empty())
+                {
+                    return schema_path;
+                }
+
+                size_t dot_pos = schema_path.find('.');
+                std::string first_component =
+                    dot_pos == std::string::npos ? schema_path : schema_path.substr(0, dot_pos);
+                if (core::IdentifierUtils::namesMatch(first_component, false /*search_delimited*/,
+                                                      "root", false /*stored_delimited*/))
+                {
+                    if (dot_pos == std::string::npos)
+                    {
+                        return std::string();
+                    }
+                    return schema_path.substr(dot_pos + 1);
+                }
+
+                return schema_path;
+            }
         } // namespace
 
         void Executor::executeCreateFunctionStatement()
@@ -33558,7 +34184,7 @@ namespace scratchbird
             core::ID schema_id;
             std::string resolved_function_name;
             auto schema_status = resolveSchemaIdForQualifiedName(function_name, resolved_function_name,
-                                                                 schema_id, &ctx);
+                                                                 schema_id, &ctx, false);
             if (schema_status != core::Status::OK)
             {
                 std::string err_msg = "Schema not found for function '" + function_name + "'";
@@ -33599,8 +34225,9 @@ namespace scratchbird
             info.function_id = core::generateUuidV7();
             info.schema_id = schema_id;
             info.name = resolved_function_name;
+            core::ErrorContext owner_ctx;
             info.owner_id = conn_ctx_ ? conn_ctx_->getCurrentUserId()
-                                      : core::SecurityConstants::makeSystemUserID();
+                                      : db_->catalog_manager()->getSystemUserId(&owner_ctx);
             info.parameters = params;
             info.return_type = decodeDataType(return_type_byte);
             info.return_type_precision = return_precision;
@@ -33652,7 +34279,7 @@ namespace scratchbird
             core::ID schema_id;
             std::string resolved_procedure_name;
             auto schema_status = resolveSchemaIdForQualifiedName(procedure_name, resolved_procedure_name,
-                                                                 schema_id, &ctx);
+                                                                 schema_id, &ctx, false);
             if (schema_status != core::Status::OK)
             {
                 std::string err_msg = "Schema not found for procedure '" + procedure_name + "'";
@@ -33689,8 +34316,9 @@ namespace scratchbird
             info.procedure_id = core::generateUuidV7();
             info.schema_id = schema_id;
             info.name = resolved_procedure_name;
+            core::ErrorContext owner_ctx;
             info.owner_id = conn_ctx_ ? conn_ctx_->getCurrentUserId()
-                                      : core::SecurityConstants::makeSystemUserID();
+                                      : db_->catalog_manager()->getSystemUserId(&owner_ctx);
             info.parameters = params;
             info.or_replace = or_replace;
             info.sql_security = decodeProcSqlSecurity(flags);
@@ -33741,7 +34369,7 @@ namespace scratchbird
             core::ID schema_id;
             std::string resolved_package_name;
             auto schema_status = resolveSchemaIdForQualifiedName(package_name, resolved_package_name,
-                                                                 schema_id, &ctx);
+                                                                 schema_id, &ctx, false);
             if (schema_status != core::Status::OK)
             {
                 std::string err_msg = "Schema not found for package '" + package_name + "'";
@@ -33816,22 +34444,24 @@ namespace scratchbird
             std::string function_name = readString();
 
             core::ErrorContext ctx;
-            core::ID schema_id;
-            std::string resolved_name;
-            auto status = resolveSchemaIdForQualifiedName(function_name, resolved_name, schema_id, &ctx);
+            core::ID function_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                function_name, core::CatalogManager::ObjectType::FUNCTION,
+                function_id, resolved_type, nullptr, &ctx, false);
             if (status != core::Status::OK)
             {
                 if (if_exists && status == core::Status::NOT_FOUND)
                 {
                     return;
                 }
-                std::string msg = "Schema not found for function '" + function_name + "'";
+                std::string msg = "Function not found: '" + function_name + "'";
                 if (!ctx.message.empty()) { msg += ": " + ctx.message; }
                 error(msg);
             }
 
             core::CatalogManager::FunctionInfo func_info;
-            status = db_->catalog_manager()->getFunction(resolved_name, func_info, &ctx);
+            status = findFunctionById(db_->catalog_manager(), function_id, func_info, &ctx);
             if (status != core::Status::OK)
             {
                 if (if_exists && status == core::Status::NOT_FOUND)
@@ -33843,16 +34473,7 @@ namespace scratchbird
                 error(msg);
             }
 
-            if (func_info.schema_id != schema_id)
-            {
-                if (if_exists)
-                {
-                    return;
-                }
-                error("Function not found: " + function_name);
-            }
-
-            status = db_->catalog_manager()->dropFunction(resolved_name, if_exists, &ctx);
+            status = db_->catalog_manager()->dropFunction(func_info.name, if_exists, &ctx);
             if (status != core::Status::OK && !(if_exists && status == core::Status::NOT_FOUND))
             {
                 std::string msg = "Failed to drop function '" + function_name + "'";
@@ -33868,22 +34489,24 @@ namespace scratchbird
             std::string procedure_name = readString();
 
             core::ErrorContext ctx;
-            core::ID schema_id;
-            std::string resolved_name;
-            auto status = resolveSchemaIdForQualifiedName(procedure_name, resolved_name, schema_id, &ctx);
+            core::ID procedure_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                procedure_name, core::CatalogManager::ObjectType::PROCEDURE,
+                procedure_id, resolved_type, nullptr, &ctx, false);
             if (status != core::Status::OK)
             {
                 if (if_exists && status == core::Status::NOT_FOUND)
                 {
                     return;
                 }
-                std::string msg = "Schema not found for procedure '" + procedure_name + "'";
+                std::string msg = "Procedure not found: '" + procedure_name + "'";
                 if (!ctx.message.empty()) { msg += ": " + ctx.message; }
                 error(msg);
             }
 
             core::CatalogManager::ProcedureInfo proc_info;
-            status = db_->catalog_manager()->getProcedure(resolved_name, proc_info, &ctx);
+            status = findProcedureById(db_->catalog_manager(), procedure_id, proc_info, &ctx);
             if (status != core::Status::OK)
             {
                 if (if_exists && status == core::Status::NOT_FOUND)
@@ -33895,16 +34518,7 @@ namespace scratchbird
                 error(msg);
             }
 
-            if (proc_info.schema_id != schema_id)
-            {
-                if (if_exists)
-                {
-                    return;
-                }
-                error("Procedure not found: " + procedure_name);
-            }
-
-            status = db_->catalog_manager()->dropProcedure(resolved_name, if_exists, &ctx);
+            status = db_->catalog_manager()->dropProcedure(proc_info.name, if_exists, &ctx);
             if (status != core::Status::OK && !(if_exists && status == core::Status::NOT_FOUND))
             {
                 std::string msg = "Failed to drop procedure '" + procedure_name + "'";
@@ -33921,24 +34535,26 @@ namespace scratchbird
 
             core::CatalogManager::PackageInfo pkg_info;
             core::ErrorContext ctx;
-            core::ID schema_id;
-            std::string resolved_name;
-            auto status = resolveSchemaIdForQualifiedName(package_name, resolved_name, schema_id, &ctx);
+            core::ID package_id;
+            core::CatalogManager::ObjectType resolved_type;
+            auto status = resolveObjectIdForQualifiedName(
+                package_name, core::CatalogManager::ObjectType::PACKAGE,
+                package_id, resolved_type, nullptr, &ctx, false);
             if (status != core::Status::OK)
             {
                 if (if_exists && status == core::Status::NOT_FOUND)
                 {
                     return;
                 }
-                std::string msg = "Schema not found for package '" + package_name + "'";
+                std::string msg = "Package not found: '" + package_name + "'";
                 if (!ctx.message.empty()) { msg += ": " + ctx.message; }
                 error(msg);
             }
 
-            status = db_->catalog_manager()->getPackageByName(schema_id, resolved_name, pkg_info, &ctx);
+            status = db_->catalog_manager()->getPackage(package_id, pkg_info, &ctx);
             if (status != core::Status::OK)
             {
-                if (if_exists)
+                if (if_exists && status == core::Status::NOT_FOUND)
                 {
                     return;
                 }

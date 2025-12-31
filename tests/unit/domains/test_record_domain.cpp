@@ -1,6 +1,7 @@
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "unit/test_user_helpers.h"
 #include <iostream>
 #include "gtest/gtest.h"
 #include <cstdio>
@@ -58,6 +59,7 @@ TEST_F(RecordDomainTest, Comprehensive) {
 
     // Create schema
     ID schema_id;
+    EnsureUser(catalog, "test_user");
     status = catalog->createSchema("test_schema", "test_user", schema_id, &ctx);
     ASSERT_EQ(status, Status::OK);
 
@@ -236,4 +238,3 @@ TEST_F(RecordDomainTest, Comprehensive) {
     std::cout << "\nNote: Field extraction from RECORD values (extractField)\n";
     std::cout << "requires TypedValue extension and is planned for future enhancement.\n";
 }
-

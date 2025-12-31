@@ -14,6 +14,8 @@
 #include "unit/test_user_helpers.h"
 
 #include <filesystem>
+#include <iomanip>
+#include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -127,6 +129,15 @@ bool readRenamePayload(const std::vector<uint8_t>& bytecode, size_t offset, Pars
     }
     out->flags = bytecode[offset++];
     out->object_type = static_cast<core::CatalogManager::ObjectType>(bytecode[offset++]);
+
+    // If has_uuid flag is set, skip the UUID (16 bytes)
+    if (out->flags & 0x01) {
+        if (offset + 16 > bytecode.size()) {
+            return false;
+        }
+        offset += 16;  // Skip UUID
+    }
+
     if (!readPath(bytecode, &offset, &out->path)) {
         return false;
     }
@@ -139,6 +150,15 @@ bool readMovePayload(const std::vector<uint8_t>& bytecode, size_t offset, Parsed
     }
     out->flags = bytecode[offset++];
     out->object_type = static_cast<core::CatalogManager::ObjectType>(bytecode[offset++]);
+
+    // If has_uuid flag is set, skip the UUID (16 bytes)
+    if (out->flags & 0x01) {
+        if (offset + 16 > bytecode.size()) {
+            return false;
+        }
+        offset += 16;  // Skip UUID
+    }
+
     if (!readPath(bytecode, &offset, &out->object_path)) {
         return false;
     }
@@ -177,6 +197,13 @@ protected:
 
         ASSERT_EQ(db_.connect(conn_, &ctx), core::Status::OK) << ctx.message;
         core::ConnectionContext::setCurrent(conn_.get());
+
+        // Set current user to test_user so schema resolution works
+        core::CatalogManager::UserInfo user_info;
+        ASSERT_EQ(catalog_->getUserByName("test_user", user_info, &ctx), core::Status::OK)
+            << ctx.message;
+        conn_->setCurrentUser(user_info.user_id, false);
+
         conn_->setCurrentSchemaId(test_schema_id_);
     }
 
@@ -207,8 +234,13 @@ protected:
         v2::SemanticAnalyzerV2 analyzer(*catalog_, parser.stringPool());
         analyzer.setCurrentSchema(test_schema_id_);
         auto sem_result = analyzer.analyze(parse_result.statement.get());
-        EXPECT_TRUE(sem_result.success()) << "Semantic analysis failed for: " << sql;
         if (!sem_result.success()) {
+            std::ostringstream oss;
+            oss << "Semantic analysis failed for: " << sql << "\nErrors: ";
+            for (const auto& err : sem_result.errors()) {
+                oss << err.message << "; ";
+            }
+            EXPECT_TRUE(false) << oss.str();
             return {};
         }
 
@@ -381,14 +413,35 @@ TEST_F(RenameMoveOpcodeDbTest, V2MoveTableEmitsExtendedOpcode) {
 
 TEST_F(RenameMoveOpcodeDbTest, FirebirdRenameColumnEmitsExtendedOpcode) {
     createTable("foo", {"bar"});
-    auto bytecode = compileFirebird("ALTER TABLE test.foo ALTER COLUMN bar TO baz");
-    ASSERT_FALSE(bytecode.empty());
+    // Use unqualified name since current schema is already set to "test"
+    auto bytecode = compileFirebird("ALTER TABLE foo ALTER COLUMN bar TO baz");
+    ASSERT_FALSE(bytecode.empty()) << "Bytecode is empty - compilation failed";
+
+    // Debug: print bytecode size and first few bytes
+    std::cout << "Bytecode size: " << bytecode.size() << "\n";
+    std::cout << "First 20 bytes: ";
+    for (size_t i = 0; i < std::min(size_t(20), bytecode.size()); ++i) {
+        std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(bytecode[i]) << " ";
+    }
+    std::cout << std::dec << "\n";
 
     size_t offset = 0;
     ASSERT_TRUE(readExtendedHeader(bytecode, sblr::ExtendedOpcode::EXT_RENAME_OBJECT, &offset));
 
+    std::cout << "Offset after readExtendedHeader: " << offset << "\n";
+    std::cout << "Payload bytes (offset " << offset << " to " << offset + 20 << "): ";
+    for (size_t i = offset; i < std::min(offset + 20, bytecode.size()); ++i) {
+        std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(bytecode[i]) << " ";
+    }
+    std::cout << std::dec << "\n";
+
     ParsedRename rename;
-    ASSERT_TRUE(readRenamePayload(bytecode, offset, &rename));
+    bool read_success = readRenamePayload(bytecode, offset, &rename);
+    std::cout << "readRenamePayload returned: " << (read_success ? "true" : "false") << "\n";
+    if (read_success) {
+        std::cout << "flags=" << static_cast<int>(rename.flags) << " object_type=" << static_cast<int>(rename.object_type) << "\n";
+    }
+    ASSERT_TRUE(read_success);
     EXPECT_TRUE(rename.flags & 0x01);
     EXPECT_FALSE(rename.flags & 0x02);
     EXPECT_EQ(rename.object_type, core::CatalogManager::ObjectType::COLUMN);
@@ -398,7 +451,18 @@ TEST_F(RenameMoveOpcodeDbTest, FirebirdRenameColumnEmitsExtendedOpcode) {
 }
 
 TEST_F(RenameMoveOpcodeDbTest, FirebirdRenameDomainEmitsExtendedOpcode) {
-    createDomain("my_domain");
+    // Firebird uppercases unquoted identifiers, so create domain with uppercase name
+    createDomain("MY_DOMAIN");
+
+    // Verify domain can be found
+    core::DomainInfo dinfo;
+    core::ErrorContext verify_ctx;
+    auto verify_status = catalog_->getDomainByName(test_schema_id_, "MY_DOMAIN", dinfo, &verify_ctx);
+    std::cout << "getDomainByName verification: " << (verify_status == core::Status::OK ? "OK" : "FAILED") << "\n";
+    if (verify_status != core::Status::OK) {
+        std::cout << "Verification error: " << verify_ctx.message << "\n";
+    }
+
     auto bytecode = compileFirebird("ALTER DOMAIN my_domain TO new_domain");
     ASSERT_FALSE(bytecode.empty());
 

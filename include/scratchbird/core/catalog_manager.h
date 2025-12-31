@@ -125,35 +125,9 @@ namespace scratchbird::core
     struct ObjectPath
     {
         PathType type = PathType::UNQUALIFIED;
+        bool no_search_path = false;  // True when !: disables search path
         std::vector<std::string> components;
     };
-
-    /**
-     * SecurityConstants - Well-known security object UUIDs
-     *
-     * Phase 1.2: Security System Bootstrap
-     * These constants define well-known UUIDs for core security objects
-     */
-    namespace SecurityConstants
-    {
-        // SYSTEM user UUID (well-known, contains "system" in ASCII at end)
-        // 00000000-0000-7000-8000-737973746d00
-        // Last 6 bytes: 73 79 73 74 6d 00 = "system\0" in ASCII
-        constexpr uint8_t SYSTEM_USER_UUID[16] = {
-            0x00, 0x00, 0x00, 0x00,  // time_low
-            0x00, 0x00,              // time_mid
-            0x70, 0x00,              // time_hi_and_version (version 7)
-            0x80, 0x00,              // clock_seq
-            0x73, 0x79, 0x73, 0x74, 0x6d, 0x00  // node: "system\0"
-        };
-
-        // Helper function to create SYSTEM user ID
-        inline ID makeSystemUserID() {
-            ID id;
-            std::memcpy(id.bytes.data(), SYSTEM_USER_UUID, 16);
-            return id;
-        }
-    }
 
     /**
      * MigrationPhase - Phases of ONLINE table migration
@@ -329,9 +303,11 @@ namespace scratchbird::core
      *
      * Reference: docs/specifications/character_sets_and_collations.md
      */
-    class CatalogManager
-    {
-    public:
+class CatalogManager
+{
+public:
+        using CatalogMutex = std::recursive_mutex;
+
         // Schema types for hierarchical namespace (Phase B - Schema Architecture)
         enum class SchemaType : uint8_t
         {
@@ -622,7 +598,7 @@ namespace scratchbird::core
             ID dependency_id;                      // Dependency: index → table (AUTO)
 
             // Plan 01 Task E: Shadow index rebuild + versioning
-            ID logical_index_id;                   // Stable ID across rebuilds (derived from table_id + index_name)
+            ID logical_index_id;                   // Stable logical index UUID across rebuilds
             uint8_t state = 1;                     // 0=BUILDING, 1=ACTIVE, 2=RETIRED, 3=FAILED (default ACTIVE)
             uint64_t valid_from_xid = 0;           // XID when new txns can use this index (0 = immediately)
             uint64_t retired_xid = 0;              // XID after which no new txns use this index (0 = not retired)
@@ -767,6 +743,7 @@ namespace scratchbird::core
         {
             ID constraint_id;                  // Unique constraint ID
             std::string constraint_name;       // Constraint name (may be system-generated)
+            bool name_is_delimited = false;    // True if name was double-quoted (case-sensitive)
             ID table_id;                       // Table this constraint applies to
             ConstraintType constraint_type;    // Type of constraint
 
@@ -1177,6 +1154,7 @@ namespace scratchbird::core
             ID udr_id;
             ID schema_id;
             std::string udr_name;
+            bool name_is_delimited = false;    // True if name was double-quoted (case-sensitive)
             ID owner_id;
             std::string library_path;
             std::string entry_point;
@@ -1192,6 +1170,7 @@ namespace scratchbird::core
             ID package_id;
             ID schema_id;
             std::string package_name;
+            bool name_is_delimited = false;    // True if name was double-quoted (case-sensitive)
             ID owner_id;
             std::string package_header;  // Stored in TOAST on disk
             std::string package_body;    // Stored in TOAST on disk
@@ -1210,7 +1189,8 @@ namespace scratchbird::core
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
             uint8_t is_valid = 1;
-            uint8_t padding[7]{};
+            uint8_t name_is_delimited = 0;   // True if name was double-quoted (case-sensitive)
+            uint8_t padding[6]{};
         };
 
         // Exception information (Phase 3 - Stored Code Tables)
@@ -1219,6 +1199,7 @@ namespace scratchbird::core
             ID exception_id;                 // UUID v7
             ID schema_id;                    // Schema containing the exception
             std::string name;                // Exception name
+            bool name_is_delimited = false;  // True if name was double-quoted (case-sensitive)
             std::string message;             // Exception message text
             ID owner_id;                     // Owner user UUID
             uint64_t created_time = 0;
@@ -1283,6 +1264,7 @@ namespace scratchbird::core
             ID synonym_id;                    // UUID v7
             ID schema_id;                     // Schema containing the synonym
             std::string synonym_name;         // Local name for the synonym
+            bool name_is_delimited = false;   // True if name was double-quoted (case-sensitive)
             std::string target_path;          // Full dotted path to target object
             ObjectType target_type;           // TABLE, VIEW, SEQUENCE, PROCEDURE, FUNCTION, etc.
             ID owner_id;
@@ -1314,6 +1296,7 @@ namespace scratchbird::core
             ID foreign_table_id;             // UUID v7
             ID schema_id;                    // Local schema
             std::string table_name;          // Local table name
+            bool name_is_delimited = false;  // True if name was double-quoted (case-sensitive)
             ID foreign_server_id;            // References ForeignServerInfo
             std::string remote_schema;       // Remote schema name
             std::string remote_table;        // Remote table name
@@ -1566,7 +1549,7 @@ namespace scratchbird::core
 
         // ===== Plan 01 Task E: Shadow index rebuild + versioning =====
 
-        // Generate stable logical index ID from table_id + index_name
+        // Resolve existing logical index ID or generate a new UUIDv7
         auto generateLogicalIndexId(const ID &table_id, const std::string &index_name) -> ID;
 
         // Get the visible index version for a transaction XID
@@ -1967,6 +1950,7 @@ namespace scratchbird::core
         {
             bool allow_ambiguity = false;
             bool follow_synonyms = false;
+            bool allow_search_path = true;
             std::string dialect_tag = "scratchbird";
         };
 
@@ -2216,6 +2200,8 @@ namespace scratchbird::core
         auto createUser(const std::string& username, const std::string& password_hash,
                        const ID& default_schema_id, bool is_superuser,
                        ID& user_id_out, ErrorContext* ctx = nullptr) -> Status;
+
+        auto getSystemUserId(ErrorContext* ctx = nullptr) -> ID;
 
         auto getUser(const ID& user_id, UserInfo& user_out,
                     ErrorContext* ctx = nullptr) -> Status;
@@ -3060,12 +3046,12 @@ namespace scratchbird::core
         // Catalog statistics
         auto schemaCount() const -> uint32_t
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             return schema_count_;
         }
         auto tableCount() const -> uint32_t
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<CatalogMutex> lock(mutex_);
             return table_count_;
         }
 
@@ -3311,10 +3297,15 @@ namespace scratchbird::core
         // Internal unlocked version of getUserByName - caller must hold mutex_
         auto getUserByNameUnlocked(const std::string& username, UserInfo& user_out,
                                    ErrorContext* ctx) -> Status;
+        auto getSystemUserIdUnlocked(ErrorContext* ctx) -> ID;
 
         // Internal unlocked version of dropIndex - caller must hold mutex_
         // Used by dropTable to avoid deadlock
         auto dropIndexInternal(const ID &index_id, ErrorContext *ctx) -> Status;
+
+        // Internal logical index ID resolver/generator - caller must hold mutex_
+        auto generateLogicalIndexIdUnlocked(const ID &table_id,
+                                            const std::string &index_name) -> ID;
 
         // WP-2 CAT-M3: Extract column references from expression bytecode
         static void extractColumnRefsFromBytecode(const std::vector<uint8_t>& bytecode,
@@ -3326,6 +3317,12 @@ namespace scratchbird::core
         struct DependencyFilter {
             std::vector<DependencyInfo> owned;      // Auto-drop (indexes, triggers, etc.)
             std::vector<DependencyInfo> blocking;   // Error if exist (views, FKs, etc.)
+        };
+
+        // Resolved dependency name for error reporting (name resolution happens elsewhere)
+        struct DependencyName {
+            ObjectType dependent_type;
+            std::string dependent_name;
         };
 
         // Convert ObjectType enum to user-friendly string
@@ -3340,14 +3337,61 @@ namespace scratchbird::core
                                const std::vector<DependencyInfo>& all_deps,
                                ErrorContext* ctx) -> DependencyFilter;
 
+        // Resolve dependent object names for error reporting (call outside object-type locks).
+        void resolveDependencyNames(const std::vector<DependencyInfo>& deps,
+                                    std::vector<DependencyName>& names_out,
+                                    ErrorContext* ctx);
+
         // Build detailed error message for blocked DROP operations
         auto buildDependencyErrorMessage(const std::string& object_name,
                                         ObjectType object_type,
-                                        const std::vector<DependencyInfo>& blocking_deps,
-                                        ErrorContext* ctx) -> std::string;
+                                        const std::vector<DependencyName>& blocking_deps) -> std::string;
+
+    private:
+        // Internal helpers (assume locks already held by caller)
+        // These functions do NOT acquire locks - caller must hold appropriate mutexes
+        void getDependentsInternal(const ID& object_id,
+                                   std::vector<DependencyInfo>& dependents_out);
+
+        void clearDependenciesForInternal(const ID& dependent_object_id,
+                                         ErrorContext* ctx);
+
+        auto getObjectNameInternal(const ID& object_id, ObjectType type,
+                                   ErrorContext* ctx) -> std::string;
+
+        void resolveDependencyNamesInternal(const std::vector<DependencyInfo>& deps,
+                                           std::vector<DependencyName>& names_out,
+                                           ErrorContext* ctx);
+
+        void getDependenciesForInternal(const ID& object_id,
+                                       std::vector<DependencyInfo>& dependencies_out);
+
+        auto createDependencyInternal(const ID& dependent_object_id, ObjectType dependent_type,
+                                     const ID& referenced_object_id, ObjectType referenced_type,
+                                     DependencyType dep_type, ID& dependency_id,
+                                     ErrorContext* ctx) -> Status;
+
+        auto dropSequenceInternal(const ID& sequence_id, ErrorContext* ctx) -> Status;
+
+        // Internal trigger helpers (assume trigger_mutex_ already held)
+        auto getTriggerInternal(const ID& trigger_id, TriggerInfo& info, ErrorContext* ctx) -> Status;
+        auto dropTriggerInternal(const std::string& trigger_name, ErrorContext* ctx) -> Status;
+
+        // Internal FK/constraint helpers (assume appropriate mutexes already held)
+        auto deleteDependencyInternal(const ID& dependency_id, ErrorContext* ctx) -> Status;
+        auto dropForeignKeyInternal(const ID& fk_id, ErrorContext* ctx) -> Status;
+        auto dropConstraintInternal(const ID& constraint_id, ErrorContext* ctx) -> Status;
+        auto getConstraintInternal(const ID& constraint_id, ConstraintInfo& constraint_out,
+                                  ErrorContext* ctx) -> Status;
+
+        // Internal sequence helpers (assume sequence_cache_mutex_ already held)
+        auto getSequenceIdByNameInternal(const ID& schema_id, const std::string& name,
+                                        ID& id_out, ErrorContext* ctx) -> Status;
+        auto getSequenceInternal(const ID& schema_id, const std::string& name,
+                                SequenceInfo& info_out, ErrorContext* ctx) -> Status;
 
         Database *db_;
-        mutable std::mutex mutex_;
+        mutable CatalogMutex mutex_;
 
         // TRUNCATE TABLE async job tracking (ALPHA Phase 1 - DDL Modifications)
         std::unordered_map<uint64_t, std::shared_ptr<TruncateJob>> truncate_jobs_;
@@ -3389,8 +3433,11 @@ namespace scratchbird::core
         std::unordered_map<ID, PolicyInfo> policy_cache_;  // policy_id -> PolicyInfo
         std::mutex policy_cache_mutex_;
 
+        // Cached SYSTEM user UUID (resolved from users table)
+        ID system_user_id_{};
+
         // TOAST table ID for policy expressions (Phase 3.4.8 - TOAST Persistence)
-        ID policy_toast_table_id_;  // UUID for sb_toast_policy table
+        ID policy_toast_table_id_{};  // UUID for sb_toast_policy table
         std::unique_ptr<ToastManager> policy_toast_manager_;  // TOAST manager for policy expressions
 
         // Object permissions cache (Phase 3.1 - SQL Object Permissions)
@@ -3446,12 +3493,13 @@ namespace scratchbird::core
         // Internal helper methods (assume mutex_ is already held by caller)
         auto createSchemaInternal(const std::string &schema_name, const std::string &owner,
                                   ID &schema_id, const ID &parent_schema_id = ID(),
-                                  ErrorContext *ctx = nullptr) -> Status;
+                                  ErrorContext *ctx = nullptr,
+                                  const std::optional<ID> &forced_schema_id = std::nullopt) -> Status;
 
         // Helper to resolve owner name to UUID (Phase 5.1 - Owner UUID References)
         // For ALPHA: Returns system UUID for "system" and zero UUID for others
         // TODO Phase 6: Implement full user lookup from Users table
-        auto resolveOwnerUUID(const std::string &owner_name) -> ID;
+        auto resolveOwnerUUID(const std::string &owner_name, ErrorContext* ctx) -> ID;
 
         // Note: storeStringInToast and loadStringFromToast are in public section (OPT-1/OPT-2, WP-5 EXEC-M6)
 
@@ -3889,7 +3937,8 @@ namespace scratchbird::core
                                  std::function<void(const RecordType &, InfoType &)> converter,
                                  ErrorContext *ctx) -> Status;
 
-        // Specific write/read methods using the generic helpers
+    public:
+        // Specific write/read methods using the generic helpers (public for testing)
         auto writeSchemaRecord(const SchemaInfo &schema, ErrorContext *ctx) -> Status;
         auto deleteSchemaRecord(const ID &schema_id, ErrorContext *ctx) -> Status;  // Phase A CRUD
         auto readSchemaRecords(ErrorContext *ctx) -> Status;

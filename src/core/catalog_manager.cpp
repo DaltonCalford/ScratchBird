@@ -18926,10 +18926,19 @@ auto CatalogManager::getObjectNameInternal(const ID& object_id, ObjectType type,
         }
 
         case ObjectType::CONSTRAINT: {
-            ConstraintInfo info;
-            if (getConstraint(object_id, info, ctx) == Status::OK) {
-                return info.constraint_name;
+            // NO LOCK - caller must hold constraints_cache_mutex_ and foreign_keys_cache_mutex_
+            // Foreign keys are constraints, check foreign_keys_cache_ first
+            auto fk_it = foreign_keys_cache_.find(object_id);
+            if (fk_it != foreign_keys_cache_.end()) {
+                return fk_it->second.fk_name;
             }
+
+            // Then check regular constraints cache
+            auto constraint_it = constraints_cache_.find(object_id);
+            if (constraint_it != constraints_cache_.end()) {
+                return constraint_it->second.constraint_name;
+            }
+
             return "<unknown>";
         }
 
@@ -25848,9 +25857,11 @@ auto CatalogManager::createForeignKey(const std::string& fk_name,
                                      bool initially_deferred,
                                      ErrorContext* ctx) -> Status
 {
-    // Acquire locks in consistent order to prevent deadlock
-    // Lock order: foreign_keys_cache_mutex_, dependency_cache_mutex_
-    std::scoped_lock lock(foreign_keys_cache_mutex_, dependency_cache_mutex_);
+    // Acquire ALL locks in consistent order to prevent deadlock with dropTable
+    // Must use same lock order as dropTable: mutex_, sequence_cache_mutex_, trigger_mutex_,
+    // foreign_keys_cache_mutex_, constraints_cache_mutex_, dependency_cache_mutex_
+    std::scoped_lock lock(mutex_, sequence_cache_mutex_, trigger_mutex_,
+                         foreign_keys_cache_mutex_, constraints_cache_mutex_, dependency_cache_mutex_);
 
     // Validate inputs
     if (fk_name.empty())

@@ -1507,7 +1507,7 @@ Status listPermissionsForObject(const ID& object_id, vector<PermissionInfo>& per
 // During database initialization
 Status CatalogManager::initializeSecurity(ErrorContext* ctx) {
     // 1. Create SYSTEM user (owner of all system objects)
-    ID system_user_id = SYSTEM_UUID;  // 00000000-0000-7000-8000-737973746d00
+    ID system_user_id = generateUuidV7();  // Per-database UUIDv7
     UserRecord system_user;
     memset(&system_user, 0, sizeof(UserRecord));
     system_user.user_id = system_user_id;
@@ -2097,7 +2097,7 @@ SHOW USERS;  -- Only superuser can run this
 
 | Object | UUID | Description |
 |--------|------|-------------|
-| SYSTEM user | `00000000-0000-7000-8000-737973746d00` | Owner of all system objects |
+| SYSTEM user | Generated UUIDv7 | Owner of all system objects |
 | PUBLIC role | Generated | All users implicit members |
 | DB_OWNER role | Generated | First user becomes DB_OWNER |
 

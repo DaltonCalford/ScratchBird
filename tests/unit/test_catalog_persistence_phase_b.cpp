@@ -50,6 +50,7 @@ TEST_F(CatalogPersistencePhaseBTest, ConstraintsPersistAcrossRestart)
 {
     auto *catalog = db_->catalog_manager();
     ASSERT_NE(catalog, nullptr);
+    ID system_user_id = catalog->getSystemUserId(nullptr);
 
     ID schema_id;
     Status status = catalog->createSchema("persist_schema", "system", schema_id, nullptr);
@@ -78,7 +79,7 @@ TEST_F(CatalogPersistencePhaseBTest, ConstraintsPersistAcrossRestart)
     constraint.table_id = table_id;
     constraint.constraint_type = CatalogManager::ConstraintType::PRIMARY_KEY;
     constraint.column_names = {"id"};
-    constraint.owner_id = SecurityConstants::makeSystemUserID();
+    constraint.owner_id = system_user_id;
 
     ID constraint_id;
     status = catalog->createConstraint(constraint, constraint_id, nullptr);
@@ -113,6 +114,7 @@ TEST_F(CatalogPersistencePhaseBTest, PhaseBCatalogsPersistAcrossRestart)
 {
     auto *catalog = db_->catalog_manager();
     ASSERT_NE(catalog, nullptr);
+    ID system_user_id = catalog->getSystemUserId(nullptr);
 
     ID foreign_server_id;
     Status status = catalog->createForeignServer("fdw_server", "postgresql", "127.0.0.1",
@@ -120,7 +122,7 @@ TEST_F(CatalogPersistencePhaseBTest, PhaseBCatalogsPersistAcrossRestart)
     ASSERT_EQ(status, Status::OK) << "Failed to create foreign server";
 
     ID mapping_id;
-    status = catalog->createUserMapping(SecurityConstants::makeSystemUserID(), foreign_server_id,
+    status = catalog->createUserMapping(system_user_id, foreign_server_id,
                                         "fdw_user", "secret", mapping_id, nullptr);
     ASSERT_EQ(status, Status::OK) << "Failed to create user mapping";
 
@@ -158,7 +160,7 @@ TEST_F(CatalogPersistencePhaseBTest, PhaseBCatalogsPersistAcrossRestart)
     EXPECT_EQ(foreign_server.server_type, "postgresql");
 
     CatalogManager::UserMappingInfo mapping{};
-    status = catalog->getUserMapping(SecurityConstants::makeSystemUserID(), foreign_server_id,
+    status = catalog->getUserMapping(system_user_id, foreign_server_id,
                                      mapping, nullptr);
     ASSERT_EQ(status, Status::OK) << "Failed to reload user mapping";
     EXPECT_EQ(mapping.mapping_id, mapping_id);

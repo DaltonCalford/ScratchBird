@@ -12,6 +12,7 @@
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "unit/test_user_helpers.h"
 #include <cstdio>
 #include <filesystem>
 #include <sstream>
@@ -49,6 +50,7 @@ protected:
         ASSERT_NE(catalog_, nullptr) << "CatalogManager is null";
 
         // Create a test schema
+        EnsureUser(catalog_, "test_user");
         status = catalog_->createSchema("test", "test_user", test_schema_id_, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to create test schema";
 

@@ -90,7 +90,7 @@ TEST_F(DependencyErrorTest, ErrorMessageFormatIncludesDetailAndHint)
     func.function_id = generateUuidV7();
     func.schema_id = schema_id;
     func.name = "dep_func";
-    func.owner_id = SecurityConstants::makeSystemUserID();
+    func.owner_id = catalog->getSystemUserId(&ctx);
     func.return_type = DataType::INT32;
     func.source_text = "select 1";
     ASSERT_EQ(catalog->registerFunction(func, &ctx), Status::OK);

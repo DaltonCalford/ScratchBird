@@ -24,6 +24,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "test_helpers.h"
+#include "unit/test_user_helpers.h"
 
 using namespace scratchbird::core;
 
@@ -178,6 +179,7 @@ TEST_F(SecurityTest, Catalog_Idempotency)
 
         // Create a test schema
         ID schema_id;
+        EnsureUser(catalog, "test_user");
         ASSERT_EQ(catalog->createSchema("test_schema", "test_user", schema_id), Status::OK);
 
         // Database closes automatically
@@ -191,6 +193,7 @@ TEST_F(SecurityTest, Catalog_Idempotency)
         CatalogManager *catalog = db.catalog_manager();
         ASSERT_NE(catalog, nullptr);
 
+        EnsureUser(catalog, "test_user");
         // Verify schema still exists (not duplicated)
         CatalogManager::SchemaInfo schema;
         EXPECT_EQ(catalog->getSchema("test_schema", schema), Status::OK);
@@ -242,6 +245,7 @@ TEST_F(SecurityTest, Catalog_ConcurrentAccess)
     ASSERT_EQ(db.open(test_security_path_), Status::OK);
 
     CatalogManager *catalog = db.catalog_manager();
+    EnsureUser(catalog, "test_user");
 
     // Get baseline count of system schemas
     std::vector<CatalogManager::SchemaInfo> baseline_schemas;

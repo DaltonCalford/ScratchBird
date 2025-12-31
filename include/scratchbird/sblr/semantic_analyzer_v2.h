@@ -227,7 +227,8 @@ private:
     /**
      * Resolve a schema path to a table UUID
      */
-    std::optional<ResolvedTableRef> resolveTable(const SchemaPath& path, SourceSpan span);
+    std::optional<ResolvedTableRef> resolveTable(const SchemaPath& path, SourceSpan span,
+                                                 bool allow_search_path = true);
 
     /**
      * Resolve a column reference

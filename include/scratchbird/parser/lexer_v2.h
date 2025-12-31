@@ -114,6 +114,7 @@ enum class TokenType : uint16_t {
     SEMICOLON,            // ;
     DOT,                  // .
     DOUBLE_DOT,           // .. (parent schema navigation)
+    EXCLAIM_COLON,        // !: (no search path prefix)
     COLON,                // :
 
     // ===== Gatekeeper Keywords =====

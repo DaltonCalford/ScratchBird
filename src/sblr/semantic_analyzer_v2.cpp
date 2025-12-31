@@ -21,6 +21,7 @@ core::CatalogManager::ObjectType toCatalogObjectType(DdlObjectType type) {
 core::ObjectPath buildObjectPath(const SchemaPath& path, const StringPool& pool) {
     core::ObjectPath out;
     out.type = static_cast<core::PathType>(path.type);
+    out.no_search_path = path.no_search_path;
     out.components.reserve(path.components.size());
     for (auto id : path.components) {
         out.components.emplace_back(pool.get(id));
@@ -35,6 +36,25 @@ SchemaPath appendPathComponent(const SchemaPath& base,
     combined.components.push_back(name);
     combined.span = span;
     return combined;
+}
+
+std::string stripRootPrefixForDisplay(const std::string& schema_path) {
+    if (schema_path.empty()) {
+        return schema_path;
+    }
+
+    size_t dot_pos = schema_path.find('.');
+    std::string first_component =
+        dot_pos == std::string::npos ? schema_path : schema_path.substr(0, dot_pos);
+    if (core::IdentifierUtils::namesMatch(first_component, false /*search_delimited*/,
+                                          "root", false /*stored_delimited*/)) {
+        if (dot_pos == std::string::npos) {
+            return std::string();
+        }
+        return schema_path.substr(dot_pos + 1);
+    }
+
+    return schema_path;
 }
 } // namespace
 
@@ -393,7 +413,7 @@ ResolutionScope& SemanticAnalyzerV2::currentScope() {
 // =============================================================================
 
 std::optional<ResolvedTableRef> SemanticAnalyzerV2::resolveTable(
-    const SchemaPath& path, SourceSpan span)
+    const SchemaPath& path, SourceSpan span, bool allow_search_path)
 {
     if (path.components.empty())
     {
@@ -472,6 +492,8 @@ std::optional<ResolvedTableRef> SemanticAnalyzerV2::resolveTable(
     CatalogManager::TableInfo table_info;
     Status status = Status::NOT_FOUND;
 
+    bool search_path_allowed = allow_search_path && !path.no_search_path;
+
     if (path.type == PathType::UNQUALIFIED)
     {
         if (components.size() != 1)
@@ -480,17 +502,25 @@ std::optional<ResolvedTableRef> SemanticAnalyzerV2::resolveTable(
             return std::nullopt;
         }
 
-        for (const auto& schema_id : search_path_)
+        if (search_path_allowed)
         {
-            status = catalog_.getTable(schema_id, table_name, table_info);
-            if (status == Status::OK)
+            for (const auto& schema_id : search_path_)
             {
-                break;
+                status = catalog_.getTable(schema_id, table_name, table_info);
+                if (status == Status::OK)
+                {
+                    break;
+                }
             }
         }
         if (status != Status::OK && !isZeroUuidLocal(current_schema_))
         {
             status = catalog_.getTable(current_schema_, table_name, table_info);
+        }
+        if (status != Status::OK && !search_path_allowed && isZeroUuidLocal(current_schema_))
+        {
+            error(span, "Current schema not set");
+            return std::nullopt;
         }
     }
     else
@@ -1285,7 +1315,7 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateIndex(CreateIndexStmt* stmt)
     resolved->concurrent = stmt->concurrent;
 
     // Resolve table
-    auto table_ref = resolveTable(stmt->table_path, stmt->span);
+    auto table_ref = resolveTable(stmt->table_path, stmt->span, false);
     if (!table_ref) {
         return nullptr;
     }
@@ -1481,10 +1511,12 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeRenameObject(RenameObjectStmt* stm
     core::ObjectPath obj_path = buildObjectPath(stmt->object_path, string_pool_);
     core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
     core::ErrorContext err_ctx;
+    core::CatalogManager::ResolveOptions opts;
+    opts.allow_search_path = false;
     Status status = catalog_.resolveObjectPath(
         obj_path,
         toCatalogObjectType(stmt->object_type),
-        core::CatalogManager::ResolveOptions{},
+        opts,
         resolved->object_uuid,
         resolved_type,
         &err_ctx);
@@ -1518,10 +1550,12 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeMoveObject(MoveObjectStmt* stmt) {
     core::ObjectPath obj_path = buildObjectPath(stmt->object_path, string_pool_);
     core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
     core::ErrorContext err_ctx;
+    core::CatalogManager::ResolveOptions opts;
+    opts.allow_search_path = false;
     Status status = catalog_.resolveObjectPath(
         obj_path,
         toCatalogObjectType(stmt->object_type),
-        core::CatalogManager::ResolveOptions{},
+        opts,
         resolved->object_uuid,
         resolved_type,
         &err_ctx);
@@ -1556,10 +1590,12 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterTable(AlterTableStmt* stmt) {
         core::ObjectPath obj_path = buildObjectPath(path, string_pool_);
         core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
         core::ErrorContext err_ctx;
+        core::CatalogManager::ResolveOptions opts;
+        opts.allow_search_path = false;
         Status status = catalog_.resolveObjectPath(
             obj_path,
             toCatalogObjectType(type),
-            core::CatalogManager::ResolveOptions{},
+            opts,
             resolved->object_uuid,
             resolved_type,
             &err_ctx);
@@ -1588,10 +1624,12 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterTable(AlterTableStmt* stmt) {
         core::ObjectPath obj_path = buildObjectPath(path, string_pool_);
         core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
         core::ErrorContext err_ctx;
+        core::CatalogManager::ResolveOptions opts;
+        opts.allow_search_path = false;
         Status status = catalog_.resolveObjectPath(
             obj_path,
             toCatalogObjectType(DdlObjectType::TABLE),
-            core::CatalogManager::ResolveOptions{},
+            opts,
             resolved->object_uuid,
             resolved_type,
             &err_ctx);
@@ -1624,6 +1662,187 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterTable(AlterTableStmt* stmt) {
             break;
     }
 
+    auto table_ref = resolveTable(stmt->table_path, stmt->span, false);
+    if (!table_ref) {
+        return nullptr;
+    }
+
+    if (table_ref->object_type != ResolvedTableRef::ObjectType::TABLE) {
+        error(stmt->span, "ALTER TABLE requires a base table");
+        return nullptr;
+    }
+
+    core::ErrorContext err_ctx;
+    std::string schema_path;
+    if (catalog_.getSchemaPath(table_ref->schema_uuid, schema_path, &err_ctx) != Status::OK) {
+        std::string msg = err_ctx.message.empty() ? "Failed to resolve schema path" : err_ctx.message;
+        error(stmt->span, msg);
+        return nullptr;
+    }
+
+    std::string table_name = std::string(getString(table_ref->name));
+    std::string display_schema_path = stripRootPrefixForDisplay(schema_path);
+    std::string qualified_name =
+        display_schema_path.empty() ? table_name : display_schema_path + "." + table_name;
+
+    if (stmt->only) {
+        warning(stmt->span, "ALTER TABLE ONLY is not supported");
+    }
+    if (stmt->if_exists) {
+        warning(stmt->span, "ALTER TABLE IF EXISTS is not enforced at bytecode level");
+    }
+
+    auto* resolved = arena_.create<ResolvedAlterTableStmt>();
+    resolved->span = stmt->span;
+    resolved->action = stmt->action;
+    resolved->if_exists = stmt->if_exists;
+    resolved->only = stmt->only;
+    resolved->cascade = stmt->cascade;
+    resolved->table_uuid = table_ref->table_uuid;
+    resolved->schema_uuid = table_ref->schema_uuid;
+    resolved->table_name = table_ref->name;
+    resolved->qualified_table_name = internString(qualified_name);
+
+    switch (stmt->action) {
+        case AlterTableAction::ADD_COLUMN: {
+            if (!stmt->column) {
+                error(stmt->span, "ALTER TABLE ADD COLUMN requires a column definition");
+                return nullptr;
+            }
+            if (stmt->column->is_computed || stmt->column->computed_expr) {
+                error(stmt->span, "ALTER TABLE ADD COLUMN does not support computed columns");
+                return nullptr;
+            }
+            for (const auto& constraint : stmt->column->constraints) {
+                if (constraint.type == ConstraintType::NOT_NULL ||
+                    constraint.type == ConstraintType::NULL_ALLOWED) {
+                    continue;
+                }
+                error(stmt->span, "ALTER TABLE ADD COLUMN supports only NULL/NOT NULL constraints");
+                return nullptr;
+            }
+
+            ResolvedColumnDef col_def = analyzeColumnDef(stmt->column);
+            if (col_def.name == StringPool::INVALID_ID) {
+                error(stmt->span, "ALTER TABLE ADD COLUMN requires a column name");
+                return nullptr;
+            }
+            if (col_def.type.data_type == DataType::UNKNOWN) {
+                error(stmt->span, "ALTER TABLE ADD COLUMN has unsupported data type");
+                return nullptr;
+            }
+            if (col_def.default_value || col_def.check_expr || col_def.is_primary_key ||
+                col_def.is_unique || col_def.has_fk) {
+                error(stmt->span, "ALTER TABLE ADD COLUMN supports only type and NULL/NOT NULL");
+                return nullptr;
+            }
+
+            core::CatalogManager::ColumnInfo existing;
+            if (catalog_.getColumn(table_ref->table_uuid, std::string(getString(col_def.name)),
+                                   existing, &err_ctx) == Status::OK) {
+                error(stmt->span, "Column already exists: " + std::string(getString(col_def.name)));
+                return nullptr;
+            }
+
+            resolved->column_def = col_def;
+            resolved->has_column_def = true;
+            resolved->column_name = col_def.name;
+            return resolved;
+        }
+        case AlterTableAction::DROP_COLUMN: {
+            if (stmt->column_name == StringPool::INVALID_ID) {
+                error(stmt->span, "ALTER TABLE DROP COLUMN requires a column name");
+                return nullptr;
+            }
+
+            core::CatalogManager::ColumnInfo existing;
+            if (catalog_.getColumn(table_ref->table_uuid, std::string(getString(stmt->column_name)),
+                                   existing, &err_ctx) != Status::OK) {
+                error(stmt->span, "Column not found: " + std::string(getString(stmt->column_name)));
+                return nullptr;
+            }
+
+            resolved->column_name = stmt->column_name;
+            return resolved;
+        }
+        case AlterTableAction::ALTER_COLUMN: {
+            if (!stmt->column && stmt->column_name == StringPool::INVALID_ID) {
+                error(stmt->span, "ALTER TABLE ALTER COLUMN requires a column name");
+                return nullptr;
+            }
+
+            StringPool::StringId col_name = stmt->column_name;
+            if (col_name == StringPool::INVALID_ID && stmt->column) {
+                col_name = stmt->column->name;
+            }
+            if (col_name == StringPool::INVALID_ID) {
+                error(stmt->span, "ALTER TABLE ALTER COLUMN requires a column name");
+                return nullptr;
+            }
+
+            core::CatalogManager::ColumnInfo existing;
+            if (catalog_.getColumn(table_ref->table_uuid, std::string(getString(col_name)),
+                                   existing, &err_ctx) != Status::OK) {
+                error(stmt->span, "Column not found: " + std::string(getString(col_name)));
+                return nullptr;
+            }
+
+            if (!stmt->column) {
+                error(stmt->span, "ALTER TABLE ALTER COLUMN requires a type definition");
+                return nullptr;
+            }
+            if (stmt->column->is_computed || stmt->column->computed_expr) {
+                error(stmt->span, "ALTER TABLE ALTER COLUMN does not support computed columns");
+                return nullptr;
+            }
+            if (!stmt->column->constraints.empty()) {
+                error(stmt->span, "ALTER TABLE ALTER COLUMN supports only type changes");
+                return nullptr;
+            }
+
+            ResolvedColumnDef col_def = analyzeColumnDef(stmt->column);
+            if (col_def.type.data_type == DataType::UNKNOWN) {
+                error(stmt->span, "ALTER TABLE ALTER COLUMN has unsupported data type");
+                return nullptr;
+            }
+            if (col_def.default_value || col_def.check_expr || col_def.is_primary_key ||
+                col_def.is_unique || col_def.has_fk) {
+                error(stmt->span, "ALTER TABLE ALTER COLUMN supports only type changes");
+                return nullptr;
+            }
+
+            col_def.name = col_name;
+            resolved->column_def = col_def;
+            resolved->has_column_def = true;
+            resolved->column_name = col_name;
+            return resolved;
+        }
+        case AlterTableAction::SET_TABLESPACE: {
+            if (stmt->tablespace.components.empty()) {
+                error(stmt->span, "ALTER TABLE SET TABLESPACE requires a tablespace name");
+                return nullptr;
+            }
+            if (stmt->tablespace.components.size() > 1) {
+                warning(stmt->span, "Tablespace paths are global; using the final component");
+            }
+            resolved->tablespace_name = stmt->tablespace.components.back();
+            resolved->tablespace_online = false;
+            return resolved;
+        }
+        case AlterTableAction::ENABLE_RLS:
+            resolved->rls_action = 0;
+            return resolved;
+        case AlterTableAction::DISABLE_RLS:
+            resolved->rls_action = 1;
+            return resolved;
+        case AlterTableAction::ADD_CONSTRAINT:
+        case AlterTableAction::DROP_CONSTRAINT:
+            error(stmt->span, "ALTER TABLE constraint operations are not supported");
+            return nullptr;
+        default:
+            break;
+    }
+
     warning(stmt->span, "ALTER TABLE semantic analysis not fully implemented");
     return nullptr;
 }
@@ -1641,7 +1860,7 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeDropTable(DropTableStmt* stmt) {
 
     // Resolve each table
     for (const auto& table_path : stmt->tables) {
-        auto table_ref = resolveTable(table_path, stmt->span);
+        auto table_ref = resolveTable(table_path, stmt->span, false);
         if (table_ref) {
             resolved->object_uuids.push_back(table_ref->table_uuid);
         } else if (!stmt->if_exists) {
@@ -1688,7 +1907,7 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeDropView(DropViewStmt* stmt) {
 
     // View resolution - views are treated like tables in catalog
     for (const auto& view_path : stmt->views) {
-        auto view_ref = resolveTable(view_path, stmt->span);
+        auto view_ref = resolveTable(view_path, stmt->span, false);
         if (view_ref) {
             resolved->object_uuids.push_back(view_ref->table_uuid);
         } else if (!stmt->if_exists) {
@@ -1711,7 +1930,7 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeTruncateTable(TruncateTableStmt* s
     resolved->async_mode = !stmt->sync_mode;  // ASYNC is default (sync_mode = false)
 
     for (const auto& table_path : stmt->tables) {
-        auto table_ref = resolveTable(table_path, stmt->span);
+        auto table_ref = resolveTable(table_path, stmt->span, false);
         if (table_ref) {
             resolved->table_uuids.push_back(table_ref->table_uuid);
         } else {
@@ -3149,7 +3368,7 @@ ResolvedColumnDef SemanticAnalyzerV2::analyzeColumnDef(ColumnDef* def) {
                 resolved.has_fk = true;
                 // Would need to resolve the referenced table
                 if (!constraint.ref_table.components.empty()) {
-                    auto ref_table = resolveTable(constraint.ref_table, SourceSpan{});
+                    auto ref_table = resolveTable(constraint.ref_table, SourceSpan{}, false);
                     if (ref_table) {
                         resolved.fk_table_uuid = ref_table->table_uuid;
                         // Find referenced column (use first column from ref_columns vector)
@@ -3232,7 +3451,7 @@ ResolvedTableConstraint SemanticAnalyzerV2::analyzeTableConstraint(
             }
             // Resolve referenced table and columns
             if (!constraint->ref_table.components.empty()) {
-                auto ref_table = resolveTable(constraint->ref_table, SourceSpan{});
+                auto ref_table = resolveTable(constraint->ref_table, SourceSpan{}, false);
                 if (ref_table) {
                     resolved.fk_table_uuid = ref_table->table_uuid;
                     for (auto ref_col_name : constraint->ref_columns) {

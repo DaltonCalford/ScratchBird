@@ -42,6 +42,12 @@ protected:
         ASSERT_EQ(db_.open(db_file_->path(), &ctx), Status::OK) << ctx.message;
         ASSERT_EQ(db_.connect(conn_, &ctx), Status::OK) << ctx.message;
 
+        // Set current schema to PUBLIC
+        scratchbird::core::CatalogManager::SchemaInfo schema_info;
+        ASSERT_EQ(db_.catalog_manager()->getSchema("PUBLIC", schema_info, &ctx), Status::OK)
+            << ctx.message;
+        conn_->setCurrentSchemaId(schema_info.schema_id);
+
         executor_ = std::make_unique<Executor>(&db_);
         executor_->setConnectionContext(conn_.get());
     }

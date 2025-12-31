@@ -13,9 +13,12 @@
  *   - RELATIVE:    `.sub.orders`      - Relative from current schema
  *   - PARENT:      `..orders`         - Parent schema
  *   - ABSOLUTE:    `sys.catalog.tables` - Absolute path from root
+ *   - NO_SEARCH:   `!:orders`         - Disable search path for unqualified names
  *
  * Grammar:
- *   <object_path> ::= <unqualified> | <current_path> | <parent_path> | <absolute_path>
+ *   <object_path> ::= [ <no_search_prefix> ] <schema_path>
+ *   <no_search_prefix> ::= "!" ":"
+ *   <schema_path> ::= <unqualified> | <current_path> | <parent_path> | <absolute_path>
  *   <unqualified> ::= <identifier>
  *   <current_path> ::= DOT <identifier> [ DOT <identifier> ]*
  *   <parent_path> ::= DOUBLE_DOT <identifier> [ DOT <identifier> ]*
@@ -56,13 +59,15 @@ enum class PathType : uint8_t {
  */
 struct SchemaPath {
     PathType type = PathType::UNQUALIFIED;
+    bool no_search_path = false;  // True when prefixed with !:
     std::vector<StringPool::StringId> components;
     SourceSpan span;  // Source location for error reporting
 
     // Convenience constructors
     SchemaPath() = default;
-    SchemaPath(PathType t, std::vector<StringPool::StringId> comps, SourceSpan s = {})
-        : type(t), components(std::move(comps)), span(s) {}
+    SchemaPath(PathType t, std::vector<StringPool::StringId> comps, SourceSpan s = {},
+               bool no_search = false)
+        : type(t), no_search_path(no_search), components(std::move(comps)), span(s) {}
 
     // Query methods
     bool isQualified() const { return type != PathType::UNQUALIFIED; }
@@ -82,7 +87,9 @@ struct SchemaPath {
 
     // Comparison for testing
     bool operator==(const SchemaPath& other) const {
-        return type == other.type && components == other.components;
+        return type == other.type &&
+               no_search_path == other.no_search_path &&
+               components == other.components;
     }
     bool operator!=(const SchemaPath& other) const {
         return !(*this == other);

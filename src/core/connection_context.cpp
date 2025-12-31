@@ -368,6 +368,7 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
+        LOG_INFO(TRANSACTION, "Commit start: proc_id=%u, xid=%lu", proc_id_, current_xid_);
         LOG_DEBUG(TRANSACTION, "Committing transaction: proc_id=%u, xid=%lu", proc_id_,
                   current_xid_);
 
@@ -408,6 +409,7 @@ namespace scratchbird::core
 
         LOG_DEBUG(TRANSACTION, "Started new transaction after commit: proc_id=%u, new_xid=%lu",
                   proc_id_, current_xid_);
+        LOG_INFO(TRANSACTION, "Commit complete: proc_id=%u, xid=%lu", proc_id_, current_xid_);
 
         return Status::OK;
     }
@@ -420,6 +422,7 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
+        LOG_INFO(TRANSACTION, "Rollback start: proc_id=%u, xid=%lu", proc_id_, current_xid_);
         LOG_DEBUG(TRANSACTION, "Rolling back transaction: proc_id=%u, xid=%lu", proc_id_,
                   current_xid_);
 
@@ -463,6 +466,7 @@ namespace scratchbird::core
 
         LOG_DEBUG(TRANSACTION, "Started new transaction after rollback: proc_id=%u, new_xid=%lu",
                   proc_id_, current_xid_);
+        LOG_INFO(TRANSACTION, "Rollback complete: proc_id=%u, xid=%lu", proc_id_, current_xid_);
 
         return Status::OK;
     }

@@ -12,6 +12,7 @@
 #include "scratchbird/sblr/semantic_analyzer_v2.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "unit/test_user_helpers.h"
 #include <cstdio>
 #include <filesystem>
 #include <sstream>
@@ -49,6 +50,7 @@ protected:
         ASSERT_NE(catalog_, nullptr) << "CatalogManager is null";
 
         // Create a test schema
+        EnsureUser(catalog_, "test_user");
         status = catalog_->createSchema("test", "test_user", test_schema_id_, &ctx);
         ASSERT_EQ(status, Status::OK) << "Failed to create test schema";
 
@@ -449,6 +451,32 @@ TEST_F(SemanticAnalyzerV2Test, DropTableStatement) {
             EXPECT_EQ(stmt->object_type, ResolvedDropStmt::ObjectType::TABLE);
         }
     }
+}
+
+TEST_F(SemanticAnalyzerV2Test, AlterTableAddColumn) {
+    auto result = analyze("ALTER TABLE users ADD COLUMN age INT");
+    ASSERT_TRUE(result.success()) << "Analysis failed for ALTER TABLE ADD COLUMN";
+
+    auto* stmt = dynamic_cast<ResolvedAlterTableStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(stmt->action, AlterTableAction::ADD_COLUMN);
+    EXPECT_EQ(stmt->table_uuid, users_table_id_);
+    EXPECT_EQ(stmt->column_def.type.data_type, DataType::INT32);
+
+    auto* pool = result.stringPool();
+    ASSERT_NE(pool, nullptr);
+    EXPECT_EQ(std::string(pool->get(stmt->column_def.name)), "age");
+    EXPECT_EQ(std::string(pool->get(stmt->qualified_table_name)), "test.users");
+}
+
+TEST_F(SemanticAnalyzerV2Test, AlterTableEnableRls) {
+    auto result = analyze("ALTER TABLE users ENABLE ROW LEVEL SECURITY");
+    ASSERT_TRUE(result.success()) << "Analysis failed for ALTER TABLE ENABLE RLS";
+
+    auto* stmt = dynamic_cast<ResolvedAlterTableStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(stmt->action, AlterTableAction::ENABLE_RLS);
+    EXPECT_EQ(stmt->rls_action, 0);
 }
 
 // =============================================================================

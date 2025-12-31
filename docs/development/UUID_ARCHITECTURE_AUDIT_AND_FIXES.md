@@ -152,80 +152,16 @@ struct SBBTreeIndex {
 
 **Result:** B-Tree indexes now correctly reference columns by UUID.
 
-### Fix #2: Created System UUID Constants ✅
+### Fix #2: Removed Fixed System UUIDs ✅
 
-**New File:** `include/scratchbird/core/system_uuids.h`
-
-**Contents:**
-```cpp
-namespace scratchbird::core::system_uuids {
-
-    // System Schema UUIDs (fixed, never change)
-    constexpr UuidV7Bytes ROOT_SCHEMA_UUID = {{
-        0x01, 0x92, 0x00, 0x00, 0x00, 0x00,
-        0x70, 0x00, 0x80, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x01  // ID: 1
-    }};
-
-    constexpr UuidV7Bytes SYS_SCHEMA_UUID = {{...}};    // ID: 2
-    constexpr UuidV7Bytes SEC_SCHEMA_UUID = {{...}};    // ID: 3
-    constexpr UuidV7Bytes AGENTS_SCHEMA_UUID = {{...}}; // ID: 4
-    constexpr UuidV7Bytes APP_SCHEMA_UUID = {{...}};    // ID: 5
-    constexpr UuidV7Bytes REMOTE_SCHEMA_UUID = {{...}}; // ID: 6
-    constexpr UuidV7Bytes USERS_SCHEMA_UUID = {{...}};  // ID: 7
-    constexpr UuidV7Bytes ROLES_SCHEMA_UUID = {{...}};  // ID: 8
-
-    // Array for iteration
-    constexpr UuidV7Bytes SYSTEM_SCHEMA_UUIDS[] = {
-        ROOT_SCHEMA_UUID, SYS_SCHEMA_UUID, SEC_SCHEMA_UUID,
-        AGENTS_SCHEMA_UUID, APP_SCHEMA_UUID, REMOTE_SCHEMA_UUID,
-        USERS_SCHEMA_UUID, ROLES_SCHEMA_UUID
-    };
-
-    // System Catalog Table UUIDs
-    constexpr UuidV7Bytes SCHEMAS_TABLE_UUID = {{...}};  // ID: 16
-    constexpr UuidV7Bytes TABLES_TABLE_UUID = {{...}};   // ID: 17
-    constexpr UuidV7Bytes COLUMNS_TABLE_UUID = {{...}};  // ID: 18
-    constexpr UuidV7Bytes INDEXES_TABLE_UUID = {{...}};  // ID: 19
-
-    // Utility functions
-    auto isSystemSchema(const UuidV7Bytes &uuid) -> bool;
-    auto isSystemCatalogTable(const UuidV7Bytes &uuid) -> bool;
-    auto getSystemSchemaName(const UuidV7Bytes &uuid) -> const char*;
-}
-```
-
-**UUID Format:**
-- Bytes 0-5: Base timestamp (0x019200000000) for system objects
-- Bytes 6-7: Version marker (0x7000 for UUIDv7)
-- Bytes 8-9: Variant marker (0x8000 for RFC 4122)
-- Bytes 10-15: Sequential system object ID
-
-**Benefits:**
-- Fixed, well-known UUIDs for all system objects
-- Same UUIDs across all ScratchBird databases
-- Enables consistent system object references
-- Utility functions for type checking
+System schemas and catalog items now use generated UUIDv7 values per database. Fixed UUID
+constants were removed to avoid cross-database conflicts as branch/merge work expands.
+The root schema UUID aligns with the database UUID.
 
 ### Fix #3: Updated System Schema Creation ✅
 
-**File:** `src/core/database.cpp`
-
-**Added Include:**
-```cpp
-#include "scratchbird/core/system_uuids.h"
-```
-
-**Changed Schema Creation:**
-```cpp
-// BEFORE:
-ID schema_uuid = generateUuidV7();  // Random UUID
-
-// AFTER:
-ID schema_uuid = system_uuids::SYSTEM_SCHEMA_UUIDS[i];  // Fixed UUID
-```
-
-**Result:** System schemas now have predictable, fixed UUIDs.
+System schema creation now uses `generateUuidV7()` for base schemas (root uses the database UUID)
+and no longer relies on `system_uuids.h`.
 
 ---
 
@@ -364,29 +300,9 @@ $ cmake --build .
 
 ## Part 6: System UUID Reference
 
-### System Schema UUIDs (Always Constant)
-
-| Schema | UUID (last 6 bytes) | Full UUID |
-|--------|---------------------|-----------|
-| [root] | `00 00 00 00 00 01` | `01920000-0000-7000-8000-000000000001` |
-| [sys] | `00 00 00 00 00 02` | `01920000-0000-7000-8000-000000000002` |
-| [sec] | `00 00 00 00 00 03` | `01920000-0000-7000-8000-000000000003` |
-| [agents] | `00 00 00 00 00 04` | `01920000-0000-7000-8000-000000000004` |
-| [app] | `00 00 00 00 00 05` | `01920000-0000-7000-8000-000000000005` |
-| [remote] | `00 00 00 00 00 06` | `01920000-0000-7000-8000-000000000006` |
-| [users] | `00 00 00 00 00 07` | `01920000-0000-7000-8000-000000000007` |
-| [roles] | `00 00 00 00 00 08` | `01920000-0000-7000-8000-000000000008` |
-
-### System Catalog Table UUIDs (Always Constant)
-
-| Table | UUID (last 6 bytes) | Full UUID |
-|-------|---------------------|-----------|
-| schemas | `00 00 00 00 00 10` | `01920000-0000-7000-8000-000000000010` |
-| tables | `00 00 00 00 00 11` | `01920000-0000-7000-8000-000000000011` |
-| columns | `00 00 00 00 00 12` | `01920000-0000-7000-8000-000000000012` |
-| indexes | `00 00 00 00 00 13` | `01920000-0000-7000-8000-000000000013` |
-
-**Note:** User-created schemas, tables, columns, and indexes get dynamically generated UUIDv7 values using `generateUuidV7()`.
+System schemas and catalog tables now use generated UUIDv7 values per database. The root
+schema UUID aligns with the database UUID; all other system objects are generated with
+`generateUuidV7()`. Fixed UUID mappings are no longer used.
 
 ---
 
@@ -394,8 +310,8 @@ $ cmake --build .
 
 ### Files Changed:
 1. **include/scratchbird/core/btree.h** - Fixed column ID type
-2. **src/core/database.cpp** - Use fixed system schema UUIDs
-3. **include/scratchbird/core/system_uuids.h** - NEW FILE (207 lines)
+2. **src/core/database.cpp** - Generate system schema UUIDs (root = database UUID)
+3. **include/scratchbird/core/system_uuids.h** - Removed fixed UUID constants
 
 ### Files Analyzed:
 - All headers in `include/scratchbird/core/`

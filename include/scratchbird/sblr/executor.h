@@ -188,7 +188,7 @@ namespace scratchbird
             const QueryLimits& getQueryLimits() const { return query_limits_; }
 
             // Set current schema for DDL operations (Firebird emulation support)
-            // If not set, defaults to PUBLIC schema
+            // If not set, defaults to root schema
             void setCurrentSchema(const core::ID& schema_id) { current_schema_id_ = schema_id; current_schema_set_ = true; }
             void clearCurrentSchema() { current_schema_id_ = core::ID(); current_schema_set_ = false; }
             bool hasCurrentSchema() const { return current_schema_set_; }
@@ -286,11 +286,21 @@ namespace scratchbird
             core::ObjectPath readObjectPath();
             core::Status resolveSchemaIdForName(const std::string& schema_path,
                                                 core::ID& schema_id_out,
-                                                core::ErrorContext* ctx);
+                                                core::ErrorContext* ctx,
+                                                bool allow_search_path = true);
             core::Status resolveSchemaIdForQualifiedName(const std::string& qualified_name,
                                                          std::string& object_name_out,
                                                          core::ID& schema_id_out,
-                                                         core::ErrorContext* ctx);
+                                                         core::ErrorContext* ctx,
+                                                         bool allow_search_path = true);
+            core::Status resolveObjectIdForQualifiedName(
+                const std::string& qualified_name,
+                core::CatalogManager::ObjectType expected_type,
+                core::ID& object_id_out,
+                core::CatalogManager::ObjectType& resolved_type_out,
+                core::CatalogManager::ResolvedObject* resolved_out,
+                core::ErrorContext* ctx,
+                bool allow_search_path = true);
 
             void push(const Value &v)
             {

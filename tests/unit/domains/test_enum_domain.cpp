@@ -1,6 +1,7 @@
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "unit/test_user_helpers.h"
 #include <iostream>
 #include "gtest/gtest.h"
 #include <cstdio>
@@ -37,6 +38,7 @@ TEST(EnumDomainTest, Comprehensive) {
 
     // Create schema
     ID schema_id;
+    EnsureUser(catalog, "test_user");
     status = catalog->createSchema("test_schema", "test_user", schema_id, &ctx);
     ASSERT_EQ(status, Status::OK);
 
@@ -320,4 +322,3 @@ TEST(EnumDomainTest, Comprehensive) {
     std::cout << "ENUM Domain Phase 3 is functional.\n";
     std::cout << "========================================\n";
 }
-

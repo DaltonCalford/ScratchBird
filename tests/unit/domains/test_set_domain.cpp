@@ -1,6 +1,7 @@
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "unit/test_user_helpers.h"
 #include <iostream>
 #include "gtest/gtest.h"
 #include <cstdio>
@@ -37,6 +38,7 @@ TEST(SetDomainTest, Comprehensive) {
 
     // Create schema
     ID schema_id;
+    EnsureUser(catalog, "test_user");
     status = catalog->createSchema("test_schema", "test_user", schema_id, &ctx);
     ASSERT_EQ(status, Status::OK);
 
@@ -227,4 +229,3 @@ TEST(SetDomainTest, Comprehensive) {
     std::cout << "\nNote: SET value operations (contains, overlap, union, intersection, difference)\n";
     std::cout << "require TypedValue VECTOR element access and are planned for future enhancement.\n";
 }
-

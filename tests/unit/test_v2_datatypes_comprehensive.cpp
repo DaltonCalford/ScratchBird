@@ -26,6 +26,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/types.h"
+#include "unit/test_user_helpers.h"
 #include <cstdio>
 #include <filesystem>
 #include <sstream>
@@ -61,6 +62,7 @@ protected:
         catalog_ = db_.catalog_manager();
         ASSERT_NE(catalog_, nullptr);
 
+        EnsureUser(catalog_, "test_user");
         status = catalog_->createSchema("test", "test_user", test_schema_id_, &ctx);
         ASSERT_EQ(status, Status::OK);
 
@@ -774,4 +776,3 @@ TEST_F(V2DataTypesTest, Constraints_Check) {
     expectSuccess("CREATE TABLE t_check2 (a VARCHAR(10) CHECK (a <> ''))");
     expectSuccess("CREATE TABLE t_check3 (val DECIMAL(10,2) CHECK (val >= 0.00))");
 }
-

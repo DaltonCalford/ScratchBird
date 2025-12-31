@@ -2069,6 +2069,7 @@ void Parser::parseRenameStmt() {
 
     auto emit_object_path = [&](const std::vector<std::string>& components) {
         emitByte(static_cast<uint8_t>(core::PathType::ABSOLUTE));
+        emitByte(0);  // no_search_path flag (reserved)
         if (components.size() > std::numeric_limits<uint8_t>::max()) {
             error("Object path has too many components");
             emitByte(0);
@@ -2157,14 +2158,15 @@ void Parser::parseAlterStmt() {
             return;
         }
 
-        if (matchKeyword(TokenType::KW_OWNER)) {
-            consumeKeyword(TokenType::KW_TO, "Expected TO after OWNER");
-            std::string owner = parseIdentifier();
-            emit_alter_database(sblr::AlterDatabaseAction::SET_OWNER, owner);
-            return;
-        }
+        // TODO: Add OWNER keyword support
+        // if (matchKeyword(TokenType::KW_OWNER)) {
+        //     consumeKeyword(TokenType::KW_TO, "Expected TO after OWNER");
+        //     std::string owner = parseIdentifier();
+        //     emit_alter_database(sblr::AlterDatabaseAction::SET_OWNER, owner);
+        //     return;
+        // }
 
-        error("ALTER DATABASE supports only RENAME TO or OWNER TO in MySQL parser");
+        error("ALTER DATABASE supports only RENAME TO in MySQL parser");
         synchronize();
         return;
     }
@@ -2221,6 +2223,7 @@ void Parser::parseAlterStmt() {
 
     auto emit_object_path = [&](const std::vector<std::string>& components) {
         emitByte(static_cast<uint8_t>(core::PathType::ABSOLUTE));
+        emitByte(0);  // no_search_path flag (reserved)
         if (components.size() > std::numeric_limits<uint8_t>::max()) {
             error("Object path has too many components");
             emitByte(0);
@@ -2720,13 +2723,14 @@ void Parser::parseCreateDatabase() {
             parseIdentifier();
         } else if (matchKeyword(TokenType::KW_COLLATE)) {
             parseIdentifier();
-        } else if (matchKeyword(TokenType::KW_ENCRYPTION)) {
-            match(TokenType::EQUAL);
-            if (check(TokenType::STRING_LITERAL)) {
-                advance();
-            } else {
-                parseIdentifier();
-            }
+        // TODO: Add ENCRYPTION keyword support
+        // } else if (matchKeyword(TokenType::KW_ENCRYPTION)) {
+        //     match(TokenType::EQUAL);
+        //     if (check(TokenType::STRING_LITERAL)) {
+        //         advance();
+        //     } else {
+        //         parseIdentifier();
+        //     }
         } else {
             break;
         }

@@ -1,6 +1,7 @@
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "unit/test_user_helpers.h"
 #include <iostream>
 #include "gtest/gtest.h"
 #include <cstdio>
@@ -29,6 +30,7 @@ TEST(VariantDomainTest, Comprehensive) {
     ASSERT_NE(catalog, nullptr);
 
     ID schema_id;
+    EnsureUser(catalog, "test_user");
     status = catalog->createSchema("test_schema", "test_user", schema_id, &ctx);
     ASSERT_EQ(status, Status::OK);
 
@@ -135,4 +137,3 @@ TEST(VariantDomainTest, Comprehensive) {
     std::cout << "\nNote: VARIANT value operations (extractDataType, isOfType, variantCast)\n";
     std::cout << "require TypedValue VARIANT support and are planned for future enhancement.\n";
 }
-

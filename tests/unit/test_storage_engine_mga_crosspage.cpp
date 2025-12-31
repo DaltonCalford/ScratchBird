@@ -7,6 +7,7 @@
 #include "scratchbird/core/tid.h"
 #include "scratchbird/core/gpid.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "unit/test_user_helpers.h"
 #include <cstring>
 #include <filesystem>
 #include <vector>
@@ -45,6 +46,7 @@ protected:
 
         // Create a test schema first
         ID schema_id;
+        EnsureUser(catalog, "test_user");
         Status status = catalog->createSchema("test_schema", "test_user", schema_id, ctx);
         // Schema may already exist from previous test, that's OK
         if (status != Status::OK && status != Status::DUPLICATE_OBJECT) {

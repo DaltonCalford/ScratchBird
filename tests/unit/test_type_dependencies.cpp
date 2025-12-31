@@ -158,7 +158,7 @@ TEST_F(TypeDependencyTest, DropExceptionFailsIfProcedureReferences)
     proc.procedure_id = generateUuidV7();
     proc.schema_id = schema_id;
     proc.name = "p1";
-    proc.owner_id = SecurityConstants::makeSystemUserID();
+    proc.owner_id = catalog->getSystemUserId(&ctx);
     proc.source_text = "raise ex_test;";
     status = catalog->registerProcedure(proc, &ctx);
     ASSERT_EQ(status, Status::OK) << ctx.message;

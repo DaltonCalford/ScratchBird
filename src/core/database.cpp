@@ -16,7 +16,6 @@
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/permission_cache.h" // Security Phase 3.2.3
-#include "scratchbird/core/system_uuids.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/optimizer/statistics_manager.h"
@@ -360,8 +359,8 @@ namespace scratchbird::core
         {
             SystemCatalogEntry &entry = entries[i];
 
-            // Use fixed, well-known UUIDs for system schemas (not random)
-            ID schema_uuid = system_uuids::SYSTEM_SCHEMA_UUIDS[i];
+            // Root schema UUID aligns with the database UUID; others are generated per database.
+            ID schema_uuid = (i == 0) ? db_uuid : generateUuidV7();
             memcpy(entry.schema_uuid, schema_uuid.bytes.data(), 16);
 
             // Root has no parent, others have root as parent

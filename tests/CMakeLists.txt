@@ -253,15 +253,10 @@ endif()
 
 # Register tests
 include(GoogleTest)
-gtest_discover_tests(scratchbird_tests)
-
-# Slow tests: explicit timeouts and labels for expected long runtimes
-
-# Explicit add_test for validator
-add_test(NAME scratchbird_tests COMMAND scratchbird_tests)
-set_tests_properties(scratchbird_tests PROPERTIES
-    LABELS "aggregate"
-    TIMEOUT 1800
+gtest_discover_tests(scratchbird_tests
+    PROPERTIES
+        TIMEOUT 60  # Per-test timeout: 60 seconds
+        LABELS "unit"
 )
 
 # ==============================================================================

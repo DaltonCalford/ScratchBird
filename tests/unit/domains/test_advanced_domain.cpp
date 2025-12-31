@@ -1,6 +1,7 @@
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "unit/test_user_helpers.h"
 #include <iostream>
 #include "gtest/gtest.h"
 #include <cstdio>
@@ -27,6 +28,7 @@ TEST(AdvancedDomainTest, Comprehensive) {
     CatalogManager* catalog = db.catalog_manager();
 
     ID schema_id;
+    EnsureUser(catalog, "test_user");
     status = catalog->createSchema("test_schema", "test_user", schema_id, &ctx);
     ASSERT_EQ(status, Status::OK);
 
@@ -163,4 +165,3 @@ TEST(AdvancedDomainTest, Comprehensive) {
     std::cout << "  ✓ Phase 5: VARIANT type with polymorphism\n";
     std::cout << "  ✓ Phase 6: Advanced features (security, integrity, validation, quality)\n";
 }
-
