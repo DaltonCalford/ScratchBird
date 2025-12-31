@@ -363,9 +363,72 @@ bool handleCreateDatabase(const std::string& dbPath, core::Database& db) {
         return false;
     }
 
-    // Note: RDB$ system views would be created here by EmulationViewGenerator
-    // For now, skipping view generation due to API mismatches in the header
-    // Views will be added when EmulationViewGenerator is updated
+    // Ensure emulation metadata records exist for this database
+    core::CatalogManager::EmulationTypeInfo type_info;
+    status = catalog->getEmulationTypeByName("firebird", type_info, &ctx);
+    if (status != core::Status::OK && status != core::Status::NOT_FOUND) {
+        std::cerr << "Error resolving emulation type: " << ctx.message << "\n";
+        return false;
+    }
+    if (status == core::Status::NOT_FOUND) {
+        status = catalog->createEmulationType("firebird",
+                                              1, 0,  // version 1.0
+                                              "",    // empty mapping rules
+                                              type_info.emulation_type_id,
+                                              &ctx);
+        if (status != core::Status::OK) {
+            std::cerr << "Error creating emulation type: " << ctx.message << "\n";
+            return false;
+        }
+    }
+
+    core::CatalogManager::EmulationServerInfo server_info;
+    status = catalog->getEmulationServerByName(g_fb_state.server_name, server_info, &ctx);
+    if (status != core::Status::OK && status != core::Status::NOT_FOUND) {
+        std::cerr << "Error resolving emulation server: " << ctx.message << "\n";
+        return false;
+    }
+    if (status == core::Status::NOT_FOUND) {
+        core::ID server_id;
+        status = catalog->createEmulationServer(g_fb_state.server_name,
+                                                type_info.emulation_type_id,
+                                                std::string(),
+                                                server_id,
+                                                &ctx);
+        if (status != core::Status::OK) {
+            std::cerr << "Error creating emulation server: " << ctx.message << "\n";
+            return false;
+        }
+        server_info.server_id = server_id;
+        server_info.server_name = g_fb_state.server_name;
+        server_info.emulation_type_id = type_info.emulation_type_id;
+    } else if (server_info.emulation_type_id != type_info.emulation_type_id) {
+        std::cerr << "Error: Emulation server type mismatch\n";
+        return false;
+    }
+
+    core::CatalogManager::EmulatedDatabaseInfo db_info;
+    status = catalog->getEmulatedDatabaseByName(server_info.server_id, dbName, db_info, &ctx);
+    if (status != core::Status::OK && status != core::Status::NOT_FOUND) {
+        std::cerr << "Error resolving emulated database: " << ctx.message << "\n";
+        return false;
+    }
+    if (status == core::Status::NOT_FOUND) {
+        core::ID emulated_db_id;
+        status = catalog->createEmulatedDatabase(dbName,
+                                                 server_info.server_id,
+                                                 schemaId,
+                                                 std::string(),
+                                                 emulated_db_id,
+                                                 &ctx);
+        if (status != core::Status::OK) {
+            std::cerr << "Error creating emulated database record: " << ctx.message << "\n";
+            return false;
+        }
+    }
+
+    // Note: RDB$ system views would be created here by EmulationViewGenerator.
+    // Integration is pending; views are still created in adapter bootstrap paths.
 
     // Auto-connect to the newly created database
     g_fb_state.database_name = dbName;
