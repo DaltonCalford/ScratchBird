@@ -1,6 +1,7 @@
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/logger.h"
@@ -20,6 +21,14 @@ namespace scratchbird::core
                 }
             }
             return true;
+        }
+
+        std::string defaultDialectTagForCreate() {
+            auto* conn_ctx = ConnectionContext::getCurrent();
+            if (conn_ctx && !conn_ctx->dialect_tag().empty()) {
+                return conn_ctx->dialect_tag();
+            }
+            return "scratchbird";
         }
     }
 
@@ -174,6 +183,10 @@ namespace scratchbird::core
         info.constraints = constraints;
         info.created_time = std::time(nullptr);
         info.last_modified_time = info.created_time;
+        if (info.dialect_tag.empty())
+        {
+            info.dialect_tag = defaultDialectTagForCreate();
+        }
 
         // Write to catalog
         Status status = writeDomainRecord(info, ctx);
@@ -223,7 +236,8 @@ namespace scratchbird::core
             {
                 continue;
             }
-            if (domain_info.domain_name == domain_name)
+            if (IdentifierUtils::namesMatch(domain_name, false /*search_delimited*/,
+                                            domain_info.domain_name, false /*stored_delimited*/))
             {
                 info = domain_info;
                 return Status::OK;
@@ -529,6 +543,10 @@ namespace scratchbird::core
         info.fields = fields;
         info.created_time = std::time(nullptr);
         info.last_modified_time = info.created_time;
+        if (info.dialect_tag.empty())
+        {
+            info.dialect_tag = defaultDialectTagForCreate();
+        }
 
         // Write to catalog
         Status status = writeDomainRecord(info, ctx);
@@ -745,6 +763,10 @@ namespace scratchbird::core
         info.enum_values = values;
         info.created_time = std::time(nullptr);
         info.last_modified_time = info.created_time;
+        if (info.dialect_tag.empty())
+        {
+            info.dialect_tag = defaultDialectTagForCreate();
+        }
 
         // Write to catalog
         Status status = writeDomainRecord(info, ctx);
@@ -982,6 +1004,10 @@ namespace scratchbird::core
         info.set_element_type = element_type;
         info.created_time = std::time(nullptr);
         info.last_modified_time = info.created_time;
+        if (info.dialect_tag.empty())
+        {
+            info.dialect_tag = defaultDialectTagForCreate();
+        }
 
         // Write to catalog
         Status status = writeDomainRecord(info, ctx);
@@ -1371,6 +1397,10 @@ namespace scratchbird::core
         info.variant_allowed_types = allowed_types;
         info.created_time = std::time(nullptr);
         info.last_modified_time = info.created_time;
+        if (info.dialect_tag.empty())
+        {
+            info.dialect_tag = defaultDialectTagForCreate();
+        }
 
         // Write to catalog
         Status status = writeDomainRecord(info, ctx);
@@ -1979,6 +2009,10 @@ namespace scratchbird::core
                 info.last_modified_time = record->last_modified_time;
                 info.set_element_type = static_cast<DataType>(record->set_element_type);
                 info.dialect_tag = record->dialect_tag;
+                if (info.dialect_tag.empty())
+                {
+                    info.dialect_tag = "scratchbird";
+                }
                 info.compat_name = record->compat_name;
 
                 // Phase 3 Enhancement: Load constraints, fields, enum_values from TOAST
