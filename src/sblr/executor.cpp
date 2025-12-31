@@ -48,6 +48,7 @@
 #include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"  // For LOG_ERROR macro
+#include "scratchbird/catalog/emulation_view_generator.h"
 #include "scratchbird/sblr/query_result_cache.h"  // P2-19: Query Result Caching
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -4505,6 +4506,27 @@ namespace scratchbird
                 }
                 error(err_msg);
             }
+
+            auto protocol = catalog::protocolTypeFromString(dialect);
+            if (protocol != catalog::ProtocolType::SCRATCHBIRD)
+            {
+                core::ErrorContext view_ctx;
+                auto generator = catalog::createEmulationViewGenerator(db_->catalog_manager());
+                auto view_status = generator->generateEmulatedViews(server, db_name, protocol, &view_ctx);
+                if (view_status != core::Status::OK)
+                {
+                    core::ErrorContext cleanup_ctx;
+                    generator->dropEmulatedViews(server, db_name, protocol, &cleanup_ctx);
+                    db_->catalog_manager()->dropEmulatedDatabase(emulated_db_id, &cleanup_ctx);
+
+                    std::string err_msg = "Failed to generate emulation views";
+                    if (!view_ctx.message.empty())
+                    {
+                        err_msg += ": " + view_ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
         }
 
         void Executor::executeDropDatabase()
@@ -4569,7 +4591,16 @@ namespace scratchbird
                 error(err_msg);
             }
 
-            status = db_->catalog_manager()->dropSchema(db_info.schema_id, force, &ctx);
+            auto protocol = catalog::protocolTypeFromString(dialect);
+            if (protocol != catalog::ProtocolType::SCRATCHBIRD)
+            {
+                auto generator = catalog::createEmulationViewGenerator(db_->catalog_manager());
+                status = generator->dropEmulatedViews(server, db_name, protocol, &ctx);
+            }
+            else
+            {
+                status = db_->catalog_manager()->dropSchema(db_info.schema_id, force, &ctx);
+            }
             if (status != core::Status::OK)
             {
                 std::string err_msg = "DROP DATABASE failed";

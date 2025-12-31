@@ -425,13 +425,53 @@ std::string Parser::parseQualifiedName() {
 }
 
 void Parser::resolveTableName(std::string& schema, std::string& table) {
+    auto normalize_path = [](const std::string& path) {
+        std::vector<std::string> parts;
+        std::string current;
+        for (char ch : path) {
+            if (ch == '/' || ch == '.') {
+                if (!current.empty()) {
+                    parts.push_back(current);
+                    current.clear();
+                }
+            } else {
+                current.push_back(ch);
+            }
+        }
+        if (!current.empty()) {
+            parts.push_back(current);
+        }
+
+        std::string normalized;
+        for (size_t i = 0; i < parts.size(); ++i) {
+            if (i > 0) {
+                normalized.push_back('.');
+            }
+            normalized += parts[i];
+        }
+        return normalized;
+    };
+
+    std::string normalized_default = normalize_path(default_schema_);
+
     // If no schema specified, use default
     if (schema.empty()) {
-        schema = default_schema_;
+        schema = normalized_default;
+        return;
     }
-    // Ensure schema starts with /remote/emulated/postgresql/
-    if (schema.find("/remote/emulated/postgresql/") != 0) {
-        schema = default_schema_ + schema;
+
+    std::string normalized_schema = normalize_path(schema);
+    if (normalized_schema.rfind("remote.emulated.postgresql.", 0) == 0 ||
+        normalized_schema == "remote.emulated.postgresql")
+    {
+        schema = normalized_schema;
+        return;
+    }
+
+    if (!normalized_default.empty()) {
+        schema = normalized_default + "." + normalized_schema;
+    } else {
+        schema = normalized_schema;
     }
 }
 

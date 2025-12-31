@@ -146,15 +146,10 @@ static std::string buildEmulatedServerRoot(const std::string& default_schema) {
         return default_schema;
     }
 
-    std::string trimmed = default_schema;
-    while (trimmed.size() > 1 && trimmed.back() == '/') {
-        trimmed.pop_back();
-    }
-
     std::vector<std::string> parts;
     std::string current;
-    for (char ch : trimmed) {
-        if (ch == '/') {
+    for (char ch : default_schema) {
+        if (ch == '/' || ch == '.') {
             if (!current.empty()) {
                 parts.push_back(current);
                 current.clear();
@@ -172,17 +167,11 @@ static std::string buildEmulatedServerRoot(const std::string& default_schema) {
     }
 
     std::string root;
-    if (!default_schema.empty() && default_schema.front() == '/') {
-        root.push_back('/');
-    }
     for (size_t i = 0; i < parts.size(); ++i) {
         if (i > 0) {
-            root.push_back('/');
+            root.push_back('.');
         }
         root += parts[i];
-    }
-    if (!root.empty() && root.back() != '/') {
-        root.push_back('/');
     }
     return root;
 }
@@ -448,13 +437,54 @@ std::string Parser::parseQualifiedName() {
 }
 
 void Parser::resolveTableName(std::string& schema, std::string& table) {
+    auto normalize_path = [](const std::string& path) {
+        std::vector<std::string> parts;
+        std::string current;
+        for (char ch : path) {
+            if (ch == '/' || ch == '.') {
+                if (!current.empty()) {
+                    parts.push_back(current);
+                    current.clear();
+                }
+            } else {
+                current.push_back(ch);
+            }
+        }
+        if (!current.empty()) {
+            parts.push_back(current);
+        }
+
+        std::string normalized;
+        for (size_t i = 0; i < parts.size(); ++i) {
+            if (i > 0) {
+                normalized.push_back('.');
+            }
+            normalized += parts[i];
+        }
+        return normalized;
+    };
+
+    std::string normalized_default = normalize_path(default_schema_);
+
     // If no schema specified, use default
     if (schema.empty()) {
-        schema = default_schema_;
+        schema = normalized_default;
+        return;
     }
-    // Ensure schema starts with /remote/emulated/mysql/
-    if (schema.find("/remote/emulated/mysql/") != 0) {
-        schema = default_schema_ + schema;
+
+    std::string normalized_schema = normalize_path(schema);
+    if (normalized_schema.rfind("remote.emulated.mysql.", 0) == 0 ||
+        normalized_schema == "remote.emulated.mysql")
+    {
+        schema = normalized_schema;
+        return;
+    }
+
+    std::string server_root = buildEmulatedServerRoot(default_schema_);
+    if (!server_root.empty()) {
+        schema = server_root + "." + normalized_schema;
+    } else {
+        schema = normalized_schema;
     }
 }
 
@@ -2005,7 +2035,7 @@ void Parser::parseRenameStmt() {
         std::vector<std::string> parts;
         std::string current;
         for (char ch : path) {
-            if (ch == '/') {
+            if (ch == '/' || ch == '.') {
                 if (!current.empty()) {
                     parts.push_back(current);
                     current.clear();
@@ -2112,11 +2142,10 @@ void Parser::parseAlterStmt() {
             emitByte(static_cast<uint8_t>(action));
 
             std::string db_path = buildEmulatedServerRoot(default_schema_);
-            if (!db_path.empty() && db_path.back() != '/') {
-                db_path.push_back('/');
+            if (!db_path.empty()) {
+                db_path.push_back('.');
             }
             db_path += db_name;
-            db_path.push_back('/');
             emitString(db_path);
             emitString(payload);
         };
@@ -2158,7 +2187,7 @@ void Parser::parseAlterStmt() {
         std::vector<std::string> parts;
         std::string current;
         for (char ch : path) {
-            if (ch == '/') {
+            if (ch == '/' || ch == '.') {
                 if (!current.empty()) {
                     parts.push_back(current);
                     current.clear();
@@ -2272,11 +2301,10 @@ void Parser::parseDropStmt() {
         emitByte(if_exists ? 0x01 : 0x00);
 
         std::string db_path = buildEmulatedServerRoot(default_schema_);
-        if (!db_path.empty() && db_path.back() != '/') {
-            db_path.push_back('/');
+        if (!db_path.empty()) {
+            db_path.push_back('.');
         }
         db_path += db_name;
-        db_path.push_back('/');
         emitString(db_path);
         return;
     }
@@ -2675,11 +2703,10 @@ void Parser::parseCreateDatabase() {
     emitByte(if_not_exists ? 0x01 : 0x00);
 
     std::string db_path = buildEmulatedServerRoot(default_schema_);
-    if (!db_path.empty() && db_path.back() != '/') {
-        db_path.push_back('/');
+    if (!db_path.empty()) {
+        db_path.push_back('.');
     }
     db_path += db_name;
-    db_path.push_back('/');
     emitString(db_path);
 
     // Optional database options
@@ -2946,7 +2973,11 @@ void Parser::parseUseStmt() {
     std::string db = parseIdentifier();
 
     // Update default schema to include the database
-    default_schema_ = "/remote/emulated/mysql/localhost/" + db + "/";
+    std::string server_root = buildEmulatedServerRoot(default_schema_);
+    if (server_root.empty()) {
+        server_root = "remote.emulated.mysql.localhost";
+    }
+    default_schema_ = server_root + "." + db;
 
     // Emit a schema change opcode
     emit(sblr::Opcode::EXTENDED_OPCODE);

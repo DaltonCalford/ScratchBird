@@ -63,15 +63,10 @@ std::string buildEmulatedServerRoot(std::string_view default_schema) {
         return std::string(default_schema);
     }
 
-    std::string trimmed(default_schema);
-    while (trimmed.size() > 1 && trimmed.back() == '/') {
-        trimmed.pop_back();
-    }
-
     std::vector<std::string> parts;
     std::string current;
-    for (char ch : trimmed) {
-        if (ch == '/') {
+    for (char ch : default_schema) {
+        if (ch == '/' || ch == '.') {
             if (!current.empty()) {
                 parts.push_back(current);
                 current.clear();
@@ -89,17 +84,11 @@ std::string buildEmulatedServerRoot(std::string_view default_schema) {
     }
 
     std::string root;
-    if (!default_schema.empty() && default_schema.front() == '/') {
-        root.push_back('/');
-    }
     for (size_t i = 0; i < parts.size(); ++i) {
         if (i > 0) {
-            root.push_back('/');
+            root.push_back('.');
         }
         root += parts[i];
-    }
-    if (!root.empty() && root.back() != '/') {
-        root.push_back('/');
     }
     return root;
 }
@@ -1003,11 +992,10 @@ void Parser::parseCreateDatabase() {
     emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_DATABASE));
     emitByte(if_not_exists ? 0x01 : 0x00);
     std::string db_path = buildEmulatedServerRoot(default_schema_);
-    if (!db_path.empty() && db_path.back() != '/') {
-        db_path.push_back('/');
+    if (!db_path.empty()) {
+        db_path.push_back('.');
     }
     db_path += db_name;
-    db_path.push_back('/');
     emitString(db_path);
 
     // Database options
@@ -1063,12 +1051,39 @@ void Parser::parseCreateSchema() {
         return;
     }
 
+    auto normalize_path = [](const std::string& path) {
+        std::vector<std::string> parts;
+        std::string current;
+        for (char ch : path) {
+            if (ch == '/' || ch == '.') {
+                if (!current.empty()) {
+                    parts.push_back(current);
+                    current.clear();
+                }
+            } else {
+                current.push_back(ch);
+            }
+        }
+        if (!current.empty()) {
+            parts.push_back(current);
+        }
+
+        std::string normalized;
+        for (size_t i = 0; i < parts.size(); ++i) {
+            if (i > 0) {
+                normalized.push_back('.');
+            }
+            normalized += parts[i];
+        }
+        return normalized;
+    };
+
     emit(sblr::Opcode::EXTENDED_OPCODE);
     emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_SCHEMA));
     emitByte(if_not_exists ? 0x01 : 0x00);
-    std::string schema_path = default_schema_;
-    if (!schema_path.empty() && schema_path.back() != '/') {
-        schema_path.push_back('/');
+    std::string schema_path = normalize_path(default_schema_);
+    if (!schema_path.empty()) {
+        schema_path.push_back('.');
     }
     schema_path += schema_name;
     emitString(schema_path);
@@ -1369,7 +1384,7 @@ void Parser::parseAlterStmt() {
         std::vector<std::string> parts;
         std::string current;
         for (char ch : path) {
-            if (ch == '/') {
+            if (ch == '/' || ch == '.') {
                 if (!current.empty()) {
                     parts.push_back(current);
                     current.clear();
@@ -1382,6 +1397,18 @@ void Parser::parseAlterStmt() {
             parts.push_back(current);
         }
         return parts;
+    };
+
+    auto normalize_path = [&](const std::string& path) {
+        auto parts = split_path(path);
+        std::string normalized;
+        for (size_t i = 0; i < parts.size(); ++i) {
+            if (i > 0) {
+                normalized.push_back('.');
+            }
+            normalized += parts[i];
+        }
+        return normalized;
     };
 
     auto split_qualified = [&](const std::string& qualified) {
@@ -1425,22 +1452,19 @@ void Parser::parseAlterStmt() {
     };
 
     auto build_schema_path_string = [&](const std::string& schema_name) {
-        std::string schema_path = default_schema_;
-        if (!schema_path.empty() && schema_path.back() != '/') {
-            schema_path.push_back('/');
+        std::string schema_path = normalize_path(default_schema_);
+        if (!schema_path.empty()) {
+            schema_path.push_back('.');
         }
-        schema_path += schema_name;
-        return schema_path;
+        return schema_path + schema_name;
     };
 
     auto build_database_path_string = [&](const std::string& db_name) {
         std::string db_path = buildEmulatedServerRoot(default_schema_);
-        if (!db_path.empty() && db_path.back() != '/') {
-            db_path.push_back('/');
+        if (!db_path.empty()) {
+            db_path.push_back('.');
         }
-        db_path += db_name;
-        db_path.push_back('/');
-        return db_path;
+        return db_path + db_name;
     };
 
     auto emit_object_path = [&](const std::vector<std::string>& components) {
@@ -1782,11 +1806,10 @@ void Parser::parseDropStmt() {
         emitByte(flags);
 
         std::string db_path = buildEmulatedServerRoot(default_schema_);
-        if (!db_path.empty() && db_path.back() != '/') {
-            db_path.push_back('/');
+        if (!db_path.empty()) {
+            db_path.push_back('.');
         }
         db_path += db_name;
-        db_path.push_back('/');
         emitString(db_path);
         return;
     }
@@ -1811,12 +1834,39 @@ void Parser::parseDropStmt() {
         }
 
         for (const auto& schema_name : schemas) {
+        auto normalize_path = [](const std::string& path) {
+            std::vector<std::string> parts;
+            std::string current;
+            for (char ch : path) {
+                if (ch == '/' || ch == '.') {
+                    if (!current.empty()) {
+                        parts.push_back(current);
+                        current.clear();
+                    }
+                } else {
+                    current.push_back(ch);
+                }
+            }
+            if (!current.empty()) {
+                parts.push_back(current);
+            }
+
+            std::string normalized;
+            for (size_t i = 0; i < parts.size(); ++i) {
+                if (i > 0) {
+                    normalized.push_back('.');
+                }
+                normalized += parts[i];
+            }
+            return normalized;
+        };
+
             emit(sblr::Opcode::EXTENDED_OPCODE);
             emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_SCHEMA));
             emitByte(flags);
-            std::string schema_path = default_schema_;
-            if (!schema_path.empty() && schema_path.back() != '/') {
-                schema_path.push_back('/');
+            std::string schema_path = normalize_path(default_schema_);
+            if (!schema_path.empty()) {
+                schema_path.push_back('.');
             }
             schema_path += schema_name;
             emitString(schema_path);

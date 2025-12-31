@@ -116,6 +116,11 @@ inline const char* protocolTypeToString(ProtocolType type) {
     }
 }
 
+/**
+ * Convert protocol name string to ProtocolType
+ */
+ProtocolType protocolTypeFromString(const std::string& name);
+
 // ============================================================================
 // Virtual Catalog Handler Interface
 // ============================================================================

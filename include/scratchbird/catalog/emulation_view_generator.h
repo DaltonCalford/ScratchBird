@@ -136,15 +136,17 @@ public:
         std::vector<EmulatedViewDefinition> views = getViewDefinitions(protocol);
 
         // Create each view
+        Status first_error = Status::OK;
         for (const auto& viewDef : views) {
-            s = createEmulatedView(schema_id, viewDef, ctx);
-            if (s != Status::OK) {
+            s = createEmulatedView(schema_id, viewDef, server_name, database_name, ctx);
+            if (s != Status::OK && first_error == Status::OK) {
+                first_error = s;
                 // Log error but continue with other views
                 // In production, might want to rollback all
             }
         }
 
-        return Status::OK;
+        return first_error;
     }
 
     /**
@@ -214,9 +216,36 @@ private:
      */
     Status createEmulatedView(const ID& schema_id,
                               const EmulatedViewDefinition& viewDef,
+                              const std::string& server_name,
+                              const std::string& database_name,
                               ErrorContext* ctx) {
-        return catalog_->createView(schema_id, viewDef.view_name, viewDef.source_query,
+        std::string query = renderViewQuery(viewDef, schema_id, server_name, database_name);
+        return catalog_->createView(schema_id, viewDef.view_name, query,
                                     true, false, false, viewDef.columns, ID{}, ctx);
+    }
+
+    static void replaceAll(std::string& text, const std::string& token,
+                           const std::string& replacement) {
+        if (token.empty()) {
+            return;
+        }
+        size_t pos = 0;
+        while ((pos = text.find(token, pos)) != std::string::npos) {
+            text.replace(pos, token.size(), replacement);
+            pos += replacement.size();
+        }
+    }
+
+    static std::string renderViewQuery(const EmulatedViewDefinition& viewDef,
+                                       const ID& schema_id,
+                                       const std::string& server_name,
+                                       const std::string& database_name) {
+        std::string query = viewDef.source_query;
+        std::string schema_literal = "UUID '" + schema_id.toString() + "'";
+        replaceAll(query, "{schema_id}", schema_literal);
+        replaceAll(query, "{server_name}", server_name);
+        replaceAll(query, "{database_name}", database_name);
+        return query;
     }
 
     // ========================================================================
@@ -251,6 +280,7 @@ private:
                     NULL AS RDB$SECURITY_CLASS
                 FROM sys.catalog.tables t
                 JOIN sys.catalog.schemas s ON t.schema_id = s.schema_id
+                WHERE t.schema_id = {schema_id}
             )SQL",
             {"RDB$RELATION_NAME", "RDB$RELATION_ID", "RDB$SYSTEM_FLAG",
              "RDB$OWNER_NAME", "RDB$DESCRIPTION", "RDB$VIEW_BLR",
@@ -331,6 +361,8 @@ private:
                     NULL AS RDB$SECURITY_CLASS,
                     NULL AS RDB$OWNER_NAME
                 FROM sys.catalog.columns c
+                JOIN sys.catalog.tables t ON c.table_id = t.table_id
+                WHERE t.schema_id = {schema_id}
             )SQL",
             {"RDB$FIELD_NAME", "RDB$QUERY_NAME", "RDB$FIELD_TYPE",
              "RDB$FIELD_LENGTH", "RDB$FIELD_SCALE", "RDB$NULL_FLAG"},
@@ -367,6 +399,7 @@ private:
                     NULL AS RDB$IDENTITY_TYPE
                 FROM sys.catalog.columns c
                 JOIN sys.catalog.tables t ON c.table_id = t.table_id
+                WHERE t.schema_id = {schema_id}
             )SQL",
             {"RDB$RELATION_NAME", "RDB$FIELD_NAME", "RDB$FIELD_SOURCE",
              "RDB$FIELD_POSITION", "RDB$NULL_FLAG"},
@@ -395,6 +428,7 @@ private:
                     NULL AS RDB$STATISTICS
                 FROM sys.catalog.indexes i
                 JOIN sys.catalog.tables t ON i.table_id = t.table_id
+                WHERE t.schema_id = {schema_id}
             )SQL",
             {"RDB$INDEX_NAME", "RDB$RELATION_NAME", "RDB$INDEX_ID",
              "RDB$UNIQUE_FLAG", "RDB$SEGMENT_COUNT", "RDB$INDEX_TYPE"},
@@ -427,6 +461,7 @@ private:
                     0 AS RDB$SYSTEM_FLAG,
                     NULL AS RDB$SQL_SECURITY
                 FROM sys.catalog.procedures p
+                WHERE p.schema_id = {schema_id}
             )SQL",
             {"RDB$PROCEDURE_NAME", "RDB$PROCEDURE_ID", "RDB$PROCEDURE_INPUTS",
              "RDB$PROCEDURE_SOURCE", "RDB$OWNER_NAME"},
@@ -473,6 +508,7 @@ private:
                     NULL AS RDB$SQL_SECURITY
                 FROM sys.catalog.triggers tr
                 JOIN sys.catalog.tables t ON tr.table_id = t.table_id
+                WHERE t.schema_id = {schema_id}
             )SQL",
             {"RDB$TRIGGER_NAME", "RDB$RELATION_NAME", "RDB$TRIGGER_SEQUENCE",
              "RDB$TRIGGER_TYPE", "RDB$TRIGGER_SOURCE", "RDB$TRIGGER_INACTIVE"},
@@ -508,6 +544,7 @@ private:
                     FALSE AS hasrules
                 FROM sys.catalog.tables t
                 JOIN sys.catalog.schemas s ON t.schema_id = s.schema_id
+                WHERE t.schema_id = {schema_id}
             )SQL",
             {"schemaname", "tablename", "tableowner", "tablespace",
              "hasindexes", "hastriggers", "hasrules"},
@@ -526,6 +563,7 @@ private:
                     v.definition AS definition
                 FROM sys.catalog.views v
                 JOIN sys.catalog.schemas s ON v.schema_id = s.schema_id
+                WHERE v.schema_id = {schema_id}
             )SQL",
             {"schemaname", "viewname", "viewowner", "definition"},
             {DataType::VARCHAR, DataType::VARCHAR, DataType::VARCHAR, DataType::VARCHAR},
@@ -569,6 +607,7 @@ private:
                     t.description AS TABLE_COMMENT
                 FROM sys.catalog.tables t
                 JOIN sys.catalog.schemas s ON t.schema_id = s.schema_id
+                WHERE t.schema_id = {schema_id}
             )SQL",
             {"TABLE_CATALOG", "TABLE_SCHEMA", "TABLE_NAME", "TABLE_TYPE",
              "ENGINE", "TABLE_ROWS", "TABLE_COMMENT"},
@@ -617,6 +656,7 @@ private:
                     0 AS category,
                     0 AS cache
                 FROM sys.catalog.tables t
+                WHERE t.schema_id = {schema_id}
             )SQL",
             {"name", "id", "type"},
             {DataType::VARCHAR, DataType::INT32, DataType::CHAR},
