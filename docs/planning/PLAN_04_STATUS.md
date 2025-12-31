@@ -2,8 +2,8 @@
 
 **Plan:** Domain DDL (CREATE/ALTER/DROP DOMAIN) with full WITH block support
 **Version:** 1.0
-**Last Updated:** 2025-12-26
-**Overall Status:** ⚠️ BLOCKED - Awaiting Schema/Database DDL infrastructure
+**Last Updated:** 2025-12-31
+**Overall Status:** ⚠️ WAITING ON PLAN 03B - Schema/Database DDL core complete
 
 ---
 
@@ -12,8 +12,8 @@
 | Phase | Status | Details |
 |-------|--------|---------|
 | **Specification** | ✅ COMPLETE | All specifications written and reviewed |
-| **Prerequisites** | ⚠️ BLOCKED | Critical blocker discovered (Schema/Database DDL missing) |
-| **Implementation** | ❌ NOT STARTED | Cannot start until blocker resolved |
+| **Prerequisites** | ⚠️ PARTIAL | Plan 02B resolved; Plan 03B pending |
+| **Implementation** | ❌ NOT STARTED | Awaiting Plan 03B |
 
 ---
 
@@ -76,69 +76,58 @@
    - Added Tasks 10.9-10.12 for WITH block enforcement (52 hours)
    - Updated task count from 76 to 80 tasks
 
-### ⚠️ Phase 3: Critical Blocker Discovery (2025-12-26)
+### ✅ Phase 3: Blocker Resolved (2025-12-31)
 
-1. **Schema/Database DDL Opcode Gap Identified** ⚠️
-   - Discovered missing SBLR opcodes for schema/database management
-   - EXT_CREATE_SCHEMA, EXT_DROP_SCHEMA, EXT_CREATE_DATABASE, EXT_DROP_DATABASE all MISSING
-   - PostgreSQL parser uses wrong placeholder opcode
-   - PostgreSQL parseCreateSchema() emits NO opcode (corrupt bytecode)
-   - MySQL/Firebird parsers have stubs or missing implementations
-   - No executor handlers for schema/database DDL
-   - **Impact:** Blocks Plan 04 testing (domains are schema-scoped)
-   - **Impact:** Blocks ALL emulated database support
+1. **Schema/Database DDL Infrastructure Implemented** ✅
+   - EXT_CREATE/EXT_DROP/EXT_ALTER SCHEMA and DATABASE opcodes added
+   - PostgreSQL/MySQL parsers emit schema/database opcodes
+   - Firebird parser supports CREATE/DROP/ALTER DATABASE (rename only)
+   - Executor handlers implemented for schema/database DDL
+   - Emulation view generator updated and integrated into CREATE/DROP DATABASE
+   - Canonical emulation path resolved to `remote.emulated.<dialect>.<server>.<db>` (dot-path)
 
-2. **Documentation Created** ✅
-   - `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md` - Detailed analysis
-   - Updated `PLAN_04_PREREQUISITES.md` with blocker section
-   - Updated `PLAN_04_IMPLEMENTATION_CHECKLIST.md` with blocker warning
+2. **Documentation Updated** ✅
+   - `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md` - historical analysis
+   - `PLAN_04_PREREQUISITES.md` updated with resolved status
+   - `PLAN_04_IMPLEMENTATION_CHECKLIST.md` updated with unblocked status
 
 ---
 
-## Current Blockers
+## Current Dependencies
 
-### 🔴 BLOCKER #1: Schema/Database DDL Infrastructure Missing
+### 🟡 Dependency #1: Plan 03B Domain Infrastructure
 
-**Status:** BLOCKING - Cannot proceed with Plan 04 implementation
+**Status:** BLOCKING - Required before Plan 04 implementation
 **Severity:** CRITICAL
-**Discovered:** 2025-12-26
 
-**Problem:**
-- Domains are schema-scoped
-- SBLR opcodes for CREATE/DROP SCHEMA and CREATE/DROP DATABASE do not exist
-- Emulated parsers cannot create test schemas for domain testing
-- PostgreSQL parser generates corrupt SBLR bytecode
+**Why it matters:**
+- WITH blocks (SECURITY/INTEGRITY/VALIDATION/QUALITY) require the Plan 03B infrastructure.
+- Domain enforcement depends on audit, masking, validation, and quality pipelines.
 
 **Dependencies:**
-- Plan 02B (Schema/Database DDL) - 60-80 hours
 - Plan 03B (Domain Infrastructure) - 138-192 hours
-- **Total:** 198-272 hours before Plan 04 can start
 
-**Resolution Options:**
-1. Wait for Plan 02B completion (other AI working on it)
-2. Create minimal schema opcodes in Plan 04 scope
-3. User provides interim fix
+**Note:** Plan 02B (Schema/Database DDL) is now core complete; remaining alignment/testing is tracked separately.
 
-**User Decision Required:** How to proceed?
+**User Decision Required:** Approval to begin Plan 03B.
 
 **Detailed Analysis:** `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md`
 
 ---
 
-### 🔴 BLOCKER #2: Emulation Schema Path Normalization
+### 🟡 Dependency #2: Emulation Schema Path Alignment
 
-**Status:** BLOCKING - Must resolve before any emulation DDL work
-**Severity:** CRITICAL
-**Discovered:** 2025-12-28 (audit)
+**Status:** IN PROGRESS - Canonical path resolved; adapter/compiler alignment pending
+**Severity:** HIGH
 
-**Problem:**
-- Plans and adapters assume `remote.emulated.<dialect>.<server>.<db>`
-- Catalog defaults include `emulation.<dialect>` under root
-- MySQL parser/compiler uses slash paths (`/remote/emulated/mysql/...`)
-- Catalog schema lookup splits by dot path, so dotted names created as a single schema are not discoverable
+**Current State:**
+- Canonical path is `remote.emulated.<dialect>.<server>.<db>` (dot-path).
+- MySQL/PostgreSQL parsers normalize slash paths to dot paths.
+- Adapters and query compilers still use slash defaults in places.
 
-**Resolution Required:**
-- Decide canonical emulation path format in Plan 02B and update adapters, parsers, and catalog usage.
+**Remaining Work:**
+- Align adapters and query compilers to dot-path defaults.
+- Remove legacy `emulation.<dialect>` references where present.
 
 **Detailed Analysis:** `docs/audit/AUDIT_SCHEMA_DATABASE_DDL_GAP.md`
 
@@ -150,7 +139,7 @@
 
 **Status:** NOT STARTED - Awaiting user approval
 **Assigned To:** This AI (Plan 04 team)
-**Dependencies:** Plan 02B must complete first
+**Dependencies:** Plan 02B core complete; remaining alignment/testing can proceed in parallel
 
 **Key Components:**
 - ✅ Specification complete (35 tasks defined)
@@ -161,43 +150,26 @@
 
 ### Plan 02B: Schema/Database DDL (60-80 hours)
 
-**Status:** DRAFT - See `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`
+**Status:** CORE COMPLETE - See `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`
 **Critical For:** Plan 04 testing capability
 
-**Key Components Needed:**
-- EXT_CREATE_SCHEMA opcode + handler
-- EXT_DROP_SCHEMA opcode + handler
-- EXT_CREATE_DATABASE opcode + handler
-- EXT_DROP_DATABASE opcode + handler
-- PostgreSQL parser fixes
-- MySQL parser implementation
-- Firebird parser implementation
+**Delivered:**
+- EXT_CREATE/EXT_DROP/EXT_ALTER SCHEMA and DATABASE opcodes + handlers
+- PostgreSQL/MySQL parser emission (schema/database DDL)
+- Firebird CREATE/DROP/ALTER DATABASE support (rename only for ALTER)
+- Emulated database lifecycle + view generation integration
 
-**Waiting For:** Plan 02B execution and path decision
+**Remaining:** Adapter/query compiler path alignment, cascade semantics, tests
 
 ---
 
-## Next Steps (Pending User Decision)
+## Next Steps
 
-### Option A: Wait for Dependencies
-1. Wait for Plan 02B completion (Schema/Database DDL)
-2. Implement Plan 03B (Domain Infrastructure)
-3. Begin Plan 04 implementation
+1. Begin Plan 03B (Domain Infrastructure).
+2. Track remaining Plan 02B alignment/testing items (path defaults, cascade semantics, tests).
+3. Start Plan 04 after Plan 03B completion.
 
-**Timeline:** 198-272 hours before Plan 04 starts
-
-### Option B: Proceed with Minimal Scope
-1. Implement minimal schema opcodes in Plan 04
-2. Begin Plan 04 with basic domain types only
-3. Add WITH blocks when Plan 03B completes
-
-**Issue:** Violates separation of concerns
-**Issue:** May duplicate work from Plan 02B
-
-### Option C: User Provides Interim Fix
-1. User provides working schema DDL opcodes
-2. Begin Plan 04 implementation
-3. Integrate with Plan 02B/03B when ready
+**Timeline:** 138-192 hours before Plan 04 starts (Plan 03B).
 
 ---
 
@@ -219,7 +191,7 @@
 
 ## Implementation Progress (0/80 tasks)
 
-**Current:** 0% complete (blocked before start)
+**Current:** 0% complete (awaiting Plan 03B)
 
 ### Section 1: Schema Changes (0/1)
 - [ ] Task 1.1: Add dialect_tag/compat_name to domain schema
@@ -275,21 +247,16 @@
 
 ## Questions for User
 
-1. **How should we proceed with the Schema/Database DDL blocker?**
-   - Wait for Plan 02B?
-   - Implement minimal schema opcodes in Plan 04?
-   - Other solution?
+1. **Approval to start Plan 03B?**
+   - Can we proceed with domain infrastructure implementation?
 
-2. **Are other AIs working on Plan 02 and Plan 03 as mentioned?**
-   - What is their status?
-   - Can we coordinate with them?
+2. **Confirm Plan 02B alignment priorities?**
+   - Adapter/query compiler path defaults
+   - Cascade semantics for DROP SCHEMA/DATABASE
+   - Dedicated tests for schema/database DDL
 
-3. **Is the emulation architecture understanding correct?**
-   - CREATE DATABASE → schema under emulation tree?
-   - DROP DATABASE → CASCADE prune schema tree?
-
-4. **Timeline expectations?**
-   - 198-272 hours of prerequisites before Plan 04
+3. **Timeline expectations?**
+   - 138-192 hours of prerequisites (Plan 03B) before Plan 04
    - Is this acceptable?
 
 ---
@@ -299,19 +266,18 @@
 **In case of session error, the next AI should:**
 
 1. Read this status document first
-2. Read `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md` for blocker details
+2. Read `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md` for historical context
 3. Read `PLAN_04_PREREQUISITES.md` for full prerequisites list
 4. Read `PLAN_04_IMPLEMENTATION_CHECKLIST.md` for task breakdown
-5. Check with user on blocker resolution before proceeding
+5. Confirm Plan 03B scope and start if approved
 6. Update this status document with any progress
 
 **Key Context:**
-- Plan 04 is BLOCKED by missing Schema/Database DDL infrastructure
+- Plan 02B core implementation is complete; alignment/testing remains
+- Plan 04 is waiting on Plan 03B domain infrastructure
 - All specifications are complete and committed
-- Awaiting user decision on how to proceed
-- DO NOT start implementation until blocker is resolved
 
 ---
 
-**Last Updated:** 2025-12-26 by Claude Code
-**Next Update:** After user decision on blocker resolution
+**Last Updated:** 2025-12-31
+**Next Update:** After Plan 03B approval or completion

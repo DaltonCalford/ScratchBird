@@ -2,35 +2,24 @@
 
 **Version:** 1.1 (Updated 2025-12-26)
 **Created:** 2025-12-21
-**Status:** ⚠️ BLOCKED - Schema/Database DDL opcodes missing
+**Status:** ✅ UNBLOCKED - Schema/Database DDL core complete (alignment/testing remaining)
 **Requirement:** ZERO deferrals, stubs, or partial implementations
 
 ---
 
-## ⚠️ CRITICAL BLOCKER (Discovered 2025-12-26)
+## ✅ BLOCKER RESOLVED (2025-12-31)
 
-**CANNOT PROCEED UNTIL RESOLVED:**
+Plan 02B delivered the schema/database DDL infrastructure:
+- ✅ CREATE/DROP/ALTER SCHEMA and DATABASE opcodes + handlers
+- ✅ PostgreSQL/MySQL parser emission for schema/database DDL
+- ✅ Firebird CREATE/DROP/ALTER DATABASE support (rename only)
+- ✅ Emulation path resolved to `remote.emulated.<dialect>.<server>.<db>` (dot-path)
+- ✅ Emulation view generator integrated into CREATE/DROP DATABASE
 
-Plan 04 implementation is **BLOCKED** by missing Schema/Database DDL infrastructure:
-- ❌ CREATE/DROP SCHEMA opcodes do not exist
-- ❌ CREATE/DROP DATABASE opcodes do not exist
-- ❌ PostgreSQL/MySQL/Firebird parsers have broken/missing schema DDL
-- ❌ No executor handlers for schema/database operations
-- ❌ Emulation schema path normalization is unresolved (emulation.* vs remote.emulated.* and dot vs slash paths)
-
-**Impact:**
-- Domains are schema-scoped; cannot test without working schema creation
-- Emulated database parsers cannot create test schemas
-- PostgreSQL parser generates corrupt SBLR bytecode
-
-**Resolution Required:**
-- Plan 02B (Schema/Database DDL) must be completed first (see `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`), OR
-- Minimal schema opcodes must be implemented in Plan 04 scope
-
-**See:** `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md` for full analysis
-**See:** `PLAN_04_PREREQUISITES.md` Section "Critical Blocker" for details
-
-**User Decision Required Before Implementation Can Begin**
+Remaining alignment tasks (tracked in Plan 02B):
+- Adapter/query compiler dot-path defaults
+- DROP SCHEMA/DATABASE cascade semantics
+- Dedicated unit/integration tests
 
 ---
 
@@ -44,7 +33,7 @@ Plan 04 implementation is **BLOCKED** by missing Schema/Database DDL infrastruct
 6. **DUAL SYNTAX SUPPORT** - When SQL Standard and Firebird conflict, implement BOTH for Firebird compatibility while allowing SQL Standard to be followed moving forward
 7. **PARSER ARCHITECTURE** - ScratchBird parser is context-aware with flexible keywords; emulated parsers (Firebird/PostgreSQL/MySQL) must match their target engine's reserved keyword lists and grammar restrictions
 8. **TEST REQUIRED** - Every feature needs corresponding test
-9. **⚠️ SCHEMA DDL DEPENDENCY** - Schema/Database DDL opcodes MUST exist before Plan 04 implementation (currently MISSING)
+9. **SCHEMA DDL DEPENDENCY** - Schema/Database DDL is available; ensure path alignment and cascade semantics are addressed where needed
 
 ---
 

@@ -16,7 +16,7 @@ This document tracks the progress of building a comprehensive native test suite 
 - ✅ **Documentation**: README.md with usage guide
 - ✅ **Test plan**: Comprehensive TEST_PLAN.md outlining 5,000+ test target
 
-### Initial Test Coverage (10 files created)
+### Initial Test Coverage (17 files created)
 
 #### Basic Tests (3 files)
 - ✅ `basic/001_datatypes.sql` - Basic datatype sampling (needs expansion)
@@ -34,23 +34,30 @@ This document tracks the progress of building a comprehensive native test suite 
 #### Security Tests (1 file)
 - ✅ `security/001_authentication.sql` - User/role basics (needs expansion)
 
-#### Datatype Tests - Comprehensive (2 files)
+#### Datatype Tests - Comprehensive (9 files)
 - ✅ `datatypes/001_numeric_integer_types.sql` - **COMPREHENSIVE** - All 9 integer types tested thoroughly
 - ✅ `datatypes/002_numeric_floating_decimal.sql` - **COMPREHENSIVE** - FLOAT32, FLOAT64, DECIMAL, MONEY tested thoroughly
+- ✅ `datatypes/003_string_char_varchar.sql` - **COMPREHENSIVE** - CHAR, VARCHAR with UTF-8, collation, pattern matching
+- ✅ `datatypes/004_string_text.sql` - **COMPREHENSIVE** - TEXT with unlimited length, UTF-8 multi-language support
+- ✅ `datatypes/005_binary_types.sql` - **COMPREHENSIVE** - BINARY, VARBINARY, BLOB, BYTEA with encoding/operations
+- ✅ `datatypes/006_temporal_date.sql` - **COMPREHENSIVE** - DATE operations, arithmetic, formatting, extraction
+- ✅ `datatypes/007_temporal_time.sql` - **COMPREHENSIVE** - TIME with precision, timezone support, duration calculations
+- ✅ `datatypes/008_temporal_timestamp.sql` - **COMPREHENSIVE** - TIMESTAMP with/without timezone, precision, formatting
+- ✅ `datatypes/009_temporal_interval.sql` - **COMPREHENSIVE** - INTERVAL arithmetic, justification, business logic
 
 ## Current Test Count
 
 | Category | Files Created | Tests Estimated | Status |
 |----------|---------------|-----------------|--------|
-| **Data Types** | 2 comprehensive | ~200 | 🟡 Just started |
+| **Data Types** | 9 comprehensive | ~700 | 🟢 Major progress |
 | **Basic** | 3 basic | ~30 | 🟡 Need expansion |
 | **Advanced** | 2 basic | ~20 | 🟡 Need expansion |
 | **MGA** | 2 basic | ~20 | 🟡 Need expansion |
 | **Security** | 1 basic | ~10 | 🟡 Need expansion |
-| **TOTAL** | **10** | **~280** | **5.6% of target** |
+| **TOTAL** | **17** | **~780** | **15.6% of target** |
 
 **Target**: 5,000+ tests
-**Progress**: ~280 tests (5.6%)
+**Progress**: ~780 tests (15.6%)
 
 ## Remaining Work
 
@@ -62,16 +69,16 @@ Need **1,500 tests** total covering all 54+ base types:
 - ✅ Integer types (INT8-UINT64) - **DONE** (001_numeric_integer_types.sql)
 - ✅ Floating/Decimal (FLOAT32, FLOAT64, DECIMAL, MONEY) - **DONE** (002_numeric_floating_decimal.sql)
 
-#### String and Binary Types (Need **300 tests**)
-- ⬜ 003_string_char_varchar.sql - CHAR(n), VARCHAR(n) variants
-- ⬜ 004_string_text.sql - TEXT with various encodings
-- ⬜ 005_binary_types.sql - BINARY, VARBINARY, BLOB, BYTEA
+#### String and Binary Types (**300 tests**)
+- ✅ 003_string_char_varchar.sql - CHAR(n), VARCHAR(n) variants - **DONE**
+- ✅ 004_string_text.sql - TEXT with various encodings - **DONE**
+- ✅ 005_binary_types.sql - BINARY, VARBINARY, BLOB, BYTEA - **DONE**
 
-#### Temporal Types (Need **200 tests**)
-- ⬜ 006_temporal_date.sql - DATE operations
-- ⬜ 007_temporal_time.sql - TIME operations
-- ⬜ 008_temporal_timestamp.sql - TIMESTAMP with/without timezone
-- ⬜ 009_temporal_interval.sql - INTERVAL arithmetic
+#### Temporal Types (**200 tests**)
+- ✅ 006_temporal_date.sql - DATE operations - **DONE**
+- ✅ 007_temporal_time.sql - TIME operations - **DONE**
+- ✅ 008_temporal_timestamp.sql - TIMESTAMP with/without timezone - **DONE**
+- ✅ 009_temporal_interval.sql - INTERVAL arithmetic - **DONE**
 
 #### Boolean (Need **50 tests**)
 - ⬜ 010_boolean.sql - Three-valued logic, operations
@@ -225,8 +232,8 @@ To efficiently create 5,000+ tests:
 ## Next Actions (Priority Order)
 
 1. ✅ **Complete remaining numeric types** - DONE (2/2 files)
-2. ⬜ **Complete string/binary types** (3 files, ~300 tests)
-3. ⬜ **Complete temporal types** (4 files, ~200 tests)
+2. ✅ **Complete string/binary types** - DONE (3/3 files, ~300 tests)
+3. ✅ **Complete temporal types** - DONE (4/4 files, ~200 tests)
 4. ⬜ **Complete spatial types** (7 files, ~200 tests)
 5. ⬜ **Complete special types** (5 files, ~250 tests)
 6. ⬜ **Build comprehensive index tests** (55 files, ~550 tests)
@@ -249,5 +256,5 @@ To efficiently create 5,000+ tests:
 ---
 
 **Last Updated**: 2025-12-31
-**Current Progress**: 280 tests (~5.6% of 5,000 target)
-**Next Milestone**: Complete all data type tests (1,500 total)
+**Current Progress**: 780 tests (~15.6% of 5,000 target)
+**Next Milestone**: Complete remaining data type tests (Boolean, Spatial, Special types) - targeting 1,500 total datatype tests

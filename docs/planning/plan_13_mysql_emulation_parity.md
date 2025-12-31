@@ -19,7 +19,7 @@ P0 (Alpha requirement).
 
 ## Decisions / Constraints (Resolved)
 - Emulated databases live under schema path `remote.emulated.mysql.<server>.<db>` (full path `/remote/emulated/mysql/<server>/<db>`). The server name is part of the path to avoid collisions.
-  - Audit note (2025-12-28): catalog defaults and parsers use other path formats; the canonical path decision is pending in `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`.
+  - Canonical path resolved in Plan 02B; parsers normalize slash/dot paths. Adapter/query compiler defaults still need alignment in some areas.
 - On emulated database creation/connection, create catalog views scoped to that database only (no cross-database leakage).
 - Catalog objects implemented as views must **appear as tables** where MySQL expects tables (use metadata overrides in the emulated catalogs).
 - MySQL user identity is `(user, host)` (host-specific user records). Host-specific auth precedence and wildcard matching must be honored.
@@ -47,13 +47,13 @@ P0 (Alpha requirement).
     - `parseAlterStmt` (stub)
     - `parseDropStmt` (stub)
     - `parseTruncateStmt` (stub)
-    - `parseCreateIndex` / `parseCreateView` / `parseCreateDatabase` / `parseCreateProcedure` / `parseCreateFunction` / `parseCreateTrigger`
+    - `parseCreateIndex` / `parseCreateView` / `parseCreateProcedure` / `parseCreateFunction` / `parseCreateTrigger` (parseCreateDatabase implemented)
     - `parseIndexDef`, `parseForeignKeyDef` (TODO)
     - `parseComparisonExpr` (`<=>` NULL-safe semantics)
     - `parseLikeExpr` (ESCAPE)
     - Placeholder handling (currently emits `LITERAL_NULL`)
     - `parseQualifiedName` (restrict to db.table, db.table.column)
-    - `parseUseStmt` (default_schema path must include server name)
+    - `parseUseStmt` (normalized to canonical dot-path; ensure server name present)
   - `include/scratchbird/parser/mysql/mysql_parser.h`
     - Update schema path comment and any hard-coded `localhost` semantics.
 - Adapter:

@@ -73,15 +73,8 @@ Emulated parser constraints (by design):
   - Schema names: unique within parent_schema_id.
 - SBLR encoding: bump SBLR_VERSION to 2; extended opcode encoding uses 16-bit opcodes after EXTENDED_OPCODE (0xFF); add EXT_RENAME_OBJECT and EXT_MOVE_OBJECT as 16-bit extended opcodes.
 
-## Known Stub/Partial Areas (Must Be Replaced)
-- Semantic analyzer v2 only handles ALTER TABLE rename/move; other actions still warn:
-  - `src/sblr/semantic_analyzer_v2.cpp`
-- Executor uses hard-coded "PUBLIC" schema and partial lookup paths:
-  - `src/sblr/executor.cpp` (many uses of getSchema("PUBLIC"))
-- Name resolution gaps:
-  - `CatalogManager::getSchema(string)` resolves hierarchy but uppercases components and ignores name_is_delimited
-  - Sequence names are globally unique; schema-scoped lookup still needed
-  - Resolver relies on caches that are incomplete for non-persisted objects
+## Known Stub/Partial Areas
+Resolved for Plan 02 scope; no remaining known stubs.
 
 ## Required Data/Schema Changes
 - No schema_path columns are added to sys.catalog.tables/sys.catalog.views/etc. Schema path is computed.

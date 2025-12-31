@@ -498,7 +498,7 @@ Status status = catalog_->resolveObjectPath(path, ObjectType::DOMAIN, opts, doma
 |------|-----------|---------|----------|
 | Comprehensive domain spec | ❌ MISSING | No BNF grammar for advanced features | 1-2 weeks |
 | Domain payload encoding spec | ❌ MISSING | SBLR payload structure undefined | 1 week |
-| Dialect-aware resolution | ❌ BLOCKED | Requires Plan 02 completion | N/A |
+| Dialect-aware resolution | ⚠️ NEEDS IMPLEMENTATION | Plan 02 complete; implement domain lookup rules | 1-2 days |
 
 ### 8.2 Recommended Implementation Sequence
 

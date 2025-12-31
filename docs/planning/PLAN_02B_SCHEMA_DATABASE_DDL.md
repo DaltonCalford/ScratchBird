@@ -1,8 +1,8 @@
 # Plan 02B - Schema/Database DDL Infrastructure
 
-Version: 1.0
-Date: 2025-12-28
-Status: Draft (audit-aligned)
+Version: 1.1
+Date: 2025-12-31
+Status: In progress (core implementation complete; alignment/testing remaining)
 
 Scope: Provide SBLR opcodes, parser emission, executor handlers, and catalog integration for CREATE/DROP/ALTER SCHEMA and CREATE/DROP/ALTER DATABASE. Align emulated database lifecycle with catalog schema paths and view generation.
 
@@ -14,27 +14,39 @@ References:
 - `docs/planning/plan_14_postgresql_emulation_parity.md`
 - `docs/planning/plan_15_firebird_emulation_parity.md`
 
-## Current Implementation (from audit)
-- CatalogManager supports schema CRUD and schema paths:
-  - `createSchema`, `createSchemaPath`, `dropSchema` (RESTRICT-only).
-- Emulation catalog records exist:
-  - `createEmulationType`, `createEmulationServer`, `createEmulatedDatabase`, `dropEmulatedDatabase`.
-- Adapters create emulated schemas directly; view generation is partially implemented per adapter.
-- SBLR opcodes, executor handlers, and parser DDL support are missing or incorrect.
-- Emulation view generator header is out of sync with current CatalogManager APIs.
+## Current Implementation (as of 2025-12-31)
+Completed:
+- SBLR extended opcodes defined for CREATE/DROP/ALTER SCHEMA and CREATE/DROP/ALTER DATABASE.
+- V2 semantic analyzer + bytecode generator emit schema/database DDL payloads and flags.
+- Executor handlers implemented for CREATE/DROP/ALTER SCHEMA and CREATE/DROP/ALTER DATABASE.
+- PostgreSQL parser emits CREATE/DROP/ALTER SCHEMA/DATABASE opcodes.
+- MySQL parser emits CREATE/DROP/ALTER DATABASE (SCHEMA synonym supported).
+- Firebird parser builds emulated database paths for CREATE/DROP/ALTER DATABASE (RENAME only for ALTER).
+- ScratchBird v2 parser supports CREATE/DROP/ALTER SCHEMA/DATABASE.
+- Emulated database lifecycle wired: createSchemaPath + createEmulationType/server/db record; dropEmulatedDatabase.
+- Emulation view generator updated and integrated into CREATE/DROP DATABASE for non-native protocols.
+- MySQL/PostgreSQL parsers normalize slash/dot paths to canonical dot paths.
 
-## Decisions Required (before implementation)
+Remaining:
+- DROP SCHEMA/DATABASE cascade behavior (CatalogManager dropSchema is RESTRICT-only; cascade flag ignored).
+- CREATE SCHEMA owner assignment is read but not persisted (catalog API gap).
+- ALTER SCHEMA SET PATH is not supported.
+- Adapter/query compiler default schema path alignment (slash paths still used in adapters/compilers).
+- Dedicated unit/integration tests for schema/database DDL and emulated view generation.
+
+## Decisions (Resolved)
 1) Canonical emulation schema path:
-   - Option A: `emulation.<dialect>.<server>.<db>` (matches catalog root tree).
-   - Option B: `remote.emulated.<dialect>.<server>.<db>` (matches current plans/adapters).
-   - Resolve dot-path vs slash-path representations used in parsers/query compilers.
+   - `remote.emulated.<dialect>.<server>.<db>` is canonical (dot-path).
+   - Slash paths (`/remote/emulated/...`) are normalized to dot-path at parser boundaries.
 2) CREATE DATABASE semantics:
-   - Must it also create an emulated database record and views?
-   - Required flags (IF NOT EXISTS, owner, encoding, template, server).
+   - Creates schema path under `remote.emulated.<dialect>.<server>.<db>`.
+   - Creates/ensures emulation type/server records.
+   - Creates emulated database record and generates protocol-specific views.
 3) DROP DATABASE semantics:
-   - Cascade behavior for schema tree and views.
-   - Record cleanup for emulated database entries.
-4) CREATE/DROP SCHEMA cascade rules (RESTRICT vs CASCADE).
+   - Drops emulation views (non-native protocols), then drops schema (native).
+   - Drops emulated database record.
+4) Emulated databases are virtual:
+   - No dedicated database files; they are branches on the schema tree within an existing ScratchBird database.
 
 ## Schema Resolution Mechanics (authoritative)
 - Default schema is always set from user/role/group; if missing, treat root as current schema.
@@ -51,59 +63,51 @@ References:
 ## Work Items
 
 ### 1) Opcode Definitions and Payloads
-- Add extended opcodes in `include/scratchbird/sblr/opcodes.h`:
-  - EXT_CREATE_SCHEMA, EXT_DROP_SCHEMA, EXT_ALTER_SCHEMA
-  - EXT_CREATE_DATABASE, EXT_DROP_DATABASE, EXT_ALTER_DATABASE
-- Define payload structures for flags, names/IDs, owner, and cascade options.
+Status: Completed
+- Extended opcodes added in `include/scratchbird/sblr/opcodes.h`.
+- Payloads emitted by v2 bytecode generator (flags + schema/database path + optional owner/rename).
 
 ### 2) Executor Handlers
-- Implement handlers in `src/sblr/executor.cpp` for each opcode:
-  - Map to CatalogManager schema CRUD and emulated database CRUD.
-  - Enforce IF EXISTS / IF NOT EXISTS semantics.
-  - Apply cascade vs restrict behavior for drop operations.
-  - Update connection context schema/search_path as needed.
-  - Align schema resolution with leading-dot and relative path rules where applicable.
+Status: Completed (cascade semantics pending)
+- Implemented handlers in `src/sblr/executor.cpp` for schema/database opcodes.
+- IF EXISTS / IF NOT EXISTS enforced.
+- Emulated database records created/dropped.
+- Cascade flag is passed but CatalogManager dropSchema remains RESTRICT-only.
 
 ### 3) Parser Implementations
-- PostgreSQL (`src/parser/postgresql/pg_parser_ddl.cpp`):
-  - Replace placeholder CREATE DATABASE opcode; emit full payload.
-  - Emit opcode + payload for CREATE SCHEMA.
-  - Add DROP/ALTER DATABASE and DROP/ALTER SCHEMA parsing.
-- MySQL (`src/parser/mysql/mysql_parser.cpp`):
-  - Implement CREATE/DROP DATABASE and CREATE/DROP SCHEMA synonyms.
-  - Implement ALTER DATABASE if needed for dialect parity.
-  - Normalize `parseUseStmt` to the chosen schema path format.
-- Firebird (`src/parser/firebird/firebird_parser.cpp`):
-  - Implement CREATE/DROP DATABASE in dialect-appropriate syntax.
-- ScratchBird v2 (`src/parser/parser_v2.cpp`):
-  - Add CREATE/DROP SCHEMA/DATABASE if native SQL requires them.
+Status: Completed (per-dialect scope)
+- PostgreSQL: CREATE/DROP/ALTER SCHEMA and DATABASE emit extended opcodes.
+- MySQL: CREATE/DROP/ALTER DATABASE implemented; SCHEMA synonym supported; USE path normalized.
+- Firebird: CREATE/DROP/ALTER DATABASE parses to emulated database paths; ALTER supports RENAME only.
+- ScratchBird v2: CREATE/DROP/ALTER SCHEMA/DATABASE supported.
 
 ### 4) Catalog Integration
-- Align schema path creation:
-  - Use `createSchemaPath` for hierarchical emulation paths.
-  - Ensure `getSchema` by name works for emulated schemas.
-- Drop behavior:
-  - Implement cascade semantics or explicitly enforce restrict behavior with consistent errors.
-  - On DROP DATABASE, prune schema tree and clean emulated database records.
-- Connect emulated database records to schema creation/deletion.
+Status: Completed (cascade pending)
+- Schema paths created via `createSchemaPath` with REMOTE_EMULATED schema type.
+- Emulated database records created/dropped via CatalogManager.
+- DROP DATABASE prunes views and drops emulated database record.
+- DROP SCHEMA is still RESTRICT-only (cascade pending).
 
 ### 5) Emulation View Generation
-- Update or replace `EmulationViewGenerator` to use current CatalogManager APIs.
-- Decide whether view generation is centralized (generator) or per-adapter; make it consistent.
+Status: Completed (core integration)
+- `EmulationViewGenerator` updated to current CatalogManager APIs.
+- CREATE/DROP DATABASE invokes centralized view generation for emulated protocols.
 
 ### 6) Adapter and Compiler Alignment
-- Update adapters and query compilers to use the canonical path format.
-- Remove slash-path defaults in MySQL parser/compiler if dot paths are canonical.
-- Ensure search_path updates and schema resolution match the chosen path format.
+Status: In progress
+- Parsers normalize slash/dot paths to canonical dot paths.
+- Adapters/query compilers still use slash defaults in places; align to dot path.
 - Ensure adapters do not expose PARENT/CURRENT/ABSOLUTE tokens to remote clients.
 
 ### 7) Testing
-- Unit tests for opcode emission and executor handling.
-- Parser tests for CREATE/DROP/ALTER SCHEMA and CREATE/DROP/ALTER DATABASE.
-- Integration tests for emulated DB create/drop across PostgreSQL/MySQL/Firebird adapters.
+Status: In progress
+- Add unit tests for opcode emission and executor handling.
+- Add parser tests for CREATE/DROP/ALTER SCHEMA/DATABASE.
+- Add integration tests for emulated DB create/drop across PostgreSQL/MySQL/Firebird adapters.
 
 ## Acceptance Criteria
 - Emulated database creation and drop work end-to-end for PostgreSQL, MySQL, Firebird.
 - Schema and database DDL opcodes are defined, emitted, and executed with correct semantics.
 - Emulation schema paths are consistent across catalog, adapters, parsers, and plans.
-- View generation works and is not reliant on stale APIs.
+- View generation works via the centralized generator.
+- Cascade semantics and adapter/query compiler path alignment are validated.

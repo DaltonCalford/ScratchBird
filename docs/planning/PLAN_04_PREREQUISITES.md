@@ -2,7 +2,7 @@
 
 **Version:** 1.1
 **Date:** 2025-12-26 (Updated)
-**Status:** CRITICAL BLOCKER IDENTIFIED - AWAITING USER REVIEW
+**Status:** Updated - Plan 02B core implementation complete (alignment/testing remaining)
 
 ---
 
@@ -10,61 +10,56 @@
 
 This document identifies all infrastructure components that MUST exist before Plan 04 (Domain DDL) can be implemented. The WITH blocks (SECURITY, INTEGRITY, VALIDATION, QUALITY) require significant underlying infrastructure for full Alpha implementation.
 
-**CRITICAL BLOCKER DISCOVERED (2025-12-26):** Schema/Database DDL opcodes are missing. This blocks not only Plan 04 but ALL emulated database support. See "Critical Blocker" section below.
+**Previous blocker resolved (2025-12-31):** Schema/Database DDL opcodes and handlers are implemented. Remaining work is path alignment, cascade semantics, and tests (see "Resolved Blocker" section below).
 
 **CRITICAL:** These prerequisites must be completed BEFORE Plan 04 implementation begins, or Plan 04 must be scoped to exclude WITH blocks until prerequisites are ready.
 
 ---
 
-## ⚠️ CRITICAL BLOCKER: Schema/Database DDL Opcodes Missing
+## ✅ RESOLVED: Schema/Database DDL Infrastructure
 
 **Discovered:** 2025-12-26
 **Severity:** BLOCKS Plan 04 AND All Emulation
-**Status:** REQUIRES PLAN_02B OR IMMEDIATE FIX
+**Status:** CORE IMPLEMENTATION COMPLETE (alignment/testing remaining)
 
 ### Problem
 
-Domains are **schema-scoped**, but the SBLR opcodes for CREATE/DROP SCHEMA and CREATE/DROP DATABASE do not exist. The emulation architecture depends on CREATE DATABASE mapping to schema creation under the emulation tree (e.g., `emulation.postgres.mydb`), but:
+Domains are **schema-scoped**, and the required schema/database DDL infrastructure is now in place:
 
-- ❌ `EXT_CREATE_SCHEMA` opcode does NOT exist
-- ❌ `EXT_DROP_SCHEMA` opcode does NOT exist
-- ❌ `EXT_CREATE_DATABASE` opcode does NOT exist
-- ❌ `EXT_DROP_DATABASE` opcode does NOT exist
-- ❌ PostgreSQL `parseCreateDatabase()` uses wrong placeholder opcode
-- ❌ PostgreSQL `parseCreateSchema()` emits NO opcode (corrupt bytecode)
-- ❌ MySQL `parseCreateDatabase()` is just a TODO stub
-- ❌ Firebird has no CREATE DATABASE implementation
-- ❌ No executor handlers for schema/database DDL
+- ✅ EXT_CREATE/EXT_DROP/EXT_ALTER SCHEMA and DATABASE opcodes added.
+- ✅ PostgreSQL parser emits CREATE/DROP/ALTER SCHEMA/DATABASE opcodes.
+- ✅ MySQL parser implements CREATE/DROP/ALTER DATABASE (SCHEMA synonym).
+- ✅ Firebird parser builds emulated DB paths for CREATE/DROP/ALTER DATABASE (RENAME only).
+- ✅ Executor handlers implemented for schema/database DDL.
+- ✅ Emulation view generator updated and wired into CREATE/DROP DATABASE.
+- ✅ Canonical emulation path resolved to `remote.emulated.<dialect>.<server>.<db>` (dot-path normalized).
 
-**Audit update (2025-12-28):**
-- CatalogManager already provides `createSchema`, `createSchemaPath`, and `dropSchema` (restrict-only), plus emulation type/server/database records, but there is no SBLR path to invoke them.
-- Emulation schema path conventions are inconsistent (emulation.* vs remote.emulated.* and dot vs slash paths).
-- `EmulationViewGenerator` APIs do not match CatalogManager and are currently unused.
+**Remaining gaps:**
+- DROP SCHEMA/DATABASE cascade semantics (CatalogManager dropSchema is RESTRICT-only).
+- Adapter/query compiler default schema path alignment (slash-path defaults remain).
+- Dedicated unit/integration tests for schema/database DDL and emulated view generation.
 
 ### Impact on Plan 04
 
-1. **Cannot test domains** - Domains are schema-scoped; need working schema creation
-2. **Cannot test emulated parsers** - PostgreSQL/MySQL/Firebird parsers can't create schemas for domain testing
-3. **Invalid bytecode** - Current PostgreSQL parser generates corrupt SBLR
+1. **Domain testing unblocked** - Schema/database DDL opcodes and handlers now exist.
+2. **Emulated parser DDL unblocked** - Parsers emit valid schema/database opcodes.
+3. **Path alignment still needed** - Adapters/compilers must converge on dot-path defaults.
 
 ### Dependencies
 
 **Plan 04 now depends on:**
 - ✅ Plan 03B (WITH block infrastructure) - 138-192 hours
-- ⚠️ **Plan 02B (Schema/Database DDL)** - 60-80 hours **[NEW BLOCKER]**
-  - See `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`
+- ⚠️ **Plan 02B (Schema/Database DDL)** - core complete; remaining alignment/testing
+  - See `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md` for status
 
-**Total prerequisite work:** 198-272 hours before Plan 04 can proceed
+**Total prerequisite work:** 138-192 hours before Plan 04 can proceed (Plan 03B)
 
-### Resolution Options
+### Next Steps
 
-**Option A:** Wait for Plan 02B completion (other AI working on it)
-**Option B:** Create minimal schema opcodes in Plan 04 scope (violates separation of concerns)
-**Option C:** User provides interim fix for schema creation
+1. Proceed with Plan 03B (Domain Infrastructure).
+2. Track remaining Plan 02B alignment items (cascade semantics, adapter path alignment, tests).
 
 **Detailed Analysis:** See `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md`
-
-**User Decision Required:** How should Plan 04 proceed given this blocker?
 
 ---
 

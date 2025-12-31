@@ -616,7 +616,7 @@ The ScratchBird Native Wire Protocol specification (scratchbird_native_wire_prot
 
 ### 9.3 Plan Dependencies
 - **Plan 03 (Auth):** ODBC uses authentication system
-- **Plan 02B (Schema DDL):** Catalog functions need schema queries
+- **Plan 02B (Schema DDL):** Core complete; alignment/testing ongoing
 - **No blocking dependencies:** ODBC can proceed independently
 
 ---
