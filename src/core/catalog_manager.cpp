@@ -1727,16 +1727,16 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // ├── app (application data)
         // ├── users (user home directories - DIFFERENT from sys.sec.users)
         // ├── remote (remote/federated objects)
-        // ├── emulation (database emulation layer)
-        // │   ├── mysql (MySQL compatibility)
-        // │   ├── postgres (PostgreSQL compatibility)
-        // │   ├── mssql (SQL Server compatibility)
-        // │   └── firebird (Firebird compatibility)
+        // │   └── emulated (database emulation layer)
+        // │       ├── mysql (MySQL compatibility)
+        // │       ├── postgresql (PostgreSQL compatibility)
+        // │       ├── mssql (SQL Server compatibility)
+        // │       └── firebird (Firebird compatibility)
         // └── public (default user schema)
 
         ID root_id, sys_id, sec_id, srv_id, users_sec_id, roles_id, groups_id;
-        ID mon_id, agents_id, app_id, users_home_id, remote_id, emulation_id;
-        ID mysql_id, postgres_id, mssql_id, firebird_id, public_id;
+        ID mon_id, agents_id, app_id, users_home_id, remote_id, public_id;
+        ID emulated_id, mysql_id, postgresql_id, mssql_id, firebird_id;
 
         // Level 0: root
         status = createSchemaInternal("root", "system", root_id, ID(), ctx, db_->uuid());
@@ -1753,9 +1753,6 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         if (status != Status::OK) return status;
 
         status = createSchemaInternal("remote", "system", remote_id, root_id, ctx);
-        if (status != Status::OK) return status;
-
-        status = createSchemaInternal("emulation", "system", emulation_id, root_id, ctx);
         if (status != Status::OK) return status;
 
         status = createSchemaInternal("public", "system", public_id, root_id, ctx);
@@ -1784,17 +1781,20 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         status = createSchemaInternal("groups", "system", groups_id, sec_id, ctx);
         if (status != Status::OK) return status;
 
-        // Level 2: emulation.* schemas
-        status = createSchemaInternal("mysql", "system", mysql_id, emulation_id, ctx);
+        // Level 2: remote.emulated.* schemas
+        status = createSchemaInternal("emulated", "system", emulated_id, remote_id, ctx);
         if (status != Status::OK) return status;
 
-        status = createSchemaInternal("postgres", "system", postgres_id, emulation_id, ctx);
+        status = createSchemaInternal("mysql", "system", mysql_id, emulated_id, ctx);
         if (status != Status::OK) return status;
 
-        status = createSchemaInternal("mssql", "system", mssql_id, emulation_id, ctx);
+        status = createSchemaInternal("postgresql", "system", postgresql_id, emulated_id, ctx);
         if (status != Status::OK) return status;
 
-        status = createSchemaInternal("firebird", "system", firebird_id, emulation_id, ctx);
+        status = createSchemaInternal("mssql", "system", mssql_id, emulated_id, ctx);
+        if (status != Status::OK) return status;
+
+        status = createSchemaInternal("firebird", "system", firebird_id, emulated_id, ctx);
         if (status != Status::OK) return status;
 
         DEBUG_LOG_DB("System catalog initialized with 18 schemas in hierarchy");

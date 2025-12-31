@@ -303,31 +303,15 @@ std::string getFirebirdSchemaPath(const std::string& server, const std::string& 
 bool ensureFirebirdSchemaHierarchy(core::CatalogManager* catalog, const std::string& server) {
     if (!catalog) return false;
 
-    // Create hierarchy one level at a time
-    std::vector<std::string> levels = {
-        "remote",
-        "remote.emulated",
-        "remote.emulated.firebird",
-        "remote.emulated.firebird." + server
-    };
-
-    for (const auto& path : levels) {
-        core::ErrorContext ctx;
-        core::ID schemaId;
-        // Try to create, ignore if already exists
-        core::Status status = catalog->createSchema(path, "system", schemaId, &ctx);
-        if (status != core::Status::OK) {
-            // Check if it already exists
-            core::CatalogManager::SchemaInfo info;
-            core::ErrorContext get_ctx;
-            status = catalog->getSchema(path, info, &get_ctx);
-            if (status != core::Status::OK) {
-                std::cerr << "Error creating schema hierarchy (" << path << "): " << get_ctx.message << "\n";
-                return false;
-            }
-        }
+    std::string path = "remote.emulated.firebird." + server;
+    core::ErrorContext ctx;
+    core::ID schema_id;
+    core::Status status = catalog->createSchemaPath(
+        path, core::CatalogManager::SchemaType::REMOTE_EMULATED, schema_id, &ctx);
+    if (status != core::Status::OK) {
+        std::cerr << "Error creating schema hierarchy (" << path << "): " << ctx.message << "\n";
+        return false;
     }
-
     return true;
 }
 
@@ -359,20 +343,24 @@ bool handleCreateDatabase(const std::string& dbPath, core::Database& db) {
     // Create schema path: remote.emulated.firebird.localhost.{dbName}
     std::string schemaPath = getFirebirdSchemaPath(g_fb_state.server_name, dbName);
 
-    // Create schema using simple createSchema API
+    // Create schema using hierarchical path API
     core::ID schemaId;
-    core::Status status = catalog->createSchema(schemaPath, "system", schemaId, &ctx);
-
-    if (status != core::Status::OK) {
-        // Schema might already exist - try to get it
-        core::CatalogManager::SchemaInfo schemaInfo;
-        status = catalog->getSchema(schemaPath, schemaInfo, &ctx);
-        if (status == core::Status::OK) {
-            schemaId = schemaInfo.schema_id;
-        } else {
+    core::CatalogManager::SchemaInfo schemaInfo;
+    core::Status status = catalog->getSchema(schemaPath, schemaInfo, &ctx);
+    if (status == core::Status::OK) {
+        schemaId = schemaInfo.schema_id;
+    } else if (status == core::Status::NOT_FOUND || status == core::Status::INVALID_ARGUMENT) {
+        status = catalog->createSchemaPath(schemaPath,
+                                           core::CatalogManager::SchemaType::REMOTE_EMULATED,
+                                           schemaId,
+                                           &ctx);
+        if (status != core::Status::OK) {
             std::cerr << "Error creating database schema: " << ctx.message << "\n";
             return false;
         }
+    } else {
+        std::cerr << "Error resolving database schema: " << ctx.message << "\n";
+        return false;
     }
 
     // Note: RDB$ system views would be created here by EmulationViewGenerator

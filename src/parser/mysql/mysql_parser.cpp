@@ -141,6 +141,52 @@ bool Parser::match(TokenType type) {
     return false;
 }
 
+static std::string buildEmulatedServerRoot(const std::string& default_schema) {
+    if (default_schema.empty()) {
+        return default_schema;
+    }
+
+    std::string trimmed = default_schema;
+    while (trimmed.size() > 1 && trimmed.back() == '/') {
+        trimmed.pop_back();
+    }
+
+    std::vector<std::string> parts;
+    std::string current;
+    for (char ch : trimmed) {
+        if (ch == '/') {
+            if (!current.empty()) {
+                parts.push_back(current);
+                current.clear();
+            }
+        } else {
+            current.push_back(ch);
+        }
+    }
+    if (!current.empty()) {
+        parts.push_back(current);
+    }
+
+    if (parts.size() > 4) {
+        parts.resize(4);
+    }
+
+    std::string root;
+    if (!default_schema.empty() && default_schema.front() == '/') {
+        root.push_back('/');
+    }
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i > 0) {
+            root.push_back('/');
+        }
+        root += parts[i];
+    }
+    if (!root.empty() && root.back() != '/') {
+        root.push_back('/');
+    }
+    return root;
+}
+
 bool Parser::matchKeyword(TokenType kw) {
     return match(kw);
 }
@@ -2065,7 +2111,7 @@ void Parser::parseAlterStmt() {
             emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_DATABASE));
             emitByte(static_cast<uint8_t>(action));
 
-            std::string db_path = default_schema_;
+            std::string db_path = buildEmulatedServerRoot(default_schema_);
             if (!db_path.empty() && db_path.back() != '/') {
                 db_path.push_back('/');
             }
@@ -2225,7 +2271,7 @@ void Parser::parseDropStmt() {
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_DATABASE));
         emitByte(if_exists ? 0x01 : 0x00);
 
-        std::string db_path = default_schema_;
+        std::string db_path = buildEmulatedServerRoot(default_schema_);
         if (!db_path.empty() && db_path.back() != '/') {
             db_path.push_back('/');
         }
@@ -2628,7 +2674,7 @@ void Parser::parseCreateDatabase() {
     emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_DATABASE));
     emitByte(if_not_exists ? 0x01 : 0x00);
 
-    std::string db_path = default_schema_;
+    std::string db_path = buildEmulatedServerRoot(default_schema_);
     if (!db_path.empty() && db_path.back() != '/') {
         db_path.push_back('/');
     }
