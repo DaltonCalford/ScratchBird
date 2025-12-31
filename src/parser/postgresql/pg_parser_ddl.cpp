@@ -8,6 +8,7 @@
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/catalog_manager.h"
 #include <algorithm>
+#include <cctype>
 #include <limits>
 
 namespace scratchbird::parser::postgresql {
@@ -943,11 +944,25 @@ void Parser::parseCreateSequence() {
 }
 
 void Parser::parseCreateDatabase() {
-    emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_DATABASE));  // Use a placeholder
+    bool if_not_exists = false;
+    if (matchKeyword(TokenType::KW_IF)) {
+        consumeKeyword(TokenType::KW_NOT, "Expected NOT");
+        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+        if_not_exists = true;
+    }
 
     std::string db_name = parseIdentifier();
-    emitString(db_name);
+
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_DATABASE));
+    emitByte(if_not_exists ? 0x01 : 0x00);
+    std::string db_path = default_schema_;
+    if (!db_path.empty() && db_path.back() != '/') {
+        db_path.push_back('/');
+    }
+    db_path += db_name;
+    db_path.push_back('/');
+    emitString(db_path);
 
     // Database options
     if (matchKeyword(TokenType::KW_WITH)) {
@@ -977,6 +992,7 @@ void Parser::parseCreateDatabase() {
 
 void Parser::parseCreateSchema() {
     std::string schema_name;
+    std::string owner_name;
 
     bool if_not_exists = false;
     if (matchKeyword(TokenType::KW_IF)) {
@@ -990,10 +1006,27 @@ void Parser::parseCreateSchema() {
     }
 
     if (matchKeyword(TokenType::KW_AUTHORIZATION)) {
-        parseIdentifier();  // role name
+        owner_name = parseIdentifier();
     }
 
-    emitString(schema_name);
+    if (schema_name.empty() && !owner_name.empty()) {
+        schema_name = owner_name;
+    }
+    if (schema_name.empty()) {
+        error("Expected schema name");
+        return;
+    }
+
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_SCHEMA));
+    emitByte(if_not_exists ? 0x01 : 0x00);
+    std::string schema_path = default_schema_;
+    if (!schema_path.empty() && schema_path.back() != '/') {
+        schema_path.push_back('/');
+    }
+    schema_path += schema_name;
+    emitString(schema_path);
+    emitString(owner_name);
 }
 
 void Parser::parseCreateFunction() {
@@ -1601,6 +1634,83 @@ void Parser::parseAlterStmt() {
 
 void Parser::parseDropStmt() {
     consume(TokenType::KW_DROP, "Expected DROP");
+
+    if (matchKeyword(TokenType::KW_DATABASE)) {
+        bool if_exists = false;
+        if (matchKeyword(TokenType::KW_IF)) {
+            consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+            if_exists = true;
+        }
+
+        std::string db_name = parseIdentifier();
+
+        uint8_t flags = if_exists ? 0x01 : 0x00;
+        if (matchKeyword(TokenType::KW_WITH)) {
+            if (match(TokenType::LEFT_PAREN)) {
+                do {
+                    std::string opt;
+                    if (matchKeyword(TokenType::KW_FORCE)) {
+                        opt = "FORCE";
+                    } else {
+                        opt = parseIdentifier();
+                    }
+                    std::string upper = opt;
+                    std::transform(upper.begin(), upper.end(), upper.begin(),
+                                   [](unsigned char ch) { return std::toupper(ch); });
+                    if (upper == "FORCE") {
+                        flags |= 0x02;
+                    }
+                } while (match(TokenType::COMMA));
+                consume(TokenType::RIGHT_PAREN, "Expected )");
+            }
+        }
+
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_DATABASE));
+        emitByte(flags);
+
+        std::string db_path = default_schema_;
+        if (!db_path.empty() && db_path.back() != '/') {
+            db_path.push_back('/');
+        }
+        db_path += db_name;
+        db_path.push_back('/');
+        emitString(db_path);
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_SCHEMA)) {
+        bool if_exists = false;
+        if (matchKeyword(TokenType::KW_IF)) {
+            consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+            if_exists = true;
+        }
+
+        std::vector<std::string> schemas;
+        do {
+            schemas.push_back(parseQualifiedName());
+        } while (match(TokenType::COMMA));
+
+        uint8_t flags = if_exists ? 0x01 : 0x00;
+        if (matchKeyword(TokenType::KW_CASCADE)) {
+            flags |= 0x02;
+        } else if (matchKeyword(TokenType::KW_RESTRICT)) {
+            flags |= 0x04;
+        }
+
+        for (const auto& schema_name : schemas) {
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_SCHEMA));
+            emitByte(flags);
+            std::string schema_path = default_schema_;
+            if (!schema_path.empty() && schema_path.back() != '/') {
+                schema_path.push_back('/');
+            }
+            schema_path += schema_name;
+            emitString(schema_path);
+        }
+        return;
+    }
 
     if (matchKeyword(TokenType::KW_TABLE)) {
         emit(sblr::Opcode::DROP_TABLE);

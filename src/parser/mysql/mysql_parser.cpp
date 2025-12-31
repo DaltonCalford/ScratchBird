@@ -1926,7 +1926,16 @@ void Parser::parseReplaceStmt() {
 
 void Parser::parseCreateStmt() {
     advance();  // Consume CREATE
-    parseCreateTable();  // Simplified - just handle TABLE for now
+    if (matchKeyword(TokenType::KW_DATABASE) || matchKeyword(TokenType::KW_SCHEMA)) {
+        parseCreateDatabase();
+        return;
+    }
+    if (check(TokenType::KW_TABLE) || check(TokenType::KW_TEMPORARY)) {
+        parseCreateTable();
+        return;
+    }
+    error("CREATE statement not yet implemented");
+    synchronize();
 }
 
 void Parser::parseRenameStmt() {
@@ -2165,6 +2174,29 @@ void Parser::parseAlterStmt() {
 
 void Parser::parseDropStmt() {
     advance();  // Consume DROP
+    if (matchKeyword(TokenType::KW_DATABASE) || matchKeyword(TokenType::KW_SCHEMA)) {
+        bool if_exists = false;
+        if (matchKeyword(TokenType::KW_IF)) {
+            consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+            if_exists = true;
+        }
+
+        std::string db_name = parseIdentifier();
+
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_DATABASE));
+        emitByte(if_exists ? 0x01 : 0x00);
+
+        std::string db_path = default_schema_;
+        if (!db_path.empty() && db_path.back() != '/') {
+            db_path.push_back('/');
+        }
+        db_path += db_name;
+        db_path.push_back('/');
+        emitString(db_path);
+        return;
+    }
+
     error("DROP statement not yet implemented");
     synchronize();
 }
@@ -2545,7 +2577,49 @@ void Parser::parseCreateView() {
 }
 
 void Parser::parseCreateDatabase() {
-    // TODO: Implement
+    bool if_not_exists = false;
+    if (matchKeyword(TokenType::KW_IF)) {
+        consumeKeyword(TokenType::KW_NOT, "Expected NOT");
+        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+        if_not_exists = true;
+    }
+
+    std::string db_name = parseIdentifier();
+
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_DATABASE));
+    emitByte(if_not_exists ? 0x01 : 0x00);
+
+    std::string db_path = default_schema_;
+    if (!db_path.empty() && db_path.back() != '/') {
+        db_path.push_back('/');
+    }
+    db_path += db_name;
+    db_path.push_back('/');
+    emitString(db_path);
+
+    // Optional database options
+    while (true) {
+        if (matchKeyword(TokenType::KW_DEFAULT)) {
+            continue;
+        } else if (matchKeyword(TokenType::KW_CHARACTER)) {
+            consumeKeyword(TokenType::KW_SET, "Expected SET");
+            parseIdentifier();
+        } else if (matchKeyword(TokenType::KW_CHARSET)) {
+            parseIdentifier();
+        } else if (matchKeyword(TokenType::KW_COLLATE)) {
+            parseIdentifier();
+        } else if (matchKeyword(TokenType::KW_ENCRYPTION)) {
+            match(TokenType::EQUAL);
+            if (check(TokenType::STRING_LITERAL)) {
+                advance();
+            } else {
+                parseIdentifier();
+            }
+        } else {
+            break;
+        }
+    }
 }
 
 void Parser::parseCreateProcedure() {

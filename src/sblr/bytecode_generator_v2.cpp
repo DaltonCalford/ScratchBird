@@ -88,6 +88,16 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateCreateIndex(create_index);
     } else if (auto* create_view = dynamic_cast<ResolvedCreateViewStmt*>(stmt)) {
         generateCreateView(create_view);
+    } else if (auto* create_schema = dynamic_cast<ResolvedCreateSchemaStmt*>(stmt)) {
+        generateCreateSchema(create_schema);
+    } else if (auto* drop_schema = dynamic_cast<ResolvedDropSchemaStmt*>(stmt)) {
+        generateDropSchema(drop_schema);
+    } else if (auto* create_database = dynamic_cast<ResolvedCreateDatabaseStmt*>(stmt)) {
+        generateCreateDatabase(create_database);
+    } else if (auto* drop_database = dynamic_cast<ResolvedDropDatabaseStmt*>(stmt)) {
+        generateDropDatabase(drop_database);
+    } else if (auto* alter_table = dynamic_cast<ResolvedAlterTableStmt*>(stmt)) {
+        generateAlterTable(alter_table);
     } else if (auto* rename_obj = dynamic_cast<ResolvedRenameObjectStmt*>(stmt)) {
         generateRenameObject(rename_obj);
     } else if (auto* move_obj = dynamic_cast<ResolvedMoveObjectStmt*>(stmt)) {
@@ -574,6 +584,184 @@ void BytecodeGeneratorV2::generateCreateView(ResolvedCreateViewStmt* stmt) {
     // Write query
     if (stmt->query) {
         generateSelect(stmt->query);
+    }
+}
+
+void BytecodeGeneratorV2::generateCreateSchema(ResolvedCreateSchemaStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_SCHEMA));
+
+    uint8_t flags = stmt->if_not_exists ? 0x01 : 0x00;
+    current_result_->writeByte(flags);
+
+    current_result_->writeString(schemaPathToString(stmt->schema_path, string_pool_));
+
+    if (stmt->owner != StringPool::INVALID_ID) {
+        writeStringId(stmt->owner);
+    } else {
+        current_result_->writeString("");
+    }
+}
+
+void BytecodeGeneratorV2::generateDropSchema(ResolvedDropSchemaStmt* stmt) {
+    uint8_t flags = 0;
+    if (stmt->if_exists) flags |= 0x01;
+    if (stmt->cascade) flags |= 0x02;
+    if (stmt->restrict) flags |= 0x04;
+
+    for (const auto& path : stmt->schema_paths) {
+        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+        current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_SCHEMA));
+        current_result_->writeByte(flags);
+        current_result_->writeString(schemaPathToString(path, string_pool_));
+    }
+}
+
+void BytecodeGeneratorV2::generateCreateDatabase(ResolvedCreateDatabaseStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_DATABASE));
+
+    uint8_t flags = stmt->if_not_exists ? 0x01 : 0x00;
+    current_result_->writeByte(flags);
+    current_result_->writeString(schemaPathToString(stmt->database_path, string_pool_));
+}
+
+void BytecodeGeneratorV2::generateDropDatabase(ResolvedDropDatabaseStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_DATABASE));
+
+    uint8_t flags = 0;
+    if (stmt->if_exists) flags |= 0x01;
+    if (stmt->force) flags |= 0x02;
+    current_result_->writeByte(flags);
+    current_result_->writeString(schemaPathToString(stmt->database_path, string_pool_));
+}
+
+void BytecodeGeneratorV2::generateAlterTable(ResolvedAlterTableStmt* stmt) {
+    if (!stmt) {
+        return;
+    }
+
+    auto writeQualifiedTableName = [&]() -> bool {
+        if (stmt->qualified_table_name == StringPool::INVALID_ID) {
+            current_result_->addError("ALTER TABLE requires a qualified table name");
+            return false;
+        }
+        writeStringId(stmt->qualified_table_name);
+        return true;
+    };
+
+    auto resolveTypeModifiers = [&](const ResolvedType& type, uint32_t& precision,
+                                    uint32_t& scale) {
+        precision = 0;
+        scale = 0;
+
+        if (type.length) {
+            precision = static_cast<uint32_t>(*type.length);
+        } else if (type.precision) {
+            precision = static_cast<uint32_t>(*type.precision);
+        }
+
+        if (type.scale) {
+            scale = static_cast<uint32_t>(*type.scale);
+        }
+
+        if ((type.data_type == DataType::VARCHAR || type.data_type == DataType::CHAR) &&
+            precision == 0) {
+            precision = 255;
+        }
+        if (type.data_type == DataType::DECIMAL && precision == 0) {
+            precision = 18;
+        }
+    };
+
+    switch (stmt->action) {
+        case AlterTableAction::ADD_COLUMN: {
+            if (!stmt->has_column_def || stmt->column_def.name == StringPool::INVALID_ID) {
+                current_result_->addError("ALTER TABLE ADD COLUMN missing column definition");
+                return;
+            }
+            if (stmt->column_def.type.data_type == DataType::UNKNOWN) {
+                current_result_->addError("ALTER TABLE ADD COLUMN has unsupported data type");
+                return;
+            }
+
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+
+            current_result_->writeByte(0);  // ADD_COLUMN
+            writeStringId(stmt->column_def.name);
+            current_result_->writeInt16(static_cast<uint16_t>(stmt->column_def.type.data_type));
+
+            uint32_t precision = 0;
+            uint32_t scale = 0;
+            resolveTypeModifiers(stmt->column_def.type, precision, scale);
+            current_result_->writeInt32(precision);
+            current_result_->writeInt32(scale);
+            current_result_->writeByte(stmt->column_def.is_nullable ? 1 : 0);
+            break;
+        }
+        case AlterTableAction::DROP_COLUMN: {
+            if (stmt->column_name == StringPool::INVALID_ID) {
+                current_result_->addError("ALTER TABLE DROP COLUMN requires a column name");
+                return;
+            }
+
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+
+            current_result_->writeByte(1);  // DROP_COLUMN
+            writeStringId(stmt->column_name);
+            current_result_->writeByte(0);  // if_exists (column-level not supported)
+            current_result_->writeByte(stmt->cascade ? 1 : 0);
+            break;
+        }
+        case AlterTableAction::ALTER_COLUMN: {
+            if (!stmt->has_column_def || stmt->column_name == StringPool::INVALID_ID) {
+                current_result_->addError("ALTER TABLE ALTER COLUMN missing type definition");
+                return;
+            }
+            if (stmt->column_def.type.data_type == DataType::UNKNOWN) {
+                current_result_->addError("ALTER TABLE ALTER COLUMN has unsupported data type");
+                return;
+            }
+
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE);
+            if (!writeQualifiedTableName()) return;
+
+            current_result_->writeByte(2);  // ALTER_COLUMN_TYPE
+            writeStringId(stmt->column_name);
+            current_result_->writeInt16(static_cast<uint16_t>(stmt->column_def.type.data_type));
+
+            uint32_t precision = 0;
+            uint32_t scale = 0;
+            resolveTypeModifiers(stmt->column_def.type, precision, scale);
+            current_result_->writeInt32(precision);
+            current_result_->writeInt32(scale);
+            break;
+        }
+        case AlterTableAction::SET_TABLESPACE: {
+            if (stmt->tablespace_name == StringPool::INVALID_ID) {
+                current_result_->addError("ALTER TABLE SET TABLESPACE requires a tablespace name");
+                return;
+            }
+            current_result_->writeOpcode(sblr::Opcode::ALTER_TABLE_SET_TABLESPACE);
+            if (!writeQualifiedTableName()) return;
+            writeStringId(stmt->tablespace_name);
+            current_result_->writeByte(stmt->tablespace_online ? 1 : 0);
+            break;
+        }
+        case AlterTableAction::ENABLE_RLS:
+        case AlterTableAction::DISABLE_RLS: {
+            current_result_->writeExtendedOpcode(
+                sblr::ExtendedOpcode::EXT_ALTER_TABLE_RLS);
+            if (!writeQualifiedTableName()) return;
+            current_result_->writeByte(stmt->rls_action);
+            break;
+        }
+        default:
+            current_result_->addError("ALTER TABLE action not supported in bytecode generator");
+            break;
     }
 }
 
@@ -1696,6 +1884,7 @@ void BytecodeGeneratorV2::writeString16(std::string_view str) {
 
 void BytecodeGeneratorV2::writeObjectPath(const SchemaPath& path) {
     current_result_->writeByte(static_cast<uint8_t>(path.type));
+    current_result_->writeByte(path.no_search_path ? 1 : 0);
     if (path.components.size() > std::numeric_limits<uint8_t>::max()) {
         current_result_->addError("Object path has too many components");
         current_result_->writeByte(0);

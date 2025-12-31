@@ -284,6 +284,10 @@ private:
     ResolvedStatement* analyzeCreateTable(CreateTableStmt* stmt);
     ResolvedStatement* analyzeCreateIndex(CreateIndexStmt* stmt);
     ResolvedStatement* analyzeCreateView(CreateViewStmt* stmt);
+    ResolvedStatement* analyzeCreateSchema(CreateSchemaStmt* stmt);
+    ResolvedStatement* analyzeDropSchema(DropSchemaStmt* stmt);
+    ResolvedStatement* analyzeCreateDatabase(CreateDatabaseStmt* stmt);
+    ResolvedStatement* analyzeDropDatabase(DropDatabaseStmt* stmt);
     ResolvedStatement* analyzeAlterTable(AlterTableStmt* stmt);
     ResolvedStatement* analyzeRenameObject(RenameObjectStmt* stmt);
     ResolvedStatement* analyzeMoveObject(MoveObjectStmt* stmt);

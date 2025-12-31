@@ -1256,6 +1256,12 @@ namespace scratchbird
             EXT_PREPARE_TRANSACTION = 0x0105,  // 2PC prepare
             EXT_COMMIT_PREPARED = 0x0106,  // 2PC commit
             EXT_ROLLBACK_PREPARED = 0x0107,  // 2PC rollback
+            EXT_CREATE_SCHEMA = 0x0108,  // CREATE SCHEMA
+            EXT_DROP_SCHEMA = 0x0109,  // DROP SCHEMA
+            EXT_ALTER_SCHEMA = 0x010A,  // ALTER SCHEMA
+            EXT_CREATE_DATABASE = 0x010B,  // CREATE DATABASE (emulated)
+            EXT_DROP_DATABASE = 0x010C,  // DROP DATABASE (emulated)
+            EXT_ALTER_DATABASE = 0x010D,  // ALTER DATABASE (emulated)
         };
 
         /**

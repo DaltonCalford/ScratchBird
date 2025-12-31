@@ -249,6 +249,14 @@ Statement* Parser::parseCreate() {
     }
 
     // Dispatch based on object type
+    if (matchContextual("SCHEMA")) {
+        return parseCreateSchema();
+    }
+
+    if (matchContextual("DATABASE")) {
+        return parseCreateDatabase();
+    }
+
     if (matchContextual("TABLE")) {
         auto* stmt = parseCreateTable(or_replace);
         if (stmt) {
@@ -940,6 +948,67 @@ CreateSequenceStmt* Parser::parseCreateSequence() {
 }
 
 // =============================================================================
+// CREATE SCHEMA
+// =============================================================================
+
+CreateSchemaStmt* Parser::parseCreateSchema() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateSchemaStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_NOT, "Expected NOT after IF");
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF NOT");
+        stmt->if_not_exists = true;
+    }
+
+    if (!checkContextual("AUTHORIZATION")) {
+        stmt->schema_path = parseSchemaPath(state_);
+    }
+
+    if (matchContextual("AUTHORIZATION")) {
+        stmt->has_owner = true;
+        stmt->owner = expectIdentifier("Expected owner name");
+        if (stmt->schema_path.isEmpty()) {
+            SchemaPath path;
+            path.components.push_back(stmt->owner);
+            stmt->schema_path = path;
+        }
+    }
+
+    if (stmt->schema_path.isEmpty()) {
+        error("Expected schema name");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+// =============================================================================
+// CREATE DATABASE
+// =============================================================================
+
+CreateDatabaseStmt* Parser::parseCreateDatabase() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateDatabaseStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_NOT, "Expected NOT after IF");
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF NOT");
+        stmt->if_not_exists = true;
+    }
+
+    stmt->database_path = parseSchemaPath(state_);
+    if (stmt->database_path.isEmpty()) {
+        error("Expected database name");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+// =============================================================================
 // ALTER Statements
 // =============================================================================
 
@@ -1115,6 +1184,8 @@ AlterTableStmt* Parser::parseAlterTable() {
 Statement* Parser::parseDrop() {
     ParseModeGuard guard(state_, ParseMode::DDL);
 
+    if (matchContextual("SCHEMA")) return parseDropSchema();
+    if (matchContextual("DATABASE")) return parseDropDatabase();
     if (matchContextual("TABLE")) return parseDropTable();
     if (matchContextual("INDEX")) return parseDropIndex();
     if (matchContextual("VIEW")) return parseDropView();
@@ -1127,6 +1198,60 @@ Statement* Parser::parseDrop() {
 
     error("Expected object type after DROP");
     return nullptr;
+}
+
+// =============================================================================
+// DROP SCHEMA
+// =============================================================================
+
+DropSchemaStmt* Parser::parseDropSchema() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropSchemaStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->schemas.push_back(parseSchemaPath(state_));
+    } while (match(TokenType::COMMA));
+
+    if (matchContextual("CASCADE")) stmt->cascade = true;
+    else if (matchContextual("RESTRICT")) stmt->restrict = true;
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+// =============================================================================
+// DROP DATABASE
+// =============================================================================
+
+DropDatabaseStmt* Parser::parseDropDatabase() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropDatabaseStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    stmt->database_path = parseSchemaPath(state_);
+    if (stmt->database_path.isEmpty()) {
+        error("Expected database name");
+    }
+
+    if (matchContextual("CASCADE") || matchContextual("FORCE")) {
+        stmt->force = true;
+    } else if (matchContextual("RESTRICT")) {
+        stmt->force = false;
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
 }
 
 DropTableStmt* Parser::parseDropTable() {

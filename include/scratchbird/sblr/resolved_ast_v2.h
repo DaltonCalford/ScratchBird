@@ -640,6 +640,69 @@ struct ResolvedCreateViewStmt : public ResolvedStatement {
 };
 
 /**
+ * Resolved CREATE SCHEMA statement
+ */
+struct ResolvedCreateSchemaStmt : public ResolvedStatement {
+    bool if_not_exists = false;
+    SchemaPath schema_path;
+    StringPool::StringId owner = StringPool::INVALID_ID;
+};
+
+/**
+ * Resolved DROP SCHEMA statement
+ */
+struct ResolvedDropSchemaStmt : public ResolvedStatement {
+    bool if_exists = false;
+    bool cascade = false;
+    bool restrict = false;
+    std::vector<SchemaPath> schema_paths;
+};
+
+/**
+ * Resolved CREATE DATABASE statement
+ */
+struct ResolvedCreateDatabaseStmt : public ResolvedStatement {
+    bool if_not_exists = false;
+    SchemaPath database_path;
+};
+
+/**
+ * Resolved DROP DATABASE statement
+ */
+struct ResolvedDropDatabaseStmt : public ResolvedStatement {
+    bool if_exists = false;
+    bool force = false;
+    SchemaPath database_path;
+};
+
+/**
+ * Resolved ALTER TABLE statement
+ */
+struct ResolvedAlterTableStmt : public ResolvedStatement {
+    AlterTableAction action = AlterTableAction::ADD_COLUMN;
+    bool if_exists = false;
+    bool only = false;
+    bool cascade = false;
+
+    ID table_uuid;
+    ID schema_uuid;
+    StringPool::StringId table_name = StringPool::INVALID_ID;
+    StringPool::StringId qualified_table_name = StringPool::INVALID_ID;
+
+    // Column operations
+    ResolvedColumnDef column_def;
+    bool has_column_def = false;
+    StringPool::StringId column_name = StringPool::INVALID_ID;
+
+    // Tablespace operations
+    StringPool::StringId tablespace_name = StringPool::INVALID_ID;
+    bool tablespace_online = false;
+
+    // RLS operations
+    uint8_t rls_action = 0;
+};
+
+/**
  * Resolved RENAME OBJECT statement
  */
 struct ResolvedRenameObjectStmt : public ResolvedStatement {

@@ -302,6 +302,41 @@ ast::SourceSpan toV2Span(const fb::SourceSpan& span) {
     return ast::SourceSpan(loc, span.length);
 }
 
+std::string deriveFirebirdDatabaseName(std::string_view db_path) {
+    size_t last_sep = db_path.find_last_of("/\\");
+    std::string base = (last_sep == std::string_view::npos)
+        ? std::string(db_path)
+        : std::string(db_path.substr(last_sep + 1));
+
+    if (base.empty()) {
+        return base;
+    }
+
+    size_t dot = base.find_last_of('.');
+    if (dot != std::string::npos && dot + 1 < base.size()) {
+        std::string ext = base.substr(dot + 1);
+        for (char& ch : ext) {
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        if (ext == "fdb" || ext == "gdb") {
+            base = base.substr(0, dot);
+        }
+    }
+
+    return base;
+}
+
+ast::SchemaPath buildEmulatedDatabasePath(ast::StringPool& pool, std::string_view db_name) {
+    ast::SchemaPath path;
+    path.type = ast::PathType::ABSOLUTE;
+    path.components.push_back(pool.intern("remote"));
+    path.components.push_back(pool.intern("emulated"));
+    path.components.push_back(pool.intern("firebird"));
+    path.components.push_back(pool.intern("localhost"));
+    path.components.push_back(pool.intern(db_name));
+    return path;
+}
+
 } // anonymous namespace
 
 // =============================================================================
@@ -1322,6 +1357,9 @@ Statement* Parser::parseCreateStatement() {
     }
 
     // Dispatch based on object type
+    if (matchKeyword(TokenType::KW_DATABASE)) {
+        return parseCreateDatabase();
+    }
     if (matchKeyword(TokenType::KW_TABLE)) {
         auto* stmt = parseCreateTableImpl(or_replace, temporary, global_temp);
         return stmt;
@@ -1371,6 +1409,77 @@ Statement* Parser::parseCreateStatement() {
     return nullptr;
 }
 
+Statement* Parser::parseCreateDatabase() {
+    auto* stmt = allocate<ast::CreateDatabaseStmt>();
+    stmt->span = toV2Span(current_token_.span);
+
+    auto parseValueToken = [&]() {
+        if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL) ||
+            check(TokenType::IDENTIFIER)) {
+            advance();
+            return true;
+        }
+        return false;
+    };
+
+    std::string db_path_text;
+    if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {
+        auto id = internFromLexer(current_token_.value.string_id);
+        db_path_text = std::string(string_pool_.get(id));
+        advance();
+    } else if (check(TokenType::IDENTIFIER)) {
+        auto id = parseIdentifier();
+        db_path_text = std::string(string_pool_.get(id));
+    } else {
+        error("Expected database path after CREATE DATABASE");
+        return stmt;
+    }
+
+    std::string db_name = deriveFirebirdDatabaseName(db_path_text);
+    if (db_name.empty()) {
+        error("Database name is empty");
+        return stmt;
+    }
+
+    stmt->database_path = buildEmulatedDatabasePath(string_pool_, db_name);
+
+    // Optional Firebird parameters (ignored for emulation)
+    while (!atEnd() && !check(TokenType::SEMICOLON)) {
+        if (matchKeyword(TokenType::KW_USER) || matchKeyword(TokenType::KW_PASSWORD)) {
+            if (!parseValueToken()) {
+                error("Expected identifier or string literal after USER/PASSWORD");
+                break;
+            }
+        } else if (matchKeyword(TokenType::KW_PAGE)) {
+            matchKeyword(TokenType::KW_SIZE);
+            if (!check(TokenType::INTEGER_LITERAL)) {
+                error("Expected page size after PAGE [SIZE]");
+                break;
+            }
+            advance();
+        } else if (matchKeyword(TokenType::KW_DEFAULT)) {
+            if (matchKeyword(TokenType::KW_CHARACTER)) {
+                matchKeyword(TokenType::KW_SET);
+                if (!parseValueToken()) {
+                    error("Expected character set after DEFAULT CHARACTER SET");
+                    break;
+                }
+            } else if (matchKeyword(TokenType::KW_COLLATION)) {
+                if (!parseValueToken()) {
+                    error("Expected collation after DEFAULT COLLATION");
+                    break;
+                }
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    return stmt;
+}
+
 Statement* Parser::parseAlterStatement() {
     if (matchKeyword(TokenType::KW_TABLE)) {
         return parseAlterTableImpl();
@@ -1388,6 +1497,10 @@ Statement* Parser::parseAlterStatement() {
 Statement* Parser::parseDropStatement() {
     // Handle IF EXISTS
     bool if_exists = false;
+
+    if (matchKeyword(TokenType::KW_DATABASE)) {
+        return parseDropDatabase();
+    }
 
     if (matchKeyword(TokenType::KW_TABLE)) {
         if (matchKeyword(TokenType::KW_IF)) {
@@ -1416,6 +1529,38 @@ Statement* Parser::parseDropStatement() {
 
     error("DROP statement for this object type not yet implemented");
     return nullptr;
+}
+
+Statement* Parser::parseDropDatabase() {
+    auto* stmt = allocate<ast::DropDatabaseStmt>();
+    stmt->span = toV2Span(current_token_.span);
+
+    if (matchKeyword(TokenType::KW_IF)) {
+        consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    std::string db_path_text;
+    if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {
+        auto id = internFromLexer(current_token_.value.string_id);
+        db_path_text = std::string(string_pool_.get(id));
+        advance();
+    } else if (check(TokenType::IDENTIFIER)) {
+        auto id = parseIdentifier();
+        db_path_text = std::string(string_pool_.get(id));
+    } else {
+        error("Expected database path after DROP DATABASE");
+        return stmt;
+    }
+
+    std::string db_name = deriveFirebirdDatabaseName(db_path_text);
+    if (db_name.empty()) {
+        error("Database name is empty");
+        return stmt;
+    }
+
+    stmt->database_path = buildEmulatedDatabasePath(string_pool_, db_name);
+    return stmt;
 }
 
 Statement* Parser::parseRecreateStatement() {

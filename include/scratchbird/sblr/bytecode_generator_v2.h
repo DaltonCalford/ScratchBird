@@ -160,6 +160,11 @@ private:
     void generateCreateTable(ResolvedCreateTableStmt* stmt);
     void generateCreateIndex(ResolvedCreateIndexStmt* stmt);
     void generateCreateView(ResolvedCreateViewStmt* stmt);
+    void generateCreateSchema(ResolvedCreateSchemaStmt* stmt);
+    void generateDropSchema(ResolvedDropSchemaStmt* stmt);
+    void generateCreateDatabase(ResolvedCreateDatabaseStmt* stmt);
+    void generateDropDatabase(ResolvedDropDatabaseStmt* stmt);
+    void generateAlterTable(ResolvedAlterTableStmt* stmt);
     void generateRenameObject(ResolvedRenameObjectStmt* stmt);
     void generateMoveObject(ResolvedMoveObjectStmt* stmt);
     void generateDrop(ResolvedDropStmt* stmt);

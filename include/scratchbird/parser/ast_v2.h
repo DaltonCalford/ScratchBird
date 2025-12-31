@@ -54,6 +54,10 @@ enum class ASTKind : uint16_t {
     CreateIndexStmt,
     CreateViewStmt,
     CreateSequenceStmt,
+    CreateSchemaStmt,
+    DropSchemaStmt,
+    CreateDatabaseStmt,
+    DropDatabaseStmt,
     CreateFunctionStmt,
     CreateProcedureStmt,
     CreateTriggerStmt,
@@ -475,6 +479,59 @@ public:
     SchemaPath owned_by_table;
     StringPool::StringId owned_by_column = StringPool::INVALID_ID;
     bool has_owned_by = false;
+};
+
+/**
+ * CREATE SCHEMA statement
+ */
+class CreateSchemaStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateSchemaStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_not_exists = false;
+    SchemaPath schema_path;
+    bool has_owner = false;
+    StringPool::StringId owner = StringPool::INVALID_ID;
+};
+
+/**
+ * DROP SCHEMA statement
+ */
+class DropSchemaStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropSchemaStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    std::vector<SchemaPath> schemas;
+    bool cascade = false;
+    bool restrict = false;
+};
+
+/**
+ * CREATE DATABASE statement
+ */
+class CreateDatabaseStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateDatabaseStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_not_exists = false;
+    SchemaPath database_path;
+};
+
+/**
+ * DROP DATABASE statement
+ */
+class DropDatabaseStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropDatabaseStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    SchemaPath database_path;
+    bool force = false;
 };
 
 /**
@@ -2137,6 +2194,10 @@ public:
     virtual void visit(CreateIndexStmt* stmt) = 0;
     virtual void visit(CreateViewStmt* stmt) = 0;
     virtual void visit(CreateSequenceStmt* stmt) = 0;
+    virtual void visit(CreateSchemaStmt* stmt) = 0;
+    virtual void visit(DropSchemaStmt* stmt) = 0;
+    virtual void visit(CreateDatabaseStmt* stmt) = 0;
+    virtual void visit(DropDatabaseStmt* stmt) = 0;
     virtual void visit(AlterTableStmt* stmt) = 0;
     virtual void visit(RenameObjectStmt* stmt) = 0;
     virtual void visit(MoveObjectStmt* stmt) = 0;

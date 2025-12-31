@@ -82,6 +82,23 @@ namespace scratchbird
         namespace {
             bool isZeroUuid(const core::ID& id);
             std::string normalizeSchemaPath(const std::string& path);
+            std::vector<std::string> splitSchemaComponents(const std::string& path);
+            std::string joinSchemaComponents(const std::vector<std::string>& components,
+                                             size_t start_index = 0);
+            core::Status buildAbsoluteSchemaPath(core::CatalogManager* catalog,
+                                                 const core::ConnectionContext* conn_ctx,
+                                                 const core::ObjectPath& path,
+                                                 std::string& path_out,
+                                                 core::ErrorContext* ctx);
+            core::Status extractEmulatedDatabaseComponents(const std::string& path,
+                                                           std::string& normalized_path_out,
+                                                           std::string& dialect_out,
+                                                           std::string& server_out,
+                                                           std::string& database_out,
+                                                           core::ErrorContext* ctx);
+            core::Status buildObjectPathFromName(const std::string& qualified_name,
+                                                 core::ObjectPath& path,
+                                                 core::ErrorContext* ctx);
         }
 
         // ===== Numeric Type Coercion Helper =====
@@ -1436,6 +1453,26 @@ namespace scratchbird
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_MOVE_OBJECT))
                         {
                             executeMoveObject();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_SCHEMA))
+                        {
+                            executeCreateSchema();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_SCHEMA))
+                        {
+                            executeDropSchema();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_DATABASE))
+                        {
+                            executeCreateDatabase();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_DATABASE))
+                        {
+                            executeDropDatabase();
                             result = ExecutionResult();
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SET_AUTOCOMMIT))
@@ -4100,6 +4137,371 @@ namespace scratchbird
                 error(err_msg);
             }
         }
+
+        void Executor::executeCreateSchema()
+        {
+            uint8_t flags = readByte();
+            bool if_not_exists = (flags & 0x01) != 0;
+
+            std::string schema_path = readString();
+            std::string owner = readString();
+            (void)owner;  // Owner assignment not yet supported by catalog API.
+
+            core::ObjectPath path;
+            core::ErrorContext ctx;
+            auto status = buildObjectPathFromName(schema_path, path, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Invalid schema path";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            core::CatalogManager::ResolveOptions opts;
+            opts.allow_search_path = false;
+            core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+            core::ID existing_id{};
+            status = db_->catalog_manager()->resolveObjectPath(
+                path, core::CatalogManager::ObjectType::SCHEMA, opts,
+                existing_id, resolved_type, &ctx);
+            if (status == core::Status::OK)
+            {
+                if (if_not_exists)
+                {
+                    return;
+                }
+                error("Schema already exists");
+            }
+            if (status != core::Status::NOT_FOUND)
+            {
+                std::string err_msg = "Failed to resolve schema";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            std::string absolute_path;
+            status = buildAbsoluteSchemaPath(db_->catalog_manager(), conn_ctx_, path, absolute_path, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to resolve schema path";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            auto components = splitSchemaComponents(absolute_path);
+            core::CatalogManager::SchemaType schema_type =
+                core::CatalogManager::SchemaType::APPLICATION;
+            if (components.size() >= 2 &&
+                scratchbird::core::IdentifierUtils::namesMatch(
+                    components[0], false, "remote", false) &&
+                scratchbird::core::IdentifierUtils::namesMatch(
+                    components[1], false, "emulated", false))
+            {
+                schema_type = core::CatalogManager::SchemaType::REMOTE_EMULATED;
+            }
+
+            core::ID schema_id;
+            status = db_->catalog_manager()->createSchemaPath(absolute_path,
+                                                              schema_type,
+                                                              schema_id,
+                                                              &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "CREATE SCHEMA failed";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        void Executor::executeDropSchema()
+        {
+            uint8_t flags = readByte();
+            bool if_exists = (flags & 0x01) != 0;
+            bool cascade = (flags & 0x02) != 0;
+
+            std::string schema_path = readString();
+
+            core::ObjectPath path;
+            core::ErrorContext ctx;
+            auto status = buildObjectPathFromName(schema_path, path, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Invalid schema path";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            core::CatalogManager::ResolveOptions opts;
+            opts.allow_search_path = false;
+            core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+            core::ID schema_id{};
+            status = db_->catalog_manager()->resolveObjectPath(
+                path, core::CatalogManager::ObjectType::SCHEMA, opts,
+                schema_id, resolved_type, &ctx);
+            if (status != core::Status::OK)
+            {
+                if (status == core::Status::NOT_FOUND && if_exists)
+                {
+                    return;
+                }
+                std::string err_msg = "Schema not found";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            status = db_->catalog_manager()->dropSchema(schema_id, cascade, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "DROP SCHEMA failed";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        void Executor::executeCreateDatabase()
+        {
+            uint8_t flags = readByte();
+            bool if_not_exists = (flags & 0x01) != 0;
+
+            std::string db_path = readString();
+
+            std::string normalized_path;
+            std::string dialect;
+            std::string server;
+            std::string db_name;
+            core::ErrorContext ctx;
+            auto status = extractEmulatedDatabaseComponents(
+                db_path, normalized_path, dialect, server, db_name, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Invalid emulated database path";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            core::ID schema_id;
+            status = db_->catalog_manager()->createSchemaPath(
+                normalized_path, core::CatalogManager::SchemaType::REMOTE_EMULATED,
+                schema_id, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "CREATE DATABASE failed";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            core::CatalogManager::EmulationTypeInfo type_info;
+            status = db_->catalog_manager()->getEmulationTypeByName(dialect, type_info, &ctx);
+            if (status != core::Status::OK && status != core::Status::NOT_FOUND)
+            {
+                std::string err_msg = "Failed to resolve emulation type";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+            if (status == core::Status::NOT_FOUND)
+            {
+                status = db_->catalog_manager()->createEmulationType(dialect,
+                                                                     type_info.emulation_type_id,
+                                                                     &ctx);
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to create emulation type";
+                    if (!ctx.message.empty())
+                    {
+                        err_msg += ": " + ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+
+            core::CatalogManager::EmulationServerInfo server_info;
+            status = db_->catalog_manager()->getEmulationServerByName(server, server_info, &ctx);
+            if (status != core::Status::OK && status != core::Status::NOT_FOUND)
+            {
+                std::string err_msg = "Failed to resolve emulation server";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+            if (status == core::Status::NOT_FOUND)
+            {
+                core::ID server_id;
+                status = db_->catalog_manager()->createEmulationServer(server,
+                                                                       type_info.emulation_type_id,
+                                                                       std::string(),
+                                                                       server_id,
+                                                                       &ctx);
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to create emulation server";
+                    if (!ctx.message.empty())
+                    {
+                        err_msg += ": " + ctx.message;
+                    }
+                    error(err_msg);
+                }
+                server_info.emulation_server_id = server_id;
+                server_info.server_name = server;
+                server_info.emulation_type_id = type_info.emulation_type_id;
+            }
+            else if (server_info.emulation_type_id != type_info.emulation_type_id)
+            {
+                error("Emulation server type mismatch");
+            }
+
+            core::CatalogManager::EmulatedDatabaseInfo db_info;
+            status = db_->catalog_manager()->getEmulatedDatabaseByName(
+                server_info.emulation_server_id, db_name, db_info, &ctx);
+            if (status == core::Status::OK)
+            {
+                if (if_not_exists)
+                {
+                    return;
+                }
+                error("Emulated database already exists");
+            }
+            if (status != core::Status::NOT_FOUND)
+            {
+                std::string err_msg = "Failed to resolve emulated database";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            core::ID emulated_db_id;
+            status = db_->catalog_manager()->createEmulatedDatabase(
+                db_name, server_info.emulation_server_id, schema_id,
+                std::string(), emulated_db_id, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "CREATE DATABASE failed";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
+        void Executor::executeDropDatabase()
+        {
+            uint8_t flags = readByte();
+            bool if_exists = (flags & 0x01) != 0;
+            bool force = (flags & 0x02) != 0;
+
+            std::string db_path = readString();
+
+            std::string normalized_path;
+            std::string dialect;
+            std::string server;
+            std::string db_name;
+            core::ErrorContext ctx;
+            auto status = extractEmulatedDatabaseComponents(
+                db_path, normalized_path, dialect, server, db_name, &ctx);
+            if (status != core::Status::OK)
+            {
+                if (if_exists)
+                {
+                    return;
+                }
+                std::string err_msg = "Invalid emulated database path";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            core::CatalogManager::EmulationServerInfo server_info;
+            status = db_->catalog_manager()->getEmulationServerByName(server, server_info, &ctx);
+            if (status != core::Status::OK)
+            {
+                if (status == core::Status::NOT_FOUND && if_exists)
+                {
+                    return;
+                }
+                std::string err_msg = "Emulation server not found";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            core::CatalogManager::EmulatedDatabaseInfo db_info;
+            status = db_->catalog_manager()->getEmulatedDatabaseByName(
+                server_info.emulation_server_id, db_name, db_info, &ctx);
+            if (status != core::Status::OK)
+            {
+                if (status == core::Status::NOT_FOUND && if_exists)
+                {
+                    return;
+                }
+                std::string err_msg = "Emulated database not found";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            status = db_->catalog_manager()->dropSchema(db_info.schema_id, force, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "DROP DATABASE failed";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            status = db_->catalog_manager()->dropEmulatedDatabase(db_info.emulated_db_id, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Failed to drop emulated database record";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
 
         void Executor::executeTruncateTable()
         {
@@ -32631,6 +33033,281 @@ namespace scratchbird
                 }
                 return normalized;
             }
+
+            std::vector<std::string> splitSchemaComponents(const std::string& path)
+            {
+                std::vector<std::string> components;
+                std::string normalized = normalizeSchemaPath(path);
+                size_t start = 0;
+                while (start < normalized.size())
+                {
+                    size_t dot = normalized.find('.', start);
+                    size_t end = (dot == std::string::npos) ? normalized.size() : dot;
+                    if (end > start)
+                    {
+                        components.emplace_back(normalized.substr(start, end - start));
+                    }
+                    if (dot == std::string::npos)
+                    {
+                        break;
+                    }
+                    start = dot + 1;
+                }
+                return components;
+            }
+
+            std::string joinSchemaComponents(const std::vector<std::string>& components,
+                                             size_t start_index = 0)
+            {
+                std::string joined;
+                for (size_t i = start_index; i < components.size(); ++i)
+                {
+                    if (!joined.empty())
+                    {
+                        joined.push_back('.');
+                    }
+                    joined.append(components[i]);
+                }
+                return joined;
+            }
+
+            core::Status buildAbsoluteSchemaPath(core::CatalogManager* catalog,
+                                                 const core::ConnectionContext* conn_ctx,
+                                                 const core::ObjectPath& path,
+                                                 std::string& path_out,
+                                                 core::ErrorContext* ctx)
+            {
+                path_out.clear();
+                if (!catalog)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
+                                      "Catalog manager not available");
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                std::string suffix = joinSchemaComponents(path.components);
+                if (suffix.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Schema path is empty");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+
+                core::PathType type = path.type;
+                if (type == core::PathType::UNQUALIFIED)
+                {
+                    type = core::PathType::CURRENT;
+                }
+
+                if (type == core::PathType::ABSOLUTE)
+                {
+                    path_out = suffix;
+                    return core::Status::OK;
+                }
+
+                if (!conn_ctx)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                      "Current schema not available");
+                    return core::Status::NOT_FOUND;
+                }
+
+                core::ID base_schema_id = conn_ctx->getCurrentSchemaId();
+                if (isZeroUuid(base_schema_id))
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                      "Current schema not available");
+                    return core::Status::NOT_FOUND;
+                }
+
+                if (type == core::PathType::PARENT)
+                {
+                    core::CatalogManager::SchemaInfo schema_info;
+                    auto status = catalog->getSchema(base_schema_id, schema_info, ctx);
+                    if (status != core::Status::OK)
+                    {
+                        return status;
+                    }
+                    base_schema_id = schema_info.parent_schema_id;
+                    if (isZeroUuid(base_schema_id))
+                    {
+                        SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                          "Current schema has no parent");
+                        return core::Status::NOT_FOUND;
+                    }
+                }
+
+                std::string base_path;
+                auto status = catalog->getSchemaPath(base_schema_id, base_path, ctx);
+                if (status != core::Status::OK)
+                {
+                    return status;
+                }
+
+                if (base_path.empty())
+                {
+                    path_out = suffix;
+                }
+                else
+                {
+                    path_out = base_path + "." + suffix;
+                }
+
+                return core::Status::OK;
+            }
+
+            core::Status extractEmulatedDatabaseComponents(const std::string& path,
+                                                           std::string& normalized_path_out,
+                                                           std::string& dialect_out,
+                                                           std::string& server_out,
+                                                           std::string& database_out,
+                                                           core::ErrorContext* ctx)
+            {
+                normalized_path_out = normalizeSchemaPath(path);
+                auto components = splitSchemaComponents(normalized_path_out);
+                if (components.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Emulated database path is empty");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+
+                size_t start = 0;
+                if (scratchbird::core::IdentifierUtils::namesMatch(
+                        components[0], false, "root", false))
+                {
+                    start = 1;
+                }
+
+                if (components.size() - start < 5)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Emulated database path is incomplete");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+
+                if (!scratchbird::core::IdentifierUtils::namesMatch(
+                        components[start], false, "remote", false) ||
+                    !scratchbird::core::IdentifierUtils::namesMatch(
+                        components[start + 1], false, "emulated", false))
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Emulated database path must start with remote.emulated");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+
+                if (components.size() - start != 5)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Emulated database path has unexpected depth");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+
+                dialect_out = components[start + 2];
+                server_out = components[start + 3];
+                database_out = components[start + 4];
+                normalized_path_out = joinSchemaComponents(components, start);
+
+                return core::Status::OK;
+            }
+
+            core::Status buildObjectPathFromName(const std::string& qualified_name,
+                                                 core::ObjectPath& path,
+                                                 core::ErrorContext* ctx)
+            {
+                path.components.clear();
+                path.type = core::PathType::UNQUALIFIED;
+                path.no_search_path = false;
+
+                if (qualified_name.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Object name is empty");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+
+                std::string normalized = normalizeSchemaPath(qualified_name);
+                if (normalized.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Object name is empty");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+
+                if (normalized.rfind("!:", 0) == 0)
+                {
+                    path.no_search_path = true;
+                    normalized.erase(0, 2);
+                    if (normalized.empty())
+                    {
+                        SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                          "Object name is empty");
+                        return core::Status::INVALID_ARGUMENT;
+                    }
+                }
+
+                size_t start = 0;
+                if (normalized.rfind("..", 0) == 0)
+                {
+                    path.type = core::PathType::PARENT;
+                    start = 2;
+                }
+                else if (normalized.rfind(".", 0) == 0)
+                {
+                    path.type = core::PathType::CURRENT;
+                    start = 1;
+                }
+
+                if (start >= normalized.size())
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Object name is empty");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+
+                while (start < normalized.size())
+                {
+                    size_t dot_pos = normalized.find('.', start);
+                    if (dot_pos == start)
+                    {
+                        SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                          "Invalid object path");
+                        return core::Status::INVALID_ARGUMENT;
+                    }
+
+                    std::string component = dot_pos == std::string::npos
+                        ? normalized.substr(start)
+                        : normalized.substr(start, dot_pos - start);
+                    if (component.empty())
+                    {
+                        SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                          "Invalid object path");
+                        return core::Status::INVALID_ARGUMENT;
+                    }
+
+                    path.components.push_back(component);
+                    if (dot_pos == std::string::npos)
+                    {
+                        break;
+                    }
+                    start = dot_pos + 1;
+                }
+
+                if (path.components.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Object name is empty");
+                    return core::Status::INVALID_ARGUMENT;
+                }
+
+                if (path.type == core::PathType::UNQUALIFIED && path.components.size() > 1)
+                {
+                    path.type = core::PathType::ABSOLUTE;
+                }
+
+                return core::Status::OK;
+            }
+
         } // namespace
 
         void Executor::executeCreateFunctionStatement()

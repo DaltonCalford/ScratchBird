@@ -20,6 +20,10 @@ void CreateTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateIndexStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateViewStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateSequenceStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateSchemaStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropSchemaStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateDatabaseStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropDatabaseStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void RenameObjectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void MoveObjectStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -211,6 +215,10 @@ const char* astKindToString(ASTKind kind) {
         case ASTKind::CreateIndexStmt: return "CreateIndexStmt";
         case ASTKind::CreateViewStmt: return "CreateViewStmt";
         case ASTKind::CreateSequenceStmt: return "CreateSequenceStmt";
+        case ASTKind::CreateSchemaStmt: return "CreateSchemaStmt";
+        case ASTKind::DropSchemaStmt: return "DropSchemaStmt";
+        case ASTKind::CreateDatabaseStmt: return "CreateDatabaseStmt";
+        case ASTKind::DropDatabaseStmt: return "DropDatabaseStmt";
         case ASTKind::CreateFunctionStmt: return "CreateFunctionStmt";
         case ASTKind::CreateProcedureStmt: return "CreateProcedureStmt";
         case ASTKind::CreateTriggerStmt: return "CreateTriggerStmt";

@@ -133,6 +133,8 @@ private:
     CreateIndexStmt* parseCreateIndex();
     CreateViewStmt* parseCreateView(bool or_replace = false);
     CreateSequenceStmt* parseCreateSequence();
+    CreateSchemaStmt* parseCreateSchema();
+    CreateDatabaseStmt* parseCreateDatabase();
 
     // ALTER statements
     AlterTableStmt* parseAlterTable();
@@ -141,6 +143,8 @@ private:
     DropTableStmt* parseDropTable();
     DropIndexStmt* parseDropIndex();
     DropViewStmt* parseDropView();
+    DropSchemaStmt* parseDropSchema();
+    DropDatabaseStmt* parseDropDatabase();
 
     // TRUNCATE statement
     TruncateTableStmt* parseTruncateTable();

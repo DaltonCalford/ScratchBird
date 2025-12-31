@@ -174,6 +174,7 @@ private:
     Statement* parseRecreateStatement();
 
     // DDL - CREATE variants
+    Statement* parseCreateDatabase();
     Statement* parseCreateTable();
     Statement* parseCreateOrAlterTable();
     Statement* parseCreateIndex();
@@ -186,6 +187,9 @@ private:
     Statement* parseCreateException();
     Statement* parseCreateRole();
     Statement* parseCreatePackage();
+
+    // DDL - DROP variants
+    Statement* parseDropDatabase();
 
     // DML Statements
     Statement* parseSelectStatement();

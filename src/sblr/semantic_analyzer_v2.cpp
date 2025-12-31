@@ -1013,6 +1013,14 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeCreateIndex(static_cast<CreateIndexStmt*>(stmt));
         case ASTKind::CreateViewStmt:
             return analyzeCreateView(static_cast<CreateViewStmt*>(stmt));
+        case ASTKind::CreateSchemaStmt:
+            return analyzeCreateSchema(static_cast<CreateSchemaStmt*>(stmt));
+        case ASTKind::DropSchemaStmt:
+            return analyzeDropSchema(static_cast<DropSchemaStmt*>(stmt));
+        case ASTKind::CreateDatabaseStmt:
+            return analyzeCreateDatabase(static_cast<CreateDatabaseStmt*>(stmt));
+        case ASTKind::DropDatabaseStmt:
+            return analyzeDropDatabase(static_cast<DropDatabaseStmt*>(stmt));
         case ASTKind::AlterTableStmt:
             return analyzeAlterTable(static_cast<AlterTableStmt*>(stmt));
         case ASTKind::RenameObjectStmt:
@@ -1362,6 +1370,62 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateView(CreateViewStmt* stmt) {
     }
 
     resolved->check_option = stmt->with_check_option;
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateSchema(CreateSchemaStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateSchemaStmt>();
+    resolved->span = stmt->span;
+    resolved->if_not_exists = stmt->if_not_exists;
+    resolved->schema_path = stmt->schema_path;
+    resolved->owner = stmt->has_owner ? stmt->owner : StringPool::INVALID_ID;
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropSchema(DropSchemaStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropSchemaStmt>();
+    resolved->span = stmt->span;
+    resolved->if_exists = stmt->if_exists;
+    resolved->cascade = stmt->cascade;
+    resolved->restrict = stmt->restrict;
+    resolved->schema_paths = stmt->schemas;
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDatabase(CreateDatabaseStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateDatabaseStmt>();
+    resolved->span = stmt->span;
+    resolved->if_not_exists = stmt->if_not_exists;
+    resolved->database_path = stmt->database_path;
+
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropDatabase(DropDatabaseStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropDatabaseStmt>();
+    resolved->span = stmt->span;
+    resolved->if_exists = stmt->if_exists;
+    resolved->force = stmt->force;
+    resolved->database_path = stmt->database_path;
 
     return resolved;
 }
