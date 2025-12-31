@@ -516,6 +516,27 @@ bool handleDropDatabase(const std::string& dbPath, core::Database& db) {
         return false;
     }
 
+    // Drop emulated database record if present
+    core::CatalogManager::EmulationServerInfo server_info;
+    status = catalog->getEmulationServerByName(g_fb_state.server_name, server_info, &ctx);
+    if (status == core::Status::OK) {
+        core::CatalogManager::EmulatedDatabaseInfo db_info;
+        status = catalog->getEmulatedDatabaseByName(server_info.server_id, dbName, db_info, &ctx);
+        if (status == core::Status::OK) {
+            status = catalog->dropEmulatedDatabase(db_info.emulated_db_id, &ctx);
+            if (status != core::Status::OK) {
+                std::cerr << "Error dropping emulated database record: " << ctx.message << "\n";
+                return false;
+            }
+        } else if (status != core::Status::NOT_FOUND) {
+            std::cerr << "Error resolving emulated database record: " << ctx.message << "\n";
+            return false;
+        }
+    } else if (status != core::Status::NOT_FOUND) {
+        std::cerr << "Error resolving emulation server: " << ctx.message << "\n";
+        return false;
+    }
+
     // If we were connected to this database, disconnect
     if (g_fb_state.connected && g_fb_state.database_name == dbName) {
         g_fb_state.connected = false;
