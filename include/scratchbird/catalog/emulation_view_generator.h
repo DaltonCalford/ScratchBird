@@ -101,22 +101,9 @@ public:
         // Build schema path: remote.emulated.{protocol}.{server}
         std::string protocolName = protocolTypeToString(protocol);
         std::string schemaPath = "remote.emulated." + protocolName + "." + server_name;
-
-        // Check if schema already exists
-        CatalogManager::SchemaInfo schemaInfo;
-        Status s = catalog_->getSchemaByName(schemaPath, schemaInfo, ctx);
-        if (s.ok()) {
-            // Schema already exists
-            return Status::OK;
-        }
-
-        // Create the schema
-        CatalogManager::SchemaInfo newSchema;
-        newSchema.schema_name = schemaPath;
-        newSchema.schema_type = SchemaType::REMOTE_EMULATED;
-        newSchema.full_path = "/" + schemaPath;
-
-        return catalog_->createSchema(newSchema, ctx);
+        ID schema_id;
+        return catalog_->createSchemaPath(schemaPath, SchemaType::REMOTE_EMULATED,
+                                          schema_id, ctx);
     }
 
     /**
@@ -140,29 +127,18 @@ public:
         std::string schemaPath = "remote.emulated." + protocolName + "." +
                                   server_name + "." + database_name;
 
-        // Create the database schema if it doesn't exist
-        CatalogManager::SchemaInfo schemaInfo;
-        Status s = catalog_->getSchemaByName(schemaPath, schemaInfo, ctx);
-        if (!s.ok()) {
-            CatalogManager::SchemaInfo newSchema;
-            newSchema.schema_name = schemaPath;
-            newSchema.schema_type = SchemaType::REMOTE_EMULATED;
-            newSchema.full_path = "/" + schemaPath;
-
-            s = catalog_->createSchema(newSchema, ctx);
-            if (!s.ok()) return s;
-
-            s = catalog_->getSchemaByName(schemaPath, schemaInfo, ctx);
-            if (!s.ok()) return s;
-        }
+        ID schema_id;
+        Status s = catalog_->createSchemaPath(schemaPath, SchemaType::REMOTE_EMULATED,
+                                              schema_id, ctx);
+        if (s != Status::OK) return s;
 
         // Get view definitions for this protocol
         std::vector<EmulatedViewDefinition> views = getViewDefinitions(protocol);
 
         // Create each view
         for (const auto& viewDef : views) {
-            s = createEmulatedView(schemaInfo.schema_id, viewDef, ctx);
-            if (!s.ok()) {
+            s = createEmulatedView(schema_id, viewDef, ctx);
+            if (s != Status::OK) {
                 // Log error but continue with other views
                 // In production, might want to rollback all
             }
@@ -190,18 +166,18 @@ public:
 
         // Get schema info
         CatalogManager::SchemaInfo schemaInfo;
-        Status s = catalog_->getSchemaByName(schemaPath, schemaInfo, ctx);
-        if (!s.ok()) {
+        Status s = catalog_->getSchema(schemaPath, schemaInfo, ctx);
+        if (s != Status::OK) {
             // Schema doesn't exist, nothing to drop
             return Status::OK;
         }
 
         // Drop all views in the schema
         std::vector<CatalogManager::ViewInfo> views;
-        s = catalog_->listViews(schemaInfo.schema_id, views, ctx);
-        if (s.ok()) {
+        s = catalog_->listViewsForSchema(schemaInfo.schema_id, views, ctx);
+        if (s == Status::OK) {
             for (const auto& view : views) {
-                catalog_->dropView(view.view_id, ctx);
+                catalog_->dropView(view.view_id, true, ctx);
             }
         }
 
@@ -239,14 +215,8 @@ private:
     Status createEmulatedView(const ID& schema_id,
                               const EmulatedViewDefinition& viewDef,
                               ErrorContext* ctx) {
-        CatalogManager::ViewInfo view;
-        view.view_name = viewDef.view_name;
-        view.schema_id = schema_id;
-        view.definition = viewDef.source_query;
-        view.is_updatable = false;  // Emulated views are read-only
-        view.check_option = false;
-
-        return catalog_->createView(view, ctx);
+        return catalog_->createView(schema_id, viewDef.view_name, viewDef.source_query,
+                                    true, false, false, viewDef.columns, ID{}, ctx);
     }
 
     // ========================================================================
