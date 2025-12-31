@@ -7,6 +7,7 @@ This directory contains comprehensive SQL compatibility tests from three major d
 **Total Tests:** 11,905 SQL test files
 **Databases:** Firebird, MySQL, PostgreSQL
 **Purpose:** Validate ScratchBird's database emulation compatibility
+**Source Policy:** Upstream test suites are vendored snapshots in `tests/compatibility/*/repos/` and updated one-way into ScratchBird via `scripts/update_test_repos.sh`.
 
 ## Statistics
 
@@ -67,13 +68,15 @@ tests/compatibility/
 
 ## Quick Start
 
-### 1. Update Test Repositories
+### 1. Refresh Test Repositories (Vendored Snapshots)
 
 Refresh the latest tests from official repositories:
 
 ```bash
 ./scripts/update_test_repos.sh
 ```
+
+Run from `tests/compatibility/` (or use `./tests/compatibility/scripts/update_test_repos.sh` from the repo root). The script performs shallow clones and sparse checkout to refresh the vendored snapshots.
 
 ### 2. Convert Tests to SQL
 
@@ -188,9 +191,13 @@ Test repositories are vendored snapshots (no git submodules). Refresh them with:
 ./scripts/update_test_repos.sh
 ```
 
-The update script uses shallow clones and sparse checkout to minimize disk usage:
+Updates are one-way into ScratchBird; do not push to upstream repositories. Avoid adding `.git` metadata under `repos/`.
+
+The update script uses shallow clones and sparse checkout to minimize disk usage and rsyncs the snapshot into `repos/`:
 - **MySQL:** Only `mysql-test/` directory (~812 MB vs 1.3 GB full repo)
 - **PostgreSQL:** Only `src/test/regress/` directory (~18 MB vs 152 MB full repo)
+
+Large upstream artifacts are kept for fidelity and regression coverage (for example, `tests/compatibility/mysql/repos/mysql-server/mysql-test/std_data/bug36444172/dump.sql`).
 
 ## Conversion Statistics
 
@@ -228,7 +235,7 @@ Failed Firebird tests (21 files):
 
 When adding new tests:
 
-1. Place original tests in appropriate `repos/` directory
+1. Refresh upstream tests with `scripts/update_test_repos.sh` (or add new tests under `repos/` without `.git` metadata)
 2. Run conversion scripts to generate SQL files
 3. Update test manifests
 4. Document new test categories in database README
@@ -244,6 +251,6 @@ See individual repository licenses for details.
 
 ---
 
-**Last Updated:** 2025-12-29
+**Last Updated:** 2025-12-31
 **Test Count:** 11,905
 **Conversion Success Rate:** 99.8%
