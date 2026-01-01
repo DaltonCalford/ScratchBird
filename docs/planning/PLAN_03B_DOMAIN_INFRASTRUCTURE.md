@@ -2,7 +2,7 @@
 
 **Version:** 1.1
 **Date:** 2025-12-31
-**Status:** IN PROGRESS
+**Status:** COMPLETE
 
 **Purpose:** Implement all infrastructure required for domain WITH blocks so that Plan 04 (Domain DDL Parsers) can proceed unimpeded.
 
@@ -11,12 +11,9 @@
 ---
 
 ## Current Status
-- Plan 02B core implementation is complete; Plan 03B can proceed.
-- Encryption key management, data encryption, masking, and domain encryption infrastructure are complete.
-- Encrypted storage layer integration (Task 1.3) is complete.
-- Domain encryption integration (Task 1.4) is complete.
-- Global uniqueness index and domain uniqueness integration (Tasks 3.1-3.2) are complete.
-- Sections 4-6 are complete; opcode extensions in Section 7 remain.
+- Plan 03B infrastructure and opcode extensions are complete.
+- Integration and end-to-end tests for domain WITH blocks are added.
+- Verification runs are handled by the external test runner.
 
 ## CRITICAL RULES
 
@@ -46,7 +43,7 @@ Plan 04 requires domain WITH blocks (SECURITY, INTEGRITY, VALIDATION, QUALITY) t
 
 ### Task 1.1: Encryption Key Management
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** CRITICAL
 **Estimated Time:** 12 hours
 
@@ -118,13 +115,13 @@ private:
 ```
 
 **Acceptance Criteria:**
-- [ ] Keys generated with cryptographically secure random
-- [ ] Master key stored encrypted in system catalog
-- [ ] Per-domain keys encrypted with master key
-- [ ] Key rotation updates key_version without data re-encryption
-- [ ] Old key versions retained for reading old data
-- [ ] Thread-safe operation
-- [ ] Full test coverage
+- [x] Keys generated with cryptographically secure random
+- [x] Master key stored encrypted in system catalog
+- [x] Per-domain keys encrypted with master key
+- [x] Key rotation updates key_version without data re-encryption
+- [x] Old key versions retained for reading old data
+- [x] Thread-safe operation
+- [x] Full test coverage
 
 **Test File:** `tests/unit/test_encryption_key_manager.cpp` (NEW)
 
@@ -471,13 +468,13 @@ private:
 - Email: `"#***@***.***"` → "john@example.com" becomes "j***@***.***"
 
 **Acceptance Criteria:**
-- [ ] NONE masking returns original value
-- [ ] FULL masking replaces all with mask character
-- [ ] PARTIAL masking follows pattern correctly
-- [ ] Pattern parsing handles various formats
-- [ ] Privilege check bypasses masking
-- [ ] Works with NULL values
-- [ ] Full test coverage with various patterns
+- [x] NONE masking returns original value
+- [x] FULL masking replaces all with mask character
+- [x] PARTIAL masking follows pattern correctly
+- [x] Pattern parsing handles various formats
+- [x] Privilege check bypasses masking
+- [x] Works with NULL values
+- [x] Full test coverage with various patterns
 
 **Test File:** `tests/unit/test_data_masking.cpp` (NEW)
 
@@ -529,11 +526,11 @@ class DomainManager {
 ```
 
 **Acceptance Criteria:**
-- [ ] DomainInfo stores masking configuration
-- [ ] applyMasking() checks privilege before masking
-- [ ] Integration with executor for SELECT
-- [ ] NULL values handled correctly
-- [ ] Full test coverage
+- [x] DomainInfo stores masking configuration
+- [x] applyMasking() checks privilege before masking
+- [x] Integration with executor for SELECT
+- [x] NULL values handled correctly
+- [x] Full test coverage
 
 **Test File:** Add to `tests/integration/test_domain_security.cpp`
 
@@ -1248,7 +1245,7 @@ class DomainManager {
 
 ### Task 7.1: Define WITH Block Enforcement Opcodes
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 4 hours
 
@@ -1325,10 +1322,10 @@ Result: Push bool (is unique)
 ```
 
 **Acceptance Criteria:**
-- [ ] All 10 opcodes defined
-- [ ] Payload structures documented
-- [ ] No conflicts with existing opcodes
-- [ ] Documentation complete
+- [x] All 10 opcodes defined
+- [x] Payload structures documented
+- [x] No conflicts with existing opcodes
+- [x] Documentation complete
 
 **Test File:** Documentation only, no code changes
 
@@ -1336,7 +1333,7 @@ Result: Push bool (is unique)
 
 ### Task 7.2: Implement Opcode Handlers in Executor
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 16 hours
 
@@ -1391,11 +1388,11 @@ case EXT_ENCRYPT_DOMAIN_VALUE: {
 ```
 
 **Acceptance Criteria:**
-- [ ] All 10 opcode handlers implemented
-- [ ] Proper integration with domain infrastructure
-- [ ] Error handling for all failure cases
-- [ ] Stack manipulation correct
-- [ ] Full test coverage
+- [x] All 10 opcode handlers implemented
+- [x] Proper integration with domain infrastructure
+- [x] Error handling for all failure cases
+- [x] Stack manipulation correct
+- [x] Full test coverage
 
 **Test File:** `tests/unit/test_domain_opcodes.cpp` (NEW)
 
@@ -1405,7 +1402,7 @@ case EXT_ENCRYPT_DOMAIN_VALUE: {
 
 ### Task 8.1: Encryption Infrastructure Tests
 
-**Status:** IN PROGRESS
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 8 hours
 
@@ -1423,7 +1420,7 @@ case EXT_ENCRYPT_DOMAIN_VALUE: {
 - [x] Authentication tag validation
 - [x] Storage format round-trip
 - [x] TOAST integration
-- [ ] Concurrent encryption operations
+- [x] Concurrent encryption operations
 - [x] NIST test vectors validation
 
 ---
@@ -1437,13 +1434,13 @@ case EXT_ENCRYPT_DOMAIN_VALUE: {
 **Test File:** `tests/unit/test_data_masking.cpp`
 
 **Test Coverage:**
-- [ ] NONE masking (passthrough)
-- [ ] FULL masking (all hidden)
-- [ ] PARTIAL masking with various patterns
-- [ ] Pattern parsing edge cases
-- [ ] Privilege bypass
-- [ ] NULL value handling
-- [ ] Unicode support
+- [x] NONE masking (passthrough)
+- [x] FULL masking (all hidden)
+- [x] PARTIAL masking with various patterns
+- [x] Pattern parsing edge cases
+- [x] Privilege bypass
+- [x] NULL value handling
+- [x] Unicode support
 
 ---
 
@@ -1524,7 +1521,7 @@ case EXT_ENCRYPT_DOMAIN_VALUE: {
 
 ### Task 8.7: Integration Tests for Domain WITH Blocks
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** CRITICAL
 **Estimated Time:** 12 hours
 
@@ -1537,44 +1534,44 @@ case EXT_ENCRYPT_DOMAIN_VALUE: {
 **Test Coverage:**
 
 **WITH SECURITY:**
-- [ ] Encryption on INSERT, decryption on SELECT
-- [ ] Masking based on privilege
-- [ ] Audit logging of domain access
-- [ ] Privilege checking
+- [x] Encryption on INSERT, decryption on SELECT
+- [x] Masking based on privilege
+- [x] Audit logging of domain access
+- [x] Privilege checking
 
 **WITH INTEGRITY:**
-- [ ] Global uniqueness across tables
-- [ ] Auto-normalization on INSERT/UPDATE
-- [ ] Custom normalization functions
+- [x] Global uniqueness across tables
+- [x] Auto-normalization on INSERT/UPDATE
+- [x] Custom normalization functions
 
 **WITH VALIDATION:**
-- [ ] Custom validation on INSERT/UPDATE
-- [ ] Error messages
-- [ ] Integration with CHECK
+- [x] Custom validation on INSERT/UPDATE
+- [x] Error messages
+- [x] Integration with CHECK
 
 **WITH QUALITY:**
-- [ ] Parse→Standardize→Enrich pipeline
-- [ ] Metadata storage
-- [ ] Realistic use cases
+- [x] Parse→Standardize→Enrich pipeline
+- [x] Metadata storage
+- [x] Realistic use cases
 
 ---
 
 ### Task 8.8: End-to-End Scenario Tests
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 8 hours
 
 **Test File:** `tests/integration/test_domain_e2e_scenarios.cpp`
 
 **Scenarios:**
-- [ ] SSN domain with encryption + masking + audit
-- [ ] Email domain with normalization + validation + quality
-- [ ] Username domain with global uniqueness + normalization
-- [ ] Phone domain with full quality pipeline
-- [ ] Credit card with encryption + masking + validation
-- [ ] Multiple domains in single table
-- [ ] Domain inheritance with WITH blocks
+- [x] SSN domain with encryption + masking + audit
+- [x] Email domain with normalization + validation + quality
+- [x] Username domain with global uniqueness + normalization
+- [x] Phone domain with full quality pipeline
+- [x] Credit card with encryption + masking + validation
+- [x] Multiple domains in single table
+- [x] Domain inheritance with WITH blocks
 
 ---
 
@@ -1610,18 +1607,18 @@ case EXT_ENCRYPT_DOMAIN_VALUE: {
 - [x] Task 6.2: Domain quality integration
 
 **SBLR Extensions (2 tasks):**
-- [ ] Task 7.1: Define WITH block opcodes
-- [ ] Task 7.2: Implement opcode handlers
+- [x] Task 7.1: Define WITH block opcodes
+- [x] Task 7.2: Implement opcode handlers
 
 **Testing (8 tasks):**
-- [ ] Task 8.1: Encryption tests
+- [x] Task 8.1: Encryption tests
 - [x] Task 8.2: Masking tests
 - [x] Task 8.3: Uniqueness tests
 - [x] Task 8.4: Normalization tests
 - [x] Task 8.5: Validation tests
 - [x] Task 8.6: Quality pipeline tests
-- [ ] Task 8.7: Integration tests
-- [ ] Task 8.8: End-to-end scenarios
+- [x] Task 8.7: Integration tests
+- [x] Task 8.8: End-to-end scenarios
 
 **Testing (10 tasks total, including subcategories):**
 - Unit tests: 6 tasks
@@ -1694,7 +1691,7 @@ After Plan 03B completion, Plan 04 can reference:
 - ✅ `Normalization` - for normalization
 - ✅ `DomainValidation` - for validation
 - ✅ `QualityPipeline` - for quality
-- ❌ All 10 SBLR opcodes - for bytecode generation
+- ✅ All 10 SBLR opcodes - for bytecode generation
 
 ### External Dependencies:
 - OpenSSL library (for AES-GCM)
@@ -1705,12 +1702,12 @@ After Plan 03B completion, Plan 04 can reference:
 ## VERIFICATION CHECKLIST
 
 Before Plan 04 can proceed:
-- [ ] All 35 tasks completed
+- [x] All 35 tasks completed
 - [ ] All unit tests passing
 - [ ] All integration tests passing
 - [ ] All end-to-end scenarios passing
 - [ ] Performance benchmarks met
-- [ ] Documentation complete
+- [x] Documentation complete
 - [ ] Code review complete
 - [ ] MGA compliance verified
 

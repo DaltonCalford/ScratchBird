@@ -49,6 +49,7 @@
 #include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"  // For LOG_ERROR macro
+#include "scratchbird/core/audit_logger.h"
 #include "scratchbird/catalog/emulation_view_generator.h"
 #include "scratchbird/sblr/query_result_cache.h"  // P2-19: Query Result Caching
 #include <nlohmann/json.hpp>
@@ -2044,6 +2045,18 @@ namespace scratchbird
             return path;
         }
 
+        core::ID Executor::readId()
+        {
+            if (pc_ + 16 > bytecode_size_)
+            {
+                throw std::runtime_error("Bytecode underflow");
+            }
+            core::ID id{};
+            std::memcpy(id.bytes.data(), &bytecode_[pc_], id.bytes.size());
+            pc_ += id.bytes.size();
+            return id;
+        }
+
         core::Status Executor::resolveSchemaIdForName(const std::string& schema_path,
                                                       core::ID& schema_id_out,
                                                       core::ErrorContext* ctx,
@@ -2708,6 +2721,56 @@ namespace scratchbird
             Value v = stack_.top();
             stack_.pop();
             return v;
+        }
+
+        Value Executor::getStackValueAtOffset(uint16_t offset)
+        {
+            if (offset >= stack_.size())
+            {
+                error("Stack offset out of range");
+            }
+
+            std::vector<Value> scratch;
+            scratch.reserve(offset);
+            for (uint16_t i = 0; i < offset; ++i)
+            {
+                scratch.push_back(pop());
+            }
+
+            Value value = stack_.top();
+            for (auto it = scratch.rbegin(); it != scratch.rend(); ++it)
+            {
+                push(*it);
+            }
+
+            return value;
+        }
+
+        void Executor::setStackValueAtOffset(uint16_t offset, const Value& value)
+        {
+            if (offset >= stack_.size())
+            {
+                error("Stack offset out of range");
+            }
+
+            std::vector<Value> scratch;
+            scratch.reserve(offset);
+            for (uint16_t i = 0; i < offset; ++i)
+            {
+                scratch.push_back(pop());
+            }
+
+            if (stack_.empty())
+            {
+                error("Stack underflow");
+            }
+            stack_.pop();
+            stack_.push(value);
+
+            for (auto it = scratch.rbegin(); it != scratch.rend(); ++it)
+            {
+                push(*it);
+            }
         }
 
         // Helper: Convert parser::DataType to core::DataType
@@ -16633,8 +16696,366 @@ namespace scratchbird
                 {
                     uint16_t ext_op = readExtendedOpcode();
 
+                    if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CHECK_DOMAIN_CONSTRAINT))
+                    {
+                        core::ID domain_id = readId();
+                        uint16_t value_offset = readInt16();
+
+                        auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+                        if (!domain_mgr)
+                        {
+                            error("Domain manager unavailable for domain constraint check");
+                        }
+
+                        Value value = getStackValueAtOffset(value_offset);
+                        core::ErrorContext ctx;
+                        core::Status status = domain_mgr->validateValue(domain_id, value, &ctx);
+                        bool passed = true;
+                        if (status != core::Status::OK)
+                        {
+                            if (status == core::Status::CONSTRAINT_VIOLATION)
+                            {
+                                passed = false;
+                            }
+                            else
+                            {
+                                std::string msg = "Domain constraint check failed";
+                                if (!ctx.message.empty())
+                                {
+                                    msg += ": " + ctx.message;
+                                }
+                                error(msg);
+                            }
+                        }
+                        push(Value::makeBoolean(passed));
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_APPLY_DOMAIN_MASKING))
+                    {
+                        core::ID domain_id = readId();
+                        core::ID user_id = readId();
+                        uint16_t value_offset = readInt16();
+
+                        if (isZeroUuid(user_id) && conn_ctx_)
+                        {
+                            user_id = conn_ctx_->getCurrentUserId();
+                        }
+
+                        auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+                        if (!domain_mgr)
+                        {
+                            error("Domain manager unavailable for domain masking");
+                        }
+
+                        Value value = getStackValueAtOffset(value_offset);
+                        Value masked;
+                        core::ErrorContext ctx;
+                        core::Status status = domain_mgr->applyMasking(domain_id, user_id,
+                                                                      value, masked, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string msg = "Domain masking failed";
+                            if (!ctx.message.empty())
+                            {
+                                msg += ": " + ctx.message;
+                            }
+                            error(msg);
+                        }
+                        setStackValueAtOffset(value_offset, masked);
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ENCRYPT_DOMAIN_VALUE))
+                    {
+                        core::ID domain_id = readId();
+                        uint16_t value_offset = readInt16();
+
+                        auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+                        if (!domain_mgr)
+                        {
+                            error("Domain manager unavailable for domain encryption");
+                        }
+
+                        Value value = getStackValueAtOffset(value_offset);
+                        core::ErrorContext ctx;
+                        core::Status status = domain_mgr->encryptValue(domain_id, value, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string msg = "Domain encryption failed";
+                            if (!ctx.message.empty())
+                            {
+                                msg += ": " + ctx.message;
+                            }
+                            error(msg);
+                        }
+                        setStackValueAtOffset(value_offset, value);
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DECRYPT_DOMAIN_VALUE))
+                    {
+                        core::ID domain_id = readId();
+                        uint16_t value_offset = readInt16();
+
+                        auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+                        if (!domain_mgr)
+                        {
+                            error("Domain manager unavailable for domain decryption");
+                        }
+
+                        Value value = getStackValueAtOffset(value_offset);
+                        core::ErrorContext ctx;
+                        core::Status status = domain_mgr->decryptValue(domain_id, value, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string msg = "Domain decryption failed";
+                            if (!ctx.message.empty())
+                            {
+                                msg += ": " + ctx.message;
+                            }
+                            error(msg);
+                        }
+                        setStackValueAtOffset(value_offset, value);
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_AUDIT_DOMAIN_ACCESS))
+                    {
+                        core::ID domain_id = readId();
+                        core::ID user_id = readId();
+                        core::ID table_id = readId();
+                        core::ID column_id = readId();
+
+                        if (isZeroUuid(user_id) && conn_ctx_)
+                        {
+                            user_id = conn_ctx_->getCurrentUserId();
+                        }
+
+                        auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+                        if (!domain_mgr)
+                        {
+                            error("Domain manager unavailable for domain audit");
+                        }
+
+                        core::DomainInfo domain_info;
+                        core::ErrorContext ctx;
+                        core::Status status = domain_mgr->getDomain(domain_id, domain_info, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string msg = "Failed to resolve domain for audit";
+                            if (!ctx.message.empty())
+                            {
+                                msg += ": " + ctx.message;
+                            }
+                            error(msg);
+                        }
+
+                        if (domain_info.security.audit_enabled)
+                        {
+                            auto* audit_logger = db_ ? db_->audit_logger() : nullptr;
+                            if (!audit_logger)
+                            {
+                                error("Audit logger unavailable for domain access");
+                            }
+
+                            std::string username;
+                            auto* catalog = db_->catalog_manager();
+                            if (catalog && !isZeroUuid(user_id))
+                            {
+                                core::CatalogManager::UserInfo user_info;
+                                core::ErrorContext user_ctx;
+                                if (catalog->getUser(user_id, user_info, &user_ctx) == core::Status::OK)
+                                {
+                                    username = user_info.username;
+                                }
+                            }
+
+                            core::AuditEvent event;
+                            event.event_type = core::AuditEventType::DOMAIN_ACCESS;
+                            event.user_id = user_id;
+                            event.username = username;
+                            event.object_type = "DOMAIN";
+                            event.object_name = domain_info.domain_name;
+                            event.success = true;
+
+                            json details;
+                            details["domain_id"] = domain_id.toString();
+                            details["table_id"] = table_id.toString();
+                            details["column_id"] = column_id.toString();
+                            details["user_id"] = user_id.toString();
+                            event.details = details.dump();
+
+                            status = audit_logger->logEvent(event, &ctx);
+                            if (status != core::Status::OK)
+                            {
+                                std::string msg = "Failed to audit domain access";
+                                if (!ctx.message.empty())
+                                {
+                                    msg += ": " + ctx.message;
+                                }
+                                error(msg);
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CHECK_DOMAIN_PRIVILEGE))
+                    {
+                        core::ID domain_id = readId();
+                        core::ID user_id = readId();
+
+                        if (isZeroUuid(user_id) && conn_ctx_)
+                        {
+                            user_id = conn_ctx_->getCurrentUserId();
+                        }
+
+                        auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+                        if (!domain_mgr)
+                        {
+                            error("Domain manager unavailable for domain privilege check");
+                        }
+
+                        bool has_privilege = false;
+                        core::ErrorContext ctx;
+                        core::Status status = domain_mgr->checkMaskingPrivilege(domain_id, user_id,
+                                                                               has_privilege, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string msg = "Domain privilege check failed";
+                            if (!ctx.message.empty())
+                            {
+                                msg += ": " + ctx.message;
+                            }
+                            error(msg);
+                        }
+
+                        push(Value::makeBoolean(has_privilege));
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_NORMALIZE_DOMAIN_VALUE))
+                    {
+                        core::ID domain_id = readId();
+                        uint16_t value_offset = readInt16();
+
+                        auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+                        if (!domain_mgr)
+                        {
+                            error("Domain manager unavailable for domain normalization");
+                        }
+
+                        Value value = getStackValueAtOffset(value_offset);
+                        core::ErrorContext ctx;
+                        core::Status status = domain_mgr->applyNormalization(domain_id, value,
+                                                                             this, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string msg = "Domain normalization failed";
+                            if (!ctx.message.empty())
+                            {
+                                msg += ": " + ctx.message;
+                            }
+                            error(msg);
+                        }
+
+                        setStackValueAtOffset(value_offset, value);
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_VALIDATE_DOMAIN_VALUE))
+                    {
+                        core::ID domain_id = readId();
+                        uint16_t value_offset = readInt16();
+
+                        auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+                        if (!domain_mgr)
+                        {
+                            error("Domain manager unavailable for domain validation");
+                        }
+
+                        Value value = getStackValueAtOffset(value_offset);
+                        bool is_valid = true;
+                        core::ErrorContext ctx;
+                        core::Status status = domain_mgr->validateValue(domain_id, value,
+                                                                       this, is_valid, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string msg = "Domain validation failed";
+                            if (!ctx.message.empty())
+                            {
+                                msg += ": " + ctx.message;
+                            }
+                            error(msg);
+                        }
+
+                        push(Value::makeBoolean(is_valid));
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_APPLY_QUALITY_PIPELINE))
+                    {
+                        core::ID domain_id = readId();
+                        uint16_t value_offset = readInt16();
+
+                        auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+                        if (!domain_mgr)
+                        {
+                            error("Domain manager unavailable for quality pipeline");
+                        }
+
+                        Value value = getStackValueAtOffset(value_offset);
+                        core::QualityResult quality_result;
+                        core::ErrorContext ctx;
+                        core::Status status = domain_mgr->executeQualityPipeline(domain_id, value,
+                                                                                 this,
+                                                                                 quality_result,
+                                                                                 &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string msg = "Domain quality pipeline failed";
+                            if (!ctx.message.empty())
+                            {
+                                msg += ": " + ctx.message;
+                            }
+                            error(msg);
+                        }
+
+                        setStackValueAtOffset(value_offset, value);
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CHECK_GLOBAL_UNIQUENESS))
+                    {
+                        core::ID domain_id = readId();
+                        core::ID table_id = readId();
+                        core::ID column_id = readId();
+                        core::ID row_id = readId();
+                        uint16_t value_offset = readInt16();
+
+                        (void)table_id;
+                        (void)column_id;
+                        (void)row_id;
+
+                        auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+                        if (!domain_mgr)
+                        {
+                            error("Domain manager unavailable for uniqueness check");
+                        }
+
+                        uint64_t tx_id = 0;
+                        if (conn_ctx_)
+                        {
+                            tx_id = conn_ctx_->getCurrentXid();
+                        }
+                        if (tx_id == 0 && db_ && db_->storage_engine())
+                        {
+                            tx_id = db_->storage_engine()->getCurrentXid();
+                        }
+
+                        Value value = getStackValueAtOffset(value_offset);
+                        bool is_unique = true;
+                        core::ErrorContext ctx;
+                        core::Status status = domain_mgr->checkGlobalUniqueness(domain_id, value,
+                                                                               tx_id,
+                                                                               is_unique,
+                                                                               &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string msg = "Domain uniqueness check failed";
+                            if (!ctx.message.empty())
+                            {
+                                msg += ": " + ctx.message;
+                            }
+                            error(msg);
+                        }
+
+                        push(Value::makeBoolean(is_unique));
+                    }
                     // Array manipulation functions
-                    if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_APPEND))
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_APPEND))
                     {
                         uint8_t arg_count = readByte();
                         if (arg_count != 2)

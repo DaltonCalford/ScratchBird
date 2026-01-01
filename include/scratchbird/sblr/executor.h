@@ -291,6 +291,7 @@ namespace scratchbird
             std::string readString();
             std::string readString16();
             core::ObjectPath readObjectPath();
+            core::ID readId();
             core::Status resolveSchemaIdForName(const std::string& schema_path,
                                                 core::ID& schema_id_out,
                                                 core::ErrorContext* ctx,
@@ -314,6 +315,8 @@ namespace scratchbird
                 stack_.push(v);
             }
             Value pop();
+            Value getStackValueAtOffset(uint16_t offset);
+            void setStackValueAtOffset(uint16_t offset, const Value& value);
 
             // Statement execution
             void executeCreateTable();

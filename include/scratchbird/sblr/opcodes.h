@@ -1264,6 +1264,18 @@ namespace scratchbird
             EXT_ALTER_DATABASE = 0x010D,  // ALTER DATABASE (emulated)
             EXT_ALTER_DOMAIN = 0x010E,  // ALTER DOMAIN
             EXT_DROP_DOMAIN = 0x010F,  // DROP DOMAIN
+
+            // Domain enforcement opcodes (Plan 03B)
+            EXT_CHECK_DOMAIN_CONSTRAINT = 0x0204,  // Check all domain constraints
+            EXT_APPLY_DOMAIN_MASKING = 0x0205,  // Apply masking (SELECT)
+            EXT_ENCRYPT_DOMAIN_VALUE = 0x0206,  // Encrypt value (INSERT/UPDATE)
+            EXT_DECRYPT_DOMAIN_VALUE = 0x0207,  // Decrypt value (SELECT)
+            EXT_AUDIT_DOMAIN_ACCESS = 0x0208,  // Log domain access
+            EXT_CHECK_DOMAIN_PRIVILEGE = 0x0209,  // Check privilege
+            EXT_NORMALIZE_DOMAIN_VALUE = 0x020A,  // Apply normalization
+            EXT_VALIDATE_DOMAIN_VALUE = 0x020B,  // Custom validation
+            EXT_APPLY_QUALITY_PIPELINE = 0x020C,  // Quality pipeline
+            EXT_CHECK_GLOBAL_UNIQUENESS = 0x020D,  // Global uniqueness
         };
 
         enum class AlterSchemaAction : uint8_t

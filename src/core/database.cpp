@@ -14,6 +14,7 @@
 #include "scratchbird/core/long_transaction_monitor.h"
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/encryption_key_manager.h"
+#include "scratchbird/core/audit_logger.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/permission_cache.h" // Security Phase 3.2.3
@@ -66,6 +67,9 @@ namespace scratchbird::core
 
         // Shut down encryption key manager
         encryption_key_manager_.reset();
+
+        // Shut down audit logger before catalog manager
+        audit_logger_.reset();
 
         // Shut down garbage collector first (before sweep manager)
         garbage_collector_.reset();
@@ -855,6 +859,18 @@ namespace scratchbird::core
                     }
                 }
             }
+        }
+
+        // Initialize audit logger
+        try
+        {
+            audit_logger_ = std::make_unique<AuditLogger>(catalog_manager_.get());
+        }
+        catch (const std::bad_alloc &)
+        {
+            close();
+            SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate AuditLogger");
+            return Status::OOM;
         }
 
         // Initialize storage engine

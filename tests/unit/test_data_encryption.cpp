@@ -1,8 +1,11 @@
 #include "scratchbird/core/data_encryption.h"
 #include "gtest/gtest.h"
+#include <atomic>
 #include <chrono>
 #include <iostream>
+#include <mutex>
 #include <string>
+#include <thread>
 
 using namespace scratchbird::core;
 
@@ -185,4 +188,58 @@ TEST(DataEncryptionTest, PerformanceSmallValues)
     std::cout << "AES-GCM encryption throughput: "
               << static_cast<int>(ops_per_sec) << " ops/sec\n";
     EXPECT_GT(ops_per_sec, 10000.0);
+}
+
+TEST(DataEncryptionTest, ConcurrentEncryptDecrypt)
+{
+    constexpr int kThreads = 4;
+    constexpr int kIterations = 200;
+    std::vector<uint8_t> key(32, 0x42);
+    std::vector<uint8_t> plaintext(128, 0x5a);
+
+    std::atomic<bool> failed{false};
+    std::mutex error_mutex;
+    std::string error_msg;
+
+    auto worker = [&]() {
+        for (int i = 0; i < kIterations && !failed.load(); ++i)
+        {
+            EncryptedValue encrypted;
+            ErrorContext ctx;
+            Status status = DataEncryption::encrypt(plaintext, key,
+                                                    EncryptionAlgorithm::AES256_GCM,
+                                                    encrypted, &ctx);
+            if (status != Status::OK)
+            {
+                std::lock_guard<std::mutex> lock(error_mutex);
+                failed = true;
+                error_msg = "Encrypt failed: " + ctx.message;
+                return;
+            }
+
+            std::vector<uint8_t> decrypted;
+            status = DataEncryption::decrypt(encrypted, key, decrypted, &ctx);
+            if (status != Status::OK || decrypted != plaintext)
+            {
+                std::lock_guard<std::mutex> lock(error_mutex);
+                failed = true;
+                error_msg = "Decrypt failed or mismatch";
+                return;
+            }
+        }
+    };
+
+    std::vector<std::thread> threads;
+    threads.reserve(kThreads);
+    for (int i = 0; i < kThreads; ++i)
+    {
+        threads.emplace_back(worker);
+    }
+
+    for (auto& thread : threads)
+    {
+        thread.join();
+    }
+
+    EXPECT_FALSE(failed) << error_msg;
 }

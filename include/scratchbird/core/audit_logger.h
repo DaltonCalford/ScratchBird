@@ -52,6 +52,7 @@ enum class AuditEventType {
     COLUMN_ACCESS_DENIED = 401,
     TABLE_ACCESS_DENIED = 402,
     SCHEMA_ACCESS_DENIED = 403,
+    DOMAIN_ACCESS = 404,
 
     // Privilege Escalation (500-599)
     SUPERUSER_ACCESS = 500,

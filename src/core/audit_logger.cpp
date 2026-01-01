@@ -202,6 +202,7 @@ std::string AuditLogger::getEventTypeName(AuditEventType type)
         case AuditEventType::COLUMN_ACCESS_DENIED: return "COLUMN_ACCESS_DENIED";
         case AuditEventType::TABLE_ACCESS_DENIED:  return "TABLE_ACCESS_DENIED";
         case AuditEventType::SCHEMA_ACCESS_DENIED: return "SCHEMA_ACCESS_DENIED";
+        case AuditEventType::DOMAIN_ACCESS:        return "DOMAIN_ACCESS";
 
         // Privilege Escalation
         case AuditEventType::SUPERUSER_ACCESS:     return "SUPERUSER_ACCESS";

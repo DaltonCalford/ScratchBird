@@ -1098,6 +1098,95 @@ set_tests_properties(DomainIntegrity PROPERTIES
     TIMEOUT 60
 )
 
+# Domain Security Tests (Plan 03B - Encryption/Masking/Audit)
+add_executable(test_domain_encryption
+    integration/test_domain_encryption.cpp
+)
+target_link_libraries(test_domain_encryption
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+add_test(NAME DomainEncryption COMMAND test_domain_encryption)
+set_tests_properties(DomainEncryption PROPERTIES
+    LABELS "integration;domain;security;encryption"
+    TIMEOUT 60
+)
+
+add_executable(test_domain_security
+    integration/test_domain_security.cpp
+)
+target_link_libraries(test_domain_security
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+add_test(NAME DomainSecurity COMMAND test_domain_security)
+set_tests_properties(DomainSecurity PROPERTIES
+    LABELS "integration;domain;security;masking;audit"
+    TIMEOUT 60
+)
+
+# Domain Validation Tests (Plan 03B)
+add_executable(test_domain_validation
+    integration/test_domain_validation.cpp
+)
+target_link_libraries(test_domain_validation
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+add_test(NAME DomainValidation COMMAND test_domain_validation)
+set_tests_properties(DomainValidation PROPERTIES
+    LABELS "integration;domain;validation"
+    TIMEOUT 60
+)
+
+# Domain Quality Pipeline Tests (Plan 03B)
+add_executable(test_domain_quality
+    integration/test_domain_quality.cpp
+)
+target_link_libraries(test_domain_quality
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+add_test(NAME DomainQuality COMMAND test_domain_quality)
+set_tests_properties(DomainQuality PROPERTIES
+    LABELS "integration;domain;quality"
+    TIMEOUT 60
+)
+
+# Domain End-to-End Scenarios (Plan 03B)
+add_executable(test_domain_e2e_scenarios
+    integration/test_domain_e2e_scenarios.cpp
+)
+target_link_libraries(test_domain_e2e_scenarios
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+add_test(NAME DomainE2EScenarios COMMAND test_domain_e2e_scenarios)
+set_tests_properties(DomainE2EScenarios PROPERTIES
+    LABELS "integration;domain;e2e"
+    TIMEOUT 60
+)
+
 # Foreign Key Constraints Tests (ALPHA Phase A - FK Constraints)
 add_executable(test_foreign_keys
     integration/test_foreign_keys.cpp

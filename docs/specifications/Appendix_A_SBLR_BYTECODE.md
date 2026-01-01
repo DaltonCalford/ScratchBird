@@ -318,8 +318,82 @@ Defined extended opcodes:
 - EXT_ROLLBACK_PREPARED   = 0x0107
 - EXT_ALTER_DOMAIN        = 0x010E
 - EXT_DROP_DOMAIN         = 0x010F
+- EXT_CHECK_DOMAIN_CONSTRAINT = 0x0204
+- EXT_APPLY_DOMAIN_MASKING    = 0x0205
+- EXT_ENCRYPT_DOMAIN_VALUE    = 0x0206
+- EXT_DECRYPT_DOMAIN_VALUE    = 0x0207
+- EXT_AUDIT_DOMAIN_ACCESS     = 0x0208
+- EXT_CHECK_DOMAIN_PRIVILEGE  = 0x0209
+- EXT_NORMALIZE_DOMAIN_VALUE  = 0x020A
+- EXT_VALIDATE_DOMAIN_VALUE   = 0x020B
+- EXT_APPLY_QUALITY_PIPELINE  = 0x020C
+- EXT_CHECK_GLOBAL_UNIQUENESS = 0x020D
 
 Domain DDL payloads are defined in `docs/specifications/SBLR_DOMAIN_PAYLOADS.md`.
+
+### 7.4 Domain Enforcement Opcodes (v2)
+Unless noted, `value_stack_offset` is counted from the top of the execution stack
+(0 = top).
+
+- EXT_CHECK_DOMAIN_CONSTRAINT (0x0204)
+  ```
+  [domain_id:16] [value_stack_offset:uint16]
+  ```
+  Result: Push bool (all constraints passed)
+
+- EXT_APPLY_DOMAIN_MASKING (0x0205)
+  ```
+  [domain_id:16] [user_id:16] [value_stack_offset:uint16]
+  ```
+  Result: Replace stack value with masked value
+
+- EXT_ENCRYPT_DOMAIN_VALUE (0x0206)
+  ```
+  [domain_id:16] [value_stack_offset:uint16]
+  ```
+  Result: Replace stack value with encrypted value
+
+- EXT_DECRYPT_DOMAIN_VALUE (0x0207)
+  ```
+  [domain_id:16] [value_stack_offset:uint16]
+  ```
+  Result: Replace stack value with decrypted value
+
+- EXT_AUDIT_DOMAIN_ACCESS (0x0208)
+  ```
+  [domain_id:16] [user_id:16] [table_id:16] [column_id:16]
+  ```
+  Result: Log audit event
+
+- EXT_CHECK_DOMAIN_PRIVILEGE (0x0209)
+  ```
+  [domain_id:16] [user_id:16]
+  ```
+  Result: Push bool (has privilege)
+
+- EXT_NORMALIZE_DOMAIN_VALUE (0x020A)
+  ```
+  [domain_id:16] [value_stack_offset:uint16]
+  ```
+  Result: Replace stack value with normalized value
+
+- EXT_VALIDATE_DOMAIN_VALUE (0x020B)
+  ```
+  [domain_id:16] [value_stack_offset:uint16]
+  ```
+  Result: Push bool (validation passed)
+
+- EXT_APPLY_QUALITY_PIPELINE (0x020C)
+  ```
+  [domain_id:16] [value_stack_offset:uint16]
+  ```
+  Result: Replace stack value with enriched value
+
+- EXT_CHECK_GLOBAL_UNIQUENESS (0x020D)
+  ```
+  [domain_id:16] [table_id:16] [column_id:16] [row_id:16] [value_stack_offset:uint16]
+  ```
+  Result: Push bool (is unique)
 
 ## 8. Transaction Opcodes (v2)
 
