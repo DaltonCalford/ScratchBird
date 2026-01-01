@@ -3278,6 +3278,13 @@ public:
         auto storeStringInToast(const std::string& str, uint64_t xmin,
                                uint32_t& oid_out, ErrorContext* ctx = nullptr) -> Status;
 
+        // Plan 03B: Encryption key catalog table
+        auto ensureEncryptionKeysTable(ErrorContext* ctx = nullptr) -> Status;
+        auto encryptionKeysTablePage() const -> uint32_t
+        {
+            return encryption_keys_table_page_;
+        }
+
         // Plan 01 Task B: Heap page enumeration (now public)
         // Enumerates all heap pages belonging to a table
         // Filters by table_id field in PageHeader (ON_DISK_FORMAT.md v1.4.0)
@@ -3650,6 +3657,7 @@ public:
         uint32_t migration_history_table_page_ = 0; // Migration history (WP-2 CAT-L2)
         uint32_t dormant_transactions_table_page_ = 0; // Dormant transactions (Track 3.2)
         uint32_t prepared_transactions_table_page_ = 0; // Prepared transactions (2PC)
+        uint32_t encryption_keys_table_page_ = 0;   // Encryption keys (Plan 03B)
 
         // Internal methods
         auto writeCatalogRoot(ErrorContext *ctx) -> Status;

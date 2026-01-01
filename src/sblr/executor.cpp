@@ -63,6 +63,7 @@
 #include <regex>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <openssl/md5.h>
 #include <openssl/sha.h>
 
@@ -105,6 +106,151 @@ namespace scratchbird
             bool isTableScopedType(core::CatalogManager::ObjectType type);
             bool resolveEmulatedRootPath(const core::ConnectionContext* conn_ctx,
                                          std::string& root_path_out);
+
+            enum class ColumnEncryptionState
+            {
+                NONE,
+                ENCRYPTED,
+                ERROR_STATE
+            };
+
+            ColumnEncryptionState getColumnEncryptionState(core::Database* db,
+                                                           const core::CatalogManager::ColumnInfo& column,
+                                                           core::ErrorContext* ctx)
+            {
+                if (column.domain_id == core::ID())
+                {
+                    return ColumnEncryptionState::NONE;
+                }
+                if (db == nullptr || db->domain_manager() == nullptr)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
+                                      "Domain manager unavailable for encryption lookup");
+                    return ColumnEncryptionState::ERROR_STATE;
+                }
+                core::DomainInfo domain;
+                core::Status status = db->domain_manager()->getDomain(column.domain_id, domain, ctx);
+                if (status == core::Status::NOT_FOUND)
+                {
+                    return ColumnEncryptionState::NONE;
+                }
+                if (status != core::Status::OK)
+                {
+                    if (ctx && ctx->message.empty())
+                    {
+                        SET_ERROR_CONTEXT(ctx, status, "Failed to resolve domain for column encryption");
+                    }
+                    return ColumnEncryptionState::ERROR_STATE;
+                }
+                return domain.security.encryption_enabled ? ColumnEncryptionState::ENCRYPTED
+                                                          : ColumnEncryptionState::NONE;
+            }
+
+            bool appendEncryptedValue(const core::TypedValue& value,
+                                      std::vector<uint8_t>& tuple_data,
+                                      core::ErrorContext* ctx)
+            {
+                if (!value.isEncrypted())
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Value is not encrypted");
+                    return false;
+                }
+
+                const auto& record = value.encryptedData();
+                if (record.size() > std::numeric_limits<uint32_t>::max())
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::OUT_OF_RANGE,
+                                      "Encrypted value too large for tuple storage");
+                    return false;
+                }
+
+                uint32_t len = static_cast<uint32_t>(record.size());
+                size_t offset = tuple_data.size();
+                tuple_data.resize(offset + sizeof(uint32_t) + len);
+                std::memcpy(&tuple_data[offset], &len, sizeof(uint32_t));
+                if (len > 0)
+                {
+                    std::memcpy(&tuple_data[offset + sizeof(uint32_t)], record.data(), len);
+                }
+                return true;
+            }
+
+            bool prepareEncryptedValue(core::Database* db,
+                                       const core::CatalogManager::ColumnInfo& column,
+                                       const core::TypedValue& value,
+                                       core::TypedValue& encrypted_out,
+                                       core::ErrorContext* ctx)
+            {
+                encrypted_out = value;
+                if (encrypted_out.isEncrypted())
+                {
+                    return true;
+                }
+
+                if (column.domain_id == core::ID())
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Encrypted column missing domain reference");
+                    return false;
+                }
+                if (db == nullptr || db->domain_manager() == nullptr)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
+                                      "Domain manager unavailable for encryption");
+                    return false;
+                }
+
+                core::Status status = db->domain_manager()->encryptValue(column.domain_id,
+                                                                         encrypted_out, ctx);
+                if (status != core::Status::OK)
+                {
+                    if (ctx && ctx->message.empty())
+                    {
+                        SET_ERROR_CONTEXT(ctx, status, "Failed to encrypt value");
+                    }
+                    return false;
+                }
+                if (!encrypted_out.isEncrypted())
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Value was not encrypted");
+                    return false;
+                }
+                return true;
+            }
+
+            bool readEncryptedValue(const uint8_t* tuple_data,
+                                    uint32_t tuple_size,
+                                    size_t& data_offset,
+                                    core::TypedValue& value,
+                                    core::ErrorContext* ctx)
+            {
+                if (data_offset + sizeof(uint32_t) > tuple_size)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::DATA_CORRUPTED,
+                                      "Encrypted value length prefix out of bounds");
+                    return false;
+                }
+
+                uint32_t len = 0;
+                std::memcpy(&len, tuple_data + data_offset, sizeof(uint32_t));
+                data_offset += sizeof(uint32_t);
+
+                if (data_offset + len > tuple_size)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::DATA_CORRUPTED,
+                                      "Encrypted value exceeds tuple bounds");
+                    return false;
+                }
+
+                std::vector<uint8_t> record(tuple_data + data_offset,
+                                            tuple_data + data_offset + len);
+                data_offset += len;
+
+                core::Status status = value.setEncryptedData(record, ctx);
+                return status == core::Status::OK;
+            }
         }
 
         // ===== Numeric Type Coercion Helper =====
@@ -5539,6 +5685,7 @@ namespace scratchbird
                     col_info.ordinal = static_cast<uint16_t>(i);
                     col_info.data_type = static_cast<uint16_t>(result_set->columnType(i));
                     col_info.nullable = true;  // Materialized view columns are nullable by default
+                    col_info.domain_id = core::ID{};
                     mat_columns.push_back(col_info);
                 }
 
@@ -5606,6 +5753,31 @@ namespace scratchbird
                             size_t bit_pos = col_idx % 8;
                             tuple_data[byte_offset] |= (1 << bit_pos);
                             continue;
+                        }
+
+                        core::ErrorContext enc_ctx;
+                        auto enc_state = getColumnEncryptionState(db_, mat_columns[col_idx], &enc_ctx);
+                        if (enc_state == ColumnEncryptionState::ERROR_STATE)
+                        {
+                            error("Failed to resolve encryption state for column '" +
+                                  mat_columns[col_idx].column_name + "': " + enc_ctx.message);
+                        }
+                        if (enc_state == ColumnEncryptionState::ENCRYPTED)
+                        {
+                            core::TypedValue encrypted_value;
+                            if (!prepareEncryptedValue(db_, mat_columns[col_idx], value,
+                                                       encrypted_value, &enc_ctx) ||
+                                !appendEncryptedValue(encrypted_value, tuple_data, &enc_ctx))
+                            {
+                                error("Failed to serialize encrypted value for column '" +
+                                      mat_columns[col_idx].column_name + "': " + enc_ctx.message);
+                            }
+                            continue;
+                        }
+                        if (value.isEncrypted())
+                        {
+                            error("Encrypted value provided for non-encrypted column '" +
+                                  mat_columns[col_idx].column_name + "'");
                         }
 
                         // Serialize value based on column type
@@ -6002,6 +6174,31 @@ namespace scratchbird
                         size_t bit_pos = col_idx % 8;
                         tuple_data[byte_offset] |= (1 << bit_pos);
                         continue;
+                    }
+
+                    core::ErrorContext enc_ctx;
+                    auto enc_state = getColumnEncryptionState(db_, mat_columns[col_idx], &enc_ctx);
+                    if (enc_state == ColumnEncryptionState::ERROR_STATE)
+                    {
+                        error("Failed to resolve encryption state for column '" +
+                              mat_columns[col_idx].column_name + "': " + enc_ctx.message);
+                    }
+                    if (enc_state == ColumnEncryptionState::ENCRYPTED)
+                    {
+                        core::TypedValue encrypted_value;
+                        if (!prepareEncryptedValue(db_, mat_columns[col_idx], value,
+                                                   encrypted_value, &enc_ctx) ||
+                            !appendEncryptedValue(encrypted_value, tuple_data, &enc_ctx))
+                        {
+                            error("Failed to serialize encrypted value for column '" +
+                                  mat_columns[col_idx].column_name + "': " + enc_ctx.message);
+                        }
+                        continue;
+                    }
+                    if (value.isEncrypted())
+                    {
+                        error("Encrypted value provided for non-encrypted column '" +
+                              mat_columns[col_idx].column_name + "'");
                     }
 
                     // Serialize based on type
@@ -6781,6 +6978,30 @@ namespace scratchbird
                     tuple_data[byte_offset] |= (1 << bit_pos);
                     // Don't write any data for null values
                     continue;
+                }
+
+                core::ErrorContext enc_ctx;
+                auto enc_state = getColumnEncryptionState(db_, col_info, &enc_ctx);
+                if (enc_state == ColumnEncryptionState::ERROR_STATE)
+                {
+                    error("Failed to resolve encryption state for column '" +
+                          col_info.column_name + "': " + enc_ctx.message);
+                }
+                if (enc_state == ColumnEncryptionState::ENCRYPTED)
+                {
+                    core::TypedValue encrypted_value;
+                    if (!prepareEncryptedValue(db_, col_info, value, encrypted_value, &enc_ctx) ||
+                        !appendEncryptedValue(encrypted_value, tuple_data, &enc_ctx))
+                    {
+                        error("Failed to serialize encrypted value for column '" +
+                              col_info.column_name + "': " + enc_ctx.message);
+                    }
+                    continue;
+                }
+                if (value.isEncrypted())
+                {
+                    error("Encrypted value provided for non-encrypted column '" +
+                          col_info.column_name + "'");
                 }
 
                 // Serialize value based on column type
@@ -8082,6 +8303,30 @@ namespace scratchbird
 
                     const auto &val = row_values[i];
                     const auto &col = all_columns[i];
+
+                    core::ErrorContext enc_ctx;
+                    auto enc_state = getColumnEncryptionState(db_, col, &enc_ctx);
+                    if (enc_state == ColumnEncryptionState::ERROR_STATE)
+                    {
+                        error("Failed to resolve encryption state for column '" +
+                              col.column_name + "': " + enc_ctx.message);
+                    }
+                    if (enc_state == ColumnEncryptionState::ENCRYPTED)
+                    {
+                        core::TypedValue encrypted_value;
+                        if (!prepareEncryptedValue(db_, col, val, encrypted_value, &enc_ctx) ||
+                            !appendEncryptedValue(encrypted_value, new_tuple_data, &enc_ctx))
+                        {
+                            error("Failed to serialize encrypted value for column '" +
+                                  col.column_name + "': " + enc_ctx.message);
+                        }
+                        continue;
+                    }
+                    if (val.isEncrypted())
+                    {
+                        error("Encrypted value provided for non-encrypted column '" +
+                              col.column_name + "'");
+                    }
 
                     // Serialize based on column data type
                     switch (static_cast<core::DataType>(col.data_type))
@@ -21229,6 +21474,27 @@ namespace scratchbird
                 // Deserialize value based on column type
                 core::DataType col_type = static_cast<core::DataType>(columns[i].data_type);
 
+                core::ErrorContext enc_ctx;
+                auto enc_state = getColumnEncryptionState(db_, columns[i], &enc_ctx);
+                if (enc_state == ColumnEncryptionState::ERROR_STATE)
+                {
+                    return false;
+                }
+                if (enc_state == ColumnEncryptionState::ENCRYPTED)
+                {
+                    Value enc_value(col_type);
+                    if (!readEncryptedValue(tuple_data, tuple_size, data_offset, enc_value, &enc_ctx))
+                    {
+                        return false;
+                    }
+                    if (!decryptValueForColumn(db_, columns[i], enc_value, &enc_ctx))
+                    {
+                        return false;
+                    }
+                    values_out.push_back(std::move(enc_value));
+                    continue;
+                }
+
                 switch (col_type)
                 {
                     case core::DataType::INT32:
@@ -30131,6 +30397,27 @@ namespace scratchbird
                     continue;
                 }
 
+                core::ErrorContext enc_ctx;
+                auto enc_state = getColumnEncryptionState(db_, col_info, &enc_ctx);
+                if (enc_state == ColumnEncryptionState::ERROR_STATE)
+                {
+                    return false;
+                }
+                if (enc_state == ColumnEncryptionState::ENCRYPTED)
+                {
+                    core::TypedValue encrypted_value;
+                    if (!prepareEncryptedValue(db_, col_info, value, encrypted_value, &enc_ctx) ||
+                        !appendEncryptedValue(encrypted_value, tuple_data_out, &enc_ctx))
+                    {
+                        return false;
+                    }
+                    continue;
+                }
+                if (value.isEncrypted())
+                {
+                    return false;
+                }
+
                 // Serialize value based on column type
                 core::DataType col_type = static_cast<core::DataType>(col_info.data_type);
 
@@ -34082,6 +34369,41 @@ namespace scratchbird
                     }
                 }
 
+                return true;
+            }
+
+            bool decryptValueForColumn(core::Database* db,
+                                       const core::CatalogManager::ColumnInfo& column,
+                                       core::TypedValue& value,
+                                       core::ErrorContext* ctx)
+            {
+                if (!value.isEncrypted())
+                {
+                    return true;
+                }
+                if (column.domain_id == core::ID())
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                      "Encrypted column missing domain reference");
+                    return false;
+                }
+                if (db == nullptr || db->domain_manager() == nullptr)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
+                                      "Domain manager unavailable for decryption");
+                    return false;
+                }
+
+                core::Status status = db->domain_manager()->decryptValue(column.domain_id,
+                                                                         value, ctx);
+                if (status != core::Status::OK)
+                {
+                    if (ctx && ctx->message.empty())
+                    {
+                        SET_ERROR_CONTEXT(ctx, status, "Failed to decrypt value");
+                    }
+                    return false;
+                }
                 return true;
             }
 

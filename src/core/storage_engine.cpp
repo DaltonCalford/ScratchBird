@@ -5,6 +5,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/lock_manager.h"
@@ -182,6 +183,157 @@ namespace scratchbird::core
                     return Status::INVALID_ARGUMENT;
             }
         }
+
+        Status computeColumnLayout(const uint8_t *tuple_data,
+                                   uint32_t tuple_size,
+                                   const std::vector<CatalogManager::ColumnInfo> &columns,
+                                   DomainManager *domain_mgr,
+                                   std::vector<size_t> &column_offsets,
+                                   std::vector<size_t> &column_sizes,
+                                   ErrorContext *ctx)
+        {
+            if (tuple_data == nullptr || tuple_size < sizeof(TupleHeader))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Tuple data is invalid");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            column_offsets.clear();
+            column_sizes.clear();
+            column_offsets.reserve(columns.size());
+            column_sizes.reserve(columns.size());
+
+            const auto *header = reinterpret_cast<const TupleHeader *>(tuple_data);
+            size_t data_offset = sizeof(TupleHeader);
+
+            const uint8_t *null_bitmap = nullptr;
+            if (header->hasNulls() && header->null_bitmap_offset > 0 &&
+                header->null_bitmap_offset < tuple_size)
+            {
+                null_bitmap = tuple_data + header->null_bitmap_offset;
+                size_t bitmap_bytes = (columns.size() + 7) / 8;
+                data_offset = header->null_bitmap_offset + bitmap_bytes;
+            }
+
+            size_t current_offset = data_offset;
+            for (size_t i = 0; i < columns.size(); i++)
+            {
+                bool is_null = false;
+                if (null_bitmap)
+                {
+                    size_t byte_offset = i / 8;
+                    size_t bit_pos = i % 8;
+                    is_null = (null_bitmap[byte_offset] & (1 << bit_pos)) != 0;
+                }
+
+                if (is_null)
+                {
+                    column_offsets.push_back(0);
+                    column_sizes.push_back(0);
+                    continue;
+                }
+
+                bool is_encrypted = false;
+                if (domain_mgr != nullptr && columns[i].domain_id != ID{})
+                {
+                    DomainInfo domain;
+                    Status status = domain_mgr->getDomain(columns[i].domain_id, domain, ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                    is_encrypted = domain.security.encryption_enabled;
+                }
+
+                size_t col_size = 0;
+                if (is_encrypted)
+                {
+                    if (current_offset + sizeof(uint32_t) > tuple_size)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Encrypted value length out of bounds");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    uint32_t len = 0;
+                    std::memcpy(&len, tuple_data + current_offset, sizeof(uint32_t));
+                    col_size = sizeof(uint32_t) + len;
+                    if (current_offset + col_size > tuple_size)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Encrypted value exceeds tuple bounds");
+                        return Status::DATA_CORRUPTED;
+                    }
+                }
+                else
+                {
+                    DataType col_type = static_cast<DataType>(columns[i].data_type);
+                    switch (col_type)
+                    {
+                        case DataType::INT8:
+                            col_size = sizeof(int8_t);
+                            break;
+                        case DataType::INT16:
+                            col_size = sizeof(int16_t);
+                            break;
+                        case DataType::INT32:
+                            col_size = sizeof(int32_t);
+                            break;
+                        case DataType::INT64:
+                        case DataType::MONEY:
+                            col_size = sizeof(int64_t);
+                            break;
+                        case DataType::FLOAT32:
+                            col_size = sizeof(float);
+                            break;
+                        case DataType::FLOAT64:
+                        case DataType::DECIMAL:
+                            col_size = sizeof(double);
+                            break;
+                        case DataType::BOOLEAN:
+                            col_size = sizeof(uint8_t);
+                            break;
+                        case DataType::DATE:
+                        case DataType::TIME:
+                            col_size = sizeof(int32_t);
+                            break;
+                        case DataType::TIMESTAMP:
+                            col_size = sizeof(int32_t) * 2;
+                            break;
+                        case DataType::UUID:
+                        case DataType::INT128:
+                            col_size = 16;
+                            break;
+                        case DataType::VECTOR:
+                        case DataType::VARCHAR:
+                        case DataType::TEXT:
+                        case DataType::CHAR:
+                        case DataType::BINARY:
+                        case DataType::VARBINARY:
+                        case DataType::BLOB:
+                        case DataType::BYTEA:
+                        case DataType::JSON:
+                        case DataType::JSONB:
+                        case DataType::XML:
+                        {
+                            if (current_offset + sizeof(uint32_t) <= tuple_size)
+                            {
+                                uint32_t len = 0;
+                                std::memcpy(&len, tuple_data + current_offset, sizeof(uint32_t));
+                                col_size = sizeof(uint32_t) + len;
+                            }
+                            break;
+                        }
+                        default:
+                            col_size = 0;
+                            break;
+                    }
+                }
+
+                column_offsets.push_back(current_offset);
+                column_sizes.push_back(col_size);
+                current_offset += col_size;
+            }
+
+            return Status::OK;
+        }
     } // anonymous namespace
 
     // TASK-DML-2: Public wrapper for removeFromIndex (for executor)
@@ -299,82 +451,16 @@ namespace scratchbird::core
                     // Create IndexKeyExtractor for detoasting
                     IndexKeyExtractor extractor;
 
-                    // Extract column offsets and sizes from tuple
-                    // Based on deserializeTuple() implementation in executor.cpp
                     std::vector<size_t> column_offsets;
                     std::vector<size_t> column_sizes;
-
-                    const auto *header = reinterpret_cast<const TupleHeader *>(tuple_data);
-                    size_t data_offset = sizeof(TupleHeader);
-
-                    // Check for null bitmap
-                    const uint8_t *null_bitmap = nullptr;
-                    if (header->hasNulls() && header->null_bitmap_offset > 0 &&
-                        header->null_bitmap_offset < tuple_size)
+                    Status layout_status = computeColumnLayout(tuple_data, tuple_size, columns,
+                                                               db_->domain_manager(),
+                                                               column_offsets, column_sizes, ctx);
+                    if (layout_status != Status::OK)
                     {
-                        null_bitmap = tuple_data + header->null_bitmap_offset;
-                        size_t bitmap_bytes = (columns.size() + 7) / 8;
-                        data_offset = header->null_bitmap_offset + bitmap_bytes;
-                    }
-
-                    // Calculate column offsets and sizes
-                    column_offsets.reserve(columns.size());
-                    column_sizes.reserve(columns.size());
-
-                    size_t current_offset = data_offset;
-                    for (size_t i = 0; i < columns.size(); i++)
-                    {
-                        // Check if column is NULL
-                        bool is_null = false;
-                        if (null_bitmap)
-                        {
-                            size_t byte_offset = i / 8;
-                            size_t bit_pos = i % 8;
-                            is_null = (null_bitmap[byte_offset] & (1 << bit_pos)) != 0;
-                        }
-
-                        if (is_null)
-                        {
-                            // NULL column has no data
-                            column_offsets.push_back(0);
-                            column_sizes.push_back(0);
-                            continue;
-                        }
-
-                        // Determine column size based on type
-                        DataType col_type = static_cast<DataType>(columns[i].data_type);
-                        size_t col_size = 0;
-
-                        switch (col_type)
-                        {
-                            case DataType::INT32:
-                                col_size = sizeof(int32_t);
-                                break;
-                            case DataType::INT64:
-                                col_size = sizeof(int64_t);
-                                break;
-                            case DataType::FLOAT64:
-                                col_size = sizeof(double);
-                                break;
-                            case DataType::VARCHAR:
-                            case DataType::TEXT:
-                                // Variable-length: read uint32_t length prefix
-                                if (current_offset + sizeof(uint32_t) <= tuple_size)
-                                {
-                                    uint32_t len;
-                                    std::memcpy(&len, tuple_data + current_offset, sizeof(uint32_t));
-                                    col_size = sizeof(uint32_t) + len;
-                                }
-                                break;
-                            default:
-                                // For unknown types, skip this column
-                                col_size = 0;
-                                break;
-                        }
-
-                        column_offsets.push_back(current_offset);
-                        column_sizes.push_back(col_size);
-                        current_offset += col_size;
+                        LOG_WARNING(STORAGE, "Failed to compute column layout for index update: %s",
+                                    ctx ? ctx->message.c_str() : "unknown error");
+                        continue;
                     }
 
                     // Update each index
@@ -739,75 +825,16 @@ namespace scratchbird::core
                         // Create IndexKeyExtractor
                         IndexKeyExtractor extractor;
 
-                        // Calculate column offsets (similar to insertTuple)
                         std::vector<size_t> column_offsets;
                         std::vector<size_t> column_sizes;
-                        const auto *header = reinterpret_cast<const TupleHeader *>(tuple_data);
-                        size_t data_offset = sizeof(TupleHeader);
-
-                        // Check for null bitmap
-                        const uint8_t *null_bitmap = nullptr;
-                        if (header->hasNulls() && header->null_bitmap_offset > 0 &&
-                            header->null_bitmap_offset < tuple_length)
+                        Status layout_status = computeColumnLayout(tuple_data, tuple_length, columns,
+                                                                   db_->domain_manager(),
+                                                                   column_offsets, column_sizes, ctx);
+                        if (layout_status != Status::OK)
                         {
-                            null_bitmap = tuple_data + header->null_bitmap_offset;
-                            size_t bitmap_bytes = (columns.size() + 7) / 8;
-                            data_offset = header->null_bitmap_offset + bitmap_bytes;
-                        }
-
-                        // Calculate column offsets and sizes
-                        column_offsets.reserve(columns.size());
-                        column_sizes.reserve(columns.size());
-
-                        size_t current_offset = data_offset;
-                        for (size_t i = 0; i < columns.size(); i++)
-                        {
-                            bool is_null = false;
-                            if (null_bitmap)
-                            {
-                                size_t byte_offset = i / 8;
-                                size_t bit_pos = i % 8;
-                                is_null = (null_bitmap[byte_offset] & (1 << bit_pos)) != 0;
-                            }
-
-                            if (is_null)
-                            {
-                                column_offsets.push_back(0);
-                                column_sizes.push_back(0);
-                                continue;
-                            }
-
-                            DataType col_type = static_cast<DataType>(columns[i].data_type);
-                            size_t col_size = 0;
-
-                            switch (col_type)
-                            {
-                                case DataType::INT32:
-                                    col_size = sizeof(int32_t);
-                                    break;
-                                case DataType::INT64:
-                                    col_size = sizeof(int64_t);
-                                    break;
-                                case DataType::FLOAT64:
-                                    col_size = sizeof(double);
-                                    break;
-                                case DataType::VARCHAR:
-                                case DataType::TEXT:
-                                    if (current_offset + sizeof(uint32_t) <= tuple_length)
-                                    {
-                                        uint32_t len;
-                                        std::memcpy(&len, tuple_data + current_offset, sizeof(uint32_t));
-                                        col_size = sizeof(uint32_t) + len;
-                                    }
-                                    break;
-                                default:
-                                    col_size = 0;
-                                    break;
-                            }
-
-                            column_offsets.push_back(current_offset);
-                            column_sizes.push_back(col_size);
-                            current_offset += col_size;
+                            LOG_WARNING(STORAGE, "Failed to compute column layout for index removal: %s",
+                                        ctx ? ctx->message.c_str() : "unknown error");
+                            continue;
                         }
 
                         // Remove from each index
@@ -1397,85 +1424,20 @@ namespace scratchbird::core
                     // Create IndexKeyExtractor for detoasting
                     IndexKeyExtractor extractor;
 
-                    // Helper lambda to extract column offsets/sizes from tuple
-                    auto extractColumnLayout = [&columns](const uint8_t *tuple_data, uint32_t tuple_size,
-                                                          std::vector<size_t> &offsets, std::vector<size_t> &sizes) {
-                        offsets.clear();
-                        sizes.clear();
-                        offsets.reserve(columns.size());
-                        sizes.reserve(columns.size());
-
-                        const auto *header = reinterpret_cast<const TupleHeader *>(tuple_data);
-                        size_t data_offset = sizeof(TupleHeader);
-
-                        // Check for null bitmap
-                        const uint8_t *null_bitmap = nullptr;
-                        if (header->hasNulls() && header->null_bitmap_offset > 0 &&
-                            header->null_bitmap_offset < tuple_size)
-                        {
-                            null_bitmap = tuple_data + header->null_bitmap_offset;
-                            size_t bitmap_bytes = (columns.size() + 7) / 8;
-                            data_offset = header->null_bitmap_offset + bitmap_bytes;
-                        }
-
-                        size_t current_offset = data_offset;
-                        for (size_t i = 0; i < columns.size(); i++)
-                        {
-                            // Check if column is NULL
-                            bool is_null = false;
-                            if (null_bitmap)
-                            {
-                                size_t byte_offset = i / 8;
-                                size_t bit_pos = i % 8;
-                                is_null = (null_bitmap[byte_offset] & (1 << bit_pos)) != 0;
-                            }
-
-                            if (is_null)
-                            {
-                                offsets.push_back(0);
-                                sizes.push_back(0);
-                                continue;
-                            }
-
-                            // Determine column size based on type
-                            DataType col_type = static_cast<DataType>(columns[i].data_type);
-                            size_t col_size = 0;
-
-                            switch (col_type)
-                            {
-                                case DataType::INT32:
-                                    col_size = sizeof(int32_t);
-                                    break;
-                                case DataType::INT64:
-                                    col_size = sizeof(int64_t);
-                                    break;
-                                case DataType::FLOAT64:
-                                    col_size = sizeof(double);
-                                    break;
-                                case DataType::VARCHAR:
-                                case DataType::TEXT:
-                                    if (current_offset + sizeof(uint32_t) <= tuple_size)
-                                    {
-                                        uint32_t len;
-                                        std::memcpy(&len, tuple_data + current_offset, sizeof(uint32_t));
-                                        col_size = sizeof(uint32_t) + len;
-                                    }
-                                    break;
-                                default:
-                                    col_size = 0;
-                                    break;
-                            }
-
-                            offsets.push_back(current_offset);
-                            sizes.push_back(col_size);
-                            current_offset += col_size;
-                        }
-                    };
-
                     // Extract old and new tuple layouts
                     std::vector<size_t> old_offsets, old_sizes, new_offsets, new_sizes;
-                    extractColumnLayout(old_tuple_data, old_length, old_offsets, old_sizes);
-                    extractColumnLayout(new_tuple_data, new_tuple_size, new_offsets, new_sizes);
+                    Status old_layout_status = computeColumnLayout(old_tuple_data, old_length, columns,
+                                                                   db_->domain_manager(),
+                                                                   old_offsets, old_sizes, ctx);
+                    Status new_layout_status = computeColumnLayout(new_tuple_data, new_tuple_size, columns,
+                                                                   db_->domain_manager(),
+                                                                   new_offsets, new_sizes, ctx);
+                    if (old_layout_status != Status::OK || new_layout_status != Status::OK)
+                    {
+                        LOG_WARNING(STORAGE, "Failed to compute column layout for index update: %s",
+                                    ctx ? ctx->message.c_str() : "unknown error");
+                        continue;
+                    }
 
                     // Check each index to see if indexed columns changed
                     for (const auto &index_info : indexes)

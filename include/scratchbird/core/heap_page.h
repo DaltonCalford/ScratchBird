@@ -196,6 +196,22 @@ namespace scratchbird::core
     };
 #pragma pack(pop)
 
+// Encrypted value record stored inside tuple data
+#pragma pack(push, 1)
+    struct EncryptedValueRecord
+    {
+        uint8_t algorithm;           // EncryptionAlgorithm
+        uint32_t key_version;        // Key version used
+        uint16_t iv_length;          // IV length (typically 12)
+        uint16_t auth_tag_length;    // Auth tag length (typically 16)
+        uint32_t ciphertext_length;  // Ciphertext length
+        // Followed by:
+        // - IV bytes (iv_length)
+        // - Auth tag bytes (auth_tag_length)
+        // - Ciphertext bytes (ciphertext_length)
+    };
+#pragma pack(pop)
+
 // Special area at the end of heap pages
 #pragma pack(push, 1)
     struct HeapPageSpecial

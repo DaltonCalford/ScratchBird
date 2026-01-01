@@ -11,6 +11,7 @@
 #include "scratchbird/core/network.h"
 #include "scratchbird/core/tsvector.h"
 #include "scratchbird/core/tsquery.h"
+#include "scratchbird/core/encryption_key_manager.h"
 
 namespace scratchbird::core
 {
@@ -167,6 +168,7 @@ namespace scratchbird::core
 
         // Compatibility aliases for legacy code with type coercion
         int64_t toInt64() const {
+            ensureDecrypted();
             switch (type_) {
                 case DataType::INT32: return static_cast<int64_t>(data_.int32_val);
                 case DataType::INT64: return data_.int64_val;
@@ -176,6 +178,7 @@ namespace scratchbird::core
             }
         }
         int32_t toInt32() const {
+            ensureDecrypted();
             switch (type_) {
                 case DataType::INT32: return data_.int32_val;
                 case DataType::INT64: return static_cast<int32_t>(data_.int64_val);
@@ -185,6 +188,7 @@ namespace scratchbird::core
             }
         }
         double toDouble() const {
+            ensureDecrypted();
             switch (type_) {
                 case DataType::INT32: return static_cast<double>(data_.int32_val);
                 case DataType::INT64: return static_cast<double>(data_.int64_val);
@@ -195,6 +199,7 @@ namespace scratchbird::core
             }
         }
         float toFloat() const {
+            ensureDecrypted();
             switch (type_) {
                 case DataType::INT32: return static_cast<float>(data_.int32_val);
                 case DataType::INT64: return static_cast<float>(data_.int64_val);
@@ -211,6 +216,22 @@ namespace scratchbird::core
         static TypedValue makeInt8(int8_t value) { return makeInt32(value); }
         static TypedValue makeInt16(int16_t value) { return makeInt32(value); }
         static TypedValue makeJSON(const std::string& value) { return makeText(value); }
+
+        // Encryption support
+        bool isEncrypted() const { return is_encrypted_; }
+        uint32_t encryptionKeyVersion() const { return encryption_key_version_; }
+        EncryptionAlgorithm encryptionAlgorithm() const { return encryption_algorithm_; }
+        const std::vector<uint8_t>& encryptedData() const { return encrypted_data_; }
+
+        // Encrypt/decrypt value payload
+        Status encrypt(const std::vector<uint8_t>& key,
+                       EncryptionAlgorithm algo,
+                       uint32_t key_version,
+                       ErrorContext* ctx = nullptr);
+        Status decrypt(const std::vector<uint8_t>& key,
+                       ErrorContext* ctx = nullptr);
+        Status setEncryptedData(const std::vector<uint8_t>& record,
+                                ErrorContext* ctx = nullptr);
 
         // Type conversion method
         TypedValue convertTo(DataType target_type) const;
@@ -294,10 +315,19 @@ namespace scratchbird::core
         };
         std::unique_ptr<ComplexData> complex_data_;
 
+        // Encryption metadata and payload
+        bool is_encrypted_ = false;
+        uint32_t encryption_key_version_ = 0;
+        EncryptionAlgorithm encryption_algorithm_ = EncryptionAlgorithm::NONE;
+        std::vector<uint8_t> encrypted_data_;
+
         // Helper methods
         void copyFrom(const TypedValue& other);
         void moveFrom(TypedValue&& other) noexcept;
         void clear();
+        void ensureDecrypted() const;
+        Status serializePlainValue(std::vector<uint8_t>& out, ErrorContext* ctx) const;
+        Status deserializePlainValue(const std::vector<uint8_t>& data, ErrorContext* ctx);
     };
 
     // Template implementations for range types
@@ -337,6 +367,7 @@ namespace scratchbird::core
         if (is_null_) {
             throw std::runtime_error("Cannot get value from NULL");
         }
+        ensureDecrypted();
         if (type_ != DataType::DATERANGE) {
             throw std::runtime_error("Type mismatch: expected DATERANGE");
         }
@@ -352,6 +383,7 @@ namespace scratchbird::core
         if (is_null_) {
             throw std::runtime_error("Cannot get value from NULL");
         }
+        ensureDecrypted();
         if (type_ != DataType::TSRANGE) {
             throw std::runtime_error("Type mismatch: expected TSRANGE");
         }
@@ -367,6 +399,7 @@ namespace scratchbird::core
         if (is_null_) {
             throw std::runtime_error("Cannot get value from NULL");
         }
+        ensureDecrypted();
         if (type_ != DataType::TSTZRANGE) {
             throw std::runtime_error("Type mismatch: expected TSTZRANGE");
         }

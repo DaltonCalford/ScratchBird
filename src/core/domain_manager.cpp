@@ -33,7 +33,7 @@ namespace scratchbird::core
             return "scratchbird";
         }
 
-        constexpr uint8_t DOMAIN_SECURITY_VERSION = 1;
+        constexpr uint8_t DOMAIN_SECURITY_VERSION = 2;
         constexpr uint8_t DOMAIN_INTEGRITY_VERSION = 1;
         constexpr uint8_t DOMAIN_VALIDATION_VERSION = 1;
         constexpr uint8_t DOMAIN_QUALITY_VERSION = 1;
@@ -90,6 +90,12 @@ namespace scratchbird::core
             out.append(value);
         }
 
+        void appendId(std::string& out, const ID& id)
+        {
+            out.append(reinterpret_cast<const char*>(id.bytes.data()),
+                       id.bytes.size());
+        }
+
         bool readString(const std::string& blob, size_t& offset, std::string& value)
         {
             uint32_t len = 0;
@@ -106,6 +112,17 @@ namespace scratchbird::core
             return true;
         }
 
+        bool readId(const std::string& blob, size_t& offset, ID& id)
+        {
+            if (offset + id.bytes.size() > blob.size())
+            {
+                return false;
+            }
+            std::memcpy(id.bytes.data(), blob.data() + offset, id.bytes.size());
+            offset += id.bytes.size();
+            return true;
+        }
+
         bool isDefaultSecurity(const DomainSecurity& security)
         {
             return security.masking_config.type == MaskingType::NONE &&
@@ -113,6 +130,8 @@ namespace scratchbird::core
                    security.masking_config.full_mask_char == "*" &&
                    security.required_privilege_for_unmasked.empty() &&
                    !security.encryption_enabled &&
+                   security.encryption_algorithm == EncryptionAlgorithm::NONE &&
+                   isZeroUuidLocal(security.encryption_key_id) &&
                    !security.audit_enabled &&
                    security.permission_mask == 0;
         }
@@ -149,10 +168,12 @@ namespace scratchbird::core
             appendUint8(out, static_cast<uint8_t>(security.masking_config.type));
             appendUint8(out, security.encryption_enabled ? 1 : 0);
             appendUint8(out, security.audit_enabled ? 1 : 0);
+            appendUint8(out, static_cast<uint8_t>(security.encryption_algorithm));
             appendUint32(out, security.permission_mask);
             appendString(out, security.masking_config.pattern);
             appendString(out, security.masking_config.full_mask_char);
             appendString(out, security.required_privilege_for_unmasked);
+            appendId(out, security.encryption_key_id);
             return out;
         }
 
@@ -167,7 +188,7 @@ namespace scratchbird::core
 
             size_t offset = 0;
             uint8_t version = 0;
-            if (!readUint8(blob, offset, version) || version != DOMAIN_SECURITY_VERSION)
+            if (!readUint8(blob, offset, version))
             {
                 SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain security format");
                 return Status::CORRUPTION;
@@ -176,20 +197,49 @@ namespace scratchbird::core
             uint8_t type = 0;
             uint8_t encryption = 0;
             uint8_t audit = 0;
+            uint8_t algorithm = 0;
             uint32_t permission_mask = 0;
             std::string pattern;
             std::string mask_char;
             std::string privilege;
+            ID key_id;
 
-            if (!readUint8(blob, offset, type) ||
-                !readUint8(blob, offset, encryption) ||
-                !readUint8(blob, offset, audit) ||
-                !readUint32(blob, offset, permission_mask) ||
-                !readString(blob, offset, pattern) ||
-                !readString(blob, offset, mask_char) ||
-                !readString(blob, offset, privilege))
+            if (version == 1)
             {
-                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain security payload");
+                if (!readUint8(blob, offset, type) ||
+                    !readUint8(blob, offset, encryption) ||
+                    !readUint8(blob, offset, audit) ||
+                    !readUint32(blob, offset, permission_mask) ||
+                    !readString(blob, offset, pattern) ||
+                    !readString(blob, offset, mask_char) ||
+                    !readString(blob, offset, privilege))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain security payload");
+                    return Status::CORRUPTION;
+                }
+
+                algorithm = static_cast<uint8_t>(EncryptionAlgorithm::NONE);
+                key_id = ID{};
+            }
+            else if (version == DOMAIN_SECURITY_VERSION)
+            {
+                if (!readUint8(blob, offset, type) ||
+                    !readUint8(blob, offset, encryption) ||
+                    !readUint8(blob, offset, audit) ||
+                    !readUint8(blob, offset, algorithm) ||
+                    !readUint32(blob, offset, permission_mask) ||
+                    !readString(blob, offset, pattern) ||
+                    !readString(blob, offset, mask_char) ||
+                    !readString(blob, offset, privilege) ||
+                    !readId(blob, offset, key_id))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain security payload");
+                    return Status::CORRUPTION;
+                }
+            }
+            else
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain security format");
                 return Status::CORRUPTION;
             }
 
@@ -200,6 +250,8 @@ namespace scratchbird::core
             security.encryption_enabled = (encryption != 0);
             security.audit_enabled = (audit != 0);
             security.permission_mask = permission_mask;
+            security.encryption_algorithm = static_cast<EncryptionAlgorithm>(algorithm);
+            security.encryption_key_id = key_id;
 
             return Status::OK;
         }
@@ -2042,8 +2094,56 @@ namespace scratchbird::core
             return Status::NOT_FOUND;
         }
 
+        DomainSecurity updated_security = security;
+        if (updated_security.encryption_enabled)
+        {
+            EncryptionKeyManager* key_mgr = db_ ? db_->encryption_key_manager() : nullptr;
+            if (!key_mgr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "EncryptionKeyManager not available");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            EncryptionKey active_key;
+            Status key_status = key_mgr->getActiveKey(domain_id, active_key, ctx);
+            if (key_status == Status::NOT_FOUND)
+            {
+                EncryptionAlgorithm algo = updated_security.encryption_algorithm;
+                if (algo == EncryptionAlgorithm::NONE)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Encryption algorithm not set for domain");
+                    return Status::INVALID_ARGUMENT;
+                }
+                ID new_key_id;
+                key_status = key_mgr->generateKey(domain_id, algo, new_key_id, ctx);
+                if (key_status != Status::OK && key_status != Status::FILE_EXISTS)
+                {
+                    return key_status;
+                }
+                key_status = key_mgr->getActiveKey(domain_id, active_key, ctx);
+            }
+            if (key_status != Status::OK)
+            {
+                if (ctx && ctx->message.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, key_status, "Failed to resolve active encryption key");
+                }
+                return key_status;
+            }
+
+            updated_security.encryption_algorithm = active_key.algorithm;
+            updated_security.encryption_key_id = active_key.key_id;
+        }
+        else
+        {
+            updated_security.encryption_algorithm = EncryptionAlgorithm::NONE;
+            updated_security.encryption_key_id = ID{};
+        }
+
         // Update security options
-        it->second.security = security;
+        it->second.security = updated_security;
         it->second.last_modified_time = std::time(nullptr);
 
         // Update catalog
@@ -2387,6 +2487,7 @@ namespace scratchbird::core
         {
             return status;
         }
+        (void)domain;
 
         if (value.isNull() || domain.security.masking_config.type == MaskingType::NONE)
         {
@@ -2461,6 +2562,148 @@ namespace scratchbird::core
 
         return checkMaskingPrivilegeInternal(db_, domain.security, domain_id,
                                              user_id, has_privilege_out, ctx);
+    }
+
+    auto DomainManager::encryptValue(const ID& domain_id,
+                                     TypedValue& value,
+                                     ErrorContext* ctx) -> Status
+    {
+        if (value.isNull())
+        {
+            return Status::OK;
+        }
+
+        if (value.isEncrypted())
+        {
+            return Status::OK;
+        }
+
+        DomainInfo domain;
+        Status status = getDomain(domain_id, domain, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        if (!domain.security.encryption_enabled)
+        {
+            return Status::OK;
+        }
+
+        EncryptionKeyManager* key_mgr = db_ ? db_->encryption_key_manager() : nullptr;
+        if (!key_mgr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "EncryptionKeyManager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        EncryptionKey active_key;
+        status = key_mgr->getActiveKey(domain_id, active_key, ctx);
+        if (status == Status::NOT_FOUND)
+        {
+            EncryptionAlgorithm algo = domain.security.encryption_algorithm;
+            if (algo == EncryptionAlgorithm::NONE)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Encryption algorithm not set for domain");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            ID new_key_id;
+            status = key_mgr->generateKey(domain_id, algo, new_key_id, ctx);
+            if (status != Status::OK && status != Status::FILE_EXISTS)
+            {
+                return status;
+            }
+            status = key_mgr->getActiveKey(domain_id, active_key, ctx);
+        }
+        if (status != Status::OK)
+        {
+            if (ctx && ctx->message.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to resolve active encryption key");
+            }
+            return status;
+        }
+
+        if (domain.security.encryption_key_id != active_key.key_id ||
+            domain.security.encryption_algorithm != active_key.algorithm)
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = domain_cache_.find(domain_id);
+            if (it != domain_cache_.end())
+            {
+                it->second.security.encryption_enabled = true;
+                it->second.security.encryption_algorithm = active_key.algorithm;
+                it->second.security.encryption_key_id = active_key.key_id;
+                it->second.last_modified_time = std::time(nullptr);
+
+                Status update_status = writeDomainRecord(it->second, ctx);
+                if (update_status != Status::OK)
+                {
+                    return update_status;
+                }
+            }
+        }
+
+        std::vector<uint8_t> plaintext_key;
+        status = key_mgr->decryptKey(active_key, plaintext_key, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        return value.encrypt(plaintext_key, active_key.algorithm, active_key.key_version, ctx);
+    }
+
+    auto DomainManager::decryptValue(const ID& domain_id,
+                                     TypedValue& value,
+                                     ErrorContext* ctx) -> Status
+    {
+        if (!value.isEncrypted())
+        {
+            return Status::OK;
+        }
+
+        DomainInfo domain;
+        Status status = getDomain(domain_id, domain, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        EncryptionKeyManager* key_mgr = db_ ? db_->encryption_key_manager() : nullptr;
+        if (!key_mgr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "EncryptionKeyManager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        uint32_t key_version = value.encryptionKeyVersion();
+        if (key_version == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Encrypted value missing key version");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        EncryptionKey key;
+        status = key_mgr->getKeyByVersion(domain_id, key_version, key, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<uint8_t> plaintext_key;
+        status = key_mgr->decryptKey(key, plaintext_key, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        return value.decrypt(plaintext_key, ctx);
     }
 
     // ====================

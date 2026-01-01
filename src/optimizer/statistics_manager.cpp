@@ -4,6 +4,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/heap_page.h"
+#include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/debug.h"
 #include <algorithm>
@@ -1725,6 +1726,28 @@ namespace scratchbird::optimizer
             return column_values; // Empty vector
         }
 
+        std::vector<bool> encryption_flags(columns.size(), false);
+        auto *domain_mgr = db_->domain_manager();
+        for (size_t i = 0; i < columns.size(); ++i)
+        {
+            if (columns[i].domain_id == core::ID{})
+            {
+                continue;
+            }
+            if (domain_mgr == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR, "Domain manager unavailable for encryption lookup");
+                return {};
+            }
+            core::DomainInfo domain;
+            Status status = domain_mgr->getDomain(columns[i].domain_id, domain, ctx);
+            if (status != Status::OK)
+            {
+                return {};
+            }
+            encryption_flags[i] = domain.security.encryption_enabled;
+        }
+
         // Extract column values from each tuple
         for (const auto &tuple_data : sample_rows)
         {
@@ -1780,20 +1803,71 @@ namespace scratchbird::optimizer
                     }
                 }
 
+                if (encryption_flags[i])
+                {
+                    if (data_offset + sizeof(uint32_t) > tuple_data.size())
+                    {
+                        data_offset = tuple_data.size();
+                        break;
+                    }
+                    uint32_t len;
+                    std::memcpy(&len, tuple_data.data() + data_offset, sizeof(uint32_t));
+                    data_offset += sizeof(uint32_t) + len;
+                    continue;
+                }
+
                 core::DataType col_type = static_cast<core::DataType>(columns[i].data_type);
-                if (col_type == core::DataType::INT32)
+                if (col_type == core::DataType::INT8)
+                {
+                    data_offset += sizeof(int8_t);
+                }
+                else if (col_type == core::DataType::INT16)
+                {
+                    data_offset += sizeof(int16_t);
+                }
+                else if (col_type == core::DataType::INT32)
                 {
                     data_offset += sizeof(int32_t);
                 }
-                else if (col_type == core::DataType::INT64)
+                else if (col_type == core::DataType::INT64 || col_type == core::DataType::MONEY)
                 {
                     data_offset += sizeof(int64_t);
                 }
-                else if (col_type == core::DataType::FLOAT64)
+                else if (col_type == core::DataType::FLOAT32)
+                {
+                    data_offset += sizeof(float);
+                }
+                else if (col_type == core::DataType::FLOAT64 || col_type == core::DataType::DECIMAL)
                 {
                     data_offset += sizeof(double);
                 }
-                else if (col_type == core::DataType::VARCHAR)
+                else if (col_type == core::DataType::BOOLEAN)
+                {
+                    data_offset += sizeof(uint8_t);
+                }
+                else if (col_type == core::DataType::DATE || col_type == core::DataType::TIME)
+                {
+                    data_offset += sizeof(int32_t);
+                }
+                else if (col_type == core::DataType::TIMESTAMP)
+                {
+                    data_offset += sizeof(int32_t) * 2;
+                }
+                else if (col_type == core::DataType::UUID || col_type == core::DataType::INT128)
+                {
+                    data_offset += 16;
+                }
+                else if (col_type == core::DataType::VARCHAR ||
+                         col_type == core::DataType::TEXT ||
+                         col_type == core::DataType::CHAR ||
+                         col_type == core::DataType::BINARY ||
+                         col_type == core::DataType::VARBINARY ||
+                         col_type == core::DataType::BLOB ||
+                         col_type == core::DataType::BYTEA ||
+                         col_type == core::DataType::VECTOR ||
+                         col_type == core::DataType::JSON ||
+                         col_type == core::DataType::JSONB ||
+                         col_type == core::DataType::XML)
                 {
                     if (data_offset + sizeof(uint32_t) > tuple_data.size())
                         break;
@@ -1807,22 +1881,88 @@ namespace scratchbird::optimizer
             core::DataType target_type = static_cast<core::DataType>(target_column_info.data_type);
             std::vector<uint8_t> value;
 
-            if (target_type == core::DataType::INT32 && data_offset + sizeof(int32_t) <= tuple_data.size())
+            if (encryption_flags[target_column_idx])
+            {
+                if (data_offset + sizeof(uint32_t) <= tuple_data.size())
+                {
+                    uint32_t len;
+                    std::memcpy(&len, tuple_data.data() + data_offset, sizeof(uint32_t));
+                    if (data_offset + sizeof(uint32_t) + len <= tuple_data.size())
+                    {
+                        value.resize(sizeof(uint32_t) + len);
+                        std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(uint32_t) + len);
+                    }
+                }
+            }
+            else if (target_type == core::DataType::INT8 &&
+                     data_offset + sizeof(int8_t) <= tuple_data.size())
+            {
+                value.resize(sizeof(int8_t));
+                std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(int8_t));
+            }
+            else if (target_type == core::DataType::INT16 &&
+                     data_offset + sizeof(int16_t) <= tuple_data.size())
+            {
+                value.resize(sizeof(int16_t));
+                std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(int16_t));
+            }
+            else if (target_type == core::DataType::INT32 && data_offset + sizeof(int32_t) <= tuple_data.size())
             {
                 value.resize(sizeof(int32_t));
                 std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(int32_t));
             }
-            else if (target_type == core::DataType::INT64 && data_offset + sizeof(int64_t) <= tuple_data.size())
+            else if ((target_type == core::DataType::INT64 || target_type == core::DataType::MONEY) &&
+                     data_offset + sizeof(int64_t) <= tuple_data.size())
             {
                 value.resize(sizeof(int64_t));
                 std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(int64_t));
             }
-            else if (target_type == core::DataType::FLOAT64 && data_offset + sizeof(double) <= tuple_data.size())
+            else if (target_type == core::DataType::FLOAT32 && data_offset + sizeof(float) <= tuple_data.size())
+            {
+                value.resize(sizeof(float));
+                std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(float));
+            }
+            else if ((target_type == core::DataType::FLOAT64 || target_type == core::DataType::DECIMAL) &&
+                     data_offset + sizeof(double) <= tuple_data.size())
             {
                 value.resize(sizeof(double));
                 std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(double));
             }
-            else if (target_type == core::DataType::VARCHAR && data_offset + sizeof(uint32_t) <= tuple_data.size())
+            else if (target_type == core::DataType::BOOLEAN && data_offset + sizeof(uint8_t) <= tuple_data.size())
+            {
+                value.resize(sizeof(uint8_t));
+                std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(uint8_t));
+            }
+            else if ((target_type == core::DataType::DATE || target_type == core::DataType::TIME) &&
+                     data_offset + sizeof(int32_t) <= tuple_data.size())
+            {
+                value.resize(sizeof(int32_t));
+                std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(int32_t));
+            }
+            else if (target_type == core::DataType::TIMESTAMP &&
+                     data_offset + sizeof(int32_t) * 2 <= tuple_data.size())
+            {
+                value.resize(sizeof(int32_t) * 2);
+                std::memcpy(value.data(), tuple_data.data() + data_offset, sizeof(int32_t) * 2);
+            }
+            else if ((target_type == core::DataType::UUID || target_type == core::DataType::INT128) &&
+                     data_offset + 16 <= tuple_data.size())
+            {
+                value.resize(16);
+                std::memcpy(value.data(), tuple_data.data() + data_offset, 16);
+            }
+            else if ((target_type == core::DataType::VARCHAR ||
+                      target_type == core::DataType::TEXT ||
+                      target_type == core::DataType::CHAR ||
+                      target_type == core::DataType::BINARY ||
+                      target_type == core::DataType::VARBINARY ||
+                      target_type == core::DataType::BLOB ||
+                      target_type == core::DataType::BYTEA ||
+                      target_type == core::DataType::VECTOR ||
+                      target_type == core::DataType::JSON ||
+                      target_type == core::DataType::JSONB ||
+                      target_type == core::DataType::XML) &&
+                     data_offset + sizeof(uint32_t) <= tuple_data.size())
             {
                 uint32_t len;
                 std::memcpy(&len, tuple_data.data() + data_offset, sizeof(uint32_t));

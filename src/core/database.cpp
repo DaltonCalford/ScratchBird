@@ -13,6 +13,7 @@
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/long_transaction_monitor.h"
 #include "scratchbird/core/domain_manager.h"
+#include "scratchbird/core/encryption_key_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/permission_cache.h" // Security Phase 3.2.3
@@ -62,6 +63,9 @@ namespace scratchbird::core
 
         // Shut down domain manager
         domain_manager_.reset();
+
+        // Shut down encryption key manager
+        encryption_key_manager_.reset();
 
         // Shut down garbage collector first (before sweep manager)
         garbage_collector_.reset();
@@ -1035,6 +1039,24 @@ namespace scratchbird::core
                 close();
                 return status;
             }
+        }
+
+        // Initialize encryption key manager
+        try
+        {
+            encryption_key_manager_ = std::make_unique<EncryptionKeyManager>(this);
+        }
+        catch (const std::bad_alloc &)
+        {
+            close();
+            SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate EncryptionKeyManager");
+            return Status::OOM;
+        }
+        status = encryption_key_manager_->initialize(ctx);
+        if (status != Status::OK)
+        {
+            close();
+            return status;
         }
 
         // Initialize optimizer components (Phase 1, Task 1.3)

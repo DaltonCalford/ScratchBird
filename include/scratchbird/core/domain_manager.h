@@ -12,6 +12,7 @@
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/typed_value.h"
+#include "scratchbird/core/encryption_key_manager.h"
 #include "scratchbird/core/data_masking.h"
 
 namespace scratchbird::core
@@ -96,11 +97,15 @@ namespace scratchbird::core
         MaskingConfig masking_config;       // Data masking
         std::string required_privilege_for_unmasked; // Privilege to bypass masking
         bool encryption_enabled;    // Encryption at rest
+        EncryptionAlgorithm encryption_algorithm; // Encryption algorithm
+        ID encryption_key_id;       // Active encryption key ID
         bool audit_enabled;         // Audit trail
         uint32_t permission_mask;   // Permission requirements
 
         DomainSecurity()
             : encryption_enabled(false),
+              encryption_algorithm(EncryptionAlgorithm::NONE),
+              encryption_key_id(),
               audit_enabled(false), permission_mask(0) {}
     };
 
@@ -424,6 +429,14 @@ namespace scratchbird::core
                                    const ID& user_id,
                                    bool& has_privilege_out,
                                    ErrorContext* ctx = nullptr) -> Status;
+
+        // Encryption support
+        auto encryptValue(const ID& domain_id,
+                          TypedValue& value,
+                          ErrorContext* ctx = nullptr) -> Status;
+        auto decryptValue(const ID& domain_id,
+                          TypedValue& value,
+                          ErrorContext* ctx = nullptr) -> Status;
 
         // Statistics
         auto domainCount() const -> uint32_t

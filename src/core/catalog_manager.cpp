@@ -308,9 +308,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // Track 2: Prepared transactions (2PC)
         uint32_t prepared_transactions_page; // Page containing prepared transactions table
 
+        // Plan 03B: Encryption key management
+        uint32_t encryption_keys_page; // Page containing encryption keys table
+
         ID policy_toast_table_id;     // UUID for policy expression TOAST storage
 
-        uint8_t reserved[3832];       // Padding for 4KB page (264 bytes used)
+        uint8_t reserved[3828];       // Padding for 4KB page (268 bytes used)
     };
 
     // Schema record on disk
@@ -2685,6 +2688,32 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
                          "TOAST manager not available - using in-memory cache");
         return Status::NOT_IMPLEMENTED;
+    }
+
+    auto CatalogManager::ensureEncryptionKeysTable(ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<CatalogMutex> lock(mutex_);
+
+        if (encryption_keys_table_page_ != 0)
+        {
+            return Status::OK;
+        }
+
+        Status status = allocateCatalogPage(encryption_keys_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to allocate encryption keys table page");
+            return status;
+        }
+
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to persist encryption keys table page");
+            return status;
+        }
+
+        return Status::OK;
     }
 
     auto CatalogManager::getSchema(const ID &schema_id, SchemaInfo &info, ErrorContext *ctx)
@@ -5613,6 +5642,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         root->migration_history_page = migration_history_table_page_;
         root->dormant_transactions_page = dormant_transactions_table_page_;
         root->prepared_transactions_page = prepared_transactions_table_page_;
+        root->encryption_keys_page = encryption_keys_table_page_;
         root->policy_toast_table_id = policy_toast_table_id_;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, true, ctx);
@@ -5704,6 +5734,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         migration_history_table_page_ = root->migration_history_page;
         dormant_transactions_table_page_ = root->dormant_transactions_page;
         prepared_transactions_table_page_ = root->prepared_transactions_page;
+        encryption_keys_table_page_ = root->encryption_keys_page;
         policy_toast_table_id_ = root->policy_toast_table_id;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, false, ctx);

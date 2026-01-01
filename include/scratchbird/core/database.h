@@ -44,6 +44,7 @@ namespace scratchbird
         class GarbageCollector;
         class LongTransactionMonitor;
         class DomainManager;
+        class EncryptionKeyManager;
         class TIDResolver; // Sprint 4 Task 5.4.2
         class PermissionCache; // Security Phase 3.2.3
 
@@ -399,6 +400,16 @@ namespace scratchbird
                 return domain_manager_.get();
             }
 
+            // Get encryption key manager
+            EncryptionKeyManager *encryption_key_manager()
+            {
+                return encryption_key_manager_.get();
+            }
+            const EncryptionKeyManager *encryption_key_manager() const
+            {
+                return encryption_key_manager_.get();
+            }
+
             // Initialize ProcArray for multi-connection support
             Status initializeProcArray(uint32_t max_backends, ErrorContext *ctx = nullptr);
 
@@ -508,6 +519,7 @@ namespace scratchbird
             std::unique_ptr<optimizer::QueryPlanner> query_planner_;          // Query planner (owned)
             std::unique_ptr<optimizer::CostModel> cost_model_;                // Cost model (owned)
             std::unique_ptr<DomainManager> domain_manager_;                   // Domain manager (owned)
+            std::unique_ptr<EncryptionKeyManager> encryption_key_manager_;    // Encryption key manager (owned)
 
             // Security components (Phase 3.2.3)
             std::unique_ptr<PermissionCache> permission_cache_; // Permission cache (owned)
