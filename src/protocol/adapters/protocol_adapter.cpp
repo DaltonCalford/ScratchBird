@@ -10,6 +10,7 @@
 #include "scratchbird/protocol/adapters/native_adapter.h"
 #include "scratchbird/protocol/adapters/firebird_adapter.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/sblr/opcodes.h"
 
 #include <cstring>
 
@@ -439,6 +440,16 @@ core::Status ProtocolAdapter::executeBytecode(const std::string& sql,
                                               const std::vector<uint8_t>& bytecode,
                                               ResultContext& result,
                                               core::ErrorContext* ctx) {
+    if (bytecode.size() < 2 ||
+        bytecode[0] != static_cast<uint8_t>(sblr::Opcode::VERSION) ||
+        bytecode[1] != static_cast<uint8_t>(sblr::SBLR_VERSION)) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(core::Status::NOT_SUPPORTED);
+        result.sqlstate = "0A000";
+        result.error_message = "Unsupported SBLR version";
+        return core::Status::OK;
+    }
+
     auto exec_result = executor_->execute(bytecode);
     if (!exec_result.success()) {
         result.has_error = true;

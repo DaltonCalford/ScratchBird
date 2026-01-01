@@ -317,6 +317,7 @@ private:
     bool check(TokenType type) const;
     bool match(TokenType type);
     bool matchKeyword(TokenType kw);
+    bool matchIdentifierKeyword(const char* keyword);
     Token consume(TokenType type, const std::string& message);
     Token consumeKeyword(TokenType kw, const std::string& message);
 

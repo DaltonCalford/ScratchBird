@@ -12,6 +12,7 @@
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/typed_value.h"
+#include "scratchbird/core/data_masking.h"
 
 namespace scratchbird::core
 {
@@ -92,14 +93,14 @@ namespace scratchbird::core
      */
     struct DomainSecurity
     {
-        bool masking_enabled;       // Data masking
-        std::string mask_type;      // Masking type (FULL, PARTIAL, etc.)
+        MaskingConfig masking_config;       // Data masking
+        std::string required_privilege_for_unmasked; // Privilege to bypass masking
         bool encryption_enabled;    // Encryption at rest
         bool audit_enabled;         // Audit trail
         uint32_t permission_mask;   // Permission requirements
 
         DomainSecurity()
-            : masking_enabled(false), encryption_enabled(false),
+            : encryption_enabled(false),
               audit_enabled(false), permission_mask(0) {}
     };
 
@@ -414,9 +415,15 @@ namespace scratchbird::core
 
         // Apply data masking
         auto applyMasking(const ID& domain_id,
+                         const ID& user_id,
                          const TypedValue& value,
                          TypedValue& masked_value,
                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto checkMaskingPrivilege(const ID& domain_id,
+                                   const ID& user_id,
+                                   bool& has_privilege_out,
+                                   ErrorContext* ctx = nullptr) -> Status;
 
         // Statistics
         auto domainCount() const -> uint32_t

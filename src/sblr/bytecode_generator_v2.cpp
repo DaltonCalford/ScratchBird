@@ -1083,9 +1083,9 @@ void BytecodeGeneratorV2::generateSet(ResolvedSetStmt* stmt) {
             current_result_->writeByte(
                 stmt->autocommit_mode == AutocommitMode::ON ? 1 : 0);
             current_result_->writeByte(static_cast<uint8_t>(stmt->conflict_action));
-            if (stmt->conflict_action == TransactionConflictAction::ERROR &&
-                stmt->has_conflict_error_code) {
-                current_result_->writeInt32(static_cast<uint32_t>(stmt->conflict_error_code));
+            if (stmt->conflict_action == TransactionConflictAction::ERROR) {
+                int32_t code = stmt->has_conflict_error_code ? stmt->conflict_error_code : 0;
+                current_result_->writeInt32(static_cast<uint32_t>(code));
             }
             break;
 

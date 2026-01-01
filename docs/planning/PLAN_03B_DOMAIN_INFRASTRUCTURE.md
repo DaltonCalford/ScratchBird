@@ -2,7 +2,7 @@
 
 **Version:** 1.1
 **Date:** 2025-12-31
-**Status:** READY - Awaiting execution
+**Status:** IN PROGRESS
 
 **Purpose:** Implement all infrastructure required for domain WITH blocks so that Plan 04 (Domain DDL Parsers) can proceed unimpeded.
 
@@ -12,7 +12,8 @@
 
 ## Current Status
 - Plan 02B core implementation is complete; Plan 03B can proceed.
-- No tasks started yet; this document is the execution spec.
+- Masking engine + domain integration + masking tests are complete.
+- Remaining tasks not started.
 
 ## CRITICAL RULES
 
@@ -385,7 +386,7 @@ private:
 
 ### Task 2.1: Masking Engine Implementation
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 12 hours
 
@@ -483,7 +484,7 @@ private:
 
 ### Task 2.2: Domain Masking Integration
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 8 hours
 
@@ -1415,7 +1416,7 @@ case EXT_ENCRYPT_DOMAIN_VALUE: {
 
 ### Task 8.2: Masking Infrastructure Tests
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 6 hours
 
@@ -1574,8 +1575,8 @@ case EXT_ENCRYPT_DOMAIN_VALUE: {
 - [ ] Task 1.4: Domain encryption integration
 
 **Masking (2 tasks):**
-- [ ] Task 2.1: Masking engine
-- [ ] Task 2.2: Domain masking integration
+- [x] Task 2.1: Masking engine
+- [x] Task 2.2: Domain masking integration
 
 **Global Uniqueness (2 tasks):**
 - [ ] Task 3.1: Global uniqueness index
@@ -1600,7 +1601,7 @@ case EXT_ENCRYPT_DOMAIN_VALUE: {
 
 **Testing (8 tasks):**
 - [ ] Task 8.1: Encryption tests
-- [ ] Task 8.2: Masking tests
+- [x] Task 8.2: Masking tests
 - [ ] Task 8.3: Uniqueness tests
 - [ ] Task 8.4: Normalization tests
 - [ ] Task 8.5: Validation tests

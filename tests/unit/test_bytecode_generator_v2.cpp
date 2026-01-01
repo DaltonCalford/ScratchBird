@@ -504,6 +504,23 @@ TEST_F(BytecodeGeneratorV2Test, StartTransactionReadCommittedModePayload) {
               static_cast<uint8_t>(sblr::ReadCommittedMode::RECORD_VERSION));
 }
 
+TEST_F(BytecodeGeneratorV2Test, SetAutocommitErrorEmitsCode) {
+    auto result = generateBytecode("SET AUTOCOMMIT 1 ON CONFLICT ERROR 99");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    size_t payload_offset = 0;
+    ASSERT_TRUE(findExtendedOpcode(result.bytecode(),
+                                   sblr::ExtendedOpcode::EXT_SET_AUTOCOMMIT,
+                                   payload_offset));
+    ASSERT_LT(payload_offset + 6, result.bytecode().size());
+
+    EXPECT_EQ(result.bytecode()[payload_offset++], 1);
+    EXPECT_EQ(result.bytecode()[payload_offset++],
+              static_cast<uint8_t>(sblr::TransactionConflictAction::ERROR));
+    uint32_t code = sblr::readInt32(&result.bytecode()[payload_offset]);
+    EXPECT_EQ(code, 99u);
+}
+
 TEST_F(BytecodeGeneratorV2Test, Commit) {
     auto result = generateBytecode("COMMIT");
     ASSERT_TRUE(result.success()) << "Bytecode generation failed";

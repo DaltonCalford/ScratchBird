@@ -7,6 +7,7 @@
 
 #include "scratchbird/parser/mysql/mysql_parser.h"
 #include "scratchbird/core/catalog_manager.h"
+#include <cctype>
 #include <cstring>
 #include <algorithm>
 #include <stdexcept>
@@ -192,6 +193,26 @@ Token Parser::consume(TokenType type, const std::string& message) {
 
 Token Parser::consumeKeyword(TokenType kw, const std::string& message) {
     return consume(kw, message);
+}
+
+bool Parser::matchIdentifierKeyword(const char* keyword) {
+    if (!check(TokenType::IDENTIFIER)) {
+        return false;
+    }
+    std::string_view text = lexer_.stringPool().get(current_token_.value.string_id);
+    size_t len = std::strlen(keyword);
+    if (text.size() != len) {
+        return false;
+    }
+    for (size_t i = 0; i < len; ++i) {
+        char a = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
+        char b = static_cast<char>(std::tolower(static_cast<unsigned char>(keyword[i])));
+        if (a != b) {
+            return false;
+        }
+    }
+    advance();
+    return true;
 }
 
 // ============================================================================
@@ -2781,11 +2802,81 @@ void Parser::parseSetStmt() {
 
         bool has_isolation = false;
         bool has_access_mode = false;
+        bool has_autocommit = false;
+        bool has_conflict_error_code = false;
         uint8_t isolation = kIsoReadCommitted;
         uint8_t access_mode = 0;  // 0=READ WRITE, 1=READ ONLY
+        sblr::AutocommitMode autocommit_mode = sblr::AutocommitMode::UNCHANGED;
+        auto conflict_action = sblr::TransactionConflictAction::DEFAULT;
+        int32_t conflict_error_code = 0;
+
+        auto parseAutocommitMode = [&]() -> sblr::AutocommitMode {
+            if (matchKeyword(TokenType::KW_ON)) {
+                return sblr::AutocommitMode::ON;
+            }
+            if (matchIdentifierKeyword("ON")) {
+                return sblr::AutocommitMode::ON;
+            }
+            if (matchIdentifierKeyword("OFF")) {
+                return sblr::AutocommitMode::OFF;
+            }
+            if (check(TokenType::INTEGER_LITERAL)) {
+                int64_t value = current_token_.value.int_value;
+                advance();
+                if (value == 0) {
+                    return sblr::AutocommitMode::OFF;
+                }
+                if (value == 1) {
+                    return sblr::AutocommitMode::ON;
+                }
+                error("AUTOCOMMIT expects 0/1 or ON/OFF");
+                return sblr::AutocommitMode::UNCHANGED;
+            }
+            error("Expected AUTOCOMMIT mode (ON/OFF/1/0)");
+            return sblr::AutocommitMode::UNCHANGED;
+        };
+
+        auto parseConflictClause = [&]() {
+            if (!matchIdentifierKeyword("CONFLICT")) {
+                error("Expected CONFLICT after ON");
+                return;
+            }
+
+            if (conflict_action != sblr::TransactionConflictAction::DEFAULT) {
+                error("ON CONFLICT specified more than once");
+            }
+
+            if (matchKeyword(TokenType::KW_COMMIT)) {
+                conflict_action = sblr::TransactionConflictAction::COMMIT;
+            } else if (matchKeyword(TokenType::KW_ROLLBACK)) {
+                conflict_action = sblr::TransactionConflictAction::ROLLBACK;
+            } else if (matchIdentifierKeyword("ERROR")) {
+                conflict_action = sblr::TransactionConflictAction::ERROR;
+                if (check(TokenType::INTEGER_LITERAL)) {
+                    int64_t value = current_token_.value.int_value;
+                    advance();
+                    if (value < std::numeric_limits<int32_t>::min() ||
+                        value > std::numeric_limits<int32_t>::max()) {
+                        error("ON CONFLICT ERROR code out of range");
+                    } else {
+                        has_conflict_error_code = true;
+                        conflict_error_code = static_cast<int32_t>(value);
+                    }
+                }
+            } else if (matchIdentifierKeyword("KEEP")) {
+                conflict_action = sblr::TransactionConflictAction::KEEP;
+            } else {
+                error("Expected conflict action (COMMIT, ROLLBACK, ERROR, KEEP)");
+            }
+        };
 
         while (true) {
-            if (matchKeyword(TokenType::KW_ISOLATION)) {
+            if (matchKeyword(TokenType::KW_ON)) {
+                parseConflictClause();
+            } else if (matchIdentifierKeyword("AUTOCOMMIT")) {
+                has_autocommit = true;
+                autocommit_mode = parseAutocommitMode();
+            } else if (matchKeyword(TokenType::KW_ISOLATION)) {
                 consumeKeyword(TokenType::KW_LEVEL, "Expected LEVEL");
                 if (matchKeyword(TokenType::KW_SERIALIZABLE)) {
                     has_isolation = true;
@@ -2821,8 +2912,16 @@ void Parser::parseSetStmt() {
         uint16_t flags = 0;
         if (has_isolation) flags |= sblr::TransactionFlags::HAS_ISOLATION;
         if (has_access_mode) flags |= sblr::TransactionFlags::HAS_ACCESS_MODE;
+        if (has_autocommit) flags |= sblr::TransactionFlags::HAS_AUTOCOMMIT;
+        if (has_conflict_error_code) flags |= sblr::TransactionFlags::HAS_CONFLICT_ERROR_CODE;
         emitU16(flags);
-        emitByte(static_cast<uint8_t>(sblr::TransactionConflictAction::DEFAULT));
+        emitByte(static_cast<uint8_t>(conflict_action));
+        if (has_conflict_error_code) {
+            emitU32(static_cast<uint32_t>(conflict_error_code));
+        }
+        if (has_autocommit) {
+            emitByte(static_cast<uint8_t>(autocommit_mode));
+        }
         if (has_isolation) emitByte(isolation);
         if (has_access_mode) emitByte(access_mode);
         return;
@@ -2852,14 +2951,86 @@ void Parser::parseSetStmt() {
         }
     }
 
-    if (var_upper == "AUTOCOMMIT" && check(TokenType::INTEGER_LITERAL)) {
-        int64_t value = current_token_.value.int_value;
-        if (value == 0 || value == 1) {
+    if (var_upper == "AUTOCOMMIT") {
+        auto identifierEquals = [&](const char* keyword) -> bool {
+            if (!check(TokenType::IDENTIFIER)) {
+                return false;
+            }
+            std::string_view text = lexer_.stringPool().get(current_token_.value.string_id);
+            size_t len = std::strlen(keyword);
+            if (text.size() != len) {
+                return false;
+            }
+            for (size_t i = 0; i < len; ++i) {
+                char a = static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
+                char b = static_cast<char>(std::tolower(static_cast<unsigned char>(keyword[i])));
+                if (a != b) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        if (check(TokenType::INTEGER_LITERAL) || check(TokenType::KW_ON) ||
+            identifierEquals("ON") || identifierEquals("OFF")) {
+            uint8_t mode = 0;
+            if (check(TokenType::INTEGER_LITERAL)) {
+                int64_t value = current_token_.value.int_value;
+                advance();
+                if (value == 0) {
+                    mode = 0;
+                } else if (value == 1) {
+                    mode = 1;
+                } else {
+                    error("AUTOCOMMIT expects 0/1 or ON/OFF");
+                }
+            } else if (matchKeyword(TokenType::KW_ON) || matchIdentifierKeyword("ON")) {
+                mode = 1;
+            } else if (matchIdentifierKeyword("OFF")) {
+                mode = 0;
+            } else {
+                error("Expected AUTOCOMMIT mode (ON/OFF/1/0)");
+            }
+
+            auto conflict_action = sblr::TransactionConflictAction::DEFAULT;
+            int32_t conflict_error_code = 0;
+            bool has_conflict_error_code = false;
+
+            if (matchKeyword(TokenType::KW_ON)) {
+                if (!matchIdentifierKeyword("CONFLICT")) {
+                    error("Expected CONFLICT after ON");
+                } else if (matchKeyword(TokenType::KW_COMMIT)) {
+                    conflict_action = sblr::TransactionConflictAction::COMMIT;
+                } else if (matchKeyword(TokenType::KW_ROLLBACK)) {
+                    conflict_action = sblr::TransactionConflictAction::ROLLBACK;
+                } else if (matchIdentifierKeyword("ERROR")) {
+                    conflict_action = sblr::TransactionConflictAction::ERROR;
+                    if (check(TokenType::INTEGER_LITERAL)) {
+                        int64_t value = current_token_.value.int_value;
+                        advance();
+                        if (value < std::numeric_limits<int32_t>::min() ||
+                            value > std::numeric_limits<int32_t>::max()) {
+                            error("ON CONFLICT ERROR code out of range");
+                        } else {
+                            has_conflict_error_code = true;
+                            conflict_error_code = static_cast<int32_t>(value);
+                        }
+                    }
+                } else if (matchIdentifierKeyword("KEEP")) {
+                    conflict_action = sblr::TransactionConflictAction::KEEP;
+                } else {
+                    error("Expected conflict action (COMMIT, ROLLBACK, ERROR, KEEP)");
+                }
+            }
+
             emit(sblr::Opcode::EXTENDED_OPCODE);
             emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SET_AUTOCOMMIT));
-            emitByte(static_cast<uint8_t>(value));
-            emitByte(static_cast<uint8_t>(sblr::TransactionConflictAction::DEFAULT));
-            advance();
+            emitByte(mode);
+            emitByte(static_cast<uint8_t>(conflict_action));
+            if (conflict_action == sblr::TransactionConflictAction::ERROR) {
+                int32_t code = has_conflict_error_code ? conflict_error_code : 0;
+                emitU32(static_cast<uint32_t>(code));
+            }
             return;
         }
     }
@@ -3004,11 +3175,81 @@ void Parser::parseBeginStmt() {
 
     emit(sblr::Opcode::START_TRANSACTION);
     bool has_access_mode = false;
+    bool has_autocommit = false;
+    bool has_conflict_error_code = false;
     uint8_t access_mode = 0;  // 0=READ WRITE, 1=READ ONLY
+    sblr::AutocommitMode autocommit_mode = sblr::AutocommitMode::UNCHANGED;
+    auto conflict_action = sblr::TransactionConflictAction::DEFAULT;
+    int32_t conflict_error_code = 0;
+
+    auto parseAutocommitMode = [&]() -> sblr::AutocommitMode {
+        if (matchKeyword(TokenType::KW_ON)) {
+            return sblr::AutocommitMode::ON;
+        }
+        if (matchIdentifierKeyword("ON")) {
+            return sblr::AutocommitMode::ON;
+        }
+        if (matchIdentifierKeyword("OFF")) {
+            return sblr::AutocommitMode::OFF;
+        }
+        if (check(TokenType::INTEGER_LITERAL)) {
+            int64_t value = current_token_.value.int_value;
+            advance();
+            if (value == 0) {
+                return sblr::AutocommitMode::OFF;
+            }
+            if (value == 1) {
+                return sblr::AutocommitMode::ON;
+            }
+            error("AUTOCOMMIT expects 0/1 or ON/OFF");
+            return sblr::AutocommitMode::UNCHANGED;
+        }
+        error("Expected AUTOCOMMIT mode (ON/OFF/1/0)");
+        return sblr::AutocommitMode::UNCHANGED;
+    };
+
+    auto parseConflictClause = [&]() {
+        if (!matchIdentifierKeyword("CONFLICT")) {
+            error("Expected CONFLICT after ON");
+            return;
+        }
+
+        if (conflict_action != sblr::TransactionConflictAction::DEFAULT) {
+            error("ON CONFLICT specified more than once");
+        }
+
+        if (matchKeyword(TokenType::KW_COMMIT)) {
+            conflict_action = sblr::TransactionConflictAction::COMMIT;
+        } else if (matchKeyword(TokenType::KW_ROLLBACK)) {
+            conflict_action = sblr::TransactionConflictAction::ROLLBACK;
+        } else if (matchIdentifierKeyword("ERROR")) {
+            conflict_action = sblr::TransactionConflictAction::ERROR;
+            if (check(TokenType::INTEGER_LITERAL)) {
+                int64_t value = current_token_.value.int_value;
+                advance();
+                if (value < std::numeric_limits<int32_t>::min() ||
+                    value > std::numeric_limits<int32_t>::max()) {
+                    error("ON CONFLICT ERROR code out of range");
+                } else {
+                    has_conflict_error_code = true;
+                    conflict_error_code = static_cast<int32_t>(value);
+                }
+            }
+        } else if (matchIdentifierKeyword("KEEP")) {
+            conflict_action = sblr::TransactionConflictAction::KEEP;
+        } else {
+            error("Expected conflict action (COMMIT, ROLLBACK, ERROR, KEEP)");
+        }
+    };
 
     // Transaction characteristics
     while (true) {
-        if (matchKeyword(TokenType::KW_READ)) {
+        if (matchKeyword(TokenType::KW_ON)) {
+            parseConflictClause();
+        } else if (matchIdentifierKeyword("AUTOCOMMIT")) {
+            has_autocommit = true;
+            autocommit_mode = parseAutocommitMode();
+        } else if (matchKeyword(TokenType::KW_READ)) {
             if (matchKeyword(TokenType::KW_ONLY)) {
                 has_access_mode = true;
                 access_mode = 1;
@@ -3034,11 +3275,17 @@ void Parser::parseBeginStmt() {
 
     uint16_t flags = 0;
     if (has_access_mode) flags |= sblr::TransactionFlags::HAS_ACCESS_MODE;
+    if (has_autocommit) flags |= sblr::TransactionFlags::HAS_AUTOCOMMIT;
+    if (has_conflict_error_code) flags |= sblr::TransactionFlags::HAS_CONFLICT_ERROR_CODE;
     emitU16(flags);
-    emitByte(static_cast<uint8_t>(sblr::TransactionConflictAction::DEFAULT));
-    if (has_access_mode) {
-        emitByte(access_mode);
+    emitByte(static_cast<uint8_t>(conflict_action));
+    if (has_conflict_error_code) {
+        emitU32(static_cast<uint32_t>(conflict_error_code));
     }
+    if (has_autocommit) {
+        emitByte(static_cast<uint8_t>(autocommit_mode));
+    }
+    if (has_access_mode) emitByte(access_mode);
 }
 
 void Parser::parseCommitStmt() {

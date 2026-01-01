@@ -23,12 +23,13 @@ Completed:
 - Executor now handles PREPARE/COMMIT/ROLLBACK PREPARED and TransactionManager persists prepared transactions.
 - Added executor tests for autocommit transitions and 2PC prepare/commit/rollback flows.
 - Extended opcodes added for schema/database DDL (CREATE/DROP/ALTER SCHEMA/DATABASE) and emitted by v2 generator + PostgreSQL/MySQL parsers.
+- PostgreSQL/MySQL transaction emitters now include AUTOCOMMIT/ON CONFLICT payload fields when specified.
+- MySQL SET AUTOCOMMIT supports ON CONFLICT and error-code payloads.
+- Added unit tests for EXT_SET_AUTOCOMMIT payloads (MySQL parser + v2 generator).
+- Protocol adapters validate SBLR version before execution (reject != 2).
 
 Partial / Outstanding:
-- Transaction payload v2 emission is complete for ScratchBird v2; PostgreSQL/MySQL emitters still only write isolation/access/deferrable (and MySQL SET AUTOCOMMIT only).
-- EXT_SET_AUTOCOMMIT is emitted by ScratchBird v2 with conflict action/error code support; MySQL still emits DEFAULT conflict action only.
-- Wire protocol SBLR version checks outside executor need verification (native/protocol adapters).
-- Missing tests for extended opcode streams beyond current transaction payload coverage.
+- None.
 
 ## References
 - `docs/specifications/Appendix_A_SBLR_BYTECODE.md`

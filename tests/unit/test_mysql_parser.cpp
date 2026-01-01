@@ -8,8 +8,37 @@
 #include <gtest/gtest.h>
 #include "scratchbird/parser/mysql/mysql_parser.h"
 #include "scratchbird/parser/mysql/mysql_lexer.h"
+#include "scratchbird/sblr/opcodes.h"
 
 using namespace scratchbird::parser::mysql;
+namespace sblr = scratchbird::sblr;
+
+namespace {
+
+bool readExtendedHeader(const std::vector<uint8_t>& bytecode,
+                        sblr::ExtendedOpcode expected,
+                        size_t* offset) {
+    if (bytecode.size() < 5) {
+        return false;
+    }
+    if (bytecode[0] != static_cast<uint8_t>(sblr::Opcode::VERSION)) {
+        return false;
+    }
+    if (bytecode[1] != static_cast<uint8_t>(sblr::SBLR_VERSION)) {
+        return false;
+    }
+    if (bytecode[2] != static_cast<uint8_t>(sblr::Opcode::EXTENDED_OPCODE)) {
+        return false;
+    }
+    uint16_t opcode = sblr::readInt16(&bytecode[3]);
+    if (opcode != static_cast<uint16_t>(expected)) {
+        return false;
+    }
+    *offset = 5;
+    return true;
+}
+
+}  // namespace
 
 // ============================================================================
 // Lexer Tests
@@ -385,6 +414,40 @@ TEST_F(MySQLParserTest, SetStatements) {
     expectSuccess("SET TRANSACTION ISOLATION LEVEL READ COMMITTED");
     expectSuccess("SET TRANSACTION READ ONLY");
     expectSuccess("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ WRITE");
+    expectSuccess("SET AUTOCOMMIT = 0");
+    expectSuccess("SET AUTOCOMMIT = OFF");
+}
+
+TEST_F(MySQLParserTest, SetAutocommitEmitsExtendedOpcode) {
+    Parser parser("SET AUTOCOMMIT = 0");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success()) << "Failed to parse SET AUTOCOMMIT";
+
+    const auto& bytecode = result.bytecode();
+    size_t offset = 0;
+    ASSERT_TRUE(readExtendedHeader(bytecode, sblr::ExtendedOpcode::EXT_SET_AUTOCOMMIT, &offset));
+    ASSERT_LT(offset + 2, bytecode.size());
+
+    EXPECT_EQ(bytecode[offset++], 0);
+    EXPECT_EQ(bytecode[offset++],
+              static_cast<uint8_t>(sblr::TransactionConflictAction::DEFAULT));
+}
+
+TEST_F(MySQLParserTest, SetAutocommitConflictErrorEmitsCode) {
+    Parser parser("SET AUTOCOMMIT = 1 ON CONFLICT ERROR 42");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success()) << "Failed to parse SET AUTOCOMMIT with conflict";
+
+    const auto& bytecode = result.bytecode();
+    size_t offset = 0;
+    ASSERT_TRUE(readExtendedHeader(bytecode, sblr::ExtendedOpcode::EXT_SET_AUTOCOMMIT, &offset));
+    ASSERT_LT(offset + 6, bytecode.size());
+
+    EXPECT_EQ(bytecode[offset++], 1);
+    EXPECT_EQ(bytecode[offset++],
+              static_cast<uint8_t>(sblr::TransactionConflictAction::ERROR));
+    uint32_t code = sblr::readInt32(&bytecode[offset]);
+    EXPECT_EQ(code, 42u);
 }
 
 TEST_F(MySQLParserTest, ShowStatements) {

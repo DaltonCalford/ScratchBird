@@ -9,6 +9,8 @@
 #include "scratchbird/core/utf8_utils.h"
 #include <cstring>
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <unordered_set>
 
 namespace scratchbird::core
@@ -29,6 +31,314 @@ namespace scratchbird::core
                 return conn_ctx->dialect_tag();
             }
             return "scratchbird";
+        }
+
+        constexpr uint8_t DOMAIN_SECURITY_VERSION = 1;
+        constexpr uint8_t DOMAIN_INTEGRITY_VERSION = 1;
+        constexpr uint8_t DOMAIN_VALIDATION_VERSION = 1;
+        constexpr uint8_t DOMAIN_QUALITY_VERSION = 1;
+
+        void appendUint8(std::string& out, uint8_t value)
+        {
+            out.push_back(static_cast<char>(value));
+        }
+
+        bool readUint8(const std::string& blob, size_t& offset, uint8_t& value)
+        {
+            if (offset + 1 > blob.size())
+            {
+                return false;
+            }
+            value = static_cast<uint8_t>(blob[offset]);
+            offset += 1;
+            return true;
+        }
+
+        void appendUint32(std::string& out, uint32_t value)
+        {
+            char buf[4];
+            buf[0] = static_cast<char>(value & 0xFF);
+            buf[1] = static_cast<char>((value >> 8) & 0xFF);
+            buf[2] = static_cast<char>((value >> 16) & 0xFF);
+            buf[3] = static_cast<char>((value >> 24) & 0xFF);
+            out.append(buf, 4);
+        }
+
+        bool readUint32(const std::string& blob, size_t& offset, uint32_t& value)
+        {
+            if (offset + 4 > blob.size())
+            {
+                return false;
+            }
+            const uint8_t* data = reinterpret_cast<const uint8_t*>(blob.data() + offset);
+            value = static_cast<uint32_t>(data[0]) |
+                    (static_cast<uint32_t>(data[1]) << 8) |
+                    (static_cast<uint32_t>(data[2]) << 16) |
+                    (static_cast<uint32_t>(data[3]) << 24);
+            offset += 4;
+            return true;
+        }
+
+        void appendString(std::string& out, const std::string& value)
+        {
+            if (value.size() > UINT32_MAX)
+            {
+                appendUint32(out, 0);
+                return;
+            }
+            appendUint32(out, static_cast<uint32_t>(value.size()));
+            out.append(value);
+        }
+
+        bool readString(const std::string& blob, size_t& offset, std::string& value)
+        {
+            uint32_t len = 0;
+            if (!readUint32(blob, offset, len))
+            {
+                return false;
+            }
+            if (offset + len > blob.size())
+            {
+                return false;
+            }
+            value.assign(blob.data() + offset, len);
+            offset += len;
+            return true;
+        }
+
+        bool isDefaultSecurity(const DomainSecurity& security)
+        {
+            return security.masking_config.type == MaskingType::NONE &&
+                   security.masking_config.pattern.empty() &&
+                   security.masking_config.full_mask_char == "*" &&
+                   security.required_privilege_for_unmasked.empty() &&
+                   !security.encryption_enabled &&
+                   !security.audit_enabled &&
+                   security.permission_mask == 0;
+        }
+
+        bool isDefaultIntegrity(const DomainIntegrity& integrity)
+        {
+            return !integrity.uniqueness_check &&
+                   !integrity.normalization_enabled &&
+                   integrity.normalization_function.empty();
+        }
+
+        bool isDefaultValidation(const DomainValidation& validation)
+        {
+            return validation.validation_function.empty() &&
+                   validation.error_message.empty();
+        }
+
+        bool isDefaultQuality(const DomainQuality& quality)
+        {
+            return quality.parse_function.empty() &&
+                   quality.standardize_function.empty() &&
+                   quality.enrich_function.empty();
+        }
+
+        std::string serializeDomainSecurity(const DomainSecurity& security)
+        {
+            if (isDefaultSecurity(security))
+            {
+                return {};
+            }
+
+            std::string out;
+            appendUint8(out, DOMAIN_SECURITY_VERSION);
+            appendUint8(out, static_cast<uint8_t>(security.masking_config.type));
+            appendUint8(out, security.encryption_enabled ? 1 : 0);
+            appendUint8(out, security.audit_enabled ? 1 : 0);
+            appendUint32(out, security.permission_mask);
+            appendString(out, security.masking_config.pattern);
+            appendString(out, security.masking_config.full_mask_char);
+            appendString(out, security.required_privilege_for_unmasked);
+            return out;
+        }
+
+        Status deserializeDomainSecurity(const std::string& blob,
+                                         DomainSecurity& security,
+                                         ErrorContext* ctx)
+        {
+            if (blob.empty())
+            {
+                return Status::OK;
+            }
+
+            size_t offset = 0;
+            uint8_t version = 0;
+            if (!readUint8(blob, offset, version) || version != DOMAIN_SECURITY_VERSION)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain security format");
+                return Status::CORRUPTION;
+            }
+
+            uint8_t type = 0;
+            uint8_t encryption = 0;
+            uint8_t audit = 0;
+            uint32_t permission_mask = 0;
+            std::string pattern;
+            std::string mask_char;
+            std::string privilege;
+
+            if (!readUint8(blob, offset, type) ||
+                !readUint8(blob, offset, encryption) ||
+                !readUint8(blob, offset, audit) ||
+                !readUint32(blob, offset, permission_mask) ||
+                !readString(blob, offset, pattern) ||
+                !readString(blob, offset, mask_char) ||
+                !readString(blob, offset, privilege))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain security payload");
+                return Status::CORRUPTION;
+            }
+
+            security.masking_config.type = static_cast<MaskingType>(type);
+            security.masking_config.pattern = std::move(pattern);
+            security.masking_config.full_mask_char = std::move(mask_char);
+            security.required_privilege_for_unmasked = std::move(privilege);
+            security.encryption_enabled = (encryption != 0);
+            security.audit_enabled = (audit != 0);
+            security.permission_mask = permission_mask;
+
+            return Status::OK;
+        }
+
+        std::string serializeDomainIntegrity(const DomainIntegrity& integrity)
+        {
+            if (isDefaultIntegrity(integrity))
+            {
+                return {};
+            }
+
+            std::string out;
+            appendUint8(out, DOMAIN_INTEGRITY_VERSION);
+            appendUint8(out, integrity.uniqueness_check ? 1 : 0);
+            appendUint8(out, integrity.normalization_enabled ? 1 : 0);
+            appendUint8(out, 0);
+            appendString(out, integrity.normalization_function);
+            return out;
+        }
+
+        Status deserializeDomainIntegrity(const std::string& blob,
+                                          DomainIntegrity& integrity,
+                                          ErrorContext* ctx)
+        {
+            if (blob.empty())
+            {
+                return Status::OK;
+            }
+
+            size_t offset = 0;
+            uint8_t version = 0;
+            uint8_t uniqueness = 0;
+            uint8_t normalization = 0;
+            uint8_t reserved = 0;
+            std::string function;
+
+            if (!readUint8(blob, offset, version) || version != DOMAIN_INTEGRITY_VERSION ||
+                !readUint8(blob, offset, uniqueness) ||
+                !readUint8(blob, offset, normalization) ||
+                !readUint8(blob, offset, reserved) ||
+                !readString(blob, offset, function))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain integrity payload");
+                return Status::CORRUPTION;
+            }
+
+            integrity.uniqueness_check = (uniqueness != 0);
+            integrity.normalization_enabled = (normalization != 0);
+            integrity.normalization_function = std::move(function);
+
+            return Status::OK;
+        }
+
+        std::string serializeDomainValidation(const DomainValidation& validation)
+        {
+            if (isDefaultValidation(validation))
+            {
+                return {};
+            }
+
+            std::string out;
+            appendUint8(out, DOMAIN_VALIDATION_VERSION);
+            appendString(out, validation.validation_function);
+            appendString(out, validation.error_message);
+            return out;
+        }
+
+        Status deserializeDomainValidation(const std::string& blob,
+                                           DomainValidation& validation,
+                                           ErrorContext* ctx)
+        {
+            if (blob.empty())
+            {
+                return Status::OK;
+            }
+
+            size_t offset = 0;
+            uint8_t version = 0;
+            std::string function;
+            std::string message;
+
+            if (!readUint8(blob, offset, version) || version != DOMAIN_VALIDATION_VERSION ||
+                !readString(blob, offset, function) ||
+                !readString(blob, offset, message))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain validation payload");
+                return Status::CORRUPTION;
+            }
+
+            validation.validation_function = std::move(function);
+            validation.error_message = std::move(message);
+
+            return Status::OK;
+        }
+
+        std::string serializeDomainQuality(const DomainQuality& quality)
+        {
+            if (isDefaultQuality(quality))
+            {
+                return {};
+            }
+
+            std::string out;
+            appendUint8(out, DOMAIN_QUALITY_VERSION);
+            appendString(out, quality.parse_function);
+            appendString(out, quality.standardize_function);
+            appendString(out, quality.enrich_function);
+            return out;
+        }
+
+        Status deserializeDomainQuality(const std::string& blob,
+                                        DomainQuality& quality,
+                                        ErrorContext* ctx)
+        {
+            if (blob.empty())
+            {
+                return Status::OK;
+            }
+
+            size_t offset = 0;
+            uint8_t version = 0;
+            std::string parse_function;
+            std::string standardize_function;
+            std::string enrich_function;
+
+            if (!readUint8(blob, offset, version) || version != DOMAIN_QUALITY_VERSION ||
+                !readString(blob, offset, parse_function) ||
+                !readString(blob, offset, standardize_function) ||
+                !readString(blob, offset, enrich_function))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain quality payload");
+                return Status::CORRUPTION;
+            }
+
+            quality.parse_function = std::move(parse_function);
+            quality.standardize_function = std::move(standardize_function);
+            quality.enrich_function = std::move(enrich_function);
+
+            return Status::OK;
         }
     }
 
@@ -51,6 +361,10 @@ namespace scratchbird::core
         uint32_t constraints_oid;   // TOAST reference for constraints
         uint32_t fields_oid;        // TOAST reference for RECORD fields
         uint32_t enum_values_oid;   // TOAST reference for ENUM values
+        uint32_t security_oid;      // TOAST reference for security config
+        uint32_t integrity_oid;     // TOAST reference for integrity config
+        uint32_t validation_oid;    // TOAST reference for validation config
+        uint32_t quality_oid;       // TOAST reference for quality config
         uint16_t set_element_type;  // For SET domains
         char dialect_tag[32];        // Cross-dialect compatibility tag
         char compat_name[128];       // Dialect-specific type name
@@ -59,6 +373,7 @@ namespace scratchbird::core
         DomainRecord() : domain_type(0), base_type(0), precision(0), scale(0),
                         nullable(1), is_valid(1), created_time(0), last_modified_time(0),
                         constraints_oid(0), fields_oid(0), enum_values_oid(0),
+                        security_oid(0), integrity_oid(0), validation_oid(0), quality_oid(0),
                         set_element_type(0), reserved(0)
         {
             std::memset(domain_name, 0, sizeof(domain_name));
@@ -1838,50 +2153,314 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    namespace
+    {
+        std::string normalizePrivilegeName(const std::string& name)
+        {
+            std::string normalized;
+            normalized.reserve(name.size());
+            for (char ch : name)
+            {
+                if (std::isspace(static_cast<unsigned char>(ch)) || ch == '-')
+                {
+                    normalized.push_back('_');
+                }
+                else
+                {
+                    normalized.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
+                }
+            }
+            return normalized;
+        }
+
+        bool parsePrivilegeName(const std::string& name, CatalogManager::Privilege& privilege_out)
+        {
+            std::string normalized = normalizePrivilegeName(name);
+            if (normalized.empty())
+            {
+                return false;
+            }
+            if (normalized == "SELECT")
+            {
+                privilege_out = CatalogManager::Privilege::SELECT;
+                return true;
+            }
+            if (normalized == "INSERT")
+            {
+                privilege_out = CatalogManager::Privilege::INSERT;
+                return true;
+            }
+            if (normalized == "UPDATE")
+            {
+                privilege_out = CatalogManager::Privilege::UPDATE;
+                return true;
+            }
+            if (normalized == "DELETE")
+            {
+                privilege_out = CatalogManager::Privilege::DELETE;
+                return true;
+            }
+            if (normalized == "TRUNCATE")
+            {
+                privilege_out = CatalogManager::Privilege::TRUNCATE;
+                return true;
+            }
+            if (normalized == "REFERENCES")
+            {
+                privilege_out = CatalogManager::Privilege::REFERENCES;
+                return true;
+            }
+            if (normalized == "TRIGGER")
+            {
+                privilege_out = CatalogManager::Privilege::TRIGGER;
+                return true;
+            }
+            if (normalized == "CREATE")
+            {
+                privilege_out = CatalogManager::Privilege::CREATE;
+                return true;
+            }
+            if (normalized == "USAGE")
+            {
+                privilege_out = CatalogManager::Privilege::USAGE;
+                return true;
+            }
+            if (normalized == "SEQUENCE_USAGE")
+            {
+                privilege_out = CatalogManager::Privilege::SEQUENCE_USAGE;
+                return true;
+            }
+            if (normalized == "SEQUENCE_UPDATE")
+            {
+                privilege_out = CatalogManager::Privilege::SEQUENCE_UPDATE;
+                return true;
+            }
+            if (normalized == "EXECUTE")
+            {
+                privilege_out = CatalogManager::Privilege::EXECUTE;
+                return true;
+            }
+            if (normalized == "CONNECT")
+            {
+                privilege_out = CatalogManager::Privilege::CONNECT;
+                return true;
+            }
+            if (normalized == "TEMPORARY")
+            {
+                privilege_out = CatalogManager::Privilege::TEMPORARY;
+                return true;
+            }
+            if (normalized == "ALL")
+            {
+                privilege_out = CatalogManager::Privilege::ALL;
+                return true;
+            }
+            return false;
+        }
+
+        Status checkPermissionMask(CatalogManager* catalog,
+                                   const ID& domain_id,
+                                   const ID& user_id,
+                                   uint32_t permission_mask,
+                                   bool& has_privilege_out,
+                                   ErrorContext* ctx)
+        {
+            has_privilege_out = false;
+
+            constexpr std::array<CatalogManager::Privilege, 14> kPrivileges = {
+                CatalogManager::Privilege::SELECT,
+                CatalogManager::Privilege::INSERT,
+                CatalogManager::Privilege::UPDATE,
+                CatalogManager::Privilege::DELETE,
+                CatalogManager::Privilege::TRUNCATE,
+                CatalogManager::Privilege::REFERENCES,
+                CatalogManager::Privilege::TRIGGER,
+                CatalogManager::Privilege::CREATE,
+                CatalogManager::Privilege::USAGE,
+                CatalogManager::Privilege::SEQUENCE_USAGE,
+                CatalogManager::Privilege::SEQUENCE_UPDATE,
+                CatalogManager::Privilege::EXECUTE,
+                CatalogManager::Privilege::CONNECT,
+                CatalogManager::Privilege::TEMPORARY
+            };
+
+            for (auto privilege : kPrivileges)
+            {
+                uint32_t bit = static_cast<uint32_t>(privilege);
+                if ((permission_mask & bit) == 0)
+                {
+                    continue;
+                }
+                bool has_permission = false;
+                Status status = catalog->hasPermission(
+                    user_id,
+                    domain_id,
+                    CatalogManager::PermissionObjectType::DOMAIN,
+                    privilege,
+                    has_permission,
+                    ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                if (has_permission)
+                {
+                    has_privilege_out = true;
+                    return Status::OK;
+                }
+            }
+
+            return Status::OK;
+        }
+
+        Status checkMaskingPrivilegeInternal(Database* db,
+                                             const DomainSecurity& security,
+                                             const ID& domain_id,
+                                             const ID& user_id,
+                                             bool& has_privilege_out,
+                                             ErrorContext* ctx)
+        {
+            has_privilege_out = false;
+
+            if (isZeroUuidLocal(user_id))
+            {
+                return Status::OK;
+            }
+
+            CatalogManager* catalog = db->catalog_manager();
+            if (!catalog)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "CatalogManager not available");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            if (security.permission_mask != 0)
+            {
+                return checkPermissionMask(catalog, domain_id, user_id,
+                                           security.permission_mask, has_privilege_out, ctx);
+            }
+
+            if (security.required_privilege_for_unmasked.empty())
+            {
+                return Status::OK;
+            }
+
+            std::string normalized = normalizePrivilegeName(security.required_privilege_for_unmasked);
+            if (normalized == "NONE")
+            {
+                return Status::OK;
+            }
+
+            CatalogManager::Privilege privilege;
+            if (!parsePrivilegeName(security.required_privilege_for_unmasked, privilege))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Unknown masking privilege");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            bool has_permission = false;
+            Status status = catalog->hasPermission(
+                user_id,
+                domain_id,
+                CatalogManager::PermissionObjectType::DOMAIN,
+                privilege,
+                has_permission,
+                ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            has_privilege_out = has_permission;
+            return Status::OK;
+        }
+    }
+
     auto DomainManager::applyMasking(const ID& domain_id,
+                                    const ID& user_id,
                                     const TypedValue& value,
                                     TypedValue& masked_value,
                                     ErrorContext* ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-
-        auto it = domain_cache_.find(domain_id);
-        if (it == domain_cache_.end())
+        DomainInfo domain;
+        Status status = getDomain(domain_id, domain, ctx);
+        if (status != Status::OK)
         {
-            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
-            return Status::NOT_FOUND;
+            return status;
         }
 
-        const DomainInfo& domain = it->second;
-
-        // Check if masking is enabled
-        if (!domain.security.masking_enabled)
+        if (value.isNull() || domain.security.masking_config.type == MaskingType::NONE)
         {
-            // No masking - return original value
             masked_value = value;
             return Status::OK;
         }
 
-        // Apply masking based on mask type
-        if (domain.security.mask_type == "FULL")
+        bool has_privilege = false;
+        status = checkMaskingPrivilegeInternal(db_, domain.security, domain_id,
+                                               user_id, has_privilege, ctx);
+        if (status != Status::OK)
         {
-            // Full masking - return placeholder
-            masked_value = TypedValue::makeVarchar("***MASKED***");
+            return status;
         }
-        else if (domain.security.mask_type == "PARTIAL")
+
+        std::string raw_value;
+        switch (value.type())
         {
-            // Partial masking - show first/last few characters
-            // Phase 3 Enhancement: Implement partial masking logic (e.g., show first 2 + last 2 characters)
-            // Placeholder returns full mask; actual partial mask needs character extraction
-            masked_value = TypedValue::makeVarchar("***PARTIAL***");
+        case DataType::VARCHAR:
+            raw_value = value.getVarchar();
+            break;
+        case DataType::TEXT:
+            raw_value = value.getText();
+            break;
+        case DataType::CHAR:
+            raw_value = value.getChar();
+            break;
+        default:
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Masking only supported for string domain values");
+            return Status::INVALID_ARGUMENT;
         }
-        else
+
+        std::string masked;
+        status = DataMasking::applyMasking(raw_value, domain.security.masking_config,
+                                           has_privilege, masked, ctx);
+        if (status != Status::OK)
         {
-            // No masking or unknown type - return original
+            return status;
+        }
+
+        switch (value.type())
+        {
+        case DataType::VARCHAR:
+            masked_value = TypedValue::makeVarchar(masked);
+            break;
+        case DataType::TEXT:
+            masked_value = TypedValue::makeText(masked);
+            break;
+        case DataType::CHAR:
+            masked_value = TypedValue::makeChar(masked);
+            break;
+        default:
             masked_value = value;
+            break;
         }
 
         return Status::OK;
+    }
+
+    auto DomainManager::checkMaskingPrivilege(const ID& domain_id,
+                                              const ID& user_id,
+                                              bool& has_privilege_out,
+                                              ErrorContext* ctx) -> Status
+    {
+        DomainInfo domain;
+        Status status = getDomain(domain_id, domain, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        return checkMaskingPrivilegeInternal(db_, domain.security, domain_id,
+                                             user_id, has_privilege_out, ctx);
     }
 
     // ====================
@@ -1965,6 +2544,68 @@ namespace scratchbird::core
         std::strncpy(record->compat_name, domain.compat_name.c_str(), sizeof(record->compat_name) - 1);
         record->compat_name[sizeof(record->compat_name) - 1] = '\0';
 
+        CatalogManager* catalog = db_->catalog_manager();
+        if (!catalog)
+        {
+            bp->unpinPage(domains_table_page_, false, ctx);
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "CatalogManager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        uint64_t xmin = ConnectionContext::getCurrentTransactionId();
+
+        record->security_oid = 0;
+        std::string security_blob = serializeDomainSecurity(domain.security);
+        if (!security_blob.empty())
+        {
+            status = catalog->storeStringInToast(security_blob, xmin, record->security_oid, ctx);
+            if (status != Status::OK)
+            {
+                bp->unpinPage(domains_table_page_, false, ctx);
+                SET_ERROR_CONTEXT(ctx, status, "Failed to store domain security in TOAST");
+                return status;
+            }
+        }
+
+        record->integrity_oid = 0;
+        std::string integrity_blob = serializeDomainIntegrity(domain.integrity);
+        if (!integrity_blob.empty())
+        {
+            status = catalog->storeStringInToast(integrity_blob, xmin, record->integrity_oid, ctx);
+            if (status != Status::OK)
+            {
+                bp->unpinPage(domains_table_page_, false, ctx);
+                SET_ERROR_CONTEXT(ctx, status, "Failed to store domain integrity in TOAST");
+                return status;
+            }
+        }
+
+        record->validation_oid = 0;
+        std::string validation_blob = serializeDomainValidation(domain.validation);
+        if (!validation_blob.empty())
+        {
+            status = catalog->storeStringInToast(validation_blob, xmin, record->validation_oid, ctx);
+            if (status != Status::OK)
+            {
+                bp->unpinPage(domains_table_page_, false, ctx);
+                SET_ERROR_CONTEXT(ctx, status, "Failed to store domain validation in TOAST");
+                return status;
+            }
+        }
+
+        record->quality_oid = 0;
+        std::string quality_blob = serializeDomainQuality(domain.quality);
+        if (!quality_blob.empty())
+        {
+            status = catalog->storeStringInToast(quality_blob, xmin, record->quality_oid, ctx);
+            if (status != Status::OK)
+            {
+                bp->unpinPage(domains_table_page_, false, ctx);
+                SET_ERROR_CONTEXT(ctx, status, "Failed to store domain quality in TOAST");
+                return status;
+            }
+        }
+
         // TODO: Persist constraints, fields, enum_values to TOAST
         // For now, constraints_oid, fields_oid, enum_values_oid remain 0
 
@@ -2014,6 +2655,89 @@ namespace scratchbird::core
                     info.dialect_tag = "scratchbird";
                 }
                 info.compat_name = record->compat_name;
+
+                CatalogManager* catalog = db_->catalog_manager();
+                if (!catalog)
+                {
+                    bp->unpinPage(domains_table_page_, false, ctx);
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "CatalogManager not available");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                uint64_t xmin = ConnectionContext::getCurrentTransactionId();
+                std::string blob;
+
+                if (record->security_oid != 0)
+                {
+                    Status load_status = catalog->loadStringFromToast(record->security_oid,
+                                                                      xmin, blob, ctx);
+                    if (load_status != Status::OK)
+                    {
+                        bp->unpinPage(domains_table_page_, false, ctx);
+                        return load_status;
+                    }
+                    load_status = deserializeDomainSecurity(blob, info.security, ctx);
+                    if (load_status != Status::OK)
+                    {
+                        bp->unpinPage(domains_table_page_, false, ctx);
+                        return load_status;
+                    }
+                    blob.clear();
+                }
+
+                if (record->integrity_oid != 0)
+                {
+                    Status load_status = catalog->loadStringFromToast(record->integrity_oid,
+                                                                      xmin, blob, ctx);
+                    if (load_status != Status::OK)
+                    {
+                        bp->unpinPage(domains_table_page_, false, ctx);
+                        return load_status;
+                    }
+                    load_status = deserializeDomainIntegrity(blob, info.integrity, ctx);
+                    if (load_status != Status::OK)
+                    {
+                        bp->unpinPage(domains_table_page_, false, ctx);
+                        return load_status;
+                    }
+                    blob.clear();
+                }
+
+                if (record->validation_oid != 0)
+                {
+                    Status load_status = catalog->loadStringFromToast(record->validation_oid,
+                                                                      xmin, blob, ctx);
+                    if (load_status != Status::OK)
+                    {
+                        bp->unpinPage(domains_table_page_, false, ctx);
+                        return load_status;
+                    }
+                    load_status = deserializeDomainValidation(blob, info.validation, ctx);
+                    if (load_status != Status::OK)
+                    {
+                        bp->unpinPage(domains_table_page_, false, ctx);
+                        return load_status;
+                    }
+                    blob.clear();
+                }
+
+                if (record->quality_oid != 0)
+                {
+                    Status load_status = catalog->loadStringFromToast(record->quality_oid,
+                                                                      xmin, blob, ctx);
+                    if (load_status != Status::OK)
+                    {
+                        bp->unpinPage(domains_table_page_, false, ctx);
+                        return load_status;
+                    }
+                    load_status = deserializeDomainQuality(blob, info.quality, ctx);
+                    if (load_status != Status::OK)
+                    {
+                        bp->unpinPage(domains_table_page_, false, ctx);
+                        return load_status;
+                    }
+                    blob.clear();
+                }
 
                 // Phase 3 Enhancement: Load constraints, fields, enum_values from TOAST
                 // Currently domain constraints are stored inline; TOAST support for large constraint lists
