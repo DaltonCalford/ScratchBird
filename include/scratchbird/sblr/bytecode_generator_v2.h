@@ -164,7 +164,10 @@ private:
     void generateDropSchema(ResolvedDropSchemaStmt* stmt);
     void generateAlterSchema(ResolvedAlterSchemaStmt* stmt);
     void generateCreateDatabase(ResolvedCreateDatabaseStmt* stmt);
+    void generateCreateDomain(ResolvedCreateDomainStmt* stmt);
     void generateDropDatabase(ResolvedDropDatabaseStmt* stmt);
+    void generateAlterDomain(ResolvedAlterDomainStmt* stmt);
+    void generateDropDomain(ResolvedDropDomainStmt* stmt);
     void generateAlterDatabase(ResolvedAlterDatabaseStmt* stmt);
     void generateAlterTable(ResolvedAlterTableStmt* stmt);
     void generateRenameObject(ResolvedRenameObjectStmt* stmt);

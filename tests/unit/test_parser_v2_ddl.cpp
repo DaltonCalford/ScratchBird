@@ -431,6 +431,159 @@ TEST_F(ParserV2DDLTest, CreateSequence_AllOptions) {
 }
 
 // =============================================================================
+// CREATE DOMAIN Tests
+// =============================================================================
+
+TEST_F(ParserV2DDLTest, CreateDomain_WithIntegrity) {
+    Parser parser(
+        "CREATE DOMAIN IF NOT EXISTS public.user_name AS TEXT "
+        "NOT NULL DEFAULT 'x' CHECK (VALUE <> '') "
+        "WITH INTEGRITY (UNIQUENESS = TRUE)");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success()) << "Errors: "
+                                  << (result.errors().empty() ? "none" : result.errors()[0].message);
+
+    auto* stmt = dynamic_cast<CreateDomainStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+
+    EXPECT_TRUE(stmt->if_not_exists);
+    EXPECT_EQ(getPathString(parser, stmt->domain_path), "public.user_name");
+    EXPECT_EQ(getString(parser, stmt->base_type.name), "TEXT");
+
+    bool saw_not_null = false;
+    bool saw_default = false;
+    bool saw_check = false;
+    for (const auto& constraint : stmt->constraints) {
+        if (constraint.type == DomainConstraintType::NOT_NULL) {
+            saw_not_null = true;
+        } else if (constraint.type == DomainConstraintType::DEFAULT) {
+            saw_default = true;
+            EXPECT_EQ(constraint.expression, "'x'");
+        } else if (constraint.type == DomainConstraintType::CHECK) {
+            saw_check = true;
+            EXPECT_EQ(constraint.expression, "VALUE <> ''");
+        }
+    }
+
+    EXPECT_TRUE(saw_not_null);
+    EXPECT_TRUE(saw_default);
+    EXPECT_TRUE(saw_check);
+
+    EXPECT_TRUE(stmt->has_integrity);
+    EXPECT_TRUE(stmt->integrity.uniqueness);
+}
+
+TEST_F(ParserV2DDLTest, CreateDomain_WithSecurityValidationQuality) {
+    Parser parser(
+        "CREATE DOMAIN public.email AS TEXT "
+        "WITH SECURITY (MASKING = PARTIAL, MASK_PATTERN = '***', ENCRYPTION = AES256, "
+        "AUDIT_ACCESS = TRUE, REQUIRE_PRIVILEGE = 'unmask') "
+        "WITH VALIDATION (FUNCTION = validate_email, ERROR_MESSAGE = 'bad email') "
+        "WITH QUALITY (PARSE_FUNCTION = parse_email, STANDARDIZE_FUNCTION = std_email, "
+        "ENRICH_FUNCTION = enrich_email)");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success()) << "Errors: "
+                                  << (result.errors().empty() ? "none" : result.errors()[0].message);
+
+    auto* stmt = dynamic_cast<CreateDomainStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+
+    EXPECT_EQ(getPathString(parser, stmt->domain_path), "public.email");
+    EXPECT_TRUE(stmt->has_security);
+    EXPECT_TRUE(stmt->security.has_masking);
+    EXPECT_EQ(stmt->security.masking, "PARTIAL");
+    EXPECT_TRUE(stmt->security.has_mask_pattern);
+    EXPECT_EQ(stmt->security.mask_pattern, "***");
+    EXPECT_TRUE(stmt->security.has_encryption);
+    EXPECT_EQ(stmt->security.encryption, "AES256");
+    EXPECT_TRUE(stmt->security.has_audit_access);
+    EXPECT_TRUE(stmt->security.audit_access);
+    EXPECT_TRUE(stmt->security.has_required_privilege);
+    EXPECT_EQ(stmt->security.required_privilege, "unmask");
+
+    EXPECT_TRUE(stmt->has_validation);
+    EXPECT_TRUE(stmt->validation.has_function);
+    EXPECT_EQ(stmt->validation.function, "validate_email");
+    EXPECT_TRUE(stmt->validation.has_error_message);
+    EXPECT_EQ(stmt->validation.error_message, "bad email");
+
+    EXPECT_TRUE(stmt->has_quality);
+    EXPECT_TRUE(stmt->quality.has_parse_function);
+    EXPECT_EQ(stmt->quality.parse_function, "parse_email");
+    EXPECT_TRUE(stmt->quality.has_standardize_function);
+    EXPECT_EQ(stmt->quality.standardize_function, "std_email");
+    EXPECT_TRUE(stmt->quality.has_enrich_function);
+    EXPECT_EQ(stmt->quality.enrich_function, "enrich_email");
+}
+
+TEST_F(ParserV2DDLTest, AlterDomain_SetDefault) {
+    Parser parser("ALTER DOMAIN public.user_name SET DEFAULT 42");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<AlterDomainStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+
+    EXPECT_EQ(getPathString(parser, stmt->domain_path), "public.user_name");
+    EXPECT_EQ(stmt->action, AlterDomainAction::SET_DEFAULT);
+    EXPECT_EQ(stmt->value, "42");
+}
+
+TEST_F(ParserV2DDLTest, AlterDomain_AddCheck) {
+    Parser parser("ALTER DOMAIN public.user_name ADD CHECK (VALUE <> '')");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<AlterDomainStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+
+    EXPECT_EQ(getPathString(parser, stmt->domain_path), "public.user_name");
+    EXPECT_EQ(stmt->action, AlterDomainAction::ADD_CHECK);
+    EXPECT_EQ(stmt->value, "VALUE <> ''");
+}
+
+TEST_F(ParserV2DDLTest, AlterDomain_Rename) {
+    Parser parser("ALTER DOMAIN public.user_name RENAME TO user_name2");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<AlterDomainStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+
+    EXPECT_EQ(getPathString(parser, stmt->domain_path), "public.user_name");
+    EXPECT_EQ(stmt->action, AlterDomainAction::RENAME);
+    EXPECT_EQ(getString(parser, stmt->new_name), "user_name2");
+}
+
+TEST_F(ParserV2DDLTest, AlterDomain_SetCompat) {
+    Parser parser("ALTER DOMAIN public.user_name SET COMPAT 'VARCHAR'");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<AlterDomainStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+
+    EXPECT_EQ(stmt->action, AlterDomainAction::SET_COMPAT);
+    EXPECT_EQ(stmt->value, "VARCHAR");
+}
+
+TEST_F(ParserV2DDLTest, DropDomain_IfExistsRestrict) {
+    Parser parser("DROP DOMAIN IF EXISTS public.user_name RESTRICT");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<DropDomainStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+
+    EXPECT_TRUE(stmt->if_exists);
+    EXPECT_TRUE(stmt->restrict);
+    ASSERT_EQ(stmt->domains.size(), 1u);
+    EXPECT_EQ(getPathString(parser, stmt->domains[0]), "public.user_name");
+}
+
+// =============================================================================
 // ALTER TABLE Tests
 // =============================================================================
 

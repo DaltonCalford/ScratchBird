@@ -24,6 +24,9 @@ void CreateSchemaStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropSchemaStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterSchemaStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateDatabaseStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void AlterDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void DropDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void DropDatabaseStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterDatabaseStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void AlterTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }

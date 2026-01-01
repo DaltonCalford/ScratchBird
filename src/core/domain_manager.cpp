@@ -8,6 +8,9 @@
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/composite.h"
 #include "scratchbird/core/utf8_utils.h"
+#include "scratchbird/core/normalization.h"
+#include "scratchbird/core/domain_validation.h"
+#include "scratchbird/core/quality_pipeline.h"
 #include <cstring>
 #include <algorithm>
 #include <array>
@@ -456,7 +459,7 @@ namespace scratchbird::core
 
     auto DomainManager::initialize(ErrorContext* ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock<std::mutex> lock(mutex_);
 
         LOG_INFO(CATALOG, "Initializing domain manager");
 
@@ -668,10 +671,10 @@ namespace scratchbird::core
 
         // Check for dependencies - domain cannot be dropped if used by columns
         // We need to unlock mutex before calling catalog_manager to avoid deadlock
-        mutex_.unlock();
+        lock.unlock();
         std::vector<std::pair<ID, std::string>> dependent_columns;
         Status status = db_->catalog_manager()->findColumnsByDomain(domain_id, dependent_columns, ctx);
-        mutex_.lock();
+        lock.lock();
 
         if (status == Status::OK && !dependent_columns.empty())
         {
@@ -765,6 +768,163 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto DomainManager::setDefaultValue(const ID& domain_id,
+                                        const std::string& default_value,
+                                        ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        it->second.default_value = default_value;
+        it->second.last_modified_time = std::time(nullptr);
+
+        Status status = writeDomainRecord(it->second, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update domain record");
+            return status;
+        }
+
+        LOG_INFO(CATALOG, "Updated default value for domain %s",
+                 domain_id.toString().c_str());
+
+        return Status::OK;
+    }
+
+    auto DomainManager::addCheckConstraint(const ID& domain_id,
+                                           const std::string& name,
+                                           const std::string& expression,
+                                           ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        if (expression.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "CHECK constraint expression cannot be empty");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        if (!name.empty())
+        {
+            for (const auto& existing : it->second.constraints)
+            {
+                if (!existing.name.empty() &&
+                    IdentifierUtils::namesMatch(existing.name, false, name, false))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
+                                      "Constraint name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+        }
+
+        it->second.constraints.emplace_back(ConstraintType::CHECK, expression, name);
+        it->second.last_modified_time = std::time(nullptr);
+
+        Status status = writeDomainRecord(it->second, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update domain record");
+            return status;
+        }
+
+        LOG_INFO(CATALOG, "Added CHECK constraint for domain %s",
+                 domain_id.toString().c_str());
+
+        return Status::OK;
+    }
+
+    auto DomainManager::dropConstraint(const ID& domain_id,
+                                       const std::string& name,
+                                       ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        if (name.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Constraint name is required");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        auto& constraints = it->second.constraints;
+        auto match = std::find_if(constraints.begin(), constraints.end(),
+                                  [&](const DomainConstraint& constraint) {
+                                      return !constraint.name.empty() &&
+                                             IdentifierUtils::namesMatch(constraint.name, false, name, false);
+                                  });
+        if (match == constraints.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Constraint not found");
+            return Status::NOT_FOUND;
+        }
+
+        constraints.erase(match);
+        it->second.last_modified_time = std::time(nullptr);
+
+        Status status = writeDomainRecord(it->second, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update domain record");
+            return status;
+        }
+
+        LOG_INFO(CATALOG, "Dropped constraint for domain %s",
+                 domain_id.toString().c_str());
+
+        return Status::OK;
+    }
+
+    auto DomainManager::setCompatName(const ID& domain_id,
+                                      const std::string& compat_name,
+                                      ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        auto it = domain_cache_.find(domain_id);
+        if (it == domain_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Domain not found");
+            return Status::NOT_FOUND;
+        }
+
+        it->second.compat_name = compat_name;
+        it->second.last_modified_time = std::time(nullptr);
+
+        Status status = writeDomainRecord(it->second, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update domain record");
+            return status;
+        }
+
+        LOG_INFO(CATALOG, "Updated compat name for domain %s",
+                 domain_id.toString().c_str());
+
+        return Status::OK;
+    }
+
     auto DomainManager::validateValue(const ID& domain_id,
                                       const TypedValue& value,
                                       ErrorContext* ctx) -> Status
@@ -844,6 +1004,138 @@ namespace scratchbird::core
             }
         }
 
+        return Status::OK;
+    }
+
+    auto DomainManager::applyNormalization(const ID& domain_id,
+                                           TypedValue& value,
+                                           FunctionInvoker* invoker,
+                                           ErrorContext* ctx) -> Status
+    {
+        if (domain_id == ID{})
+        {
+            return Status::OK;
+        }
+
+        DomainInfo domain;
+        Status status = getDomain(domain_id, domain, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        if (!domain.integrity.normalization_enabled ||
+            domain.integrity.normalization_function.empty())
+        {
+            return Status::OK;
+        }
+
+        NormalizationConfig config =
+            Normalization::resolveConfig(domain.integrity.normalization_function);
+        TypedValue normalized;
+        status = Normalization::applyNormalization(value, config, invoker, normalized, ctx);
+        if (status != Status::OK)
+        {
+            if (ctx && ctx->message.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Domain normalization failed");
+            }
+            return status;
+        }
+
+        value = normalized;
+        return Status::OK;
+    }
+
+    auto DomainManager::validateValue(const ID& domain_id,
+                                      const TypedValue& value,
+                                      FunctionInvoker* invoker,
+                                      bool& is_valid_out,
+                                      ErrorContext* ctx) -> Status
+    {
+        is_valid_out = true;
+        if (domain_id == ID{})
+        {
+            return Status::OK;
+        }
+
+        DomainInfo domain;
+        Status status = getDomain(domain_id, domain, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        if (domain.validation.validation_function.empty())
+        {
+            return Status::OK;
+        }
+
+        ValidationConfig config;
+        config.function_name = domain.validation.validation_function;
+        config.error_message = domain.validation.error_message;
+        status = DomainValidation::validateValue(value, config, invoker, is_valid_out, ctx);
+        if (status != Status::OK)
+        {
+            if (ctx && ctx->message.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Domain validation failed");
+            }
+            return status;
+        }
+
+        return Status::OK;
+    }
+
+    auto DomainManager::executeQualityPipeline(const ID& domain_id,
+                                               TypedValue& value,
+                                               FunctionInvoker* invoker,
+                                               QualityResult& result_out,
+                                               ErrorContext* ctx) -> Status
+    {
+        if (domain_id == ID{})
+        {
+            result_out.parsed_value = value;
+            result_out.standardized_value = value;
+            result_out.enriched_value = value;
+            result_out.metadata.clear();
+            return Status::OK;
+        }
+
+        DomainInfo domain;
+        Status status = getDomain(domain_id, domain, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        if (domain.quality.parse_function.empty() &&
+            domain.quality.standardize_function.empty() &&
+            domain.quality.enrich_function.empty())
+        {
+            result_out.parsed_value = value;
+            result_out.standardized_value = value;
+            result_out.enriched_value = value;
+            result_out.metadata.clear();
+            return Status::OK;
+        }
+
+        QualityConfig config;
+        config.parse_function = domain.quality.parse_function;
+        config.standardize_function = domain.quality.standardize_function;
+        config.enrich_function = domain.quality.enrich_function;
+
+        status = QualityPipeline::executePipeline(value, config, invoker, result_out, ctx);
+        if (status != Status::OK)
+        {
+            if (ctx && ctx->message.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Domain quality pipeline failed");
+            }
+            return status;
+        }
+
+        value = result_out.enriched_value;
         return Status::OK;
     }
 

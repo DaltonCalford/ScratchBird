@@ -580,6 +580,91 @@ TEST_F(BytecodeGeneratorV2Test, CreateTable) {
     EXPECT_TRUE(hasOpcode(result.bytecode(), Opcode::COLUMN_DEF));
 }
 
+TEST_F(BytecodeGeneratorV2Test, CreateDomain) {
+    auto result = generateBytecode(
+        "CREATE DOMAIN test_domain AS TEXT "
+        "WITH INTEGRITY (UNIQUENESS = TRUE) "
+        "WITH SECURITY (MASKING = FULL) "
+        "WITH VALIDATION (FUNCTION = validate_domain) "
+        "WITH QUALITY (PARSE_FUNCTION = parse_domain)");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    size_t payload_offset = 0;
+    ASSERT_TRUE(findExtendedOpcode(result.bytecode(),
+                                   sblr::ExtendedOpcode::EXT_CREATE_DOMAIN,
+                                   payload_offset));
+    ASSERT_LT(payload_offset, result.bytecode().size());
+
+    uint8_t flags = result.bytecode()[payload_offset++];
+    EXPECT_EQ(flags & 0x01, 0);  // IF NOT EXISTS not set
+    EXPECT_EQ(flags & 0x02, 0x02);  // WITH INTEGRITY set
+    EXPECT_EQ(flags & 0x04, 0x04);  // WITH SECURITY set
+    EXPECT_EQ(flags & 0x08, 0x08);  // WITH VALIDATION set
+    EXPECT_EQ(flags & 0x10, 0x10);  // WITH QUALITY set
+
+    ASSERT_LE(payload_offset + 4, result.bytecode().size());
+    uint32_t name_len = sblr::readInt32(&result.bytecode()[payload_offset]);
+    payload_offset += 4;
+    ASSERT_LE(payload_offset + name_len, result.bytecode().size());
+    std::string domain_name(result.bytecode().begin() + payload_offset,
+                            result.bytecode().begin() + payload_offset + name_len);
+    EXPECT_EQ(domain_name, "test_domain");
+    payload_offset += name_len;
+
+    ASSERT_LE(payload_offset + 4, result.bytecode().size());
+    uint32_t value_len = sblr::readInt32(&result.bytecode()[payload_offset]);
+    payload_offset += 4;
+    ASSERT_LE(payload_offset + value_len, result.bytecode().size());
+    std::string default_value(result.bytecode().begin() + payload_offset,
+                              result.bytecode().begin() + payload_offset + value_len);
+    EXPECT_EQ(default_value, "5");
+}
+
+TEST_F(BytecodeGeneratorV2Test, AlterDomainSetDefault) {
+    auto result = generateBytecode("ALTER DOMAIN test_domain SET DEFAULT 5");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    size_t payload_offset = 0;
+    ASSERT_TRUE(findExtendedOpcode(result.bytecode(),
+                                   sblr::ExtendedOpcode::EXT_ALTER_DOMAIN,
+                                   payload_offset));
+    ASSERT_LT(payload_offset, result.bytecode().size());
+
+    uint8_t action = result.bytecode()[payload_offset++];
+    EXPECT_EQ(action, static_cast<uint8_t>(sblr::AlterDomainAction::SET_DEFAULT));
+
+    ASSERT_LE(payload_offset + 4, result.bytecode().size());
+    uint32_t name_len = sblr::readInt32(&result.bytecode()[payload_offset]);
+    payload_offset += 4;
+    ASSERT_LE(payload_offset + name_len, result.bytecode().size());
+    std::string domain_name(result.bytecode().begin() + payload_offset,
+                            result.bytecode().begin() + payload_offset + name_len);
+    EXPECT_EQ(domain_name, "test_domain");
+}
+
+TEST_F(BytecodeGeneratorV2Test, DropDomainIfExists) {
+    auto result = generateBytecode("DROP DOMAIN IF EXISTS test_domain RESTRICT");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    size_t payload_offset = 0;
+    ASSERT_TRUE(findExtendedOpcode(result.bytecode(),
+                                   sblr::ExtendedOpcode::EXT_DROP_DOMAIN,
+                                   payload_offset));
+    ASSERT_LT(payload_offset, result.bytecode().size());
+
+    uint8_t flags = result.bytecode()[payload_offset++];
+    EXPECT_EQ(flags & 0x01, 0x01);  // IF EXISTS set
+    EXPECT_EQ(flags & 0x02, 0x02);  // RESTRICT set
+
+    ASSERT_LE(payload_offset + 4, result.bytecode().size());
+    uint32_t name_len = sblr::readInt32(&result.bytecode()[payload_offset]);
+    payload_offset += 4;
+    ASSERT_LE(payload_offset + name_len, result.bytecode().size());
+    std::string domain_name(result.bytecode().begin() + payload_offset,
+                            result.bytecode().begin() + payload_offset + name_len);
+    EXPECT_EQ(domain_name, "test_domain");
+}
+
 TEST_F(BytecodeGeneratorV2Test, CreateIndex) {
     // First we need a table to create an index on
     // For this test, just check bytecode generation works

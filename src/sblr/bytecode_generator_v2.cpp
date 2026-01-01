@@ -96,6 +96,12 @@ void BytecodeGeneratorV2::generateStatement(ResolvedStatement* stmt) {
         generateAlterSchema(alter_schema);
     } else if (auto* create_database = dynamic_cast<ResolvedCreateDatabaseStmt*>(stmt)) {
         generateCreateDatabase(create_database);
+    } else if (auto* create_domain = dynamic_cast<ResolvedCreateDomainStmt*>(stmt)) {
+        generateCreateDomain(create_domain);
+    } else if (auto* alter_domain = dynamic_cast<ResolvedAlterDomainStmt*>(stmt)) {
+        generateAlterDomain(alter_domain);
+    } else if (auto* drop_domain = dynamic_cast<ResolvedDropDomainStmt*>(stmt)) {
+        generateDropDomain(drop_domain);
     } else if (auto* drop_database = dynamic_cast<ResolvedDropDatabaseStmt*>(stmt)) {
         generateDropDatabase(drop_database);
     } else if (auto* alter_database = dynamic_cast<ResolvedAlterDatabaseStmt*>(stmt)) {
@@ -630,6 +636,107 @@ void BytecodeGeneratorV2::generateCreateDatabase(ResolvedCreateDatabaseStmt* stm
     current_result_->writeString(schemaPathToString(stmt->database_path, string_pool_));
 }
 
+void BytecodeGeneratorV2::generateCreateDomain(ResolvedCreateDomainStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_DOMAIN));
+
+    uint8_t flags = 0;
+    if (stmt->if_not_exists) {
+        flags |= 0x01;
+    }
+    if (stmt->has_integrity) {
+        flags |= 0x02;
+    }
+    if (stmt->has_security) {
+        flags |= 0x04;
+    }
+    if (stmt->has_validation) {
+        flags |= 0x08;
+    }
+    if (stmt->has_quality) {
+        flags |= 0x10;
+    }
+    current_result_->writeByte(flags);
+
+    current_result_->writeString(schemaPathToString(stmt->domain_path, string_pool_));
+    generateDataType(stmt->base_type);
+
+    current_result_->writeByte(stmt->nullable ? 1 : 0);
+    current_result_->writeString(stmt->default_value);
+
+    current_result_->writeInt32(static_cast<uint32_t>(stmt->constraints.size()));
+    for (const auto& constraint : stmt->constraints) {
+        current_result_->writeByte(static_cast<uint8_t>(constraint.type));
+        if (constraint.name != StringPool::INVALID_ID) {
+            writeStringId(constraint.name);
+        } else {
+            current_result_->writeString("");
+        }
+        current_result_->writeString(constraint.expression);
+    }
+
+    if (stmt->has_integrity) {
+        current_result_->writeByte(stmt->integrity.uniqueness ? 1 : 0);
+        current_result_->writeByte(stmt->integrity.normalization_enabled ? 1 : 0);
+        current_result_->writeString(stmt->integrity.normalization_function);
+    }
+
+    if (stmt->has_security) {
+        uint8_t sec_flags = 0;
+        if (stmt->security.has_masking) sec_flags |= 0x01;
+        if (stmt->security.has_mask_pattern) sec_flags |= 0x02;
+        if (stmt->security.has_encryption) sec_flags |= 0x04;
+        if (stmt->security.has_audit_access) sec_flags |= 0x08;
+        if (stmt->security.has_required_privilege) sec_flags |= 0x10;
+        current_result_->writeByte(sec_flags);
+        if (stmt->security.has_masking) {
+            current_result_->writeString(stmt->security.masking);
+        }
+        if (stmt->security.has_mask_pattern) {
+            current_result_->writeString(stmt->security.mask_pattern);
+        }
+        if (stmt->security.has_encryption) {
+            current_result_->writeString(stmt->security.encryption);
+        }
+        if (stmt->security.has_audit_access) {
+            current_result_->writeByte(stmt->security.audit_access ? 1 : 0);
+        }
+        if (stmt->security.has_required_privilege) {
+            current_result_->writeString(stmt->security.required_privilege);
+        }
+    }
+
+    if (stmt->has_validation) {
+        uint8_t val_flags = 0;
+        if (stmt->validation.has_function) val_flags |= 0x01;
+        if (stmt->validation.has_error_message) val_flags |= 0x02;
+        current_result_->writeByte(val_flags);
+        if (stmt->validation.has_function) {
+            current_result_->writeString(stmt->validation.function);
+        }
+        if (stmt->validation.has_error_message) {
+            current_result_->writeString(stmt->validation.error_message);
+        }
+    }
+
+    if (stmt->has_quality) {
+        uint8_t qual_flags = 0;
+        if (stmt->quality.has_parse_function) qual_flags |= 0x01;
+        if (stmt->quality.has_standardize_function) qual_flags |= 0x02;
+        if (stmt->quality.has_enrich_function) qual_flags |= 0x04;
+        current_result_->writeByte(qual_flags);
+        if (stmt->quality.has_parse_function) {
+            current_result_->writeString(stmt->quality.parse_function);
+        }
+        if (stmt->quality.has_standardize_function) {
+            current_result_->writeString(stmt->quality.standardize_function);
+        }
+        if (stmt->quality.has_enrich_function) {
+            current_result_->writeString(stmt->quality.enrich_function);
+        }
+    }
+}
+
 void BytecodeGeneratorV2::generateDropDatabase(ResolvedDropDatabaseStmt* stmt) {
     current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
     current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_DATABASE));
@@ -639,6 +746,51 @@ void BytecodeGeneratorV2::generateDropDatabase(ResolvedDropDatabaseStmt* stmt) {
     if (stmt->force) flags |= 0x02;
     current_result_->writeByte(flags);
     current_result_->writeString(schemaPathToString(stmt->database_path, string_pool_));
+}
+
+void BytecodeGeneratorV2::generateAlterDomain(ResolvedAlterDomainStmt* stmt) {
+    current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+    current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_DOMAIN));
+    current_result_->writeByte(static_cast<uint8_t>(stmt->action));
+    current_result_->writeString(schemaPathToString(stmt->domain_path, string_pool_));
+
+    switch (stmt->action) {
+        case AlterDomainAction::SET_DEFAULT:
+        case AlterDomainAction::ADD_CHECK:
+        case AlterDomainAction::SET_COMPAT:
+            current_result_->writeString(stmt->value);
+            break;
+        case AlterDomainAction::DROP_CONSTRAINT:
+            if (stmt->constraint_name != StringPool::INVALID_ID) {
+                writeStringId(stmt->constraint_name);
+            } else {
+                current_result_->writeString("");
+            }
+            break;
+        case AlterDomainAction::RENAME:
+            if (stmt->new_name != StringPool::INVALID_ID) {
+                writeStringId(stmt->new_name);
+            } else {
+                current_result_->writeString("");
+            }
+            break;
+        case AlterDomainAction::DROP_DEFAULT:
+        case AlterDomainAction::DROP_COMPAT:
+            break;
+    }
+}
+
+void BytecodeGeneratorV2::generateDropDomain(ResolvedDropDomainStmt* stmt) {
+    uint8_t flags = 0;
+    if (stmt->if_exists) flags |= 0x01;
+    if (stmt->restrict) flags |= 0x02;
+
+    for (const auto& path : stmt->domains) {
+        current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
+        current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_DOMAIN));
+        current_result_->writeByte(flags);
+        current_result_->writeString(schemaPathToString(path, string_pool_));
+    }
 }
 
 void BytecodeGeneratorV2::generateAlterSchema(ResolvedAlterSchemaStmt* stmt) {

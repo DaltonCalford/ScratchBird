@@ -135,11 +135,13 @@ private:
     CreateSequenceStmt* parseCreateSequence();
     CreateSchemaStmt* parseCreateSchema();
     CreateDatabaseStmt* parseCreateDatabase();
+    CreateDomainStmt* parseCreateDomain();
 
     // ALTER statements
     AlterTableStmt* parseAlterTable();
     AlterSchemaStmt* parseAlterSchema();
     AlterDatabaseStmt* parseAlterDatabase();
+    AlterDomainStmt* parseAlterDomain();
 
     // DROP statements
     DropTableStmt* parseDropTable();
@@ -147,6 +149,7 @@ private:
     DropViewStmt* parseDropView();
     DropSchemaStmt* parseDropSchema();
     DropDatabaseStmt* parseDropDatabase();
+    DropDomainStmt* parseDropDomain();
 
     // TRUNCATE statement
     TruncateTableStmt* parseTruncateTable();
@@ -240,6 +243,12 @@ private:
     ColumnDef* parseColumnDef();
     TypeName parseTypeName();
     std::vector<ColumnConstraint> parseColumnConstraints();
+    std::vector<DomainConstraint> parseDomainConstraints();
+    void parseDomainIntegrityBlock(CreateDomainStmt* stmt);
+    void parseDomainSecurityBlock(CreateDomainStmt* stmt);
+    void parseDomainValidationBlock(CreateDomainStmt* stmt);
+    void parseDomainQualityBlock(CreateDomainStmt* stmt);
+    std::string extractExpressionText(Expression* expr);
     ColumnConstraint parseColumnConstraint();
 
     // ==========================================================================

@@ -50,6 +50,8 @@ These extended opcodes are reserved and MUST keep their values:
 - EXT_PREPARE_TRANSACTION = 0x0105
 - EXT_COMMIT_PREPARED     = 0x0106
 - EXT_ROLLBACK_PREPARED   = 0x0107
+- EXT_ALTER_DOMAIN        = 0x010E
+- EXT_DROP_DOMAIN         = 0x010F
 
 ## Change Process (Policy)
 - Add or modify opcodes in `include/scratchbird/sblr/opcodes.h` first.

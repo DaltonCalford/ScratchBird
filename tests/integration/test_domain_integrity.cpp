@@ -51,14 +51,19 @@ protected:
         ASSERT_EQ(status, Status::OK) << ctx.message;
         schema_id_ = schema_info.schema_id;
 
-        status = domain_mgr_->createBasicDomain(schema_id_, "global_unique_text", DataType::TEXT,
-                                                0, 0, false, "", {}, domain_id_, &ctx);
-        ASSERT_EQ(status, Status::OK) << ctx.message;
+        compiler_ = std::make_unique<QueryCompilerV2>(&db_);
+        compiler_->setCurrentSchema(schema_id_);
+        executor_ = std::make_unique<Executor>(&db_);
+        executor_->setCurrentSchema(schema_id_);
 
-        DomainIntegrity integrity;
-        integrity.uniqueness_check = true;
-        status = domain_mgr_->setIntegrityOptions(domain_id_, integrity, &ctx);
+        auto create_domain = compileAndExecute(
+            "CREATE DOMAIN global_unique_text AS TEXT WITH INTEGRITY (UNIQUENESS = TRUE)");
+        ASSERT_TRUE(create_domain.success()) << create_domain.error();
+
+        DomainInfo domain_info;
+        status = domain_mgr_->getDomain(schema_id_, "global_unique_text", domain_info, &ctx);
         ASSERT_EQ(status, Status::OK) << ctx.message;
+        domain_id_ = domain_info.domain_id;
 
         auto columns_one = buildColumns();
         status = catalog_->createTable(schema_id_, "domain_table_one", columns_one, table_one_id_, 0, &ctx);
@@ -68,9 +73,8 @@ protected:
         status = catalog_->createTable(schema_id_, "domain_table_two", columns_two, table_two_id_, 0, &ctx);
         ASSERT_EQ(status, Status::OK) << ctx.message;
 
-        compiler_ = std::make_unique<QueryCompilerV2>(&db_);
         compiler_->setCurrentSchema(schema_id_);
-        executor_ = std::make_unique<Executor>(&db_);
+        executor_->setCurrentSchema(schema_id_);
     }
 
     void TearDown() override

@@ -591,6 +591,15 @@ struct ResolvedTableConstraint {
 };
 
 /**
+ * Resolved domain constraint
+ */
+struct ResolvedDomainConstraint {
+    DomainConstraintType type = DomainConstraintType::CHECK;
+    StringPool::StringId name = StringPool::INVALID_ID;
+    std::string expression;
+};
+
+/**
  * Resolved CREATE TABLE statement
  */
 struct ResolvedCreateTableStmt : public ResolvedStatement {
@@ -664,6 +673,46 @@ struct ResolvedDropSchemaStmt : public ResolvedStatement {
 struct ResolvedCreateDatabaseStmt : public ResolvedStatement {
     bool if_not_exists = false;
     SchemaPath database_path;
+};
+
+/**
+ * Resolved CREATE DOMAIN statement
+ */
+struct ResolvedCreateDomainStmt : public ResolvedStatement {
+    bool if_not_exists = false;
+    SchemaPath domain_path;
+    ResolvedType base_type;
+    bool nullable = true;
+    std::string default_value;
+    std::vector<ResolvedDomainConstraint> constraints;
+    bool has_integrity = false;
+    DomainIntegrityOptions integrity;
+    bool has_security = false;
+    DomainSecurityOptions security;
+    bool has_validation = false;
+    DomainValidationOptions validation;
+    bool has_quality = false;
+    DomainQualityOptions quality;
+};
+
+/**
+ * Resolved ALTER DOMAIN statement
+ */
+struct ResolvedAlterDomainStmt : public ResolvedStatement {
+    AlterDomainAction action = AlterDomainAction::SET_DEFAULT;
+    SchemaPath domain_path;
+    std::string value;
+    StringPool::StringId constraint_name = StringPool::INVALID_ID;
+    StringPool::StringId new_name = StringPool::INVALID_ID;
+};
+
+/**
+ * Resolved DROP DOMAIN statement
+ */
+struct ResolvedDropDomainStmt : public ResolvedStatement {
+    bool if_exists = false;
+    std::vector<SchemaPath> domains;
+    bool restrict = false;
 };
 
 /**

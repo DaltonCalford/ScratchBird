@@ -11,6 +11,7 @@
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/typed_value.h"
 #include "scratchbird/core/permission_cache.h"  // For PermissionCheckMode
+#include "scratchbird/core/function_invoker.h"
 // Index headers needed for template implementation
 #include "scratchbird/core/gist_index.h"
 #include "scratchbird/core/spgist_index.h"
@@ -165,7 +166,7 @@ namespace scratchbird
         // SBLR Bytecode Executor
         // NOTE: The executor does not take ownership of the Database pointer.
         // The caller must ensure the Database remains valid for the executor's lifetime.
-        class Executor
+        class Executor : public core::FunctionInvoker
         {
         public:
             // Constructor takes a non-null Database pointer
@@ -213,6 +214,12 @@ namespace scratchbird
             // Returns success/error status
             ExecutionResult callProcedureByName(const std::string& procedure_name,
                                                 const std::vector<Value>& args = {});
+
+            // Function invocation for domain WITH blocks and custom validations
+            auto callFunctionByName(const std::string& function_name,
+                                    const std::vector<Value>& args,
+                                    Value& result_out,
+                                    core::ErrorContext* ctx = nullptr) -> core::Status override;
 
         private:
             core::Database *db_;
@@ -360,6 +367,9 @@ namespace scratchbird
             void executeDropSchema();
             void executeAlterSchema();
             void executeCreateDatabase();
+            void executeCreateDomain();
+            void executeAlterDomain();
+            void executeDropDomain();
             void executeDropDatabase();
             void executeAlterDatabase();
             void executeTruncateTable();           // ALPHA Phase 1 - DDL Modifications (TRUNCATE TABLE ASYNC)

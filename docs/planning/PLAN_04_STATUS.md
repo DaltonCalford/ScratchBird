@@ -2,8 +2,8 @@
 
 **Plan:** Domain DDL (CREATE/ALTER/DROP DOMAIN) with full WITH block support
 **Version:** 1.0
-**Last Updated:** 2025-12-31
-**Overall Status:** ⚠️ WAITING ON PLAN 03B - Schema/Database DDL core complete
+**Last Updated:** 2026-01-01
+**Overall Status:** ⚠️ IN PROGRESS - V2 CREATE/ALTER/DROP DOMAIN wired (basic + WITH blocks); advanced domain kinds + enforcement pending
 
 ---
 
@@ -12,8 +12,8 @@
 | Phase | Status | Details |
 |-------|--------|---------|
 | **Specification** | ✅ COMPLETE | All specifications written and reviewed |
-| **Prerequisites** | ⚠️ PARTIAL | Plan 02B resolved; Plan 03B pending |
-| **Implementation** | ❌ NOT STARTED | Awaiting Plan 03B |
+| **Prerequisites** | ⚠️ PARTIAL | Plan 02B resolved; Plan 03B in progress |
+| **Implementation** | ⚠️ IN PROGRESS | CREATE/ALTER/DROP DOMAIN (basic + WITH blocks) wired in v2 pipeline |
 
 ---
 
@@ -91,13 +91,32 @@
    - `PLAN_04_PREREQUISITES.md` updated with resolved status
    - `PLAN_04_IMPLEMENTATION_CHECKLIST.md` updated with unblocked status
 
+### ✅ Phase 4: Domain DDL Wiring (2026-01-01)
+
+1. **Parser V2 Domain DDL** ✅
+   - CREATE DOMAIN now parses WITH SECURITY/INTEGRITY/VALIDATION/QUALITY
+   - ALTER DOMAIN + DROP DOMAIN parsing added
+   - CREATE/ALTER/DROP dispatchers updated
+
+2. **AST/Resolved AST Extensions** ✅
+   - CreateDomainStmt includes security/validation/quality options
+   - AlterDomainStmt + DropDomainStmt added to v2 AST + resolved AST
+
+3. **Bytecode + Executor Wiring** ✅
+   - EXT_CREATE_DOMAIN payload extended for WITH blocks
+   - EXT_ALTER_DOMAIN / EXT_DROP_DOMAIN opcodes emitted and executed
+
+4. **Docs + Tests** ✅
+   - SBLR domain payload spec added
+   - Parser/bytecode tests added for WITH blocks + ALTER/DROP DOMAIN
+
 ---
 
 ## Current Dependencies
 
 ### 🟡 Dependency #1: Plan 03B Domain Infrastructure
 
-**Status:** BLOCKING - Required before Plan 04 implementation
+**Status:** PARTIAL - Global uniqueness done; remaining WITH block infrastructure pending
 **Severity:** CRITICAL
 
 **Why it matters:**
@@ -109,7 +128,7 @@
 
 **Note:** Plan 02B (Schema/Database DDL) is now core complete; remaining alignment/testing is tracked separately.
 
-**User Decision Required:** Approval to begin Plan 03B.
+**Status Update:** Plan 03B enforcement work is pending; parser/bytecode/executor wiring is complete.
 
 **Detailed Analysis:** `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md`
 
@@ -137,16 +156,14 @@
 
 ### Plan 03B: Domain Infrastructure (138-192 hours)
 
-**Status:** NOT STARTED - Awaiting user approval
+**Status:** IN PROGRESS - Global uniqueness + domain uniqueness integration complete
 **Assigned To:** This AI (Plan 04 team)
 **Dependencies:** Plan 02B core complete; remaining alignment/testing can proceed in parallel
 
 **Key Components:**
 - ✅ Specification complete (35 tasks defined)
-- ❌ Implementation not started
+- ⚠️ Implementation in progress (masking/uniqueness complete; normalization/validation/quality pending)
 - ❌ Testing not started
-
-**Waiting For:** User approval to begin
 
 ### Plan 02B: Schema/Database DDL (60-80 hours)
 
@@ -165,9 +182,9 @@
 
 ## Next Steps
 
-1. Begin Plan 03B (Domain Infrastructure).
-2. Track remaining Plan 02B alignment/testing items (path defaults, cascade semantics, tests).
-3. Start Plan 04 after Plan 03B completion.
+1. Finish Plan 03B enforcement work (normalization, validation, quality pipeline).
+2. Complete remaining Plan 04 items (advanced domain types, dialect/compat, executor enforcement).
+3. Track remaining Plan 02B alignment/testing items (path defaults, cascade semantics, tests).
 
 **Timeline:** 138-192 hours before Plan 04 starts (Plan 03B).
 
@@ -177,6 +194,7 @@
 
 ### Specifications
 - ✅ `/docs/specifications/DDL_DOMAINS_COMPREHENSIVE.md` (NEW)
+- ✅ `/docs/specifications/SBLR_DOMAIN_PAYLOADS.md` (NEW)
 - ✅ `/docs/planning/PLAN_04_IMPLEMENTATION_CHECKLIST.md` (NEW)
 - ✅ `/docs/planning/PLAN_03B_DOMAIN_INFRASTRUCTURE.md` (NEW)
 - ✅ `/docs/planning/PLAN_04_PREREQUISITES.md` (NEW)
@@ -189,28 +207,28 @@
 
 ---
 
-## Implementation Progress (0/80 tasks)
+## Implementation Progress (9/80 tasks complete; partials in progress)
 
-**Current:** 0% complete (awaiting Plan 03B)
+**Current:** V2 CREATE/ALTER/DROP domain wiring is complete; advanced domain types and enforcement pending.
 
 ### Section 1: Schema Changes (0/1)
 - [ ] Task 1.1: Add dialect_tag/compat_name to domain schema
 
 ### Section 2: SBLR Opcodes (0/3)
-- [ ] Task 2.1: Define extended domain opcodes
-- [ ] Task 2.2: Document SBLR payload structures
+- [ ] Task 2.1: Define extended domain opcodes (ALTER/DROP done)
+- [ ] Task 2.2: Document SBLR payload structures (BASIC + ALTER/DROP done)
 - [ ] Task 2.3: Define WITH block enforcement opcodes
 
 ### Section 3: AST Extensions (0/3)
-- [ ] Task 3.1: Extend CreateDomainStmt
-- [ ] Task 3.2: Create AlterDomainStmt
-- [ ] Task 3.3: Create DropDomainStmt
+- [ ] Task 3.1: Extend CreateDomainStmt (v2 basic + WITH blocks done)
+- [ ] Task 3.2: Create AlterDomainStmt (v2 done)
+- [ ] Task 3.3: Create DropDomainStmt (v2 done)
 
-### Section 4: ScratchBird V2 Parser (0/12)
-- [ ] Tasks 4.1-4.7: parseCreateDomain() all types + WITH blocks
-- [ ] Task 4.8: parseAlterDomain()
-- [ ] Task 4.9: parseDropDomain()
-- [ ] Task 4.10-4.12: Update dispatchers
+### Section 4: ScratchBird V2 Parser (5/12)
+- [ ] Tasks 4.1-4.7: parseCreateDomain() all types + WITH blocks (basic + WITH blocks done)
+- [x] Task 4.8: parseAlterDomain()
+- [x] Task 4.9: parseDropDomain()
+- [x] Task 4.10-4.12: Update dispatchers
 
 ### Section 5: Firebird Parser (0/3)
 - [ ] Tasks 5.1-5.3: CREATE/ALTER/DROP DOMAIN
@@ -222,13 +240,18 @@
 - [ ] Tasks 7.1-7.3: Reject domain DDL with clear errors
 
 ### Section 8: Semantic Analyzer (0/7)
-- [ ] Tasks 8.1-8.7: Analyze all domain types + ALTER/DROP
+- [ ] Tasks 8.1-8.7: Analyze all domain types + ALTER/DROP (basic wiring done)
 
-### Section 9: Bytecode Generator (0/7)
-- [ ] Tasks 9.1-9.7: Emit all domain types + ALTER/DROP
+### Section 9: Bytecode Generator (2/7)
+- [ ] Tasks 9.1-9.5: Emit CREATE DOMAIN for all types (basic done; advanced pending)
+- [x] Task 9.6: Emit ALTER DOMAIN
+- [x] Task 9.7: Emit DROP DOMAIN
 
-### Section 10: Executor (0/12)
-- [ ] Tasks 10.1-10.8: Execute all domain types + ALTER/DROP + SHOW
+### Section 10: Executor (2/12)
+- [ ] Tasks 10.1-10.5: Execute CREATE DOMAIN for all types (basic done; advanced pending)
+- [x] Task 10.6: Execute ALTER DOMAIN
+- [x] Task 10.7: Execute DROP DOMAIN
+- [ ] Task 10.8: Execute SHOW DOMAIN
 - [ ] Tasks 10.9-10.12: WITH block enforcement
 
 ### Section 11: Transaction Extensions (0/10)
@@ -241,7 +264,7 @@
 - [ ] Tasks 13.1-13.5: Comprehensive test coverage
 
 ### Section 14: Documentation (0/3)
-- [ ] Tasks 14.1-14.3: Update specs and create guides
+- [ ] Tasks 14.1-14.3: Update specs and create guides (domain payload doc added)
 
 ---
 

@@ -65,6 +65,8 @@ enum class ASTKind : uint16_t {
     CreateTriggerStmt,
     CreateTypeStmt,
     CreateDomainStmt,
+    AlterDomainStmt,
+    DropDomainStmt,
     AlterTableStmt,
     RenameObjectStmt,
     MoveObjectStmt,
@@ -332,6 +334,74 @@ struct TableConstraint : public ASTNode {
     StringPool::StringId index_method = StringPool::INVALID_ID;  // BTREE, HASH, etc.
 };
 
+/**
+ * Domain constraint types (CREATE DOMAIN)
+ */
+enum class DomainConstraintType : uint8_t {
+    NOT_NULL = 0,
+    NULL_ALLOWED = 1,
+    DEFAULT = 2,
+    CHECK = 3,
+};
+
+/**
+ * Domain-level constraint
+ */
+struct DomainConstraint {
+    DomainConstraintType type = DomainConstraintType::CHECK;
+    StringPool::StringId name = StringPool::INVALID_ID;  // Optional constraint name
+    std::string expression;  // Raw expression text for DEFAULT/CHECK
+    SourceSpan span;
+};
+
+/**
+ * Domain integrity options (WITH INTEGRITY)
+ */
+struct DomainIntegrityOptions {
+    bool has_uniqueness = false;
+    bool uniqueness = false;
+    bool normalization_enabled = false;
+    std::string normalization_function;
+};
+
+/**
+ * Domain security options (WITH SECURITY)
+ */
+struct DomainSecurityOptions {
+    bool has_masking = false;
+    std::string masking;
+    bool has_mask_pattern = false;
+    std::string mask_pattern;
+    bool has_encryption = false;
+    std::string encryption;
+    bool has_audit_access = false;
+    bool audit_access = false;
+    bool has_required_privilege = false;
+    std::string required_privilege;
+};
+
+/**
+ * Domain validation options (WITH VALIDATION)
+ */
+struct DomainValidationOptions {
+    bool has_function = false;
+    std::string function;
+    bool has_error_message = false;
+    std::string error_message;
+};
+
+/**
+ * Domain quality options (WITH QUALITY)
+ */
+struct DomainQualityOptions {
+    bool has_parse_function = false;
+    std::string parse_function;
+    bool has_standardize_function = false;
+    std::string standardize_function;
+    bool has_enrich_function = false;
+    std::string enrich_function;
+};
+
 // =============================================================================
 // DDL Statements
 // =============================================================================
@@ -521,6 +591,71 @@ public:
 
     bool if_not_exists = false;
     SchemaPath database_path;
+};
+
+/**
+ * CREATE DOMAIN statement (basic domains)
+ */
+class CreateDomainStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateDomainStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_not_exists = false;
+    SchemaPath domain_path;
+    TypeName base_type;
+
+    std::vector<DomainConstraint> constraints;
+
+    bool has_security = false;
+    DomainSecurityOptions security;
+
+    bool has_integrity = false;
+    DomainIntegrityOptions integrity;
+
+    bool has_validation = false;
+    DomainValidationOptions validation;
+
+    bool has_quality = false;
+    DomainQualityOptions quality;
+};
+
+/**
+ * ALTER DOMAIN statement
+ */
+enum class AlterDomainAction : uint8_t {
+    SET_DEFAULT = 0,
+    DROP_DEFAULT = 1,
+    ADD_CHECK = 2,
+    DROP_CONSTRAINT = 3,
+    RENAME = 4,
+    SET_COMPAT = 5,
+    DROP_COMPAT = 6,
+};
+
+class AlterDomainStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::AlterDomainStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    AlterDomainAction action = AlterDomainAction::SET_DEFAULT;
+    SchemaPath domain_path;
+    std::string value;  // Default/check expression or compat name
+    StringPool::StringId constraint_name = StringPool::INVALID_ID;
+    StringPool::StringId new_name = StringPool::INVALID_ID;
+};
+
+/**
+ * DROP DOMAIN statement
+ */
+class DropDomainStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::DropDomainStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    bool if_exists = false;
+    std::vector<SchemaPath> domains;
+    bool restrict = false;
 };
 
 /**
@@ -2240,6 +2375,9 @@ public:
     virtual void visit(DropSchemaStmt* stmt) = 0;
     virtual void visit(AlterSchemaStmt* stmt) = 0;
     virtual void visit(CreateDatabaseStmt* stmt) = 0;
+    virtual void visit(CreateDomainStmt* stmt) = 0;
+    virtual void visit(AlterDomainStmt* stmt) = 0;
+    virtual void visit(DropDomainStmt* stmt) = 0;
     virtual void visit(DropDatabaseStmt* stmt) = 0;
     virtual void visit(AlterDatabaseStmt* stmt) = 0;
     virtual void visit(AlterTableStmt* stmt) = 0;

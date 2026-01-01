@@ -195,19 +195,21 @@ struct DomainRecord
 
 ## PART 2: SBLR OPCODES FOR DOMAINS
 
-### 2.1 Existing Opcodes - MINIMAL ⚠️
+### 2.1 Existing Opcodes - PARTIAL ⚠️
 
 **Location:** `include/scratchbird/sblr/opcodes.h`
 
 ```cpp
 // Lines 827, 840 (duplicated in 1201, 1209):
 EXT_CREATE_DOMAIN = 0x5C,      // CREATE DOMAIN domain_name AS type [constraints]
+EXT_ALTER_DOMAIN = 0x010E,     // ALTER DOMAIN
+EXT_DROP_DOMAIN = 0x010F,      // DROP DOMAIN
 EXT_SHOW_DOMAIN = 0x64,        // SHOW DOMAIN object_name - domain definition
 ```
 
-**Status:** ⚠️ ONLY 2 OPCODES DEFINED
+**Status:** ⚠️ CREATE/ALTER/DROP defined; conflict opcodes pending
 
-### 2.2 Missing Domain Opcodes - CRITICAL ❌
+### 2.2 Missing Domain Opcodes - PARTIAL ⚠️
 
 **Required by Plan 04:**
 ```
@@ -215,15 +217,13 @@ Plan 04: "Add SBLR opcodes for ALTER/DROP DOMAIN and conflict resolution operati
 ```
 
 **Missing Opcodes:**
-- ❌ `EXT_ALTER_DOMAIN` - Modify domain (rename, change constraints, compat_name)
-- ❌ `EXT_DROP_DOMAIN` - Drop domain (RESTRICT only per spec)
 - ❌ `EXT_REBIND_DOMAIN` - Repoint dependent objects to new domain UUID
 - ❌ `EXT_RESOLVE_DOMAIN_CONFLICT` - Admin conflict resolution
 
-**Impact:** HIGH - Cannot implement full domain DDL lifecycle
+**Impact:** MEDIUM - Conflict resolution workflow not yet defined
 
 **Fix Required:**
-1. Add extended opcodes (0x0200+ range, 16-bit)
+1. Add conflict-resolution opcodes
 2. Define payload structures for each opcode
 3. Implement executor handlers
 
@@ -233,7 +233,7 @@ Plan 04: "Add SBLR opcodes for ALTER/DROP DOMAIN and conflict resolution operati
 
 ## PART 3: PARSER IMPLEMENTATION STATUS
 
-### 3.1 ScratchBird V2 Parser - STUBBED ❌
+### 3.1 ScratchBird V2 Parser - PARTIAL ⚠️
 
 **Location:** `src/parser/parser_v2.cpp` lines 279-285
 
@@ -244,12 +244,12 @@ Plan 04: "Add SBLR opcodes for ALTER/DROP DOMAIN and conflict resolution operati
 // if (matchContextual("TRIGGER"))    return parseCreateTrigger();
 ```
 
-**Domain Parsing:** ❌ COMPLETELY ABSENT
-- No `parseCreateDomain()` method
-- No `parseAlterDomain()` method
-- No `parseDropDomain()` method
+**Domain Parsing:** ⚠️ BASIC + WITH blocks implemented
+- `parseCreateDomain()` (basic + WITH SECURITY/INTEGRITY/VALIDATION/QUALITY)
+- `parseAlterDomain()` implemented
+- `parseDropDomain()` implemented
 
-**Status:** ❌ ZERO DOMAIN PARSING IN V2
+**Status:** ⚠️ V2 domain parsing present; advanced domain kinds pending
 
 ### 3.2 Firebird Parser - STUBBED ❌
 
@@ -362,14 +362,14 @@ private:
 
 **Estimated Effort:** 1-2 days
 
-### 4.3 Missing AST Nodes - CRITICAL ❌
+### 4.3 Missing AST Nodes - PARTIAL ⚠️
 
 **Required:**
-- ❌ `AlterDomainStmt` - For ALTER DOMAIN operations
-- ❌ `DropDomainStmt` - For DROP DOMAIN operations
+- ✅ `AlterDomainStmt` - For ALTER DOMAIN operations (v2 AST)
+- ✅ `DropDomainStmt` - For DROP DOMAIN operations (v2 AST)
 - ❌ `RebindDomainStmt` - For REBIND DOMAIN (admin operation)
 
-**Impact:** HIGH - Cannot implement full domain DDL
+**Impact:** MEDIUM - REBIND DOMAIN still blocked
 
 **Estimated Effort:** 1 day
 
@@ -377,55 +377,41 @@ private:
 
 ## PART 5: EXECUTOR IMPLEMENTATION
 
-### 5.1 Executor Domain Handlers - NOT FOUND ❌
+### 5.1 Executor Domain Handlers - PARTIAL ⚠️
 
-**Search Result:**
-```bash
-$ grep -n "EXT_CREATE_DOMAIN\|executeCreateDomain" src/sblr/executor.cpp
-(No matches found)
-```
+**Status:** ⚠️ CREATE/ALTER/DROP handlers implemented; SHOW pending
 
-**Status:** ❌ ZERO EXECUTOR HANDLERS FOR DOMAINS
+**Implemented Handlers:**
+- ✅ EXT_CREATE_DOMAIN → executeCreateDomain()
+- ✅ EXT_ALTER_DOMAIN → executeAlterDomain()
+- ✅ EXT_DROP_DOMAIN → executeDropDomain()
 
-**Required Handlers:**
-```cpp
-// In executeExtendedOpcode():
-case ExtendedOpcode::EXT_CREATE_DOMAIN:
-    return executeCreateDomain();
+**Missing Handler:**
+- ❌ EXT_SHOW_DOMAIN → executeShowDomain()
 
-case ExtendedOpcode::EXT_ALTER_DOMAIN:
-    return executeAlterDomain();
+**Impact:** MEDIUM - SHOW DOMAIN still unavailable
 
-case ExtendedOpcode::EXT_DROP_DOMAIN:
-    return executeDropDomain();
-
-case ExtendedOpcode::EXT_SHOW_DOMAIN:
-    return executeShowDomain();
-```
-
-**Impact:** CRITICAL - Even if parser emits domain opcodes, executor won't handle them
-
-**Estimated Effort:** 3-4 days (implement all handlers + payload parsing)
+**Estimated Effort:** 1-2 days (SHOW handler + formatting)
 
 ---
 
 ## PART 6: SEMANTIC ANALYZER STATUS
 
-### 6.1 Domain Analysis - NOT IMPLEMENTED ❌
+### 6.1 Domain Analysis - PARTIAL ⚠️
 
 **Location:** `src/sblr/semantic_analyzer_v2.cpp`
 
-**Search Result:** No domain-related analysis methods found
+**Status:** ⚠️ Basic analyzeCreate/Alter/Drop wired; validation pending
 
 **Required:**
-- ❌ `analyzeDomain()` - Resolve domain references
+- ✅ `analyzeCreateDomain()` / `analyzeAlterDomain()` / `analyzeDropDomain()`
 - ❌ `validateDomainConstraints()` - Semantic validation of CHECK expressions
 - ❌ `resolveDomainInheritance()` - Validate INHERITS clause (no cycles)
 - ❌ `collectDomainDependencies()` - Populate object_uuids for dependency tracking
 
 **Impact:** MEDIUM - Can defer to executor for initial implementation
 
-**Estimated Effort:** 2-3 days (after parser implementation)
+**Estimated Effort:** 2-3 days (validation + dependency tracking)
 
 ---
 
@@ -664,14 +650,14 @@ Status status = catalog_->resolveObjectPath(path, ObjectType::DOMAIN, opts, doma
 
 ## CONCLUSION
 
-**Plan 04 is READY TO START with a focus on connecting existing domain infrastructure to parsers.**
+**Plan 04 wiring is IN PROGRESS with focus on completing advanced domain kinds and enforcement.**
 
 **Key Findings:**
-1. ✅ Domain backend is COMPREHENSIVE (all 5 types implemented)
+1. ⚠️ Domain backend supports BASIC + WITH block storage; advanced domain kinds pending
 2. ✅ Transaction control is COMPLETE (just needs parser extension)
-3. ❌ Parser-to-executor wiring is COMPLETELY ABSENT
+3. ⚠️ Parser-to-executor wiring is present for BASIC + WITH blocks
 4. ⚠️ Schema needs minor fix (dialect_tag/compat_name)
-5. ✅ Plan 02/03 dependencies are MINIMAL (can proceed in parallel)
+5. ⚠️ Plan 03B enforcement work still pending (normalization/validation/quality)
 
 **Critical Path:**
 ```

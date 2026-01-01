@@ -316,6 +316,10 @@ Defined extended opcodes:
 - EXT_PREPARE_TRANSACTION = 0x0105
 - EXT_COMMIT_PREPARED     = 0x0106
 - EXT_ROLLBACK_PREPARED   = 0x0107
+- EXT_ALTER_DOMAIN        = 0x010E
+- EXT_DROP_DOMAIN         = 0x010F
+
+Domain DDL payloads are defined in `docs/specifications/SBLR_DOMAIN_PAYLOADS.md`.
 
 ## 8. Transaction Opcodes (v2)
 

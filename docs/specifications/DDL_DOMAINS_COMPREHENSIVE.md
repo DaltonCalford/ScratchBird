@@ -133,27 +133,8 @@ CREATE DOMAIN fb_timestamp AS TIMESTAMP
 
 ### 3.4 SBLR Encoding
 
-```
-[EXT_CREATE_DOMAIN]
-[flags:uint16]
-    bit 0: HAS_DEFAULT
-    bit 1: NOT_NULL
-    bit 2: HAS_CHECK
-    bit 3: HAS_COLLATE
-    bit 4: HAS_DIALECT
-    bit 5: HAS_COMPAT
-[domain_type:uint8] = 0 (BASIC)
-[schema_id:UUID]
-[domain_name:string]
-[base_type:uint16] (DataType enum)
-[precision:uint32] (if applicable)
-[scale:uint32] (if applicable)
-[if HAS_DEFAULT: default_expr:SBLR_expression]
-[if HAS_CHECK: check_expr:SBLR_expression]
-[if HAS_COLLATE: collation_id:uint32]
-[if HAS_DIALECT: dialect_tag:string]
-[if HAS_COMPAT: compat_name:string]
-```
+See `docs/specifications/SBLR_DOMAIN_PAYLOADS.md` for the current
+EXT_CREATE_DOMAIN payload encoding (BASIC domains + WITH blocks).
 
 ---
 
@@ -235,25 +216,8 @@ SELECT customer.address.city FROM customers;
 
 ### 4.5 SBLR Encoding
 
-```
-[EXT_CREATE_DOMAIN]
-[flags:uint16] (HAS_DIALECT, HAS_COMPAT bits)
-[domain_type:uint8] = 1 (RECORD)
-[schema_id:UUID]
-[domain_name:string]
-[field_count:uint16]
-[for each field:
-    [field_name:string]
-    [field_type:uint16] (DataType enum OR 0xFFFF for domain reference)
-    [if domain reference: field_domain_id:UUID]
-    [field_precision:uint32]
-    [field_scale:uint32]
-    [field_flags:uint8] (bit 0: NOT_NULL, bit 1: HAS_DEFAULT)
-    [if HAS_DEFAULT: default_expr:SBLR_expression]
-]
-[if HAS_DIALECT: dialect_tag:string]
-[if HAS_COMPAT: compat_name:string]
-```
+See `docs/specifications/SBLR_DOMAIN_PAYLOADS.md` for the current payload
+layout. RECORD domains will require payload extensions once implemented.
 
 ### 4.6 Storage Format
 
@@ -361,21 +325,8 @@ WHERE priority_level > 'MEDIUM'  -- Returns HIGH and CRITICAL
 
 ### 5.5 SBLR Encoding
 
-```
-[EXT_CREATE_DOMAIN]
-[flags:uint16] (HAS_WRAP, HAS_DIALECT, HAS_COMPAT bits)
-[domain_type:uint8] = 2 (ENUM)
-[schema_id:UUID]
-[domain_name:string]
-[enum_value_count:uint16]
-[for each value:
-    [label:string]
-    [position:int32]
-]
-[if HAS_WRAP: wrap_enabled:uint8]
-[if HAS_DIALECT: dialect_tag:string]
-[if HAS_COMPAT: compat_name:string]
-```
+See `docs/specifications/SBLR_DOMAIN_PAYLOADS.md` for the current payload
+layout. ENUM domains will require payload extensions once implemented.
 
 ### 5.6 Storage Format
 
@@ -450,19 +401,8 @@ SELECT CARDINALITY(tags) FROM ...  -- SQL standard
 
 ### 6.5 SBLR Encoding
 
-```
-[EXT_CREATE_DOMAIN]
-[flags:uint16] (HAS_DIALECT, HAS_COMPAT bits)
-[domain_type:uint8] = 3 (SET)
-[schema_id:UUID]
-[domain_name:string]
-[element_type:uint16] (DataType enum OR 0xFFFF for domain reference)
-[if domain reference: element_domain_id:UUID]
-[element_precision:uint32]
-[element_scale:uint32]
-[if HAS_DIALECT: dialect_tag:string]
-[if HAS_COMPAT: compat_name:string]
-```
+See `docs/specifications/SBLR_DOMAIN_PAYLOADS.md` for the current payload
+layout. SET domains will require payload extensions once implemented.
 
 ### 6.6 Storage Format
 
@@ -547,22 +487,8 @@ FROM ...
 
 ### 7.5 SBLR Encoding
 
-```
-[EXT_CREATE_DOMAIN]
-[flags:uint16] (HAS_DIALECT, HAS_COMPAT bits)
-[domain_type:uint8] = 4 (VARIANT)
-[schema_id:UUID]
-[domain_name:string]
-[allowed_type_count:uint16]
-[for each type:
-    [type:uint16] (DataType enum OR 0xFFFF for domain reference)
-    [if domain reference: type_domain_id:UUID]
-    [precision:uint32]
-    [scale:uint32]
-]
-[if HAS_DIALECT: dialect_tag:string]
-[if HAS_COMPAT: compat_name:string]
-```
+See `docs/specifications/SBLR_DOMAIN_PAYLOADS.md` for the current payload
+layout. VARIANT domains will require payload extensions once implemented.
 
 ### 7.6 Storage Format
 
@@ -624,15 +550,8 @@ CREATE DOMAIN required_positive AS INTEGER
 
 ### 8.4 SBLR Encoding
 
-```
-[EXT_CREATE_DOMAIN]
-[flags:uint16] (bit 6: HAS_PARENT)
-[domain_type:uint8]
-[schema_id:UUID]
-[domain_name:string]
-[if HAS_PARENT: parent_domain_id:UUID]
-[... rest of domain definition ...]
-```
+See `docs/specifications/SBLR_DOMAIN_PAYLOADS.md` for the current payload
+layout. INHERITS metadata will require payload extensions once implemented.
 
 ---
 
@@ -775,23 +694,8 @@ ALTER DOMAIN mysql_bool DROP COMPAT;
 
 ### 10.4 SBLR Encoding
 
-```
-[EXT_ALTER_DOMAIN]
-[flags:uint16]
-    bit 0: SET_DEFAULT
-    bit 1: DROP_DEFAULT
-    bit 2: ADD_CHECK
-    bit 3: DROP_CONSTRAINT
-    bit 4: RENAME
-    bit 5: SET_COMPAT
-    bit 6: DROP_COMPAT
-[domain_id:UUID]
-[if SET_DEFAULT: default_expr:SBLR_expression]
-[if ADD_CHECK: check_expr:SBLR_expression]
-[if DROP_CONSTRAINT: constraint_name:string]
-[if RENAME: new_name:string]
-[if SET_COMPAT: compat_name:string]
-```
+See `docs/specifications/SBLR_DOMAIN_PAYLOADS.md` for the current
+EXT_ALTER_DOMAIN payload encoding.
 
 ---
 
@@ -824,12 +728,8 @@ DROP DOMAIN IF EXISTS old_domain RESTRICT;
 
 ### 11.4 SBLR Encoding
 
-```
-[EXT_DROP_DOMAIN]
-[flags:uint8]
-    bit 0: IF_EXISTS
-[domain_id:UUID]
-```
+See `docs/specifications/SBLR_DOMAIN_PAYLOADS.md` for the current
+EXT_DROP_DOMAIN payload encoding.
 
 ---
 
@@ -1053,8 +953,8 @@ VARIANT_TYPE_NOT_ALLOWED  - VARIANT value type not in allowed list
 
 ```
 EXT_CREATE_DOMAIN    = 0x5C   -- Create domain (all types)
-EXT_ALTER_DOMAIN     = 0x0200 -- Alter domain
-EXT_DROP_DOMAIN      = 0x0201 -- Drop domain
+EXT_ALTER_DOMAIN     = 0x010E -- Alter domain
+EXT_DROP_DOMAIN      = 0x010F -- Drop domain
 EXT_SHOW_DOMAIN      = 0x64   -- Show domain definition
 ```
 

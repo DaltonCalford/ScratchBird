@@ -257,6 +257,10 @@ Statement* Parser::parseCreate() {
         return parseCreateDatabase();
     }
 
+    if (matchContextual("DOMAIN")) {
+        return parseCreateDomain();
+    }
+
     if (matchContextual("TABLE")) {
         auto* stmt = parseCreateTable(or_replace);
         if (stmt) {
@@ -614,6 +618,304 @@ std::vector<ColumnConstraint> Parser::parseColumnConstraints() {
     }
 
     return constraints;
+}
+
+std::vector<DomainConstraint> Parser::parseDomainConstraints() {
+    std::vector<DomainConstraint> constraints;
+
+    while (true) {
+        StringPool::StringId constraint_name = StringPool::INVALID_ID;
+        SourceLocation constraint_start = currentLocation();
+        if (matchContextual("CONSTRAINT")) {
+            constraint_name = expectIdentifier("Expected constraint name");
+        }
+
+        DomainConstraint constraint;
+        constraint.name = constraint_name;
+        bool found = false;
+
+        if (match(TokenType::KW_NOT)) {
+            expect(TokenType::KW_NULL, "Expected NULL after NOT");
+            constraint.type = DomainConstraintType::NOT_NULL;
+            found = true;
+        } else if (match(TokenType::KW_NULL)) {
+            constraint.type = DomainConstraintType::NULL_ALLOWED;
+            found = true;
+        } else if (matchContextual("CHECK")) {
+            expect(TokenType::LEFT_PAREN, "Expected '(' after CHECK");
+            Expression* expr = parseExpression();
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after CHECK expression");
+            constraint.type = DomainConstraintType::CHECK;
+            constraint.expression = extractExpressionText(expr);
+            found = true;
+        } else if (match(TokenType::KW_DEFAULT)) {
+            Expression* expr = parseExpression();
+            constraint.type = DomainConstraintType::DEFAULT;
+            constraint.expression = extractExpressionText(expr);
+            found = true;
+        }
+
+        if (!found) {
+            if (constraint_name != StringPool::INVALID_ID) {
+                error("Expected domain constraint after CONSTRAINT name");
+            }
+            break;
+        }
+
+        constraint.span = makeSpan(constraint_start);
+        constraints.push_back(std::move(constraint));
+    }
+
+    return constraints;
+}
+
+void Parser::parseDomainIntegrityBlock(CreateDomainStmt* stmt) {
+    if (!stmt) {
+        return;
+    }
+
+    stmt->has_integrity = true;
+    expect(TokenType::LEFT_PAREN, "Expected '(' after WITH INTEGRITY");
+
+    auto parse_bool = [&]() -> bool {
+        if (match(TokenType::KW_TRUE)) {
+            return true;
+        }
+        if (match(TokenType::KW_FALSE)) {
+            return false;
+        }
+        error("Expected TRUE or FALSE");
+        return false;
+    };
+
+    auto parse_value_string = [&]() -> std::string {
+        if (check(TokenType::STRING_LITERAL)) {
+            auto id = current().value.string_id;
+            advance();
+            return std::string(stringPool().get(id));
+        }
+        if (isIdentifier()) {
+            auto id = currentIdentifier();
+            return std::string(stringPool().get(id));
+        }
+        error("Expected identifier or string literal");
+        return {};
+    };
+
+    auto to_upper = [](std::string_view input) {
+        std::string out;
+        out.reserve(input.size());
+        for (char c : input) {
+            out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+        }
+        return out;
+    };
+
+    while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+        if (matchContextual("UNIQUENESS")) {
+            expect(TokenType::EQUAL, "Expected '=' after UNIQUENESS");
+            stmt->integrity.has_uniqueness = true;
+            stmt->integrity.uniqueness = parse_bool();
+        } else if (matchContextual("NORMALIZATION_FUNCTION")) {
+            expect(TokenType::EQUAL, "Expected '=' after NORMALIZATION_FUNCTION");
+            stmt->integrity.normalization_enabled = true;
+            stmt->integrity.normalization_function = parse_value_string();
+        } else if (matchContextual("NORMALIZATION")) {
+            expect(TokenType::EQUAL, "Expected '=' after NORMALIZATION");
+            std::string value = parse_value_string();
+            std::string normalized = to_upper(value);
+            if (normalized == "NONE") {
+                stmt->integrity.normalization_enabled = false;
+                stmt->integrity.normalization_function.clear();
+            } else {
+                stmt->integrity.normalization_enabled = true;
+                stmt->integrity.normalization_function = value;
+            }
+        } else {
+            error("Unknown WITH INTEGRITY option");
+        }
+
+        if (!match(TokenType::COMMA)) {
+            break;
+        }
+    }
+
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after WITH INTEGRITY options");
+}
+
+void Parser::parseDomainSecurityBlock(CreateDomainStmt* stmt) {
+    if (!stmt) {
+        return;
+    }
+
+    stmt->has_security = true;
+    expect(TokenType::LEFT_PAREN, "Expected '(' after WITH SECURITY");
+
+    auto parse_bool = [&]() -> bool {
+        if (match(TokenType::KW_TRUE)) {
+            return true;
+        }
+        if (match(TokenType::KW_FALSE)) {
+            return false;
+        }
+        error("Expected TRUE or FALSE");
+        return false;
+    };
+
+    auto parse_value_string = [&]() -> std::string {
+        if (check(TokenType::STRING_LITERAL)) {
+            auto id = current().value.string_id;
+            advance();
+            return std::string(stringPool().get(id));
+        }
+        if (isIdentifier()) {
+            auto id = currentIdentifier();
+            return std::string(stringPool().get(id));
+        }
+        error("Expected identifier or string literal");
+        return {};
+    };
+
+    while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+        if (matchContextual("MASKING")) {
+            expect(TokenType::EQUAL, "Expected '=' after MASKING");
+            stmt->security.has_masking = true;
+            stmt->security.masking = parse_value_string();
+        } else if (matchContextual("MASK_PATTERN")) {
+            expect(TokenType::EQUAL, "Expected '=' after MASK_PATTERN");
+            stmt->security.has_mask_pattern = true;
+            stmt->security.mask_pattern = parse_value_string();
+        } else if (matchContextual("ENCRYPTION")) {
+            expect(TokenType::EQUAL, "Expected '=' after ENCRYPTION");
+            stmt->security.has_encryption = true;
+            stmt->security.encryption = parse_value_string();
+        } else if (matchContextual("AUDIT_ACCESS")) {
+            expect(TokenType::EQUAL, "Expected '=' after AUDIT_ACCESS");
+            stmt->security.has_audit_access = true;
+            stmt->security.audit_access = parse_bool();
+        } else if (matchContextual("REQUIRE_PRIVILEGE")) {
+            expect(TokenType::EQUAL, "Expected '=' after REQUIRE_PRIVILEGE");
+            stmt->security.has_required_privilege = true;
+            stmt->security.required_privilege = parse_value_string();
+        } else if (matchContextual("REQUIRE")) {
+            expectContextual("PRIVILEGE", "Expected PRIVILEGE after REQUIRE");
+            expect(TokenType::EQUAL, "Expected '=' after REQUIRE PRIVILEGE");
+            stmt->security.has_required_privilege = true;
+            stmt->security.required_privilege = parse_value_string();
+        } else {
+            error("Unknown WITH SECURITY option");
+        }
+
+        if (!match(TokenType::COMMA)) {
+            break;
+        }
+    }
+
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after WITH SECURITY options");
+}
+
+void Parser::parseDomainValidationBlock(CreateDomainStmt* stmt) {
+    if (!stmt) {
+        return;
+    }
+
+    stmt->has_validation = true;
+    expect(TokenType::LEFT_PAREN, "Expected '(' after WITH VALIDATION");
+
+    auto parse_value_string = [&]() -> std::string {
+        if (check(TokenType::STRING_LITERAL)) {
+            auto id = current().value.string_id;
+            advance();
+            return std::string(stringPool().get(id));
+        }
+        if (isIdentifier()) {
+            auto id = currentIdentifier();
+            return std::string(stringPool().get(id));
+        }
+        error("Expected identifier or string literal");
+        return {};
+    };
+
+    while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+        if (matchContextual("FUNCTION")) {
+            expect(TokenType::EQUAL, "Expected '=' after FUNCTION");
+            stmt->validation.has_function = true;
+            stmt->validation.function = parse_value_string();
+        } else if (matchContextual("ERROR_MESSAGE")) {
+            expect(TokenType::EQUAL, "Expected '=' after ERROR_MESSAGE");
+            stmt->validation.has_error_message = true;
+            stmt->validation.error_message = parse_value_string();
+        } else {
+            error("Unknown WITH VALIDATION option");
+        }
+
+        if (!match(TokenType::COMMA)) {
+            break;
+        }
+    }
+
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after WITH VALIDATION options");
+}
+
+void Parser::parseDomainQualityBlock(CreateDomainStmt* stmt) {
+    if (!stmt) {
+        return;
+    }
+
+    stmt->has_quality = true;
+    expect(TokenType::LEFT_PAREN, "Expected '(' after WITH QUALITY");
+
+    auto parse_value_string = [&]() -> std::string {
+        if (check(TokenType::STRING_LITERAL)) {
+            auto id = current().value.string_id;
+            advance();
+            return std::string(stringPool().get(id));
+        }
+        if (isIdentifier()) {
+            auto id = currentIdentifier();
+            return std::string(stringPool().get(id));
+        }
+        error("Expected identifier or string literal");
+        return {};
+    };
+
+    while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+        if (matchContextual("PARSE_FUNCTION")) {
+            expect(TokenType::EQUAL, "Expected '=' after PARSE_FUNCTION");
+            stmt->quality.has_parse_function = true;
+            stmt->quality.parse_function = parse_value_string();
+        } else if (matchContextual("STANDARDIZE_FUNCTION")) {
+            expect(TokenType::EQUAL, "Expected '=' after STANDARDIZE_FUNCTION");
+            stmt->quality.has_standardize_function = true;
+            stmt->quality.standardize_function = parse_value_string();
+        } else if (matchContextual("ENRICH_FUNCTION")) {
+            expect(TokenType::EQUAL, "Expected '=' after ENRICH_FUNCTION");
+            stmt->quality.has_enrich_function = true;
+            stmt->quality.enrich_function = parse_value_string();
+        } else {
+            error("Unknown WITH QUALITY option");
+        }
+
+        if (!match(TokenType::COMMA)) {
+            break;
+        }
+    }
+
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after WITH QUALITY options");
+}
+
+std::string Parser::extractExpressionText(Expression* expr) {
+    if (!expr) {
+        return {};
+    }
+
+    std::string_view text = state_.lexer().getTokenText(expr->span);
+    size_t start = text.find_first_not_of(" \t\r\n");
+    if (start == std::string_view::npos) {
+        return {};
+    }
+    size_t end = text.find_last_not_of(" \t\r\n");
+    return std::string(text.substr(start, end - start + 1));
 }
 
 ForeignKeyAction Parser::parseForeignKeyAction() {
@@ -1009,6 +1311,64 @@ CreateDatabaseStmt* Parser::parseCreateDatabase() {
 }
 
 // =============================================================================
+// CREATE DOMAIN
+// =============================================================================
+
+CreateDomainStmt* Parser::parseCreateDomain() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateDomainStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_NOT, "Expected NOT after IF");
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF NOT");
+        stmt->if_not_exists = true;
+    }
+
+    stmt->domain_path = parseSchemaPath(state_);
+    if (stmt->domain_path.isEmpty()) {
+        error("Expected domain name");
+    }
+
+    // Optional AS keyword
+    match(TokenType::KW_AS);
+
+    stmt->base_type = parseTypeName();
+
+    stmt->constraints = parseDomainConstraints();
+
+    while (match(TokenType::KW_WITH)) {
+        if (matchContextual("INTEGRITY")) {
+            parseDomainIntegrityBlock(stmt);
+        } else if (matchContextual("SECURITY")) {
+            parseDomainSecurityBlock(stmt);
+        } else if (matchContextual("VALIDATION")) {
+            parseDomainValidationBlock(stmt);
+        } else if (matchContextual("QUALITY")) {
+            parseDomainQualityBlock(stmt);
+        } else {
+            error("WITH block type not supported for CREATE DOMAIN");
+            // Best-effort consume block for recovery
+            if (match(TokenType::LEFT_PAREN)) {
+                int depth = 1;
+                while (!isAtEnd() && depth > 0) {
+                    if (match(TokenType::LEFT_PAREN)) {
+                        depth++;
+                    } else if (match(TokenType::RIGHT_PAREN)) {
+                        depth--;
+                    } else {
+                        advance();
+                    }
+                }
+            }
+        }
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+// =============================================================================
 // ALTER Statements
 // =============================================================================
 
@@ -1018,6 +1378,7 @@ Statement* Parser::parseAlter() {
     if (matchContextual("TABLE")) return parseAlterTable();
     if (matchContextual("SCHEMA")) return parseAlterSchema();
     if (matchContextual("DATABASE")) return parseAlterDatabase();
+    if (matchContextual("DOMAIN")) return parseAlterDomain();
 
     auto parse_rename_move = [&](DdlObjectType object_type) -> Statement* {
         SourceLocation start = currentLocation();
@@ -1126,6 +1487,62 @@ AlterDatabaseStmt* Parser::parseAlterDatabase() {
         stmt->owner = expectIdentifier("Expected owner name");
     } else {
         error("Expected RENAME TO or OWNER TO after database name");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+AlterDomainStmt* Parser::parseAlterDomain() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<AlterDomainStmt>();
+    stmt->domain_path = parseSchemaPath(state_);
+    if (stmt->domain_path.isEmpty()) {
+        error("Expected domain name");
+    }
+
+    if (match(TokenType::KW_SET)) {
+        if (match(TokenType::KW_DEFAULT)) {
+            stmt->action = AlterDomainAction::SET_DEFAULT;
+            stmt->value = extractExpressionText(parseExpression());
+        } else if (matchContextual("COMPAT")) {
+            stmt->action = AlterDomainAction::SET_COMPAT;
+            if (check(TokenType::STRING_LITERAL)) {
+                stmt->value = std::string(stringPool().get(current().value.string_id));
+                advance();
+            } else {
+                stmt->value = std::string(stringPool().get(expectIdentifier("Expected compat name")));
+            }
+        } else {
+            error("Expected DEFAULT or COMPAT after SET");
+        }
+    } else if (match(TokenType::KW_DROP)) {
+        if (match(TokenType::KW_DEFAULT)) {
+            stmt->action = AlterDomainAction::DROP_DEFAULT;
+        } else if (matchContextual("CONSTRAINT")) {
+            stmt->action = AlterDomainAction::DROP_CONSTRAINT;
+            stmt->constraint_name = expectIdentifier("Expected constraint name");
+        } else if (matchContextual("COMPAT")) {
+            stmt->action = AlterDomainAction::DROP_COMPAT;
+        } else {
+            error("Expected DEFAULT, CONSTRAINT, or COMPAT after DROP");
+        }
+    } else if (matchContextual("ADD")) {
+        if (matchContextual("CHECK")) {
+            expect(TokenType::LEFT_PAREN, "Expected '(' after CHECK");
+            stmt->action = AlterDomainAction::ADD_CHECK;
+            stmt->value = extractExpressionText(parseExpression());
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after CHECK expression");
+        } else {
+            error("Expected CHECK after ADD");
+        }
+    } else if (matchContextual("RENAME")) {
+        expectContextual("TO", "Expected TO after RENAME");
+        stmt->action = AlterDomainAction::RENAME;
+        stmt->new_name = expectIdentifier("Expected new domain name");
+    } else {
+        error("Expected SET, DROP, ADD, or RENAME after domain name");
     }
 
     stmt->span = makeSpan(start);
@@ -1248,6 +1665,7 @@ Statement* Parser::parseDrop() {
     if (matchContextual("TABLE")) return parseDropTable();
     if (matchContextual("INDEX")) return parseDropIndex();
     if (matchContextual("VIEW")) return parseDropView();
+    if (matchContextual("DOMAIN")) return parseDropDomain();
     if (matchContextual("MATERIALIZED")) {
         expectContextual("VIEW", "Expected VIEW after MATERIALIZED");
         auto* stmt = parseDropView();
@@ -1307,6 +1725,34 @@ DropDatabaseStmt* Parser::parseDropDatabase() {
         stmt->force = true;
     } else if (matchContextual("RESTRICT")) {
         stmt->force = false;
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+// =============================================================================
+// DROP DOMAIN
+// =============================================================================
+
+DropDomainStmt* Parser::parseDropDomain() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropDomainStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->domains.push_back(parseSchemaPath(state_));
+    } while (match(TokenType::COMMA));
+
+    if (matchContextual("CASCADE")) {
+        error("DROP DOMAIN does not support CASCADE");
+    } else if (matchContextual("RESTRICT")) {
+        stmt->restrict = true;
     }
 
     stmt->span = makeSpan(start);

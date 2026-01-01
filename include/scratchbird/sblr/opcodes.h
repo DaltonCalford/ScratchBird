@@ -1262,6 +1262,8 @@ namespace scratchbird
             EXT_CREATE_DATABASE = 0x010B,  // CREATE DATABASE (emulated)
             EXT_DROP_DATABASE = 0x010C,  // DROP DATABASE (emulated)
             EXT_ALTER_DATABASE = 0x010D,  // ALTER DATABASE (emulated)
+            EXT_ALTER_DOMAIN = 0x010E,  // ALTER DOMAIN
+            EXT_DROP_DOMAIN = 0x010F,  // DROP DOMAIN
         };
 
         enum class AlterSchemaAction : uint8_t
@@ -1275,6 +1277,17 @@ namespace scratchbird
         {
             RENAME = 1,
             SET_OWNER = 2
+        };
+
+        enum class AlterDomainAction : uint8_t
+        {
+            SET_DEFAULT = 0,
+            DROP_DEFAULT = 1,
+            ADD_CHECK = 2,
+            DROP_CONSTRAINT = 3,
+            RENAME = 4,
+            SET_COMPAT = 5,
+            DROP_COMPAT = 6
         };
 
         /**

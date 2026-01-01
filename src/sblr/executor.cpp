@@ -33,6 +33,7 @@
 #include "scratchbird/core/ts_functions.h"
 #include "scratchbird/core/ts_operations.h"
 #include "scratchbird/core/expression_serializer.h"
+#include "scratchbird/core/quality_pipeline.h"
 #include "scratchbird/sblr/expression_evaluator.h"
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
@@ -1625,6 +1626,21 @@ namespace scratchbird
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_DATABASE))
                         {
                             executeCreateDatabase();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_DOMAIN))
+                        {
+                            executeCreateDomain();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_DOMAIN))
+                        {
+                            executeAlterDomain();
+                            result = ExecutionResult();
+                        }
+                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_DOMAIN))
+                        {
+                            executeDropDomain();
                             result = ExecutionResult();
                         }
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_DATABASE))
@@ -5138,6 +5154,527 @@ namespace scratchbird
             }
         }
 
+        void Executor::executeCreateDomain()
+        {
+            uint8_t flags = readByte();
+            bool if_not_exists = (flags & 0x01) != 0;
+            bool has_integrity = (flags & 0x02) != 0;
+            bool has_security = (flags & 0x04) != 0;
+            bool has_validation = (flags & 0x08) != 0;
+            bool has_quality = (flags & 0x10) != 0;
+
+            std::string domain_path = readString();
+
+            Opcode type_op = static_cast<Opcode>(readByte());
+            uint32_t precision = 0;
+            uint32_t scale = 0;
+
+            switch (type_op)
+            {
+                case Opcode::TYPE_VARCHAR:
+                case Opcode::TYPE_CHAR:
+                    precision = readInt32();
+                    break;
+                case Opcode::TYPE_DECIMAL:
+                    precision = readInt32();
+                    scale = readInt32();
+                    break;
+                default:
+                    break;
+            }
+
+            core::DataType base_type = convertDataType(type_op, precision);
+            (void)scale;
+
+            bool nullable = readByte() != 0;
+            std::string default_value = readString();
+
+            uint32_t constraint_count = readInt32();
+            std::vector<core::DomainConstraint> constraints;
+            constraints.reserve(constraint_count);
+
+            for (uint32_t i = 0; i < constraint_count; ++i)
+            {
+                uint8_t constraint_type = readByte();
+                std::string constraint_name = readString();
+                std::string constraint_expr = readString();
+
+                switch (constraint_type)
+                {
+                    case 0: // NOT_NULL
+                        nullable = false;
+                        break;
+                    case 1: // NULL_ALLOWED
+                        nullable = true;
+                        break;
+                    case 2: // DEFAULT
+                        if (!constraint_expr.empty())
+                        {
+                            default_value = constraint_expr;
+                        }
+                        break;
+                    case 3: // CHECK
+                    {
+                        core::DomainConstraint constraint;
+                        constraint.type = core::ConstraintType::CHECK;
+                        constraint.name = constraint_name;
+                        constraint.expression = constraint_expr;
+                        constraints.push_back(std::move(constraint));
+                        break;
+                    }
+                    default:
+                        error("Unknown domain constraint type");
+                }
+            }
+
+            core::ID schema_id;
+            std::string resolved_domain_name;
+            core::ErrorContext ctx;
+            core::Status status = resolveSchemaIdForQualifiedName(domain_path,
+                                                                  resolved_domain_name,
+                                                                  schema_id,
+                                                                  &ctx,
+                                                                  false);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Schema not found for domain";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+            if (!domain_mgr)
+            {
+                error("Domain manager not available");
+            }
+
+            core::DomainInfo existing;
+            status = domain_mgr->getDomain(schema_id, resolved_domain_name, existing, &ctx);
+            if (status == core::Status::OK)
+            {
+                if (if_not_exists)
+                {
+                    return;
+                }
+                error("Domain already exists");
+            }
+            if (status != core::Status::OK && status != core::Status::NOT_FOUND)
+            {
+                std::string err_msg = "Failed to resolve domain";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            core::ID domain_id;
+            status = domain_mgr->createBasicDomain(schema_id,
+                                                   resolved_domain_name,
+                                                   base_type,
+                                                   precision,
+                                                   scale,
+                                                   nullable,
+                                                   default_value,
+                                                   constraints,
+                                                   domain_id,
+                                                   &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "CREATE DOMAIN failed";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            if (has_integrity)
+            {
+                core::DomainIntegrity integrity;
+                integrity.uniqueness_check = readByte() != 0;
+                integrity.normalization_enabled = readByte() != 0;
+                integrity.normalization_function = readString();
+
+                status = domain_mgr->setIntegrityOptions(domain_id, integrity, &ctx);
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to set domain integrity";
+                    if (!ctx.message.empty())
+                    {
+                        err_msg += ": " + ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+
+            if (has_security)
+            {
+                uint8_t sec_flags = readByte();
+                core::DomainSecurity security;
+
+                auto to_upper = [](const std::string& value) {
+                    std::string out;
+                    out.reserve(value.size());
+                    for (char c : value)
+                    {
+                        out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+                    }
+                    return out;
+                };
+
+                if (sec_flags & 0x01)
+                {
+                    std::string masking = readString();
+                    std::string normalized = to_upper(masking);
+                    if (normalized == "NONE")
+                    {
+                        security.masking_config.type = core::MaskingType::NONE;
+                    }
+                    else if (normalized == "PARTIAL")
+                    {
+                        security.masking_config.type = core::MaskingType::PARTIAL;
+                    }
+                    else if (normalized == "FULL")
+                    {
+                        security.masking_config.type = core::MaskingType::FULL;
+                    }
+                    else
+                    {
+                        error("Unsupported masking type for domain");
+                    }
+                }
+
+                if (sec_flags & 0x02)
+                {
+                    security.masking_config.pattern = readString();
+                }
+
+                if (sec_flags & 0x04)
+                {
+                    std::string encryption = readString();
+                    std::string normalized = to_upper(encryption);
+                    if (normalized == "NONE")
+                    {
+                        security.encryption_enabled = false;
+                        security.encryption_algorithm = core::EncryptionAlgorithm::NONE;
+                    }
+                    else if (normalized == "AES128" || normalized == "AES128_GCM" ||
+                             normalized == "AES128-GCM")
+                    {
+                        security.encryption_enabled = true;
+                        security.encryption_algorithm = core::EncryptionAlgorithm::AES128_GCM;
+                    }
+                    else if (normalized == "AES256" || normalized == "AES256_GCM" ||
+                             normalized == "AES256-GCM")
+                    {
+                        security.encryption_enabled = true;
+                        security.encryption_algorithm = core::EncryptionAlgorithm::AES256_GCM;
+                    }
+                    else
+                    {
+                        error("Unsupported encryption algorithm for domain");
+                    }
+                }
+
+                if (sec_flags & 0x08)
+                {
+                    security.audit_enabled = readByte() != 0;
+                }
+
+                if (sec_flags & 0x10)
+                {
+                    security.required_privilege_for_unmasked = readString();
+                }
+
+                status = domain_mgr->setSecurityOptions(domain_id, security, &ctx);
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to set domain security";
+                    if (!ctx.message.empty())
+                    {
+                        err_msg += ": " + ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+
+            if (has_validation)
+            {
+                uint8_t val_flags = readByte();
+                core::DomainValidation validation;
+                if (val_flags & 0x01)
+                {
+                    validation.validation_function = readString();
+                }
+                if (val_flags & 0x02)
+                {
+                    validation.error_message = readString();
+                }
+                status = domain_mgr->setValidationOptions(domain_id, validation, &ctx);
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to set domain validation";
+                    if (!ctx.message.empty())
+                    {
+                        err_msg += ": " + ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+
+            if (has_quality)
+            {
+                uint8_t qual_flags = readByte();
+                core::DomainQuality quality;
+                if (qual_flags & 0x01)
+                {
+                    quality.parse_function = readString();
+                }
+                if (qual_flags & 0x02)
+                {
+                    quality.standardize_function = readString();
+                }
+                if (qual_flags & 0x04)
+                {
+                    quality.enrich_function = readString();
+                }
+                status = domain_mgr->setQualityOptions(domain_id, quality, &ctx);
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to set domain quality";
+                    if (!ctx.message.empty())
+                    {
+                        err_msg += ": " + ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+        }
+
+        void Executor::executeAlterDomain()
+        {
+            uint8_t action = readByte();
+            std::string domain_path = readString();
+
+            core::ID schema_id;
+            std::string resolved_domain_name;
+            core::ErrorContext ctx;
+            core::Status status = resolveSchemaIdForQualifiedName(domain_path,
+                                                                  resolved_domain_name,
+                                                                  schema_id,
+                                                                  &ctx,
+                                                                  false);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Schema not found for domain";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+            if (!domain_mgr)
+            {
+                error("Domain manager not available");
+            }
+
+            core::DomainInfo domain_info;
+            status = domain_mgr->getDomain(schema_id, resolved_domain_name, domain_info, &ctx);
+            if (status != core::Status::OK)
+            {
+                std::string err_msg = "Domain not found";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            switch (static_cast<sblr::AlterDomainAction>(action))
+            {
+                case sblr::AlterDomainAction::SET_DEFAULT:
+                {
+                    std::string value = readString();
+                    status = domain_mgr->setDefaultValue(domain_info.domain_id, value, &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "ALTER DOMAIN SET DEFAULT failed";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    break;
+                }
+                case sblr::AlterDomainAction::DROP_DEFAULT:
+                {
+                    status = domain_mgr->setDefaultValue(domain_info.domain_id, std::string(), &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "ALTER DOMAIN DROP DEFAULT failed";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    break;
+                }
+                case sblr::AlterDomainAction::ADD_CHECK:
+                {
+                    std::string expr = readString();
+                    status = domain_mgr->addCheckConstraint(domain_info.domain_id, std::string(), expr, &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "ALTER DOMAIN ADD CHECK failed";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    break;
+                }
+                case sblr::AlterDomainAction::DROP_CONSTRAINT:
+                {
+                    std::string name = readString();
+                    status = domain_mgr->dropConstraint(domain_info.domain_id, name, &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "ALTER DOMAIN DROP CONSTRAINT failed";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    break;
+                }
+                case sblr::AlterDomainAction::RENAME:
+                {
+                    std::string new_name = readString();
+                    status = domain_mgr->renameDomain(domain_info.domain_id, new_name, &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "ALTER DOMAIN RENAME failed";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    break;
+                }
+                case sblr::AlterDomainAction::SET_COMPAT:
+                {
+                    std::string compat = readString();
+                    status = domain_mgr->setCompatName(domain_info.domain_id, compat, &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "ALTER DOMAIN SET COMPAT failed";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    break;
+                }
+                case sblr::AlterDomainAction::DROP_COMPAT:
+                {
+                    status = domain_mgr->setCompatName(domain_info.domain_id, std::string(), &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "ALTER DOMAIN DROP COMPAT failed";
+                        if (!ctx.message.empty())
+                        {
+                            err_msg += ": " + ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    break;
+                }
+                default:
+                    error("Unsupported ALTER DOMAIN action");
+                    break;
+            }
+        }
+
+        void Executor::executeDropDomain()
+        {
+            uint8_t flags = readByte();
+            bool if_exists = (flags & 0x01) != 0;
+            (void)flags;
+
+            std::string domain_path = readString();
+
+            core::ID schema_id;
+            std::string resolved_domain_name;
+            core::ErrorContext ctx;
+            core::Status status = resolveSchemaIdForQualifiedName(domain_path,
+                                                                  resolved_domain_name,
+                                                                  schema_id,
+                                                                  &ctx,
+                                                                  false);
+            if (status != core::Status::OK)
+            {
+                if (if_exists)
+                {
+                    return;
+                }
+                std::string err_msg = "Schema not found for domain";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            auto* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+            if (!domain_mgr)
+            {
+                error("Domain manager not available");
+            }
+
+            core::DomainInfo domain_info;
+            status = domain_mgr->getDomain(schema_id, resolved_domain_name, domain_info, &ctx);
+            if (status != core::Status::OK)
+            {
+                if (status == core::Status::NOT_FOUND && if_exists)
+                {
+                    return;
+                }
+                std::string err_msg = "Domain not found";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+
+            status = domain_mgr->dropDomain(domain_info.domain_id, &ctx);
+            if (status != core::Status::OK)
+            {
+                if (status == core::Status::NOT_FOUND && if_exists)
+                {
+                    return;
+                }
+                std::string err_msg = "DROP DOMAIN failed";
+                if (!ctx.message.empty())
+                {
+                    err_msg += ": " + ctx.message;
+                }
+                error(err_msg);
+            }
+        }
+
         void Executor::executeDropDatabase()
         {
             uint8_t flags = readByte();
@@ -6930,6 +7467,86 @@ namespace scratchbird
                 }
             }
 
+            // Build full row values (including defaults) for enforcement and storage
+            std::vector<Value> row_values(all_columns.size());
+            for (size_t i = 0; i < values.size(); i++)
+            {
+                row_values[col_indices[i]] = values[i];
+            }
+
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                bool found = false;
+                for (size_t j = 0; j < col_indices.size(); j++)
+                {
+                    if (col_indices[j] == i)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    if (all_columns[i].has_default && !all_columns[i].default_value.empty())
+                    {
+                        row_values[i] = evaluateDefaultValue(all_columns[i]);
+                    }
+                    else
+                    {
+                        row_values[i] = Value();
+                    }
+                }
+            }
+
+            auto* domain_mgr = db_->domain_manager();
+            if (!domain_mgr)
+            {
+                error("Domain manager unavailable for domain enforcement");
+            }
+
+            // Plan 03B: Apply normalization and quality pipelines before constraints
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                const auto& col = all_columns[i];
+                if (col.domain_id == core::ID())
+                {
+                    continue;
+                }
+
+                core::ErrorContext domain_ctx;
+                auto norm_status = domain_mgr->applyNormalization(col.domain_id,
+                                                                 row_values[i],
+                                                                 this,
+                                                                 &domain_ctx);
+                if (norm_status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to normalize value for column '" +
+                                          col.column_name + "'";
+                    if (!domain_ctx.message.empty())
+                    {
+                        err_msg += ": " + domain_ctx.message;
+                    }
+                    error(err_msg);
+                }
+
+                core::QualityResult quality_result;
+                auto quality_status = domain_mgr->executeQualityPipeline(col.domain_id,
+                                                                        row_values[i],
+                                                                        this,
+                                                                        quality_result,
+                                                                        &domain_ctx);
+                if (quality_status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to apply quality pipeline for column '" +
+                                          col.column_name + "'";
+                    if (!domain_ctx.message.empty())
+                    {
+                        err_msg += ": " + domain_ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+
             // Build tuple in binary format
             // Format: TupleHeader + null bitmap (if needed) + column data
             // HeapPage will overwrite some TupleHeader fields (xmin, xmax, ctid, etc.)
@@ -6941,7 +7558,7 @@ namespace scratchbird
 
             // Determine if we need a null bitmap
             bool has_nulls = false;
-            for (const auto &val : values)
+            for (const auto &val : row_values)
             {
                 if (val.isNull())
                 {
@@ -6963,10 +7580,9 @@ namespace scratchbird
             }
 
             // Serialize each column value
-            for (size_t i = 0; i < values.size(); i++)
+            for (size_t col_idx = 0; col_idx < all_columns.size(); col_idx++)
             {
-                const auto &value = values[i];
-                size_t col_idx = col_indices[i];
+                const auto &value = row_values[col_idx];
                 const auto &col_info = all_columns[col_idx];
 
                 if (value.isNull())
@@ -7276,7 +7892,7 @@ namespace scratchbird
                 {
                     if (!trigger.enabled) continue;
 
-                    TriggerContext ctx(trigger, nullptr, &values, table_info, all_columns);
+                    TriggerContext ctx(trigger, nullptr, &row_values, table_info, all_columns);
                     bool should_continue = fireTrigger(ctx);
 
                     if (!should_continue)
@@ -7288,43 +7904,8 @@ namespace scratchbird
             }
 
             // Security Phase 3.5: Row-Level Security WITH CHECK enforcement for INSERT
-            // Build row values for RLS check (before actual insert)
-            std::vector<Value> rls_row_values(all_columns.size());
-            for (size_t i = 0; i < values.size(); i++)
-            {
-                rls_row_values[col_indices[i]] = values[i];
-            }
-            // ALPHA Phase A: Fill in DEFAULT values or NULL for columns not specified in INSERT
-            for (size_t i = 0; i < all_columns.size(); i++)
-            {
-                bool found = false;
-                for (size_t j = 0; j < col_indices.size(); j++)
-                {
-                    if (col_indices[j] == i)
-                    {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found)
-                {
-                    // Check if column has DEFAULT value
-                    if (all_columns[i].has_default && !all_columns[i].default_value.empty())
-                    {
-                        // Try to evaluate DEFAULT value
-                        Value default_val = evaluateDefaultValue(all_columns[i]);
-                        rls_row_values[i] = default_val;
-                    }
-                    else
-                    {
-                        // No DEFAULT - use NULL
-                        rls_row_values[i] = Value(); // NULL
-                    }
-                }
-            }
-
             // Check RLS policies with WITH CHECK
-            if (!checkRLSPolicies(table_id, rls_row_values, all_columns,
+            if (!checkRLSPolicies(table_id, row_values, all_columns,
                                  core::CatalogManager::PolicyType::INSERT,
                                  true /* is_with_check */))
             {
@@ -7335,7 +7916,7 @@ namespace scratchbird
             for (size_t i = 0; i < all_columns.size(); i++)
             {
                 const auto& col = all_columns[i];
-                if (!col.nullable && rls_row_values[i].isNull())
+                if (!col.nullable && row_values[i].isNull())
                 {
                     error("NOT NULL constraint violation: NULL value in column '" + col.column_name + "'");
                 }
@@ -7347,7 +7928,7 @@ namespace scratchbird
             for (size_t i = 0; i < all_columns.size(); i++)
             {
                 const auto& col = all_columns[i];
-                const auto& val = rls_row_values[i];
+                const auto& val = row_values[i];
 
                 // Skip NULL values (already handled by NOT NULL check above)
                 if (val.isNull())
@@ -7445,66 +8026,9 @@ namespace scratchbird
                 }
             }
 
-            // ALPHA Phase A+: Enforce PRIMARY KEY constraints (Nov 19, 2025)
-            for (size_t i = 0; i < all_columns.size(); i++)
-            {
-                const auto& col = all_columns[i];
-                if (col.is_primary_key)
-                {
-                    // PRIMARY KEY = NOT NULL + UNIQUE
-                    if (rls_row_values[i].isNull())
-                    {
-                        error("PRIMARY KEY constraint violation: NULL value in column '" + col.column_name + "'");
-                    }
-                    // Check uniqueness (already handled by UNIQUE check below, but we ensure it's checked)
-                    if (checkUniqueViolation(table_id, col, rls_row_values[i], all_columns))
-                    {
-                        error("PRIMARY KEY constraint violation: duplicate value in column '" + col.column_name + "'");
-                    }
-                }
-            }
-
-            // ALPHA Phase A: Enforce CHECK constraints on columns
-            for (size_t i = 0; i < all_columns.size(); i++)
-            {
-                const auto& col = all_columns[i];
-                if (col.check_expr_oid != 0)
-                {
-                    // Column has a CHECK constraint - evaluate it
-                    if (!evaluateCheckConstraint(col, rls_row_values, all_columns))
-                    {
-                        error("CHECK constraint violation on column '" + col.column_name + "'");
-                    }
-                }
-            }
-
-            // ALPHA Phase A: Enforce UNIQUE constraints on columns
-            for (size_t i = 0; i < all_columns.size(); i++)
-            {
-                const auto& col = all_columns[i];
-                // Skip if already checked as PRIMARY KEY
-                if (col.is_primary_key) continue;
-
-                if (col.is_unique && !rls_row_values[i].isNull())
-                {
-                    // Column has a UNIQUE constraint and value is not NULL
-                    // Check if value already exists in table
-                    if (checkUniqueViolation(table_id, col, rls_row_values[i], all_columns))
-                    {
-                        error("UNIQUE constraint violation on column '" + col.column_name + "'");
-                    }
-                }
-            }
-
-            auto* domain_mgr = db_->domain_manager();
-            if (!domain_mgr)
-            {
-                error("Domain manager unavailable for domain uniqueness enforcement");
-            }
-
             uint64_t xid = db_->storage_engine()->getCurrentXid();
 
-            // Plan 03B Task 3.2: Enforce global domain uniqueness
+            // Plan 03B: Enforce global domain uniqueness before validation and constraints
             for (size_t i = 0; i < all_columns.size(); i++)
             {
                 const auto& col = all_columns[i];
@@ -7516,7 +8040,7 @@ namespace scratchbird
                 bool is_unique = true;
                 core::ErrorContext uniq_ctx;
                 auto uniq_status = domain_mgr->checkGlobalUniqueness(col.domain_id,
-                                                                    rls_row_values[i],
+                                                                    row_values[i],
                                                                     xid,
                                                                     is_unique,
                                                                     &uniq_ctx);
@@ -7542,6 +8066,95 @@ namespace scratchbird
                 }
             }
 
+            // Plan 03B: Execute domain validation functions
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                const auto& col = all_columns[i];
+                if (col.domain_id == core::ID())
+                {
+                    continue;
+                }
+
+                bool is_valid = true;
+                core::ErrorContext val_ctx;
+                auto val_status = domain_mgr->validateValue(col.domain_id,
+                                                           row_values[i],
+                                                           this,
+                                                           is_valid,
+                                                           &val_ctx);
+                if (val_status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to validate domain value for column '" +
+                                          col.column_name + "'";
+                    if (!val_ctx.message.empty())
+                    {
+                        err_msg += ": " + val_ctx.message;
+                    }
+                    error(err_msg);
+                }
+                if (!is_valid)
+                {
+                    std::string err_msg = "Domain validation failed for column '" +
+                                          col.column_name + "'";
+                    if (!val_ctx.message.empty())
+                    {
+                        err_msg += ": " + val_ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+
+            // ALPHA Phase A+: Enforce PRIMARY KEY constraints (Nov 19, 2025)
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                const auto& col = all_columns[i];
+                if (col.is_primary_key)
+                {
+                    // PRIMARY KEY = NOT NULL + UNIQUE
+                    if (row_values[i].isNull())
+                    {
+                        error("PRIMARY KEY constraint violation: NULL value in column '" + col.column_name + "'");
+                    }
+                    // Check uniqueness (already handled by UNIQUE check below, but we ensure it's checked)
+                    if (checkUniqueViolation(table_id, col, row_values[i], all_columns))
+                    {
+                        error("PRIMARY KEY constraint violation: duplicate value in column '" + col.column_name + "'");
+                    }
+                }
+            }
+
+            // ALPHA Phase A: Enforce CHECK constraints on columns
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                const auto& col = all_columns[i];
+                if (col.check_expr_oid != 0)
+                {
+                    // Column has a CHECK constraint - evaluate it
+                    if (!evaluateCheckConstraint(col, row_values, all_columns))
+                    {
+                        error("CHECK constraint violation on column '" + col.column_name + "'");
+                    }
+                }
+            }
+
+            // ALPHA Phase A: Enforce UNIQUE constraints on columns
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                const auto& col = all_columns[i];
+                // Skip if already checked as PRIMARY KEY
+                if (col.is_primary_key) continue;
+
+                if (col.is_unique && !row_values[i].isNull())
+                {
+                    // Column has a UNIQUE constraint and value is not NULL
+                    // Check if value already exists in table
+                    if (checkUniqueViolation(table_id, col, row_values[i], all_columns))
+                    {
+                        error("UNIQUE constraint violation on column '" + col.column_name + "'");
+                    }
+                }
+            }
+
             // ALPHA Phase A: Enforce FOREIGN KEY constraints on columns
             // Get all FKs for this table (where this table is the child)
             std::vector<core::CatalogManager::ForeignKeyInfo> fks;
@@ -7562,7 +8175,7 @@ namespace scratchbird
                         {
                             if (all_columns[i].column_name == col_name)
                             {
-                                fk_values.push_back(rls_row_values[i]);
+                                fk_values.push_back(row_values[i]);
                                 break;
                             }
                         }
@@ -7610,7 +8223,7 @@ namespace scratchbird
                                                                   table_id,
                                                                   col.column_id,
                                                                   row_tid,
-                                                                  rls_row_values[i],
+                                                                  row_values[i],
                                                                   xid,
                                                                   &uniq_ctx);
                 if (uniq_status != core::Status::OK)
@@ -7626,29 +8239,6 @@ namespace scratchbird
             }
 
             // Task 17 Phase 7: Update expression/filtered indexes
-            // Build full row values in column order (all_columns)
-            std::vector<Value> row_values(all_columns.size());
-            for (size_t i = 0; i < values.size(); i++)
-            {
-                row_values[col_indices[i]] = values[i];
-            }
-            // Fill in default/NULL for columns not specified
-            for (size_t i = 0; i < all_columns.size(); i++)
-            {
-                bool found = false;
-                for (size_t j = 0; j < col_indices.size(); j++)
-                {
-                    if (col_indices[j] == i)
-                    {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found)
-                {
-                    row_values[i] = Value(); // NULL
-                }
-            }
             // Task 17 MGA Phase 1.1: Pass current transaction ID
             updateIndexesOnInsert(xid, table_id, table_info, all_columns, page_id, item_id, row_values);
 
@@ -7668,7 +8258,7 @@ namespace scratchbird
                 {
                     if (!trigger.enabled) continue;
 
-                    TriggerContext ctx(trigger, nullptr, &values, table_info, all_columns);
+                    TriggerContext ctx(trigger, nullptr, &row_values, table_info, all_columns);
                     fireTrigger(ctx);  // AFTER triggers don't prevent operation
                 }
             }
@@ -8154,6 +8744,55 @@ namespace scratchbird
                     }
                 }
 
+                auto* domain_mgr = db_->domain_manager();
+                if (!domain_mgr)
+                {
+                    error("Domain manager unavailable for domain enforcement");
+                }
+
+                // Plan 03B: Apply normalization and quality pipelines to updated domain columns
+                for (const auto& assign : assignments)
+                {
+                    const auto& col = all_columns[assign.column_index];
+                    if (col.domain_id == core::ID())
+                    {
+                        continue;
+                    }
+
+                    core::ErrorContext domain_ctx;
+                    auto norm_status = domain_mgr->applyNormalization(col.domain_id,
+                                                                     row_values[assign.column_index],
+                                                                     this,
+                                                                     &domain_ctx);
+                    if (norm_status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to normalize value for column '" +
+                                              col.column_name + "'";
+                        if (!domain_ctx.message.empty())
+                        {
+                            err_msg += ": " + domain_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+
+                    core::QualityResult quality_result;
+                    auto quality_status = domain_mgr->executeQualityPipeline(col.domain_id,
+                                                                            row_values[assign.column_index],
+                                                                            this,
+                                                                            quality_result,
+                                                                            &domain_ctx);
+                    if (quality_status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to apply quality pipeline for column '" +
+                                              col.column_name + "'";
+                        if (!domain_ctx.message.empty())
+                        {
+                            err_msg += ": " + domain_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                }
+
                 // Security Phase 3.5: Row-Level Security WITH CHECK enforcement for UPDATE
                 // Check if new row values pass policies (after assignments)
                 if (!checkRLSPolicies(table_id, row_values, all_columns,
@@ -8220,6 +8859,97 @@ namespace scratchbird
                         error("Type mismatch: cannot update column '" + col.column_name +
                               "' of type " + std::to_string(static_cast<int>(col.data_type)) +
                               " with value of type " + std::to_string(static_cast<int>(val.type())));
+                    }
+                }
+
+                uint64_t xid = db_->storage_engine()->getCurrentXid();
+
+                // Plan 03B Task 3.2: Enforce global domain uniqueness for updated values
+                for (size_t i = 0; i < all_columns.size(); i++)
+                {
+                    const auto& col = all_columns[i];
+                    if (col.domain_id == core::ID())
+                    {
+                        continue;
+                    }
+
+                    const auto& old_val = old_row_values[i];
+                    const auto& new_val = row_values[i];
+
+                    if (new_val.isNull())
+                    {
+                        continue;
+                    }
+
+                    if (!old_val.isNull() && valuesEqual(old_val, new_val))
+                    {
+                        continue;
+                    }
+
+                    bool is_unique = true;
+                    core::ErrorContext uniq_ctx;
+                    auto uniq_status = domain_mgr->checkGlobalUniqueness(col.domain_id,
+                                                                        new_val,
+                                                                        xid,
+                                                                        is_unique,
+                                                                        &uniq_ctx);
+                    if (uniq_status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to enforce domain uniqueness for column '" +
+                                              col.column_name + "'";
+                        if (!uniq_ctx.message.empty())
+                        {
+                            err_msg += ": " + uniq_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    if (!is_unique)
+                    {
+                        std::string err_msg = "Domain uniqueness violation on column '" +
+                                              col.column_name + "'";
+                        if (!uniq_ctx.message.empty())
+                        {
+                            err_msg += ": " + uniq_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                }
+
+                // Plan 03B: Execute domain validation functions for updated columns
+                for (const auto& assign : assignments)
+                {
+                    const auto& col = all_columns[assign.column_index];
+                    if (col.domain_id == core::ID())
+                    {
+                        continue;
+                    }
+
+                    bool is_valid = true;
+                    core::ErrorContext val_ctx;
+                    auto val_status = domain_mgr->validateValue(col.domain_id,
+                                                               row_values[assign.column_index],
+                                                               this,
+                                                               is_valid,
+                                                               &val_ctx);
+                    if (val_status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to validate domain value for column '" +
+                                              col.column_name + "'";
+                        if (!val_ctx.message.empty())
+                        {
+                            err_msg += ": " + val_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    if (!is_valid)
+                    {
+                        std::string err_msg = "Domain validation failed for column '" +
+                                              col.column_name + "'";
+                        if (!val_ctx.message.empty())
+                        {
+                            err_msg += ": " + val_ctx.message;
+                        }
+                        error(err_msg);
                     }
                 }
 
@@ -8330,65 +9060,6 @@ namespace scratchbird
                                 }
                             }
                         }
-                    }
-                }
-
-                auto* domain_mgr = db_->domain_manager();
-                if (!domain_mgr)
-                {
-                    error("Domain manager unavailable for domain uniqueness enforcement");
-                }
-
-                uint64_t xid = db_->storage_engine()->getCurrentXid();
-
-                // Plan 03B Task 3.2: Enforce global domain uniqueness for updated values
-                for (size_t i = 0; i < all_columns.size(); i++)
-                {
-                    const auto& col = all_columns[i];
-                    if (col.domain_id == core::ID())
-                    {
-                        continue;
-                    }
-
-                    const auto& old_val = old_row_values[i];
-                    const auto& new_val = row_values[i];
-
-                    if (new_val.isNull())
-                    {
-                        continue;
-                    }
-
-                    if (!old_val.isNull() && valuesEqual(old_val, new_val))
-                    {
-                        continue;
-                    }
-
-                    bool is_unique = true;
-                    core::ErrorContext uniq_ctx;
-                    auto uniq_status = domain_mgr->checkGlobalUniqueness(col.domain_id,
-                                                                        new_val,
-                                                                        xid,
-                                                                        is_unique,
-                                                                        &uniq_ctx);
-                    if (uniq_status != core::Status::OK)
-                    {
-                        std::string err_msg = "Failed to enforce domain uniqueness for column '" +
-                                              col.column_name + "'";
-                        if (!uniq_ctx.message.empty())
-                        {
-                            err_msg += ": " + uniq_ctx.message;
-                        }
-                        error(err_msg);
-                    }
-                    if (!is_unique)
-                    {
-                        std::string err_msg = "Domain uniqueness violation on column '" +
-                                              col.column_name + "'";
-                        if (!uniq_ctx.message.empty())
-                        {
-                            err_msg += ": " + uniq_ctx.message;
-                        }
-                        error(err_msg);
                     }
                 }
 
@@ -23114,6 +23785,230 @@ namespace scratchbird
             }
 
             return result;
+        }
+
+        core::Status Executor::callFunctionByName(const std::string& function_name,
+                                                  const std::vector<Value>& args,
+                                                  Value& result_out,
+                                                  core::ErrorContext* ctx)
+        {
+            core::CatalogManager::FunctionInfo function_info;
+            core::ErrorContext err_ctx;
+            auto status = db_->catalog_manager()->getFunction(function_name, function_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                if (ctx)
+                {
+                    std::string msg = "Function not found: " + function_name;
+                    if (!err_ctx.message.empty())
+                    {
+                        msg += ": " + err_ctx.message;
+                    }
+                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND, msg.c_str());
+                }
+                return core::Status::NOT_FOUND;
+            }
+
+            if (function_info.bytecode.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                  "Function has no bytecode (not compiled)");
+                return core::Status::INVALID_ARGUMENT;
+            }
+
+            auto conn_ctx = core::ConnectionContext::getCurrent();
+            if (conn_ctx && !conn_ctx->isSuperuser())
+            {
+                if (!db_->catalog_manager()->hasObjectPermission(
+                        function_info.function_id,
+                        conn_ctx->getCurrentUserId(),
+                        0x0001,
+                        &err_ctx))
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::PERMISSION_DENIED,
+                                      "Permission denied: EXECUTE on function");
+                    return core::Status::PERMISSION_DENIED;
+                }
+            }
+
+            bool security_context_pushed = false;
+            if (conn_ctx)
+            {
+                if (function_info.sql_security == core::CatalogManager::FunctionInfo::SqlSecurity::DEFINER)
+                {
+                    bool owner_is_superuser = false;
+                    core::CatalogManager::UserInfo owner_info;
+                    if (db_->catalog_manager()->getUser(function_info.owner_id, owner_info, &err_ctx) == core::Status::OK)
+                    {
+                        owner_is_superuser = owner_info.is_superuser;
+                    }
+
+                    conn_ctx->pushSecurityContext(
+                        function_info.owner_id,
+                        core::ID(),
+                        owner_is_superuser,
+                        core::ConnectionContext::SecurityMode::DEFINER,
+                        function_info.function_id);
+                    security_context_pushed = true;
+                }
+                else
+                {
+                    conn_ctx->pushSecurityContext(
+                        conn_ctx->getCurrentUserId(),
+                        conn_ctx->getActiveRoleId(),
+                        conn_ctx->isSuperuser(),
+                        core::ConnectionContext::SecurityMode::INVOKER,
+                        function_info.function_id);
+                    security_context_pushed = true;
+                }
+            }
+
+            if (!variable_stack_)
+            {
+                variable_stack_ = std::make_unique<VariableStack>();
+            }
+            variable_stack_->pushFrame();
+
+            size_t in_param_count = 0;
+            for (const auto& param : function_info.parameters)
+            {
+                if (param.mode != core::CatalogManager::ParameterMode::OUT)
+                {
+                    ++in_param_count;
+                }
+            }
+
+            if (args.size() != in_param_count)
+            {
+                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                  "Function argument count mismatch");
+                variable_stack_->popFrame();
+                if (security_context_pushed && conn_ctx)
+                {
+                    conn_ctx->popSecurityContext();
+                }
+                return core::Status::INVALID_ARGUMENT;
+            }
+
+            size_t arg_index = 0;
+            for (const auto& param : function_info.parameters)
+            {
+                if (param.mode == core::CatalogManager::ParameterMode::OUT)
+                {
+                    variable_stack_->declareVariable(param.name, Value());
+                }
+                else
+                {
+                    variable_stack_->declareVariable(param.name, args[arg_index]);
+                    ++arg_index;
+                }
+            }
+
+            const uint8_t* saved_bytecode = bytecode_;
+            size_t saved_size = bytecode_size_;
+            size_t saved_pc = pc_;
+            bool saved_return_requested = return_requested_;
+            Value saved_return_value = return_value_;
+
+            bytecode_ = function_info.bytecode.data();
+            bytecode_size_ = function_info.bytecode.size();
+            pc_ = 0;
+            return_requested_ = false;
+            return_value_ = Value();
+
+            try
+            {
+                if (bytecode_size_ >= 2)
+                {
+                    pc_ += 2;
+                }
+
+                while (pc_ < bytecode_size_)
+                {
+                    if (return_requested_)
+                    {
+                        break;
+                    }
+
+                    uint8_t opcode = readByte();
+                    if (opcode == static_cast<uint8_t>(Opcode::END))
+                    {
+                        break;
+                    }
+
+                    if (opcode == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                    {
+                        uint16_t ext_opcode = readExtendedOpcode();
+                        switch (static_cast<ExtendedOpcode>(ext_opcode))
+                        {
+                            case ExtendedOpcode::EXT_BLOCK:
+                                executeBlock();
+                                break;
+                            case ExtendedOpcode::EXT_ASSIGN:
+                                executeAssignment();
+                                break;
+                            case ExtendedOpcode::EXT_IF:
+                                executeIfStatement();
+                                break;
+                            case ExtendedOpcode::EXT_LOOP:
+                                executeLoopStatement();
+                                break;
+                            case ExtendedOpcode::EXT_WHILE:
+                                executeWhileStatement();
+                                break;
+                            case ExtendedOpcode::EXT_EXIT:
+                                executeExitStatement();
+                                break;
+                            case ExtendedOpcode::EXT_RETURN:
+                                executeReturnStatement();
+                                break;
+                            case ExtendedOpcode::EXT_RAISE:
+                                executeRaiseStatement();
+                                break;
+                            default:
+                                break;
+                        }
+                    }
+                }
+            }
+            catch (const std::exception& e)
+            {
+                const std::string message = e.what();
+                core::Status error_status = core::Status::INTERNAL_ERROR;
+                if (message.rfind("PSQL EXCEPTION:", 0) == 0)
+                {
+                    error_status = core::Status::RAISE_EXCEPTION;
+                }
+                SET_ERROR_CONTEXT(ctx, error_status, message.c_str());
+                bytecode_ = saved_bytecode;
+                bytecode_size_ = saved_size;
+                pc_ = saved_pc;
+                return_requested_ = saved_return_requested;
+                return_value_ = saved_return_value;
+                variable_stack_->popFrame();
+                if (security_context_pushed && conn_ctx)
+                {
+                    conn_ctx->popSecurityContext();
+                }
+                return error_status;
+            }
+
+            result_out = return_requested_ ? return_value_ : Value();
+
+            bytecode_ = saved_bytecode;
+            bytecode_size_ = saved_size;
+            pc_ = saved_pc;
+            return_requested_ = saved_return_requested;
+            return_value_ = saved_return_value;
+
+            variable_stack_->popFrame();
+
+            if (security_context_pushed && conn_ctx)
+            {
+                conn_ctx->popSecurityContext();
+            }
+
+            return core::Status::OK;
         }
 
         void Executor::executeBlock()

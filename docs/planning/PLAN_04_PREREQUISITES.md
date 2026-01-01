@@ -197,7 +197,12 @@ Domains are **schema-scoped**, and the required schema/database DDL infrastructu
 
 **Required For:** WITH INTEGRITY (UNIQUENESS = TRUE)
 
-**Current Status:** ❌ NOT IMPLEMENTED
+**Current Status:** ✅ COMPLETE (2026-01-01)
+
+**Implemented:**
+- GlobalUniquenessIndex + DomainManager integration
+- MGA-aware uniqueness checks in executor (INSERT/UPDATE/DELETE)
+- Unit + integration coverage for uniqueness paths
 
 **Requirements:**
 1. **Cross-Table Uniqueness Index**
@@ -325,10 +330,10 @@ The following opcodes are already defined in `PLAN_04_IMPLEMENTATION_CHECKLIST.m
 
 ```cpp
 // Domain DDL
-EXT_CREATE_DOMAIN = 0x0200
-EXT_ALTER_DOMAIN  = 0x0201
-EXT_DROP_DOMAIN   = 0x0202
-EXT_SHOW_DOMAIN   = 0x0203
+EXT_CREATE_DOMAIN = 0x005C
+EXT_ALTER_DOMAIN  = 0x010E
+EXT_DROP_DOMAIN   = 0x010F
+EXT_SHOW_DOMAIN   = 0x0064
 ```
 
 ### NEW Opcodes Required for WITH Blocks
@@ -402,7 +407,7 @@ Before Plan 04 can proceed, verify:
 - [ ] **Encryption:** AES-256/128-GCM encryption/decryption implemented
 - [ ] **Key Management:** Secure key generation, storage, and rotation
 - [ ] **Masking:** PARTIAL/FULL masking with pattern support
-- [ ] **Uniqueness:** Global uniqueness index and enforcement
+- [x] **Uniqueness:** Global uniqueness index and enforcement
 - [ ] **Normalization:** Built-in + custom function support
 - [ ] **Validation:** Custom validation function integration
 - [ ] **Quality:** Parse→Standardize→Enrich pipeline

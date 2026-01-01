@@ -12,6 +12,7 @@
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/typed_value.h"
+#include "scratchbird/core/function_invoker.h"
 #include "scratchbird/core/encryption_key_manager.h"
 #include "scratchbird/core/data_masking.h"
 
@@ -21,6 +22,7 @@ namespace scratchbird::core
     class Database;
     class BufferPool;
     class GlobalUniquenessIndex;
+    struct QualityResult;
     struct TID;
 
     using ID = UuidV7Bytes;
@@ -260,11 +262,42 @@ namespace scratchbird::core
                         ErrorContext* ctx = nullptr) -> Status;
         auto renameDomain(const ID& domain_id, const std::string& new_name,
                           ErrorContext* ctx = nullptr) -> Status;
+        auto setDefaultValue(const ID& domain_id,
+                             const std::string& default_value,
+                             ErrorContext* ctx = nullptr) -> Status;
+        auto addCheckConstraint(const ID& domain_id,
+                                const std::string& name,
+                                const std::string& expression,
+                                ErrorContext* ctx = nullptr) -> Status;
+        auto dropConstraint(const ID& domain_id,
+                            const std::string& name,
+                            ErrorContext* ctx = nullptr) -> Status;
+        auto setCompatName(const ID& domain_id,
+                           const std::string& compat_name,
+                           ErrorContext* ctx = nullptr) -> Status;
 
         // Validate value against domain constraints
         auto validateValue(const ID& domain_id,
                           const TypedValue& value,
                           ErrorContext* ctx = nullptr) -> Status;
+
+        // Domain WITH block enforcement
+        auto applyNormalization(const ID& domain_id,
+                                TypedValue& value,
+                                FunctionInvoker* invoker,
+                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto validateValue(const ID& domain_id,
+                           const TypedValue& value,
+                           FunctionInvoker* invoker,
+                           bool& is_valid_out,
+                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto executeQualityPipeline(const ID& domain_id,
+                                    TypedValue& value,
+                                    FunctionInvoker* invoker,
+                                    QualityResult& result_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
 
         // Domain uniqueness (Plan 03B Task 3.2)
         auto checkGlobalUniqueness(const ID& domain_id,

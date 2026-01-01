@@ -1051,6 +1051,12 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeStatement(Statement* stmt) {
             return analyzeAlterSchema(static_cast<AlterSchemaStmt*>(stmt));
         case ASTKind::CreateDatabaseStmt:
             return analyzeCreateDatabase(static_cast<CreateDatabaseStmt*>(stmt));
+        case ASTKind::CreateDomainStmt:
+            return analyzeCreateDomain(static_cast<CreateDomainStmt*>(stmt));
+        case ASTKind::AlterDomainStmt:
+            return analyzeAlterDomain(static_cast<AlterDomainStmt*>(stmt));
+        case ASTKind::DropDomainStmt:
+            return analyzeDropDomain(static_cast<DropDomainStmt*>(stmt));
         case ASTKind::DropDatabaseStmt:
             return analyzeDropDatabase(static_cast<DropDatabaseStmt*>(stmt));
         case ASTKind::AlterDatabaseStmt:
@@ -1450,6 +1456,66 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDatabase(CreateDatabaseStmt*
     return resolved;
 }
 
+ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedCreateDomainStmt>();
+    resolved->span = stmt->span;
+    resolved->if_not_exists = stmt->if_not_exists;
+    resolved->domain_path = stmt->domain_path;
+
+    resolved->base_type = resolveTypeName(stmt->base_type);
+    if (resolved->base_type.data_type == DataType::UNKNOWN) {
+        error(stmt->base_type.span, "Unknown base type for domain");
+        return nullptr;
+    }
+
+    resolved->nullable = true;
+    bool default_set = false;
+    for (const auto& constraint : stmt->constraints) {
+        switch (constraint.type) {
+            case DomainConstraintType::NOT_NULL:
+                resolved->nullable = false;
+                break;
+            case DomainConstraintType::NULL_ALLOWED:
+                resolved->nullable = true;
+                break;
+            case DomainConstraintType::DEFAULT:
+                if (default_set) {
+                    error(stmt->span, "Multiple DEFAULT clauses for domain");
+                    break;
+                }
+                resolved->default_value = constraint.expression;
+                default_set = true;
+                break;
+            case DomainConstraintType::CHECK: {
+                ResolvedDomainConstraint resolved_constraint;
+                resolved_constraint.type = DomainConstraintType::CHECK;
+                resolved_constraint.name = constraint.name;
+                resolved_constraint.expression = constraint.expression;
+                resolved->constraints.push_back(std::move(resolved_constraint));
+                break;
+            }
+            default:
+                error(stmt->span, "Unsupported domain constraint");
+                break;
+        }
+    }
+
+    resolved->has_integrity = stmt->has_integrity;
+    resolved->integrity = stmt->integrity;
+    resolved->has_security = stmt->has_security;
+    resolved->security = stmt->security;
+    resolved->has_validation = stmt->has_validation;
+    resolved->validation = stmt->validation;
+    resolved->has_quality = stmt->has_quality;
+    resolved->quality = stmt->quality;
+
+    return resolved;
+}
+
 ResolvedStatement* SemanticAnalyzerV2::analyzeDropDatabase(DropDatabaseStmt* stmt) {
     if (!stmt) {
         return nullptr;
@@ -1492,6 +1558,34 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterDatabase(AlterDatabaseStmt* s
     resolved->new_name = stmt->new_name;
     resolved->owner = stmt->owner;
 
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeAlterDomain(AlterDomainStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedAlterDomainStmt>();
+    resolved->span = stmt->span;
+    resolved->action = stmt->action;
+    resolved->domain_path = stmt->domain_path;
+    resolved->value = stmt->value;
+    resolved->constraint_name = stmt->constraint_name;
+    resolved->new_name = stmt->new_name;
+    return resolved;
+}
+
+ResolvedStatement* SemanticAnalyzerV2::analyzeDropDomain(DropDomainStmt* stmt) {
+    if (!stmt) {
+        return nullptr;
+    }
+
+    auto* resolved = arena_.create<ResolvedDropDomainStmt>();
+    resolved->span = stmt->span;
+    resolved->if_exists = stmt->if_exists;
+    resolved->domains = stmt->domains;
+    resolved->restrict = stmt->restrict;
     return resolved;
 }
 
