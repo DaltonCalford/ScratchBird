@@ -1399,6 +1399,7 @@ case EXT_ENCRYPT_DOMAIN_VALUE: {
 - `tests/unit/test_encryption_key_manager.cpp`
 - `tests/unit/test_data_encryption.cpp`
 - `tests/unit/test_encrypted_storage.cpp`
+- `tests/integration/test_domain_encryption.cpp`
 
 **Test Coverage:**
 - [x] Key generation and rotation
@@ -1406,8 +1407,8 @@ case EXT_ENCRYPT_DOMAIN_VALUE: {
 - [x] AES-128-GCM encryption/decryption
 - [x] IV randomness
 - [x] Authentication tag validation
-- [ ] Storage format round-trip
-- [ ] TOAST integration
+- [x] Storage format round-trip
+- [x] TOAST integration
 - [ ] Concurrent encryption operations
 - [x] NIST test vectors validation
 
