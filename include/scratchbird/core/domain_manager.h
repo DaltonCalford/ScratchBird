@@ -20,6 +20,8 @@ namespace scratchbird::core
     // Forward declarations
     class Database;
     class BufferPool;
+    class GlobalUniquenessIndex;
+    struct TID;
 
     using ID = UuidV7Bytes;
 
@@ -183,6 +185,9 @@ namespace scratchbird::core
         DomainValidation validation;
         DomainQuality quality;
 
+        // Domain uniqueness (Plan 03B Task 3.2)
+        bool enforce_global_uniqueness = false;
+
         // Cross-dialect compatibility (Plan 04)
         std::string dialect_tag;      // e.g., "firebird", "postgresql", "mysql"
         std::string compat_name;      // Dialect-specific type name for mapping
@@ -260,6 +265,29 @@ namespace scratchbird::core
         auto validateValue(const ID& domain_id,
                           const TypedValue& value,
                           ErrorContext* ctx = nullptr) -> Status;
+
+        // Domain uniqueness (Plan 03B Task 3.2)
+        auto checkGlobalUniqueness(const ID& domain_id,
+                                   const TypedValue& value,
+                                   uint64_t tx_id,
+                                   bool& is_unique_out,
+                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto registerUniqueValue(const ID& domain_id,
+                                 const ID& table_id,
+                                 const ID& column_id,
+                                 const TID& row_id,
+                                 const TypedValue& value,
+                                 uint64_t tx_id,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto unregisterUniqueValue(const ID& domain_id,
+                                   const ID& table_id,
+                                   const ID& column_id,
+                                   const TID& row_id,
+                                   const TypedValue& value,
+                                   uint64_t tx_id,
+                                   ErrorContext* ctx = nullptr) -> Status;
 
         // Domain inheritance
         auto setParentDomain(const ID& domain_id,
@@ -456,6 +484,7 @@ namespace scratchbird::core
         // In-memory cache
         std::unordered_map<ID, DomainInfo> domain_cache_;
         uint32_t domain_count_ = 0;
+        std::unique_ptr<GlobalUniquenessIndex> uniqueness_index_;
 
         // Internal helpers
         auto writeDomainRecord(const DomainInfo& domain, ErrorContext* ctx) -> Status;

@@ -1,4 +1,5 @@
 #include "scratchbird/core/domain_manager.h"
+#include "scratchbird/core/global_uniqueness_index.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/connection_context.h"
@@ -445,7 +446,9 @@ namespace scratchbird::core
     };
 
     DomainManager::DomainManager(Database* db)
-        : db_(db), domain_count_(0)
+        : db_(db),
+          domain_count_(0),
+          uniqueness_index_(std::make_unique<GlobalUniquenessIndex>(db))
     {
     }
 
@@ -510,6 +513,23 @@ namespace scratchbird::core
         {
             LOG_ERROR(CATALOG, "Failed to load domains from catalog");
             return status;
+        }
+
+        if (uniqueness_index_)
+        {
+            for (const auto& [id, info] : domain_cache_)
+            {
+                if (!info.enforce_global_uniqueness && !info.integrity.uniqueness_check)
+                {
+                    continue;
+                }
+                status = uniqueness_index_->enableUniqueness(id, ctx);
+                if (status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to enable domain uniqueness");
+                    return status;
+                }
+            }
         }
 
         LOG_INFO(CATALOG, "Loaded %u domains", domain_count_);
@@ -825,6 +845,134 @@ namespace scratchbird::core
         }
 
         return Status::OK;
+    }
+
+    auto DomainManager::checkGlobalUniqueness(const ID& domain_id,
+                                              const TypedValue& value,
+                                              uint64_t tx_id,
+                                              bool& is_unique_out,
+                                              ErrorContext* ctx) -> Status
+    {
+        is_unique_out = true;
+
+        if (domain_id == ID{})
+        {
+            return Status::OK;
+        }
+
+        DomainInfo domain;
+        Status status = getDomain(domain_id, domain, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        if (!domain.enforce_global_uniqueness && !domain.integrity.uniqueness_check)
+        {
+            return Status::OK;
+        }
+
+        if (!uniqueness_index_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR,
+                              "Global uniqueness index unavailable");
+            return Status::INTERNAL_ERROR;
+        }
+
+        status = uniqueness_index_->checkUniqueness(domain_id, value, tx_id, is_unique_out, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        if (!is_unique_out && ctx && ctx->message.empty())
+        {
+            ctx->message = "Domain uniqueness violation";
+        }
+
+        return Status::OK;
+    }
+
+    auto DomainManager::registerUniqueValue(const ID& domain_id,
+                                            const ID& table_id,
+                                            const ID& column_id,
+                                            const TID& row_id,
+                                            const TypedValue& value,
+                                            uint64_t tx_id,
+                                            ErrorContext* ctx) -> Status
+    {
+        if (domain_id == ID{})
+        {
+            return Status::OK;
+        }
+
+        DomainInfo domain;
+        Status status = getDomain(domain_id, domain, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        if (!domain.enforce_global_uniqueness && !domain.integrity.uniqueness_check)
+        {
+            return Status::OK;
+        }
+
+        if (!uniqueness_index_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR,
+                              "Global uniqueness index unavailable");
+            return Status::INTERNAL_ERROR;
+        }
+
+        status = uniqueness_index_->insertValue(domain_id, table_id, column_id,
+                                                 row_id, value, tx_id, ctx);
+        if (status == Status::UNIQUE_VIOLATION && ctx && ctx->message.empty())
+        {
+            ctx->message = "Domain uniqueness violation";
+        }
+        return status;
+    }
+
+    auto DomainManager::unregisterUniqueValue(const ID& domain_id,
+                                              const ID& table_id,
+                                              const ID& column_id,
+                                              const TID& row_id,
+                                              const TypedValue& value,
+                                              uint64_t tx_id,
+                                              ErrorContext* ctx) -> Status
+    {
+        if (domain_id == ID{})
+        {
+            return Status::OK;
+        }
+
+        DomainInfo domain;
+        Status status = getDomain(domain_id, domain, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        if (!domain.enforce_global_uniqueness && !domain.integrity.uniqueness_check)
+        {
+            return Status::OK;
+        }
+
+        if (!uniqueness_index_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR,
+                              "Global uniqueness index unavailable");
+            return Status::INTERNAL_ERROR;
+        }
+
+        status = uniqueness_index_->deleteValue(domain_id, table_id, column_id,
+                                                 row_id, value, tx_id, ctx);
+        if (status == Status::NOT_FOUND)
+        {
+            return Status::OK;
+        }
+        return status;
     }
 
     auto DomainManager::setParentDomain(const ID& domain_id,
@@ -2175,6 +2323,7 @@ namespace scratchbird::core
 
         // Update integrity options
         it->second.integrity = integrity;
+        it->second.enforce_global_uniqueness = integrity.uniqueness_check;
         it->second.last_modified_time = std::time(nullptr);
 
         // Update catalog
@@ -2183,6 +2332,23 @@ namespace scratchbird::core
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to update domain record");
             return status;
+        }
+
+        if (uniqueness_index_)
+        {
+            if (it->second.enforce_global_uniqueness)
+            {
+                status = uniqueness_index_->enableUniqueness(domain_id, ctx);
+            }
+            else
+            {
+                status = uniqueness_index_->disableUniqueness(domain_id, ctx);
+            }
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to update domain uniqueness index");
+                return status;
+            }
         }
 
         LOG_INFO(CATALOG, "Set integrity options for domain %s",
@@ -2945,6 +3111,8 @@ namespace scratchbird::core
                     }
                     blob.clear();
                 }
+
+                info.enforce_global_uniqueness = info.integrity.uniqueness_check;
 
                 if (record->validation_oid != 0)
                 {

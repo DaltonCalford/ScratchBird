@@ -7496,6 +7496,52 @@ namespace scratchbird
                 }
             }
 
+            auto* domain_mgr = db_->domain_manager();
+            if (!domain_mgr)
+            {
+                error("Domain manager unavailable for domain uniqueness enforcement");
+            }
+
+            uint64_t xid = db_->storage_engine()->getCurrentXid();
+
+            // Plan 03B Task 3.2: Enforce global domain uniqueness
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                const auto& col = all_columns[i];
+                if (col.domain_id == core::ID())
+                {
+                    continue;
+                }
+
+                bool is_unique = true;
+                core::ErrorContext uniq_ctx;
+                auto uniq_status = domain_mgr->checkGlobalUniqueness(col.domain_id,
+                                                                    rls_row_values[i],
+                                                                    xid,
+                                                                    is_unique,
+                                                                    &uniq_ctx);
+                if (uniq_status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to enforce domain uniqueness for column '" +
+                                          col.column_name + "'";
+                    if (!uniq_ctx.message.empty())
+                    {
+                        err_msg += ": " + uniq_ctx.message;
+                    }
+                    error(err_msg);
+                }
+                if (!is_unique)
+                {
+                    std::string err_msg = "Domain uniqueness violation on column '" +
+                                          col.column_name + "'";
+                    if (!uniq_ctx.message.empty())
+                    {
+                        err_msg += ": " + uniq_ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+
             // ALPHA Phase A: Enforce FOREIGN KEY constraints on columns
             // Get all FKs for this table (where this table is the child)
             std::vector<core::CatalogManager::ForeignKeyInfo> fks;
@@ -7549,6 +7595,36 @@ namespace scratchbird
                 error("Failed to insert tuple into storage");
             }
 
+            // Plan 03B Task 3.2: Register global domain uniqueness entries
+            core::TID row_tid(page_id, item_id);
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                const auto& col = all_columns[i];
+                if (col.domain_id == core::ID())
+                {
+                    continue;
+                }
+
+                core::ErrorContext uniq_ctx;
+                auto uniq_status = domain_mgr->registerUniqueValue(col.domain_id,
+                                                                  table_id,
+                                                                  col.column_id,
+                                                                  row_tid,
+                                                                  rls_row_values[i],
+                                                                  xid,
+                                                                  &uniq_ctx);
+                if (uniq_status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to register domain uniqueness for column '" +
+                                          col.column_name + "'";
+                    if (!uniq_ctx.message.empty())
+                    {
+                        err_msg += ": " + uniq_ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+
             // Task 17 Phase 7: Update expression/filtered indexes
             // Build full row values in column order (all_columns)
             std::vector<Value> row_values(all_columns.size());
@@ -7574,7 +7650,6 @@ namespace scratchbird
                 }
             }
             // Task 17 MGA Phase 1.1: Pass current transaction ID
-            uint64_t xid = db_->storage_engine()->getCurrentXid();
             updateIndexesOnInsert(xid, table_id, table_info, all_columns, page_id, item_id, row_values);
 
             // Wave 2: Fire AFTER INSERT triggers
@@ -8258,6 +8333,65 @@ namespace scratchbird
                     }
                 }
 
+                auto* domain_mgr = db_->domain_manager();
+                if (!domain_mgr)
+                {
+                    error("Domain manager unavailable for domain uniqueness enforcement");
+                }
+
+                uint64_t xid = db_->storage_engine()->getCurrentXid();
+
+                // Plan 03B Task 3.2: Enforce global domain uniqueness for updated values
+                for (size_t i = 0; i < all_columns.size(); i++)
+                {
+                    const auto& col = all_columns[i];
+                    if (col.domain_id == core::ID())
+                    {
+                        continue;
+                    }
+
+                    const auto& old_val = old_row_values[i];
+                    const auto& new_val = row_values[i];
+
+                    if (new_val.isNull())
+                    {
+                        continue;
+                    }
+
+                    if (!old_val.isNull() && valuesEqual(old_val, new_val))
+                    {
+                        continue;
+                    }
+
+                    bool is_unique = true;
+                    core::ErrorContext uniq_ctx;
+                    auto uniq_status = domain_mgr->checkGlobalUniqueness(col.domain_id,
+                                                                        new_val,
+                                                                        xid,
+                                                                        is_unique,
+                                                                        &uniq_ctx);
+                    if (uniq_status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to enforce domain uniqueness for column '" +
+                                              col.column_name + "'";
+                        if (!uniq_ctx.message.empty())
+                        {
+                            err_msg += ": " + uniq_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                    if (!is_unique)
+                    {
+                        std::string err_msg = "Domain uniqueness violation on column '" +
+                                              col.column_name + "'";
+                        if (!uniq_ctx.message.empty())
+                        {
+                            err_msg += ": " + uniq_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                }
+
                 // Serialize updated tuple data (same format as INSERT)
                 std::vector<uint8_t> new_tuple_data;
 
@@ -8433,8 +8567,55 @@ namespace scratchbird
                 // Task 17 Phase 7: Update expression/filtered indexes
                 core::TID old_tid(page_id, item_id);
                 core::TID new_tid(new_page_id, new_item_id);
+
+                // Plan 03B Task 3.2: Update domain uniqueness entries for new tuple version
+                for (size_t i = 0; i < all_columns.size(); i++)
+                {
+                    const auto& col = all_columns[i];
+                    if (col.domain_id == core::ID())
+                    {
+                        continue;
+                    }
+
+                    core::ErrorContext uniq_ctx;
+                    auto del_status = domain_mgr->unregisterUniqueValue(col.domain_id,
+                                                                       table_id,
+                                                                       col.column_id,
+                                                                       old_tid,
+                                                                       old_row_values[i],
+                                                                       xid,
+                                                                       &uniq_ctx);
+                    if (del_status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to unregister domain uniqueness for column '" +
+                                              col.column_name + "'";
+                        if (!uniq_ctx.message.empty())
+                        {
+                            err_msg += ": " + uniq_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+
+                    auto ins_status = domain_mgr->registerUniqueValue(col.domain_id,
+                                                                      table_id,
+                                                                      col.column_id,
+                                                                      new_tid,
+                                                                      row_values[i],
+                                                                      xid,
+                                                                      &uniq_ctx);
+                    if (ins_status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to register domain uniqueness for column '" +
+                                              col.column_name + "'";
+                        if (!uniq_ctx.message.empty())
+                        {
+                            err_msg += ": " + uniq_ctx.message;
+                        }
+                        error(err_msg);
+                    }
+                }
+
                 // Task 17 MGA Phase 1.1: Pass current transaction ID
-                uint64_t xid = db_->storage_engine()->getCurrentXid();
                 updateIndexesOnUpdate(xid, table_id, table_info, all_columns, old_row_values, row_values, old_tid, new_tid);
 
                 // Wave 2: Fire AFTER UPDATE triggers
@@ -8772,6 +8953,11 @@ namespace scratchbird
                 uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tuple.tid));
                 uint16_t item_id = core::getSlot(tuple.tid);
                 core::TID tid(page_id, item_id);
+                auto* domain_mgr = db_->domain_manager();
+                if (!domain_mgr)
+                {
+                    error("Domain manager unavailable for domain uniqueness enforcement");
+                }
                 // Task 17 MGA Phase 1.1: Pass current transaction ID
                 uint64_t xid = db_->storage_engine()->getCurrentXid();
                 updateIndexesOnDelete(xid, table_id, table_info, all_columns, row_values, tid);
@@ -8787,6 +8973,35 @@ namespace scratchbird
                 if (delete_status != core::Status::OK)
                 {
                     error("Failed to delete tuple from storage");
+                }
+
+                // Plan 03B Task 3.2: Unregister domain uniqueness entries for deleted row
+                for (size_t i = 0; i < all_columns.size(); i++)
+                {
+                    const auto& col = all_columns[i];
+                    if (col.domain_id == core::ID())
+                    {
+                        continue;
+                    }
+
+                    core::ErrorContext uniq_ctx;
+                    auto uniq_status = domain_mgr->unregisterUniqueValue(col.domain_id,
+                                                                        table_id,
+                                                                        col.column_id,
+                                                                        tid,
+                                                                        row_values[i],
+                                                                        xid,
+                                                                        &uniq_ctx);
+                    if (uniq_status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to unregister domain uniqueness for column '" +
+                                              col.column_name + "'";
+                        if (!uniq_ctx.message.empty())
+                        {
+                            err_msg += ": " + uniq_ctx.message;
+                        }
+                        error(err_msg);
+                    }
                 }
 
                 // Wave 2: Fire AFTER DELETE triggers

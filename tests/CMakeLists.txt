@@ -1080,6 +1080,24 @@ set_tests_properties(CheckConstraints PROPERTIES
     TIMEOUT 60
 )
 
+# Domain Integrity Tests (Plan 03B - Global Uniqueness)
+add_executable(test_domain_integrity
+    integration/test_domain_integrity.cpp
+)
+target_link_libraries(test_domain_integrity
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer
+    gtest
+    gtest_main
+)
+add_test(NAME DomainIntegrity COMMAND test_domain_integrity)
+set_tests_properties(DomainIntegrity PROPERTIES
+    LABELS "integration;domain;integrity;uniqueness"
+    TIMEOUT 60
+)
+
 # Foreign Key Constraints Tests (ALPHA Phase A - FK Constraints)
 add_executable(test_foreign_keys
     integration/test_foreign_keys.cpp

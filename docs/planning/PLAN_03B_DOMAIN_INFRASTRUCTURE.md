@@ -15,7 +15,8 @@
 - Encryption key management, data encryption, masking, and domain encryption infrastructure are complete.
 - Encrypted storage layer integration (Task 1.3) is complete.
 - Domain encryption integration (Task 1.4) is complete.
-- Remaining tasks not started beyond Section 2.
+- Global uniqueness index and domain uniqueness integration (Tasks 3.1-3.2) are complete.
+- Remaining tasks start at Section 4.
 
 ## CRITICAL RULES
 
@@ -338,6 +339,7 @@ public:
 **File to Modify:** `include/scratchbird/core/domain_manager.h`
 **File to Modify:** `src/core/domain_manager.cpp`
 **File to Modify:** `src/sblr/executor.cpp`
+**File to Modify:** `src/sblr/executor.cpp`
 **File to Create:** `tests/integration/test_domain_encryption.cpp`
 
 **Requirements:**
@@ -541,7 +543,7 @@ class DomainManager {
 
 ### Task 3.1: Global Uniqueness Index
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 16 hours
 
@@ -664,13 +666,13 @@ private:
 - Only committed, visible versions count for uniqueness
 
 **Acceptance Criteria:**
-- [ ] Index tracks values across all tables/columns
-- [ ] checkUniqueness() respects MGA visibility
-- [ ] Concurrent inserts handled correctly
-- [ ] Updates handled (delete old, insert new)
-- [ ] Deletes remove from index
-- [ ] Performance acceptable (hash-based lookup)
-- [ ] Full test coverage with concurrent transactions
+- [x] Index tracks values across all tables/columns
+- [x] checkUniqueness() respects MGA visibility
+- [x] Concurrent inserts handled correctly
+- [x] Updates handled (delete old, insert new)
+- [x] Deletes remove from index
+- [x] Performance acceptable (hash-based lookup)
+- [x] Full test coverage with concurrent transactions
 
 **Test File:** `tests/unit/test_global_uniqueness_index.cpp` (NEW)
 
@@ -678,7 +680,7 @@ private:
 
 ### Task 3.2: Domain Uniqueness Integration
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 10 hours
 
@@ -687,7 +689,7 @@ private:
 
 **Requirements:**
 1. Store uniqueness settings in DomainInfo
-2. Hook into INSERT/UPDATE to enforce uniqueness
+2. Hook into INSERT/UPDATE/DELETE to enforce uniqueness
 3. Integration with GlobalUniquenessIndex
 
 **Implementation Details:**
@@ -717,25 +719,33 @@ class DomainManager {
     Status registerUniqueValue(const ID& domain_id,
                               const ID& table_id,
                               const ID& column_id,
-                              const ID& row_id,
+                              const TID& row_id,
                               const TypedValue& value,
                               uint64_t tx_id,
                               ErrorContext* ctx);
 
+    Status unregisterUniqueValue(const ID& domain_id,
+                                 const ID& table_id,
+                                 const ID& column_id,
+                                 const TID& row_id,
+                                 const TypedValue& value,
+                                 uint64_t tx_id,
+                                 ErrorContext* ctx);
+
 private:
-    GlobalUniquenessIndex* uniqueness_index_;
+    std::unique_ptr<GlobalUniquenessIndex> uniqueness_index_;
 };
 ```
 
 **Acceptance Criteria:**
-- [ ] DomainInfo stores uniqueness setting
-- [ ] checkGlobalUniqueness() calls index
-- [ ] registerUniqueValue() updates index
-- [ ] Executor integration for INSERT/UPDATE
-- [ ] Error message on uniqueness violation clear
-- [ ] Full test coverage
+- [x] DomainInfo stores uniqueness setting
+- [x] checkGlobalUniqueness() calls index
+- [x] registerUniqueValue() updates index
+- [x] Executor integration for INSERT/UPDATE
+- [x] Error message on uniqueness violation clear
+- [x] Full test coverage
 
-**Test File:** Add to `tests/integration/test_domain_integrity.cpp`
+**Test File:** `tests/integration/test_domain_integrity.cpp` (NEW)
 
 ---
 
@@ -1435,21 +1445,21 @@ case EXT_ENCRYPT_DOMAIN_VALUE: {
 
 ### Task 8.3: Uniqueness Infrastructure Tests
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 8 hours
 
 **Test File:** `tests/unit/test_global_uniqueness_index.cpp`
 
 **Test Coverage:**
-- [ ] Single value uniqueness
-- [ ] Duplicate detection
-- [ ] MGA transaction visibility
-- [ ] Concurrent inserts
-- [ ] Update handling
-- [ ] Delete handling
-- [ ] Multiple domains
-- [ ] Performance stress test
+- [x] Single value uniqueness
+- [x] Duplicate detection
+- [x] MGA transaction visibility
+- [x] Concurrent inserts
+- [x] Update handling
+- [x] Delete handling
+- [x] Multiple domains
+- [x] Performance stress test
 
 ---
 
@@ -1579,8 +1589,8 @@ case EXT_ENCRYPT_DOMAIN_VALUE: {
 - [x] Task 2.2: Domain masking integration
 
 **Global Uniqueness (2 tasks):**
-- [ ] Task 3.1: Global uniqueness index
-- [ ] Task 3.2: Domain uniqueness integration
+- [x] Task 3.1: Global uniqueness index
+- [x] Task 3.2: Domain uniqueness integration
 
 **Normalization (3 tasks):**
 - [ ] Task 4.1: Built-in normalization
@@ -1602,7 +1612,7 @@ case EXT_ENCRYPT_DOMAIN_VALUE: {
 **Testing (8 tasks):**
 - [ ] Task 8.1: Encryption tests
 - [x] Task 8.2: Masking tests
-- [ ] Task 8.3: Uniqueness tests
+- [x] Task 8.3: Uniqueness tests
 - [ ] Task 8.4: Normalization tests
 - [ ] Task 8.5: Validation tests
 - [ ] Task 8.6: Quality pipeline tests
