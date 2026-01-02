@@ -183,21 +183,21 @@ Partial / Outstanding:
   - Window/aggregate extended opcode parsing
 
 ## Completion Checklist (Developer)
-- [ ] SBLR_VERSION set to 2 and enforced in executor.
-- [ ] All emitters write 16-bit extended opcodes.
-- [ ] All decoder paths read 16-bit extended opcodes.
-- [ ] EXT_RENAME_OBJECT and EXT_MOVE_OBJECT defined and encoded as 16-bit.
-- [ ] Transaction payload v2 implemented for START/SET/COMMIT/ROLLBACK.
-- [ ] New extended opcodes for AUTOCOMMIT and 2PC implemented.
-- [ ] Network SBLR version check requires 2.
-- [ ] All SBLR tests updated to v2.
+- [x] SBLR_VERSION set to 2 and enforced in executor.
+- [x] All emitters write 16-bit extended opcodes.
+- [x] All decoder paths read 16-bit extended opcodes.
+- [x] EXT_RENAME_OBJECT and EXT_MOVE_OBJECT defined and encoded as 16-bit.
+- [x] Transaction payload v2 implemented for START/SET/COMMIT/ROLLBACK.
+- [x] New extended opcodes for AUTOCOMMIT and 2PC implemented.
+- [x] Network SBLR version check requires 2.
+- [x] All SBLR tests updated to v2.
 
 ## Completion Checklist (Auditor)
-- [ ] Bytecode streams begin with VERSION opcode and version byte = 2.
-- [ ] Any EXTENDED_OPCODE sequence is followed by 2 bytes, not 1.
-- [ ] Executor rejects version != 2.
-- [ ] No lingering `emit(EXTENDED_OPCODE); emit(byte)` patterns remain.
-- [ ] SBLR rename/move opcodes decode correctly.
+- [x] Bytecode streams begin with VERSION opcode and version byte = 2.
+- [x] Any EXTENDED_OPCODE sequence is followed by 2 bytes, not 1.
+- [x] Executor rejects version != 2.
+- [x] No lingering `emit(EXTENDED_OPCODE); emit(byte)` patterns remain.
+- [x] SBLR rename/move opcodes decode correctly.
 
 ## Testing Requirements
 - Unit test: encode/decode a minimal extended opcode and verify round-trip.
