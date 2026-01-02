@@ -1,6 +1,7 @@
 #include "scratchbird/core/permission_cache.h"
 #include "scratchbird/core/logger.h"
 #include <algorithm>
+#include <utility>
 
 namespace scratchbird::core
 {
@@ -123,7 +124,9 @@ namespace scratchbird::core
         return it->second.has_permission;
     }
 
-    void PermissionCache::insert(const CacheKey &key, bool has_permission)
+    void PermissionCache::insert(const CacheKey &key, bool has_permission,
+                                 uint64_t policy_epoch_global,
+                                 uint64_t policy_epoch_table)
     {
         if (!enabled_)
         {
@@ -141,6 +144,8 @@ namespace scratchbird::core
             it->second.has_permission = has_permission;
             it->second.timestamp = std::chrono::steady_clock::now();
             ++it->second.access_count;
+            it->second.policy_epoch_global = policy_epoch_global;
+            it->second.policy_epoch_table = policy_epoch_table;
 
             // Move to front of LRU
             moveToFront(key);
@@ -162,7 +167,7 @@ namespace scratchbird::core
         }
 
         // Insert new entry
-        CacheEntry entry(has_permission);
+        CacheEntry entry(has_permission, policy_epoch_global, policy_epoch_table);
         cache_.emplace(key, entry);
         lru_list_.push_front(key);
         ++stats_.current_entries;
@@ -176,75 +181,95 @@ namespace scratchbird::core
                                         PermissionCheckMode mode,
                                         ErrorContext *ctx)
     {
-        // SECURITY ENHANCEMENT (MEDIUM-1): Support for verified permission checks
-        // This eliminates the tiny race window between REVOKE and cache invalidation
-
-        if (mode == PermissionCheckMode::VERIFIED)
+        if (!catalog)
         {
-            // VERIFIED mode: Always query database for security-critical operations
-            // This ensures we have the absolute latest permission state
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+            return false;
+        }
 
-            LOG_DEBUG(GENERAL, "Permission check in VERIFIED mode (bypassing cache)");
+        SecurityQuorum::Decision quorum_decision = quorum_.evaluate();
+        if (quorum_decision == SecurityQuorum::Decision::DENY)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PERMISSION_DENIED, "Security quorum not satisfied");
+            return false;
+        }
 
-            // Query database directly
-            bool has_permission = false;
-            Status status = catalog->hasPermission(
-                key.user_id,
-                key.object_id,
-                key.object_type,
-                key.privilege,
-                has_permission,
-                ctx);
+        bool cache_allowed = enabled_ && (quorum_decision == SecurityQuorum::Decision::ALLOW_CACHE);
+        bool use_cache = (mode == PermissionCheckMode::CACHED) && cache_allowed;
 
-            if (status != Status::OK)
+        uint64_t policy_epoch_global = 0;
+        uint64_t policy_epoch_table = 0;
+        bool epochs_available = false;
+
+        if (cache_allowed)
+        {
+            Status epoch_status = catalog->getSecurityPolicyEpoch(policy_epoch_global, ctx);
+            if (epoch_status == Status::OK)
             {
-                // Database query failed - treat as no permission for security
-                LOG_ERROR(GENERAL, "Permission check failed in VERIFIED mode: status=%d",
-                         static_cast<int>(status));
-                return false;
+                if (key.object_type == CatalogManager::PermissionObjectType::TABLE)
+                {
+                    Status table_status = catalog->getTablePolicyEpoch(key.object_id,
+                                                                      policy_epoch_table, ctx);
+                    epochs_available = (table_status == Status::OK);
+                }
+                else
+                {
+                    epochs_available = true;
+                }
             }
 
-            // Update cache with fresh value
-            // This keeps cache warm for subsequent CACHED mode checks
-            insert(key, has_permission);
-
-            return has_permission;
+            if (!epochs_available)
+            {
+                cache_allowed = false;
+                use_cache = false;
+            }
         }
-        else
-        {
-            // CACHED mode: Use cache if available (fast path for normal operations)
 
-            // Try cache lookup first
-            std::optional<bool> cached_result = lookup(key);
+        if (use_cache)
+        {
+            std::optional<bool> cached_result = lookupWithEpoch(key, policy_epoch_global,
+                                                                policy_epoch_table);
             if (cached_result.has_value())
             {
-                // Cache hit!
                 return cached_result.value();
             }
-
-            // Cache miss - query database
-            bool has_permission = false;
-            Status status = catalog->hasPermission(
-                key.user_id,
-                key.object_id,
-                key.object_type,
-                key.privilege,
-                has_permission,
-                ctx);
-
-            if (status != Status::OK)
-            {
-                // Database query failed - treat as no permission for security
-                LOG_ERROR(GENERAL, "Permission check failed in CACHED mode: status=%d",
-                         static_cast<int>(status));
-                return false;
-            }
-
-            // Cache result for future lookups
-            insert(key, has_permission);
-
-            return has_permission;
         }
+
+        // Query database directly
+        bool has_permission = false;
+        Status status = catalog->hasPermission(
+            key.user_id,
+            key.object_id,
+            key.object_type,
+            key.privilege,
+            has_permission,
+            ctx);
+
+        if (status != Status::OK)
+        {
+            LOG_ERROR(GENERAL, "Permission check failed: status=%d",
+                     static_cast<int>(status));
+            return false;
+        }
+
+        if (cache_allowed)
+        {
+            insert(key, has_permission, policy_epoch_global, policy_epoch_table);
+        }
+
+        return has_permission;
+    }
+
+    void PermissionCache::configureQuorum(const SecurityQuorumConfig &config)
+    {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        quorum_.configure(config);
+    }
+
+    void PermissionCache::setQuorumStatusProvider(std::function<std::optional<bool>()> provider)
+    {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        quorum_.setStatusProvider(std::move(provider));
     }
 
     void PermissionCache::invalidateUser(const ID &user_id)
@@ -361,6 +386,71 @@ namespace scratchbird::core
         auto now = std::chrono::steady_clock::now();
         auto age = std::chrono::duration_cast<std::chrono::seconds>(now - entry.timestamp);
         return age > ttl_;
+    }
+
+    std::optional<bool> PermissionCache::lookupWithEpoch(const CacheKey &key,
+                                                         uint64_t policy_epoch_global,
+                                                         uint64_t policy_epoch_table)
+    {
+        if (!enabled_)
+        {
+            return std::nullopt;
+        }
+
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+
+        ++stats_.total_lookups;
+
+        auto it = cache_.find(key);
+        if (it == cache_.end())
+        {
+            ++stats_.miss_count;
+            return std::nullopt;
+        }
+
+        if (isExpired(it->second) ||
+            isEpochMismatch(it->second, policy_epoch_global, policy_epoch_table))
+        {
+            lock.unlock();
+            {
+                std::unique_lock<std::shared_mutex> write_lock(mutex_);
+                auto it2 = cache_.find(key);
+                if (it2 != cache_.end() &&
+                    (isExpired(it2->second) ||
+                     isEpochMismatch(it2->second, policy_epoch_global, policy_epoch_table)))
+                {
+                    removeFromLRU(key);
+                    cache_.erase(it2);
+                    --stats_.current_entries;
+                    ++stats_.invalidation_count;
+                }
+            }
+
+            ++stats_.miss_count;
+            return std::nullopt;
+        }
+
+        ++stats_.hit_count;
+        ++const_cast<CacheEntry &>(it->second).access_count;
+
+        return it->second.has_permission;
+    }
+
+    bool PermissionCache::isEpochMismatch(const CacheEntry &entry,
+                                          uint64_t policy_epoch_global,
+                                          uint64_t policy_epoch_table) const
+    {
+        if (policy_epoch_global != 0 && entry.policy_epoch_global != policy_epoch_global)
+        {
+            return true;
+        }
+
+        if (policy_epoch_table != 0 && entry.policy_epoch_table != policy_epoch_table)
+        {
+            return true;
+        }
+
+        return false;
     }
 
 } // namespace scratchbird::core

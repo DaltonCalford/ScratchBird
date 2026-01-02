@@ -824,6 +824,12 @@ namespace scratchbird
                                uint32_t required_privilege,
                                core::PermissionCheckMode mode);
 
+            // Metadata visibility helper (Plan 03): determine if details should be redacted.
+            bool shouldRedactMetadata(const core::ID& object_id,
+                                      core::CatalogManager::PermissionObjectType object_type,
+                                      const core::ID& owner_id,
+                                      uint32_t required_privilege);
+
             // Row-Level Security helpers (Phase 3.5 - RLS DML Enforcement)
 
             // Check if current user/role should be subject to RLS policies

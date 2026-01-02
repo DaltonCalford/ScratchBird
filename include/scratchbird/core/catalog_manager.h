@@ -9,6 +9,7 @@
 #include <map>
 #include <optional>
 #include <cstring>  // for std::memcpy
+#include <array>
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/error_context.h"
@@ -26,6 +27,8 @@ namespace scratchbird::core
     class TIDResolver;
     class ToastManager;
     struct DomainInfo;
+    struct AuditEvent;
+    struct AuditQuery;
 
     using ID = UuidV7Bytes;
 
@@ -371,6 +374,7 @@ public:
             uint32_t storage_params_oid = 0;   // TOAST reference for storage parameters - IMPLEMENTED
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
+            uint64_t policy_epoch = 0;            // Security policy epoch (Plan 03)
 
             // ONLINE migration fields (Sprint 4 Task 5.4.1)
             bool migration_in_progress = false;     // True if table is being migrated
@@ -989,6 +993,39 @@ public:
             bool enable_automatic_cleanup = true;      // Enable automatic cleanup of expired sessions
         };
 
+        // AuthKey status lifecycle (Plan 03)
+        enum class AuthKeyStatus : uint8_t
+        {
+            ACTIVE = 0,
+            REVOKED = 1,
+            EXPIRED = 2,
+            SUSPENDED = 3
+        };
+
+        // AuthKey usage mode (Plan 03)
+        enum class AuthKeyUsage : uint8_t
+        {
+            UNLIMITED = 0,
+            LIMITED = 1,
+            SINGLE_USE = 2
+        };
+
+        struct AuthKeyInfo
+        {
+            ID authkey_id;
+            std::string issuer;
+            uint64_t valid_from = 0;
+            uint64_t valid_to = 0;
+            uint32_t usage_limit = 0;
+            uint32_t usage_count = 0;
+            AuthKeyStatus status = AuthKeyStatus::ACTIVE;
+            AuthKeyUsage usage_type = AuthKeyUsage::UNLIMITED;
+            std::vector<ID> role_scope;
+            std::vector<ID> group_scope;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
         // Session information (Phase 1.4 - Security System)
         struct SessionInfo
         {
@@ -1001,6 +1038,10 @@ public:
             uint64_t login_time = 0;
             uint64_t last_activity_time = 0;
             ID current_schema_id;            // Current schema context
+            ID authkey_id;                   // Bound AuthKey UUID (Plan 03)
+            std::string emulation_mode;      // Dialect tag or emulation mode (Plan 03)
+            uint64_t policy_epoch_global = 0;
+            uint64_t policy_epoch_table = 0;
 
             // P1-12: Session timeout tracking
             bool is_expired = false;         // Whether session has been marked expired
@@ -2323,8 +2364,20 @@ public:
         // Session & Permission Operations (Phase 1.4 - Security System)
         // ========================================================================
 
+        // AuthKey management (Plan 03)
+        auto createAuthKey(const AuthKeyInfo& authkey_in, ID& authkey_id_out,
+                          ErrorContext* ctx = nullptr) -> Status;
+        auto getAuthKey(const ID& authkey_id, AuthKeyInfo& authkey_out,
+                       ErrorContext* ctx = nullptr) -> Status;
+        auto revokeAuthKey(const ID& authkey_id, ErrorContext* ctx = nullptr) -> Status;
+        auto consumeAuthKey(const ID& authkey_id, uint32_t uses = 1,
+                           ErrorContext* ctx = nullptr) -> Status;
+        auto listAuthKeys(std::vector<AuthKeyInfo>& authkeys_out,
+                         ErrorContext* ctx = nullptr) -> Status;
+
         // Session management
-        auto createSession(const ID& user_id, const ID& default_schema_id,
+        auto createSession(const ID& user_id, const ID& authkey_id,
+                          const std::string& emulation_mode,
                           SessionInfo& session_out, ErrorContext* ctx = nullptr) -> Status;
 
         auto getSession(const ID& session_id, SessionInfo& session_out,
@@ -2348,6 +2401,27 @@ public:
 
         auto getSessionTimeoutConfig(SessionTimeoutConfig& config_out,
                                     ErrorContext* ctx = nullptr) -> Status;
+
+        // Security policy epochs (Plan 03)
+        auto getSecurityPolicyEpoch(uint64_t& epoch_out,
+                                   ErrorContext* ctx = nullptr) -> Status;
+        auto bumpSecurityPolicyEpoch(uint64_t& epoch_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
+        auto getTablePolicyEpoch(const ID& table_id, uint64_t& epoch_out,
+                                ErrorContext* ctx = nullptr) -> Status;
+        auto bumpTablePolicyEpoch(const ID& table_id, uint64_t& epoch_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        // Audit log persistence (Plan 03)
+        auto appendAuditLog(const AuditEvent& event,
+                            const std::array<uint8_t, 32>& hash_prev,
+                            const std::array<uint8_t, 32>& hash_curr,
+                            ErrorContext* ctx = nullptr) -> Status;
+        auto queryAuditLog(const AuditQuery& query, std::vector<AuditEvent>& events_out,
+                           ErrorContext* ctx = nullptr) -> Status;
+        auto getAuditLogTail(uint64_t& last_event_id_out,
+                             std::array<uint8_t, 32>& last_hash_out,
+                             ErrorContext* ctx = nullptr) -> Status;
 
         // Dormant transaction persistence (Track 3.2)
         auto createDormantTransaction(DormantTransactionInfo& info,
@@ -3658,6 +3732,12 @@ public:
         uint32_t dormant_transactions_table_page_ = 0; // Dormant transactions (Track 3.2)
         uint32_t prepared_transactions_table_page_ = 0; // Prepared transactions (2PC)
         uint32_t encryption_keys_table_page_ = 0;   // Encryption keys (Plan 03B)
+        uint32_t authkeys_table_page_ = 0;          // AuthKeys (Plan 03)
+        uint32_t sessions_table_page_ = 0;          // Sessions (Plan 03)
+        uint32_t audit_log_table_page_ = 0;         // Audit log (Plan 03)
+        uint32_t security_policy_epoch_table_page_ = 0; // Policy epoch (Plan 03)
+
+        uint64_t security_policy_epoch_ = 0;
 
         // Internal methods
         auto writeCatalogRoot(ErrorContext *ctx) -> Status;
@@ -3956,6 +4036,7 @@ public:
         auto writeColumnRecords(const ID &table_id, const std::vector<ColumnInfo> &columns,
                                 ErrorContext *ctx) -> Status;
         auto readColumnRecords(const ID &table_id, ErrorContext *ctx) -> Status;
+        auto readSessionRecords(ErrorContext *ctx) -> Status;
 
         // Phase 6.2: Dependency persistence methods
         auto writeDependencyRecord(const DependencyInfo &dependency, ErrorContext *ctx) -> Status;

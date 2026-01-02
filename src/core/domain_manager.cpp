@@ -41,6 +41,9 @@ namespace scratchbird::core
         constexpr uint8_t DOMAIN_INTEGRITY_VERSION = 1;
         constexpr uint8_t DOMAIN_VALIDATION_VERSION = 1;
         constexpr uint8_t DOMAIN_QUALITY_VERSION = 1;
+        constexpr uint8_t DOMAIN_CONSTRAINTS_VERSION = 1;
+        constexpr uint8_t DOMAIN_FIELDS_VERSION = 1;
+        constexpr uint8_t DOMAIN_ENUM_VALUES_VERSION = 1;
 
         void appendUint8(std::string& out, uint8_t value)
         {
@@ -393,6 +396,239 @@ namespace scratchbird::core
             quality.parse_function = std::move(parse_function);
             quality.standardize_function = std::move(standardize_function);
             quality.enrich_function = std::move(enrich_function);
+
+            return Status::OK;
+        }
+
+        std::string serializeDomainConstraints(const DomainInfo& domain)
+        {
+            if (domain.constraints.empty() && domain.variant_allowed_types.empty())
+            {
+                return {};
+            }
+
+            std::string out;
+            appendUint8(out, DOMAIN_CONSTRAINTS_VERSION);
+            appendUint32(out, static_cast<uint32_t>(domain.constraints.size()));
+            for (const auto& constraint : domain.constraints)
+            {
+                appendUint8(out, static_cast<uint8_t>(constraint.type));
+                appendString(out, constraint.expression);
+                appendString(out, constraint.name);
+            }
+            appendUint32(out, static_cast<uint32_t>(domain.variant_allowed_types.size()));
+            for (const auto& type : domain.variant_allowed_types)
+            {
+                appendUint32(out, static_cast<uint32_t>(type));
+            }
+            return out;
+        }
+
+        Status deserializeDomainConstraints(const std::string& blob,
+                                            std::vector<DomainConstraint>& constraints_out,
+                                            std::vector<DataType>& variant_types_out,
+                                            ErrorContext* ctx)
+        {
+            constraints_out.clear();
+            variant_types_out.clear();
+            if (blob.empty())
+            {
+                return Status::OK;
+            }
+
+            size_t offset = 0;
+            uint8_t version = 0;
+            if (!readUint8(blob, offset, version) || version != DOMAIN_CONSTRAINTS_VERSION)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain constraints payload");
+                return Status::CORRUPTION;
+            }
+
+            uint32_t count = 0;
+            if (!readUint32(blob, offset, count))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain constraints payload");
+                return Status::CORRUPTION;
+            }
+
+            constraints_out.reserve(count);
+            for (uint32_t i = 0; i < count; i++)
+            {
+                uint8_t type = 0;
+                std::string expression;
+                std::string name;
+                if (!readUint8(blob, offset, type) ||
+                    !readString(blob, offset, expression) ||
+                    !readString(blob, offset, name))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain constraints payload");
+                    return Status::CORRUPTION;
+                }
+                constraints_out.emplace_back(static_cast<ConstraintType>(type), expression, name);
+            }
+
+            if (offset >= blob.size())
+            {
+                return Status::OK;
+            }
+
+            uint32_t type_count = 0;
+            if (!readUint32(blob, offset, type_count))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain constraints payload");
+                return Status::CORRUPTION;
+            }
+
+            variant_types_out.reserve(type_count);
+            for (uint32_t i = 0; i < type_count; i++)
+            {
+                uint32_t type = 0;
+                if (!readUint32(blob, offset, type))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain constraints payload");
+                    return Status::CORRUPTION;
+                }
+                variant_types_out.push_back(static_cast<DataType>(type));
+            }
+
+            return Status::OK;
+        }
+
+        std::string serializeDomainFields(const std::vector<RecordField>& fields)
+        {
+            if (fields.empty())
+            {
+                return {};
+            }
+
+            std::string out;
+            appendUint8(out, DOMAIN_FIELDS_VERSION);
+            appendUint32(out, static_cast<uint32_t>(fields.size()));
+            for (const auto& field : fields)
+            {
+                appendString(out, field.name);
+                appendUint32(out, static_cast<uint32_t>(field.type));
+                appendUint32(out, field.precision);
+                appendUint32(out, field.scale);
+                appendUint8(out, field.nullable ? 1 : 0);
+                appendId(out, field.domain_id);
+            }
+            return out;
+        }
+
+        Status deserializeDomainFields(const std::string& blob,
+                                       std::vector<RecordField>& fields_out,
+                                       ErrorContext* ctx)
+        {
+            fields_out.clear();
+            if (blob.empty())
+            {
+                return Status::OK;
+            }
+
+            size_t offset = 0;
+            uint8_t version = 0;
+            if (!readUint8(blob, offset, version) || version != DOMAIN_FIELDS_VERSION)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain fields payload");
+                return Status::CORRUPTION;
+            }
+
+            uint32_t count = 0;
+            if (!readUint32(blob, offset, count))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain fields payload");
+                return Status::CORRUPTION;
+            }
+
+            fields_out.reserve(count);
+            for (uint32_t i = 0; i < count; i++)
+            {
+                std::string name;
+                uint32_t type = 0;
+                uint32_t precision = 0;
+                uint32_t scale = 0;
+                uint8_t nullable = 0;
+                ID domain_id;
+                if (!readString(blob, offset, name) ||
+                    !readUint32(blob, offset, type) ||
+                    !readUint32(blob, offset, precision) ||
+                    !readUint32(blob, offset, scale) ||
+                    !readUint8(blob, offset, nullable) ||
+                    !readId(blob, offset, domain_id))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain fields payload");
+                    return Status::CORRUPTION;
+                }
+                RecordField field;
+                field.name = std::move(name);
+                field.type = static_cast<DataType>(type);
+                field.precision = precision;
+                field.scale = scale;
+                field.nullable = nullable != 0;
+                field.domain_id = domain_id;
+                fields_out.push_back(std::move(field));
+            }
+
+            return Status::OK;
+        }
+
+        std::string serializeDomainEnumValues(const std::vector<EnumValue>& values)
+        {
+            if (values.empty())
+            {
+                return {};
+            }
+
+            std::string out;
+            appendUint8(out, DOMAIN_ENUM_VALUES_VERSION);
+            appendUint32(out, static_cast<uint32_t>(values.size()));
+            for (const auto& value : values)
+            {
+                appendString(out, value.label);
+                appendUint32(out, static_cast<uint32_t>(value.position));
+            }
+            return out;
+        }
+
+        Status deserializeDomainEnumValues(const std::string& blob,
+                                           std::vector<EnumValue>& values_out,
+                                           ErrorContext* ctx)
+        {
+            values_out.clear();
+            if (blob.empty())
+            {
+                return Status::OK;
+            }
+
+            size_t offset = 0;
+            uint8_t version = 0;
+            if (!readUint8(blob, offset, version) || version != DOMAIN_ENUM_VALUES_VERSION)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain enum values payload");
+                return Status::CORRUPTION;
+            }
+
+            uint32_t count = 0;
+            if (!readUint32(blob, offset, count))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain enum values payload");
+                return Status::CORRUPTION;
+            }
+
+            values_out.reserve(count);
+            for (uint32_t i = 0; i < count; i++)
+            {
+                std::string label;
+                uint32_t position = 0;
+                if (!readString(blob, offset, label) ||
+                    !readUint32(blob, offset, position))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain enum values payload");
+                    return Status::CORRUPTION;
+                }
+                values_out.emplace_back(label, static_cast<int32_t>(position));
+            }
 
             return Status::OK;
         }
@@ -3307,8 +3543,45 @@ namespace scratchbird::core
             }
         }
 
-        // TODO: Persist constraints, fields, enum_values to TOAST
-        // For now, constraints_oid, fields_oid, enum_values_oid remain 0
+        record->constraints_oid = 0;
+        std::string constraints_blob = serializeDomainConstraints(domain);
+        if (!constraints_blob.empty())
+        {
+            status = catalog->storeStringInToast(constraints_blob, xmin, record->constraints_oid, ctx);
+            if (status != Status::OK)
+            {
+                bp->unpinPage(domains_table_page_, false, ctx);
+                SET_ERROR_CONTEXT(ctx, status, "Failed to store domain constraints in TOAST");
+                return status;
+            }
+        }
+
+        record->fields_oid = 0;
+        std::string fields_blob = serializeDomainFields(domain.fields);
+        if (!fields_blob.empty())
+        {
+            status = catalog->storeStringInToast(fields_blob, xmin, record->fields_oid, ctx);
+            if (status != Status::OK)
+            {
+                bp->unpinPage(domains_table_page_, false, ctx);
+                SET_ERROR_CONTEXT(ctx, status, "Failed to store domain fields in TOAST");
+                return status;
+            }
+        }
+
+        record->enum_values_oid = 0;
+        std::string enum_values_blob = serializeDomainEnumValues(domain.enum_values);
+        if (!enum_values_blob.empty())
+        {
+            status = catalog->storeStringInToast(enum_values_blob, xmin,
+                                                 record->enum_values_oid, ctx);
+            if (status != Status::OK)
+            {
+                bp->unpinPage(domains_table_page_, false, ctx);
+                SET_ERROR_CONTEXT(ctx, status, "Failed to store domain enum values in TOAST");
+                return status;
+            }
+        }
 
         return bp->unpinPage(domains_table_page_, true, ctx);
     }
@@ -3442,8 +3715,65 @@ namespace scratchbird::core
                     blob.clear();
                 }
 
-                // Phase 3 Enhancement: Load constraints, fields, enum_values from TOAST
-                // Currently domain constraints are stored inline; TOAST support for large constraint lists
+                if (record->constraints_oid != 0)
+                {
+                    Status load_status = catalog->loadStringFromToast(record->constraints_oid,
+                                                                      xmin, blob, ctx);
+                    if (load_status != Status::OK)
+                    {
+                        bp->unpinPage(domains_table_page_, false, ctx);
+                        return load_status;
+                    }
+                    load_status = deserializeDomainConstraints(blob, info.constraints,
+                                                               info.variant_allowed_types, ctx);
+                    if (load_status != Status::OK)
+                    {
+                        bp->unpinPage(domains_table_page_, false, ctx);
+                        return load_status;
+                    }
+                    blob.clear();
+                }
+
+                if (record->fields_oid != 0)
+                {
+                    Status load_status = catalog->loadStringFromToast(record->fields_oid,
+                                                                      xmin, blob, ctx);
+                    if (load_status != Status::OK)
+                    {
+                        bp->unpinPage(domains_table_page_, false, ctx);
+                        return load_status;
+                    }
+                    load_status = deserializeDomainFields(blob, info.fields, ctx);
+                    if (load_status != Status::OK)
+                    {
+                        bp->unpinPage(domains_table_page_, false, ctx);
+                        return load_status;
+                    }
+                    blob.clear();
+                }
+
+                if (record->enum_values_oid != 0)
+                {
+                    Status load_status = catalog->loadStringFromToast(record->enum_values_oid,
+                                                                      xmin, blob, ctx);
+                    if (load_status != Status::OK)
+                    {
+                        bp->unpinPage(domains_table_page_, false, ctx);
+                        return load_status;
+                    }
+                    load_status = deserializeDomainEnumValues(blob, info.enum_values, ctx);
+                    if (load_status != Status::OK)
+                    {
+                        bp->unpinPage(domains_table_page_, false, ctx);
+                        return load_status;
+                    }
+                    blob.clear();
+                }
+
+                if (info.domain_type != DomainType::VARIANT)
+                {
+                    info.variant_allowed_types.clear();
+                }
 
                 domain_cache_[info.domain_id] = info;
                 domain_count_++;

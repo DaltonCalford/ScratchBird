@@ -13,8 +13,7 @@ Completed:
 - SHOW DOMAIN/GRANTS/CHECKS now use catalog lookups (constraints/permissions/domain manager) with redaction hooks.
 
 Partial / Outstanding:
-- Metadata visibility policy hooks (redaction levels, restricted enumeration) are still stubbed beyond basic body redaction.
-- Decision gate: finalize metadata redaction/visibility rules after Plan 03 role/priv enforcement is complete; until then, only missing-body redaction is guaranteed.
+- Metadata visibility policy hooks now enforce owner/superuser/privilege-based redaction for SHOW details; restricted enumeration is still partial outside SHOW GRANTS/CHECKS.
 - Emulated catalog views and runtime monitoring views are still pending.
 
 ## References

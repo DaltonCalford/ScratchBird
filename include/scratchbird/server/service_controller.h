@@ -26,6 +26,9 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/audit_logger.h"
+#include "scratchbird/core/security_quorum.h"
 #include "scratchbird/server/config_parser.h"
 #include "scratchbird/server/daemon.h"
 #include "scratchbird/network/socket_types.h"
@@ -126,6 +129,14 @@ struct ServiceConfig {
     // Statistics
     bool enable_statistics = true;
     uint16_t prometheus_port = 0;   // 0 = disabled
+
+    // Audit logging
+    core::AuditSinkConfig audit_sinks;
+
+    // Security
+    core::SecurityQuorumConfig security_quorum;
+    core::ConnectionContext::RoleSwitchPolicy role_switch_policy =
+        core::ConnectionContext::RoleSwitchPolicy::ERROR;
 
     // Behavior
     bool foreground = false;        // Run in foreground (don't daemonize)

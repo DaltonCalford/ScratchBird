@@ -45,13 +45,16 @@ enum class AuthProviderType {
 
 // User information returned by authentication provider
 struct AuthUserInfo {
+    ID user_id{};
     std::string username;
     std::string display_name;
     std::string email;
     std::vector<std::string> external_groups;  // Groups from external provider
     std::string external_id;                    // Provider-specific user ID
-    bool is_disabled;
-    bool is_locked;
+    bool is_disabled = false;
+    bool is_locked = false;
+    bool is_superuser = false;
+    ID authkey_id{};
 };
 
 /**
@@ -141,7 +144,8 @@ public:
  */
 class LocalAuthProvider : public AuthProvider {
 public:
-    explicit LocalAuthProvider(class CatalogManager* catalog);
+    explicit LocalAuthProvider(class CatalogManager* catalog,
+                               class AuditLogger* audit_logger = nullptr);
     ~LocalAuthProvider() override;
 
     AuthResult authenticate(
@@ -180,7 +184,7 @@ public:
 private:
     class CatalogManager* catalog_;
     class LoginAttemptTracker* login_tracker_;  // P0-2: Brute-force protection
-    class AuditLogger* audit_logger_;           // P0-3: Security audit logging
+    class AuditLogger* audit_logger_;           // P0-3: Security audit logging (non-owning)
 };
 
 /**
@@ -289,12 +293,14 @@ public:
     static std::unique_ptr<AuthProvider> create(
         AuthProviderType type,
         const std::string& config_json,
-        CatalogManager* catalog);
+        CatalogManager* catalog,
+        class AuditLogger* audit_logger = nullptr);
 
     /**
      * Get default provider (local auth)
      */
-    static std::unique_ptr<AuthProvider> createDefault(CatalogManager* catalog);
+    static std::unique_ptr<AuthProvider> createDefault(CatalogManager* catalog,
+                                                       class AuditLogger* audit_logger = nullptr);
 };
 
 } // namespace core

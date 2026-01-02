@@ -2,11 +2,13 @@
 
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/security_quorum.h"
 #include <unordered_map>
 #include <list>
 #include <optional>
 #include <chrono>
 #include <shared_mutex>
+#include <functional>
 
 namespace scratchbird::core
 {
@@ -123,7 +125,9 @@ namespace scratchbird::core
          * Thread-safe: Single writer at a time
          * Note: If cache is full, least recently used entry is evicted
          */
-        void insert(const CacheKey &key, bool has_permission);
+        void insert(const CacheKey &key, bool has_permission,
+                    uint64_t policy_epoch_global = 0,
+                    uint64_t policy_epoch_table = 0);
 
         /**
          * Check permission with optional cache bypass for security-critical operations
@@ -151,6 +155,16 @@ namespace scratchbird::core
                            const CacheKey &key,
                            PermissionCheckMode mode,
                            ErrorContext *ctx);
+
+        /**
+         * Configure security quorum behavior for cache usage
+         */
+        void configureQuorum(const SecurityQuorumConfig &config);
+
+        /**
+         * Provide a quorum status provider (returns true/false or nullopt if unknown)
+         */
+        void setQuorumStatusProvider(std::function<std::optional<bool>()> provider);
 
         /**
          * Invalidate all cache entries for a user
@@ -223,11 +237,15 @@ namespace scratchbird::core
             bool has_permission;
             std::chrono::steady_clock::time_point timestamp;
             size_t access_count;
+            uint64_t policy_epoch_global;
+            uint64_t policy_epoch_table;
 
-            CacheEntry(bool perm)
+            CacheEntry(bool perm, uint64_t epoch_global, uint64_t epoch_table)
                 : has_permission(perm),
                   timestamp(std::chrono::steady_clock::now()),
-                  access_count(1)
+                  access_count(1),
+                  policy_epoch_global(epoch_global),
+                  policy_epoch_table(epoch_table)
             {
             }
         };
@@ -249,6 +267,9 @@ namespace scratchbird::core
         // Thread safety (reader-writer lock)
         mutable std::shared_mutex mutex_;
 
+        // Quorum gate for cache usage
+        SecurityQuorum quorum_;
+
         // Helper: Remove entry from LRU list
         void removeFromLRU(const CacheKey &key);
 
@@ -257,6 +278,15 @@ namespace scratchbird::core
 
         // Helper: Check if entry is expired
         bool isExpired(const CacheEntry &entry) const;
+
+        // Helper: Check cached entry with policy epochs
+        std::optional<bool> lookupWithEpoch(const CacheKey &key,
+                                            uint64_t policy_epoch_global,
+                                            uint64_t policy_epoch_table);
+
+        bool isEpochMismatch(const CacheEntry &entry,
+                             uint64_t policy_epoch_global,
+                             uint64_t policy_epoch_table) const;
     };
 
 } // namespace scratchbird::core

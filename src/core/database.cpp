@@ -186,6 +186,8 @@ namespace scratchbird::core
                 return s;
             }
 
+            connection->setRoleSwitchPolicy(role_switch_policy_);
+
             connection_out = std::move(connection);
             return Status::OK;
         }

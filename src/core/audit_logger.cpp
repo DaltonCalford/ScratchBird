@@ -1,16 +1,161 @@
 #include "scratchbird/core/audit_logger.h"
 #include "scratchbird/core/catalog_manager.h"
-#include <chrono>
+#include "scratchbird/core/structured_logger.h"
+#include "scratchbird/core/logger.h"
+
 #include <algorithm>
+#include <chrono>
+#include <fstream>
+#include <iomanip>
+#include <limits>
+#include <sstream>
+
+#include <openssl/sha.h>
 
 namespace scratchbird {
 namespace core {
+
+namespace {
+
+void appendBytes(std::vector<uint8_t>& out, const void* data, size_t len)
+{
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    out.insert(out.end(), bytes, bytes + len);
+}
+
+void appendUint64(std::vector<uint8_t>& out, uint64_t value)
+{
+    for (int i = 7; i >= 0; --i)
+    {
+        out.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFF));
+    }
+}
+
+void appendUint32(std::vector<uint8_t>& out, uint32_t value)
+{
+    for (int i = 3; i >= 0; --i)
+    {
+        out.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFF));
+    }
+}
+
+void appendUint16(std::vector<uint8_t>& out, uint16_t value)
+{
+    out.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+    out.push_back(static_cast<uint8_t>(value & 0xFF));
+}
+
+void appendUint8(std::vector<uint8_t>& out, uint8_t value)
+{
+    out.push_back(value);
+}
+
+void appendString(std::vector<uint8_t>& out, const std::string& value)
+{
+    appendUint32(out, static_cast<uint32_t>(value.size()));
+    if (!value.empty())
+    {
+        appendBytes(out, value.data(), value.size());
+    }
+}
+
+void appendId(std::vector<uint8_t>& out, const ID& id)
+{
+    appendBytes(out, id.bytes.data(), id.bytes.size());
+}
+
+std::string hashToHex(const std::array<uint8_t, 32>& hash)
+{
+    std::ostringstream ss;
+    ss << std::hex << std::setfill('0');
+    for (uint8_t byte : hash)
+    {
+        ss << std::setw(2) << static_cast<unsigned>(byte);
+    }
+    return ss.str();
+}
+
+bool matchesQuery(const AuditEvent& event, const AuditQuery& query)
+{
+    if (query.start_time > 0 && event.timestamp < query.start_time)
+    {
+        return false;
+    }
+    if (query.end_time > 0 && event.timestamp > query.end_time)
+    {
+        return false;
+    }
+    if (query.user_id.has_value())
+    {
+        if (std::memcmp(&event.user_id, &query.user_id.value(), sizeof(ID)) != 0)
+        {
+            return false;
+        }
+    }
+    if (query.session_id.has_value())
+    {
+        if (std::memcmp(&event.session_id, &query.session_id.value(), sizeof(ID)) != 0)
+        {
+            return false;
+        }
+    }
+    if (query.authkey_id.has_value())
+    {
+        if (std::memcmp(&event.authkey_id, &query.authkey_id.value(), sizeof(ID)) != 0)
+        {
+            return false;
+        }
+    }
+    if (query.username.has_value() && event.username != query.username.value())
+    {
+        return false;
+    }
+    if (query.event_type.has_value() && event.event_type != query.event_type.value())
+    {
+        return false;
+    }
+    if (!query.object_name.empty() && event.object_name != query.object_name)
+    {
+        return false;
+    }
+    if (query.success.has_value() && event.success != query.success.value())
+    {
+        return false;
+    }
+
+    return true;
+}
+
+} // namespace
 
 AuditLogger::AuditLogger(CatalogManager* catalog)
     : catalog_(catalog),
       next_event_id_(1)
 {
     buffer_.reserve(MAX_BUFFER_SIZE);
+    last_hash_.fill(0);
+
+    if (catalog_)
+    {
+        ErrorContext ctx;
+        uint64_t last_event_id = 0;
+        std::array<uint8_t, 32> last_hash;
+        Status status = catalog_->getAuditLogTail(last_event_id, last_hash, &ctx);
+        if (status == Status::OK)
+        {
+            if (last_event_id >= next_event_id_)
+            {
+                next_event_id_ = last_event_id + 1;
+            }
+            last_hash_ = last_hash;
+            tail_loaded_ = true;
+        }
+        else
+        {
+            LOG_WARNING(GENERAL, "Audit logger failed to load audit log tail: %s",
+                        ctx.message.c_str());
+        }
+    }
 }
 
 AuditLogger::~AuditLogger()
@@ -27,51 +172,216 @@ uint64_t AuditLogger::getCurrentTimeMs() const
     return std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
 }
 
+void AuditLogger::configureSinks(const AuditSinkConfig& config)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    bool was_catalog_enabled = sink_config_.enable_catalog;
+    sink_config_ = config;
+    if (!was_catalog_enabled && sink_config_.enable_catalog)
+    {
+        tail_loaded_ = false;
+    }
+}
+
+void AuditLogger::addBroadcastSink(const std::function<void(const AuditEvent&)>& sink)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    broadcast_sinks_.push_back(sink);
+}
+
 Status AuditLogger::logEvent(AuditEvent& event, ErrorContext* ctx)
 {
     std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!tail_loaded_ && catalog_ && sink_config_.enable_catalog)
+    {
+        uint64_t last_event_id = 0;
+        std::array<uint8_t, 32> last_hash;
+        Status status = catalog_->getAuditLogTail(last_event_id, last_hash, ctx);
+        if (status == Status::OK)
+        {
+            if (last_event_id >= next_event_id_)
+            {
+                next_event_id_ = last_event_id + 1;
+            }
+            last_hash_ = last_hash;
+            tail_loaded_ = true;
+        }
+    }
 
     // Fill in automatic fields
     event.event_id = next_event_id_++;
     event.timestamp = getCurrentTimeMs();
 
+    AuditBufferEntry entry;
+    entry.event = event;
+    entry.hash_prev = last_hash_;
+    entry.hash_curr = computeHash(event, entry.hash_prev);
+    last_hash_ = entry.hash_curr;
+
     // Add to buffer
-    buffer_.push_back(event);
+    buffer_.push_back(entry);
 
     // Flush if buffer is full (use unlocked version since we hold mutex)
-    if (buffer_.size() >= MAX_BUFFER_SIZE) {
+    if ((buffer_.size() - flush_cursor_) >= MAX_BUFFER_SIZE)
+    {
         return flushUnlocked(ctx);
     }
 
     return Status::OK;
 }
 
-Status AuditLogger::writeEventToCatalog(const AuditEvent& event, ErrorContext* ctx)
+Status AuditLogger::writeEventToCatalog(const AuditBufferEntry& entry, ErrorContext* ctx)
 {
-    if (!catalog_) {
+    if (!catalog_ || !sink_config_.enable_catalog)
+    {
         // No catalog available - events only in memory
         return Status::OK;
     }
 
-    // Phase 4 Enhancement (P0-3 Phase 2): Implement catalog table write
-    // For now, just store in memory buffer (events not persisted)
-    // Future: Write to sb_audit_log catalog table
+    return catalog_->appendAuditLog(entry.event, entry.hash_prev, entry.hash_curr, ctx);
+}
+
+Status AuditLogger::writeEventToFile(const AuditBufferEntry& entry, ErrorContext* ctx)
+{
+    if (!sink_config_.enable_file)
+    {
+        return Status::OK;
+    }
+
+    if (sink_config_.file_path.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                         "Audit file sink enabled but file path is empty");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    std::ofstream out(sink_config_.file_path, std::ios::app);
+    if (!out.is_open())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open audit log file sink");
+        return Status::IO_ERROR;
+    }
+
+    const AuditEvent& event = entry.event;
+    std::string event_type = getEventTypeName(event.event_type);
+
+    out << "{"
+        << "\"event_id\":" << event.event_id << ","
+        << "\"timestamp\":" << event.timestamp << ","
+        << "\"event_type\":\"" << StructuredLogEntry::escapeJson(event_type) << "\","
+        << "\"success\":" << (event.success ? "true" : "false") << ","
+        << "\"user_id\":\"" << event.user_id.toString() << "\","
+        << "\"role_id\":\"" << event.role_id.toString() << "\","
+        << "\"session_id\":\"" << event.session_id.toString() << "\","
+        << "\"authkey_id\":\"" << event.authkey_id.toString() << "\","
+        << "\"username\":\"" << StructuredLogEntry::escapeJson(event.username) << "\","
+        << "\"target_username\":\"" << StructuredLogEntry::escapeJson(event.target_username) << "\","
+        << "\"object_type\":\"" << StructuredLogEntry::escapeJson(event.object_type) << "\","
+        << "\"object_name\":\"" << StructuredLogEntry::escapeJson(event.object_name) << "\","
+        << "\"object_id\":\"" << event.object_id.toString() << "\","
+        << "\"details\":\"" << StructuredLogEntry::escapeJson(event.details) << "\","
+        << "\"ip_address\":\"" << StructuredLogEntry::escapeJson(event.ip_address) << "\","
+        << "\"application_name\":\"" << StructuredLogEntry::escapeJson(event.application_name) << "\","
+        << "\"hash_prev\":\"" << hashToHex(entry.hash_prev) << "\","
+        << "\"hash_curr\":\"" << hashToHex(entry.hash_curr) << "\""
+        << "}\n";
+
+    if (!out.good())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write audit log file sink");
+        return Status::IO_ERROR;
+    }
 
     return Status::OK;
+}
+
+void AuditLogger::broadcastEvent(const AuditEvent& event)
+{
+    if (!sink_config_.enable_broadcast)
+    {
+        return;
+    }
+
+    for (const auto& sink : broadcast_sinks_)
+    {
+        if (sink)
+        {
+            try
+            {
+                sink(event);
+            }
+            catch (const std::exception& ex)
+            {
+                LOG_WARNING(GENERAL, "Audit broadcast sink failed: %s", ex.what());
+            }
+        }
+    }
+}
+
+std::array<uint8_t, 32> AuditLogger::computeHash(const AuditEvent& event,
+                                                 const std::array<uint8_t, 32>& prev_hash) const
+{
+    std::vector<uint8_t> data;
+    data.reserve(256 + event.username.size() + event.target_username.size() +
+                 event.object_type.size() + event.object_name.size() +
+                 event.details.size() + event.ip_address.size() +
+                 event.application_name.size());
+
+    appendBytes(data, prev_hash.data(), prev_hash.size());
+    appendUint64(data, event.event_id);
+    appendUint64(data, event.timestamp);
+    appendUint16(data, static_cast<uint16_t>(event.event_type));
+    appendUint8(data, event.success ? 1 : 0);
+    appendId(data, event.user_id);
+    appendId(data, event.role_id);
+    appendId(data, event.target_user_id);
+    appendId(data, event.object_id);
+    appendId(data, event.session_id);
+    appendId(data, event.authkey_id);
+    appendString(data, event.username);
+    appendString(data, event.target_username);
+    appendString(data, event.object_type);
+    appendString(data, event.object_name);
+    appendString(data, event.details);
+    appendString(data, event.ip_address);
+    appendString(data, event.application_name);
+
+    std::array<uint8_t, 32> hash{};
+    SHA256(data.data(), data.size(), hash.data());
+    return hash;
 }
 
 Status AuditLogger::flushUnlocked(ErrorContext* ctx)
 {
     // Internal flush method - caller must hold mutex_
-    for (const auto& event : buffer_) {
-        Status status = writeEventToCatalog(event, ctx);
-        if (status != Status::OK) {
+    size_t start_index = flush_cursor_;
+
+    for (size_t i = start_index; i < buffer_.size(); ++i)
+    {
+        const auto& entry = buffer_[i];
+        Status status = writeEventToCatalog(entry, ctx);
+        if (status != Status::OK)
+        {
             return status;
         }
+        status = writeEventToFile(entry, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        broadcastEvent(entry.event);
     }
 
-    // Keep events in buffer for queries (in-memory for Alpha)
-    // In production, this would be cleared after writing to catalog
+    if (sink_config_.keep_in_memory)
+    {
+        flush_cursor_ = buffer_.size();
+    }
+    else
+    {
+        buffer_.clear();
+        flush_cursor_ = 0;
+    }
 
     return Status::OK;
 }
@@ -91,71 +401,63 @@ Status AuditLogger::queryAuditLog(
 
     events_out.clear();
 
-    // Filter events from buffer (in-memory for Alpha)
     std::vector<AuditEvent> matching_events;
+    bool use_catalog = sink_config_.enable_catalog && catalog_;
 
-    for (const auto& event : buffer_) {
-        // Time range filter
-        if (query.start_time > 0 && event.timestamp < query.start_time) {
-            continue;
-        }
-        if (query.end_time > 0 && event.timestamp > query.end_time) {
-            continue;
-        }
+    if (use_catalog)
+    {
+        AuditQuery catalog_query = query;
+        catalog_query.offset = 0;
+        catalog_query.limit = std::numeric_limits<uint32_t>::max();
 
-        // User ID filter
-        if (query.user_id.has_value()) {
-            if (std::memcmp(&event.user_id, &query.user_id.value(), sizeof(ID)) != 0) {
-                continue;
-            }
+        std::vector<AuditEvent> catalog_events;
+        Status status = catalog_->queryAuditLog(catalog_query, catalog_events, ctx);
+        if (status != Status::OK)
+        {
+            return status;
         }
-
-        // Username filter
-        if (query.username.has_value() && event.username != query.username.value()) {
-            continue;
-        }
-
-        // Event type filter
-        if (query.event_type.has_value() && event.event_type != query.event_type.value()) {
-            continue;
-        }
-
-        // Object name filter
-        if (!query.object_name.empty() && event.object_name != query.object_name) {
-            continue;
-        }
-
-        // Success filter
-        if (query.success.has_value() && event.success != query.success.value()) {
-            continue;
-        }
-
-        matching_events.push_back(event);
+        matching_events.insert(matching_events.end(), catalog_events.begin(),
+                               catalog_events.end());
     }
 
-    // Sort by timestamp, with event_id as secondary key for consistent ordering
-    // when timestamps are equal (events logged within same millisecond)
-    if (query.descending) {
-        std::sort(matching_events.begin(), matching_events.end(),
-                 [](const AuditEvent& a, const AuditEvent& b) {
-                     if (a.timestamp != b.timestamp)
-                         return a.timestamp > b.timestamp;
-                     return a.event_id > b.event_id;  // Higher ID = more recent
-                 });
-    } else {
-        std::sort(matching_events.begin(), matching_events.end(),
-                 [](const AuditEvent& a, const AuditEvent& b) {
-                     if (a.timestamp != b.timestamp)
-                         return a.timestamp < b.timestamp;
-                     return a.event_id < b.event_id;  // Lower ID = older
-                 });
+    size_t start_index = use_catalog ? flush_cursor_ : 0;
+    for (size_t i = start_index; i < buffer_.size(); ++i)
+    {
+        const auto& event = buffer_[i].event;
+        if (matchesQuery(event, query))
+        {
+            matching_events.push_back(event);
+        }
     }
 
-    // Apply pagination
+    if (query.descending)
+    {
+        std::sort(matching_events.begin(), matching_events.end(),
+                  [](const AuditEvent& a, const AuditEvent& b) {
+                      if (a.timestamp != b.timestamp)
+                      {
+                          return a.timestamp > b.timestamp;
+                      }
+                      return a.event_id > b.event_id;
+                  });
+    }
+    else
+    {
+        std::sort(matching_events.begin(), matching_events.end(),
+                  [](const AuditEvent& a, const AuditEvent& b) {
+                      if (a.timestamp != b.timestamp)
+                      {
+                          return a.timestamp < b.timestamp;
+                      }
+                      return a.event_id < b.event_id;
+                  });
+    }
+
     size_t start_idx = std::min(static_cast<size_t>(query.offset), matching_events.size());
     size_t end_idx = std::min(start_idx + query.limit, matching_events.size());
-
-    for (size_t i = start_idx; i < end_idx; i++) {
+    events_out.reserve(end_idx - start_idx);
+    for (size_t i = start_idx; i < end_idx; ++i)
+    {
         events_out.push_back(matching_events[i]);
     }
 

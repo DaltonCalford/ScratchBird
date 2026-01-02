@@ -154,6 +154,17 @@ namespace scratchbird::core
         const ID& protocolSessionId() const { return protocol_session_id_; }
         void setProtocolSessionId(const ID& id) { protocol_session_id_ = id; }
 
+        // Session/AuthKey binding (Plan 03)
+        const ID& sessionId() const { return session_id_; }
+        const ID& authKeyId() const { return authkey_id_; }
+        const std::string& emulationMode() const { return emulation_mode_; }
+        uint64_t policyEpochGlobal() const { return policy_epoch_global_; }
+        uint64_t policyEpochTable() const { return policy_epoch_table_; }
+        void setSessionContext(const ID& session_id, const ID& authkey_id,
+                               const std::string& emulation_mode,
+                               uint64_t policy_epoch_global,
+                               uint64_t policy_epoch_table);
+
         // Security context queries (Phase 2 - Security System)
         const ID& getCurrentUserId() const { return current_user_id_; }
         const ID& getActiveRoleId() const { return active_role_id_; }
@@ -178,6 +189,14 @@ namespace scratchbird::core
         void set_dialect_tag(const std::string& tag) { dialect_tag_ = tag; }
 
         // Security context types (Phase 3.1 - SQL Object Permissions)
+        enum class RoleSwitchPolicy : uint8_t
+        {
+            DEFER = 0,   // Stage until next transaction (legacy behavior)
+            COMMIT = 1,  // Commit before switching roles
+            ROLLBACK = 2,// Rollback before switching roles
+            ERROR = 3    // Reject role switch during active transaction
+        };
+
         enum class SecurityMode : uint8_t
         {
             INVOKER = 0,  // Execute with caller's privileges (default)
@@ -191,12 +210,20 @@ namespace scratchbird::core
             bool is_superuser;         // Superuser flag
             SecurityMode mode;         // DEFINER or INVOKER
             ID object_id;              // Current procedure/function/view ID
+            ID session_id;             // Bound session UUID
+            ID authkey_id;             // Bound AuthKey UUID
+            std::string emulation_mode; // Emulation mode/dialect tag
+            uint64_t policy_epoch_global = 0;
+            uint64_t policy_epoch_table = 0;
         };
 
         // Security context setters (called during authentication and SET ROLE)
         void setCurrentUser(const ID& user_id, bool is_superuser);
         void setActiveRole(const ID& role_id);
         void clearActiveRole();
+
+        void setRoleSwitchPolicy(RoleSwitchPolicy policy);
+        RoleSwitchPolicy roleSwitchPolicy() const { return role_switch_policy_; }
 
         // Security context stack methods (Phase 3.1 - SQL Object Permissions)
         // Push new security context (entering procedure/function/view)
@@ -392,9 +419,30 @@ namespace scratchbird::core
         bool autocommit_mode_ = false;   // Autocommit mode (session-level)
         bool autocommit_suspended_ = false;  // Explicit transaction block active
 
+        RoleSwitchPolicy role_switch_policy_ = RoleSwitchPolicy::ERROR;
+
         // Attachment/session identifiers (minimal attachment model placeholder)
         ID attachment_id_;
         ID protocol_session_id_;
+        ID session_id_;
+        ID authkey_id_;
+        std::string emulation_mode_ = "native";
+        uint64_t policy_epoch_global_ = 0;
+        uint64_t policy_epoch_table_ = 0;
+
+        bool security_context_initialized_ = false;
+        bool security_context_staged_ = false;
+        bool pending_user_change_ = false;
+        bool pending_role_change_ = false;
+        bool pending_session_change_ = false;
+        ID pending_user_id_;
+        ID pending_role_id_;
+        bool pending_is_superuser_ = false;
+        ID pending_session_id_;
+        ID pending_authkey_id_;
+        std::string pending_emulation_mode_;
+        uint64_t pending_policy_epoch_global_ = 0;
+        uint64_t pending_policy_epoch_table_ = 0;
 
         // Session settings (Firebird ISQL compatibility)
         uint8_t sql_dialect_ = 3;             // SQL dialect (1, 2, or 3) - default 3 (modern)

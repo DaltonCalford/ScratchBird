@@ -129,6 +129,65 @@ void ServiceConfig::loadFromParser(const ConfigParser& parser) {
         prometheus_port = static_cast<uint16_t>(stats->getInt("prometheus_port", prometheus_port));
     }
 
+    // Audit section
+    const ConfigSection* audit = parser.section("audit");
+    if (audit) {
+        audit_sinks.enable_catalog = audit->getBool("sink_catalog", audit_sinks.enable_catalog);
+        audit_sinks.enable_file = audit->getBool("sink_file", audit_sinks.enable_file);
+        audit_sinks.enable_broadcast = audit->getBool("sink_broadcast",
+                                                     audit_sinks.enable_broadcast);
+        if (audit->has("sink_kafka")) {
+            audit_sinks.enable_broadcast = audit->getBool("sink_kafka",
+                                                         audit_sinks.enable_broadcast);
+        }
+        audit_sinks.keep_in_memory = audit->getBool("keep_in_memory",
+                                                    audit_sinks.keep_in_memory);
+        audit_sinks.file_path = audit->getString("file_path", audit_sinks.file_path);
+    }
+
+    // Security section
+    const ConfigSection* security = parser.section("security");
+    if (security) {
+        if (security->has("security_quorum_n")) {
+            security_quorum.required = static_cast<uint32_t>(
+                security->getInt("security_quorum_n", security_quorum.required));
+        } else {
+            security_quorum.required = static_cast<uint32_t>(
+                security->getInt("quorum_n", security_quorum.required));
+        }
+
+        if (security->has("security_quorum_m")) {
+            security_quorum.total = static_cast<uint32_t>(
+                security->getInt("security_quorum_m", security_quorum.total));
+        } else {
+            security_quorum.total = static_cast<uint32_t>(
+                security->getInt("quorum_m", security_quorum.total));
+        }
+
+        std::string failure_mode = security->getString("quorum_failure_mode", "fail_open");
+        if (security->has("security_quorum_failure_mode")) {
+            failure_mode = security->getString("security_quorum_failure_mode", failure_mode);
+        }
+        if (failure_mode == "fail_closed") {
+            security_quorum.failure_mode = core::QuorumFailureMode::FAIL_CLOSED;
+        } else if (failure_mode == "require_remote") {
+            security_quorum.failure_mode = core::QuorumFailureMode::REQUIRE_REMOTE;
+        } else {
+            security_quorum.failure_mode = core::QuorumFailureMode::FAIL_OPEN;
+        }
+
+        std::string role_action = security->getString("role_switch_default_action", "error");
+        if (role_action == "commit") {
+            role_switch_policy = core::ConnectionContext::RoleSwitchPolicy::COMMIT;
+        } else if (role_action == "rollback") {
+            role_switch_policy = core::ConnectionContext::RoleSwitchPolicy::ROLLBACK;
+        } else if (role_action == "defer") {
+            role_switch_policy = core::ConnectionContext::RoleSwitchPolicy::DEFER;
+        } else {
+            role_switch_policy = core::ConnectionContext::RoleSwitchPolicy::ERROR;
+        }
+    }
+
     // Update daemon options
     daemon_options.pid_file = pid_file;
     daemon_options.shutdown_timeout_sec = shutdown_timeout_sec;
@@ -529,6 +588,14 @@ core::Status ServiceController::openDatabase(const std::string& name, const std:
     if (status != core::Status::OK) {
         return status;
     }
+
+    if (database->audit_logger()) {
+        database->audit_logger()->configureSinks(config_.audit_sinks);
+    }
+    if (database->permission_cache()) {
+        database->permission_cache()->configureQuorum(config_.security_quorum);
+    }
+    database->setRoleSwitchPolicy(config_.role_switch_policy);
 
     databases_.push_back({name, path, std::move(database)});
     stats_.active_databases = static_cast<uint32_t>(databases_.size());

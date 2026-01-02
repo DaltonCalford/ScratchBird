@@ -8,8 +8,9 @@
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/query_compiler_v2.h"  // Parser V2 is now the only parser
 #include "scratchbird/core/catalog_manager.h"
-#include "scratchbird/core/password_hash.h"
 #include "scratchbird/core/types.h"
+#include "scratchbird/core/auth_provider.h"
+#include "scratchbird/core/audit_logger.h"
 
 #include <cstring>
 #include <sstream>
@@ -119,6 +120,12 @@ core::Status ServerSession::run() {
         }
     }
 
+    static const core::ID zero_id{};
+    if (database_ && database_->catalog_manager() && session_id_uuid_ != zero_id) {
+        core::ErrorContext close_ctx;
+        database_->catalog_manager()->closeSession(session_id_uuid_, &close_ctx);
+    }
+
     state_ = SessionState::CLOSED;
     return core::Status::OK;
 }
@@ -220,44 +227,91 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
     }
 
     // Attempt authentication
-    core::ID user_id;
-    bool is_superuser = false;
-    bool success = authenticate(username, password, user_id, is_superuser);
+    core::AuthUserInfo user_info;
+    std::string auth_error;
+    core::AuthResult auth_result = authenticate(username, password, user_info, auth_error);
 
-    if (success) {
-        username_ = username;
+    if (auth_result == core::AuthResult::SUCCESS) {
+        username_ = user_info.username.empty() ? username : user_info.username;
         state_ = SessionState::AUTHENTICATED;
 
         // Create connection context
-        database_->connect(conn_ctx_, ctx);
-        if (conn_ctx_) {
-            // Preserve the protocol session UUID for dormant reattach diagnostics.
-            core::ID protocol_session_id;
-            std::memcpy(protocol_session_id.bytes.data(), session_id_, 16);
-            conn_ctx_->setProtocolSessionId(protocol_session_id);
-
-            // Set user with ID and superuser flag
-            conn_ctx_->setCurrentUser(user_id, is_superuser);
-            executor_->setConnectionContext(conn_ctx_.get());
+        core::Status connect_status = database_->connect(conn_ctx_, ctx);
+        if (connect_status != core::Status::OK || !conn_ctx_) {
+            sendError("Failed to initialize connection context");
+            return connect_status;
         }
+
+        // Preserve the protocol session UUID for dormant reattach diagnostics.
+        core::ID protocol_session_id;
+        std::memcpy(protocol_session_id.bytes.data(), session_id_, 16);
+        conn_ctx_->setProtocolSessionId(protocol_session_id);
+
+        // Set user with ID and superuser flag
+        conn_ctx_->setCurrentUser(user_info.user_id, user_info.is_superuser);
+
+        // Create and bind catalog session
+        auto* catalog = database_->catalog_manager();
+        if (catalog) {
+            core::CatalogManager::SessionInfo session_info;
+            core::Status session_status = catalog->createSession(
+                user_info.user_id, user_info.authkey_id, conn_ctx_->emulationMode(),
+                session_info, ctx);
+            if (session_status != core::Status::OK) {
+                sendError("Failed to create session");
+                return session_status;
+            }
+
+            session_id_uuid_ = session_info.session_id;
+            authkey_id_ = user_info.authkey_id;
+
+            conn_ctx_->setCurrentSchemaId(session_info.current_schema_id);
+            conn_ctx_->setSessionContext(session_info.session_id,
+                                         user_info.authkey_id,
+                                         session_info.emulation_mode,
+                                         session_info.policy_epoch_global,
+                                         session_info.policy_epoch_table);
+        } else {
+            authkey_id_ = user_info.authkey_id;
+            session_id_uuid_ = core::generateUuidV7();
+            conn_ctx_->setSessionContext(session_id_uuid_,
+                                         authkey_id_,
+                                         conn_ctx_->emulationMode(),
+                                         0,
+                                         0);
+        }
+
+        executor_->setConnectionContext(conn_ctx_.get());
 
         // Fire ON CONNECT database triggers (Firebird-style)
         fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent::ON_CONNECT);
 
+        // Audit login success with session/authkey context
+        auto* audit_logger = database_->audit_logger();
+        if (audit_logger) {
+            core::AuditEvent event = core::AuditLogger::createLoginSuccessEvent(
+                user_info.user_id, username_);
+            event.session_id = session_id_uuid_;
+            event.authkey_id = authkey_id_;
+            core::ErrorContext audit_ctx;
+            audit_logger->logEvent(event, &audit_ctx);
+        }
+
         // Send success response (use first 4 bytes of UUID as uint32 for wire protocol)
         uint32_t user_id_wire = 0;
-        std::memcpy(&user_id_wire, user_id.bytes.data(), std::min<size_t>(4, user_id.bytes.size()));
+        std::memcpy(&user_id_wire, user_info.user_id.bytes.data(),
+                    std::min<size_t>(4, user_info.user_id.bytes.size()));
         protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(true, user_id_wire, "");
         return protocol_session_->sendMessage(response, ctx);
-    } else {
-        stats_.queries_failed++;
-
-        // Send failure response
-        protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
-            false, 0, "Authentication failed");
-        protocol_session_->sendMessage(response, ctx);
-        return core::Status::INVALID_PASSWORD;
     }
+
+    stats_.queries_failed++;
+
+    // Send failure response
+    protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+        false, 0, "Authentication failed");
+    protocol_session_->sendMessage(response, ctx);
+    return core::Status::INVALID_PASSWORD;
 }
 
 core::Status ServerSession::handleDisconnect(const protocol::Message& msg, core::ErrorContext* ctx) {
@@ -276,6 +330,12 @@ core::Status ServerSession::handleDisconnect(const protocol::Message& msg, core:
             stats_.transactions_rolled_back++;
             conn_ctx_.reset();
         }
+    }
+
+    // Close catalog session
+    static const core::ID zero_id{};
+    if (database_ && database_->catalog_manager() && session_id_uuid_ != zero_id) {
+        database_->catalog_manager()->closeSession(session_id_uuid_, ctx);
     }
 
     state_ = SessionState::CLOSED;
@@ -663,74 +723,30 @@ core::Status ServerSession::sendError(const std::string& message,
     return protocol_session_->sendMessage(error_msg, ctx);
 }
 
-bool ServerSession::authenticate(const std::string& username, const std::string& password,
-                                  core::ID& user_id, bool& is_superuser) {
-    // Default values
-    user_id = core::ID{};
-    is_superuser = false;
-
+core::AuthResult ServerSession::authenticate(const std::string& username,
+                                            const std::string& password,
+                                            core::AuthUserInfo& user_info,
+                                            std::string& error_msg_out) {
     // Get catalog manager from database
-    auto* catalog = database_->catalog_manager();
+    auto* catalog = database_ ? database_->catalog_manager() : nullptr;
     if (!catalog) {
         // No catalog manager - allow any authentication (development mode)
-        // Generate a default user ID and set superuser
-        user_id = core::generateUuidV7();
-        is_superuser = true;
-        return true;
+        user_info.user_id = core::generateUuidV7();
+        user_info.username = username;
+        user_info.display_name = username;
+        user_info.is_superuser = true;
+        user_info.authkey_id = core::generateUuidV7();
+        return core::AuthResult::SUCCESS;
     }
 
-    // Look up user in catalog
-    core::ErrorContext ctx;
-    core::CatalogManager::UserInfo user;
-    core::Status status = catalog->getUserByName(username, user, &ctx);
-
-    if (status != core::Status::OK) {
-        // User not found - check if this is a fresh database with only the SYSTEM user
-        // In that case, allow local authentication bypass for initial setup
-        std::vector<core::CatalogManager::UserInfo> all_users;
-        core::Status list_status = catalog->listUsers(all_users, &ctx);
-
-        // Check if the only user is SYSTEM (bootstrap state)
-        bool only_system_user = false;
-        if (list_status == core::Status::OK) {
-            if (all_users.empty()) {
-                only_system_user = true;  // No users at all
-            } else if (all_users.size() == 1 && all_users[0].username == "SYSTEM") {
-                only_system_user = true;  // Only SYSTEM user exists
-            }
-        }
-
-        if (only_system_user) {
-            // Fresh database with no real users (only SYSTEM) - allow bootstrap authentication
-            // Grant superuser access to allow initial security profile creation
-            user_id = core::generateUuidV7();
-            is_superuser = true;
-            return true;
-        }
-
-        // Real users exist but this one wasn't found - authentication fails
-        return false;
+    auto* audit_logger = database_ ? database_->audit_logger() : nullptr;
+    auto provider = core::AuthProviderFactory::createDefault(catalog, audit_logger);
+    if (!provider) {
+        error_msg_out = "Authentication provider unavailable";
+        return core::AuthResult::PROVIDER_ERROR;
     }
 
-    // Found the user - check if it's the SYSTEM user (cannot login directly)
-    if (user.username == "SYSTEM") {
-        return false;
-    }
-
-    // Check if user is active
-    if (!user.is_active) {
-        return false;
-    }
-
-    // Verify password using PasswordHash
-    if (!core::PasswordHash::verifyPassword(password, user.password_hash)) {
-        return false;
-    }
-
-    // Authentication successful - set output parameters
-    user_id = user.user_id;
-    is_superuser = user.is_superuser;
-    return true;
+    return provider->authenticate(username, password, user_info, error_msg_out);
 }
 
 bool ServerSession::fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent event) {

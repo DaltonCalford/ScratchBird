@@ -12,10 +12,10 @@ namespace core {
 // LocalAuthProvider Implementation (Alpha - Fully Implemented)
 // ============================================================================
 
-LocalAuthProvider::LocalAuthProvider(CatalogManager* catalog)
+LocalAuthProvider::LocalAuthProvider(CatalogManager* catalog, AuditLogger* audit_logger)
     : catalog_(catalog),
       login_tracker_(nullptr),
-      audit_logger_(nullptr)
+      audit_logger_(audit_logger)
 {
     if (catalog_ == nullptr) {
         throw std::invalid_argument("LocalAuthProvider: catalog cannot be null");
@@ -25,17 +25,12 @@ LocalAuthProvider::LocalAuthProvider(CatalogManager* catalog)
     LockoutPolicy policy;
     login_tracker_ = new LoginAttemptTracker(policy);
 
-    // P0-3: Initialize audit logger
-    audit_logger_ = new AuditLogger(catalog_);
 }
 
 LocalAuthProvider::~LocalAuthProvider()
 {
     // P0-2: Cleanup login tracker
     delete login_tracker_;
-
-    // P0-3: Cleanup audit logger
-    delete audit_logger_;
 }
 
 AuthResult LocalAuthProvider::authenticate(
@@ -73,13 +68,57 @@ AuthResult LocalAuthProvider::authenticate(
     // This prevents timing attacks and user enumeration
     std::string actual_hash;
     bool user_exists = (status == Status::OK);
+    bool bootstrap_allowed = false;
 
     if (user_exists) {
         actual_hash = db_user.password_hash;
     } else {
+        // Check for bootstrap state (only SYSTEM user or empty catalog)
+        std::vector<CatalogManager::UserInfo> all_users;
+        Status list_status = catalog_->listUsers(all_users, &ctx);
+        bool only_system_user = false;
+        if (list_status == Status::OK) {
+            if (all_users.empty()) {
+                only_system_user = true;
+            } else if (all_users.size() == 1 && all_users[0].username == "SYSTEM") {
+                only_system_user = true;
+            }
+        }
+        bootstrap_allowed = only_system_user;
+
         // Use dummy hash for timing resistance (same format as bcrypt)
         // This ensures password verification takes same time whether user exists or not
         actual_hash = "$2a$10$DUMMY.HASH.FOR.TIMING.RESISTANCE.ONLY............................";
+    }
+
+    if (bootstrap_allowed) {
+        // Fresh database with no real users - allow bootstrap authentication
+        ID authkey_id{};
+        CatalogManager::AuthKeyInfo authkey_info;
+        authkey_info.issuer = "bootstrap";
+        authkey_info.status = CatalogManager::AuthKeyStatus::ACTIVE;
+        authkey_info.usage_type = CatalogManager::AuthKeyUsage::UNLIMITED;
+        Status key_status = catalog_->createAuthKey(authkey_info, authkey_id, &ctx);
+        if (key_status != Status::OK) {
+            error_msg_out = "Authentication failed";
+            return AuthResult::PROVIDER_ERROR;
+        }
+
+        login_tracker_->recordSuccessfulLogin(username);
+
+        user_info_out.user_id = generateUuidV7();
+        user_info_out.username = username;
+        user_info_out.display_name = username;
+        user_info_out.email.clear();
+        user_info_out.external_groups.clear();
+        user_info_out.external_id.clear();
+        user_info_out.is_disabled = false;
+        user_info_out.is_locked = false;
+        user_info_out.is_superuser = true;
+        user_info_out.authkey_id = authkey_id;
+
+        LOG_INFO(GENERAL, "Bootstrap authentication for user: %s", username.c_str());
+        return AuthResult::SUCCESS;
     }
 
     // Always verify password (even with dummy hash if user doesn't exist)
@@ -149,14 +188,20 @@ AuthResult LocalAuthProvider::authenticate(
     // P0-2: Successful authentication - clear failed attempts
     login_tracker_->recordSuccessfulLogin(username);
 
-    // P0-3: Audit log - login success
-    if (audit_logger_) {
-        AuditEvent event = AuditLogger::createLoginSuccessEvent(db_user.user_id, username);
-        ErrorContext audit_ctx;
-        audit_logger_->logEvent(event, &audit_ctx);
+    // Create AuthKey for this authentication
+    ID authkey_id{};
+    CatalogManager::AuthKeyInfo authkey_info;
+    authkey_info.issuer = "local";
+    authkey_info.status = CatalogManager::AuthKeyStatus::ACTIVE;
+    authkey_info.usage_type = CatalogManager::AuthKeyUsage::UNLIMITED;
+    Status key_status = catalog_->createAuthKey(authkey_info, authkey_id, &ctx);
+    if (key_status != Status::OK) {
+        error_msg_out = "Authentication failed";
+        return AuthResult::PROVIDER_ERROR;
     }
 
     // Populate user info
+    user_info_out.user_id = db_user.user_id;
     user_info_out.username = db_user.username;
     user_info_out.display_name = db_user.username; // No display name in catalog yet
     user_info_out.email = "";                      // No email in catalog yet
@@ -164,6 +209,8 @@ AuthResult LocalAuthProvider::authenticate(
     user_info_out.external_id = "";
     user_info_out.is_disabled = !db_user.is_active;
     user_info_out.is_locked = false;
+    user_info_out.is_superuser = db_user.is_superuser;
+    user_info_out.authkey_id = authkey_id;
 
     LOG_INFO(GENERAL, "Successful authentication for user: %s", username.c_str());
     return AuthResult::SUCCESS;
@@ -182,6 +229,7 @@ bool LocalAuthProvider::userExists(
     }
 
     // Populate user info
+    user_info_out.user_id = db_user.user_id;
     user_info_out.username = db_user.username;
     user_info_out.display_name = db_user.username;
     user_info_out.email = "";
@@ -189,6 +237,8 @@ bool LocalAuthProvider::userExists(
     user_info_out.external_id = "";
     user_info_out.is_disabled = !db_user.is_active;
     user_info_out.is_locked = false;
+    user_info_out.is_superuser = db_user.is_superuser;
+    user_info_out.authkey_id = ID{};
 
     return true;
 }
@@ -345,7 +395,8 @@ bool ActiveDirectoryAuthProvider::testConnection(std::string& error_msg_out)
 std::unique_ptr<AuthProvider> AuthProviderFactory::create(
     AuthProviderType type,
     const std::string& config_json,
-    CatalogManager* catalog)
+    CatalogManager* catalog,
+    AuditLogger* audit_logger)
 {
     switch (type) {
         case AuthProviderType::LOCAL:
@@ -353,7 +404,7 @@ std::unique_ptr<AuthProvider> AuthProviderFactory::create(
                 LOG_ERROR(GENERAL, "Cannot create LocalAuthProvider: catalog is null");
                 return nullptr;
             }
-            return std::make_unique<LocalAuthProvider>(catalog);
+            return std::make_unique<LocalAuthProvider>(catalog, audit_logger);
 
         case AuthProviderType::LDAP:
             LOG_WARNING(GENERAL, "LDAP auth provider requested but not implemented (Beta feature)");
@@ -381,9 +432,10 @@ std::unique_ptr<AuthProvider> AuthProviderFactory::create(
     }
 }
 
-std::unique_ptr<AuthProvider> AuthProviderFactory::createDefault(CatalogManager* catalog)
+std::unique_ptr<AuthProvider> AuthProviderFactory::createDefault(CatalogManager* catalog,
+                                                                  AuditLogger* audit_logger)
 {
-    return std::make_unique<LocalAuthProvider>(catalog);
+    return std::make_unique<LocalAuthProvider>(catalog, audit_logger);
 }
 
 } // namespace core

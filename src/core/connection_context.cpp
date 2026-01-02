@@ -96,6 +96,24 @@ namespace scratchbird::core
           autocommit_suspended_(false),
           attachment_id_(generateUuidV7()),
           protocol_session_id_(),
+          session_id_(),
+          authkey_id_(),
+          emulation_mode_("native"),
+          policy_epoch_global_(0),
+          policy_epoch_table_(0),
+          security_context_initialized_(false),
+          security_context_staged_(false),
+          pending_user_change_(false),
+          pending_role_change_(false),
+          pending_session_change_(false),
+          pending_user_id_(),
+          pending_role_id_(),
+          pending_is_superuser_(false),
+          pending_session_id_(),
+          pending_authkey_id_(),
+          pending_emulation_mode_(),
+          pending_policy_epoch_global_(0),
+          pending_policy_epoch_table_(0),
           default_isolation_level_(IsolationLevel::SNAPSHOT),
           default_read_committed_mode_(ReadCommittedMode::READ_CONSISTENCY),
           default_is_read_only_(false),
@@ -116,6 +134,12 @@ namespace scratchbird::core
         std::memset(&current_schema_id_, 0, sizeof(current_schema_id_));
         std::memset(&session_user_id_, 0, sizeof(session_user_id_));  // WP-5 EXEC-M3
         std::memset(&protocol_session_id_, 0, sizeof(protocol_session_id_));
+        std::memset(&session_id_, 0, sizeof(session_id_));
+        std::memset(&authkey_id_, 0, sizeof(authkey_id_));
+        std::memset(&pending_user_id_, 0, sizeof(pending_user_id_));
+        std::memset(&pending_role_id_, 0, sizeof(pending_role_id_));
+        std::memset(&pending_session_id_, 0, sizeof(pending_session_id_));
+        std::memset(&pending_authkey_id_, 0, sizeof(pending_authkey_id_));
         // Note: current_schema_id_ will be set to PUBLIC schema during initialize()
     }
 
@@ -162,8 +186,27 @@ namespace scratchbird::core
           lock_timeout_seconds_(other.lock_timeout_seconds_),
           autocommit_mode_(other.autocommit_mode_),
           autocommit_suspended_(other.autocommit_suspended_),
+          role_switch_policy_(other.role_switch_policy_),
           attachment_id_(other.attachment_id_),
           protocol_session_id_(other.protocol_session_id_),
+          session_id_(other.session_id_),
+          authkey_id_(other.authkey_id_),
+          emulation_mode_(std::move(other.emulation_mode_)),
+          policy_epoch_global_(other.policy_epoch_global_),
+          policy_epoch_table_(other.policy_epoch_table_),
+          security_context_initialized_(other.security_context_initialized_),
+          security_context_staged_(other.security_context_staged_),
+          pending_user_change_(other.pending_user_change_),
+          pending_role_change_(other.pending_role_change_),
+          pending_session_change_(other.pending_session_change_),
+          pending_user_id_(other.pending_user_id_),
+          pending_role_id_(other.pending_role_id_),
+          pending_is_superuser_(other.pending_is_superuser_),
+          pending_session_id_(other.pending_session_id_),
+          pending_authkey_id_(other.pending_authkey_id_),
+          pending_emulation_mode_(std::move(other.pending_emulation_mode_)),
+          pending_policy_epoch_global_(other.pending_policy_epoch_global_),
+          pending_policy_epoch_table_(other.pending_policy_epoch_table_),
           sql_dialect_(other.sql_dialect_),
           charset_(std::move(other.charset_)),
           statement_timeout_seconds_(other.statement_timeout_seconds_),
@@ -203,6 +246,24 @@ namespace scratchbird::core
         std::memset(&other.session_user_id_, 0, sizeof(other.session_user_id_));  // WP-5 EXEC-M3
         std::memset(&other.attachment_id_, 0, sizeof(other.attachment_id_));
         std::memset(&other.protocol_session_id_, 0, sizeof(other.protocol_session_id_));
+        std::memset(&other.session_id_, 0, sizeof(other.session_id_));
+        std::memset(&other.authkey_id_, 0, sizeof(other.authkey_id_));
+        std::memset(&other.pending_user_id_, 0, sizeof(other.pending_user_id_));
+        std::memset(&other.pending_role_id_, 0, sizeof(other.pending_role_id_));
+        std::memset(&other.pending_session_id_, 0, sizeof(other.pending_session_id_));
+        std::memset(&other.pending_authkey_id_, 0, sizeof(other.pending_authkey_id_));
+        other.emulation_mode_.clear();
+        other.policy_epoch_global_ = 0;
+        other.policy_epoch_table_ = 0;
+        other.security_context_initialized_ = false;
+        other.security_context_staged_ = false;
+        other.pending_user_change_ = false;
+        other.pending_role_change_ = false;
+        other.pending_session_change_ = false;
+        other.pending_is_superuser_ = false;
+        other.pending_emulation_mode_.clear();
+        other.pending_policy_epoch_global_ = 0;
+        other.pending_policy_epoch_table_ = 0;
         other.is_superuser_ = false;
         other.session_is_superuser_ = false;  // WP-5 EXEC-M3
         other.last_statement_text_.clear();
@@ -214,6 +275,7 @@ namespace scratchbird::core
         other.last_error_code_ = 0;
         other.last_sqlstate_.clear();
         other.last_activity_time_ = 0;
+        other.role_switch_policy_ = RoleSwitchPolicy::ERROR;
     }
 
     ConnectionContext &ConnectionContext::operator=(ConnectionContext &&other) noexcept
@@ -257,8 +319,27 @@ namespace scratchbird::core
             lock_timeout_seconds_ = other.lock_timeout_seconds_;
             autocommit_mode_ = other.autocommit_mode_;
             autocommit_suspended_ = other.autocommit_suspended_;
+            role_switch_policy_ = other.role_switch_policy_;
             attachment_id_ = other.attachment_id_;
             protocol_session_id_ = other.protocol_session_id_;
+            session_id_ = other.session_id_;
+            authkey_id_ = other.authkey_id_;
+            emulation_mode_ = std::move(other.emulation_mode_);
+            policy_epoch_global_ = other.policy_epoch_global_;
+            policy_epoch_table_ = other.policy_epoch_table_;
+            security_context_initialized_ = other.security_context_initialized_;
+            security_context_staged_ = other.security_context_staged_;
+            pending_user_change_ = other.pending_user_change_;
+            pending_role_change_ = other.pending_role_change_;
+            pending_session_change_ = other.pending_session_change_;
+            pending_user_id_ = other.pending_user_id_;
+            pending_role_id_ = other.pending_role_id_;
+            pending_is_superuser_ = other.pending_is_superuser_;
+            pending_session_id_ = other.pending_session_id_;
+            pending_authkey_id_ = other.pending_authkey_id_;
+            pending_emulation_mode_ = std::move(other.pending_emulation_mode_);
+            pending_policy_epoch_global_ = other.pending_policy_epoch_global_;
+            pending_policy_epoch_table_ = other.pending_policy_epoch_table_;
             sql_dialect_ = other.sql_dialect_;
             charset_ = std::move(other.charset_);
             statement_timeout_seconds_ = other.statement_timeout_seconds_;
@@ -298,6 +379,24 @@ namespace scratchbird::core
             std::memset(&other.session_user_id_, 0, sizeof(other.session_user_id_));  // WP-5 EXEC-M3
             std::memset(&other.attachment_id_, 0, sizeof(other.attachment_id_));
             std::memset(&other.protocol_session_id_, 0, sizeof(other.protocol_session_id_));
+            std::memset(&other.session_id_, 0, sizeof(other.session_id_));
+            std::memset(&other.authkey_id_, 0, sizeof(other.authkey_id_));
+            std::memset(&other.pending_user_id_, 0, sizeof(other.pending_user_id_));
+            std::memset(&other.pending_role_id_, 0, sizeof(other.pending_role_id_));
+            std::memset(&other.pending_session_id_, 0, sizeof(other.pending_session_id_));
+            std::memset(&other.pending_authkey_id_, 0, sizeof(other.pending_authkey_id_));
+            other.emulation_mode_.clear();
+            other.policy_epoch_global_ = 0;
+            other.policy_epoch_table_ = 0;
+            other.security_context_initialized_ = false;
+            other.security_context_staged_ = false;
+            other.pending_user_change_ = false;
+            other.pending_role_change_ = false;
+            other.pending_session_change_ = false;
+            other.pending_is_superuser_ = false;
+            other.pending_emulation_mode_.clear();
+            other.pending_policy_epoch_global_ = 0;
+            other.pending_policy_epoch_table_ = 0;
             other.is_superuser_ = false;
             other.session_is_superuser_ = false;  // WP-5 EXEC-M3
             other.last_statement_text_.clear();
@@ -309,6 +408,7 @@ namespace scratchbird::core
             other.last_error_code_ = 0;
             other.last_sqlstate_.clear();
             other.last_activity_time_ = 0;
+            other.role_switch_policy_ = RoleSwitchPolicy::ERROR;
         }
         return *this;
     }
@@ -1026,6 +1126,40 @@ namespace scratchbird::core
                       static_cast<int>(isolation_level_), is_read_only_, wait_for_locks_,
                       lock_timeout_seconds_, static_cast<int>(read_committed_mode_));
         }
+
+        if (security_context_staged_)
+        {
+            if (pending_user_change_)
+            {
+                current_user_id_ = pending_user_id_;
+                is_superuser_ = pending_is_superuser_;
+                std::memset(&active_role_id_, 0, sizeof(active_role_id_));
+                pending_user_change_ = false;
+            }
+
+            if (pending_role_change_)
+            {
+                active_role_id_ = pending_role_id_;
+                pending_role_change_ = false;
+            }
+
+            if (pending_session_change_)
+            {
+                session_id_ = pending_session_id_;
+                authkey_id_ = pending_authkey_id_;
+                emulation_mode_ = pending_emulation_mode_.empty()
+                                      ? emulation_mode_
+                                      : pending_emulation_mode_;
+                policy_epoch_global_ = pending_policy_epoch_global_;
+                policy_epoch_table_ = pending_policy_epoch_table_;
+                pending_session_change_ = false;
+                pending_emulation_mode_.clear();
+            }
+
+            security_context_staged_ = false;
+
+            LOG_DEBUG(TRANSACTION, "Applied staged security context changes: proc_id=%u", proc_id_);
+        }
     }
 
     // FIREBIRD MGA: No snapshot creation needed
@@ -1361,12 +1495,44 @@ namespace scratchbird::core
     // Security Context Management (Phase 2 - Security System)
     // ============================================================================
 
+    void ConnectionContext::setSessionContext(const ID& session_id, const ID& authkey_id,
+                                             const std::string& emulation_mode,
+                                             uint64_t policy_epoch_global,
+                                             uint64_t policy_epoch_table)
+    {
+        const bool initial_binding = isZeroUuidLocal(session_id_) && isZeroUuidLocal(authkey_id_);
+        if (initial_binding || current_xid_ == 0)
+        {
+            session_id_ = session_id;
+            authkey_id_ = authkey_id;
+            emulation_mode_ = emulation_mode.empty() ? "native" : emulation_mode;
+            policy_epoch_global_ = policy_epoch_global;
+            policy_epoch_table_ = policy_epoch_table;
+            LOG_DEBUG(TRANSACTION, "Set session context: proc_id=%u, session_id=%s, authkey_id=%s",
+                      proc_id_, session_id.toString().c_str(), authkey_id.toString().c_str());
+            return;
+        }
+
+        pending_session_change_ = true;
+        pending_session_id_ = session_id;
+        pending_authkey_id_ = authkey_id;
+        pending_emulation_mode_ = emulation_mode.empty() ? emulation_mode_ : emulation_mode;
+        pending_policy_epoch_global_ = policy_epoch_global;
+        pending_policy_epoch_table_ = policy_epoch_table;
+        security_context_staged_ = true;
+
+        LOG_DEBUG(TRANSACTION,
+                  "Staged session context change for next transaction: proc_id=%u, session_id=%s",
+                  proc_id_, session_id.toString().c_str());
+    }
+
     void ConnectionContext::setCurrentUser(const ID& user_id, bool is_superuser)
     {
         // WP-5 EXEC-M3: Initialize session user on first call (authentication)
         // Session user is the original authenticated user and never changes
         static const ID zero_id{};
-        if (session_user_id_ == zero_id)
+        const bool initial_binding = (session_user_id_ == zero_id);
+        if (initial_binding)
         {
             session_user_id_ = user_id;
             session_is_superuser_ = is_superuser;
@@ -1374,11 +1540,27 @@ namespace scratchbird::core
                       proc_id_, user_id.toString().c_str(), is_superuser);
         }
 
+        if (current_xid_ != 0 && security_context_initialized_ && !initial_binding)
+        {
+            pending_user_change_ = true;
+            pending_user_id_ = user_id;
+            pending_is_superuser_ = is_superuser;
+            pending_role_change_ = true;
+            std::memset(&pending_role_id_, 0, sizeof(pending_role_id_));
+            security_context_staged_ = true;
+
+            LOG_DEBUG(TRANSACTION,
+                      "Staged user change for next transaction: proc_id=%u, user_id=%s",
+                      proc_id_, user_id.toString().c_str());
+            return;
+        }
+
         current_user_id_ = user_id;
         is_superuser_ = is_superuser;
 
         // Clear active role when user changes (switching users resets session state)
         std::memset(&active_role_id_, 0, sizeof(active_role_id_));
+        security_context_initialized_ = true;
 
         LOG_DEBUG(TRANSACTION, "Set current user: proc_id=%u, user_id=%s, is_superuser=%d",
                   proc_id_, user_id.toString().c_str(), is_superuser);
@@ -1386,6 +1568,18 @@ namespace scratchbird::core
 
     void ConnectionContext::setActiveRole(const ID& role_id)
     {
+        if (current_xid_ != 0 && security_context_initialized_)
+        {
+            pending_role_change_ = true;
+            pending_role_id_ = role_id;
+            security_context_staged_ = true;
+
+            LOG_DEBUG(TRANSACTION,
+                      "Staged role change for next transaction: proc_id=%u, role_id=%s",
+                      proc_id_, role_id.toString().c_str());
+            return;
+        }
+
         active_role_id_ = role_id;
 
         LOG_DEBUG(TRANSACTION, "Set active role: proc_id=%u, role_id=%s",
@@ -1394,10 +1588,26 @@ namespace scratchbird::core
 
     void ConnectionContext::clearActiveRole()
     {
+        if (current_xid_ != 0 && security_context_initialized_)
+        {
+            pending_role_change_ = true;
+            std::memset(&pending_role_id_, 0, sizeof(pending_role_id_));
+            security_context_staged_ = true;
+
+            LOG_DEBUG(TRANSACTION, "Staged role clear for next transaction: proc_id=%u",
+                      proc_id_);
+            return;
+        }
+
         LOG_DEBUG(TRANSACTION, "Clearing active role: proc_id=%u, previous_role=%s",
                   proc_id_, active_role_id_.toString().c_str());
 
         std::memset(&active_role_id_, 0, sizeof(active_role_id_));
+    }
+
+    void ConnectionContext::setRoleSwitchPolicy(RoleSwitchPolicy policy)
+    {
+        role_switch_policy_ = policy;
     }
 
     // ============================================================================
@@ -1414,6 +1624,11 @@ namespace scratchbird::core
         ctx.is_superuser = is_superuser_flag;
         ctx.mode = mode;
         ctx.object_id = object_id;
+        ctx.session_id = session_id_;
+        ctx.authkey_id = authkey_id_;
+        ctx.emulation_mode = emulation_mode_;
+        ctx.policy_epoch_global = policy_epoch_global_;
+        ctx.policy_epoch_table = policy_epoch_table_;
 
         security_stack_.push_back(ctx);
 
@@ -1454,6 +1669,11 @@ namespace scratchbird::core
         ctx.is_superuser = is_superuser_;
         ctx.mode = SecurityMode::INVOKER;  // Base context is always INVOKER
         std::memset(&ctx.object_id, 0, sizeof(ctx.object_id));  // No object
+        ctx.session_id = session_id_;
+        ctx.authkey_id = authkey_id_;
+        ctx.emulation_mode = emulation_mode_;
+        ctx.policy_epoch_global = policy_epoch_global_;
+        ctx.policy_epoch_table = policy_epoch_table_;
 
         return ctx;
     }

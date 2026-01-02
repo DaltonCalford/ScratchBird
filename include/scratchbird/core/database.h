@@ -10,6 +10,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/storage_engine.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/gpid.h"
 
 namespace scratchbird
@@ -296,6 +297,15 @@ namespace scratchbird
                 return permission_cache_.get();
             }
 
+            void setRoleSwitchPolicy(ConnectionContext::RoleSwitchPolicy policy)
+            {
+                role_switch_policy_ = policy;
+            }
+            ConnectionContext::RoleSwitchPolicy roleSwitchPolicy() const
+            {
+                return role_switch_policy_;
+            }
+
             // Get transaction manager
             TransactionManager *transaction_manager()
             {
@@ -535,6 +545,8 @@ namespace scratchbird
 
             // Security components (Phase 3.2.3)
             std::unique_ptr<PermissionCache> permission_cache_; // Permission cache (owned)
+            ConnectionContext::RoleSwitchPolicy role_switch_policy_ =
+                ConnectionContext::RoleSwitchPolicy::ERROR;
 
             // Dormant connection registry (reattach support)
             struct DormantContextEntry

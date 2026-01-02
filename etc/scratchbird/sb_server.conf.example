@@ -143,6 +143,22 @@ lockout_duration = 300
 allow_superuser_remote = false
 
 #==============================================================================
+# SECURITY SECTION
+#==============================================================================
+[security]
+# Quorum configuration for security cache usage
+# Use 1-of-1 for single-node deployments
+quorum_n = 1
+quorum_m = 1
+
+# Quorum failure mode: fail_open | fail_closed | require_remote
+quorum_failure_mode = fail_open
+
+# Default role switch action when a transaction is active:
+# commit | rollback | error | defer
+role_switch_default_action = error
+
+#==============================================================================
 # LOGGING SECTION
 #==============================================================================
 [logging]
@@ -166,6 +182,25 @@ log_connections = true
 
 # Log all disconnections
 log_disconnections = true
+
+#==============================================================================
+# AUDIT SECTION
+#==============================================================================
+[audit]
+# Enable catalog persistence
+sink_catalog = true
+
+# Enable file sink
+sink_file = false
+
+# Audit log file path (required when sink_file = true)
+file_path = /var/log/scratchbird/sb_audit.log
+
+# Enable broadcast sink (external pipelines, Beta)
+sink_broadcast = false
+
+# Keep an in-memory copy of audit events
+keep_in_memory = false
 
 #==============================================================================
 # STATISTICS SECTION

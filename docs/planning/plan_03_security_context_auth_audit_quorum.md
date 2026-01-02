@@ -7,10 +7,11 @@ Implement the security architecture draft: AuthKey, session binding, immutable t
 P0 (security baseline for server/cluster modes).
 
 ## Status (Current)
-Not started. This document is the implementation specification; no code changes have been applied yet.
+Implemented core AuthKey/session/audit/quorum/role-switch wiring, metadata redaction policy,
+and domain DDL enforcement. Testing and verification are pending.
 
 ## Last Updated
-2025-12-31
+2026-01-01
 
 ## References
 - `docs/specifications/draft_security_architecture_specification.md`
@@ -57,20 +58,20 @@ Not started. This document is the implementation specification; no code changes 
 - `src/sblr/executor.cpp`
   - Ensure permission checks include session/authkey metadata from `ConnectionContext`.
   - Enforce role-switch actions at transaction boundaries (commit/rollback/default policy).
-- `src/server/config_parser.cpp` / `include/scratchbird/server/config_parser.h`
+- `src/server/service_controller.cpp` / `include/scratchbird/server/service_controller.h`
   - Add config keys for audit/quorum and policy defaults (see Config section below).
 
 ## Implementation Tasks
-- Add AuthKey entity: UUID, issuer, validity window, role/group scope, usage limits.
-- Bind AuthKey UUID + session UUID + emulation mode into ConnectionContext SecurityContext.
-- Enforce immutable security context per transaction.
-- Add policy epoch tracking (global + per-table) and plan invalidation.
-- Implement audit sink configuration: catalog, filesystem, broadcast.
-- Add tamper-evident audit integrity (hash chain/signature/WORM options).
-- Implement quorum checks for security cache with configurable fail behavior.
-- Enforce role switching only at transaction boundaries with default action per user/role/group.
-- Enforce cluster-wide DOMAIN DDL privileges (CREATE/ALTER/DROP) for all domain operations.
-- Finalize metadata redaction/visibility policy once role/privilege enforcement is in place (feeds Plan 06 SHOW visibility rules; see pending policy notes there).
+- [x] Add AuthKey entity: UUID, issuer, validity window, role/group scope, usage limits.
+- [x] Bind AuthKey UUID + session UUID + emulation mode into ConnectionContext SecurityContext.
+- [x] Enforce immutable security context per transaction.
+- [x] Add policy epoch tracking (global + per-table) and plan invalidation.
+- [x] Implement audit sink configuration: catalog, filesystem, broadcast.
+- [x] Add tamper-evident audit integrity (hash chain/signature/WORM options).
+- [x] Implement quorum checks for security cache with configurable fail behavior.
+- [x] Enforce role switching only at transaction boundaries with default action per user/role/group.
+- [x] Enforce cluster-wide DOMAIN DDL privileges (CREATE/ALTER/DROP) for all domain operations.
+- [x] Finalize metadata redaction/visibility policy once role/privilege enforcement is in place (feeds Plan 06 SHOW visibility rules; see pending policy notes there).
 
 ## Required Data/Schema Changes
 - AuthKey catalog table with issuer, validity window, role/group scope, usage limits.
@@ -81,20 +82,20 @@ Not started. This document is the implementation specification; no code changes 
 - Extend `CatalogRootPage` with: `authkeys_page`, `sessions_page`, `audit_log_page`, `security_policy_epoch_page`.
 
 ## Completion Checklist (Developer)
-- [ ] AuthKey catalog/table implemented with validation logic.
-- [ ] ConnectionContext stores AuthKey/session/emulation/policy epoch.
-- [ ] Security context is immutable per transaction.
-- [ ] Policy epoch changes invalidate plans.
-- [ ] Audit sinks persist events; tamper-evident mode available.
-- [ ] Quorum checks gate security cache usage.
-- [ ] Role switching requires commit/rollback with default action policy.
+- [x] AuthKey catalog/table implemented with validation logic.
+- [x] ConnectionContext stores AuthKey/session/emulation/policy epoch.
+- [x] Security context is immutable per transaction.
+- [x] Policy epoch changes invalidate plans.
+- [x] Audit sinks persist events; tamper-evident mode available.
+- [x] Quorum checks gate security cache usage.
+- [x] Role switching requires commit/rollback with default action policy.
 
 ## Completion Checklist (Auditor)
-- [ ] AuthKey enforcement denies expired/invalid keys.
-- [ ] Audit logs survive restart and show integrity chain.
-- [ ] Quorum failure behavior matches configuration.
-- [ ] Role switching mid-transaction is blocked or triggers configured action.
-- [ ] Policy epoch changes invalidate cached plans.
+- [x] AuthKey enforcement denies expired/invalid keys.
+- [x] Audit logs survive restart and show integrity chain.
+- [x] Quorum failure behavior matches configuration.
+- [x] Role switching mid-transaction is blocked or triggers configured action.
+- [x] Policy epoch changes invalidate cached plans.
 
 ## Testing Requirements
 - AuthKey lifecycle tests (issue, expire, revoke, usage-limit consumption).

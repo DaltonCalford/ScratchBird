@@ -187,6 +187,41 @@ bool decodeTypeDescriptor(const std::string& blob, TypeDescriptorBlob& out) {
     return true;
 }
 
+std::string encodeUuidList(const std::vector<ID>& ids) {
+    std::string out;
+    out.resize(4);
+    sblr::writeInt32(reinterpret_cast<uint8_t*>(out.data()),
+                     static_cast<uint32_t>(ids.size()));
+    for (const auto& id : ids) {
+        size_t offset = out.size();
+        out.resize(offset + sizeof(ID));
+        std::memcpy(&out[offset], id.bytes.data(), sizeof(ID));
+    }
+    return out;
+}
+
+bool decodeUuidList(const std::string& blob, std::vector<ID>& out) {
+    out.clear();
+    if (blob.size() < 4) {
+        return false;
+    }
+    const uint8_t* data = reinterpret_cast<const uint8_t*>(blob.data());
+    uint32_t count = readUint32LE(data);
+    size_t expected = 4 + static_cast<size_t>(count) * sizeof(ID);
+    if (blob.size() < expected) {
+        return false;
+    }
+    out.reserve(count);
+    size_t offset = 4;
+    for (uint32_t i = 0; i < count; ++i) {
+        ID id{};
+        std::memcpy(id.bytes.data(), data + offset, sizeof(ID));
+        out.push_back(id);
+        offset += sizeof(ID);
+    }
+    return true;
+}
+
 std::pair<ID, std::string> makeSequenceNameKey(const ID& schema_id,
                                                const std::string& name,
                                                bool name_is_delimited) {
@@ -311,9 +346,15 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // Plan 03B: Encryption key management
         uint32_t encryption_keys_page; // Page containing encryption keys table
 
+        // Plan 03: AuthKey, session, audit log, policy epoch
+        uint32_t authkeys_page;        // Page containing authkeys table
+        uint32_t sessions_page;        // Page containing sessions table
+        uint32_t audit_log_page;       // Page containing audit log table
+        uint32_t security_policy_epoch_page; // Page containing security policy epoch table
+
         ID policy_toast_table_id;     // UUID for policy expression TOAST storage
 
-        uint8_t reserved[3828];       // Padding for 4KB page (268 bytes used)
+        uint8_t reserved[3812];       // Padding for 4KB page (284 bytes used)
     };
 
     // Schema record on disk
@@ -370,6 +411,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint32_t storage_params_oid;   // TOAST reference for storage parameters - IMPLEMENTED
         uint64_t created_time;
         uint64_t last_modified_time;
+        uint64_t policy_epoch;         // Security policy epoch (Plan 03)
         uint32_t is_valid;
         uint32_t padding;              // Alignment
     };
@@ -866,6 +908,78 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t reserved[6];        // Alignment
         ID internal_group_id;       // Maps to GroupRecord UUID
         uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // AuthKey record on disk (Plan 03)
+    struct AuthKeyRecord
+    {
+        ID authkey_id;
+        char issuer[256];
+        uint64_t valid_from;
+        uint64_t valid_to;
+        uint32_t usage_limit;
+        uint32_t usage_count;
+        uint8_t status;             // AuthKeyStatus enum
+        uint8_t usage_type;         // AuthKeyUsage enum
+        uint8_t reserved[6];
+        uint32_t role_scope_oid;    // TOAST reference for role scope UUID list
+        uint32_t group_scope_oid;   // TOAST reference for group scope UUID list
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Session record on disk (Plan 03)
+    struct SessionRecord
+    {
+        ID session_id;
+        ID user_id;
+        ID authkey_id;
+        char emulation_mode[64];
+        uint64_t login_time;
+        uint64_t last_activity_time;
+        ID current_schema_id;
+        uint64_t policy_epoch_global;
+        uint64_t policy_epoch_table;
+        uint8_t is_expired;
+        uint8_t reserved[7];
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Audit log record on disk (Plan 03)
+    struct AuditLogRecord
+    {
+        uint64_t event_id;
+        uint64_t timestamp;
+        uint16_t event_type;
+        uint8_t success;
+        uint8_t reserved1;
+        ID session_id;
+        ID authkey_id;
+        ID user_id;
+        ID role_id;
+        ID target_user_id;
+        ID object_id;
+        char username[128];
+        char target_username[128];
+        char object_type[64];
+        char object_name[512];
+        uint32_t details_oid;       // TOAST reference for details JSON
+        uint8_t hash_prev[32];
+        uint8_t hash_curr[32];
+        uint32_t is_valid;
+        uint32_t padding;
+    };
+
+    // Security policy epoch record on disk (Plan 03)
+    struct SecurityPolicyEpochRecord
+    {
+        uint64_t global_epoch;
         uint64_t last_modified_time;
         uint32_t is_valid;
         uint32_t padding;
@@ -1707,7 +1821,35 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         status = db_->write_page(udr_modules_table_page_, page_buffer.get(), ctx);
         if (status != Status::OK) return status;
 
-        DEBUG_LOG_DB("Allocated and initialized 22 new system tables (Phase 6.1 + FK + Phase B)");
+        // Plan 03: AuthKeys table
+        status = pm->allocatePage(authkeys_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = authkeys_table_page_;
+        status = db_->write_page(authkeys_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Plan 03: Sessions table
+        status = pm->allocatePage(sessions_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = sessions_table_page_;
+        status = db_->write_page(sessions_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Plan 03: Audit log table
+        status = pm->allocatePage(audit_log_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = audit_log_table_page_;
+        status = db_->write_page(audit_log_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        // Plan 03: Security policy epoch table
+        status = pm->allocatePage(security_policy_epoch_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = security_policy_epoch_table_page_;
+        status = db_->write_page(security_policy_epoch_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        DEBUG_LOG_DB("Allocated and initialized 26 new system tables (Phase 6.1 + FK + Phase B + Plan 03)");
 
         // Update root page with table locations
         status = writeCatalogRoot(ctx);
@@ -1715,6 +1857,19 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         {
             return status;
         }
+
+        // Initialize global security policy epoch (Plan 03)
+        SecurityPolicyEpochRecord epoch_record{};
+        epoch_record.global_epoch = 1;
+        epoch_record.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+        epoch_record.is_valid = 1;
+
+        status = writeRecordToHeapPage(security_policy_epoch_table_page_, epoch_record, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        security_policy_epoch_ = epoch_record.global_epoch;
 
         // Create default schema hierarchy (18 schemas)
         // Schema tree structure:
@@ -2213,6 +2368,26 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 {
                     return status;
                 }
+                status = backfill_catalog_page(authkeys_table_page_, "authkeys");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(sessions_table_page_, "sessions");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(audit_log_table_page_, "audit_log");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(security_policy_epoch_table_page_, "security_policy_epoch");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
 
                 if (backfilled_catalog_pages)
                 {
@@ -2222,6 +2397,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                         return status;
                     }
                     db_->sync(ctx);
+                }
+
+                uint64_t policy_epoch = 0;
+                status = getSecurityPolicyEpoch(policy_epoch, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
                 }
 
                 // Load schemas
@@ -2398,6 +2580,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 else
                 {
                     DEBUG_LOG_DB("Loaded " << foreign_keys_cache_.size() << " foreign keys");
+                }
+
+                // Plan 03: Load persisted sessions
+                status = readSessionRecords(ctx);
+                if (status != Status::OK)
+                {
+                    LOG_WARNING(CATALOG, "Failed to load sessions: %d (continuing)", static_cast<int>(status));
                 }
 
                 DEBUG_LOG_DB("Catalog loaded: " << schema_count_ << " schemas, " << table_count_
@@ -4828,6 +5017,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                  std::chrono::system_clock::now().time_since_epoch())
                                  .count();
         table.last_modified_time = table.created_time;
+        table.policy_epoch = security_policy_epoch_;
 
         // Write table record
         status = writeTableRecord(table, ctx);
@@ -5643,6 +5833,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         root->dormant_transactions_page = dormant_transactions_table_page_;
         root->prepared_transactions_page = prepared_transactions_table_page_;
         root->encryption_keys_page = encryption_keys_table_page_;
+        root->authkeys_page = authkeys_table_page_;
+        root->sessions_page = sessions_table_page_;
+        root->audit_log_page = audit_log_table_page_;
+        root->security_policy_epoch_page = security_policy_epoch_table_page_;
         root->policy_toast_table_id = policy_toast_table_id_;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, true, ctx);
@@ -5735,6 +5929,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         dormant_transactions_table_page_ = root->dormant_transactions_page;
         prepared_transactions_table_page_ = root->prepared_transactions_page;
         encryption_keys_table_page_ = root->encryption_keys_page;
+        authkeys_table_page_ = root->authkeys_page;
+        sessions_table_page_ = root->sessions_page;
+        audit_log_table_page_ = root->audit_log_page;
+        security_policy_epoch_table_page_ = root->security_policy_epoch_page;
         policy_toast_table_id_ = root->policy_toast_table_id;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, false, ctx);
@@ -6303,6 +6501,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         record.storage_params_oid = table.storage_params_oid;
         record.created_time = table.created_time;
         record.last_modified_time = table.last_modified_time;
+        record.policy_epoch = table.policy_epoch;
         record.is_valid = 1;
 
         return writeRecordToHeapPage(tables_table_page_, record, ctx);
@@ -6472,10 +6671,61 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.storage_params_oid = record.storage_params_oid;
             info.created_time = record.created_time;
             info.last_modified_time = record.last_modified_time;
+            info.policy_epoch = record.policy_epoch;
         };
         auto key_extractor = [](const TableInfo &info) { return info.table_id; };
         return readRecordsFromHeapPage<TableRecord, TableInfo, ID>(tables_table_page_, table_cache_,
                                                                    converter, key_extractor, ctx);
+    }
+
+    auto CatalogManager::readSessionRecords(ErrorContext *ctx) -> Status
+    {
+        if (sessions_table_page_ == 0)
+        {
+            return Status::OK;
+        }
+
+        std::vector<SessionInfo> sessions;
+        auto filter = [](const SessionRecord& rec) { return rec.is_valid; };
+        auto converter = [this, ctx](const SessionRecord& rec, SessionInfo& info) {
+            const_cast<char&>(rec.emulation_mode[sizeof(rec.emulation_mode) - 1]) = '\0';
+
+            UserInfo user;
+            Status user_status = getUser(rec.user_id, user, ctx);
+
+            info.session_id = rec.session_id;
+            info.user_id = rec.user_id;
+            info.username = (user_status == Status::OK) ? user.username : "";
+            info.is_superuser = (user_status == Status::OK) ? user.is_superuser : false;
+            info.current_schema_id = rec.current_schema_id;
+            info.login_time = rec.login_time;
+            info.last_activity_time = rec.last_activity_time;
+            info.authkey_id = rec.authkey_id;
+            info.emulation_mode = rec.emulation_mode;
+            info.policy_epoch_global = rec.policy_epoch_global;
+            info.policy_epoch_table = rec.policy_epoch_table;
+            info.is_expired = rec.is_expired != 0;
+
+            info.effective_roles.clear();
+            info.effective_groups.clear();
+            getEffectiveRoles(rec.user_id, info.effective_roles, ctx);
+            getEffectiveGroups(rec.user_id, info.effective_groups, ctx);
+        };
+
+        Status status = readRecordsToVector<SessionRecord, SessionInfo>(
+            sessions_table_page_, sessions, filter, converter, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::lock_guard<std::mutex> lock(session_cache_mutex_);
+        for (const auto& session : sessions)
+        {
+            session_cache_[session.session_id] = session;
+        }
+
+        return Status::OK;
     }
 
     auto CatalogManager::writeColumnRecords(const ID &table_id,
@@ -13358,6 +13608,7 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
             record.storage_params_oid = table.storage_params_oid;
             record.created_time = table.created_time;
             record.last_modified_time = table.last_modified_time;
+            record.policy_epoch = table.policy_epoch;
             record.is_valid = 1;
 
             auto predicate = [&object_id](const TableRecord& rec) {
@@ -14599,6 +14850,7 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
             record.storage_params_oid = table.storage_params_oid;
             record.created_time = table.created_time;
             record.last_modified_time = table.last_modified_time;
+            record.policy_epoch = table.policy_epoch;
             record.is_valid = 1;
 
             auto predicate = [&object_id](const TableRecord& rec) {
@@ -23465,18 +23717,355 @@ auto CatalogManager::getUserGroups(const ID& user_id, std::vector<ID>& groups_ou
 // Session & Permission Operations (Phase 1.4 - Security System)
 // ============================================================================
 
+// AuthKey management (Plan 03)
+
+auto CatalogManager::createAuthKey(const AuthKeyInfo& authkey_in, ID& authkey_id_out,
+                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    if (authkeys_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(authkeys_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to allocate authkeys table page");
+            return status;
+        }
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to persist authkeys table page");
+            return status;
+        }
+    }
+
+    ID authkey_id = authkey_in.authkey_id;
+    if (isZeroUuidLocal(authkey_id))
+    {
+        authkey_id = generateUuidV7();
+    }
+    else
+    {
+        auto predicate = [&authkey_id](const AuthKeyRecord& rec) {
+            return rec.is_valid && rec.authkey_id == authkey_id;
+        };
+        auto existing = findRecordInHeapPage<AuthKeyRecord>(authkeys_table_page_, predicate, ctx);
+        if (existing.status == Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "AuthKey already exists");
+            return Status::FILE_EXISTS;
+        }
+    }
+
+    AuthKeyRecord record{};
+    record.authkey_id = authkey_id;
+
+    std::string issuer_trunc = UTF8Utils::truncateToBytes(authkey_in.issuer,
+                                                          sizeof(record.issuer));
+    std::memset(record.issuer, 0, sizeof(record.issuer));
+    std::strncpy(record.issuer, issuer_trunc.c_str(), sizeof(record.issuer) - 1);
+
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+    record.valid_from = authkey_in.valid_from ? authkey_in.valid_from : now;
+    record.valid_to = authkey_in.valid_to;
+    if (record.valid_to != 0 && record.valid_to < record.valid_from)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "AuthKey valid_to is before valid_from");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    record.usage_limit = authkey_in.usage_limit;
+    record.usage_count = authkey_in.usage_count;
+
+    AuthKeyUsage usage_type = authkey_in.usage_type;
+    if (record.usage_limit == 0)
+    {
+        usage_type = AuthKeyUsage::UNLIMITED;
+    }
+    if (usage_type == AuthKeyUsage::SINGLE_USE && record.usage_limit == 0)
+    {
+        record.usage_limit = 1;
+    }
+
+    record.status = static_cast<uint8_t>(authkey_in.status);
+    record.usage_type = static_cast<uint8_t>(usage_type);
+    record.created_time = now;
+    record.last_modified_time = now;
+    record.is_valid = 1;
+
+    uint64_t xmin = 0;
+    record.role_scope_oid = 0;
+    record.group_scope_oid = 0;
+
+    if (!authkey_in.role_scope.empty())
+    {
+        std::string blob = encodeUuidList(authkey_in.role_scope);
+        Status toast_status = storeStringInToast(blob, xmin, record.role_scope_oid, ctx);
+        if (toast_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, toast_status, "Failed to store AuthKey role scope in TOAST");
+            return toast_status;
+        }
+    }
+
+    if (!authkey_in.group_scope.empty())
+    {
+        std::string blob = encodeUuidList(authkey_in.group_scope);
+        Status toast_status = storeStringInToast(blob, xmin, record.group_scope_oid, ctx);
+        if (toast_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, toast_status, "Failed to store AuthKey group scope in TOAST");
+            return toast_status;
+        }
+    }
+
+    Status status = writeRecordToHeapPage(authkeys_table_page_, record, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to write AuthKey record");
+        return status;
+    }
+
+    authkey_id_out = authkey_id;
+    return Status::OK;
+}
+
+auto CatalogManager::getAuthKey(const ID& authkey_id, AuthKeyInfo& authkey_out,
+                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    if (authkeys_table_page_ == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "AuthKeys catalog not initialized");
+        return Status::NOT_FOUND;
+    }
+
+    auto predicate = [&authkey_id](const AuthKeyRecord& rec) {
+        return rec.is_valid && rec.authkey_id == authkey_id;
+    };
+
+    auto result = findRecordInHeapPage<AuthKeyRecord>(authkeys_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "AuthKey not found");
+        return result.status;
+    }
+
+    AuthKeyRecord record = result.record;
+    const_cast<char&>(record.issuer[sizeof(record.issuer) - 1]) = '\0';
+
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+    if (record.status == static_cast<uint8_t>(AuthKeyStatus::ACTIVE) &&
+        record.valid_to != 0 && now > record.valid_to)
+    {
+        record.status = static_cast<uint8_t>(AuthKeyStatus::EXPIRED);
+        record.last_modified_time = now;
+        updateRecordInHeapPage(authkeys_table_page_, result.slot_index, record, ctx);
+    }
+
+    authkey_out.authkey_id = record.authkey_id;
+    authkey_out.issuer = record.issuer;
+    authkey_out.valid_from = record.valid_from;
+    authkey_out.valid_to = record.valid_to;
+    authkey_out.usage_limit = record.usage_limit;
+    authkey_out.usage_count = record.usage_count;
+    authkey_out.status = static_cast<AuthKeyStatus>(record.status);
+    authkey_out.usage_type = static_cast<AuthKeyUsage>(record.usage_type);
+    authkey_out.created_time = record.created_time;
+    authkey_out.last_modified_time = record.last_modified_time;
+
+    authkey_out.role_scope.clear();
+    authkey_out.group_scope.clear();
+
+    uint64_t xmin = 0;
+    if (record.role_scope_oid != 0)
+    {
+        std::string blob;
+        if (loadStringFromToast(record.role_scope_oid, xmin, blob, ctx) == Status::OK)
+        {
+            decodeUuidList(blob, authkey_out.role_scope);
+        }
+    }
+    if (record.group_scope_oid != 0)
+    {
+        std::string blob;
+        if (loadStringFromToast(record.group_scope_oid, xmin, blob, ctx) == Status::OK)
+        {
+            decodeUuidList(blob, authkey_out.group_scope);
+        }
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::revokeAuthKey(const ID& authkey_id, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    if (authkeys_table_page_ == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "AuthKeys catalog not initialized");
+        return Status::NOT_FOUND;
+    }
+
+    auto predicate = [&authkey_id](const AuthKeyRecord& rec) {
+        return rec.is_valid && rec.authkey_id == authkey_id;
+    };
+
+    auto result = findRecordInHeapPage<AuthKeyRecord>(authkeys_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "AuthKey not found");
+        return result.status;
+    }
+
+    AuthKeyRecord updated = result.record;
+    updated.status = static_cast<uint8_t>(AuthKeyStatus::REVOKED);
+    updated.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+    Status status = updateRecordInHeapPage(authkeys_table_page_, result.slot_index, updated, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to revoke AuthKey");
+        return status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::consumeAuthKey(const ID& authkey_id, uint32_t uses,
+                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    if (authkeys_table_page_ == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "AuthKeys catalog not initialized");
+        return Status::NOT_FOUND;
+    }
+
+    auto predicate = [&authkey_id](const AuthKeyRecord& rec) {
+        return rec.is_valid && rec.authkey_id == authkey_id;
+    };
+
+    auto result = findRecordInHeapPage<AuthKeyRecord>(authkeys_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "AuthKey not found");
+        return result.status;
+    }
+
+    AuthKeyRecord updated = result.record;
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+
+    if (updated.status != static_cast<uint8_t>(AuthKeyStatus::ACTIVE))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_AUTHORIZATION, "AuthKey is not active");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    if (updated.valid_from != 0 && now < updated.valid_from)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_AUTHORIZATION, "AuthKey not yet valid");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    if (updated.valid_to != 0 && now > updated.valid_to)
+    {
+        updated.status = static_cast<uint8_t>(AuthKeyStatus::EXPIRED);
+        updated.last_modified_time = now;
+        updateRecordInHeapPage(authkeys_table_page_, result.slot_index, updated, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_AUTHORIZATION, "AuthKey has expired");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    if (updated.usage_limit != 0 && uses > 0)
+    {
+        if (updated.usage_count + uses > updated.usage_limit)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PERMISSION_DENIED, "AuthKey usage limit exceeded");
+            return Status::PERMISSION_DENIED;
+        }
+    }
+
+    updated.usage_count += uses;
+    if (updated.usage_limit != 0 && updated.usage_count >= updated.usage_limit)
+    {
+        updated.status = static_cast<uint8_t>(AuthKeyStatus::EXPIRED);
+    }
+    updated.last_modified_time = now;
+
+    Status status = updateRecordInHeapPage(authkeys_table_page_, result.slot_index, updated, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to consume AuthKey");
+        return status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::listAuthKeys(std::vector<AuthKeyInfo>& authkeys_out,
+                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    if (authkeys_table_page_ == 0)
+    {
+        authkeys_out.clear();
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+    auto filter = [](const AuthKeyRecord& rec) { return rec.is_valid; };
+    auto converter = [this, xmin, ctx](const AuthKeyRecord& rec, AuthKeyInfo& info) {
+        const_cast<char&>(rec.issuer[sizeof(rec.issuer) - 1]) = '\0';
+        info.authkey_id = rec.authkey_id;
+        info.issuer = rec.issuer;
+        info.valid_from = rec.valid_from;
+        info.valid_to = rec.valid_to;
+        info.usage_limit = rec.usage_limit;
+        info.usage_count = rec.usage_count;
+        info.status = static_cast<AuthKeyStatus>(rec.status);
+        info.usage_type = static_cast<AuthKeyUsage>(rec.usage_type);
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+
+        info.role_scope.clear();
+        info.group_scope.clear();
+        if (rec.role_scope_oid != 0)
+        {
+            std::string blob;
+            if (loadStringFromToast(rec.role_scope_oid, xmin, blob, ctx) == Status::OK)
+            {
+                decodeUuidList(blob, info.role_scope);
+            }
+        }
+        if (rec.group_scope_oid != 0)
+        {
+            std::string blob;
+            if (loadStringFromToast(rec.group_scope_oid, xmin, blob, ctx) == Status::OK)
+            {
+                decodeUuidList(blob, info.group_scope);
+            }
+        }
+    };
+
+    return readRecordsToVector<AuthKeyRecord, AuthKeyInfo>(authkeys_table_page_,
+                                                           authkeys_out, filter, converter, ctx);
+}
+
 // Session management
 
-auto CatalogManager::createSession(const ID& user_id, const ID& default_schema_id,
+auto CatalogManager::createSession(const ID& user_id, const ID& authkey_id,
+                                   const std::string& emulation_mode,
                                    SessionInfo& session_out, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(session_cache_mutex_);
-
     // Get user info
     UserInfo user;
-    mutex_.lock();
     Status status = getUser(user_id, user, ctx);
-    mutex_.unlock();
 
     if (status != Status::OK)
     {
@@ -23490,19 +24079,40 @@ auto CatalogManager::createSession(const ID& user_id, const ID& default_schema_i
         return Status::PERMISSION_DENIED;
     }
 
+    {
+        std::lock_guard<CatalogMutex> lock(mutex_);
+        if (sessions_table_page_ == 0)
+        {
+            status = allocateCatalogPage(sessions_table_page_, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to allocate sessions table page");
+                return status;
+            }
+            status = writeCatalogRoot(ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to persist sessions table page");
+                return status;
+            }
+        }
+    }
+
     // Generate session ID
     session_out.session_id = generateUuidV7();
     session_out.user_id = user_id;
     session_out.username = user.username;
     session_out.is_superuser = user.is_superuser;
-    session_out.current_schema_id = default_schema_id;
-    session_out.login_time = std::chrono::system_clock::now().time_since_epoch().count();
+    session_out.current_schema_id = user.default_schema_id;
+    session_out.login_time = static_cast<uint64_t>(std::time(nullptr));
     session_out.last_activity_time = session_out.login_time;
+    session_out.authkey_id = authkey_id;
+    session_out.emulation_mode = emulation_mode.empty() ? "native" : emulation_mode;
+    session_out.policy_epoch_global = security_policy_epoch_;
+    session_out.policy_epoch_table = 0;
 
     // Compute effective roles (transitive closure)
-    mutex_.lock();
     status = getEffectiveRoles(user_id, session_out.effective_roles, ctx);
-    mutex_.unlock();
 
     if (status != Status::OK && status != Status::NOT_FOUND)
     {
@@ -23512,9 +24122,7 @@ auto CatalogManager::createSession(const ID& user_id, const ID& default_schema_i
     }
 
     // Compute effective groups (transitive closure)
-    mutex_.lock();
     status = getEffectiveGroups(user_id, session_out.effective_groups, ctx);
-    mutex_.unlock();
 
     if (status != Status::OK && status != Status::NOT_FOUND)
     {
@@ -23523,8 +24131,38 @@ auto CatalogManager::createSession(const ID& user_id, const ID& default_schema_i
         return status;
     }
 
+    SessionRecord session_rec{};
+    session_rec.session_id = session_out.session_id;
+    session_rec.user_id = session_out.user_id;
+    session_rec.authkey_id = session_out.authkey_id;
+    std::string emulation_trunc = UTF8Utils::truncateToBytes(session_out.emulation_mode,
+                                                             sizeof(session_rec.emulation_mode));
+    std::memset(session_rec.emulation_mode, 0, sizeof(session_rec.emulation_mode));
+    std::strncpy(session_rec.emulation_mode, emulation_trunc.c_str(),
+                 sizeof(session_rec.emulation_mode) - 1);
+    session_rec.login_time = session_out.login_time;
+    session_rec.last_activity_time = session_out.last_activity_time;
+    session_rec.current_schema_id = session_out.current_schema_id;
+    session_rec.policy_epoch_global = session_out.policy_epoch_global;
+    session_rec.policy_epoch_table = session_out.policy_epoch_table;
+    session_rec.is_expired = 0;
+    session_rec.is_valid = 1;
+
+    {
+        std::lock_guard<CatalogMutex> lock(mutex_);
+        status = writeRecordToHeapPage(sessions_table_page_, session_rec, ctx);
+    }
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to persist session record");
+        return status;
+    }
+
     // Store in cache
-    session_cache_[session_out.session_id] = session_out;
+    {
+        std::lock_guard<std::mutex> lock(session_cache_mutex_);
+        session_cache_[session_out.session_id] = session_out;
+    }
 
     DEBUG_LOG_DB("Created session for user " << user.username
                  << " (session ID: " << session_out.session_id.toString() << ")");
@@ -23534,37 +24172,109 @@ auto CatalogManager::createSession(const ID& user_id, const ID& default_schema_i
 auto CatalogManager::getSession(const ID& session_id, SessionInfo& session_out,
                                 ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(session_cache_mutex_);
+    bool cache_hit = false;
+    {
+        std::lock_guard<std::mutex> lock(session_cache_mutex_);
+        auto it = session_cache_.find(session_id);
+        if (it != session_cache_.end())
+        {
+            session_out = it->second;
+            session_out.last_activity_time = static_cast<uint64_t>(std::time(nullptr));
+            it->second.last_activity_time = session_out.last_activity_time;
+            cache_hit = true;
+        }
+    }
+    if (cache_hit)
+    {
+        Status activity_status = updateSessionActivity(session_id, ctx);
+        if (activity_status != Status::OK)
+        {
+            return activity_status;
+        }
+        return Status::OK;
+    }
 
-    auto it = session_cache_.find(session_id);
-    if (it == session_cache_.end())
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (sessions_table_page_ == 0)
     {
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Session not found");
         return Status::NOT_FOUND;
     }
 
-    session_out = it->second;
+    auto predicate = [&session_id](const SessionRecord& rec) {
+        return rec.is_valid && rec.session_id == session_id;
+    };
+    auto result = findRecordInHeapPage<SessionRecord>(sessions_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "Session not found");
+        return result.status;
+    }
 
-    // Update last activity time
-    session_out.last_activity_time = std::chrono::system_clock::now().time_since_epoch().count();
-    it->second.last_activity_time = session_out.last_activity_time;
+    SessionRecord record = result.record;
+    const_cast<char&>(record.emulation_mode[sizeof(record.emulation_mode) - 1]) = '\0';
+
+    UserInfo user;
+    Status status = getUser(record.user_id, user, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Session user not found");
+        return status;
+    }
+
+    session_out.session_id = record.session_id;
+    session_out.user_id = record.user_id;
+    session_out.username = user.username;
+    session_out.is_superuser = user.is_superuser;
+    session_out.current_schema_id = record.current_schema_id;
+    session_out.login_time = record.login_time;
+    session_out.last_activity_time = static_cast<uint64_t>(std::time(nullptr));
+    session_out.authkey_id = record.authkey_id;
+    session_out.emulation_mode = record.emulation_mode;
+    session_out.policy_epoch_global = record.policy_epoch_global;
+    session_out.policy_epoch_table = record.policy_epoch_table;
+    session_out.is_expired = record.is_expired != 0;
+
+    getEffectiveRoles(record.user_id, session_out.effective_roles, ctx);
+    getEffectiveGroups(record.user_id, session_out.effective_groups, ctx);
+
+    SessionRecord updated = record;
+    updated.last_activity_time = session_out.last_activity_time;
+    updateRecordInHeapPage(sessions_table_page_, result.slot_index, updated, ctx);
+
+    {
+        std::lock_guard<std::mutex> cache_lock(session_cache_mutex_);
+        session_cache_[session_out.session_id] = session_out;
+    }
 
     return Status::OK;
 }
 
 auto CatalogManager::closeSession(const ID& session_id, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(session_cache_mutex_);
-
-    auto it = session_cache_.find(session_id);
-    if (it == session_cache_.end())
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Session not found");
-        return Status::NOT_FOUND;
+        std::lock_guard<std::mutex> lock(session_cache_mutex_);
+        session_cache_.erase(session_id);
+    }
+
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (sessions_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    auto predicate = [&session_id](const SessionRecord& rec) {
+        return rec.is_valid && rec.session_id == session_id;
+    };
+
+    Status status = deleteRecordFromHeapPage<SessionRecord>(sessions_table_page_, predicate, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to close session");
+        return status;
     }
 
     DEBUG_LOG_DB("Closed session " << session_id.toString());
-    session_cache_.erase(it);
     return Status::OK;
 }
 
@@ -23572,35 +24282,54 @@ auto CatalogManager::closeSession(const ID& session_id, ErrorContext* ctx) -> St
 
 auto CatalogManager::updateSessionActivity(const ID& session_id, ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(session_cache_mutex_);
+    uint64_t now = static_cast<uint64_t>(std::time(nullptr));
+    {
+        std::lock_guard<std::mutex> lock(session_cache_mutex_);
+        auto it = session_cache_.find(session_id);
+        if (it != session_cache_.end())
+        {
+            it->second.last_activity_time = now;
+        }
+    }
 
-    auto it = session_cache_.find(session_id);
-    if (it == session_cache_.end())
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (sessions_table_page_ == 0)
     {
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Session not found");
         return Status::NOT_FOUND;
     }
 
-    // Update last activity time to current time
-    it->second.last_activity_time = static_cast<uint64_t>(std::time(nullptr));
+    auto predicate = [&session_id](const SessionRecord& rec) {
+        return rec.is_valid && rec.session_id == session_id;
+    };
 
-    return Status::OK;
+    auto result = findRecordInHeapPage<SessionRecord>(sessions_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Session not found");
+        return Status::NOT_FOUND;
+    }
+
+    SessionRecord updated = result.record;
+    updated.last_activity_time = now;
+    return updateRecordInHeapPage(sessions_table_page_, result.slot_index, updated, ctx);
 }
 
 auto CatalogManager::checkSessionTimeout(const ID& session_id, const SessionTimeoutConfig& config,
                                          bool& is_expired_out, std::string& reason_out,
                                          ErrorContext* ctx) -> Status
 {
-    std::lock_guard<std::mutex> lock(session_cache_mutex_);
-
-    auto it = session_cache_.find(session_id);
-    if (it == session_cache_.end())
+    SessionInfo session;
     {
-        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Session not found");
-        return Status::NOT_FOUND;
+        std::lock_guard<std::mutex> lock(session_cache_mutex_);
+        auto it = session_cache_.find(session_id);
+        if (it == session_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Session not found");
+            return Status::NOT_FOUND;
+        }
+        session = it->second;
     }
-
-    SessionInfo& session = it->second;
     uint64_t current_time = static_cast<uint64_t>(std::time(nullptr));
 
     is_expired_out = false;
@@ -23615,13 +24344,11 @@ auto CatalogManager::checkSessionTimeout(const ID& session_id, const SessionTime
             is_expired_out = true;
             reason_out = "Session expired due to inactivity (" + std::to_string(idle_seconds) + " seconds idle)";
             session.is_expired = true;
-            session.expiration_reason = reason_out;
-            return Status::OK;
         }
     }
 
     // Check max session lifetime
-    if (config.enable_max_lifetime)
+    if (!is_expired_out && config.enable_max_lifetime)
     {
         uint64_t lifetime_seconds = current_time - session.login_time;
         if (lifetime_seconds > config.max_session_lifetime_seconds)
@@ -23629,8 +24356,34 @@ auto CatalogManager::checkSessionTimeout(const ID& session_id, const SessionTime
             is_expired_out = true;
             reason_out = "Session expired due to maximum lifetime exceeded (" + std::to_string(lifetime_seconds) + " seconds)";
             session.is_expired = true;
-            session.expiration_reason = reason_out;
-            return Status::OK;
+        }
+    }
+
+    if (is_expired_out)
+    {
+        {
+            std::lock_guard<std::mutex> lock(session_cache_mutex_);
+            auto it = session_cache_.find(session_id);
+            if (it != session_cache_.end())
+            {
+                it->second.is_expired = true;
+                it->second.expiration_reason = reason_out;
+            }
+        }
+
+        std::lock_guard<CatalogMutex> lock(mutex_);
+        if (sessions_table_page_ != 0)
+        {
+            auto predicate = [&session_id](const SessionRecord& rec) {
+                return rec.is_valid && rec.session_id == session_id;
+            };
+            auto result = findRecordInHeapPage<SessionRecord>(sessions_table_page_, predicate, ctx);
+            if (result.status == Status::OK)
+            {
+                SessionRecord updated = result.record;
+                updated.is_expired = 1;
+                updateRecordInHeapPage(sessions_table_page_, result.slot_index, updated, ctx);
+            }
         }
     }
 
@@ -23647,46 +24400,47 @@ auto CatalogManager::cleanupExpiredSessions(const SessionTimeoutConfig& config,
         return Status::OK;
     }
 
-    std::lock_guard<std::mutex> lock(session_cache_mutex_);
-
     uint64_t current_time = static_cast<uint64_t>(std::time(nullptr));
     std::vector<ID> expired_sessions;
 
     // Identify expired sessions
-    for (auto& [session_id, session] : session_cache_)
     {
-        bool is_expired = false;
-
-        // Check idle timeout
-        if (config.enable_idle_timeout)
+        std::lock_guard<std::mutex> lock(session_cache_mutex_);
+        for (auto& [session_id, session] : session_cache_)
         {
-            uint64_t idle_seconds = current_time - session.last_activity_time;
-            if (idle_seconds > config.idle_timeout_seconds)
+            bool is_expired = false;
+
+            // Check idle timeout
+            if (config.enable_idle_timeout)
             {
-                is_expired = true;
+                uint64_t idle_seconds = current_time - session.last_activity_time;
+                if (idle_seconds > config.idle_timeout_seconds)
+                {
+                    is_expired = true;
+                }
             }
-        }
 
-        // Check max session lifetime
-        if (!is_expired && config.enable_max_lifetime)
-        {
-            uint64_t lifetime_seconds = current_time - session.login_time;
-            if (lifetime_seconds > config.max_session_lifetime_seconds)
+            // Check max session lifetime
+            if (!is_expired && config.enable_max_lifetime)
             {
-                is_expired = true;
+                uint64_t lifetime_seconds = current_time - session.login_time;
+                if (lifetime_seconds > config.max_session_lifetime_seconds)
+                {
+                    is_expired = true;
+                }
             }
-        }
 
-        if (is_expired)
-        {
-            expired_sessions.push_back(session_id);
+            if (is_expired)
+            {
+                expired_sessions.push_back(session_id);
+            }
         }
     }
 
     // Remove expired sessions
     for (const auto& session_id : expired_sessions)
     {
-        session_cache_.erase(session_id);
+        closeSession(session_id, ctx);
         DEBUG_LOG_DB("Cleaned up expired session " << session_id.toString());
     }
 
@@ -23715,6 +24469,433 @@ auto CatalogManager::getSessionTimeoutConfig(SessionTimeoutConfig& config_out,
 {
     std::lock_guard<std::mutex> lock(session_timeout_config_mutex_);
     config_out = session_timeout_config_;
+    return Status::OK;
+}
+
+// Security policy epochs (Plan 03)
+
+auto CatalogManager::getSecurityPolicyEpoch(uint64_t& epoch_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    if (security_policy_epoch_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(security_policy_epoch_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to allocate security policy epoch table page");
+            return status;
+        }
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to persist security policy epoch table page");
+            return status;
+        }
+    }
+
+    if (security_policy_epoch_ == 0)
+    {
+        auto predicate = [](const SecurityPolicyEpochRecord& rec) {
+            return rec.is_valid;
+        };
+        auto result = findRecordInHeapPage<SecurityPolicyEpochRecord>(
+            security_policy_epoch_table_page_, predicate, ctx);
+        if (result.status == Status::OK)
+        {
+            security_policy_epoch_ = result.record.global_epoch;
+        }
+        else
+        {
+            SecurityPolicyEpochRecord record{};
+            record.global_epoch = 1;
+            record.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+            record.is_valid = 1;
+            Status status = writeRecordToHeapPage(security_policy_epoch_table_page_, record, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to initialize security policy epoch");
+                return status;
+            }
+            security_policy_epoch_ = record.global_epoch;
+        }
+    }
+
+    epoch_out = security_policy_epoch_;
+    return Status::OK;
+}
+
+auto CatalogManager::bumpSecurityPolicyEpoch(uint64_t& epoch_out, ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    uint64_t current_epoch = 0;
+    Status status = getSecurityPolicyEpoch(current_epoch, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    uint64_t new_epoch = current_epoch + 1;
+    auto predicate = [](const SecurityPolicyEpochRecord& rec) {
+        return rec.is_valid;
+    };
+    auto result = findRecordInHeapPage<SecurityPolicyEpochRecord>(
+        security_policy_epoch_table_page_, predicate, ctx);
+
+    if (result.status == Status::OK)
+    {
+        SecurityPolicyEpochRecord updated = result.record;
+        updated.global_epoch = new_epoch;
+        updated.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+        status = updateRecordInHeapPage(security_policy_epoch_table_page_, result.slot_index,
+                                        updated, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to update security policy epoch");
+            return status;
+        }
+    }
+    else
+    {
+        SecurityPolicyEpochRecord record{};
+        record.global_epoch = new_epoch;
+        record.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+        record.is_valid = 1;
+        status = writeRecordToHeapPage(security_policy_epoch_table_page_, record, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to persist security policy epoch");
+            return status;
+        }
+    }
+
+    security_policy_epoch_ = new_epoch;
+    epoch_out = new_epoch;
+    return Status::OK;
+}
+
+auto CatalogManager::getTablePolicyEpoch(const ID& table_id, uint64_t& epoch_out,
+                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto it = table_cache_.find(table_id);
+    if (it == table_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table not found");
+        return Status::NOT_FOUND;
+    }
+    epoch_out = it->second.policy_epoch;
+    return Status::OK;
+}
+
+auto CatalogManager::bumpTablePolicyEpoch(const ID& table_id, uint64_t& epoch_out,
+                                          ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto it = table_cache_.find(table_id);
+    if (it == table_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table not found");
+        return Status::NOT_FOUND;
+    }
+
+    auto predicate = [&table_id](const TableRecord& rec) {
+        return rec.is_valid && rec.table_id == table_id;
+    };
+    auto result = findRecordInHeapPage<TableRecord>(tables_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "Table not found");
+        return result.status;
+    }
+
+    uint64_t new_epoch = it->second.policy_epoch + 1;
+    TableRecord updated = result.record;
+    updated.policy_epoch = new_epoch;
+    updated.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+    Status status = updateRecordInHeapPage(tables_table_page_, result.slot_index, updated, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to update table policy epoch");
+        return status;
+    }
+
+    it->second.policy_epoch = new_epoch;
+    it->second.last_modified_time = updated.last_modified_time;
+    epoch_out = new_epoch;
+    return Status::OK;
+}
+
+// Audit log persistence (Plan 03)
+
+auto CatalogManager::appendAuditLog(const AuditEvent& event,
+                                    const std::array<uint8_t, 32>& hash_prev,
+                                    const std::array<uint8_t, 32>& hash_curr,
+                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    if (audit_log_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(audit_log_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to allocate audit log table page");
+            return status;
+        }
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to persist audit log table page");
+            return status;
+        }
+    }
+
+    AuditLogRecord record{};
+    record.event_id = event.event_id;
+    record.timestamp = event.timestamp;
+    record.event_type = static_cast<uint16_t>(event.event_type);
+    record.success = event.success ? 1 : 0;
+    record.session_id = event.session_id;
+    record.authkey_id = event.authkey_id;
+    record.user_id = event.user_id;
+    record.role_id = event.role_id;
+    record.target_user_id = event.target_user_id;
+    record.object_id = event.object_id;
+
+    std::string user_trunc = UTF8Utils::truncateToBytes(event.username, sizeof(record.username));
+    std::memset(record.username, 0, sizeof(record.username));
+    std::strncpy(record.username, user_trunc.c_str(), sizeof(record.username) - 1);
+
+    std::string target_trunc = UTF8Utils::truncateToBytes(event.target_username, sizeof(record.target_username));
+    std::memset(record.target_username, 0, sizeof(record.target_username));
+    std::strncpy(record.target_username, target_trunc.c_str(), sizeof(record.target_username) - 1);
+
+    std::string type_trunc = UTF8Utils::truncateToBytes(event.object_type, sizeof(record.object_type));
+    std::memset(record.object_type, 0, sizeof(record.object_type));
+    std::strncpy(record.object_type, type_trunc.c_str(), sizeof(record.object_type) - 1);
+
+    std::string name_trunc = UTF8Utils::truncateToBytes(event.object_name, sizeof(record.object_name));
+    std::memset(record.object_name, 0, sizeof(record.object_name));
+    std::strncpy(record.object_name, name_trunc.c_str(), sizeof(record.object_name) - 1);
+
+    record.details_oid = 0;
+    if (!event.details.empty())
+    {
+        uint64_t xmin = 0;
+        Status toast_status = storeStringInToast(event.details, xmin, record.details_oid, ctx);
+        if (toast_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, toast_status, "Failed to store audit details in TOAST");
+            return toast_status;
+        }
+    }
+
+    std::memcpy(record.hash_prev, hash_prev.data(), hash_prev.size());
+    std::memcpy(record.hash_curr, hash_curr.data(), hash_curr.size());
+    record.is_valid = 1;
+
+    Status status = writeRecordToHeapPage(audit_log_table_page_, record, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to persist audit log record");
+        return status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::queryAuditLog(const AuditQuery& query, std::vector<AuditEvent>& events_out,
+                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    events_out.clear();
+    if (audit_log_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    uint64_t xmin = 0;
+    std::vector<AuditEvent> events;
+    auto filter = [](const AuditLogRecord& rec) { return rec.is_valid; };
+    auto converter = [this, xmin, ctx](const AuditLogRecord& rec, AuditEvent& event) {
+        const_cast<char&>(rec.username[sizeof(rec.username) - 1]) = '\0';
+        const_cast<char&>(rec.target_username[sizeof(rec.target_username) - 1]) = '\0';
+        const_cast<char&>(rec.object_type[sizeof(rec.object_type) - 1]) = '\0';
+        const_cast<char&>(rec.object_name[sizeof(rec.object_name) - 1]) = '\0';
+
+        event.event_id = rec.event_id;
+        event.timestamp = rec.timestamp;
+        event.event_type = static_cast<AuditEventType>(rec.event_type);
+        event.success = rec.success != 0;
+        event.session_id = rec.session_id;
+        event.authkey_id = rec.authkey_id;
+        event.user_id = rec.user_id;
+        event.role_id = rec.role_id;
+        event.target_user_id = rec.target_user_id;
+        event.object_id = rec.object_id;
+        event.username = rec.username;
+        event.target_username = rec.target_username;
+        event.object_type = rec.object_type;
+        event.object_name = rec.object_name;
+
+        event.details.clear();
+        if (rec.details_oid != 0)
+        {
+            loadStringFromToast(rec.details_oid, xmin, event.details, ctx);
+        }
+    };
+
+    Status status = readRecordsToVector<AuditLogRecord, AuditEvent>(
+        audit_log_table_page_, events, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    for (const auto& event : events)
+    {
+        if (query.start_time > 0 && event.timestamp < query.start_time)
+        {
+            continue;
+        }
+        if (query.end_time > 0 && event.timestamp > query.end_time)
+        {
+            continue;
+        }
+        if (query.user_id.has_value())
+        {
+            if (std::memcmp(&event.user_id, &query.user_id.value(), sizeof(ID)) != 0)
+            {
+                continue;
+            }
+        }
+        if (query.session_id.has_value())
+        {
+            if (std::memcmp(&event.session_id, &query.session_id.value(), sizeof(ID)) != 0)
+            {
+                continue;
+            }
+        }
+        if (query.authkey_id.has_value())
+        {
+            if (std::memcmp(&event.authkey_id, &query.authkey_id.value(), sizeof(ID)) != 0)
+            {
+                continue;
+            }
+        }
+        if (query.username.has_value() && event.username != query.username.value())
+        {
+            continue;
+        }
+        if (query.event_type.has_value() && event.event_type != query.event_type.value())
+        {
+            continue;
+        }
+        if (!query.object_name.empty() && event.object_name != query.object_name)
+        {
+            continue;
+        }
+        if (query.success.has_value() && event.success != query.success.value())
+        {
+            continue;
+        }
+
+        events_out.push_back(event);
+    }
+
+    if (query.descending)
+    {
+        std::sort(events_out.begin(), events_out.end(),
+                  [](const AuditEvent& a, const AuditEvent& b) {
+                      if (a.timestamp != b.timestamp)
+                      {
+                          return a.timestamp > b.timestamp;
+                      }
+                      return a.event_id > b.event_id;
+                  });
+    }
+    else
+    {
+        std::sort(events_out.begin(), events_out.end(),
+                  [](const AuditEvent& a, const AuditEvent& b) {
+                      if (a.timestamp != b.timestamp)
+                      {
+                          return a.timestamp < b.timestamp;
+                      }
+                      return a.event_id < b.event_id;
+                  });
+    }
+
+    size_t start_idx = std::min(static_cast<size_t>(query.offset), events_out.size());
+    size_t end_idx = std::min(start_idx + query.limit, events_out.size());
+    if (start_idx != 0 || end_idx != events_out.size())
+    {
+        std::vector<AuditEvent> paged;
+        paged.reserve(end_idx - start_idx);
+        for (size_t i = start_idx; i < end_idx; ++i)
+        {
+            paged.push_back(events_out[i]);
+        }
+        events_out.swap(paged);
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getAuditLogTail(uint64_t& last_event_id_out,
+                                     std::array<uint8_t, 32>& last_hash_out,
+                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    last_event_id_out = 0;
+    last_hash_out.fill(0);
+
+    if (audit_log_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    BufferPool* bp = db_->buffer_pool();
+    if (!bp)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BufferPool not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint32_t current_page_id = audit_log_table_page_;
+    while (current_page_id != 0)
+    {
+        void* page_buffer = nullptr;
+        Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            auto* record = reinterpret_cast<AuditLogRecord*>(
+                reinterpret_cast<uint8_t*>(page_buffer) + offset);
+            if (record->is_valid && record->event_id >= last_event_id_out)
+            {
+                last_event_id_out = record->event_id;
+                std::memcpy(last_hash_out.data(), record->hash_curr, last_hash_out.size());
+            }
+            offset += sizeof(AuditLogRecord);
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, false, ctx);
+        current_page_id = next_page;
+    }
+
     return Status::OK;
 }
 
@@ -24489,6 +25670,22 @@ auto CatalogManager::grantPermission(const ID& object_id, PermissionObjectType o
             return status;
         }
 
+        uint64_t epoch = 0;
+        Status epoch_status = bumpSecurityPolicyEpoch(epoch, ctx);
+        if (epoch_status != Status::OK)
+        {
+            return epoch_status;
+        }
+        if (object_type == PermissionObjectType::TABLE)
+        {
+            uint64_t table_epoch = 0;
+            Status table_status = bumpTablePolicyEpoch(object_id, table_epoch, ctx);
+            if (table_status != Status::OK)
+            {
+                return table_status;
+            }
+        }
+
         DEBUG_LOG_DB("Updated permission on object " << object_id.toString());
         return Status::OK;
     }
@@ -24513,6 +25710,23 @@ auto CatalogManager::grantPermission(const ID& object_id, PermissionObjectType o
     {
         SET_ERROR_CONTEXT(ctx, status, "Failed to write permission record");
         return status;
+    }
+
+    uint64_t epoch = 0;
+    Status epoch_status = bumpSecurityPolicyEpoch(epoch, ctx);
+    if (epoch_status != Status::OK)
+    {
+        return epoch_status;
+    }
+    if (object_type == PermissionObjectType::TABLE)
+    if (result.record.object_type == static_cast<uint8_t>(ObjectType::TABLE))
+    {
+        uint64_t table_epoch = 0;
+        Status table_status = bumpTablePolicyEpoch(object_id, table_epoch, ctx);
+        if (table_status != Status::OK)
+        {
+            return table_status;
+        }
     }
 
     DEBUG_LOG_DB("Granted permission on object " << object_id.toString());
@@ -24555,6 +25769,22 @@ auto CatalogManager::revokePermission(const ID& object_id, PermissionObjectType 
             return status;
         }
 
+        uint64_t epoch = 0;
+        Status epoch_status = bumpSecurityPolicyEpoch(epoch, ctx);
+        if (epoch_status != Status::OK)
+        {
+            return epoch_status;
+        }
+        if (object_type == PermissionObjectType::TABLE)
+        {
+            uint64_t table_epoch = 0;
+            Status table_status = bumpTablePolicyEpoch(object_id, table_epoch, ctx);
+            if (table_status != Status::OK)
+            {
+                return table_status;
+            }
+        }
+
         DEBUG_LOG_DB("Revoked all permissions on object " << object_id.toString());
         return Status::OK;
     }
@@ -24566,6 +25796,22 @@ auto CatalogManager::revokePermission(const ID& object_id, PermissionObjectType 
     {
         SET_ERROR_CONTEXT(ctx, status, "Failed to update permission record");
         return status;
+    }
+
+    uint64_t epoch = 0;
+    Status epoch_status = bumpSecurityPolicyEpoch(epoch, ctx);
+    if (epoch_status != Status::OK)
+    {
+        return epoch_status;
+    }
+    if (object_type == PermissionObjectType::TABLE)
+    {
+        uint64_t table_epoch = 0;
+        Status table_status = bumpTablePolicyEpoch(object_id, table_epoch, ctx);
+        if (table_status != Status::OK)
+        {
+            return table_status;
+        }
     }
 
     DEBUG_LOG_DB("Revoked permission on object " << object_id.toString());
@@ -24877,6 +26123,19 @@ auto CatalogManager::grantColumnPermission(const ID& table_id, const std::string
             return status;
         }
 
+        uint64_t epoch = 0;
+        Status epoch_status = bumpSecurityPolicyEpoch(epoch, ctx);
+        if (epoch_status != Status::OK)
+        {
+            return epoch_status;
+        }
+        uint64_t table_epoch = 0;
+        Status table_status = bumpTablePolicyEpoch(table_id, table_epoch, ctx);
+        if (table_status != Status::OK)
+        {
+            return table_status;
+        }
+
         DEBUG_LOG_DB("Updated column permission on table " << table_id.toString()
                     << ", column: " << column_name);
         return Status::OK;
@@ -24903,6 +26162,19 @@ auto CatalogManager::grantColumnPermission(const ID& table_id, const std::string
     {
         SET_ERROR_CONTEXT(ctx, status, "Failed to write column permission record");
         return status;
+    }
+
+    uint64_t epoch = 0;
+    Status epoch_status = bumpSecurityPolicyEpoch(epoch, ctx);
+    if (epoch_status != Status::OK)
+    {
+        return epoch_status;
+    }
+    uint64_t table_epoch = 0;
+    Status table_status = bumpTablePolicyEpoch(table_id, table_epoch, ctx);
+    if (table_status != Status::OK)
+    {
+        return table_status;
     }
 
     DEBUG_LOG_DB("Granted column permission on table " << table_id.toString()
@@ -24948,6 +26220,19 @@ auto CatalogManager::revokeColumnPermission(const ID& table_id, const std::strin
     {
         SET_ERROR_CONTEXT(ctx, status, "Failed to revoke column permission");
         return status;
+    }
+
+    uint64_t epoch = 0;
+    Status epoch_status = bumpSecurityPolicyEpoch(epoch, ctx);
+    if (epoch_status != Status::OK)
+    {
+        return epoch_status;
+    }
+    uint64_t table_epoch = 0;
+    Status table_status = bumpTablePolicyEpoch(table_id, table_epoch, ctx);
+    if (table_status != Status::OK)
+    {
+        return table_status;
     }
 
     DEBUG_LOG_DB("Revoked column permission on table " << table_id.toString()
@@ -25242,6 +26527,20 @@ auto CatalogManager::createPolicy(const ID& table_id, const std::string& policy_
 
     policy_id_out = policy_rec.policy_id;
     DEBUG_LOG_DB("Created policy '" << policy_name << "' on table " << table_id.toString());
+
+    uint64_t epoch = 0;
+    Status epoch_status = bumpSecurityPolicyEpoch(epoch, ctx);
+    if (epoch_status != Status::OK)
+    {
+        return epoch_status;
+    }
+    uint64_t table_epoch = 0;
+    Status table_status = bumpTablePolicyEpoch(table_id, table_epoch, ctx);
+    if (table_status != Status::OK)
+    {
+        return table_status;
+    }
+
     return Status::OK;
 }
 
@@ -25311,6 +26610,20 @@ auto CatalogManager::dropPolicy(const ID& table_id, const std::string& policy_na
     }
 
     DEBUG_LOG_DB("Dropped policy '" << policy_name << "' from table " << table_id.toString());
+
+    uint64_t epoch = 0;
+    Status epoch_status = bumpSecurityPolicyEpoch(epoch, ctx);
+    if (epoch_status != Status::OK)
+    {
+        return epoch_status;
+    }
+    uint64_t table_epoch = 0;
+    Status table_status = bumpTablePolicyEpoch(table_id, table_epoch, ctx);
+    if (table_status != Status::OK)
+    {
+        return table_status;
+    }
+
     return Status::OK;
 }
 
@@ -25545,6 +26858,26 @@ auto CatalogManager::setTableRLS(const ID& table_id, bool enabled, bool forced,
         return status;
     }
 
+    auto table_it = table_cache_.find(table_id);
+    if (table_it != table_cache_.end())
+    {
+        table_it->second.rls_enabled = enabled;
+        table_it->second.rls_forced = forced;
+    }
+
+    uint64_t epoch = 0;
+    Status epoch_status = bumpSecurityPolicyEpoch(epoch, ctx);
+    if (epoch_status != Status::OK)
+    {
+        return epoch_status;
+    }
+    uint64_t table_epoch = 0;
+    Status table_status = bumpTablePolicyEpoch(table_id, table_epoch, ctx);
+    if (table_status != Status::OK)
+    {
+        return table_status;
+    }
+
     DEBUG_LOG_DB("Set RLS on table " << table_id.toString()
                 << " - enabled: " << enabled << ", forced: " << forced);
     return Status::OK;
@@ -25626,6 +26959,22 @@ auto CatalogManager::grantObjectPermission(const ID& object_id, ObjectType objec
             }
         }
 
+        uint64_t epoch = 0;
+        Status epoch_status = bumpSecurityPolicyEpoch(epoch, ctx);
+        if (epoch_status != Status::OK)
+        {
+            return epoch_status;
+        }
+        if (object_type == ObjectType::TABLE)
+        {
+            uint64_t table_epoch = 0;
+            Status table_status = bumpTablePolicyEpoch(object_id, table_epoch, ctx);
+            if (table_status != Status::OK)
+            {
+                return table_status;
+            }
+        }
+
         DEBUG_LOG_DB("Updated object permission for object " << object_id.toString());
         return Status::OK;
     }
@@ -25685,6 +27034,24 @@ auto CatalogManager::grantObjectPermission(const ID& object_id, ObjectType objec
         object_permissions_cache_[object_id].push_back(perm_info);
     }
 
+    {
+        uint64_t epoch = 0;
+        Status epoch_status = bumpSecurityPolicyEpoch(epoch, ctx);
+        if (epoch_status != Status::OK)
+        {
+            return epoch_status;
+        }
+        if (object_type == ObjectType::TABLE)
+        {
+            uint64_t table_epoch = 0;
+            Status table_status = bumpTablePolicyEpoch(object_id, table_epoch, ctx);
+            if (table_status != Status::OK)
+            {
+                return table_status;
+            }
+        }
+    }
+
     permission_id_out = perm_rec.permission_id;
     DEBUG_LOG_DB("Granted object permission on object " << object_id.toString());
     return Status::OK;
@@ -25729,6 +27096,21 @@ auto CatalogManager::revokeObjectPermission(const ID& object_id, const ID& grant
             std::remove_if(perms.begin(), perms.end(),
                           [&](const ObjectPermissionInfo& p) { return p.grantee_id == grantee_id; }),
             perms.end());
+    }
+
+    uint64_t epoch = 0;
+    Status epoch_status = bumpSecurityPolicyEpoch(epoch, ctx);
+    if (epoch_status != Status::OK)
+    {
+        return epoch_status;
+    }
+    {
+        uint64_t table_epoch = 0;
+        Status table_status = bumpTablePolicyEpoch(object_id, table_epoch, ctx);
+        if (table_status != Status::OK)
+        {
+            return table_status;
+        }
     }
 
     DEBUG_LOG_DB("Revoked object permission on object " << object_id.toString());

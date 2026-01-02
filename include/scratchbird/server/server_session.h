@@ -26,6 +26,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/auth_provider.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/catalog_manager.h"  // For DatabaseTriggerEvent
 #include "scratchbird/protocol/wire_protocol.h"
@@ -243,12 +244,13 @@ private:
      *
      * @param username Username to authenticate
      * @param password Password to verify
-     * @param user_id Output: user ID if authenticated
-     * @param is_superuser Output: true if user is superuser
-     * @return true if authentication succeeded
+     * @param user_info Output: user metadata if authenticated
+     * @param error_msg_out Output: error message for failures
+     * @return AuthResult status
      */
-    bool authenticate(const std::string& username, const std::string& password,
-                      core::ID& user_id, bool& is_superuser);
+    core::AuthResult authenticate(const std::string& username, const std::string& password,
+                                  core::AuthUserInfo& user_info,
+                                  std::string& error_msg_out);
 
     // ========================================================================
     // Database Trigger Firing (Firebird-style)
@@ -279,6 +281,8 @@ private:
 
     std::string username_;                          // Authenticated username
     std::string client_info_;                       // Client connection info
+    core::ID session_id_uuid_{};                    // Catalog session UUID
+    core::ID authkey_id_{};                         // AuthKey UUID
 
     // Connection context for security and transactions
     std::unique_ptr<core::ConnectionContext> conn_ctx_;

@@ -5314,6 +5314,14 @@ namespace scratchbird
                 error("Domain manager not available");
             }
 
+            if (!checkPermission(schema_id,
+                                 core::CatalogManager::PermissionObjectType::SCHEMA,
+                                 static_cast<uint32_t>(core::CatalogManager::Privilege::CREATE),
+                                 core::PermissionCheckMode::VERIFIED))
+            {
+                error("Permission denied: CREATE DOMAIN requires CREATE on schema");
+            }
+
             core::DomainInfo existing;
             status = domain_mgr->getDomain(schema_id, resolved_domain_name, existing, &ctx);
             if (status == core::Status::OK)
@@ -5559,6 +5567,14 @@ namespace scratchbird
                 error(err_msg);
             }
 
+            if (!checkPermission(domain_info.domain_id,
+                                 core::CatalogManager::PermissionObjectType::DOMAIN,
+                                 static_cast<uint32_t>(core::CatalogManager::Privilege::CREATE),
+                                 core::PermissionCheckMode::VERIFIED))
+            {
+                error("Permission denied: ALTER DOMAIN requires DOMAIN CREATE privilege");
+            }
+
             switch (static_cast<sblr::AlterDomainAction>(action))
             {
                 case sblr::AlterDomainAction::SET_DEFAULT:
@@ -5720,6 +5736,14 @@ namespace scratchbird
                     err_msg += ": " + ctx.message;
                 }
                 error(err_msg);
+            }
+
+            if (!checkPermission(domain_info.domain_id,
+                                 core::CatalogManager::PermissionObjectType::DOMAIN,
+                                 static_cast<uint32_t>(core::CatalogManager::Privilege::CREATE),
+                                 core::PermissionCheckMode::VERIFIED))
+            {
+                error("Permission denied: DROP DOMAIN requires DOMAIN CREATE privilege");
             }
 
             status = domain_mgr->dropDomain(domain_info.domain_id, &ctx);
@@ -16870,6 +16894,11 @@ namespace scratchbird
                             event.object_type = "DOMAIN";
                             event.object_name = domain_info.domain_name;
                             event.success = true;
+                            if (conn_ctx_)
+                            {
+                                event.session_id = conn_ctx_->sessionId();
+                                event.authkey_id = conn_ctx_->authKeyId();
+                            }
 
                             json details;
                             details["domain_id"] = domain_id.toString();
@@ -26193,6 +26222,51 @@ namespace scratchbird
                 error("SET ROLE requires connection context");
             }
 
+            if (conn_ctx_->autocommitSuspended())
+            {
+                switch (conn_ctx_->roleSwitchPolicy())
+                {
+                    case core::ConnectionContext::RoleSwitchPolicy::COMMIT:
+                    {
+                        core::ErrorContext err_ctx;
+                        auto status = conn_ctx_->commit(&err_ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "Commit failed";
+                            if (!err_ctx.message.empty())
+                            {
+                                err_msg += ": " + err_ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                        conn_ctx_->setAutocommitSuspended(false);
+                        break;
+                    }
+                    case core::ConnectionContext::RoleSwitchPolicy::ROLLBACK:
+                    {
+                        core::ErrorContext err_ctx;
+                        auto status = conn_ctx_->rollback(&err_ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "Rollback failed";
+                            if (!err_ctx.message.empty())
+                            {
+                                err_msg += ": " + err_ctx.message;
+                            }
+                            error(err_msg);
+                        }
+                        conn_ctx_->setAutocommitSuspended(false);
+                        break;
+                    }
+                    case core::ConnectionContext::RoleSwitchPolicy::ERROR:
+                        error("SET ROLE requires COMMIT or ROLLBACK before switching roles");
+                        break;
+                    case core::ConnectionContext::RoleSwitchPolicy::DEFER:
+                    default:
+                        break;
+                }
+            }
+
             if (is_reset)
             {
                 // RESET ROLE: Clear active role
@@ -27932,7 +28006,14 @@ namespace scratchbird
                                                             core::CatalogManager::ProcedureInfo::SqlSecurity::DEFINER
                                                             ? "DEFINER" : "INVOKER")});
 
-            std::string body = proc_info.source_text.empty() ? "Redacted" : proc_info.source_text;
+            bool redact_body = shouldRedactMetadata(
+                proc_info.procedure_id,
+                core::CatalogManager::PermissionObjectType::PROCEDURE,
+                proc_info.owner_id,
+                static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE));
+            std::string body = (redact_body || proc_info.source_text.empty())
+                ? "Redacted"
+                : proc_info.source_text;
             current_result_set_->addRow({Value::makeVarchar("Body"),
                                          Value::makeVarchar(body)});
 
@@ -27998,7 +28079,14 @@ namespace scratchbird
                                                             core::CatalogManager::FunctionInfo::SqlSecurity::DEFINER
                                                             ? "DEFINER" : "INVOKER")});
 
-            std::string body = func_info.source_text.empty() ? "Redacted" : func_info.source_text;
+            bool redact_body = shouldRedactMetadata(
+                func_info.function_id,
+                core::CatalogManager::PermissionObjectType::FUNCTION,
+                func_info.owner_id,
+                static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE));
+            std::string body = (redact_body || func_info.source_text.empty())
+                ? "Redacted"
+                : func_info.source_text;
             current_result_set_->addRow({Value::makeVarchar("Body"),
                                          Value::makeVarchar(body)});
 
@@ -28058,8 +28146,14 @@ namespace scratchbird
                                              Value::makeVarchar(schema_path)});
             }
 
-            std::string definition = view_info.definition.empty() ? "Redacted"
-                                                                   : view_info.definition;
+            bool redact_definition = shouldRedactMetadata(
+                view_info.view_id,
+                core::CatalogManager::PermissionObjectType::VIEW,
+                view_info.owner_id,
+                static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
+            std::string definition = (redact_definition || view_info.definition.empty())
+                ? "Redacted"
+                : view_info.definition;
             current_result_set_->addRow({Value::makeVarchar("Definition"),
                                          Value::makeVarchar(definition)});
 
@@ -28160,7 +28254,11 @@ namespace scratchbird
             };
 
             // Metadata visibility hook: apply redaction policy once security levels are wired in.
-            bool redact_details = false;
+            bool redact_details = shouldRedactMetadata(
+                domain_info.domain_id,
+                core::CatalogManager::PermissionObjectType::DOMAIN,
+                core::ID{},
+                static_cast<uint32_t>(core::CatalogManager::Privilege::ALL));
 
             std::string schema_path;
             if (!isZeroUuid(domain_info.schema_id))
@@ -28690,6 +28788,12 @@ namespace scratchbird
                         error("SHOW GRANTS not supported for object type");
                 }
 
+                redact_details = shouldRedactMetadata(
+                    object_id,
+                    perm_type,
+                    core::ID{},
+                    static_cast<uint32_t>(core::CatalogManager::Privilege::ALL));
+
                 std::vector<core::CatalogManager::PermissionInfo> permissions;
                 status = catalog->getObjectPermissions(object_id, perm_type, permissions, &err_ctx);
                 if (status != core::Status::OK)
@@ -28769,15 +28873,13 @@ namespace scratchbird
                     }
                 }
 
-                if (redact_details)
+                bool redact_entry = shouldRedactMetadata(
+                    perm.object_id,
+                    perm.object_type,
+                    core::ID{},
+                    static_cast<uint32_t>(core::CatalogManager::Privilege::ALL));
+                if (redact_entry)
                 {
-                    current_result_set_->addRow({
-                        Value::makeVarchar("Redacted"),
-                        Value::makeVarchar(object_label),
-                        Value::makeVarchar("Redacted"),
-                        Value::makeVarchar("Redacted"),
-                        Value::makeVarchar("Redacted")
-                    });
                     continue;
                 }
 
@@ -28785,11 +28887,6 @@ namespace scratchbird
                 std::string grantor = format_grantor(perm.grantor_id);
                 add_privilege_rows(grantee, object_label, grantor,
                                    perm.grant_option, perm.privileges);
-            }
-
-            if (redact_details)
-            {
-                return;
             }
 
             std::vector<core::CatalogManager::SchemaInfo> schemas;
@@ -28818,6 +28915,16 @@ namespace scratchbird
 
                 for (const auto& table : tables)
                 {
+                    bool redact_columns = shouldRedactMetadata(
+                        table.table_id,
+                        core::CatalogManager::PermissionObjectType::TABLE,
+                        core::ID{},
+                        static_cast<uint32_t>(core::CatalogManager::Privilege::ALL));
+                    if (redact_columns)
+                    {
+                        continue;
+                    }
+
                     std::vector<core::CatalogManager::ColumnPermissionInfo> column_perms;
                     if (catalog->getColumnPermissions(table.table_id, column_perms, &err_ctx) != core::Status::OK)
                     {
@@ -28868,11 +28975,9 @@ namespace scratchbird
 
             core::ErrorContext err_ctx;
 
-            // Metadata visibility hook: apply redaction policy once security levels are wired in.
-            bool redact_details = false;
-
             auto add_check_row = [&](const core::CatalogManager::ConstraintInfo& constraint,
-                                     const std::string& table_label) {
+                                     const std::string& table_label,
+                                     bool redact_details) {
                 std::string clause = constraint.check_expression;
                 if (clause.empty())
                 {
@@ -28929,9 +29034,15 @@ namespace scratchbird
                     ? table_info.table_name
                     : schema_path + "." + table_info.table_name;
 
+                bool redact_details = shouldRedactMetadata(
+                    table_info.table_id,
+                    core::CatalogManager::PermissionObjectType::TABLE,
+                    table_info.owner_id,
+                    static_cast<uint32_t>(core::CatalogManager::Privilege::ALL));
+
                 for (const auto& constraint : constraints)
                 {
-                    add_check_row(constraint, table_label);
+                    add_check_row(constraint, table_label, redact_details);
                 }
                 return;
             }
@@ -28998,6 +29109,16 @@ namespace scratchbird
 
                 for (const auto& table : tables)
                 {
+                    bool redact_details = shouldRedactMetadata(
+                        table.table_id,
+                        core::CatalogManager::PermissionObjectType::TABLE,
+                        table.owner_id,
+                        static_cast<uint32_t>(core::CatalogManager::Privilege::ALL));
+                    if (redact_details)
+                    {
+                        continue;
+                    }
+
                     std::vector<core::CatalogManager::ConstraintInfo> constraints;
                     auto status = catalog->getConstraintsByType(
                         table.table_id,
@@ -29015,7 +29136,7 @@ namespace scratchbird
 
                     for (const auto& constraint : constraints)
                     {
-                        add_check_row(constraint, table_label);
+                        add_check_row(constraint, table_label, false);
                     }
                 }
             }
@@ -29417,10 +29538,17 @@ namespace scratchbird
                                              Value::makeVarchar(schema_path)});
             }
 
-            std::string header = pkg_info.package_header.empty() ? "Redacted"
-                                                                 : pkg_info.package_header;
-            std::string body = pkg_info.package_body.empty() ? "Redacted"
-                                                             : pkg_info.package_body;
+            bool redact_package = shouldRedactMetadata(
+                pkg_info.package_id,
+                core::CatalogManager::PermissionObjectType::PROCEDURE,
+                pkg_info.owner_id,
+                0);
+            std::string header = (redact_package || pkg_info.package_header.empty())
+                ? "Redacted"
+                : pkg_info.package_header;
+            std::string body = (redact_package || pkg_info.package_body.empty())
+                ? "Redacted"
+                : pkg_info.package_body;
             current_result_set_->addRow({Value::makeVarchar("Header"),
                                          Value::makeVarchar(header)});
             current_result_set_->addRow({Value::makeVarchar("Body"),
@@ -30156,7 +30284,6 @@ namespace scratchbird
                 return false; // Can't have permissions on invalid object
             }
 
-            // Security Phase 3.2.3: Check global permission cache first
             core::PermissionCache::CacheKey cache_key{
                 current_user_id,
                 object_id,
@@ -30164,31 +30291,12 @@ namespace scratchbird
                 static_cast<core::CatalogManager::Privilege>(required_privilege)
             };
 
-            auto cached_result = db_->permission_cache()->lookup(cache_key);
-            if (cached_result.has_value())
-            {
-                // Cache hit! Return cached result
-                return cached_result.value();
-            }
-
-            // Cache miss - query catalog manager
             core::ErrorContext err_ctx;
-            bool has_permission = false;
-            auto status = db_->catalog_manager()->hasPermission(
-                current_user_id, object_id, object_type,
-                static_cast<core::CatalogManager::Privilege>(required_privilege),
-                has_permission, &err_ctx);
-
-            if (status != core::Status::OK)
-            {
-                // Permission check failed - deny access
-                return false;
-            }
-
-            // Cache result in global cache (persists across statements!)
-            db_->permission_cache()->insert(cache_key, has_permission);
-
-            return has_permission;
+            return db_->permission_cache()->checkPermission(
+                db_->catalog_manager(),
+                cache_key,
+                core::PermissionCheckMode::CACHED,
+                &err_ctx);
         }
 
         bool Executor::checkPermission(const core::ID& object_id,
@@ -30235,6 +30343,58 @@ namespace scratchbird
                 cache_key,
                 mode,
                 &err_ctx);
+        }
+
+        bool Executor::shouldRedactMetadata(const core::ID& object_id,
+                                            core::CatalogManager::PermissionObjectType object_type,
+                                            const core::ID& owner_id,
+                                            uint32_t required_privilege)
+        {
+            if (!conn_ctx_)
+            {
+                // Preserve legacy behavior when no security context is available.
+                return false;
+            }
+
+            if (conn_ctx_->isSuperuser())
+            {
+                return false;
+            }
+
+            static const core::ID zero_id{};
+            const core::ID& current_user = conn_ctx_->getCurrentUserId();
+            if (current_user == zero_id)
+            {
+                return false;
+            }
+
+            if (owner_id != zero_id && owner_id == current_user)
+            {
+                return false;
+            }
+
+            if (required_privilege == 0)
+            {
+                return true;
+            }
+
+            core::CatalogManager* catalog = db_ ? db_->catalog_manager() : nullptr;
+            if (catalog)
+            {
+                std::vector<core::CatalogManager::PermissionInfo> perms;
+                core::ErrorContext err_ctx;
+                core::Status perm_status = catalog->getObjectPermissions(object_id, object_type, perms, &err_ctx);
+                if (perm_status != core::Status::OK)
+                {
+                    return false;
+                }
+                if (perms.empty())
+                {
+                    return false;
+                }
+            }
+
+            return !checkPermission(object_id, object_type, required_privilege);
         }
 
         // ===== Query Execution Limit Checks (MEDIUM-3 DoS Protection) =====
