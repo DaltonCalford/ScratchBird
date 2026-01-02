@@ -316,7 +316,17 @@ Please verify the above evidence before I mark this complete.
 3. Map each requirement to implementation
 4. Document any deferred items with user approval
 
-### 5. Evidence Provision
+### 5. Parser/SBLR Spec Traceability
+
+**Rule**: Any parser or SBLR change that affects SELECT planning/execution MUST reference the vector SELECT spec.
+
+**Required reference** (comment or doc entry in the change):
+
+`Spec: docs/specifications/DraftQueryOptimizationSpecification.md`
+
+If the change makes vector planning ambiguous or incomplete, the vector path MUST fall back in `vector_select=auto`.
+
+### 6. Evidence Provision
 
 **Rule**: NEVER mark complete without providing ALL required evidence.
 
@@ -378,6 +388,7 @@ See: `/docs/standards/COMMON_FAILURE_PATTERNS.md`
 - Marking complete without all test types
 - Marking complete without evidence
 - Skipping specification reading
+- Parser/SBLR changes affecting SELECT without spec reference
 - Bypassing checkpoints without user approval
 
 **Treatment**: Violations are as serious as violating MGA_RULES.md.
