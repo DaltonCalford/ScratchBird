@@ -1465,42 +1465,171 @@ void Parser::parseCreateTrigger() {
 }
 
 void Parser::parseCreateType() {
-    emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_TYPE));
+    // Spec: docs/specifications/SBLR_DOMAIN_PAYLOADS.md
+    bool if_not_exists = false;
+    if (matchKeyword(TokenType::KW_IF)) {
+        consumeKeyword(TokenType::KW_NOT, "Expected NOT");
+        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+        if_not_exists = true;
+    }
 
-    std::string type_name = parseQualifiedName();
-    emitString(type_name);
+    auto name_pair = splitQualifiedName(parseQualifiedName());
+    std::string schema = name_pair.first;
+    std::string type_name = name_pair.second;
+    resolveTableName(schema, type_name);
+    std::string type_path = schema.empty() ? type_name : (schema + "." + type_name);
 
     consumeKeyword(TokenType::KW_AS, "Expected AS");
 
+    auto is_supported_type = [](PgDataType::Kind kind) {
+        switch (kind) {
+            case PgDataType::Kind::SMALLINT:
+            case PgDataType::Kind::INTEGER:
+            case PgDataType::Kind::SERIAL:
+            case PgDataType::Kind::SMALLSERIAL:
+            case PgDataType::Kind::BIGINT:
+            case PgDataType::Kind::BIGSERIAL:
+            case PgDataType::Kind::REAL:
+            case PgDataType::Kind::DOUBLE_PRECISION:
+            case PgDataType::Kind::DECIMAL:
+            case PgDataType::Kind::NUMERIC:
+            case PgDataType::Kind::MONEY:
+            case PgDataType::Kind::CHAR:
+            case PgDataType::Kind::VARCHAR:
+            case PgDataType::Kind::TEXT:
+            case PgDataType::Kind::BYTEA:
+            case PgDataType::Kind::DATE:
+            case PgDataType::Kind::TIME:
+            case PgDataType::Kind::TIMETZ:
+            case PgDataType::Kind::TIMESTAMP:
+            case PgDataType::Kind::TIMESTAMPTZ:
+            case PgDataType::Kind::BOOLEAN:
+            case PgDataType::Kind::UUID:
+            case PgDataType::Kind::JSON:
+            case PgDataType::Kind::JSONB:
+                return true;
+            default:
+                return false;
+        }
+    };
+
+    auto emit_domain_header = [&](uint8_t domain_kind) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_DOMAIN));
+        uint8_t flags = if_not_exists ? 0x01 : 0x00;
+        emitByte(flags);
+        emitByte(domain_kind);
+        emitString(type_path);
+    };
+
+    auto emit_type_ref = [&](const PgDataType& type) {
+        emitByte(0);  // base type ref
+        emit(typeToOpcode(type.kind));
+        if (type.kind == PgDataType::Kind::VARCHAR ||
+            type.kind == PgDataType::Kind::CHAR) {
+            uint32_t length = type.length > 0 ? static_cast<uint32_t>(type.length) : 255;
+            emitU32(length);
+        } else if (type.kind == PgDataType::Kind::DECIMAL ||
+                   type.kind == PgDataType::Kind::NUMERIC ||
+                   type.kind == PgDataType::Kind::MONEY) {
+            uint32_t precision = type.precision > 0 ? static_cast<uint32_t>(type.precision) : 18;
+            uint32_t scale = type.scale > 0 ? static_cast<uint32_t>(type.scale) : 0;
+            emitU32(precision);
+            emitU32(scale);
+        }
+    };
+
     if (matchKeyword(TokenType::KW_ENUM)) {
-        // ENUM type
-        emitByte(1);
+        // Map ENUM type to a ScratchBird ENUM domain.
+        std::vector<std::string> labels;
         consume(TokenType::LEFT_PAREN, "Expected (");
         do {
             if (check(TokenType::STRING_LITERAL)) {
                 uint32_t id = current_token_.value.string_id;
-                emitString(lexer_.stringPool().get(id));
+                labels.emplace_back(lexer_.stringPool().get(id));
                 advance();
+            } else {
+                error("Expected string literal in ENUM definition");
+                synchronize();
+                return;
             }
         } while (match(TokenType::COMMA));
         consume(TokenType::RIGHT_PAREN, "Expected )");
-    } else if (matchKeyword(TokenType::KW_RANGE)) {
-        // RANGE type
-        emitByte(2);
-        consume(TokenType::LEFT_PAREN, "Expected (");
-        // Parse range options
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-    } else if (match(TokenType::LEFT_PAREN)) {
-        // Composite type
-        emitByte(3);
+
+        emit_domain_header(2);
+        emitU32(static_cast<uint32_t>(labels.size()));
+        uint32_t position = 1;
+        for (const auto& label : labels) {
+            emitString(label);
+            emitU32(position++);
+        }
+        emitByte(0);  // ENUM wrap disabled
+
+        emitByte(1);  // nullable
+        emitString("");  // default
+        emitString("");  // collation
+        emitU32(0);  // constraints
+        emitByte(0);  // no inherits
+        emitString("postgresql");
+        emitString("");
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_RANGE)) {
+        error("PostgreSQL CREATE TYPE RANGE is not supported in ScratchBird parser");
+        synchronize();
+        return;
+    }
+
+    if (match(TokenType::LEFT_PAREN)) {
+        struct RecordFieldDef {
+            std::string name;
+            PgDataType type;
+        };
+        std::vector<RecordFieldDef> fields;
         do {
-            std::string attr_name = parseIdentifier();
-            emitString(attr_name);
-            parseDataType();
+            RecordFieldDef field;
+            field.name = parseIdentifier();
+            field.type = parseDataType();
+            if (!is_supported_type(field.type.kind)) {
+                error("PostgreSQL composite types only support scalar base types in this release");
+                synchronize();
+                return;
+            }
+            if (matchKeyword(TokenType::KW_COLLATE)) {
+                parseIdentifier();
+            }
+            if (check(TokenType::KW_NOT) || check(TokenType::KW_NULL) ||
+                check(TokenType::KW_DEFAULT) || check(TokenType::KW_CONSTRAINT) ||
+                check(TokenType::KW_CHECK)) {
+                error("PostgreSQL composite type attributes do not support constraints in this parser");
+                synchronize();
+                return;
+            }
+            fields.push_back(std::move(field));
         } while (match(TokenType::COMMA));
         consume(TokenType::RIGHT_PAREN, "Expected )");
+
+        emit_domain_header(1);
+        emitU32(static_cast<uint32_t>(fields.size()));
+        for (const auto& field : fields) {
+            emitString(field.name);
+            emit_type_ref(field.type);
+            emitByte(1);  // field nullable
+            emitString("");  // default
+        }
+
+        emitByte(1);  // nullable
+        emitString("");  // default
+        emitString("");  // collation
+        emitU32(0);  // constraints
+        emitByte(0);  // no inherits
+        emitString("postgresql");
+        emitString("");
+        return;
     }
+
+    error("Expected ENUM, RANGE, or composite definition after CREATE TYPE");
 }
 
 std::string Parser::parseExpressionText() {

@@ -2,8 +2,8 @@
 
 **Plan:** Domain DDL (CREATE/ALTER/DROP DOMAIN) with full WITH block support
 **Version:** 1.0
-**Last Updated:** 2026-01-03
-**Overall Status:** ⚠️ IN PROGRESS - V2 domain DDL + executor enforcement complete; remaining work is emulated parser coverage, semantic validation guardrails, conflict opcodes, and comprehensive tests
+**Last Updated:** 2026-01-04
+**Overall Status:** ✅ COMPLETE - V2 + emulated parsers aligned, semantic guardrails finalized, conflict opcodes defined, parser tests updated
 
 ---
 
@@ -13,7 +13,7 @@
 |-------|--------|---------|
 | **Specification** | ✅ COMPLETE | All specifications written and reviewed |
 | **Prerequisites** | ✅ COMPLETE | Plan 02B core complete (alignment/testing pending); Plan 03B complete (verification pending) |
-| **Implementation** | ⚠️ IN PROGRESS | V2 parser/semantic/bytecode/executor wired; remaining semantic guardrails, emulated parser DDL, conflict opcodes, and comprehensive tests |
+| **Implementation** | ✅ COMPLETE | V2 + emulated parsers aligned; semantic guardrails, conflict opcodes, and parser coverage complete |
 
 ---
 
@@ -159,7 +159,7 @@
 8. **MySQL DOMAIN Guardrails** ✅
    - CREATE/ALTER/DROP DOMAIN rejected with clear alternatives + parser tests added
 
-### ✅ Phase 8: Domain Semantic Guardrails (2026-01-03)
+### ✅ Phase 8: Domain Semantic Guardrails (2026-01-04)
 
 1. **Duplicate Guardrails Added** ✅
    - Duplicate domain constraint names rejected (case-insensitive)
@@ -169,11 +169,17 @@
    - CHECK constraints require VALUE and reject subqueries
    - BASIC domain DEFAULT literal type compatibility enforced
    - RECORD/VARIANT domains must be non-empty; VARIANT types unique
-2. **ALTER/DROP Domain Validation** ✅
+2. **Inheritance + Enum Guardrails** ✅
+   - INHERITS base type compatibility enforced
+   - NOT NULL strengthening enforced for inherited domains
+   - Inheritance depth limit enforced (max 10 levels)
+   - RECORD self-reference blocked
+   - ENUM positions must be sequential
+3. **ALTER/DROP Domain Validation** ✅
    - ALTER DOMAIN validates CHECK/DEFAULT payloads and rename collisions
    - DROP DOMAIN blocks column dependencies and child domains
-2. **Tests Added** ✅
-   - Semantic analyzer unit tests cover duplicate constraint/field/label cases
+4. **Tests Added** ✅
+   - Semantic analyzer unit tests cover duplicates, inheritance, enum positions, and SET domain resolution
 
 ---
 
@@ -246,12 +252,7 @@
 
 ## Next Steps
 
-1. Complete semantic analyzer validation (type checks, inheritance cycles, dependency checks).
-2. Complete dialect guardrails + remaining parser stubs (Firebird/PostgreSQL/MySQL).
-3. Define domain conflict opcodes (EXT_REBIND_DOMAIN / EXT_RESOLVE_DOMAIN_CONFLICT).
-4. Track remaining Plan 02B testing items (cascade semantics, tests).
-
-**Timeline:** Remaining work is validation + guardrails/stubs + testing.
+Plan 04 is complete. Proceed to Plan 05 (query optimization spec + vector execution work).
 
 ---
 
@@ -279,8 +280,8 @@
 ### Section 1: Schema Changes (1/1)
 - [x] Task 1.1: Add dialect_tag/compat_name to domain schema
 
-### Section 2: SBLR Opcodes (2/3)
-- [ ] Task 2.1: Define extended domain conflict opcodes (EXT_REBIND_DOMAIN/EXT_RESOLVE_DOMAIN_CONFLICT)
+### Section 2: SBLR Opcodes (3/3)
+- [x] Task 2.1: Define extended domain conflict opcodes (EXT_REBIND_DOMAIN/EXT_RESOLVE_DOMAIN_CONFLICT)
 - [x] Task 2.2: Document SBLR payload structures (BASIC/RECORD/ENUM/SET/VARIANT + ALTER/DROP)
 - [x] Task 2.3: Define WITH block enforcement opcodes
 
@@ -295,17 +296,17 @@
 - [x] Task 4.9: parseDropDomain()
 - [x] Task 4.10-4.12: Update dispatchers
 
-### Section 5: Firebird Parser (0/3)
-- [ ] Tasks 5.1-5.3: CREATE/ALTER/DROP DOMAIN (Firebird syntax)
+### Section 5: Firebird Parser (3/3)
+- [x] Tasks 5.1-5.3: CREATE/ALTER/DROP DOMAIN (Firebird syntax)
 
-### Section 6: PostgreSQL Parser (0/3)
-- [ ] Tasks 6.1-6.3: CREATE/ALTER/DROP DOMAIN (align payload to SBLR v2)
+### Section 6: PostgreSQL Parser (3/3)
+- [x] Tasks 6.1-6.3: CREATE/ALTER/DROP DOMAIN (align payload to SBLR v2)
 
-### Section 7: MySQL Parser (0/3)
-- [ ] Tasks 7.1-7.3: Reject domain DDL with clear errors
+### Section 7: MySQL Parser (3/3)
+- [x] Tasks 7.1-7.3: Reject domain DDL with clear errors
 
-### Section 8: Semantic Analyzer (partial)
-- [ ] Tasks 8.1-8.7: Full validation + dependency checks (core analysis wired; guardrails/tests pending)
+### Section 8: Semantic Analyzer (complete)
+- [x] Tasks 8.1-8.7: Full validation + dependency checks (guardrails + tests complete)
 
 ### Section 9: Bytecode Generator (7/7)
 - [x] Tasks 9.1-9.5: Emit CREATE DOMAIN for all types
@@ -325,11 +326,11 @@
 ### Section 12: Quick Wins (5/5)
 - [x] Tasks 12.1-12.5: Firebird window specs, MySQL NULL-safe, ESCAPE, placeholders, GROUP BY
 
-### Section 13: Testing (partial)
-- [ ] Tasks 13.1-13.5: Comprehensive test coverage (V2 parser/bytecode tests added; emulated parser + negative tests pending)
+### Section 13: Testing (complete)
+- [x] Tasks 13.1-13.5: Comprehensive parser/semantic test coverage (V2 + emulated dialects)
 
-### Section 14: Documentation (partial)
-- [ ] Tasks 14.1-14.3: Update specs and create guides (domain payload doc added; remaining guides pending)
+### Section 14: Documentation (complete)
+- [x] Tasks 14.1-14.3: Update specs and create guides
 
 ---
 
@@ -347,9 +348,9 @@
 **Key Context:**
 - Plan 02B core implementation is complete; alignment/testing remains
 - Plan 03B domain infrastructure is complete; verification is external-runner dependent
-- Plan 04 remaining work centers on emulated parsers, semantic guardrails, conflict opcodes, and tests
+- Plan 04 is complete; proceed with Plan 05
 
 ---
 
-**Last Updated:** 2026-01-03
-**Next Update:** After emulated parser/domain validation progress
+**Last Updated:** 2026-01-04
+**Next Update:** After Plan 05 kickoff

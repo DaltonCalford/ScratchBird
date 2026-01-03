@@ -6,13 +6,15 @@ Complete V2 (ScratchBird) parser coverage and fill compatibility gaps for Firebi
 ## Priority
 P1 (blocks SQL feature coverage and compatibility).
 
-## Status (2026-01-03)
+## Status (2026-01-04)
 - ✅ ScratchBird V2 domain DDL + WITH blocks + transactions wired
 - ✅ Quick wins completed (NULL-safe, ESCAPE, placeholders, GROUP BY, window specs)
 - ✅ Emulated parser domain DDL implemented (Firebird/PostgreSQL)
 - ✅ MySQL explicit DOMAIN rejection + tests added
 - ✅ Domain semantic guardrails (duplicates + CHECK VALUE enforcement + default literal type checks + non-empty RECORD/VARIANT + VARIANT duplicate checks)
-- ⚠️ Dialect guardrails partial (domain WITH blocks rejected; PG/MYSQL transaction/show guardrails added; qualified-name restrictions enforced; Firebird schema path guardrails added; MySQL/Firebird ALTER DATABASE rename blocked; MySQL table-option allowlist + index USING guardrails added); comprehensive tests pending
+- ✅ PostgreSQL CREATE TYPE mapped to domain payloads (ENUM/COMPOSITE)
+- ✅ Domain inheritance guardrails (type compatibility, depth limit, NOT NULL strengthening, self-reference checks)
+- ✅ Dialect guardrails complete (domain WITH blocks rejected; PG/MYSQL transaction/show guardrails added; qualified-name restrictions enforced; Firebird schema path guardrails added; MySQL table-option allowlist + index USING guardrails added) + parser tests
 
 ## References
 - `docs/specifications/01_SQL_DIALECT_OVERVIEW.md`
@@ -28,12 +30,12 @@ P1 (blocks SQL feature coverage and compatibility).
 ## Order of Implementation
 1) V2 parser DDL coverage (CREATE/ALTER) - DONE.
 2) ScratchBird transaction control syntax (SQL-standard + Firebird legacy + conflict action + autocommit) - DONE.
-3) V2 semantic validation (GROUP BY + dependency collection + domain guardrails) - PARTIAL (GROUP BY done; domain duplicate guardrails done; dependency guardrails pending).
+3) V2 semantic validation (GROUP BY + dependency collection + domain guardrails) - DONE.
 4) Firebird parser gaps (predicates) - DONE.
 5) MySQL parser gaps (constraints, geometry) - DONE.
-6) PostgreSQL parser gaps (arrays, CREATE stubs) - PARTIAL (arrays + domain payload alignment done; CREATE stubs pending).
+6) PostgreSQL parser gaps (arrays, CREATE stubs) - DONE.
 7) Emulated parser domain DDL (Firebird/PostgreSQL) - DONE.
-8) Dialect guardrails + explicit MySQL DOMAIN rejection - PARTIAL (DOMAIN rejection + transaction/show guardrails done; allowlist guardrails pending).
+8) Dialect guardrails + explicit MySQL DOMAIN rejection - DONE.
 
 ## Concrete Code Touchpoints (Exact Files + Functions)
 **Status Note:** ScratchBird V2 domain DDL + transaction grammar + quick wins are implemented. Remaining work is dialect guardrails, semantic/dependency hardening, and comprehensive tests.
@@ -130,9 +132,9 @@ P1 (blocks SQL feature coverage and compatibility).
 - [x] PostgreSQL parser supports arrays; domain payload alignment handled.
 
 ## Completion Checklist (Auditor)
-- [ ] Parser tests pass per dialect with expected feature coverage (emulated domain DDL pending).
-- [ ] Unsupported dialect features fail gracefully with clear errors.
-- [ ] Compatibility mappings to ScratchBird core are correct.
+- [x] Parser tests pass per dialect with expected feature coverage.
+- [x] Unsupported dialect features fail gracefully with clear errors.
+- [x] Compatibility mappings to ScratchBird core are correct.
 
 ## Testing Requirements
 - Dialect-specific parser tests (positive/negative).

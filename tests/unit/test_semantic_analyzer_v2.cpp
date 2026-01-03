@@ -490,6 +490,11 @@ TEST_F(SemanticAnalyzerV2Test, CreateRecordDomainEmptyFields) {
     EXPECT_FALSE(result.success());
 }
 
+TEST_F(SemanticAnalyzerV2Test, CreateRecordDomainSelfReference) {
+    auto result = analyze("CREATE DOMAIN test.self_rec AS RECORD (self test.self_rec)");
+    EXPECT_FALSE(result.success());
+}
+
 TEST_F(SemanticAnalyzerV2Test, CreateVariantDomainEmptyTypes) {
     auto result = analyze("CREATE DOMAIN test.var AS VARIANT ()");
     EXPECT_FALSE(result.success());
@@ -497,6 +502,151 @@ TEST_F(SemanticAnalyzerV2Test, CreateVariantDomainEmptyTypes) {
 
 TEST_F(SemanticAnalyzerV2Test, CreateVariantDomainDuplicateTypes) {
     auto result = analyze("CREATE DOMAIN test.var AS VARIANT (INT, INT)");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateDomainEnumPositionGap) {
+    auto result = analyze("CREATE DOMAIN test.bad_enum AS ENUM ('A' = 1, 'B' = 3)");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateDomainEnumPositionAutoAssign) {
+    auto result = analyze("CREATE DOMAIN test.good_enum AS ENUM ('A', 'B' = 2)");
+    EXPECT_TRUE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateDomainSetUnknownType) {
+    auto result = analyze("CREATE DOMAIN test.bad_set AS SET OF NotAType");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateDomainSetOfDomainType) {
+    auto* domain_mgr = db_.domain_manager();
+    ASSERT_NE(domain_mgr, nullptr);
+
+    ErrorContext ctx;
+    DomainManager::DomainCreateOptions options;
+    ID domain_id{};
+    ASSERT_EQ(domain_mgr->createBasicDomain(
+                  test_schema_id_,
+                  "base_set",
+                  DataType::INT32,
+                  0,
+                  0,
+                  options,
+                  domain_id,
+                  &ctx),
+              Status::OK);
+
+    auto result = analyze("CREATE DOMAIN test.set_domain AS SET OF base_set");
+    ASSERT_TRUE(result.success());
+
+    auto* stmt = dynamic_cast<ResolvedCreateDomainStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_TRUE(stmt->set_element_type.is_domain);
+    EXPECT_EQ(stmt->set_element_type.domain_id, domain_id);
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateDomainInheritanceTypeMismatch) {
+    auto* domain_mgr = db_.domain_manager();
+    ASSERT_NE(domain_mgr, nullptr);
+
+    ErrorContext ctx;
+    DomainManager::DomainCreateOptions options;
+    ID domain_id{};
+    ASSERT_EQ(domain_mgr->createBasicDomain(
+                  test_schema_id_,
+                  "parent_text",
+                  DataType::TEXT,
+                  0,
+                  0,
+                  options,
+                  domain_id,
+                  &ctx),
+              Status::OK);
+
+    auto result = analyze("CREATE DOMAIN test.child_int AS INT INHERITS (test.parent_text)");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateDomainInheritanceNotNullStrengthen) {
+    auto* domain_mgr = db_.domain_manager();
+    ASSERT_NE(domain_mgr, nullptr);
+
+    ErrorContext ctx;
+    DomainManager::DomainCreateOptions options;
+    options.nullable = false;
+    ID domain_id{};
+    ASSERT_EQ(domain_mgr->createBasicDomain(
+                  test_schema_id_,
+                  "parent_nn",
+                  DataType::INT32,
+                  0,
+                  0,
+                  options,
+                  domain_id,
+                  &ctx),
+              Status::OK);
+
+    auto result = analyze("CREATE DOMAIN test.child_nn AS INT INHERITS (test.parent_nn)");
+    ASSERT_TRUE(result.success());
+
+    auto* stmt = dynamic_cast<ResolvedCreateDomainStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_FALSE(stmt->nullable);
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateDomainInheritanceCannotRelaxNotNull) {
+    auto* domain_mgr = db_.domain_manager();
+    ASSERT_NE(domain_mgr, nullptr);
+
+    ErrorContext ctx;
+    DomainManager::DomainCreateOptions options;
+    options.nullable = false;
+    ID domain_id{};
+    ASSERT_EQ(domain_mgr->createBasicDomain(
+                  test_schema_id_,
+                  "parent_nn2",
+                  DataType::INT32,
+                  0,
+                  0,
+                  options,
+                  domain_id,
+                  &ctx),
+              Status::OK);
+
+    auto result = analyze("CREATE DOMAIN test.child_nn2 AS INT INHERITS (test.parent_nn2) NULL");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateDomainInheritanceDepthLimit) {
+    auto* domain_mgr = db_.domain_manager();
+    ASSERT_NE(domain_mgr, nullptr);
+
+    ErrorContext ctx;
+    DomainManager::DomainCreateOptions options;
+    ID parent_id{};
+
+    for (int i = 0; i < 11; ++i) {
+        std::string name = "depth_" + std::to_string(i);
+        ID domain_id{};
+        ASSERT_EQ(domain_mgr->createBasicDomain(
+                      test_schema_id_,
+                      name,
+                      DataType::INT32,
+                      0,
+                      0,
+                      options,
+                      domain_id,
+                      &ctx),
+                  Status::OK);
+        if (i > 0) {
+            ASSERT_EQ(domain_mgr->setParentDomain(domain_id, parent_id, &ctx), Status::OK);
+        }
+        parent_id = domain_id;
+    }
+
+    auto result = analyze("CREATE DOMAIN test.too_deep AS INT INHERITS (test.depth_10)");
     EXPECT_FALSE(result.success());
 }
 

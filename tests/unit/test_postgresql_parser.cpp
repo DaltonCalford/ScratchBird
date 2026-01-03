@@ -47,6 +47,24 @@ std::vector<uint16_t> placeholderPositions(const std::vector<uint8_t>& bytecode)
     return positions;
 }
 
+size_t findExtendedOpcodeOffset(const std::vector<uint8_t>& bytecode,
+                                sblr::ExtendedOpcode expected) {
+    uint16_t target = static_cast<uint16_t>(expected);
+    for (size_t i = 0; i + 2 < bytecode.size(); ++i) {
+        if (bytecode[i] == static_cast<uint8_t>(sblr::Opcode::EXTENDED_OPCODE)) {
+            uint16_t opcode = sblr::readInt16(&bytecode[i + 1]);
+            if (opcode == target) {
+                return i;
+            }
+            i += 2;
+        }
+    }
+    return bytecode.size();
+}
+
+constexpr uint8_t kDomainKindRecord = 1;
+constexpr uint8_t kDomainKindEnum = 2;
+
 }  // namespace
 
 // ============================================================================
@@ -488,6 +506,44 @@ TEST_F(PostgreSQLParserTest, CreateView) {
     expectSuccess("CREATE VIEW active_users AS SELECT * FROM users WHERE active = TRUE");
     expectSuccess("CREATE OR REPLACE VIEW active_users AS SELECT * FROM users WHERE active = TRUE");
     expectSuccess("CREATE VIEW user_counts AS SELECT department, COUNT(*) FROM users GROUP BY department");
+}
+
+TEST_F(PostgreSQLParserTest, CreateDomainBasic) {
+    Parser parser("CREATE DOMAIN status_domain AS INTEGER DEFAULT 1");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success());
+    EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_CREATE_DOMAIN));
+}
+
+TEST_F(PostgreSQLParserTest, CreateDomainRejectsScratchBirdExtensions) {
+    expectError("CREATE DOMAIN status_domain AS INT WITH SECURITY (MASKING = FULL)");
+    expectError("CREATE DOMAIN status_domain AS INT INHERITS (base_status)");
+}
+
+TEST_F(PostgreSQLParserTest, CreateTypeEnumMapsToDomain) {
+    Parser parser("CREATE TYPE mood AS ENUM ('sad', 'ok')");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success());
+    size_t offset = findExtendedOpcodeOffset(result.bytecode(), sblr::ExtendedOpcode::EXT_CREATE_DOMAIN);
+    ASSERT_NE(offset, result.bytecode().size());
+    EXPECT_EQ(result.bytecode()[offset + 4], kDomainKindEnum);
+}
+
+TEST_F(PostgreSQLParserTest, CreateTypeCompositeMapsToDomain) {
+    Parser parser("CREATE TYPE point_type AS (x INTEGER, y INTEGER)");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success());
+    size_t offset = findExtendedOpcodeOffset(result.bytecode(), sblr::ExtendedOpcode::EXT_CREATE_DOMAIN);
+    ASSERT_NE(offset, result.bytecode().size());
+    EXPECT_EQ(result.bytecode()[offset + 4], kDomainKindRecord);
+}
+
+TEST_F(PostgreSQLParserTest, CreateTypeCompositeRejectsConstraints) {
+    expectError("CREATE TYPE point_type AS (x INT NOT NULL, y INT)");
+}
+
+TEST_F(PostgreSQLParserTest, CreateTypeRangeRejected) {
+    expectError("CREATE TYPE numrange AS RANGE (SUBTYPE = int4)");
 }
 
 TEST_F(PostgreSQLParserTest, DropTable) {

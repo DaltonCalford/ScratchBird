@@ -1262,6 +1262,8 @@ namespace scratchbird
             EXT_ALTER_DATABASE = 0x010D,  // ALTER DATABASE (emulated)
             EXT_ALTER_DOMAIN = 0x010E,  // ALTER DOMAIN
             EXT_DROP_DOMAIN = 0x010F,  // DROP DOMAIN
+            EXT_REBIND_DOMAIN = 0x0110,  // Rebind domain dependencies (admin)
+            EXT_RESOLVE_DOMAIN_CONFLICT = 0x0111,  // Resolve domain conflicts (admin)
 
             // Null-safe comparison operators (MySQL/PostgreSQL)
             EXT_NULL_SAFE_EQ = 0x0200,  // NULL-safe equality (<=> / IS NOT DISTINCT FROM)

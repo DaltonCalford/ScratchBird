@@ -24,6 +24,9 @@ using ast::CreateTableStmt;
 using ast::CreateIndexStmt;
 using ast::CreateViewStmt;
 using ast::CreateSequenceStmt;
+using ast::CreateDomainStmt;
+using ast::AlterDomainStmt;
+using ast::DropDomainStmt;
 using ast::DropTableStmt;
 using ast::DropIndexStmt;
 using ast::DropViewStmt;
@@ -33,6 +36,8 @@ using ast::InsertStmt;
 using ast::UpdateStmt;
 using ast::DeleteStmt;
 using ast::JoinType;
+using ast::DomainKind;
+using ast::AlterDomainAction;
 using ast::ExecuteBlockStmt;
 using ast::CompoundStmt;
 using ast::DeclareVariableStmt;
@@ -325,6 +330,47 @@ TEST_F(FirebirdParserTest, CreateSequence) {
     auto result = parser.parseStatement();
     EXPECT_TRUE(result.success);
     EXPECT_EQ(result.statement->kind(), ASTKind::CreateSequenceStmt);
+}
+
+// =============================================================================
+// DDL Tests - DOMAIN
+// =============================================================================
+
+TEST_F(FirebirdParserTest, CreateDomainBasic) {
+    Parser parser("CREATE DOMAIN email AS VARCHAR(255) NOT NULL");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::CreateDomainStmt);
+
+    auto* stmt = static_cast<CreateDomainStmt*>(result.statement.get());
+    EXPECT_EQ(stmt->domain_kind, DomainKind::BASIC);
+    EXPECT_TRUE(stmt->has_dialect);
+    EXPECT_EQ(stmt->dialect_tag, "firebird");
+}
+
+TEST_F(FirebirdParserTest, AlterDomainSetDefault) {
+    Parser parser("ALTER DOMAIN email SET DEFAULT 'x'");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::AlterDomainStmt);
+
+    auto* stmt = static_cast<AlterDomainStmt*>(result.statement.get());
+    EXPECT_EQ(stmt->action, AlterDomainAction::SET_DEFAULT);
+}
+
+TEST_F(FirebirdParserTest, DropDomain) {
+    Parser parser("DROP DOMAIN email");
+    auto result = parser.parseStatement();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.statement->kind(), ASTKind::DropDomainStmt);
+
+    auto* stmt = static_cast<DropDomainStmt*>(result.statement.get());
+    EXPECT_FALSE(stmt->if_exists);
+    EXPECT_EQ(stmt->domains.size(), 1u);
+}
+
+TEST_F(FirebirdParserTest, CreateDomainRejectsWithBlocks) {
+    expectError("CREATE DOMAIN email AS VARCHAR(255) WITH SECURITY (MASKING = FULL)");
 }
 
 // =============================================================================

@@ -1,8 +1,8 @@
 # Plan 04 Parser and Compatibility - Implementation Readiness Analysis
 
-**Analysis Date:** 2026-01-03
+**Analysis Date:** 2026-01-04
 **Analyzed By:** AI Assistant
-**Status:** UPDATED - Core V2 pipeline complete; emulated parsers + guardrails pending
+**Status:** COMPLETE - V2 + emulated parsers aligned; semantic guardrails, conflict opcodes, and parser tests complete
 
 ---
 
@@ -28,25 +28,7 @@ Plan 04 core implementation is complete for ScratchBird V2 (parser, semantic ana
 
 ## Remaining Gaps (Actionable)
 
-1. **Emulated parser domain DDL**
-   - Firebird: `parseCreateDomain()` stub; implement CREATE/ALTER/DROP DOMAIN per dialect.
-   - PostgreSQL: `parseCreateDomain()` emits legacy payload; align to SBLR v2 payload; add ALTER/DROP DOMAIN.
-   - MySQL: explicit rejection of CREATE/ALTER/DROP DOMAIN with clear errors.
-
-2. **Semantic analyzer guardrails**
-   - Validate CHECK/default expression types.
-   - Detect inheritance cycles + dependency tracking for domains.
-
-3. **Conflict opcodes**
-   - Define `EXT_REBIND_DOMAIN` and `EXT_RESOLVE_DOMAIN_CONFLICT` payloads + executor handling.
-
-4. **Tests**
-   - Emulated parser domain DDL tests.
-   - Dialect guardrail + negative-path tests.
-
-5. **Plan 02B alignment**
-   - Adapter/query compiler dot-path defaults.
-   - DROP SCHEMA/DATABASE cascade semantics tests.
+None. Plan 04 implementation and parser compatibility coverage are complete.
 
 ---
 

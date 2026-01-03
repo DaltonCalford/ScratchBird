@@ -75,6 +75,62 @@ bool typesEquivalent(const ResolvedType& a, const ResolvedType& b) {
            a.array_size == b.array_size;
 }
 
+constexpr int32_t kDefaultVarcharLength = 255;
+constexpr int32_t kDefaultDecimalPrecision = 18;
+constexpr int32_t kDefaultDecimalScale = 0;
+constexpr size_t kMaxDomainInheritanceDepth = 10;
+
+core::DomainType toCoreDomainType(DomainKind kind) {
+    switch (kind) {
+        case DomainKind::BASIC:
+            return core::DomainType::BASIC;
+        case DomainKind::RECORD:
+            return core::DomainType::RECORD;
+        case DomainKind::ENUM:
+            return core::DomainType::ENUM;
+        case DomainKind::SET:
+            return core::DomainType::SET;
+        case DomainKind::VARIANT:
+            return core::DomainType::VARIANT;
+    }
+    return core::DomainType::BASIC;
+}
+
+bool baseTypeMatchesParent(const ResolvedType& child, const core::DomainInfo& parent) {
+    if (child.data_type != parent.base_type) {
+        return false;
+    }
+    switch (child.data_type) {
+        case DataType::VARCHAR:
+        case DataType::CHAR: {
+            int32_t length = child.length.value_or(kDefaultVarcharLength);
+            return parent.precision == static_cast<uint32_t>(length);
+        }
+        case DataType::DECIMAL: {
+            int32_t precision = child.precision.value_or(kDefaultDecimalPrecision);
+            int32_t scale = child.scale.value_or(kDefaultDecimalScale);
+            return parent.precision == static_cast<uint32_t>(precision) &&
+                   parent.scale == static_cast<uint32_t>(scale);
+        }
+        default:
+            return true;
+    }
+}
+
+bool schemaPathEquals(const SchemaPath& a, const SchemaPath& b, const StringPool& pool) {
+    if (a.components.size() != b.components.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.components.size(); ++i) {
+        std::string left = core::IdentifierUtils::toUpper(std::string(pool.get(a.components[i])));
+        std::string right = core::IdentifierUtils::toUpper(std::string(pool.get(b.components[i])));
+        if (left != right) {
+            return false;
+        }
+    }
+    return true;
+}
+
 enum class LiteralKind {
     UNKNOWN,
     NULL_LITERAL,
@@ -2437,6 +2493,7 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
 
     resolved->nullable = true;
     bool default_set = false;
+    bool nullable_explicit = false;
     std::unordered_set<std::string> constraint_names;
     for (const auto& constraint : stmt->constraints) {
         if (constraint.name != StringPool::INVALID_ID) {
@@ -2450,9 +2507,11 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
         switch (constraint.type) {
             case DomainConstraintType::NOT_NULL:
                 resolved->nullable = false;
+                nullable_explicit = true;
                 break;
             case DomainConstraintType::NULL_ALLOWED:
                 resolved->nullable = true;
+                nullable_explicit = true;
                 break;
             case DomainConstraintType::DEFAULT:
                 if (default_set) {
@@ -2489,7 +2548,6 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
     if (stmt->has_inherits) {
         core::ObjectPath obj_path = buildObjectPath(stmt->parent_domain_path, string_pool_);
         core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
-        core::ErrorContext ctx;
         core::CatalogManager::ResolveOptions opts;
         opts.allow_search_path = true;
         Status status = catalog_.resolveObjectPath(
@@ -2508,22 +2566,6 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
         if (current_result_) {
             current_result_->addDependency(resolved->parent_domain_id,
                                            core::CatalogManager::ObjectType::DOMAIN);
-        }
-
-        std::unordered_set<core::ID, core::IDHash> visited;
-        core::ID current = resolved->parent_domain_id;
-        while (current != core::ID()) {
-            if (!visited.insert(current).second) {
-                error(stmt->parent_domain_path.span, "Circular domain inheritance detected");
-                return nullptr;
-            }
-            core::DomainInfo parent_info;
-            if (catalog_.getDomainById(current, parent_info, &ctx) != Status::OK) {
-                std::string msg = ctx.message.empty() ? "Failed to load parent domain" : ctx.message;
-                error(stmt->parent_domain_path.span, msg);
-                return nullptr;
-            }
-            current = parent_info.parent_domain_id;
         }
     }
 
@@ -2570,6 +2612,11 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
                     std::string(string_pool_.get(field.name)));
                 if (!field_names.insert(name).second) {
                     error(field.span, "Duplicate RECORD field name");
+                    return nullptr;
+                }
+                if (field.type.has_schema_path &&
+                    schemaPathEquals(field.type.schema_path, stmt->domain_path, string_pool_)) {
+                    error(field.span, "RECORD domain cannot reference itself");
                     return nullptr;
                 }
                 ResolvedDomainRecordField resolved_field;
@@ -2650,6 +2697,54 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
                 resolved->variant_allowed_types.push_back(std::move(resolved_type));
             }
             break;
+        }
+    }
+
+    if (resolved->has_inherits) {
+        SourceSpan inherits_span = stmt->has_inherits
+            ? stmt->parent_domain_path.span
+            : stmt->base_type.span;
+        std::unordered_set<core::ID, core::IDHash> visited;
+        core::ID current = resolved->parent_domain_id;
+        size_t depth = 0;
+        bool checked_parent = false;
+        core::DomainInfo parent_info;
+
+        while (current != core::ID()) {
+            if (!visited.insert(current).second) {
+                error(inherits_span, "Circular domain inheritance detected");
+                return nullptr;
+            }
+            depth++;
+            if (depth > kMaxDomainInheritanceDepth) {
+                error(inherits_span, "Domain inheritance depth exceeds maximum (10)");
+                return nullptr;
+            }
+            if (catalog_.getDomainById(current, parent_info, &ctx) != Status::OK) {
+                std::string msg = ctx.message.empty() ? "Failed to load parent domain" : ctx.message;
+                error(inherits_span, msg);
+                return nullptr;
+            }
+            if (!checked_parent) {
+                if (toCoreDomainType(stmt->domain_kind) != parent_info.domain_type) {
+                    error(inherits_span, "Parent domain type does not match child domain type");
+                    return nullptr;
+                }
+                if (stmt->domain_kind == DomainKind::BASIC &&
+                    !baseTypeMatchesParent(resolved->base_type, parent_info)) {
+                    error(inherits_span, "Inherited domain base type must match parent domain");
+                    return nullptr;
+                }
+                if (!parent_info.nullable) {
+                    if (nullable_explicit && resolved->nullable) {
+                        error(inherits_span, "Cannot relax NOT NULL inherited from parent domain");
+                        return nullptr;
+                    }
+                    resolved->nullable = false;
+                }
+                checked_parent = true;
+            }
+            current = parent_info.parent_domain_id;
         }
     }
 
