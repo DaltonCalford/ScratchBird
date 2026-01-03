@@ -1150,7 +1150,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 8.6: Implement analyzeAlterDomain()
 
-**Status:** ⚠️ PARTIAL - domain resolution and core validations added; rename availability pending
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 6 hours
 
@@ -1164,12 +1164,12 @@ if (matchKeyword("DOMAIN")) {
 
 **Acceptance Criteria:**
 **Acceptance Criteria:**
-- [ ] All alter actions validated
-- [ ] Test coverage
+- [x] All alter actions validated
+- [x] Test coverage
 
 ### Task 8.7: Implement analyzeDropDomain()
 
-**Status:** ⚠️ PARTIAL - drop wiring done; dependency checks pending
+**Status:** ✅ COMPLETE
 **Priority:** MEDIUM
 **Estimated Time:** 4 hours
 
@@ -1180,9 +1180,9 @@ if (matchKeyword("DOMAIN")) {
 4. If dependencies exist and not IF EXISTS: error
 
 **Acceptance Criteria:**
-- [ ] Dependency checking
-- [ ] IF EXISTS handling
-- [ ] Test coverage
+- [x] Dependency checking
+- [x] IF EXISTS handling
+- [x] Test coverage
 
 ---
 

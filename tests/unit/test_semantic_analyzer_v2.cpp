@@ -567,6 +567,105 @@ TEST_F(SemanticAnalyzerV2Test, AlterDomainSetDefaultTypeMismatch) {
     EXPECT_FALSE(result.success());
 }
 
+TEST_F(SemanticAnalyzerV2Test, AlterDomainRenameRejectsExistingName) {
+    auto* domain_mgr = db_.domain_manager();
+    ASSERT_NE(domain_mgr, nullptr);
+
+    ErrorContext ctx;
+    DomainManager::DomainCreateOptions options;
+    ID domain_a{};
+    ID domain_b{};
+    ASSERT_EQ(domain_mgr->createBasicDomain(
+                  test_schema_id_,
+                  "domain_a",
+                  DataType::INT32,
+                  0,
+                  0,
+                  options,
+                  domain_a,
+                  &ctx),
+              Status::OK);
+    ASSERT_EQ(domain_mgr->createBasicDomain(
+                  test_schema_id_,
+                  "domain_b",
+                  DataType::INT32,
+                  0,
+                  0,
+                  options,
+                  domain_b,
+                  &ctx),
+              Status::OK);
+
+    auto result = analyze("ALTER DOMAIN test.domain_a RENAME TO domain_b");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, DropDomainRejectsColumnDependency) {
+    auto* domain_mgr = db_.domain_manager();
+    ASSERT_NE(domain_mgr, nullptr);
+
+    ErrorContext ctx;
+    DomainManager::DomainCreateOptions options;
+    ID domain_id{};
+    ASSERT_EQ(domain_mgr->createBasicDomain(
+                  test_schema_id_,
+                  "age",
+                  DataType::INT32,
+                  0,
+                  0,
+                  options,
+                  domain_id,
+                  &ctx),
+              Status::OK);
+
+    std::vector<CatalogManager::ColumnInfo> columns;
+    CatalogManager::ColumnInfo col;
+    col.column_name = "age";
+    col.data_type = static_cast<uint16_t>(DataType::INT32);
+    col.domain_id = domain_id;
+    columns.push_back(col);
+    ID table_id{};
+    ASSERT_EQ(catalog_->createTable(test_schema_id_, "people", columns, table_id, 0, &ctx),
+              Status::OK);
+
+    auto result = analyze("DROP DOMAIN test.age");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, DropDomainRejectsChildDomain) {
+    auto* domain_mgr = db_.domain_manager();
+    ASSERT_NE(domain_mgr, nullptr);
+
+    ErrorContext ctx;
+    DomainManager::DomainCreateOptions options;
+    ID parent_id{};
+    ID child_id{};
+    ASSERT_EQ(domain_mgr->createBasicDomain(
+                  test_schema_id_,
+                  "parent_domain",
+                  DataType::INT32,
+                  0,
+                  0,
+                  options,
+                  parent_id,
+                  &ctx),
+              Status::OK);
+    ASSERT_EQ(domain_mgr->createBasicDomain(
+                  test_schema_id_,
+                  "child_domain",
+                  DataType::INT32,
+                  0,
+                  0,
+                  options,
+                  child_id,
+                  &ctx),
+              Status::OK);
+    ASSERT_EQ(domain_mgr->setParentDomain(child_id, parent_id, &ctx), Status::OK);
+
+    auto result = analyze("DROP DOMAIN test.parent_domain");
+    EXPECT_FALSE(result.success());
+}
+
 TEST_F(SemanticAnalyzerV2Test, CreateDomainDuplicateName) {
     auto* domain_mgr = db_.domain_manager();
     ASSERT_NE(domain_mgr, nullptr);

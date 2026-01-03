@@ -1782,6 +1782,9 @@ public:
         auto findColumnsByDomain(const ID& domain_id,
                                  std::vector<std::pair<ID, std::string>>& table_column_out,
                                  ErrorContext* ctx = nullptr) -> Status;
+        auto findChildDomains(const ID& domain_id,
+                              std::vector<DomainInfo>& child_domains_out,
+                              ErrorContext* ctx = nullptr) -> Status;
 
         // Domain lookup wrappers (delegate to DomainManager)
         auto getDomainByName(const ID& schema_id, const std::string& domain_name,

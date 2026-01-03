@@ -27790,6 +27790,35 @@ auto CatalogManager::findColumnsByDomain(const ID& domain_id,
     return Status::OK;
 }
 
+auto CatalogManager::findChildDomains(const ID& domain_id,
+                                      std::vector<DomainInfo>& child_domains_out,
+                                      ErrorContext* ctx) -> Status
+{
+    child_domains_out.clear();
+
+    if (!db_ || !db_->domain_manager())
+    {
+        return Status::OK;
+    }
+
+    std::vector<DomainInfo> domains;
+    Status status = db_->domain_manager()->listDomains(ID{}, domains, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    for (const auto& domain : domains)
+    {
+        if (domain.parent_domain_id == domain_id)
+        {
+            child_domains_out.push_back(domain);
+        }
+    }
+
+    return Status::OK;
+}
+
 // Domain lookup wrapper - delegates to DomainManager
 auto CatalogManager::getDomainByName(const ID& schema_id, const std::string& domain_name,
                                      DomainInfo& info_out, ErrorContext* ctx) -> Status

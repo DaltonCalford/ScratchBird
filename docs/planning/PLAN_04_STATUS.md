@@ -169,6 +169,9 @@
    - CHECK constraints require VALUE and reject subqueries
    - BASIC domain DEFAULT literal type compatibility enforced
    - RECORD/VARIANT domains must be non-empty; VARIANT types unique
+2. **ALTER/DROP Domain Validation** ✅
+   - ALTER DOMAIN validates CHECK/DEFAULT payloads and rename collisions
+   - DROP DOMAIN blocks column dependencies and child domains
 2. **Tests Added** ✅
    - Semantic analyzer unit tests cover duplicate constraint/field/label cases
 

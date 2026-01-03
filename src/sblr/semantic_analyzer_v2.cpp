@@ -2509,6 +2509,22 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
             current_result_->addDependency(resolved->parent_domain_id,
                                            core::CatalogManager::ObjectType::DOMAIN);
         }
+
+        std::unordered_set<core::ID, core::IDHash> visited;
+        core::ID current = resolved->parent_domain_id;
+        while (current != core::ID()) {
+            if (!visited.insert(current).second) {
+                error(stmt->parent_domain_path.span, "Circular domain inheritance detected");
+                return nullptr;
+            }
+            core::DomainInfo parent_info;
+            if (catalog_.getDomainById(current, parent_info, &ctx) != Status::OK) {
+                std::string msg = ctx.message.empty() ? "Failed to load parent domain" : ctx.message;
+                error(stmt->parent_domain_path.span, msg);
+                return nullptr;
+            }
+            current = parent_info.parent_domain_id;
+        }
     }
 
     resolved->has_collation = stmt->has_collation;
@@ -2795,6 +2811,40 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterDomain(AlterDomainStmt* stmt)
             resolved->value = std::move(trimmed);
             break;
         }
+        case AlterDomainAction::RENAME: {
+            if (stmt->new_name == StringPool::INVALID_ID) {
+                error(stmt->span, "Expected new domain name");
+                return nullptr;
+            }
+            SchemaPath new_path = stmt->domain_path;
+            if (!new_path.components.empty()) {
+                new_path.components.back() = stmt->new_name;
+            }
+            new_path.span = stmt->span;
+
+            core::ObjectPath new_obj = buildObjectPath(new_path, string_pool_);
+            core::CatalogManager::ObjectType new_type = core::CatalogManager::ObjectType::UNKNOWN;
+            core::ErrorContext rename_ctx;
+            ID new_id{};
+            Status rename_status = catalog_.resolveObjectPath(
+                new_obj,
+                core::CatalogManager::ObjectType::DOMAIN,
+                opts,
+                new_id,
+                new_type,
+                &rename_ctx);
+            if (rename_status == Status::OK) {
+                error(stmt->span, "Domain name already exists");
+                return nullptr;
+            }
+            if (rename_status != Status::NOT_FOUND) {
+                std::string msg = rename_ctx.message.empty() ? "Failed to resolve new domain name"
+                                                             : rename_ctx.message;
+                error(stmt->span, msg);
+                return nullptr;
+            }
+            break;
+        }
         default:
             break;
     }
@@ -2812,6 +2862,53 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeDropDomain(DropDomainStmt* stmt) {
     resolved->if_exists = stmt->if_exists;
     resolved->domains = stmt->domains;
     resolved->restrict = stmt->restrict;
+
+    core::CatalogManager::ResolveOptions opts;
+    opts.allow_search_path = false;
+    for (const auto& path : stmt->domains) {
+        core::ObjectPath obj_path = buildObjectPath(path, string_pool_);
+        core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+        core::ErrorContext ctx;
+        ID domain_id{};
+        Status status = catalog_.resolveObjectPath(
+            obj_path,
+            core::CatalogManager::ObjectType::DOMAIN,
+            opts,
+            domain_id,
+            resolved_type,
+            &ctx);
+        if (status == Status::NOT_FOUND && stmt->if_exists) {
+            continue;
+        }
+        if (status != Status::OK) {
+            std::string msg = ctx.message.empty() ? "Domain not found" : ctx.message;
+            error(path.span, msg);
+            return nullptr;
+        }
+
+        std::vector<std::pair<ID, std::string>> table_columns;
+        if (catalog_.findColumnsByDomain(domain_id, table_columns, &ctx) != Status::OK) {
+            std::string msg = ctx.message.empty() ? "Failed to check domain dependencies" : ctx.message;
+            error(path.span, msg);
+            return nullptr;
+        }
+        if (!table_columns.empty()) {
+            error(path.span, "Cannot drop domain referenced by table columns");
+            return nullptr;
+        }
+
+        std::vector<core::DomainInfo> child_domains;
+        if (catalog_.findChildDomains(domain_id, child_domains, &ctx) != Status::OK) {
+            std::string msg = ctx.message.empty() ? "Failed to check domain inheritance" : ctx.message;
+            error(path.span, msg);
+            return nullptr;
+        }
+        if (!child_domains.empty()) {
+            error(path.span, "Cannot drop domain with child domains");
+            return nullptr;
+        }
+    }
+
     return resolved;
 }
 
