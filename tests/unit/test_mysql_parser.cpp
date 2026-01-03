@@ -445,6 +445,12 @@ TEST_F(MySQLParserTest, IndexAlgorithmGuardrails) {
     expectError("CREATE TABLE test (id INT, INDEX idx (id) USING GIN)");
 }
 
+TEST_F(MySQLParserTest, RejectDomainStatements) {
+    expectError("CREATE DOMAIN test.email AS TEXT");
+    expectError("ALTER DOMAIN test.email SET DEFAULT 'x'");
+    expectError("DROP DOMAIN test.email");
+}
+
 TEST_F(MySQLParserTest, TransactionStatements) {
     expectSuccess("BEGIN");
     expectSuccess("BEGIN WORK");

@@ -156,6 +156,8 @@
    - `arr[idx]` now emits `EXT_ARRAY_SUBSCRIPT`
 7. **MySQL Table Constraints + Geometry Mapping** ✅
    - CREATE TABLE constraints parsed; GEOMETRY/POINT/LINESTRING/POLYGON mapped in type emission
+8. **MySQL DOMAIN Guardrails** ✅
+   - CREATE/ALTER/DROP DOMAIN rejected with clear alternatives + parser tests added
 
 ### ✅ Phase 8: Domain Semantic Guardrails (2026-01-03)
 

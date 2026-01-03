@@ -2062,7 +2062,7 @@ void Parser::parseReplaceStmt() {
 void Parser::parseCreateStmt() {
     advance();  // Consume CREATE
     if (matchIdentifierKeyword("DOMAIN")) {
-        error("MySQL does not support CREATE DOMAIN");
+        error("MySQL does not support CREATE DOMAIN. Use base types or the ScratchBird native dialect.");
         synchronize();
         return;
     }
@@ -2198,7 +2198,7 @@ void Parser::parseRenameStmt() {
 void Parser::parseAlterStmt() {
     advance();  // Consume ALTER
     if (matchIdentifierKeyword("DOMAIN")) {
-        error("MySQL does not support ALTER DOMAIN");
+        error("MySQL does not support ALTER DOMAIN. Use base types or the ScratchBird native dialect.");
         synchronize();
         return;
     }
@@ -2337,7 +2337,7 @@ void Parser::parseAlterStmt() {
 void Parser::parseDropStmt() {
     advance();  // Consume DROP
     if (matchIdentifierKeyword("DOMAIN")) {
-        error("MySQL does not support DROP DOMAIN");
+        error("MySQL does not support DROP DOMAIN. Use base types or the ScratchBird native dialect.");
         synchronize();
         return;
     }

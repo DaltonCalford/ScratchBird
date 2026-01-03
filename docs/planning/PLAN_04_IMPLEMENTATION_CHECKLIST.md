@@ -986,7 +986,7 @@ void Parser::parseCreateDomain() {
 
 ### Task 7.1: Reject CREATE DOMAIN in MySQL Parser
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 2 hours
 
@@ -1004,16 +1004,16 @@ if (matchKeyword("DOMAIN")) {
 ```
 
 **Acceptance Criteria:**
-- [ ] CREATE DOMAIN rejected with clear error message
-- [ ] Error message explains why (MySQL limitation)
-- [ ] Error message suggests alternatives
-- [ ] Test coverage
+- [x] CREATE DOMAIN rejected with clear error message
+- [x] Error message explains why (MySQL limitation)
+- [x] Error message suggests alternatives
+- [x] Test coverage
 
 **Test File:** `tests/unit/test_mysql_parser_domain_rejection.cpp` (NEW)
 
 ### Task 7.2: Reject ALTER DOMAIN in MySQL Parser
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** MEDIUM
 **Estimated Time:** 1 hour
 
@@ -1022,13 +1022,13 @@ if (matchKeyword("DOMAIN")) {
 **Implementation:** Similar to Task 7.1
 
 **Acceptance Criteria:**
-- [ ] ALTER DOMAIN rejected
-- [ ] Clear error message
-- [ ] Test coverage
+- [x] ALTER DOMAIN rejected
+- [x] Clear error message (includes alternative)
+- [x] Test coverage
 
 ### Task 7.3: Reject DROP DOMAIN in MySQL Parser
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** MEDIUM
 **Estimated Time:** 1 hour
 
@@ -1037,9 +1037,9 @@ if (matchKeyword("DOMAIN")) {
 **Implementation:** Similar to Task 7.1
 
 **Acceptance Criteria:**
-- [ ] DROP DOMAIN rejected
-- [ ] Clear error message
-- [ ] Test coverage
+- [x] DROP DOMAIN rejected
+- [x] Clear error message (includes alternative)
+- [x] Test coverage
 
 ---
 
