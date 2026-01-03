@@ -317,7 +317,7 @@ bool ensureFirebirdSchemaHierarchy(core::CatalogManager* catalog, const std::str
 
 /**
  * Handle CREATE DATABASE command
- * Creates schema at /remote/emulated/firebird/{server}/{database}/
+ * Creates schema at remote.emulated.firebird.{server}.{database}
  * and generates RDB$ system views
  */
 bool handleCreateDatabase(const std::string& dbPath, core::Database& db) {
@@ -443,7 +443,7 @@ bool handleCreateDatabase(const std::string& dbPath, core::Database& db) {
 
 /**
  * Handle CONNECT command
- * Switches to schema at /remote/emulated/firebird/{server}/{database}/
+ * Switches to schema at remote.emulated.firebird.{server}.{database}
  */
 bool handleConnect(const std::string& dbPath, core::Database& db) {
     std::string dbName = extractDatabaseName(dbPath);
@@ -481,7 +481,7 @@ bool handleConnect(const std::string& dbPath, core::Database& db) {
 
 /**
  * Handle DROP DATABASE command
- * Drops schema at /remote/emulated/firebird/{server}/{database}/
+ * Drops schema at remote.emulated.firebird.{server}.{database}
  */
 bool handleDropDatabase(const std::string& dbPath, core::Database& db) {
     std::string dbName = extractDatabaseName(dbPath);

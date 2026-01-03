@@ -2,7 +2,7 @@
 
 Version: 1.1
 Date: 2025-12-31
-Status: In progress (core implementation complete; alignment/testing remaining)
+Status: In progress (core implementation complete; adapter/compiler alignment complete; cascade semantics/testing remaining)
 
 Scope: Provide SBLR opcodes, parser emission, executor handlers, and catalog integration for CREATE/DROP/ALTER SCHEMA and CREATE/DROP/ALTER DATABASE. Align emulated database lifecycle with catalog schema paths and view generation.
 
@@ -31,7 +31,7 @@ Remaining:
 - DROP SCHEMA/DATABASE cascade behavior (CatalogManager dropSchema is RESTRICT-only; cascade flag ignored).
 - CREATE SCHEMA owner assignment is read but not persisted (catalog API gap).
 - ALTER SCHEMA SET PATH is not supported.
-- Adapter/query compiler default schema path alignment (slash paths still used in adapters/compilers).
+- Emulated adapter guardrails (PARENT/CURRENT/ABSOLUTE tokens must not leak to remote clients).
 - Dedicated unit/integration tests for schema/database DDL and emulated view generation.
 
 ## Decisions (Resolved)
@@ -94,9 +94,9 @@ Status: Completed (core integration)
 - CREATE/DROP DATABASE invokes centralized view generation for emulated protocols.
 
 ### 6) Adapter and Compiler Alignment
-Status: In progress
+Status: Partial (path alignment complete; guardrails pending)
 - Parsers normalize slash/dot paths to canonical dot paths.
-- Adapters/query compilers still use slash defaults in places; align to dot path.
+- Adapters/query compilers aligned to dot-path defaults.
 - Ensure adapters do not expose PARENT/CURRENT/ABSOLUTE tokens to remote clients.
 
 ### 7) Testing

@@ -9,8 +9,8 @@ P1 (blocks SQL feature coverage and compatibility).
 ## Status (2026-01-03)
 - ✅ ScratchBird V2 domain DDL + WITH blocks + transactions wired
 - ✅ Quick wins completed (NULL-safe, ESCAPE, placeholders, GROUP BY, window specs)
-- ⚠️ Emulated parser domain DDL pending (Firebird/PostgreSQL)
-- ⚠️ MySQL explicit DOMAIN rejection pending
+- ✅ Emulated parser domain DDL implemented (Firebird/PostgreSQL)
+- ✅ MySQL explicit DOMAIN rejection added
 - ⚠️ Semantic guardrails + comprehensive dialect tests pending
 
 ## References
@@ -30,12 +30,12 @@ P1 (blocks SQL feature coverage and compatibility).
 3) V2 semantic validation (GROUP BY + dependency collection) - PARTIAL (GROUP BY done; dependency guardrails pending).
 4) Firebird parser gaps (predicates) - DONE.
 5) MySQL parser gaps (constraints, geometry) - DONE.
-6) PostgreSQL parser gaps (arrays, CREATE stubs) - PARTIAL (arrays done; domain payload alignment pending).
-7) Emulated parser domain DDL (Firebird/PostgreSQL) - PENDING.
-8) Dialect guardrails + explicit MySQL DOMAIN rejection - PENDING.
+6) PostgreSQL parser gaps (arrays, CREATE stubs) - PARTIAL (arrays + domain payload alignment done; CREATE stubs pending).
+7) Emulated parser domain DDL (Firebird/PostgreSQL) - DONE.
+8) Dialect guardrails + explicit MySQL DOMAIN rejection - PARTIAL (DOMAIN rejection done; allowlist guardrails pending).
 
 ## Concrete Code Touchpoints (Exact Files + Functions)
-**Status Note:** ScratchBird V2 domain DDL + transaction grammar + quick wins are implemented. Remaining work is emulated parser domain DDL, MySQL rejection guardrails, and semantic/dependency hardening.
+**Status Note:** ScratchBird V2 domain DDL + transaction grammar + quick wins are implemented. Remaining work is dialect guardrails, semantic/dependency hardening, and comprehensive tests.
 - ScratchBird V2:
   - `src/parser/parser_v2.cpp`:
     - `Parser::parseCreate()` (currently commented out for FUNCTION/PROCEDURE/TRIGGER).
@@ -79,9 +79,6 @@ P1 (blocks SQL feature coverage and compatibility).
     - Clause parsing stubs around window/predicates.
 
 ## Known TODO/Stubs (Must Be Removed)
-- `src/parser/firebird/firebird_parser.cpp`: `parseCreateDomain()` stub (CREATE/ALTER/DROP DOMAIN missing).
-- `src/parser/postgresql/pg_parser_ddl.cpp`: `parseCreateDomain()` emits legacy payload; ALTER/DROP DOMAIN missing.
-- `src/parser/mysql/mysql_parser.cpp`: No explicit rejection for CREATE/ALTER/DROP DOMAIN.
 - `src/parser/parser_v2.cpp`: CREATE FUNCTION/PROCEDURE/TRIGGER TODOs (out of Plan 04 scope but still present).
 
 ## Dialect Guardrails (No ScratchBird Feature Bleed)
@@ -128,7 +125,7 @@ P1 (blocks SQL feature coverage and compatibility).
 - [x] Firebird parser handles predicate variants.
 - [x] MySQL parser handles NULL-safe and placeholders.
 - [x] MySQL parser handles constraints and geometry.
-- [ ] PostgreSQL parser supports arrays; domain payload alignment pending.
+- [x] PostgreSQL parser supports arrays; domain payload alignment handled.
 
 ## Completion Checklist (Auditor)
 - [ ] Parser tests pass per dialect with expected feature coverage (emulated domain DDL pending).

@@ -12,7 +12,7 @@
  * This compiler allows PostgreSQL SQL syntax to be executed on the
  * ScratchBird engine, enabling PostgreSQL client emulation.
  *
- * Default schema: /remote/emulated/postgresql/localhost/
+ * Default schema: remote.emulated.postgresql.localhost
  */
 
 #include "scratchbird/parser/postgresql/pg_parser.h"
@@ -103,13 +103,13 @@ public:
 
     /**
      * Get/set current schema (for name resolution)
-     * Default: /remote/emulated/postgresql/localhost/
+     * Default: remote.emulated.postgresql.localhost
      */
     const core::ID& currentSchema() const { return current_schema_; }
     void setCurrentSchema(const core::ID& schema_id) { current_schema_ = schema_id; }
 
     /**
-     * Get/set parser default schema path (slash-separated)
+     * Get/set parser default schema path (dot-separated)
      */
     const std::string& defaultSchema() const { return default_schema_; }
     void setDefaultSchema(const std::string& schema) { default_schema_ = schema; }
@@ -136,7 +136,7 @@ private:
     core::Database* db_ = nullptr;
     core::CatalogManager* catalog_ = nullptr;
     core::ID current_schema_;
-    std::string default_schema_ = "/remote/emulated/postgresql/localhost/";
+    std::string default_schema_ = "remote.emulated.postgresql.localhost";
     std::vector<std::string> search_path_ = {"public"};
     bool optimizations_enabled_ = true;
     bool stats_enabled_ = false;

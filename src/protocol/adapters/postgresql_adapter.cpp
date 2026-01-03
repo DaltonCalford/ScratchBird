@@ -1138,7 +1138,7 @@ core::Status PostgresqlAdapter::compileQuery(const std::string& sql,
 
     sblr::PostgreSQLQueryCompiler compiler(database_.get());
     std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
-    compiler.setDefaultSchema("/remote/emulated/postgresql/localhost/" + db_name + "/");
+    compiler.setDefaultSchema("remote.emulated.postgresql.localhost." + db_name);
     if (pg_schema_id_ != core::ID{}) {
         compiler.setCurrentSchema(pg_schema_id_);
     }

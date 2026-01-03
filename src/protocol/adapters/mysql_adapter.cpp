@@ -267,7 +267,7 @@ core::Status MySqlAdapter::compileQuery(const std::string& sql,
 
     sblr::MySQLQueryCompiler compiler(database_.get());
     std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
-    compiler.setDefaultSchema("/remote/emulated/mysql/localhost/" + db_name + "/");
+    compiler.setDefaultSchema("remote.emulated.mysql.localhost." + db_name);
     auto result = compiler.compile(sql);
     if (!result.success()) {
         error_out = result.errors().empty() ? "Compilation failed" : result.errors().front();

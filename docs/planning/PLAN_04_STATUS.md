@@ -181,19 +181,18 @@
 
 ---
 
-### 🟡 Dependency #2: Emulation Schema Path Alignment
+### ✅ Dependency #2: Emulation Schema Path Alignment
 
-**Status:** IN PROGRESS - Canonical path resolved; adapter/compiler alignment pending
-**Severity:** HIGH
+**Status:** COMPLETE - adapters/compilers aligned to dot-path defaults
+**Severity:** RESOLVED
 
 **Current State:**
 - Canonical path is `remote.emulated.<dialect>.<server>.<db>` (dot-path).
 - MySQL/PostgreSQL parsers normalize slash paths to dot paths.
-- Adapters and query compilers still use slash defaults in places.
+- Adapters and query compilers use dot-path defaults.
 
-**Remaining Work:**
-- Align adapters and query compilers to dot-path defaults.
-- Remove legacy `emulation.<dialect>` references where present.
+**Follow-ups:**
+- Verify no legacy `emulation.<dialect>` references remain in code/docs (audit-only).
 
 **Detailed Analysis:** `docs/audit/AUDIT_SCHEMA_DATABASE_DDL_GAP.md`
 
@@ -223,18 +222,18 @@
 - Firebird CREATE/DROP/ALTER DATABASE support (rename only for ALTER)
 - Emulated database lifecycle + view generation integration
 
-**Remaining:** Adapter/query compiler path alignment, cascade semantics, tests
+**Remaining:** Cascade semantics, tests
 
 ---
 
 ## Next Steps
 
 1. Complete semantic analyzer validation (type checks, inheritance cycles, dependency checks).
-2. Finish emulated parser coverage + guardrails (Firebird/PostgreSQL/MySQL).
+2. Complete dialect guardrails + remaining parser stubs (Firebird/PostgreSQL/MySQL).
 3. Define domain conflict opcodes (EXT_REBIND_DOMAIN / EXT_RESOLVE_DOMAIN_CONFLICT).
-4. Track remaining Plan 02B alignment/testing items (path defaults, cascade semantics, tests).
+4. Track remaining Plan 02B testing items (cascade semantics, tests).
 
-**Timeline:** Remaining work is validation + emulated parser coverage + alignment/tests.
+**Timeline:** Remaining work is validation + guardrails/stubs + testing.
 
 ---
 
@@ -257,7 +256,7 @@
 
 ## Implementation Progress (V2 pipeline complete; remaining items in emulated parsers/validation/tests)
 
-**Current:** V2 domain DDL (all domain kinds + WITH blocks), SBLR emission, and executor handling (including SHOW DOMAIN and enforcement opcodes) are complete. Remaining work is emulated parser DDL, semantic validation guardrails, conflict opcodes, and comprehensive tests.
+**Current:** V2 domain DDL (all domain kinds + WITH blocks), SBLR emission, executor handling, and emulated parser domain DDL are complete. Remaining work is semantic validation guardrails, conflict opcodes, and comprehensive tests.
 
 ### Section 1: Schema Changes (1/1)
 - [x] Task 1.1: Add dialect_tag/compat_name to domain schema

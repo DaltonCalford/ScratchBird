@@ -8,6 +8,11 @@ Scope: Align plans with current code for schema/database DDL, emulation schema p
 - Emulation schema path conventions are inconsistent across plans, catalog defaults, adapters, and parsers (dot vs slash paths, emulation vs remote.emulated).
 - Emulation view generation is partially implemented in adapters; the shared generator header is out of sync with CatalogManager.
 
+## Update (2026-01-03)
+- Schema/database DDL opcodes, parser emission, and executor handlers are implemented (see Plan 02B).
+- Adapter/query compiler defaults now use dot-paths for emulated schema roots.
+- This document remains as a historical audit; remaining items are cascade semantics, tests, and guardrails.
+
 ## Schema Resolution Mechanics (authoritative)
 - Default schema is always set from user/role/group; if missing, treat root as current schema.
 - Unqualified object names resolve using current schema, then search_path.
