@@ -11,7 +11,7 @@ P1 (blocks SQL feature coverage and compatibility).
 - ✅ Quick wins completed (NULL-safe, ESCAPE, placeholders, GROUP BY, window specs)
 - ✅ Emulated parser domain DDL implemented (Firebird/PostgreSQL)
 - ✅ MySQL explicit DOMAIN rejection added
-- ⚠️ Semantic guardrails + comprehensive dialect tests pending
+- ⚠️ Dialect guardrails partial (domain WITH blocks rejected in Firebird/PostgreSQL); comprehensive tests pending
 
 ## References
 - `docs/specifications/01_SQL_DIALECT_OVERVIEW.md`

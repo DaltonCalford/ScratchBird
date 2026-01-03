@@ -1649,6 +1649,13 @@ void Parser::parseCreateDomain() {
         break;
     }
 
+    if (check(TokenType::KW_WITH) || check(TokenType::KW_INHERITS) ||
+        check(TokenType::KW_SECURITY)) {
+        error("PostgreSQL CREATE DOMAIN does not support WITH/INHERITS options");
+        synchronize();
+        return;
+    }
+
     emitByte(nullable ? 1 : 0);
     emitString(default_value);
     emitString(has_collation ? collation_name : std::string());

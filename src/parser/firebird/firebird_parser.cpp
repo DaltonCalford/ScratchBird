@@ -365,12 +365,17 @@ ast::SchemaPath buildEmulatedDatabasePath(ast::StringPool& pool, std::string_vie
 
 ParseResult Parser::parseStatement() {
     ParseResult result;
+    SimpleParserErrorReporter local_errors;
+    ParserErrorReporter* prev_reporter = error_reporter_;
+    if (!error_reporter_) {
+        error_reporter_ = &local_errors;
+    }
+    size_t error_count_before = error_reporter_ ? error_reporter_->errorCount() : 0;
 
     try {
         Statement* stmt = parseStatementInternal();
         if (stmt) {
             result.statement.reset(stmt);
-            result.success = true;
         }
     } catch (const std::exception& e) {
         error(e.what());
@@ -378,6 +383,20 @@ ParseResult Parser::parseStatement() {
 
     // Consume optional semicolon
     match(TokenType::SEMICOLON);
+
+    bool has_new_errors = error_reporter_ &&
+        error_reporter_->errorCount() > error_count_before;
+    if (has_new_errors) {
+        if (error_reporter_ == &local_errors) {
+            result.errors = local_errors.errors();
+        }
+    } else if (result.statement) {
+        result.success = true;
+    }
+
+    if (error_reporter_ == &local_errors) {
+        error_reporter_ = prev_reporter;
+    }
 
     return result;
 }
@@ -2260,6 +2279,11 @@ Statement* Parser::parseCreateDomain() {
 
         constraint.name = constraint_name;
         stmt->constraints.push_back(std::move(constraint));
+    }
+
+    if (checkKeyword(TokenType::KW_WITH)) {
+        error("Firebird CREATE DOMAIN does not support WITH blocks");
+        synchronize();
     }
 
     stmt->has_dialect = true;
