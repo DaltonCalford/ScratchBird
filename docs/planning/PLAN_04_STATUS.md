@@ -166,6 +166,9 @@
    - Duplicate RECORD field names rejected (case-insensitive)
    - Duplicate ENUM labels rejected (case-sensitive)
    - Duplicate domain names rejected (schema-scoped, IF NOT EXISTS allowed)
+   - CHECK constraints require VALUE and reject subqueries
+   - BASIC domain DEFAULT literal type compatibility enforced
+   - RECORD/VARIANT domains must be non-empty; VARIANT types unique
 2. **Tests Added** ✅
    - Semantic analyzer unit tests cover duplicate constraint/field/label cases
 

@@ -1066,6 +1066,7 @@ if (matchKeyword("DOMAIN")) {
 7. Populate ResolvedStatement with domain_id
 
 **Update (2026-01-03):** Duplicate domain names (schema-scoped) and constraint names (case-insensitive) are now rejected in `SemanticAnalyzerV2::analyzeCreateDomain()` with unit tests in `tests/unit/test_semantic_analyzer_v2.cpp`.
+**Update (2026-01-03):** CHECK constraints now require a VALUE reference, reject subqueries, and BASIC domain DEFAULT literals are type-checked (literal-only) in `SemanticAnalyzerV2::analyzeCreateDomain()` with tests.
 
 **Acceptance Criteria:**
 - [ ] All validation rules enforced
@@ -1089,7 +1090,7 @@ if (matchKeyword("DOMAIN")) {
 4. Check for circular domain references in fields
 5. Validate DEFAULT expressions for fields
 
-**Update (2026-01-03):** Duplicate RECORD field names are now rejected (case-insensitive) with unit tests in `tests/unit/test_semantic_analyzer_v2.cpp`.
+**Update (2026-01-03):** Duplicate RECORD field names are now rejected (case-insensitive), RECORD domains require at least one field, and RECORD default literals are type-checked (literal-only) with unit tests in `tests/unit/test_semantic_analyzer_v2.cpp`.
 
 **Acceptance Criteria:**
 - [ ] Field validation complete
@@ -1133,7 +1134,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 8.5: Implement analyzeDomain() for VARIANT Domains
 
-**Status:** ⚠️ PARTIAL - type resolution wired; uniqueness pending
+**Status:** ⚠️ PARTIAL - type resolution wired; uniqueness and empty-list guardrails added
 **Priority:** MEDIUM
 **Estimated Time:** 4 hours
 
@@ -1143,13 +1144,13 @@ if (matchKeyword("DOMAIN")) {
 3. Resolve domain references
 
 **Acceptance Criteria:**
-- [ ] Type list validation
-- [ ] Domain resolution
+- [x] Type list validation
+- [x] Domain resolution
 - [ ] Test coverage
 
 ### Task 8.6: Implement analyzeAlterDomain()
 
-**Status:** ⚠️ PARTIAL - action wiring done; validation pending
+**Status:** ⚠️ PARTIAL - domain resolution and core validations added; rename availability pending
 **Priority:** HIGH
 **Estimated Time:** 6 hours
 
@@ -1161,6 +1162,7 @@ if (matchKeyword("DOMAIN")) {
 5. For DROP CONSTRAINT: validate constraint exists
 6. For RENAME: validate new name not taken
 
+**Acceptance Criteria:**
 **Acceptance Criteria:**
 - [ ] All alter actions validated
 - [ ] Test coverage

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cctype>
 #include <unordered_set>
 
 namespace scratchbird::parser::v2 {
@@ -72,6 +73,218 @@ bool typesEquivalent(const ResolvedType& a, const ResolvedType& b) {
            a.scale == b.scale &&
            a.length == b.length &&
            a.array_size == b.array_size;
+}
+
+enum class LiteralKind {
+    UNKNOWN,
+    NULL_LITERAL,
+    BOOLEAN,
+    NUMBER,
+    STRING
+};
+
+std::string trimString(std::string_view input) {
+    size_t start = 0;
+    while (start < input.size() && std::isspace(static_cast<unsigned char>(input[start]))) {
+        start++;
+    }
+    if (start == input.size()) {
+        return {};
+    }
+    size_t end = input.size() - 1;
+    while (end > start && std::isspace(static_cast<unsigned char>(input[end]))) {
+        end--;
+    }
+    return std::string(input.substr(start, end - start + 1));
+}
+
+bool equalsIgnoreCase(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool isWordChar(char c) {
+    return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+}
+
+bool hasTokenOutsideQuotes(const std::string& expr, std::string_view token) {
+    bool in_string = false;
+    for (size_t i = 0; i < expr.size();) {
+        char c = expr[i];
+        if (in_string) {
+            if (c == '\'') {
+                if (i + 1 < expr.size() && expr[i + 1] == '\'') {
+                    i += 2;
+                    continue;
+                }
+                in_string = false;
+            }
+            ++i;
+            continue;
+        }
+        if (c == '\'') {
+            in_string = true;
+            ++i;
+            continue;
+        }
+        if (isWordChar(c)) {
+            size_t start = i;
+            while (i < expr.size() && isWordChar(expr[i])) {
+                ++i;
+            }
+            std::string_view tok(expr.data() + start, i - start);
+            if (equalsIgnoreCase(tok, token)) {
+                return true;
+            }
+            continue;
+        }
+        ++i;
+    }
+    return false;
+}
+
+std::string normalizeValueToken(const std::string& expr) {
+    std::string out;
+    out.reserve(expr.size());
+    bool in_string = false;
+    for (size_t i = 0; i < expr.size();) {
+        char c = expr[i];
+        if (in_string) {
+            out.push_back(c);
+            if (c == '\'') {
+                if (i + 1 < expr.size() && expr[i + 1] == '\'') {
+                    out.push_back(expr[i + 1]);
+                    i += 2;
+                    continue;
+                }
+                in_string = false;
+            }
+            ++i;
+            continue;
+        }
+        if (c == '\'') {
+            in_string = true;
+            out.push_back(c);
+            ++i;
+            continue;
+        }
+        if (isWordChar(c)) {
+            size_t start = i;
+            while (i < expr.size() && isWordChar(expr[i])) {
+                ++i;
+            }
+            std::string_view tok(expr.data() + start, i - start);
+            if (equalsIgnoreCase(tok, "VALUE")) {
+                out.append("VALUE");
+            } else {
+                out.append(tok);
+            }
+            continue;
+        }
+        out.push_back(c);
+        ++i;
+    }
+    return out;
+}
+
+bool isNumericLiteral(std::string_view input) {
+    if (input.empty()) {
+        return false;
+    }
+    size_t i = 0;
+    if (input[i] == '+' || input[i] == '-') {
+        ++i;
+    }
+    bool saw_digit = false;
+    bool saw_dot = false;
+    bool saw_exp = false;
+
+    for (; i < input.size(); ++i) {
+        char c = input[i];
+        if (std::isdigit(static_cast<unsigned char>(c))) {
+            saw_digit = true;
+            continue;
+        }
+        if (c == '.' && !saw_dot && !saw_exp) {
+            saw_dot = true;
+            continue;
+        }
+        if ((c == 'e' || c == 'E') && saw_digit && !saw_exp) {
+            saw_exp = true;
+            saw_digit = false;
+            if (i + 1 < input.size() && (input[i + 1] == '+' || input[i + 1] == '-')) {
+                ++i;
+            }
+            continue;
+        }
+        return false;
+    }
+    return saw_digit;
+}
+
+LiteralKind classifyLiteral(const std::string& expr) {
+    std::string trimmed = trimString(expr);
+    if (trimmed.empty()) {
+        return LiteralKind::UNKNOWN;
+    }
+    if (equalsIgnoreCase(trimmed, "NULL")) {
+        return LiteralKind::NULL_LITERAL;
+    }
+    if (equalsIgnoreCase(trimmed, "TRUE") || equalsIgnoreCase(trimmed, "FALSE")) {
+        return LiteralKind::BOOLEAN;
+    }
+    if (trimmed.size() >= 2 && trimmed.front() == '\'' && trimmed.back() == '\'') {
+        return LiteralKind::STRING;
+    }
+    if (isNumericLiteral(trimmed)) {
+        return LiteralKind::NUMBER;
+    }
+    return LiteralKind::UNKNOWN;
+}
+
+bool isNumericType(DataType type) {
+    switch (type) {
+        case DataType::INT8:
+        case DataType::INT16:
+        case DataType::INT32:
+        case DataType::INT64:
+        case DataType::INT128:
+        case DataType::UINT8:
+        case DataType::UINT16:
+        case DataType::UINT32:
+        case DataType::UINT64:
+        case DataType::FLOAT32:
+        case DataType::FLOAT64:
+        case DataType::DECIMAL:
+        case DataType::MONEY:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool literalCompatibleWithType(LiteralKind kind, DataType type) {
+    if (kind == LiteralKind::UNKNOWN || kind == LiteralKind::NULL_LITERAL) {
+        return true;
+    }
+    if (kind == LiteralKind::BOOLEAN) {
+        return type == DataType::BOOLEAN;
+    }
+    if (kind == LiteralKind::NUMBER) {
+        return isNumericType(type);
+    }
+    if (kind == LiteralKind::STRING) {
+        return !isNumericType(type) && type != DataType::BOOLEAN;
+    }
+    return true;
 }
 
 bool expressionsEqual(const ResolvedExpression* left, const ResolvedExpression* right);
@@ -2246,14 +2459,23 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
                     error(stmt->span, "Multiple DEFAULT clauses for domain");
                     break;
                 }
-                resolved->default_value = constraint.expression;
+                resolved->default_value = trimString(constraint.expression);
                 default_set = true;
                 break;
             case DomainConstraintType::CHECK: {
+                std::string normalized = normalizeValueToken(constraint.expression);
+                if (!hasTokenOutsideQuotes(normalized, "VALUE")) {
+                    error(constraint.span, "CHECK constraint must reference VALUE");
+                    return nullptr;
+                }
+                if (hasTokenOutsideQuotes(normalized, "SELECT")) {
+                    error(constraint.span, "CHECK constraint subqueries are not supported");
+                    return nullptr;
+                }
                 ResolvedDomainConstraint resolved_constraint;
                 resolved_constraint.type = DomainConstraintType::CHECK;
                 resolved_constraint.name = constraint.name;
-                resolved_constraint.expression = constraint.expression;
+                resolved_constraint.expression = std::move(normalized);
                 resolved->constraints.push_back(std::move(resolved_constraint));
                 break;
             }
@@ -2322,6 +2544,10 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
             break;
         }
         case DomainKind::RECORD: {
+            if (stmt->record_fields.empty()) {
+                error(stmt->span, "RECORD domain must define at least one field");
+                return nullptr;
+            }
             std::unordered_set<std::string> field_names;
             for (const auto& field : stmt->record_fields) {
                 std::string name = core::IdentifierUtils::toUpper(
@@ -2334,10 +2560,17 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
                 resolved_field.name = field.name;
                 resolved_field.type = resolveTypeName(field.type);
                 resolved_field.nullable = field.nullable;
-                resolved_field.default_value = field.default_value;
+                resolved_field.default_value = trimString(field.default_value);
                 if (resolved_field.type.data_type == DataType::UNKNOWN && !resolved_field.type.is_domain) {
                     error(field.type.span, "Unknown field type for RECORD domain");
                     return nullptr;
+                }
+                if (field.has_default) {
+                    LiteralKind lit_kind = classifyLiteral(resolved_field.default_value);
+                    if (!literalCompatibleWithType(lit_kind, resolved_field.type.data_type)) {
+                        error(field.span, "RECORD field default does not match field type");
+                        return nullptr;
+                    }
                 }
                 resolved->record_fields.push_back(std::move(resolved_field));
             }
@@ -2382,15 +2615,33 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
             break;
         }
         case DomainKind::VARIANT: {
+            if (stmt->variant_allowed_types.empty()) {
+                error(stmt->span, "VARIANT domain must define at least one type");
+                return nullptr;
+            }
             for (const auto& type_ref : stmt->variant_allowed_types) {
                 ResolvedType resolved_type = resolveTypeName(type_ref);
                 if (resolved_type.data_type == DataType::UNKNOWN && !resolved_type.is_domain) {
                     error(type_ref.span, "Unknown allowed type for VARIANT domain");
                     return nullptr;
                 }
+                for (const auto& existing : resolved->variant_allowed_types) {
+                    if (typesEquivalent(resolved_type, existing)) {
+                        error(type_ref.span, "Duplicate VARIANT allowed type");
+                        return nullptr;
+                    }
+                }
                 resolved->variant_allowed_types.push_back(std::move(resolved_type));
             }
             break;
+        }
+    }
+
+    if (default_set && stmt->domain_kind == DomainKind::BASIC) {
+        LiteralKind lit_kind = classifyLiteral(resolved->default_value);
+        if (!literalCompatibleWithType(lit_kind, resolved->base_type.data_type)) {
+            error(stmt->span, "DEFAULT value does not match domain base type");
+            return nullptr;
         }
     }
 
@@ -2463,6 +2714,91 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeAlterDomain(AlterDomainStmt* stmt)
     resolved->value = stmt->value;
     resolved->constraint_name = stmt->constraint_name;
     resolved->new_name = stmt->new_name;
+
+    core::ObjectPath obj_path = buildObjectPath(stmt->domain_path, string_pool_);
+    core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+    core::ErrorContext ctx;
+    core::CatalogManager::ResolveOptions opts;
+    opts.allow_search_path = false;
+    ID domain_id{};
+    Status status = catalog_.resolveObjectPath(
+        obj_path,
+        core::CatalogManager::ObjectType::DOMAIN,
+        opts,
+        domain_id,
+        resolved_type,
+        &ctx);
+    if (status != Status::OK) {
+        std::string msg = ctx.message.empty() ? "Domain not found" : ctx.message;
+        error(stmt->span, msg);
+        return nullptr;
+    }
+
+    core::DomainInfo dinfo;
+    if (catalog_.getDomainById(domain_id, dinfo, &ctx) != Status::OK) {
+        std::string msg = ctx.message.empty() ? "Failed to load domain" : ctx.message;
+        error(stmt->span, msg);
+        return nullptr;
+    }
+
+    switch (stmt->action) {
+        case AlterDomainAction::ADD_CHECK: {
+            std::string normalized = normalizeValueToken(stmt->value);
+            if (!hasTokenOutsideQuotes(normalized, "VALUE")) {
+                error(stmt->span, "CHECK constraint must reference VALUE");
+                return nullptr;
+            }
+            if (hasTokenOutsideQuotes(normalized, "SELECT")) {
+                error(stmt->span, "CHECK constraint subqueries are not supported");
+                return nullptr;
+            }
+            resolved->value = std::move(normalized);
+            break;
+        }
+        case AlterDomainAction::DROP_CONSTRAINT: {
+            if (stmt->constraint_name == StringPool::INVALID_ID) {
+                error(stmt->span, "Expected constraint name");
+                return nullptr;
+            }
+            std::string target = core::IdentifierUtils::toUpper(
+                std::string(string_pool_.get(stmt->constraint_name)));
+            bool found = false;
+            for (const auto& constraint : dinfo.constraints) {
+                if (constraint.name.empty()) {
+                    continue;
+                }
+                std::string existing = core::IdentifierUtils::toUpper(constraint.name);
+                if (existing == target) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                error(stmt->span, "Domain constraint not found");
+                return nullptr;
+            }
+            break;
+        }
+        case AlterDomainAction::SET_DEFAULT: {
+            std::string trimmed = trimString(stmt->value);
+            if (trimmed.empty()) {
+                error(stmt->span, "DEFAULT value cannot be empty");
+                return nullptr;
+            }
+            if (dinfo.domain_type == core::DomainType::BASIC) {
+                LiteralKind lit_kind = classifyLiteral(trimmed);
+                if (!literalCompatibleWithType(lit_kind, dinfo.base_type)) {
+                    error(stmt->span, "DEFAULT value does not match domain base type");
+                    return nullptr;
+                }
+            }
+            resolved->value = std::move(trimmed);
+            break;
+        }
+        default:
+            break;
+    }
+
     return resolved;
 }
 

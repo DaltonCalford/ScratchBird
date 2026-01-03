@@ -460,6 +460,113 @@ TEST_F(SemanticAnalyzerV2Test, CreateDomainDuplicateConstraintNames) {
     EXPECT_FALSE(result.success());
 }
 
+TEST_F(SemanticAnalyzerV2Test, CreateDomainCheckRequiresValue) {
+    auto result = analyze("CREATE DOMAIN test.age AS INT CHECK (age > 0)");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateDomainCheckRejectsSubquery) {
+    auto result = analyze("CREATE DOMAIN test.age AS INT CHECK (VALUE IN (SELECT 1))");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateDomainDefaultTypeMismatch) {
+    auto result = analyze("CREATE DOMAIN test.age AS INT DEFAULT 'abc'");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateDomainDefaultBooleanMismatch) {
+    auto result = analyze("CREATE DOMAIN test.flag AS BOOLEAN DEFAULT 1");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateRecordDomainDefaultMismatch) {
+    auto result = analyze("CREATE DOMAIN test.rec AS RECORD (id INT DEFAULT 'x')");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateRecordDomainEmptyFields) {
+    auto result = analyze("CREATE DOMAIN test.rec AS RECORD ()");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateVariantDomainEmptyTypes) {
+    auto result = analyze("CREATE DOMAIN test.var AS VARIANT ()");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateVariantDomainDuplicateTypes) {
+    auto result = analyze("CREATE DOMAIN test.var AS VARIANT (INT, INT)");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, AlterDomainCheckRequiresValue) {
+    auto* domain_mgr = db_.domain_manager();
+    ASSERT_NE(domain_mgr, nullptr);
+
+    ErrorContext ctx;
+    DomainManager::DomainCreateOptions options;
+    ID domain_id{};
+    ASSERT_EQ(domain_mgr->createBasicDomain(
+                  test_schema_id_,
+                  "age",
+                  DataType::INT32,
+                  0,
+                  0,
+                  options,
+                  domain_id,
+                  &ctx),
+              Status::OK);
+
+    auto result = analyze("ALTER DOMAIN test.age ADD CHECK (age > 0)");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, AlterDomainDropConstraintNotFound) {
+    auto* domain_mgr = db_.domain_manager();
+    ASSERT_NE(domain_mgr, nullptr);
+
+    ErrorContext ctx;
+    DomainManager::DomainCreateOptions options;
+    options.constraints.emplace_back(scratchbird::core::ConstraintType::CHECK, "VALUE > 0", "chk1");
+    ID domain_id{};
+    ASSERT_EQ(domain_mgr->createBasicDomain(
+                  test_schema_id_,
+                  "age",
+                  DataType::INT32,
+                  0,
+                  0,
+                  options,
+                  domain_id,
+                  &ctx),
+              Status::OK);
+
+    auto result = analyze("ALTER DOMAIN test.age DROP CONSTRAINT missing");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, AlterDomainSetDefaultTypeMismatch) {
+    auto* domain_mgr = db_.domain_manager();
+    ASSERT_NE(domain_mgr, nullptr);
+
+    ErrorContext ctx;
+    DomainManager::DomainCreateOptions options;
+    ID domain_id{};
+    ASSERT_EQ(domain_mgr->createBasicDomain(
+                  test_schema_id_,
+                  "age",
+                  DataType::INT32,
+                  0,
+                  0,
+                  options,
+                  domain_id,
+                  &ctx),
+              Status::OK);
+
+    auto result = analyze("ALTER DOMAIN test.age SET DEFAULT 'abc'");
+    EXPECT_FALSE(result.success());
+}
+
 TEST_F(SemanticAnalyzerV2Test, CreateDomainDuplicateName) {
     auto* domain_mgr = db_.domain_manager();
     ASSERT_NE(domain_mgr, nullptr);
