@@ -449,10 +449,15 @@ std::string Parser::parseIdentifier() {
 
 std::string Parser::parseQualifiedName() {
     std::string name = parseIdentifier();
+    int parts = 1;
 
     while (match(TokenType::DOT)) {
+        if (parts >= 2) {
+            error("MySQL qualified names must be table or db.table");
+        }
         name += ".";
         name += parseIdentifier();
+        parts++;
     }
 
     return name;

@@ -925,6 +925,9 @@ Expression* Parser::parsePrimaryExpression() {
                 std::string_view text = lexer_.getTokenText(current_token_);
                 parts.push_back(string_pool_.intern(text));
             }
+            if (parts.size() > 2) {
+                error("Firebird does not support schema-qualified names");
+            }
             advance();
         }
 
@@ -1488,7 +1491,13 @@ ast::SchemaPath Parser::parseSchemaPath() {
         return path;
     }
 
-    do {
+    if (check(TokenType::IDENTIFIER)) {
+        path.components.push_back(internFromLexer(current_token_.value.string_id));
+        advance();
+    }
+
+    while (match(TokenType::DOT)) {
+        error("Firebird does not support schema-qualified names");
         if (check(TokenType::IDENTIFIER)) {
             path.components.push_back(internFromLexer(current_token_.value.string_id));
             advance();
@@ -1496,7 +1505,7 @@ ast::SchemaPath Parser::parseSchemaPath() {
             error("Expected identifier in schema path");
             break;
         }
-    } while (match(TokenType::DOT));
+    }
 
     return path;
 }

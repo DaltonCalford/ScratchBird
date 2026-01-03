@@ -67,6 +67,14 @@ protected:
         parser.parseStatement();  // This will fail since SELECT not implemented, but advances past SELECT
         return nullptr;  // For now, we'll test simpler things
     }
+
+    void expectError(const std::string& sql) {
+        SimpleParserErrorReporter reporter;
+        Parser parser(sql);
+        parser.setErrorReporter(&reporter);
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success) << "Expected error for: " << sql;
+    }
 };
 
 // =============================================================================
@@ -158,6 +166,15 @@ TEST_F(FirebirdParserTest, ParseUnexpectedToken) {
     auto result = parser.parseStatement();
     // COMMIT should parse, INVALID becomes next statement which fails
     EXPECT_TRUE(result.success);
+}
+
+// =============================================================================
+// Dialect Guardrails
+// =============================================================================
+
+TEST_F(FirebirdParserTest, DialectGuardrails) {
+    expectError("CREATE TABLE a.b (id INTEGER)");
+    expectError("SELECT a.b.c FROM t");
 }
 
 // =============================================================================

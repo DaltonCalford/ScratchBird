@@ -526,6 +526,8 @@ TEST_F(PostgreSQLParserTest, DialectGuardrails) {
     expectError("SHOW DATABASES");
     expectError("SHOW COLUMNS FROM users");
     expectError("SHOW INDEXES FROM users");
+    expectError("CREATE TABLE a.b.c (id INT)");
+    expectError("SELECT a.b.c.d FROM t");
 }
 
 // ============================================================================

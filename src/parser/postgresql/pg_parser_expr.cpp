@@ -581,6 +581,7 @@ void Parser::parsePrimaryExpr() {
     if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) ||
         isNonReservedKeyword(current_token_.type)) {
         std::string name = parseIdentifier();
+        int parts = 1;
 
         // Check for function call
         if (match(TokenType::LEFT_PAREN)) {
@@ -591,8 +592,12 @@ void Parser::parsePrimaryExpr() {
         // Check for qualified name (table.column or schema.table.column)
         std::string full_name = name;
         while (match(TokenType::DOT)) {
+            if (parts >= 3) {
+                error("PostgreSQL column references must be schema.table.column");
+            }
             full_name += ".";
             full_name += parseIdentifier();
+            parts++;
         }
 
         emit(sblr::Opcode::COLUMN_REF);

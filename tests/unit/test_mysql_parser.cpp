@@ -479,6 +479,12 @@ TEST_F(MySQLParserTest, TransactionGuardrails) {
     expectError("SET TRANSACTION AUTOCOMMIT ON");
 }
 
+TEST_F(MySQLParserTest, QualifiedNameGuardrails) {
+    expectError("SHOW COLUMNS FROM a.b.c");
+    expectError("SHOW CREATE TABLE a.b.c");
+    expectError("DESCRIBE a.b.c");
+}
+
 TEST_F(MySQLParserTest, ShowStatements) {
     expectSuccess("SHOW TABLES");
     expectSuccess("SHOW DATABASES");
