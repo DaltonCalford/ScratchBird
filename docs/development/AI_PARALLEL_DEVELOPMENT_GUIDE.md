@@ -84,7 +84,7 @@ Scope:
 - ARRAY_APPEND, ARRAY_PREPEND, ARRAY_CAT
 - Array operators (&&, @>, <@)
 Deliverable: Array operations work in queries
-Files: src/sblr/executor.cpp (array opcodes), src/parser/parser.cpp
+Files: src/sblr/executor.cpp (array opcodes), src/parser/parser_v2.cpp
 Time: ~40-60 hours
 ```
 

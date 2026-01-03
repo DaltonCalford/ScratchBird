@@ -2,6 +2,7 @@
 
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/ondisk.h"
+#include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/catalog_manager.h"
 #include <cstdint>
 #include <vector>
@@ -30,7 +31,7 @@ namespace scratchbird::core
      */
     constexpr uint32_t TOAST_TUPLE_THRESHOLD = 2000; // Minimum size to consider TOASTing (2KB)
     constexpr uint32_t TOAST_TUPLE_TARGET = 2000;    // Target size after TOASTing
-    constexpr uint32_t TOAST_MAX_CHUNK_SIZE = 1996;  // Max chunk size (leaves room for 28-byte header)
+    constexpr uint32_t TOAST_MAX_CHUNK_SIZE = 1996;  // Legacy 8KB page default chunk size
 
     /**
      * Page-Size-Based TOAST Settings
@@ -50,7 +51,8 @@ namespace scratchbird::core
         constexpr uint32_t THRESHOLD_DIVISOR = 32; // page_size / 32 for TOAST threshold
         constexpr uint32_t CHUNK_DIVISOR = 4;      // page_size / 4 for chunk size
         constexpr uint32_t TARGET_DIVISOR = 16;    // page_size / 16 for target size
-        constexpr uint32_t HEADER_SIZE = 28;       // xmin(8) + xmax(8) + metadata(12)
+        constexpr uint32_t LEGACY_HEADER_SIZE = 28; // Pre-TupleHeader sizing constant
+        constexpr uint32_t HEADER_SIZE = sizeof(TupleHeader) + 12; // TupleHeader + chunk metadata
 
         /**
          * Calculate TOAST threshold based on page size
@@ -73,7 +75,7 @@ namespace scratchbird::core
          * Calculate maximum chunk size based on page size
          *
          * Chunks are sized to fit efficiently in pages while leaving room
-         * for the 28-byte TOAST chunk header (xmin + xmax + metadata).
+         * for the TOAST chunk header (TupleHeader + chunk metadata).
          *
          * Examples:
          * - 8KB page:   2020 bytes (24.7% of page)
@@ -85,6 +87,11 @@ namespace scratchbird::core
         inline uint32_t getMaxChunkSize(uint32_t page_size)
         {
             return (page_size / CHUNK_DIVISOR) - HEADER_SIZE;
+        }
+
+        inline uint32_t getLegacyMaxChunkSize(uint32_t page_size)
+        {
+            return (page_size / CHUNK_DIVISOR) - LEGACY_HEADER_SIZE;
         }
 
         /**
@@ -148,14 +155,14 @@ namespace scratchbird::core
 #pragma pack(pop)
 
     /**
-     * TOAST Chunk Structure (28-byte header + data)
+     * TOAST Chunk Structure (TupleHeader + chunk metadata + data)
      *
      * MGA-Compliant Chunk Format:
-     * - xmin/xmax for transaction versioning (16 bytes)
+     * - TupleHeader for transaction/version metadata
      * - value_id/chunk_seq/chunk_size for TOAST metadata (12 bytes)
      * - chunk_data for actual data (variable length, up to TOAST_MAX_CHUNK_SIZE)
      *
-     * Total Header Size: 28 bytes
+     * Total Header Size: sizeof(TupleHeader) + 12 bytes
      *
      * Visibility:
      * - Chunk visible if xmin committed (via TIP) AND xmax NOT committed (via TIP)
@@ -169,9 +176,7 @@ namespace scratchbird::core
 #pragma pack(push, 1)
     struct ToastChunk
     {
-        // MGA Transaction Fields (16 bytes)
-        uint64_t xmin;       // Transaction that created this chunk (for visibility via TIP)
-        uint64_t xmax;       // Transaction that deleted this chunk (0 = active, non-zero = deleted)
+        TupleHeader header;  // Tuple header for MGA/TIP visibility
 
         // TOAST Metadata (12 bytes)
         uint32_t chunk_id;   // Unique ID of the owning TOAST value
@@ -264,6 +269,8 @@ namespace scratchbird::core
             next_value_id_; // Next TOAST value ID to assign (atomic for thread safety)
 
         // Helper methods
+        auto createToastTableWithParent(const ID& schema_id, uint16_t tablespace_id,
+                                        ErrorContext* ctx) -> Status;
         auto initializeNextValueId(ErrorContext *ctx) -> Status;
 
         auto writeToastChunks(uint32_t value_id, const uint8_t *data, uint32_t size, uint64_t xmin,

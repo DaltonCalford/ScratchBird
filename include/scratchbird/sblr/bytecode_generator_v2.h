@@ -230,6 +230,7 @@ private:
 
     void generateDataType(const ResolvedType& type);
     sblr::Opcode dataTypeToOpcode(DataType type);
+    void writeTypeRef(const ResolvedType& type);
 
     // ==========================================================================
     // Utility Methods

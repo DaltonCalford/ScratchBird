@@ -1786,6 +1786,8 @@ public:
         // Domain lookup wrappers (delegate to DomainManager)
         auto getDomainByName(const ID& schema_id, const std::string& domain_name,
                              DomainInfo& info_out, ErrorContext* ctx = nullptr) -> Status;
+        auto getDomainById(const ID& domain_id,
+                           DomainInfo& info_out, ErrorContext* ctx = nullptr) -> Status;
 
         // ========================================================================
         // UDR Operations (Phase A CRUD - Catalog Cleanup)
@@ -3352,11 +3354,27 @@ public:
         auto storeStringInToast(const std::string& str, uint64_t xmin,
                                uint32_t& oid_out, ErrorContext* ctx = nullptr) -> Status;
 
+        // Initialize policy TOAST storage (must be called after StorageEngine is ready)
+        auto initializePolicyToastIfNeeded(ErrorContext* ctx = nullptr) -> Status;
+
+        // Plan 03B: Domains catalog page
+        auto ensureDomainsTablePage(ErrorContext* ctx = nullptr) -> Status;
+        auto domainsTablePage() const -> uint32_t
+        {
+            return domains_table_page_;
+        }
+
         // Plan 03B: Encryption key catalog table
         auto ensureEncryptionKeysTable(ErrorContext* ctx = nullptr) -> Status;
         auto encryptionKeysTablePage() const -> uint32_t
         {
             return encryption_keys_table_page_;
+        }
+
+        // Policy TOAST table ID (used for expression storage)
+        auto policyToastTableId() const -> const ID&
+        {
+            return policy_toast_table_id_;
         }
 
         // Plan 01 Task B: Heap page enumeration (now public)
@@ -3496,6 +3514,8 @@ public:
         std::unordered_map<ID, DependencyInfo> dependency_cache_;
         std::unordered_multimap<ID, ID> object_to_dependencies_;  // object_id -> dependency_ids
         std::mutex dependency_cache_mutex_;
+        std::unordered_map<uint32_t, uint32_t> heap_page_tail_cache_;
+        std::mutex heap_page_tail_mutex_;
         std::unordered_map<ID, ExceptionInfo, IDHash> exception_cache_;
 
         // Comment cache (Phase 5.2 - Comments table)

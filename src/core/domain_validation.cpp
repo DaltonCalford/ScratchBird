@@ -72,7 +72,7 @@ namespace scratchbird::core
 
         if (!config.error_message.empty())
         {
-            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, config.error_message);
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, config.error_message.c_str());
             return;
         }
 
@@ -81,6 +81,6 @@ namespace scratchbird::core
         {
             message += " for value '" + value.toString() + "'";
         }
-        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, message);
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, message.c_str());
     }
 } // namespace scratchbird::core

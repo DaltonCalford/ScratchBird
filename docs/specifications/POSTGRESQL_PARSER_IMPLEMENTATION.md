@@ -5,7 +5,7 @@
 ## IMPLEMENTATION STATUS: 🔴 NOT IMPLEMENTED - DESIGN SPECIFICATION ONLY
 
 **Current Alpha Implementation:**
-- Basic SQL parser exists (see `src/parser/parser.cpp`)
+- Basic SQL parser exists (see `src/parser/parser_v2.cpp`)
 - Parses SQL syntax only (no wire protocol)
 - **No PostgreSQL wire protocol support**
 - No system catalog emulation

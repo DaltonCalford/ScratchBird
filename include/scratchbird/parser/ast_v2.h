@@ -209,6 +209,8 @@ protected:
  */
 struct TypeName {
     StringPool::StringId name = StringPool::INVALID_ID;  // INT, VARCHAR, etc.
+    bool has_schema_path = false;
+    SchemaPath schema_path;
 
     // Type parameters (precision, scale, length)
     std::optional<int32_t> length;      // VARCHAR(100)
@@ -345,12 +347,45 @@ enum class DomainConstraintType : uint8_t {
 };
 
 /**
+ * Domain kinds (CREATE DOMAIN)
+ */
+enum class DomainKind : uint8_t {
+    BASIC = 0,
+    RECORD = 1,
+    ENUM = 2,
+    SET = 3,
+    VARIANT = 4,
+};
+
+/**
  * Domain-level constraint
  */
 struct DomainConstraint {
     DomainConstraintType type = DomainConstraintType::CHECK;
     StringPool::StringId name = StringPool::INVALID_ID;  // Optional constraint name
     std::string expression;  // Raw expression text for DEFAULT/CHECK
+    SourceSpan span;
+};
+
+/**
+ * Domain RECORD field definition
+ */
+struct DomainRecordField {
+    StringPool::StringId name = StringPool::INVALID_ID;
+    TypeName type;
+    bool nullable = true;
+    bool has_default = false;
+    std::string default_value;
+    SourceSpan span;
+};
+
+/**
+ * Domain ENUM value definition
+ */
+struct DomainEnumValue {
+    StringPool::StringId label = StringPool::INVALID_ID;
+    bool has_position = false;
+    int32_t position = 0;
     SourceSpan span;
 };
 
@@ -603,9 +638,27 @@ public:
 
     bool if_not_exists = false;
     SchemaPath domain_path;
+    DomainKind domain_kind = DomainKind::BASIC;
     TypeName base_type;
+    std::vector<DomainRecordField> record_fields;
+    std::vector<DomainEnumValue> enum_values;
+    TypeName set_element_type;
+    std::vector<TypeName> variant_allowed_types;
 
     std::vector<DomainConstraint> constraints;
+
+    bool has_inherits = false;
+    SchemaPath parent_domain_path;
+
+    bool has_collation = false;
+    std::string collation_name;
+
+    bool has_dialect = false;
+    std::string dialect_tag;
+    bool has_compat = false;
+    std::string compat_name;
+
+    bool enum_wrap = false;
 
     bool has_security = false;
     DomainSecurityOptions security;
@@ -1444,10 +1497,12 @@ enum class BinaryOp : uint8_t {
     AND, OR,
     // String
     CONCAT,
+    REGEX_MATCH, REGEX_MATCH_CI, REGEX_NOT_MATCH, REGEX_NOT_MATCH_CI,
     // Bitwise
     BIT_AND, BIT_OR, BIT_XOR, SHIFT_LEFT, SHIFT_RIGHT,
     // JSON
     JSON_EXTRACT, JSON_EXTRACT_TEXT,
+    JSON_HASH_EXTRACT, JSON_HASH_EXTRACT_TEXT,
     // Array
     ARRAY_CONTAINS, ARRAY_CONTAINED_BY, ARRAY_OVERLAP,
 };
@@ -2091,9 +2146,12 @@ public:
         TIME_ZONE,      // SET TIME ZONE ...
         TRANSACTION,    // SET TRANSACTION ...
         AUTOCOMMIT,     // SET AUTOCOMMIT ...
+        SQL_DIALECT,    // SET SQL DIALECT n
+        NAMES,          // SET NAMES charset
+        LOCAL_TIMEOUT,  // SET LOCAL_TIMEOUT n
         SESSION_AUTHORIZATION,  // SET SESSION AUTHORIZATION ...
         ROLE,           // SET ROLE ...
-        PARSER_VERSION, // SET PARSER VERSION 1|2
+        PARSER_VERSION, // SET PARSER VERSION 2
     };
     SetType set_type = SetType::VARIABLE;
 
@@ -2133,7 +2191,13 @@ public:
     int32_t conflict_error_code = 0;
 
     // For SET PARSER VERSION
-    uint8_t parser_version = 0;  // 1 or 2 (0 = not set)
+    uint8_t parser_version = 0;  // 2 (0 = not set)
+
+    // For SET SQL DIALECT
+    uint8_t sql_dialect = 0;  // 1, 2, or 3 (0 = not set)
+
+    // For SET LOCAL_TIMEOUT
+    uint32_t local_timeout_seconds = 0;
 };
 
 /**
@@ -2214,6 +2278,9 @@ public:
         GRANTS,             // SHOW GRANTS [FOR name]
         CHECKS,             // SHOW CHECKS table
         COLLATIONS,         // SHOW COLLATIONS [LIKE pattern]
+        COMMENTS,           // SHOW COMMENTS [object_name]
+        DEPENDENCIES,       // SHOW DEPENDENCIES [object_name]
+        PACKAGE,            // SHOW PACKAGE package_name
         SQL_DIALECT,        // SHOW SQL DIALECT
         VERSION,            // SHOW VERSION
         DATABASE,           // SHOW DATABASE (current database info)

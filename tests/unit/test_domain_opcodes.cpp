@@ -367,7 +367,7 @@ TEST_F(DomainOpcodeTest, NormalizeDomainValue)
 
 TEST_F(DomainOpcodeTest, ValidateDomainValueFalse)
 {
-    DomainValidation validation;
+    DomainValidationConfig validation;
     validation.validation_function = "always_invalid";
     ErrorContext ctx;
     ASSERT_EQ(domain_mgr_->setValidationOptions(domain_id_, validation, &ctx),
@@ -389,7 +389,7 @@ TEST_F(DomainOpcodeTest, ValidateDomainValueFalse)
 
 TEST_F(DomainOpcodeTest, ValidateDomainValueTrue)
 {
-    DomainValidation validation;
+    DomainValidationConfig validation;
     validation.validation_function = "always_valid";
     ErrorContext ctx;
     ASSERT_EQ(domain_mgr_->setValidationOptions(domain_id_, validation, &ctx),

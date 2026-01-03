@@ -22,6 +22,7 @@
 #include "scratchbird/core/tid_resolver.h" // Sprint 4 Task 5.4.2
 #include "scratchbird/core/index_key_extractor.h" // Phase 3 Task 3.2: Storage Layer TOAST Integration
 #include "scratchbird/sblr/gin_extractors.h"  // TASK-DML-1: GIN Key Extractors
+#include <cctype>
 #include <cstring>
 #include <new>
 
@@ -334,6 +335,24 @@ namespace scratchbird::core
 
             return Status::OK;
         }
+
+        bool isZeroId(const ID &id)
+        {
+            for (uint8_t byte : id.bytes)
+            {
+                if (byte != 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool pageTableIdMatches(const PageHeader *header, const ID &table_id)
+        {
+            return std::memcmp(header->table_id, table_id.bytes.data(),
+                               sizeof(header->table_id)) == 0;
+        }
     } // anonymous namespace
 
     // TASK-DML-2: Public wrapper for removeFromIndex (for executor)
@@ -456,15 +475,10 @@ namespace scratchbird::core
                     Status layout_status = computeColumnLayout(tuple_data, tuple_size, columns,
                                                                db_->domain_manager(),
                                                                column_offsets, column_sizes, ctx);
-                    if (layout_status != Status::OK)
+                    if (layout_status == Status::OK)
                     {
-                        LOG_WARNING(STORAGE, "Failed to compute column layout for index update: %s",
-                                    ctx ? ctx->message.c_str() : "unknown error");
-                        continue;
-                    }
-
-                    // Update each index
-                    for (const auto &index_info : indexes)
+                        // Update each index
+                        for (const auto &index_info : indexes)
                     {
                         // Get index type and pointer
                         CatalogManager::IndexType actual_index_type;
@@ -580,8 +594,13 @@ namespace scratchbird::core
                         }
                     }
 
-                    // Clear detoasting cache
-                    extractor.clearCache();
+                        // Clear detoasting cache
+                        extractor.clearCache();
+                    }
+                    else
+                    {
+                        LOG_WARNING(STORAGE, "Skipping index updates due to column layout failure");
+                    }
                 }
             }
 
@@ -830,15 +849,10 @@ namespace scratchbird::core
                         Status layout_status = computeColumnLayout(tuple_data, tuple_length, columns,
                                                                    db_->domain_manager(),
                                                                    column_offsets, column_sizes, ctx);
-                        if (layout_status != Status::OK)
+                        if (layout_status == Status::OK)
                         {
-                            LOG_WARNING(STORAGE, "Failed to compute column layout for index removal: %s",
-                                        ctx ? ctx->message.c_str() : "unknown error");
-                            continue;
-                        }
-
-                        // Remove from each index
-                        for (const auto &index_info : indexes)
+                            // Remove from each index
+                            for (const auto &index_info : indexes)
                         {
                             // Convert column IDs to column indices
                             std::vector<uint16_t> column_indices;
@@ -896,8 +910,13 @@ namespace scratchbird::core
                             }
                         }
 
-                        // Clear detoasting cache
-                        extractor.clearCache();
+                            // Clear detoasting cache
+                            extractor.clearCache();
+                        }
+                        else
+                        {
+                            LOG_WARNING(STORAGE, "Skipping index removal due to column layout failure");
+                        }
                     }
                 }
             }
@@ -922,6 +941,15 @@ namespace scratchbird::core
         // For now, assume heap pages start after catalog pages
         // In a real system, we'd track this in the catalog
         uint32_t start_page = Config::getInstance().getUInt("storage", "heap_scan_start_page", 7);
+        if (!isZeroId(table_id))
+        {
+            // Table-specific scans rely on table_id filtering, so scan from the start.
+            start_page = 0;
+        }
+        else if (page_manager_ && start_page >= page_manager_->totalPages())
+        {
+            start_page = 0;
+        }
 
         return std::unique_ptr<HeapScanIterator>(
             new (std::nothrow) HeapScanIterator(db_, this, table_id, start_page));
@@ -1158,6 +1186,11 @@ namespace scratchbird::core
             auto *hdr = reinterpret_cast<PageHeader *>(page_data);
             if (hdr->page_type == PAGE_TYPE_HEAP)
             {
+                if (!isZeroId(table_id) && !pageTableIdMatches(hdr, table_id))
+                {
+                    buffer_pool_->unpinPage(page_id, false, ctx);
+                    continue;
+                }
                 HeapPage heap_page(page_data, db_->page_size());
 
                 if (heap_page.hasFreeSpace(tuple_size + sizeof(TupleHeader)))
@@ -1198,7 +1231,8 @@ namespace scratchbird::core
         }
 
         // Initialize as heap page
-        HeapPage heap_page(page_data, db_->page_size());
+        std::memset(page_data, 0, db_->page_size());
+        HeapPage heap_page(page_data, db_->page_size(), nullptr, db_, table_id);
         status = heap_page.initialize(page_id, ctx);
 
         if (status == Status::OK)
@@ -1224,9 +1258,17 @@ namespace scratchbird::core
     HeapScanIterator::HeapScanIterator(Database *db, StorageEngine *engine, const ID &table_id,
                                        uint32_t start_page)
         : db_(db), engine_(engine), table_id_(table_id), current_page_(start_page),
-          current_item_(0), last_page_(100), done_(false)
+          current_item_(0), last_page_(0), done_(false)
     {
-    } // Arbitrary limit
+        if (db_ && db_->page_manager())
+        {
+            uint32_t total_pages = db_->page_manager()->totalPages();
+            if (total_pages > 0)
+            {
+                last_page_ = total_pages - 1;
+            }
+        }
+    }
 
     HeapScanIterator::~HeapScanIterator()
     {
@@ -1266,7 +1308,12 @@ namespace scratchbird::core
 
             // Check if this is a heap page
             auto *hdr = reinterpret_cast<PageHeader *>(page_data_);
-            if (hdr->page_type != PAGE_TYPE_HEAP)
+            bool table_match = true;
+            if (!isZeroId(table_id_))
+            {
+                table_match = pageTableIdMatches(hdr, table_id_);
+            }
+            if (hdr->page_type != PAGE_TYPE_HEAP || !table_match)
             {
                 // Not a heap page, try next
                 db_->buffer_pool()->unpinPage(current_page_, false, ctx);
@@ -1278,6 +1325,16 @@ namespace scratchbird::core
 
             // Scan items in current page
             HeapPage heap_page(page_data_, db_->page_size());
+            ErrorContext validate_ctx;
+            Status validate_status = heap_page.validate(&validate_ctx);
+            if (validate_status != Status::OK)
+            {
+                db_->buffer_pool()->unpinPage(current_page_, false, ctx);
+                page_data_ = nullptr;
+                current_page_++;
+                current_item_ = 0;
+                continue;
+            }
 
             while (current_item_ < heap_page.getItemCount())
             {
@@ -1432,15 +1489,10 @@ namespace scratchbird::core
                     Status new_layout_status = computeColumnLayout(new_tuple_data, new_tuple_size, columns,
                                                                    db_->domain_manager(),
                                                                    new_offsets, new_sizes, ctx);
-                    if (old_layout_status != Status::OK || new_layout_status != Status::OK)
+                    if (old_layout_status == Status::OK && new_layout_status == Status::OK)
                     {
-                        LOG_WARNING(STORAGE, "Failed to compute column layout for index update: %s",
-                                    ctx ? ctx->message.c_str() : "unknown error");
-                        continue;
-                    }
-
-                    // Check each index to see if indexed columns changed
-                    for (const auto &index_info : indexes)
+                        // Check each index to see if indexed columns changed
+                        for (const auto &index_info : indexes)
                     {
                         // Get index type and pointer
                         CatalogManager::IndexType actual_index_type;
@@ -1578,8 +1630,13 @@ namespace scratchbird::core
                             }
                     }
 
-                    // Clear detoasting cache
-                    extractor.clearCache();
+                        // Clear detoasting cache
+                        extractor.clearCache();
+                    }
+                    else
+                    {
+                        LOG_WARNING(STORAGE, "Skipping index updates due to column layout failure");
+                    }
                 }
             }
 
@@ -2155,6 +2212,32 @@ namespace scratchbird::core
     auto StorageEngine::getOrCreateToastManager(const ID &table_id, ErrorContext *ctx)
         -> ToastManager *
     {
+        // Avoid recursive TOAST creation for TOAST tables.
+        if (catalog_manager_)
+        {
+            CatalogManager::TableInfo table_info;
+            ErrorContext lookup_ctx;
+            if (catalog_manager_->getTable(table_id, table_info, &lookup_ctx) == Status::OK)
+            {
+                const std::string prefix = "sb_toast_";
+                bool is_toast_table = table_info.table_type == CatalogManager::TableType::TOAST;
+                if (!is_toast_table && table_info.table_name.size() >= prefix.size())
+                {
+                    is_toast_table = std::equal(prefix.begin(), prefix.end(),
+                                                table_info.table_name.begin(),
+                                                [](char a, char b)
+                                                {
+                                                    return std::tolower(static_cast<unsigned char>(a)) ==
+                                                           std::tolower(static_cast<unsigned char>(b));
+                                                });
+                }
+                if (is_toast_table)
+                {
+                    return nullptr;
+                }
+            }
+        }
+
         // Check if we already have a ToastManager for this table
         {
             std::lock_guard<std::mutex> lock(toast_mutex_);

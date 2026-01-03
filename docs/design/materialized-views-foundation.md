@@ -49,7 +49,7 @@ uint64_t last_refresh_time;     // Timestamp of last REFRESH (0 if never)
 
 ### 2. AST Support
 
-**File**: `include/scratchbird/parser/ast.h`
+**File**: `include/scratchbird/parser/ast_v2.h`
 
 #### CreateViewStmt Extended
 Added `materialized` flag to support `CREATE MATERIALIZED VIEW`:
@@ -82,7 +82,7 @@ Added `REFRESH_MATERIALIZED_VIEW` to ASTKind enum.
 
 ### Phase 1: CREATE MATERIALIZED VIEW
 
-**Parser Changes** (`src/parser/parser.cpp`):
+**Parser Changes** (`src/parser/parser_v2.cpp`):
 ```cpp
 // Detect MATERIALIZED keyword
 if (match(TokenType::MATERIALIZED))
@@ -93,11 +93,11 @@ if (match(TokenType::MATERIALIZED))
 }
 ```
 
-**Bytecode Generator** (`src/sblr/bytecode_generator.cpp`):
+**Bytecode Generator** (`src/sblr/bytecode_generator_v2.cpp`):
 ```cpp
-void BytecodeGenerator::visit(CreateViewStmt* node)
+void BytecodeGeneratorV2::generateCreateView(ResolvedCreateViewStmt* stmt)
 {
-    if (node->materialized())
+    if (stmt->materialized)
     {
         // Generate CREATE_MATERIALIZED_VIEW opcode
         // Include initial data population

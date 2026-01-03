@@ -1,14 +1,8 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/array.h"
-#include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
-
-
-
 using namespace scratchbird::core;
 using namespace scratchbird::sblr;
-using namespace scratchbird::parser;
 
 /**
  * Test fixture for EXTRACT function
@@ -22,25 +16,7 @@ using namespace scratchbird::parser;
  * - ARRAY: cardinality, ndims, lower, upper
  * - POINT: x, y, srid
  */
-class ExtractTest : public ::testing::Test {
-protected:
-    // Helper to parse a SELECT expression and generate bytecode
-    // This allows us to test EXTRACT through the full SQL pipeline
-    BytecodeResult parseAndGenerate(const std::string& sql) {
-        Lexer lexer(sql);
-        ASTArena arena;
-        Parser parser(lexer, arena);
-
-        auto parse_result = parser.parseStatement();
-        if (!parse_result.success()) {
-            // Can't create an error result easily, so just throw
-            throw std::runtime_error("Parse failed");
-        }
-
-        BytecodeGenerator generator(parser.stringPool(), nullptr);
-        return generator.generate(parse_result.statement());
-    }
-};
+class ExtractTest : public ::testing::Test {};
 
 // ===== DATE EXTRACTION TESTS =====
 
@@ -362,4 +338,3 @@ TEST_F(ExtractTest, ARRAY_3D) {
     EXPECT_EQ(arr->getTotalElements(), 24);
     EXPECT_EQ(arr->getRank(), 3);
 }
-

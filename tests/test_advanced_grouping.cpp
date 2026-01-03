@@ -30,6 +30,7 @@ using namespace scratchbird;
 class AdvancedGroupingTest : public ::testing::Test {
 protected:
     std::unique_ptr<core::Database> db_;
+    std::unique_ptr<sblr::QueryCompilerV2> compiler_;
     const std::string db_path_ = "/tmp/test_advanced_grouping_db";
 
     void SetUp() override {
@@ -45,6 +46,8 @@ protected:
         db_ = std::make_unique<core::Database>();
         status = db_->open(db_path_, &ctx);
         ASSERT_EQ(status, core::Status::OK) << "Failed to open database: " << ctx.message;
+
+        compiler_ = std::make_unique<sblr::QueryCompilerV2>(db_.get());
 
         // Create test table and insert sample data
         createTestData();
@@ -69,43 +72,24 @@ protected:
     }
 
     void executeSQL(const std::string& sql) {
-        parser::Lexer lexer(sql);
-        parser::ASTArena arena;
-        parser::Parser parser(lexer, arena);
-
-        auto result = parser.parseStatement();
-        ASSERT_TRUE(result.success()) << "Parse error for: " << sql;
-
-        sblr::BytecodeGenerator generator(lexer.stringPool(), db_.get());
-        auto bytecode = generator.generate(result.statement());
-        ASSERT_TRUE(bytecode.success()) << "Bytecode generation error for: " << sql;
+        auto compile_result = compiler_->compile(sql);
+        ASSERT_TRUE(compile_result.success()) << "Compile error for: " << sql;
 
         sblr::Executor executor(db_.get());
-        auto exec_result = executor.execute(bytecode.bytecode());
+        auto exec_result = executor.execute(compile_result.bytecode());
         ASSERT_TRUE(exec_result.success()) << "Execution error for: " << sql
             << " - " << exec_result.error();
     }
 
     std::vector<std::vector<std::string>> queryResults(const std::string& sql) {
-        parser::Lexer lexer(sql);
-        parser::ASTArena arena;
-        parser::Parser parser(lexer, arena);
-
-        auto result = parser.parseStatement();
-        if (!result.success()) {
-            ADD_FAILURE() << "Parse error for: " << sql;
-            return {};
-        }
-
-        sblr::BytecodeGenerator generator(lexer.stringPool(), db_.get());
-        auto bytecode = generator.generate(result.statement());
-        if (!bytecode.success()) {
-            ADD_FAILURE() << "Bytecode generation error for: " << sql;
+        auto compile_result = compiler_->compile(sql);
+        if (!compile_result.success()) {
+            ADD_FAILURE() << "Compile error for: " << sql;
             return {};
         }
 
         sblr::Executor executor(db_.get());
-        auto exec_result = executor.execute(bytecode.bytecode());
+        auto exec_result = executor.execute(compile_result.bytecode());
         if (!exec_result.success()) {
             ADD_FAILURE() << "Execution error for: " << sql << " - " << exec_result.error();
             return {};

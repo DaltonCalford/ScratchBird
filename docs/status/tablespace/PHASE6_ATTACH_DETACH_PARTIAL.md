@@ -226,7 +226,7 @@ Status closeTablespace(uint16_t tablespace_id,
 
 ### SQL Parser Integration ❌ NOT IMPLEMENTED
 
-**Required Changes** (`src/parser/parser.cpp`):
+**Required Changes** (`src/parser/parser_v2.cpp`):
 
 **ATTACH syntax**:
 ```sql

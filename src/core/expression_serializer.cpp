@@ -13,6 +13,12 @@ namespace scratchbird::core
         buffer.push_back(value);
     }
 
+    void ExpressionSerializer::writeU16(std::vector<uint8_t> &buffer, uint16_t value)
+    {
+        buffer.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+        buffer.push_back(static_cast<uint8_t>(value & 0xFF));
+    }
+
     void ExpressionSerializer::writeU32(std::vector<uint8_t> &buffer, uint32_t value)
     {
         buffer.push_back((value >> 24) & 0xFF);
@@ -39,21 +45,13 @@ namespace scratchbird::core
         buffer.insert(buffer.end(), str.begin(), str.end());
     }
 
-    void ExpressionSerializer::writeStringId(std::vector<uint8_t> &buffer,
-                                             StringPool::StringId id)
-    {
-        writeU32(buffer, id);
-    }
-
     void ExpressionSerializer::writeI64(std::vector<uint8_t> &buffer, int64_t value)
     {
-        // Write as unsigned, bit pattern preserved
         writeU64(buffer, static_cast<uint64_t>(value));
     }
 
     void ExpressionSerializer::writeF64(std::vector<uint8_t> &buffer, double value)
     {
-        // Write double as uint64_t bit pattern
         uint64_t bits;
         std::memcpy(&bits, &value, sizeof(double));
         writeU64(buffer, bits);
@@ -68,6 +66,16 @@ namespace scratchbird::core
         if (ptr >= end)
             throw std::runtime_error("Unexpected end of expression data");
         return *ptr++;
+    }
+
+    uint16_t ExpressionSerializer::readU16(const uint8_t *&ptr, const uint8_t *end)
+    {
+        if (ptr + 2 > end)
+            throw std::runtime_error("Unexpected end of expression data");
+        uint16_t value = (static_cast<uint16_t>(ptr[0]) << 8) |
+                         static_cast<uint16_t>(ptr[1]);
+        ptr += 2;
+        return value;
     }
 
     uint32_t ExpressionSerializer::readU32(const uint8_t *&ptr, const uint8_t *end)
@@ -106,26 +114,14 @@ namespace scratchbird::core
         return str;
     }
 
-    StringPool::StringId ExpressionSerializer::readStringId(const uint8_t *&ptr,
-                                                            const uint8_t *end,
-                                                            StringPool &pool)
-    {
-        uint32_t id = readU32(ptr, end);
-        // Note: In deserialization, we need to map old string IDs to new ones
-        // For now, we'll store the string itself and re-intern it
-        return id;
-    }
-
     int64_t ExpressionSerializer::readI64(const uint8_t *&ptr, const uint8_t *end)
     {
-        // Read as unsigned, then reinterpret as signed
         uint64_t uvalue = readU64(ptr, end);
         return static_cast<int64_t>(uvalue);
     }
 
     double ExpressionSerializer::readF64(const uint8_t *&ptr, const uint8_t *end)
     {
-        // Read uint64 bit pattern, then reinterpret as double
         uint64_t bits = readU64(ptr, end);
         double value;
         std::memcpy(&value, &bits, sizeof(double));
@@ -161,72 +157,61 @@ namespace scratchbird::core
     {
         if (!expr)
         {
-            writeU8(buffer, 0); // null marker
+            writeU8(buffer, 0);
             return;
         }
 
-        // Determine node type and serialize
         switch (expr->kind())
         {
-        case ASTKind::LITERAL:
+        case ExprKind::LITERAL:
             writeU8(buffer, static_cast<uint8_t>(SerializedNodeType::LITERAL));
             serializeLiteral(static_cast<const LiteralExpr *>(expr), buffer);
             break;
 
-        case ASTKind::IDENTIFIER:
+        case ExprKind::IDENTIFIER:
             writeU8(buffer, static_cast<uint8_t>(SerializedNodeType::IDENTIFIER));
             serializeIdentifier(static_cast<const IdentifierExpr *>(expr), buffer);
             break;
 
-        case ASTKind::BINARY_OP:
+        case ExprKind::BINARY_OP:
             writeU8(buffer, static_cast<uint8_t>(SerializedNodeType::BINARY_OP));
             serializeBinaryOp(static_cast<const BinaryOpExpr *>(expr), buffer);
             break;
 
-        case ASTKind::FUNCTION_CALL:
+        case ExprKind::FUNCTION_CALL:
             writeU8(buffer, static_cast<uint8_t>(SerializedNodeType::FUNCTION_CALL));
             serializeFunctionCall(static_cast<const FunctionCallExpr *>(expr), buffer);
             break;
 
-        case ASTKind::CAST:
+        case ExprKind::CAST:
             writeU8(buffer, static_cast<uint8_t>(SerializedNodeType::CAST));
             serializeCast(static_cast<const CastExpr *>(expr), buffer);
             break;
 
-        case ASTKind::CASE:
+        case ExprKind::CASE:
             writeU8(buffer, static_cast<uint8_t>(SerializedNodeType::CASE));
             serializeCase(static_cast<const CaseExpr *>(expr), buffer);
             break;
 
-        case ASTKind::AGGREGATE_FUNC:
+        case ExprKind::AGGREGATE:
             writeU8(buffer, static_cast<uint8_t>(SerializedNodeType::AGGREGATE));
             serializeAggregate(static_cast<const AggregateExpr *>(expr), buffer);
             break;
 
-        case ASTKind::WINDOW_FUNC:
-            writeU8(buffer, static_cast<uint8_t>(SerializedNodeType::WINDOW_FUNC));
-            serializeWindowFunc(static_cast<const WindowFuncExpr *>(expr), buffer);
-            break;
-
-        case ASTKind::JSON_FUNC:
-            writeU8(buffer, static_cast<uint8_t>(SerializedNodeType::JSON_FUNC));
-            serializeJSONFunc(static_cast<const JSONFuncExpr *>(expr), buffer);
-            break;
-
-        case ASTKind::COALESCE:
+        case ExprKind::COALESCE:
             writeU8(buffer, static_cast<uint8_t>(SerializedNodeType::COALESCE));
             serializeCoalesce(static_cast<const CoalesceExpr *>(expr), buffer);
             break;
 
-        case ASTKind::NULLIF:
+        case ExprKind::NULLIF:
             writeU8(buffer, static_cast<uint8_t>(SerializedNodeType::NULLIF));
             serializeNullIf(static_cast<const NullIfExpr *>(expr), buffer);
             break;
 
-        case ASTKind::SUBQUERY:
-            // Subqueries are not supported in expression indexes
-            // This is a PostgreSQL limitation
-            throw std::runtime_error("Subquery expressions cannot be used in expression indexes");
+        case ExprKind::EXTRACT:
+            writeU8(buffer, static_cast<uint8_t>(SerializedNodeType::EXTRACT));
+            serializeExtract(static_cast<const ExtractExpr *>(expr), buffer);
+            break;
 
         default:
             throw std::runtime_error("Unsupported expression type for serialization");
@@ -240,12 +225,9 @@ namespace scratchbird::core
     void ExpressionSerializer::serializeLiteral(const LiteralExpr *expr,
                                                 std::vector<uint8_t> &buffer)
     {
-        writeU8(buffer, 0); // flags (unused)
-
-        // Write literal type
+        writeU8(buffer, 0);
         writeU8(buffer, static_cast<uint8_t>(expr->literalType()));
 
-        // Write literal value based on type
         switch (expr->literalType())
         {
         case LiteralExpr::LiteralType::INTEGER:
@@ -255,13 +237,12 @@ namespace scratchbird::core
             writeF64(buffer, expr->floatValue());
             break;
         case LiteralExpr::LiteralType::STRING:
-            writeStringId(buffer, expr->stringValue());
+            writeString(buffer, expr->stringValue());
             break;
         case LiteralExpr::LiteralType::NULL_LITERAL:
-            // No value to write for NULL
             break;
         case LiteralExpr::LiteralType::RANGE:
-            writeStringId(buffer, expr->rangeValue());
+            writeString(buffer, expr->rangeValue());
             break;
         }
     }
@@ -269,29 +250,20 @@ namespace scratchbird::core
     void ExpressionSerializer::serializeIdentifier(const IdentifierExpr *expr,
                                                    std::vector<uint8_t> &buffer)
     {
-        writeU8(buffer, 0); // flags
-
-        // Write identifier name ID
-        writeStringId(buffer, expr->name());
-
-        // Write qualifier (table/alias) if present
-        bool has_qualifier = expr->isQualified();
-        writeU8(buffer, has_qualifier ? 1 : 0);
-        if (has_qualifier)
+        writeU8(buffer, 0);
+        writeString(buffer, expr->name());
+        writeU8(buffer, expr->isQualified() ? 1 : 0);
+        if (expr->isQualified())
         {
-            writeStringId(buffer, expr->qualifier());
+            writeString(buffer, expr->qualifier());
         }
     }
 
     void ExpressionSerializer::serializeBinaryOp(const BinaryOpExpr *expr,
                                                  std::vector<uint8_t> &buffer)
     {
-        writeU8(buffer, 0); // flags
-
-        // Write operator type
+        writeU8(buffer, 0);
         writeU8(buffer, static_cast<uint8_t>(expr->op()));
-
-        // Write left and right expressions
         serializeNode(expr->left(), buffer);
         serializeNode(expr->right(), buffer);
     }
@@ -299,182 +271,91 @@ namespace scratchbird::core
     void ExpressionSerializer::serializeFunctionCall(const FunctionCallExpr *expr,
                                                      std::vector<uint8_t> &buffer)
     {
-        writeU8(buffer, 0); // flags
+        writeU8(buffer, 0);
+        writeString(buffer, expr->name());
 
-        // Write function name
-        writeStringId(buffer, expr->name());
-
-        // Write arguments
         const auto &args = expr->args();
         writeU8(buffer, static_cast<uint8_t>(args.size()));
-        for (auto *arg : args)
+        for (const auto &arg : args)
         {
-            serializeNode(arg, buffer);
+            serializeNode(arg.get(), buffer);
         }
     }
 
     void ExpressionSerializer::serializeCast(const CastExpr *expr, std::vector<uint8_t> &buffer)
     {
-        writeU8(buffer, 0); // flags
+        writeU8(buffer, 0);
 
-        // Write target type - serialize TypeName struct
-        const TypeName &target = expr->targetType();
-        writeU8(buffer, static_cast<uint8_t>(target.type));
+        const TypeInfo &target = expr->targetType();
+        writeU16(buffer, static_cast<uint16_t>(target.type));
         writeU32(buffer, target.precision);
         writeU32(buffer, target.scale);
+        writeU16(buffer, static_cast<uint16_t>(target.element_type));
         writeU8(buffer, target.with_timezone ? 1 : 0);
+        writeU16(buffer, target.timezone_hint);
 
-        // Write expression being cast
         serializeNode(expr->expr(), buffer);
     }
 
     void ExpressionSerializer::serializeCase(const CaseExpr *expr, std::vector<uint8_t> &buffer)
     {
-        writeU8(buffer, 0); // flags
+        writeU8(buffer, 0);
 
-        // Write WHEN clauses
         const auto &whens = expr->whenClauses();
         writeU8(buffer, static_cast<uint8_t>(whens.size()));
         for (const auto &when : whens)
         {
-            serializeNode(when.condition, buffer);
-            serializeNode(when.result, buffer);
+            serializeNode(when.condition.get(), buffer);
+            serializeNode(when.result.get(), buffer);
         }
 
-        // Write ELSE clause
         serializeNode(expr->elseResult(), buffer);
     }
 
     void ExpressionSerializer::serializeAggregate(const AggregateExpr *expr,
                                                   std::vector<uint8_t> &buffer)
     {
-        writeU8(buffer, 0); // flags
-
-        // Write aggregate function type
+        writeU8(buffer, 0);
         writeU8(buffer, static_cast<uint8_t>(expr->func()));
-
-        // Write DISTINCT flag
         writeU8(buffer, expr->distinct() ? 1 : 0);
-
-        // Write argument expression (nullptr for COUNT(*))
         serializeNode(expr->arg(), buffer);
-    }
-
-    void ExpressionSerializer::serializeWindowFunc(const WindowFuncExpr *expr,
-                                                   std::vector<uint8_t> &buffer)
-    {
-        writeU8(buffer, 0); // flags
-
-        // Write window function type
-        writeU8(buffer, static_cast<uint8_t>(expr->func()));
-
-        // Write arguments
-        const auto &args = expr->args();
-        writeU8(buffer, static_cast<uint8_t>(args.size()));
-        for (auto *arg : args)
-        {
-            serializeNode(arg, buffer);
-        }
-
-        // Write window spec
-        serializeWindowSpec(expr->windowSpec(), buffer);
-    }
-
-    void ExpressionSerializer::serializeWindowSpec(const WindowSpec *spec,
-                                                   std::vector<uint8_t> &buffer)
-    {
-        if (!spec)
-        {
-            writeU8(buffer, 0); // null marker
-            return;
-        }
-
-        writeU8(buffer, 1); // has spec
-
-        // Write PARTITION BY expressions
-        const auto &partition_by = spec->partitionBy();
-        writeU8(buffer, static_cast<uint8_t>(partition_by.size()));
-        for (auto *expr : partition_by)
-        {
-            serializeNode(expr, buffer);
-        }
-
-        // Write ORDER BY expressions
-        const auto &order_by = spec->orderBy();
-        const auto &order_asc = spec->orderAscending();
-        const auto &order_nulls = spec->orderNullsFirst();
-        writeU8(buffer, static_cast<uint8_t>(order_by.size()));
-        for (size_t i = 0; i < order_by.size(); i++)
-        {
-            serializeNode(order_by[i], buffer);
-            writeU8(buffer, order_asc[i] ? 1 : 0);
-            writeU8(buffer, order_nulls[i] ? 1 : 0);
-        }
-
-        // Write frame clause
-        writeU8(buffer, spec->hasFrame() ? 1 : 0);
-        if (spec->hasFrame())
-        {
-            writeU8(buffer, static_cast<uint8_t>(spec->frameMode()));
-            serializeFrameBoundary(spec->frameStart(), buffer);
-            serializeFrameBoundary(spec->frameEnd(), buffer);
-        }
-    }
-
-    void ExpressionSerializer::serializeFrameBoundary(const FrameBoundary &boundary,
-                                                      std::vector<uint8_t> &buffer)
-    {
-        writeU8(buffer, static_cast<uint8_t>(boundary.type));
-        serializeNode(boundary.offset, buffer);
-    }
-
-    void ExpressionSerializer::serializeJSONFunc(const JSONFuncExpr *expr,
-                                                 std::vector<uint8_t> &buffer)
-    {
-        writeU8(buffer, 0); // flags
-
-        // Write JSON function type
-        writeU8(buffer, static_cast<uint8_t>(expr->func()));
-
-        // Write arguments
-        const auto &args = expr->args();
-        writeU8(buffer, static_cast<uint8_t>(args.size()));
-        for (auto *arg : args)
-        {
-            serializeNode(arg, buffer);
-        }
     }
 
     void ExpressionSerializer::serializeCoalesce(const CoalesceExpr *expr,
                                                  std::vector<uint8_t> &buffer)
     {
-        writeU8(buffer, 0); // flags
+        writeU8(buffer, 0);
 
-        // Write arguments
         const auto &args = expr->args();
         writeU8(buffer, static_cast<uint8_t>(args.size()));
-        for (auto *arg : args)
+        for (const auto &arg : args)
         {
-            serializeNode(arg, buffer);
+            serializeNode(arg.get(), buffer);
         }
     }
 
     void ExpressionSerializer::serializeNullIf(const NullIfExpr *expr,
                                                std::vector<uint8_t> &buffer)
     {
-        writeU8(buffer, 0); // flags
-
-        // Write two expressions
+        writeU8(buffer, 0);
         serializeNode(expr->expr1(), buffer);
         serializeNode(expr->expr2(), buffer);
+    }
+
+    void ExpressionSerializer::serializeExtract(const ExtractExpr *expr,
+                                                std::vector<uint8_t> &buffer)
+    {
+        writeU8(buffer, 0);
+        writeU8(buffer, expr->fieldId());
+        writeString(buffer, expr->fieldName());
+        serializeNode(expr->source(), buffer);
     }
 
     // ========================================================================
     // Main Deserialization
     // ========================================================================
 
-    std::unique_ptr<Expression> ExpressionSerializer::deserialize(const uint8_t *data, size_t len,
-                                                  StringPool &pool)
+    std::unique_ptr<Expression> ExpressionSerializer::deserialize(const uint8_t *data, size_t len)
     {
         const uint8_t *ptr = data;
         const uint8_t *end = data + len;
@@ -485,11 +366,10 @@ namespace scratchbird::core
             throw std::runtime_error("Unsupported expression format version");
         }
 
-        return deserializeNode(ptr, end, pool);
+        return deserializeNode(ptr, end);
     }
 
-    std::vector<std::unique_ptr<Expression>> ExpressionSerializer::deserializeList(const uint8_t *data, size_t len,
-                                                                     StringPool &pool)
+    std::vector<std::unique_ptr<Expression>> ExpressionSerializer::deserializeList(const uint8_t *data, size_t len)
     {
         const uint8_t *ptr = data;
         const uint8_t *end = data + len;
@@ -506,19 +386,18 @@ namespace scratchbird::core
 
         for (uint32_t i = 0; i < count; i++)
         {
-            expressions.push_back(deserializeNode(ptr, end, pool));
+            expressions.push_back(deserializeNode(ptr, end));
         }
 
         return expressions;
     }
 
-    std::unique_ptr<Expression> ExpressionSerializer::deserializeNode(const uint8_t *&ptr, const uint8_t *end,
-                                                      StringPool &pool)
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeNode(const uint8_t *&ptr, const uint8_t *end)
     {
         uint8_t type_byte = readU8(ptr, end);
         if (type_byte == 0)
         {
-            return nullptr; // null marker
+            return nullptr;
         }
 
         SerializedNodeType type = static_cast<SerializedNodeType>(type_byte);
@@ -526,40 +405,37 @@ namespace scratchbird::core
         switch (type)
         {
         case SerializedNodeType::LITERAL:
-            return deserializeLiteral(ptr, end, pool);
+            return deserializeLiteral(ptr, end);
 
         case SerializedNodeType::IDENTIFIER:
-            return deserializeIdentifier(ptr, end, pool);
+            return deserializeIdentifier(ptr, end);
 
         case SerializedNodeType::BINARY_OP:
-            return deserializeBinaryOp(ptr, end, pool);
+            return deserializeBinaryOp(ptr, end);
 
         case SerializedNodeType::FUNCTION_CALL:
-            return deserializeFunctionCall(ptr, end, pool);
+            return deserializeFunctionCall(ptr, end);
 
         case SerializedNodeType::CAST:
-            return deserializeCast(ptr, end, pool);
+            return deserializeCast(ptr, end);
 
         case SerializedNodeType::CASE:
-            return deserializeCase(ptr, end, pool);
+            return deserializeCase(ptr, end);
 
         case SerializedNodeType::AGGREGATE:
-            return deserializeAggregate(ptr, end, pool);
-
-        case SerializedNodeType::WINDOW_FUNC:
-            return deserializeWindowFunc(ptr, end, pool);
-
-        case SerializedNodeType::JSON_FUNC:
-            return deserializeJSONFunc(ptr, end, pool);
+            return deserializeAggregate(ptr, end);
 
         case SerializedNodeType::COALESCE:
-            return deserializeCoalesce(ptr, end, pool);
+            return deserializeCoalesce(ptr, end);
 
         case SerializedNodeType::NULLIF:
-            return deserializeNullIf(ptr, end, pool);
+            return deserializeNullIf(ptr, end);
+
+        case SerializedNodeType::EXTRACT:
+            return deserializeExtract(ptr, end);
 
         default:
-            throw std::runtime_error("Unknown serialized node type");
+            throw std::runtime_error("Unknown expression node type");
         }
     }
 
@@ -567,105 +443,93 @@ namespace scratchbird::core
     // Type-Specific Deserialization
     // ========================================================================
 
-    std::unique_ptr<Expression> ExpressionSerializer::deserializeLiteral(const uint8_t *&ptr, const uint8_t *end,
-                                                         StringPool &pool)
-    {
-        readU8(ptr, end); // flags (unused)
-
-        auto lit_type = static_cast<parser::LiteralExpr::LiteralType>(readU8(ptr, end));
-
-        SourceSpan span; // Dummy span for deserialized expressions
-        auto lit_expr = std::make_unique<LiteralExpr>(span, lit_type);
-
-        // Read value based on type
-        switch (lit_type)
-        {
-        case parser::LiteralExpr::LiteralType::INTEGER:
-            lit_expr->setIntValue(readI64(ptr, end));
-            break;
-        case parser::LiteralExpr::LiteralType::FLOAT:
-            lit_expr->setFloatValue(readF64(ptr, end));
-            break;
-        case parser::LiteralExpr::LiteralType::STRING:
-            lit_expr->setStringValue(readStringId(ptr, end, pool));
-            break;
-        case parser::LiteralExpr::LiteralType::NULL_LITERAL:
-            // No value to read for NULL
-            break;
-        case parser::LiteralExpr::LiteralType::RANGE:
-            lit_expr->setRangeValue(readStringId(ptr, end, pool));
-            break;
-        }
-
-        return lit_expr;
-    }
-
-    std::unique_ptr<Expression> ExpressionSerializer::deserializeIdentifier(const uint8_t *&ptr, const uint8_t *end,
-                                                            StringPool &pool)
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeLiteral(const uint8_t *&ptr, const uint8_t *end)
     {
         readU8(ptr, end); // flags
 
-        StringPool::StringId name_id = readStringId(ptr, end, pool);
-        bool has_table = (readU8(ptr, end) != 0);
+        auto type = static_cast<LiteralExpr::LiteralType>(readU8(ptr, end));
+        auto expr = std::make_unique<LiteralExpr>(type);
 
-        SourceSpan span;
-        if (has_table)
+        switch (type)
         {
-            StringPool::StringId table_id = readStringId(ptr, end, pool);
-            return std::make_unique<IdentifierExpr>(span, name_id, table_id);
+        case LiteralExpr::LiteralType::INTEGER:
+            expr->setIntValue(readI64(ptr, end));
+            break;
+        case LiteralExpr::LiteralType::FLOAT:
+            expr->setFloatValue(readF64(ptr, end));
+            break;
+        case LiteralExpr::LiteralType::STRING:
+            expr->setStringValue(readString(ptr, end));
+            break;
+        case LiteralExpr::LiteralType::NULL_LITERAL:
+            break;
+        case LiteralExpr::LiteralType::RANGE:
+            expr->setRangeValue(readString(ptr, end));
+            break;
         }
-        else
-        {
-            return std::make_unique<IdentifierExpr>(span, name_id);
-        }
+
+        return expr;
     }
 
-    std::unique_ptr<Expression> ExpressionSerializer::deserializeBinaryOp(const uint8_t *&ptr, const uint8_t *end,
-                                                          StringPool &pool)
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeIdentifier(const uint8_t *&ptr, const uint8_t *end)
+    {
+        readU8(ptr, end); // flags
+
+        std::string name = readString(ptr, end);
+        bool has_qualifier = readU8(ptr, end) != 0;
+        if (has_qualifier)
+        {
+            std::string qualifier = readString(ptr, end);
+            return std::make_unique<IdentifierExpr>(std::move(qualifier), std::move(name));
+        }
+
+        return std::make_unique<IdentifierExpr>(std::move(name));
+    }
+
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeBinaryOp(const uint8_t *&ptr, const uint8_t *end)
     {
         readU8(ptr, end); // flags
 
         auto op = static_cast<BinaryOp>(readU8(ptr, end));
-        auto left = deserializeNode(ptr, end, pool);
-        auto right = deserializeNode(ptr, end, pool);
-
-        SourceSpan span;
-        return std::make_unique<BinaryOpExpr>(span, op, left.release(), right.release());
+        auto left = deserializeNode(ptr, end);
+        auto right = deserializeNode(ptr, end);
+        return std::make_unique<BinaryOpExpr>(op, std::move(left), std::move(right));
     }
 
-    std::unique_ptr<Expression> ExpressionSerializer::deserializeFunctionCall(const uint8_t *&ptr,
-                                                              const uint8_t *end, StringPool &pool)
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeFunctionCall(const uint8_t *&ptr, const uint8_t *end)
     {
         readU8(ptr, end); // flags
 
-        StringPool::StringId func_name = readStringId(ptr, end, pool);
+        std::string func_name = readString(ptr, end);
         uint8_t arg_count = readU8(ptr, end);
 
-        std::vector<Expression *> args;
+        std::vector<std::unique_ptr<Expression>> args;
         args.reserve(arg_count);
         for (uint8_t i = 0; i < arg_count; i++)
         {
-            args.push_back(deserializeNode(ptr, end, pool).release());
+            args.push_back(deserializeNode(ptr, end));
         }
 
-        SourceSpan span;
-        return std::make_unique<FunctionCallExpr>(span, func_name, args);
+        return std::make_unique<FunctionCallExpr>(std::move(func_name), std::move(args));
     }
 
-    std::unique_ptr<Expression> ExpressionSerializer::deserializeCast(const uint8_t *&ptr, const uint8_t *end,
-                                                      StringPool &pool)
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeCast(const uint8_t *&ptr, const uint8_t *end)
     {
         readU8(ptr, end); // flags
 
-        auto target_type = static_cast<DataType>(readU32(ptr, end));
-        auto expr = deserializeNode(ptr, end, pool);
+        TypeInfo target;
+        target.type = static_cast<DataType>(readU16(ptr, end));
+        target.precision = readU32(ptr, end);
+        target.scale = readU32(ptr, end);
+        target.element_type = static_cast<DataType>(readU16(ptr, end));
+        target.with_timezone = readU8(ptr, end) != 0;
+        target.timezone_hint = readU16(ptr, end);
 
-        SourceSpan span;
-        return std::make_unique<CastExpr>(span, expr.release(), target_type);
+        auto expr = deserializeNode(ptr, end);
+        return std::make_unique<CastExpr>(std::move(expr), target, false);
     }
 
-    std::unique_ptr<Expression> ExpressionSerializer::deserializeCase(const uint8_t *&ptr, const uint8_t *end,
-                                                      StringPool &pool)
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeCase(const uint8_t *&ptr, const uint8_t *end)
     {
         readU8(ptr, end); // flags
 
@@ -675,149 +539,58 @@ namespace scratchbird::core
 
         for (uint8_t i = 0; i < when_count; i++)
         {
-            auto condition = deserializeNode(ptr, end, pool);
-            auto result = deserializeNode(ptr, end, pool);
-            whens.push_back({condition.release(), result.release()});
+            CaseExpr::WhenClause clause;
+            clause.condition = deserializeNode(ptr, end);
+            clause.result = deserializeNode(ptr, end);
+            whens.push_back(std::move(clause));
         }
 
-        auto else_result = deserializeNode(ptr, end, pool);
-
-        SourceSpan span;
-        return std::make_unique<CaseExpr>(span, whens, else_result.release());
+        auto else_expr = deserializeNode(ptr, end);
+        return std::make_unique<CaseExpr>(std::move(whens), std::move(else_expr));
     }
 
-    std::unique_ptr<Expression> ExpressionSerializer::deserializeAggregate(const uint8_t *&ptr,
-                                                           const uint8_t *end, StringPool &pool)
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeAggregate(const uint8_t *&ptr, const uint8_t *end)
     {
         readU8(ptr, end); // flags
 
         auto func = static_cast<AggregateFunc>(readU8(ptr, end));
-        bool distinct = (readU8(ptr, end) != 0);
-        auto arg = deserializeNode(ptr, end, pool);
-
-        SourceSpan span;
-        return std::make_unique<AggregateExpr>(span, func, arg.release(), distinct);
+        bool distinct = readU8(ptr, end) != 0;
+        auto arg = deserializeNode(ptr, end);
+        return std::make_unique<AggregateExpr>(func, std::move(arg), distinct);
     }
 
-    std::unique_ptr<Expression> ExpressionSerializer::deserializeWindowFunc(const uint8_t *&ptr,
-                                                            const uint8_t *end, StringPool &pool)
-    {
-        readU8(ptr, end); // flags
-
-        auto func = static_cast<WindowFunc>(readU8(ptr, end));
-
-        uint8_t arg_count = readU8(ptr, end);
-        std::vector<Expression *> args;
-        args.reserve(arg_count);
-        for (uint8_t i = 0; i < arg_count; i++)
-        {
-            args.push_back(deserializeNode(ptr, end, pool).release());
-        }
-
-        auto window_spec = deserializeWindowSpec(ptr, end, pool);
-
-        SourceSpan span;
-        return std::make_unique<WindowFuncExpr>(span, func, args, window_spec.release());
-    }
-
-    std::unique_ptr<WindowSpec> ExpressionSerializer::deserializeWindowSpec(const uint8_t *&ptr,
-                                                            const uint8_t *end, StringPool &pool)
-    {
-        uint8_t has_spec = readU8(ptr, end);
-        if (has_spec == 0)
-        {
-            return nullptr;
-        }
-
-        SourceSpan span;
-        auto spec = std::make_unique<WindowSpec>(span);
-
-        // Read PARTITION BY expressions
-        uint8_t partition_count = readU8(ptr, end);
-        for (uint8_t i = 0; i < partition_count; i++)
-        {
-            auto expr = deserializeNode(ptr, end, pool);
-            spec->addPartitionBy(expr.release());
-        }
-
-        // Read ORDER BY expressions
-        uint8_t order_count = readU8(ptr, end);
-        for (uint8_t i = 0; i < order_count; i++)
-        {
-            auto expr = deserializeNode(ptr, end, pool);
-            bool ascending = (readU8(ptr, end) != 0);
-            bool nulls_first = (readU8(ptr, end) != 0);
-            spec->addOrderBy(expr.release(), ascending, nulls_first);
-        }
-
-        // Read frame clause
-        bool has_frame = (readU8(ptr, end) != 0);
-        if (has_frame)
-        {
-            auto frame_mode = static_cast<FrameMode>(readU8(ptr, end));
-            FrameBoundary start = deserializeFrameBoundary(ptr, end, pool);
-            FrameBoundary end_bound = deserializeFrameBoundary(ptr, end, pool);
-            spec->setFrame(frame_mode, start, end_bound);
-        }
-
-        return spec;
-    }
-
-    FrameBoundary ExpressionSerializer::deserializeFrameBoundary(const uint8_t *&ptr,
-                                                                 const uint8_t *end,
-                                                                 StringPool &pool)
-    {
-        auto type = static_cast<FrameBoundaryType>(readU8(ptr, end));
-        auto offset = deserializeNode(ptr, end, pool);
-        return FrameBoundary(type, offset.release());
-    }
-
-    std::unique_ptr<Expression> ExpressionSerializer::deserializeJSONFunc(const uint8_t *&ptr, const uint8_t *end,
-                                                          StringPool &pool)
-    {
-        readU8(ptr, end); // flags
-
-        auto func = static_cast<JSONFunc>(readU8(ptr, end));
-
-        uint8_t arg_count = readU8(ptr, end);
-        std::vector<Expression *> args;
-        args.reserve(arg_count);
-        for (uint8_t i = 0; i < arg_count; i++)
-        {
-            args.push_back(deserializeNode(ptr, end, pool).release());
-        }
-
-        SourceSpan span;
-        return std::make_unique<JSONFuncExpr>(span, func, args);
-    }
-
-    std::unique_ptr<Expression> ExpressionSerializer::deserializeCoalesce(const uint8_t *&ptr, const uint8_t *end,
-                                                          StringPool &pool)
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeCoalesce(const uint8_t *&ptr, const uint8_t *end)
     {
         readU8(ptr, end); // flags
 
         uint8_t arg_count = readU8(ptr, end);
-        std::vector<Expression *> args;
+        std::vector<std::unique_ptr<Expression>> args;
         args.reserve(arg_count);
         for (uint8_t i = 0; i < arg_count; i++)
         {
-            args.push_back(deserializeNode(ptr, end, pool).release());
+            args.push_back(deserializeNode(ptr, end));
         }
 
-        SourceSpan span;
-        return std::make_unique<CoalesceExpr>(span, args);
+        return std::make_unique<CoalesceExpr>(std::move(args));
     }
 
-    std::unique_ptr<Expression> ExpressionSerializer::deserializeNullIf(const uint8_t *&ptr, const uint8_t *end,
-                                                        StringPool &pool)
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeNullIf(const uint8_t *&ptr, const uint8_t *end)
     {
         readU8(ptr, end); // flags
 
-        auto expr1 = deserializeNode(ptr, end, pool);
-        auto expr2 = deserializeNode(ptr, end, pool);
+        auto expr1 = deserializeNode(ptr, end);
+        auto expr2 = deserializeNode(ptr, end);
+        return std::make_unique<NullIfExpr>(std::move(expr1), std::move(expr2));
+    }
 
-        SourceSpan span;
-        return std::make_unique<NullIfExpr>(span, expr1.release(), expr2.release());
+    std::unique_ptr<Expression> ExpressionSerializer::deserializeExtract(const uint8_t *&ptr, const uint8_t *end)
+    {
+        readU8(ptr, end); // flags
+
+        uint8_t field_id = readU8(ptr, end);
+        std::string field_name = readString(ptr, end);
+        auto source = deserializeNode(ptr, end);
+        return std::make_unique<ExtractExpr>(field_id, std::move(field_name), std::move(source));
     }
 
 } // namespace scratchbird::core

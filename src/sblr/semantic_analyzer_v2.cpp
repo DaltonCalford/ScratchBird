@@ -485,9 +485,109 @@ std::optional<ResolvedTableRef> SemanticAnalyzerV2::resolveTable(
         return ref;
     }
 
+    auto make_monitor_ref =
+        [&](std::string_view name,
+            const std::vector<std::pair<const char*, DataType>>& cols) -> ResolvedTableRef {
+        ResolvedTableRef ref;
+        ref.table_uuid = ID{};
+        ref.schema_uuid = ID{};
+        ref.name = internString(name);
+        ref.object_type = ResolvedTableRef::ObjectType::TABLE;
+
+        ref.columns.clear();
+        ref.columns.reserve(cols.size());
+        uint32_t index = 0;
+        for (const auto& col : cols)
+        {
+            ResolvedTableRef::ColumnInfo col_info;
+            col_info.name = internString(col.first);
+            col_info.data_type = col.second;
+            col_info.is_nullable = true;
+            col_info.column_index = index++;
+            ref.columns.push_back(col_info);
+        }
+
+        return ref;
+    };
+
     std::string table_name = components.back();
     std::string schema_path = components.size() > 1 ? join_components(components.size() - 1)
                                                     : std::string();
+
+    if (path.type == PathType::UNQUALIFIED && components.size() == 1)
+    {
+        std::string upper_name = core::IdentifierUtils::toUpper(table_name);
+        if (upper_name.rfind("MON_", 0) == 0)
+        {
+            if (upper_name == "MON_DATABASE")
+            {
+                return make_monitor_ref(
+                    table_name,
+                    {{"MON$DATABASE_NAME", DataType::VARCHAR},
+                     {"MON$NEXT_TRANSACTION", DataType::INT64},
+                     {"MON$OLDEST_TRANSACTION", DataType::INT64},
+                     {"MON$OLDEST_ACTIVE", DataType::INT64},
+                     {"MON$OLDEST_SNAPSHOT", DataType::INT64}});
+            }
+            if (upper_name == "MON_SWEEP")
+            {
+                return make_monitor_ref(
+                    table_name,
+                    {{"MON$SWEEP_COUNT", DataType::INT64},
+                     {"MON$LAST_SWEEP_TIME", DataType::INT64},
+                     {"MON$LAST_DURATION_MS", DataType::INT64},
+                     {"MON$OIT_BEFORE", DataType::INT64},
+                     {"MON$OIT_AFTER", DataType::INT64},
+                     {"MON$TOTAL_SWEPT", DataType::INT64},
+                     {"MON$IN_PROGRESS", DataType::BOOLEAN}});
+            }
+            if (upper_name == "MON_GARBAGE_COLLECTION")
+            {
+                return make_monitor_ref(
+                    table_name,
+                    {{"MON$TUPLES_REMOVED", DataType::INT64},
+                     {"MON$PAGES_CLEANED", DataType::INT64},
+                     {"MON$COOPERATIVE_RUNS", DataType::INT64},
+                     {"MON$BACKGROUND_RUNS", DataType::INT64},
+                     {"MON$LAST_BG_TIME", DataType::INT64},
+                     {"MON$LAST_BG_DURATION_MS", DataType::INT64},
+                     {"MON$DIRTY_PAGE_COUNT", DataType::INT64},
+                     {"MON$SPACE_RECLAIMED", DataType::INT64},
+                     {"MON$DURATION_0_10MS", DataType::INT64},
+                     {"MON$DURATION_10_50MS", DataType::INT64},
+                     {"MON$DURATION_50_100MS", DataType::INT64},
+                     {"MON$DURATION_100_500MS", DataType::INT64},
+                     {"MON$DURATION_500_1000MS", DataType::INT64},
+                     {"MON$DURATION_1000MS_PLUS", DataType::INT64},
+                     {"MON$PAGES_NO_GARBAGE", DataType::INT64},
+                     {"MON$MAX_SPACE_RECLAIMED_PAGE", DataType::INT64},
+                     {"MON$TOTAL_DIRTY_MARKED", DataType::INT64},
+                     {"MON$COOPERATIVE_RATE", DataType::INT64},
+                     {"MON$BACKGROUND_INTERVAL_MS", DataType::INT64}});
+            }
+            if (upper_name == "MON_ACTIVE_TRANSACTIONS")
+            {
+                return make_monitor_ref(
+                    table_name,
+                    {{"MON$TRANSACTION_ID", DataType::INT64},
+                     {"MON$PROC_ID", DataType::INT64},
+                     {"MON$AGE_SECONDS", DataType::INT64},
+                     {"MON$ISOLATION_LEVEL", DataType::INT64},
+                     {"MON$IS_READ_ONLY", DataType::BOOLEAN},
+                     {"MON$START_TIME", DataType::INT64}});
+            }
+
+            error(span, "Unknown monitoring table: " + table_name);
+            return std::nullopt;
+        }
+
+        if (upper_name == "DUAL")
+        {
+            return make_monitor_ref(
+                table_name,
+                {{"DUMMY", DataType::VARCHAR}});
+        }
+    }
 
     CatalogManager::TableInfo table_info;
     Status status = Status::NOT_FOUND;
@@ -747,12 +847,19 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
 
     // Aggregate functions
     if (func_name == "count" || func_name == "sum" || func_name == "avg" ||
-        func_name == "min" || func_name == "max") {
+        func_name == "min" || func_name == "max" ||
+        func_name == "stddev" || func_name == "stddev_samp" || func_name == "stddev_pop" ||
+        func_name == "variance" || func_name == "var_samp" || func_name == "var_pop" ||
+        func_name == "corr" || func_name == "covar_pop") {
         ref.is_aggregate = true;
 
         if (func_name == "count") {
             ret_type->data_type = DataType::INT64;
-        } else if (func_name == "avg") {
+        } else if (func_name == "avg" || func_name == "stddev" ||
+                   func_name == "stddev_samp" || func_name == "stddev_pop" ||
+                   func_name == "variance" || func_name == "var_samp" ||
+                   func_name == "var_pop" || func_name == "corr" ||
+                   func_name == "covar_pop") {
             ret_type->data_type = DataType::FLOAT64;
         } else if (!arg_types.empty()) {
             *ret_type = arg_types[0];
@@ -808,8 +915,7 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
     }
 
     // Numeric functions
-    if (func_name == "abs" || func_name == "ceil" || func_name == "floor" ||
-        func_name == "round" || func_name == "trunc") {
+    if (func_name == "abs") {
         if (!arg_types.empty()) {
             *ret_type = arg_types[0];
         } else {
@@ -819,20 +925,73 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
         return ref;
     }
 
-    if (func_name == "sqrt" || func_name == "log" || func_name == "ln" ||
-        func_name == "exp" || func_name == "power" || func_name == "sin" ||
-        func_name == "cos" || func_name == "tan") {
+    if (func_name == "sign") {
+        ret_type->data_type = DataType::INT32;
+        ret_type->is_nullable = !arg_types.empty() && arg_types[0].is_nullable;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
+    if (func_name == "round" || func_name == "ceil" || func_name == "floor" ||
+        func_name == "trunc" || func_name == "mod") {
         ret_type->data_type = DataType::FLOAT64;
         ret_type->is_nullable = !arg_types.empty() && arg_types[0].is_nullable;
         ref.return_type = ret_type;
         return ref;
     }
 
-    // Coalesce/nullif
-    if (func_name == "coalesce" || func_name == "nullif") {
-        if (!arg_types.empty()) {
-            *ret_type = arg_types[0];
+    if (func_name == "sqrt" || func_name == "log" || func_name == "ln" ||
+        func_name == "exp" || func_name == "power" || func_name == "pow" ||
+        func_name == "sin" || func_name == "cos" || func_name == "tan" ||
+        func_name == "asin" || func_name == "acos" || func_name == "atan" ||
+        func_name == "atan2" || func_name == "degrees" || func_name == "radians" ||
+        func_name == "pi" || func_name == "sinh" || func_name == "cosh" ||
+        func_name == "tanh" || func_name == "asinh" || func_name == "acosh" ||
+        func_name == "atanh" || func_name == "cot" || func_name == "cbrt" ||
+        func_name == "log10" || func_name == "log2") {
+        ret_type->data_type = DataType::FLOAT64;
+        ret_type->is_nullable = !arg_types.empty() && arg_types[0].is_nullable;
+        if (func_name == "pi") {
+            ret_type->is_nullable = false;
         }
+        ref.return_type = ret_type;
+        return ref;
+    }
+
+    // JSON functions
+    if (func_name == "json_extract" || func_name == "json_set" ||
+        func_name == "json_insert" || func_name == "json_remove" ||
+        func_name == "json_object" || func_name == "json_array" ||
+        func_name == "jsonb_extract_path" || func_name == "jsonb_build_object" ||
+        func_name == "jsonb_build_array" || func_name == "jsonb_set") {
+        ret_type->data_type = DataType::JSON;
+        ret_type->is_nullable = !arg_types.empty() && arg_types[0].is_nullable;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
+    // Coalesce/nullif
+    if (func_name == "coalesce") {
+        if (arg_types.empty()) {
+            error(span, "COALESCE requires at least one argument");
+            return std::nullopt;
+        }
+        *ret_type = arg_types[0];
+        ret_type->is_nullable = true;
+        for (const auto& arg : arg_types) {
+            ret_type->is_nullable = ret_type->is_nullable || arg.is_nullable;
+        }
+        ref.return_type = ret_type;
+        return ref;
+    }
+
+    if (func_name == "nullif") {
+        if (arg_types.size() != 2) {
+            error(span, "NULLIF requires exactly two arguments");
+            return std::nullopt;
+        }
+        *ret_type = arg_types[0];
+        ret_type->is_nullable = true;
         ref.return_type = ret_type;
         return ref;
     }
@@ -896,6 +1055,50 @@ std::optional<ResolvedType> SemanticAnalyzerV2::getCommonType(
     const ResolvedType& right,
     BinaryOp op)
 {
+    if (op == BinaryOp::REGEX_MATCH || op == BinaryOp::REGEX_MATCH_CI ||
+        op == BinaryOp::REGEX_NOT_MATCH || op == BinaryOp::REGEX_NOT_MATCH_CI) {
+        ResolvedType result;
+        result.data_type = DataType::BOOLEAN;
+        result.is_nullable = left.is_nullable || right.is_nullable ||
+                             left.data_type == DataType::UNKNOWN ||
+                             right.data_type == DataType::UNKNOWN;
+        auto is_text = [](const ResolvedType& t) {
+            return t.isString() || t.data_type == DataType::UNKNOWN;
+        };
+        if (is_text(left) && is_text(right)) {
+            return result;
+        }
+        return std::nullopt;
+    }
+
+    // Comparison operators always yield boolean
+    if (op == BinaryOp::EQ || op == BinaryOp::NE || op == BinaryOp::LT ||
+        op == BinaryOp::LE || op == BinaryOp::GT || op == BinaryOp::GE) {
+        ResolvedType result;
+        result.data_type = DataType::BOOLEAN;
+        result.is_nullable = left.is_nullable || right.is_nullable ||
+                             left.data_type == DataType::UNKNOWN ||
+                             right.data_type == DataType::UNKNOWN;
+        if (left.data_type == DataType::UNKNOWN || right.data_type == DataType::UNKNOWN) {
+            return result;
+        }
+        if (left.isComparableTo(right)) {
+            return result;
+        }
+        return std::nullopt;
+    }
+
+    // Logical operators require boolean operands and yield boolean
+    if (op == BinaryOp::AND || op == BinaryOp::OR) {
+        if (left.isBoolean() && right.isBoolean()) {
+            ResolvedType result;
+            result.data_type = DataType::BOOLEAN;
+            result.is_nullable = left.is_nullable || right.is_nullable;
+            return result;
+        }
+        return std::nullopt;
+    }
+
     // Handle NULL (UNKNOWN) type - NULL adopts the type of the other operand
     // For any operation with NULL, the result type comes from the non-NULL side
     if (left.data_type == DataType::UNKNOWN && right.data_type != DataType::UNKNOWN) {
@@ -909,14 +1112,9 @@ std::optional<ResolvedType> SemanticAnalyzerV2::getCommonType(
         return result;
     }
     if (left.data_type == DataType::UNKNOWN && right.data_type == DataType::UNKNOWN) {
-        // Both are NULL - result is NULL with UNKNOWN type (or BOOLEAN for comparisons)
+        // Both are NULL - result is NULL with UNKNOWN type
         ResolvedType result;
-        if (op == BinaryOp::EQ || op == BinaryOp::NE || op == BinaryOp::LT ||
-            op == BinaryOp::LE || op == BinaryOp::GT || op == BinaryOp::GE) {
-            result.data_type = DataType::BOOLEAN;
-        } else {
-            result.data_type = DataType::UNKNOWN;
-        }
+        result.data_type = DataType::UNKNOWN;
         result.is_nullable = true;
         return result;
     }
@@ -930,30 +1128,6 @@ std::optional<ResolvedType> SemanticAnalyzerV2::getCommonType(
 
     // Comparison operators result in boolean
     switch (op) {
-        case BinaryOp::EQ:
-        case BinaryOp::NE:
-        case BinaryOp::LT:
-        case BinaryOp::LE:
-        case BinaryOp::GT:
-        case BinaryOp::GE:
-            if (left.isComparableTo(right)) {
-                ResolvedType result;
-                result.data_type = DataType::BOOLEAN;
-                result.is_nullable = left.is_nullable || right.is_nullable;
-                return result;
-            }
-            return std::nullopt;
-
-        case BinaryOp::AND:
-        case BinaryOp::OR:
-            if (left.isBoolean() && right.isBoolean()) {
-                ResolvedType result;
-                result.data_type = DataType::BOOLEAN;
-                result.is_nullable = left.is_nullable || right.is_nullable;
-                return result;
-            }
-            return std::nullopt;
-
         case BinaryOp::ADD:
         case BinaryOp::SUB:
         case BinaryOp::MUL:
@@ -988,6 +1162,41 @@ std::optional<ResolvedType> SemanticAnalyzerV2::getCommonType(
                 return result;
             }
             return std::nullopt;
+
+        case BinaryOp::JSON_EXTRACT:
+        case BinaryOp::JSON_EXTRACT_TEXT:
+        case BinaryOp::JSON_HASH_EXTRACT:
+        case BinaryOp::JSON_HASH_EXTRACT_TEXT: {
+            auto is_json_like = [](const ResolvedType& t) {
+                return t.isString() || t.data_type == DataType::JSON ||
+                       t.data_type == DataType::JSONB || t.data_type == DataType::UNKNOWN;
+            };
+            auto is_path_text = [](const ResolvedType& t) {
+                return t.isString() || t.data_type == DataType::UNKNOWN;
+            };
+
+            if (!is_json_like(left)) {
+                return std::nullopt;
+            }
+
+            if (op == BinaryOp::JSON_HASH_EXTRACT || op == BinaryOp::JSON_HASH_EXTRACT_TEXT) {
+                if (!right.is_array && right.data_type != DataType::UNKNOWN) {
+                    return std::nullopt;
+                }
+            } else {
+                if (!is_path_text(right)) {
+                    return std::nullopt;
+                }
+            }
+
+            ResolvedType result;
+            result.data_type = (op == BinaryOp::JSON_EXTRACT_TEXT ||
+                                op == BinaryOp::JSON_HASH_EXTRACT_TEXT)
+                                   ? DataType::TEXT
+                                   : DataType::JSON;
+            result.is_nullable = left.is_nullable || right.is_nullable;
+            return result;
+        }
 
         default:
             break;
@@ -1220,6 +1429,8 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeSet(SetStmt* stmt) {
 
     // For SET PARSER VERSION
     resolved->parser_version = stmt->parser_version;
+    resolved->sql_dialect = stmt->sql_dialect;
+    resolved->local_timeout_seconds = stmt->local_timeout_seconds;
 
     return resolved;
 }
@@ -1465,12 +1676,7 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
     resolved->span = stmt->span;
     resolved->if_not_exists = stmt->if_not_exists;
     resolved->domain_path = stmt->domain_path;
-
-    resolved->base_type = resolveTypeName(stmt->base_type);
-    if (resolved->base_type.data_type == DataType::UNKNOWN) {
-        error(stmt->base_type.span, "Unknown base type for domain");
-        return nullptr;
-    }
+    resolved->domain_kind = stmt->domain_kind;
 
     resolved->nullable = true;
     bool default_set = false;
@@ -1501,6 +1707,124 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
             default:
                 error(stmt->span, "Unsupported domain constraint");
                 break;
+        }
+    }
+
+    resolved->has_inherits = stmt->has_inherits;
+    if (stmt->has_inherits) {
+        core::ObjectPath obj_path = buildObjectPath(stmt->parent_domain_path, string_pool_);
+        core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+        core::ErrorContext ctx;
+        core::CatalogManager::ResolveOptions opts;
+        opts.allow_search_path = true;
+        Status status = catalog_.resolveObjectPath(
+            obj_path,
+            core::CatalogManager::ObjectType::DOMAIN,
+            opts,
+            resolved->parent_domain_id,
+            resolved_type,
+            &ctx);
+
+        if (status != Status::OK) {
+            std::string msg = ctx.message.empty() ? "Parent domain not found" : ctx.message;
+            error(stmt->parent_domain_path.span, msg);
+            return nullptr;
+        }
+        if (current_result_) {
+            current_result_->addDependency(resolved->parent_domain_id,
+                                           core::CatalogManager::ObjectType::DOMAIN);
+        }
+    }
+
+    resolved->has_collation = stmt->has_collation;
+    resolved->collation_name = stmt->collation_name;
+    resolved->has_dialect = stmt->has_dialect;
+    resolved->dialect_tag = stmt->dialect_tag;
+    resolved->has_compat = stmt->has_compat;
+    resolved->compat_name = stmt->compat_name;
+    resolved->enum_wrap = stmt->enum_wrap;
+
+    if (stmt->enum_wrap && stmt->domain_kind != DomainKind::ENUM) {
+        error(stmt->span, "WITH OPTIONS is only valid for ENUM domains");
+        return nullptr;
+    }
+
+    switch (stmt->domain_kind) {
+        case DomainKind::BASIC: {
+            resolved->base_type = resolveTypeName(stmt->base_type);
+            if (resolved->base_type.is_domain) {
+                if (resolved->has_inherits) {
+                    error(stmt->span, "INHERITS cannot be combined with domain base type");
+                    return nullptr;
+                }
+                resolved->has_inherits = true;
+                resolved->parent_domain_id = resolved->base_type.domain_id;
+                resolved->base_type.is_domain = false;
+                resolved->base_type.domain_id = ID{};
+            }
+            if (resolved->base_type.data_type == DataType::UNKNOWN) {
+                error(stmt->base_type.span, "Unknown base type for domain");
+                return nullptr;
+            }
+            break;
+        }
+        case DomainKind::RECORD: {
+            for (const auto& field : stmt->record_fields) {
+                ResolvedDomainRecordField resolved_field;
+                resolved_field.name = field.name;
+                resolved_field.type = resolveTypeName(field.type);
+                resolved_field.nullable = field.nullable;
+                resolved_field.default_value = field.default_value;
+                if (resolved_field.type.data_type == DataType::UNKNOWN && !resolved_field.type.is_domain) {
+                    error(field.type.span, "Unknown field type for RECORD domain");
+                    return nullptr;
+                }
+                resolved->record_fields.push_back(std::move(resolved_field));
+            }
+            break;
+        }
+        case DomainKind::ENUM: {
+            if (stmt->enum_values.empty()) {
+                error(stmt->span, "ENUM domain must have at least one value");
+                return nullptr;
+            }
+            int32_t next_position = 1;
+            for (const auto& value : stmt->enum_values) {
+                ResolvedDomainEnumValue resolved_value;
+                resolved_value.label = value.label;
+                if (value.has_position) {
+                    if (value.position != next_position) {
+                        error(value.span, "ENUM positions must be sequential starting from 1");
+                        return nullptr;
+                    }
+                    resolved_value.position = value.position;
+                } else {
+                    resolved_value.position = next_position;
+                }
+                resolved->enum_values.push_back(std::move(resolved_value));
+                next_position++;
+            }
+            break;
+        }
+        case DomainKind::SET: {
+            resolved->set_element_type = resolveTypeName(stmt->set_element_type);
+            if (resolved->set_element_type.data_type == DataType::UNKNOWN &&
+                !resolved->set_element_type.is_domain) {
+                error(stmt->set_element_type.span, "Unknown element type for SET domain");
+                return nullptr;
+            }
+            break;
+        }
+        case DomainKind::VARIANT: {
+            for (const auto& type_ref : stmt->variant_allowed_types) {
+                ResolvedType resolved_type = resolveTypeName(type_ref);
+                if (resolved_type.data_type == DataType::UNKNOWN && !resolved_type.is_domain) {
+                    error(type_ref.span, "Unknown allowed type for VARIANT domain");
+                    return nullptr;
+                }
+                resolved->variant_allowed_types.push_back(std::move(resolved_type));
+            }
+            break;
         }
     }
 
@@ -2484,6 +2808,22 @@ ResolvedExpression* SemanticAnalyzerV2::analyzeBinaryExpr(BinaryExpr* expr) {
 
     auto common_type = getCommonType(left->type, right->type, expr->op);
     if (!common_type) {
+        if (expr->op == BinaryOp::ADD || expr->op == BinaryOp::SUB ||
+            expr->op == BinaryOp::MUL || expr->op == BinaryOp::DIV ||
+            expr->op == BinaryOp::MOD) {
+            warning(expr->span,
+                    "Incompatible types for arithmetic operator; deferring type checking");
+            auto* resolved = arena_.create<ResolvedBinaryExpr>();
+            resolved->span = expr->span;
+            resolved->op = expr->op;
+            resolved->left = left;
+            resolved->right = right;
+            resolved->type.data_type = DataType::UNKNOWN;
+            resolved->type.is_nullable = left->type.is_nullable || right->type.is_nullable ||
+                                         left->type.data_type == DataType::UNKNOWN ||
+                                         right->type.data_type == DataType::UNKNOWN;
+            return resolved;
+        }
         error(expr->span, "Incompatible types for binary operator");
         return nullptr;
     }
@@ -2612,6 +2952,11 @@ ResolvedExpression* SemanticAnalyzerV2::analyzeCast(CastExpr* expr) {
 ResolvedExpression* SemanticAnalyzerV2::analyzeCase(CaseExpr* expr) {
     auto* resolved = arena_.create<ResolvedCase>();
     resolved->span = expr->span;
+
+    if (expr->when_clauses.empty()) {
+        error(expr->span, "CASE expression must contain at least one WHEN clause");
+        return nullptr;
+    }
 
     // Analyze operand for simple CASE
     if (expr->operand) {
@@ -3297,9 +3642,49 @@ ResolvedJoin* SemanticAnalyzerV2::analyzeJoin(JoinNode* node) {
 ResolvedType SemanticAnalyzerV2::resolveTypeName(const TypeName& type_name) {
     ResolvedType resolved;
     resolved.is_nullable = true;
+    resolved.data_type = DataType::UNKNOWN;
+
+    auto apply_domain = [&](const core::DomainInfo& dinfo) {
+        resolved.is_domain = true;
+        resolved.domain_id = dinfo.domain_id;
+        resolved.data_type = dinfo.base_type;
+        if (dinfo.base_type == DataType::VARCHAR || dinfo.base_type == DataType::CHAR) {
+            resolved.length = static_cast<int32_t>(dinfo.precision);
+        } else if (dinfo.base_type == DataType::DECIMAL) {
+            resolved.precision = static_cast<int32_t>(dinfo.precision);
+            resolved.scale = static_cast<int32_t>(dinfo.scale);
+        }
+    };
+
+    if (type_name.has_schema_path && !type_name.schema_path.isEmpty()) {
+        core::ObjectPath obj_path = buildObjectPath(type_name.schema_path, string_pool_);
+        core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+        core::ErrorContext ctx;
+        core::CatalogManager::ResolveOptions opts;
+        opts.allow_search_path = false;
+        ID domain_id{};
+
+        Status status = catalog_.resolveObjectPath(
+            obj_path,
+            core::CatalogManager::ObjectType::DOMAIN,
+            opts,
+            domain_id,
+            resolved_type,
+            &ctx);
+
+        if (status == Status::OK) {
+            core::DomainInfo dinfo;
+            if (catalog_.getDomainById(domain_id, dinfo, &ctx) == Status::OK) {
+                apply_domain(dinfo);
+                if (current_result_) {
+                    current_result_->addDependency(dinfo.domain_id, core::CatalogManager::ObjectType::DOMAIN);
+                }
+            }
+        }
+    }
 
     // Parse type name string to DataType
-    if (type_name.name != StringPool::INVALID_ID) {
+    if (!resolved.is_domain && type_name.name != StringPool::INVALID_ID) {
         std::string name_str = std::string(string_pool_.get(type_name.name));
         // Convert to lowercase for comparison
         std::transform(name_str.begin(), name_str.end(), name_str.begin(), ::tolower);
@@ -3358,13 +3743,17 @@ ResolvedType SemanticAnalyzerV2::resolveTypeName(const TypeName& type_name) {
                     }
                 }
             }
-            if (found && current_result_) {
-                current_result_->addDependency(dinfo.domain_id, core::CatalogManager::ObjectType::DOMAIN);
+            if (found) {
+                apply_domain(dinfo);
+                if (current_result_) {
+                    current_result_->addDependency(dinfo.domain_id, core::CatalogManager::ObjectType::DOMAIN);
+                }
             }
-            resolved.data_type = DataType::UNKNOWN;
         }
     } else {
-        resolved.data_type = DataType::UNKNOWN;
+        if (!resolved.is_domain) {
+            resolved.data_type = DataType::UNKNOWN;
+        }
     }
 
     // Copy optional parameters

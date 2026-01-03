@@ -15,6 +15,7 @@
 - Integration and end-to-end tests for domain WITH blocks are added.
 - Verification runs are handled by the external test runner.
 - Domain metadata persistence (constraints/fields/enum/variant lists) is stored and reloaded via TOAST.
+- Domain DML enforcement includes domain constraint checks (NOT NULL/CHECK/inheritance) in INSERT/UPDATE.
 
 ## CRITICAL RULES
 

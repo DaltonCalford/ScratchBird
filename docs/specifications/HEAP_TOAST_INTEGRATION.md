@@ -3,7 +3,7 @@
 ## IMPLEMENTATION STATUS: 🟢 FULLY IMPLEMENTED - MGA COMPLIANT (Updated 2025-11-03)
 
 **All TOAST functionality is now complete and MGA-compliant:**
-- ✅ **MGA Compliance**: 28-byte chunk header with xmin/xmax (Phase 1)
+- ✅ **MGA Compliance**: TupleHeader-based TOAST chunks with xmin/xmax (Phase 1)
 - ✅ **TIP-Based Visibility**: Uses TIP for transaction state, not snapshots (Phase 2)
 - ✅ **Index Integration**: IndexKeyExtractor detoasts before indexing (Phase 3)
 - ✅ **Garbage Collection**: 3-phase GC (orphan detection, cleanup, TIP-based) (Phase 4)
@@ -17,7 +17,7 @@
 - ✅ Integration with heap storage
 
 **MGA Compliance Achievements (November 2025)**:
-- 28-byte chunk format: xmin (8) + xmax (8) + value_id (4) + chunk_seq (4) + chunk_size (4)
+- Chunk format: TupleHeader + value_id (4) + chunk_seq (4) + chunk_size (4)
 - TIP-based visibility: `ToastVisibility::isChunkVisible()` uses TIP, not snapshots
 - Crash recovery: TIP state recovery, NO WAL replay
 - Garbage collection: Vacuum processes TOAST tables with 3-phase GC

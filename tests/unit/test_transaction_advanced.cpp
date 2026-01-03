@@ -3,121 +3,114 @@
 
 #include <gtest/gtest.h>
 
-#include "scratchbird/parser/ast.h"
+#include "scratchbird/core/database.h"
+#include "scratchbird/core/error_context.h"
+#include "scratchbird/parser/parser_v2.h"
+#include "scratchbird/sblr/bytecode_generator_v2.h"
 #include "scratchbird/sblr/query_compiler_v2.h"
-#include "scratchbird/sblr/opcodes.h"
-#include <vector>
-#include <string>
+#include "test_helpers.h"
+#include <memory>
 #include <sstream>
+#include <string>
 
 using namespace scratchbird;
-using namespace scratchbird::parser;
+using namespace scratchbird::parser::v2;
 using namespace scratchbird::sblr;
+using namespace scratchbird::testing;
 
 // Test fixture with helper methods
 class TransactionAdvancedTest : public ::testing::Test
 {
 protected:
+    void SetUp() override
+    {
+        db_file_ = std::make_unique<TestDatabaseFile>("txn_advanced");
+
+        core::ErrorContext ctx;
+        auto status = core::Database::create(db_file_->path(), 16384, &ctx);
+        ASSERT_EQ(status, core::Status::OK) << ctx.message;
+
+        db_ = std::make_unique<core::Database>();
+        status = db_->open(db_file_->path(), &ctx);
+        ASSERT_EQ(status, core::Status::OK) << ctx.message;
+
+        compiler_ = std::make_unique<QueryCompilerV2>(db_.get());
+    }
+
+    void TearDown() override
+    {
+        compiler_.reset();
+        db_.reset();
+        db_file_.reset();
+    }
+
     std::string generateAndDisassemble(const std::string& sql)
     {
-        Lexer lexer(sql);
-        ASTArena arena;
-        Parser parser(lexer, arena);
-        auto result = parser.parseStatement();
-
+        auto result = compiler_->compile(sql);
         if (!result.success())
         {
             std::stringstream ss;
-            ss << "Parse errors:\n";
+            ss << "Compile errors:\n";
             for (const auto& err : result.errors())
-            {
-                ss << "  " << err.message << "\n";
-            }
-            return ss.str();
-        }
-
-        // Use the lexer's string pool since that's where the parsed strings are stored
-        BytecodeGenerator generator(lexer.stringPool());
-        auto bytecode_result = generator.generate(result.statement());
-
-        if (!bytecode_result.success())
-        {
-            std::stringstream ss;
-            ss << "Bytecode generation errors:\n";
-            for (const auto& err : bytecode_result.errors())
             {
                 ss << "  " << err << "\n";
             }
             return ss.str();
         }
 
-        return BytecodeDisassembler::disassemble(bytecode_result.bytecode());
+        return BytecodeDisassemblerV2::disassemble(result.bytecode());
     }
 
     struct ParsedSQL {
-        Statement* stmt;
-        std::unique_ptr<Lexer> lexer;
-        std::unique_ptr<ASTArena> arena;
+        Statement* stmt = nullptr;
+        std::unique_ptr<Parser> parser;
     };
 
-    ParsedSQL parseSQLWithLexer(const std::string& sql)
+    ParsedSQL parseSQL(const std::string& sql)
     {
-        auto lexer = std::make_unique<Lexer>(sql);
-        auto arena = std::make_unique<ASTArena>();
-        Parser parser(*lexer, *arena);
-        auto result = parser.parseStatement();
+        auto parser = std::make_unique<Parser>(sql);
+        auto result = parser->parseStatement();
         EXPECT_TRUE(result.success());
         if (!result.success() && !result.errors().empty())
         {
             ADD_FAILURE() << "Parse failed: " << result.errors()[0].message;
         }
-        return {result.statement(), std::move(lexer), std::move(arena)};
+        return {result.statement(), std::move(parser)};
     }
 
-    Statement* parseSQL(const std::string& sql)
-    {
-        Lexer lexer(sql);
-        test_arena_ = std::make_unique<ASTArena>();
-        Parser parser(lexer, *test_arena_);
-        auto result = parser.parseStatement();
-        EXPECT_TRUE(result.success());
-        if (!result.success() && !result.errors().empty())
-        {
-            ADD_FAILURE() << "Parse failed: " << result.errors()[0].message;
-        }
-        return result.statement();
-    }
-
-    StringPool pool_;
-    std::unique_ptr<ASTArena> test_arena_;
+private:
+    std::unique_ptr<TestDatabaseFile> db_file_;
+    std::unique_ptr<core::Database> db_;
+    std::unique_ptr<QueryCompilerV2> compiler_;
 };
 
 // Test basic START TRANSACTION with LOCK TIMEOUT
 TEST_F(TransactionAdvancedTest, StartTransactionWithLockTimeout)
 {
-    auto stmt = parseSQL("START TRANSACTION LOCK TIMEOUT 30;");
+    auto parsed = parseSQL("START TRANSACTION LOCK TIMEOUT 30;");
 
-    ASSERT_NE(stmt, nullptr);
-    EXPECT_EQ(stmt->kind(), ASTKind::START_TRANSACTION);
+    ASSERT_NE(parsed.stmt, nullptr);
+    EXPECT_EQ(parsed.stmt->kind(), ASTKind::StartTransactionStmt);
 
-    auto* start_txn = static_cast<StartTransactionStmt*>(stmt);
-    EXPECT_EQ(start_txn->lockTimeout(), 30u);
-    EXPECT_TRUE(start_txn->tableReservations().empty());
+    auto* start_txn = static_cast<StartTransactionStmt*>(parsed.stmt);
+    EXPECT_TRUE(start_txn->has_lock_timeout);
+    EXPECT_EQ(start_txn->lock_timeout_seconds, 30u);
+    EXPECT_TRUE(start_txn->table_reservations.empty());
 }
 
 // Test START TRANSACTION with RESERVING clause - single table
 TEST_F(TransactionAdvancedTest, StartTransactionWithReservingSingleTable)
 {
-    auto parsed = parseSQLWithLexer("START TRANSACTION RESERVING employees FOR SHARED READ;");
+    auto parsed = parseSQL("START TRANSACTION RESERVING employees FOR SHARED READ;");
 
     ASSERT_NE(parsed.stmt, nullptr);
-    EXPECT_EQ(parsed.stmt->kind(), ASTKind::START_TRANSACTION);
+    EXPECT_EQ(parsed.stmt->kind(), ASTKind::StartTransactionStmt);
 
     auto* start_txn = static_cast<StartTransactionStmt*>(parsed.stmt);
-    const auto& reservations = start_txn->tableReservations();
+    const auto& reservations = start_txn->table_reservations;
 
     ASSERT_EQ(reservations.size(), 1u);
-    EXPECT_EQ(parsed.lexer->stringPool().get(reservations[0].table_name), "employees");
+    EXPECT_EQ(parsed.parser->stringPool().get(reservations[0].table_name), "employees");
     EXPECT_EQ(reservations[0].lock_mode, TableLockMode::SHARED);
     EXPECT_FALSE(reservations[0].for_write);
 }
@@ -125,7 +118,7 @@ TEST_F(TransactionAdvancedTest, StartTransactionWithReservingSingleTable)
 // Test START TRANSACTION with RESERVING clause - multiple tables
 TEST_F(TransactionAdvancedTest, StartTransactionWithReservingMultipleTables)
 {
-    auto parsed = parseSQLWithLexer(
+    auto parsed = parseSQL(
         "START TRANSACTION RESERVING "
         "employees FOR SHARED READ, "
         "departments FOR PROTECTED WRITE, "
@@ -134,22 +127,22 @@ TEST_F(TransactionAdvancedTest, StartTransactionWithReservingMultipleTables)
 
     ASSERT_NE(parsed.stmt, nullptr);
     auto* start_txn = static_cast<StartTransactionStmt*>(parsed.stmt);
-    const auto& reservations = start_txn->tableReservations();
+    const auto& reservations = start_txn->table_reservations;
 
     ASSERT_EQ(reservations.size(), 3u);
 
     // First reservation: employees FOR SHARED READ
-    EXPECT_EQ(parsed.lexer->stringPool().get(reservations[0].table_name), "employees");
+    EXPECT_EQ(parsed.parser->stringPool().get(reservations[0].table_name), "employees");
     EXPECT_EQ(reservations[0].lock_mode, TableLockMode::SHARED);
     EXPECT_FALSE(reservations[0].for_write);
 
     // Second reservation: departments FOR PROTECTED WRITE
-    EXPECT_EQ(parsed.lexer->stringPool().get(reservations[1].table_name), "departments");
+    EXPECT_EQ(parsed.parser->stringPool().get(reservations[1].table_name), "departments");
     EXPECT_EQ(reservations[1].lock_mode, TableLockMode::PROTECTED);
     EXPECT_TRUE(reservations[1].for_write);
 
     // Third reservation: salaries FOR SHARED WRITE
-    EXPECT_EQ(parsed.lexer->stringPool().get(reservations[2].table_name), "salaries");
+    EXPECT_EQ(parsed.parser->stringPool().get(reservations[2].table_name), "salaries");
     EXPECT_EQ(reservations[2].lock_mode, TableLockMode::SHARED);
     EXPECT_TRUE(reservations[2].for_write);
 }
@@ -157,7 +150,7 @@ TEST_F(TransactionAdvancedTest, StartTransactionWithReservingMultipleTables)
 // Test START TRANSACTION with both LOCK TIMEOUT and RESERVING
 TEST_F(TransactionAdvancedTest, StartTransactionWithLockTimeoutAndReserving)
 {
-    auto parsed = parseSQLWithLexer(
+    auto parsed = parseSQL(
         "START TRANSACTION LOCK TIMEOUT 60 "
         "RESERVING employees FOR SHARED READ;"
     );
@@ -165,17 +158,17 @@ TEST_F(TransactionAdvancedTest, StartTransactionWithLockTimeoutAndReserving)
     ASSERT_NE(parsed.stmt, nullptr);
     auto* start_txn = static_cast<StartTransactionStmt*>(parsed.stmt);
 
-    EXPECT_EQ(start_txn->lockTimeout(), 60u);
-    ASSERT_EQ(start_txn->tableReservations().size(), 1u);
-    EXPECT_EQ(parsed.lexer->stringPool().get(start_txn->tableReservations()[0].table_name), "employees");
+    EXPECT_TRUE(start_txn->has_lock_timeout);
+    EXPECT_EQ(start_txn->lock_timeout_seconds, 60u);
+    ASSERT_EQ(start_txn->table_reservations.size(), 1u);
+    EXPECT_EQ(parsed.parser->stringPool().get(start_txn->table_reservations[0].table_name), "employees");
 }
 
 // Test START TRANSACTION with all parameters
 // Parser expects clauses in order: READ ONLY, NOT WAIT, ISOLATION LEVEL, LOCK TIMEOUT, RESERVING
-// Note: Parser uses KW_NOT for "NO WAIT" syntax (accepts "NOT WAIT")
 TEST_F(TransactionAdvancedTest, StartTransactionWithAllParameters)
 {
-    auto stmt = parseSQL(
+    auto parsed = parseSQL(
         "START TRANSACTION READ ONLY "
         "NOT WAIT "
         "ISOLATION LEVEL SNAPSHOT TABLE STABILITY "
@@ -183,51 +176,58 @@ TEST_F(TransactionAdvancedTest, StartTransactionWithAllParameters)
         "RESERVING accounts FOR PROTECTED READ;"
     );
 
-    ASSERT_NE(stmt, nullptr);
-    auto* start_txn = static_cast<StartTransactionStmt*>(stmt);
+    ASSERT_NE(parsed.stmt, nullptr);
+    auto* start_txn = static_cast<StartTransactionStmt*>(parsed.stmt);
 
-    EXPECT_EQ(start_txn->mode(), TransactionMode::READ_ONLY);
-    EXPECT_EQ(start_txn->isolation(), IsolationLevel::SNAPSHOT_TABLE_STABILITY);
-    EXPECT_FALSE(start_txn->wait());
-    EXPECT_EQ(start_txn->lockTimeout(), 120u);
-    ASSERT_EQ(start_txn->tableReservations().size(), 1u);
+    EXPECT_TRUE(start_txn->has_access_mode);
+    EXPECT_EQ(start_txn->access_mode, TransactionAccess::READ_ONLY);
+    EXPECT_TRUE(start_txn->has_isolation_level);
+    EXPECT_EQ(start_txn->isolation_level, IsolationLevel::SERIALIZABLE);
+    EXPECT_TRUE(start_txn->has_wait_mode);
+    EXPECT_EQ(start_txn->wait_mode, TransactionWaitMode::NO_WAIT);
+    EXPECT_TRUE(start_txn->has_lock_timeout);
+    EXPECT_EQ(start_txn->lock_timeout_seconds, 120u);
+    ASSERT_EQ(start_txn->table_reservations.size(), 1u);
 }
 
 // Test SET TRANSACTION basic syntax
 TEST_F(TransactionAdvancedTest, SetTransactionBasic)
 {
-    auto stmt = parseSQL("SET TRANSACTION READ ONLY;");
+    auto parsed = parseSQL("SET TRANSACTION READ ONLY;");
 
-    ASSERT_NE(stmt, nullptr);
-    EXPECT_EQ(stmt->kind(), ASTKind::SET_TRANSACTION);
+    ASSERT_NE(parsed.stmt, nullptr);
+    EXPECT_EQ(parsed.stmt->kind(), ASTKind::SetStmt);
 
-    auto* set_txn = static_cast<SetTransactionStmt*>(stmt);
-    EXPECT_EQ(set_txn->mode(), TransactionMode::READ_ONLY);
+    auto* set_txn = static_cast<SetStmt*>(parsed.stmt);
+    EXPECT_EQ(set_txn->set_type, SetStmt::SetType::TRANSACTION);
+    EXPECT_TRUE(set_txn->has_access_mode);
+    EXPECT_EQ(set_txn->access_mode, TransactionAccess::READ_ONLY);
 }
 
 // Test SET TRANSACTION with LOCK TIMEOUT
 TEST_F(TransactionAdvancedTest, SetTransactionWithLockTimeout)
 {
-    auto stmt = parseSQL("SET TRANSACTION LOCK TIMEOUT 45;");
+    auto parsed = parseSQL("SET TRANSACTION LOCK TIMEOUT 45;");
 
-    ASSERT_NE(stmt, nullptr);
-    auto* set_txn = static_cast<SetTransactionStmt*>(stmt);
-    EXPECT_EQ(set_txn->lockTimeout(), 45u);
+    ASSERT_NE(parsed.stmt, nullptr);
+    auto* set_txn = static_cast<SetStmt*>(parsed.stmt);
+    EXPECT_TRUE(set_txn->has_lock_timeout);
+    EXPECT_EQ(set_txn->lock_timeout_seconds, 45u);
 }
 
 // Test SET TRANSACTION with RESERVING clause
 TEST_F(TransactionAdvancedTest, SetTransactionWithReserving)
 {
-    auto parsed = parseSQLWithLexer(
+    auto parsed = parseSQL(
         "SET TRANSACTION RESERVING orders FOR PROTECTED WRITE;"
     );
 
     ASSERT_NE(parsed.stmt, nullptr);
-    auto* set_txn = static_cast<SetTransactionStmt*>(parsed.stmt);
+    auto* set_txn = static_cast<SetStmt*>(parsed.stmt);
 
-    const auto& reservations = set_txn->tableReservations();
+    const auto& reservations = set_txn->table_reservations;
     ASSERT_EQ(reservations.size(), 1u);
-    EXPECT_EQ(parsed.lexer->stringPool().get(reservations[0].table_name), "orders");
+    EXPECT_EQ(parsed.parser->stringPool().get(reservations[0].table_name), "orders");
     EXPECT_EQ(reservations[0].lock_mode, TableLockMode::PROTECTED);
     EXPECT_TRUE(reservations[0].for_write);
 }
@@ -235,21 +235,24 @@ TEST_F(TransactionAdvancedTest, SetTransactionWithReserving)
 // Test SET TRANSACTION with all parameters
 TEST_F(TransactionAdvancedTest, SetTransactionWithAllParameters)
 {
-    auto stmt = parseSQL(
+    auto parsed = parseSQL(
         "SET TRANSACTION READ WRITE "
         "ISOLATION LEVEL SNAPSHOT "
         "LOCK TIMEOUT 90 "
         "RESERVING products FOR SHARED READ, inventory FOR PROTECTED WRITE;"
     );
 
-    ASSERT_NE(stmt, nullptr);
-    auto* set_txn = static_cast<SetTransactionStmt*>(stmt);
+    ASSERT_NE(parsed.stmt, nullptr);
+    auto* set_txn = static_cast<SetStmt*>(parsed.stmt);
 
-    EXPECT_EQ(set_txn->mode(), TransactionMode::READ_WRITE);
-    EXPECT_EQ(set_txn->isolation(), IsolationLevel::SNAPSHOT);
-    EXPECT_EQ(set_txn->lockTimeout(), 90u);
+    EXPECT_TRUE(set_txn->has_access_mode);
+    EXPECT_EQ(set_txn->access_mode, TransactionAccess::READ_WRITE);
+    EXPECT_TRUE(set_txn->has_isolation_level);
+    EXPECT_EQ(set_txn->isolation_level, IsolationLevel::REPEATABLE_READ);
+    EXPECT_TRUE(set_txn->has_lock_timeout);
+    EXPECT_EQ(set_txn->lock_timeout_seconds, 90u);
 
-    const auto& reservations = set_txn->tableReservations();
+    const auto& reservations = set_txn->table_reservations;
     ASSERT_EQ(reservations.size(), 2u);
 }
 
@@ -258,9 +261,8 @@ TEST_F(TransactionAdvancedTest, BytecodeStartTransactionWithLockTimeout)
 {
     std::string disasm = generateAndDisassemble("START TRANSACTION LOCK TIMEOUT 30;");
 
-    EXPECT_NE(disasm.find("VERSION 1"), std::string::npos);
+    EXPECT_NE(disasm.find("VERSION 2"), std::string::npos);
     EXPECT_NE(disasm.find("START_TRANSACTION"), std::string::npos);
-    // Lock timeout will be in the bytecode output
 }
 
 // Test bytecode generation for START TRANSACTION with RESERVING
@@ -271,8 +273,6 @@ TEST_F(TransactionAdvancedTest, BytecodeStartTransactionWithReserving)
     );
 
     EXPECT_NE(disasm.find("START_TRANSACTION"), std::string::npos);
-    // Reserving clause with table name should appear in bytecode
-    // Check for TABLE_REF and the table name (may be formatted differently)
     EXPECT_NE(disasm.find("TABLE_REF"), std::string::npos)
         << "Should have TABLE_REF opcode for reserved table";
     EXPECT_NE(disasm.find("employees"), std::string::npos)
@@ -307,12 +307,9 @@ TEST_F(TransactionAdvancedTest, BytecodeMultipleReservations)
 // Test error handling - invalid lock timeout syntax
 TEST_F(TransactionAdvancedTest, ErrorInvalidLockTimeout)
 {
-    Lexer lexer("START TRANSACTION LOCK TIMEOUT abc;");
-    ASTArena arena;
-    Parser parser(lexer, arena);
+    Parser parser("START TRANSACTION LOCK TIMEOUT abc;");
     auto result = parser.parseStatement();
 
-    // Should fail - lock timeout requires an integer
     EXPECT_FALSE(result.success());
     EXPECT_FALSE(result.errors().empty());
 }
@@ -320,12 +317,9 @@ TEST_F(TransactionAdvancedTest, ErrorInvalidLockTimeout)
 // Test error handling - invalid RESERVING syntax
 TEST_F(TransactionAdvancedTest, ErrorInvalidReservingSyntax)
 {
-    Lexer lexer("START TRANSACTION RESERVING employees;");
-    ASTArena arena;
-    Parser parser(lexer, arena);
+    Parser parser("START TRANSACTION RESERVING employees;");
     auto result = parser.parseStatement();
 
-    // Should fail - missing FOR keyword
     EXPECT_FALSE(result.success());
     EXPECT_FALSE(result.errors().empty());
 }
@@ -333,12 +327,9 @@ TEST_F(TransactionAdvancedTest, ErrorInvalidReservingSyntax)
 // Test error handling - invalid lock mode
 TEST_F(TransactionAdvancedTest, ErrorInvalidLockMode)
 {
-    Lexer lexer("START TRANSACTION RESERVING employees FOR EXCLUSIVE READ;");
-    ASTArena arena;
-    Parser parser(lexer, arena);
+    Parser parser("START TRANSACTION RESERVING employees FOR EXCLUSIVE READ;");
     auto result = parser.parseStatement();
 
-    // Should fail - EXCLUSIVE is not a valid lock mode
     EXPECT_FALSE(result.success());
     EXPECT_FALSE(result.errors().empty());
 }
@@ -346,17 +337,15 @@ TEST_F(TransactionAdvancedTest, ErrorInvalidLockMode)
 // Test COMMIT and ROLLBACK bytecode
 TEST_F(TransactionAdvancedTest, BytecodeCommitAndRollback)
 {
-    // Test COMMIT
     {
         std::string disasm = generateAndDisassemble("COMMIT;");
-        EXPECT_NE(disasm.find("VERSION 1"), std::string::npos);
+        EXPECT_NE(disasm.find("VERSION 2"), std::string::npos);
         EXPECT_NE(disasm.find("COMMIT"), std::string::npos);
     }
 
-    // Test ROLLBACK
     {
         std::string disasm = generateAndDisassemble("ROLLBACK;");
-        EXPECT_NE(disasm.find("VERSION 1"), std::string::npos);
+        EXPECT_NE(disasm.find("VERSION 2"), std::string::npos);
         EXPECT_NE(disasm.find("ROLLBACK"), std::string::npos);
     }
 }
@@ -364,13 +353,13 @@ TEST_F(TransactionAdvancedTest, BytecodeCommitAndRollback)
 // Test PROTECTED READ mode
 TEST_F(TransactionAdvancedTest, ProtectedReadMode)
 {
-    auto stmt = parseSQL(
+    auto parsed = parseSQL(
         "START TRANSACTION RESERVING data FOR PROTECTED READ;"
     );
 
-    ASSERT_NE(stmt, nullptr);
-    auto* start_txn = static_cast<StartTransactionStmt*>(stmt);
-    const auto& reservations = start_txn->tableReservations();
+    ASSERT_NE(parsed.stmt, nullptr);
+    auto* start_txn = static_cast<StartTransactionStmt*>(parsed.stmt);
+    const auto& reservations = start_txn->table_reservations;
 
     ASSERT_EQ(reservations.size(), 1u);
     EXPECT_EQ(reservations[0].lock_mode, TableLockMode::PROTECTED);

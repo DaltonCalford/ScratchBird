@@ -16,38 +16,43 @@
 // - Executor: CTE materialization and scanning implemented
 //
 // Files Tested:
-// - src/parser/parser.cpp (parseWithClause)
-// - src/sblr/bytecode_generator.cpp (CTE bytecode generation)
+// - src/parser/parser_v2.cpp (parseWithClause)
+// - src/sblr/bytecode_generator_v2.cpp (CTE bytecode generation)
 // - src/sblr/executor.cpp (CTE execution)
 
 #include <gtest/gtest.h>
-#include "scratchbird/core/database.h"
+
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/database.h"
 #include "scratchbird/core/proc_array.h"
-
-
-#include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/executor.h"
-#include <memory>
+#include "scratchbird/sblr/query_compiler_v2.h"
+#include "test_helpers.h"
+
 #include <filesystem>
+#include <memory>
+#include <set>
+#include <string>
 
 using namespace scratchbird;
-using namespace scratchbird::parser;
 using namespace scratchbird::sblr;
+using scratchbird::testing::TestDatabaseFile;
 
 class CTEBasicTest : public ::testing::Test
 {
 protected:
     void SetUp() override
     {
-        // Create temporary test database
-        test_db_path_ = "/tmp/test_cte_basic.db";
-        std::filesystem::remove_all(test_db_path_);
+        db_file_ = std::make_unique<TestDatabaseFile>("test_cte_basic");
 
         core::ErrorContext ctx;
-        db_ = core::Database::create(test_db_path_, &ctx);
-        ASSERT_NE(db_, nullptr) << "Failed to create database: " << ctx.message;
+        ASSERT_EQ(core::Database::create(db_file_->path(), 16384, &ctx), core::Status::OK)
+            << "Failed to create database: " << ctx.message;
+
+        db_ = std::make_unique<core::Database>();
+        ASSERT_EQ(db_->open(db_file_->path(), &ctx), core::Status::OK)
+            << "Failed to open database: " << ctx.message;
 
         // Initialize ProcArray
         auto status = core::ProcArrayManager::initialize(db_.get(), 10, &ctx);
@@ -62,9 +67,18 @@ protected:
         status = conn_ctx_->initialize(&ctx);
         ASSERT_EQ(status, core::Status::OK) << "Failed to initialize connection context: " << ctx.message;
 
-        // Create executor
+        core::CatalogManager::SchemaInfo schema;
+        ASSERT_EQ(db_->catalog_manager()->getSchema("PUBLIC", schema, &ctx), core::Status::OK)
+            << "Failed to get PUBLIC schema: " << ctx.message;
+        schema_id_ = schema.schema_id;
+
+        // Create compiler + executor
+        compiler_ = std::make_unique<QueryCompilerV2>(db_.get());
+        compiler_->setCurrentSchema(schema_id_);
+
         executor_ = std::make_unique<Executor>(db_.get());
         executor_->setConnectionContext(conn_ctx_.get());
+        executor_->setCurrentSchema(schema_id_);
 
         // Create test table and insert data
         createTestTableWithData();
@@ -73,6 +87,7 @@ protected:
     void TearDown() override
     {
         executor_.reset();
+        compiler_.reset();
         conn_ctx_.reset();
 
         core::ErrorContext ctx;
@@ -80,7 +95,7 @@ protected:
         core::ProcArrayManager::shutdown(&ctx);
 
         db_.reset();
-        std::filesystem::remove_all(test_db_path_);
+        db_file_.reset();
     }
 
     void createTestTableWithData()
@@ -121,30 +136,25 @@ protected:
 
     ExecutionResult executeSQL(const std::string& sql)
     {
-        // Parse SQL
-        Lexer lexer(sql);
-        ASTArena arena;
-        Parser parser(lexer, arena);
-
-        auto parse_result = parser.parseStatement();
-        if (!parse_result.success())
+        auto compile_result = compiler_->compile(sql);
+        if (!compile_result.success())
         {
-            return ExecutionResult("Parse error: " + parse_result.error_message());
+            if (!compile_result.errors().empty())
+            {
+                return ExecutionResult(compile_result.errors().front());
+            }
+            return ExecutionResult("Compile error");
         }
 
-        // Generate bytecode
-        BytecodeGenerator generator(db_.get());
-        generator.generateStatement(parse_result.statement());
-        auto bytecode = generator.finalize();
-
-        // Execute bytecode
-        return executor_->execute(bytecode);
+        return executor_->execute(compile_result.bytecode());
     }
 
-    std::string test_db_path_;
+    std::unique_ptr<TestDatabaseFile> db_file_;
     std::unique_ptr<core::Database> db_;
     std::unique_ptr<core::ConnectionContext> conn_ctx_;
     std::unique_ptr<Executor> executor_;
+    std::unique_ptr<QueryCompilerV2> compiler_;
+    core::ID schema_id_;
     uint32_t proc_id_ = 0;
 };
 
@@ -168,18 +178,18 @@ TEST_F(CTEBasicTest, SingleCTE_SimpleSelect)
     ASSERT_NE(rs, nullptr);
 
     // Should have 3 columns: id, name, salary
-    EXPECT_EQ(rs->columnCount(), 3);
+    EXPECT_EQ(rs->columnCount(), 3u);
 
     // Should have 2 rows (Alice and Bob)
-    EXPECT_EQ(rs->rowCount(), 2);
+    EXPECT_EQ(rs->rowCount(), 2u);
 
     // Verify data (rows may be in any order)
     std::set<std::string> names;
     for (size_t i = 0; i < rs->rowCount(); ++i)
     {
         auto name_val = rs->getValue(i, 1); // name column
-        ASSERT_TRUE(std::holds_alternative<std::string>(name_val));
-        names.insert(std::get<std::string>(name_val));
+        ASSERT_FALSE(name_val.isNull());
+        names.insert(name_val.toString());
     }
 
     EXPECT_TRUE(names.count("Alice") > 0);
@@ -208,14 +218,14 @@ TEST_F(CTEBasicTest, MultipleCTEs)
     ASSERT_NE(rs, nullptr);
 
     // Should have 2 rows (Charlie and Diana)
-    EXPECT_EQ(rs->rowCount(), 2);
+    EXPECT_EQ(rs->rowCount(), 2u);
 
     std::set<std::string> names;
     for (size_t i = 0; i < rs->rowCount(); ++i)
     {
         auto name_val = rs->getValue(i, 1);
-        ASSERT_TRUE(std::holds_alternative<std::string>(name_val));
-        names.insert(std::get<std::string>(name_val));
+        ASSERT_FALSE(name_val.isNull());
+        names.insert(name_val.toString());
     }
 
     EXPECT_TRUE(names.count("Charlie") > 0);
@@ -240,7 +250,7 @@ TEST_F(CTEBasicTest, CTEWithColumnAliases)
     ASSERT_NE(rs, nullptr);
 
     // Should have 4 rows (Alice, Bob, Diana, Charlie if salary > 80000)
-    EXPECT_GE(rs->rowCount(), 3); // At least Alice, Bob, Diana
+    EXPECT_GE(rs->rowCount(), 3u); // At least Alice, Bob, Diana
 
     // Verify column names are aliased
     EXPECT_EQ(rs->columnName(0), "emp_name");
@@ -268,18 +278,12 @@ TEST_F(CTEBasicTest, CTEReferencedMultipleTimes)
     ASSERT_NE(rs, nullptr);
 
     // Should have 1 row (Eve)
-    EXPECT_EQ(rs->rowCount(), 1);
+    EXPECT_EQ(rs->rowCount(), 1u);
 
     if (rs->rowCount() > 0)
     {
         auto name_val = rs->getValue(0, 1);
-        ASSERT_TRUE(std::holds_alternative<std::string>(name_val));
-        EXPECT_EQ(std::get<std::string>(name_val), "Eve");
+        ASSERT_FALSE(name_val.isNull());
+        EXPECT_EQ(name_val.toString(), "Eve");
     }
-}
-
-int main(int argc, char** argv)
-{
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
 }

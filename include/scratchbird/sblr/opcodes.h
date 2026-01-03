@@ -871,7 +871,7 @@ namespace scratchbird
             EXT_SHOW_TRANSACTION_LEVEL = 0x7D, // SHOW TRANSACTION ISOLATION LEVEL
 
             // Phase 10: Parser version control
-            EXT_SET_PARSER_VERSION = 0x7E,     // SET PARSER VERSION {V1 | V2}
+            EXT_SET_PARSER_VERSION = 0x7E,     // SET PARSER VERSION 2
 
             // Parser V2 completeness opcodes (0x80-0x8F range)
             EXT_SELECT_TABLE_STAR = 0x80,      // SELECT t.* - qualified table star (followed by table UUID)
@@ -1232,7 +1232,7 @@ namespace scratchbird
             EXT_SHOW_VARIABLE = 0x7B,  // SHOW variable_name - show session variable value
             EXT_SHOW_ALL = 0x7C,  // SHOW ALL - show all session variables
             EXT_SHOW_TRANSACTION_LEVEL = 0x7D,  // SHOW TRANSACTION ISOLATION LEVEL
-            EXT_SET_PARSER_VERSION = 0x7E,  // SET PARSER VERSION {V1 | V2}
+            EXT_SET_PARSER_VERSION = 0x7E,  // SET PARSER VERSION 2
             EXT_SELECT_TABLE_STAR = 0x80,  // SELECT t.* - qualified table star (followed by table UUID)
             EXT_SET_VARIABLE = 0x81,  // SET variable = value - generic session variable
             EXT_ON_CONFLICT = 0x82,  // INSERT ... ON CONFLICT marker

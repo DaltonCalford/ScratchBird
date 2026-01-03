@@ -1,7 +1,8 @@
 #pragma once
 
-#include "scratchbird/parser/ast.h"
-#include "scratchbird/parser/token.h"
+#include "scratchbird/core/expression.h"
+#include <string>
+#include <string_view>
 #include <vector>
 
 /**
@@ -41,7 +42,7 @@
 
 namespace scratchbird::optimizer
 {
-    using namespace scratchbird::parser;
+    using namespace scratchbird::core;
 
     /**
      * Match result indicating how well query expression matches index expression
@@ -75,9 +76,7 @@ namespace scratchbird::optimizer
          * @return true if exact structural match
          */
         static bool matches(const Expression *query_expr,
-                           const Expression *index_expr,
-                           const StringPool *query_pool,
-                           const StringPool *index_pool = nullptr);
+                           const Expression *index_expr);
 
         /**
          * Check if query expression can use index expression
@@ -91,9 +90,7 @@ namespace scratchbird::optimizer
          * @return Match type (EXACT_MATCH, RANGE_SCAN, or NO_MATCH)
          */
         static ExpressionMatchType canUse(const Expression *query_expr,
-                                           const Expression *index_expr,
-                                           const StringPool *query_pool,
-                                           const StringPool *index_pool = nullptr);
+                                           const Expression *index_expr);
 
         /**
          * Check if operator is compatible with indexed expression
@@ -117,37 +114,27 @@ namespace scratchbird::optimizer
         static ExpressionMatchType isOperatorCompatible(BinaryOp op,
                                                         const Expression *left_expr,
                                                         const Expression *right_expr,
-                                                        const Expression *index_expr,
-                                                        const StringPool *query_pool,
-                                                        const StringPool *index_pool);
+                                                        const Expression *index_expr);
 
     private:
         // Type-specific matchers
-        static bool matchLiteral(const LiteralExpr *q, const LiteralExpr *i,
-                                const StringPool *q_pool, const StringPool *i_pool);
-        static bool matchIdentifier(const IdentifierExpr *q, const IdentifierExpr *i,
-                                    const StringPool *q_pool, const StringPool *i_pool);
-        static bool matchBinaryOp(const BinaryOpExpr *q, const BinaryOpExpr *i,
-                                 const StringPool *q_pool, const StringPool *i_pool);
-        static bool matchFunctionCall(const FunctionCallExpr *q, const FunctionCallExpr *i,
-                                     const StringPool *q_pool, const StringPool *i_pool);
-        static bool matchCast(const CastExpr *q, const CastExpr *i,
-                             const StringPool *q_pool, const StringPool *i_pool);
-        static bool matchCase(const CaseExpr *q, const CaseExpr *i,
-                             const StringPool *q_pool, const StringPool *i_pool);
-        static bool matchAggregate(const AggregateExpr *q, const AggregateExpr *i,
-                                  const StringPool *q_pool, const StringPool *i_pool);
-        static bool matchCoalesce(const CoalesceExpr *q, const CoalesceExpr *i,
-                                 const StringPool *q_pool, const StringPool *i_pool);
-        static bool matchNullIf(const NullIfExpr *q, const NullIfExpr *i,
-                               const StringPool *q_pool, const StringPool *i_pool);
-        static bool matchExtract(const ExtractExpr *q, const ExtractExpr *i,
-                                const StringPool *q_pool, const StringPool *i_pool);
+        static bool matchLiteral(const LiteralExpr *q, const LiteralExpr *i);
+        static bool matchIdentifier(const IdentifierExpr *q, const IdentifierExpr *i);
+        static bool matchBinaryOp(const BinaryOpExpr *q, const BinaryOpExpr *i);
+        static bool matchFunctionCall(const FunctionCallExpr *q, const FunctionCallExpr *i);
+        static bool matchCast(const CastExpr *q, const CastExpr *i);
+        static bool matchCase(const CaseExpr *q, const CaseExpr *i);
+        static bool matchAggregate(const AggregateExpr *q, const AggregateExpr *i);
+        static bool matchCoalesce(const CoalesceExpr *q, const CoalesceExpr *i);
+        static bool matchNullIf(const NullIfExpr *q, const NullIfExpr *i);
+        static bool matchExtract(const ExtractExpr *q, const ExtractExpr *i);
 
         // Helper methods
         static bool isCommutativeOperator(BinaryOp op);
         static bool isComparisonOperator(BinaryOp op);
-        static bool isLikePrefixScan(const LiteralExpr *pattern, const StringPool *pool);
+        static bool isLikePrefixScan(const LiteralExpr *pattern);
+        static std::string normalizeIdentifier(std::string_view name);
+        static std::string normalizeFunctionName(std::string_view name);
         static ExpressionMatchType getMatchTypeForOperator(BinaryOp op);
     };
 

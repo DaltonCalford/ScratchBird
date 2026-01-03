@@ -123,6 +123,8 @@ struct ResolvedSequenceRef {
 struct ResolvedType {
     DataType data_type;
     bool is_nullable = true;
+    bool is_domain = false;
+    ID domain_id{};
 
     // For numeric types
     std::optional<int32_t> precision;
@@ -600,6 +602,24 @@ struct ResolvedDomainConstraint {
 };
 
 /**
+ * Resolved domain RECORD field definition
+ */
+struct ResolvedDomainRecordField {
+    StringPool::StringId name = StringPool::INVALID_ID;
+    ResolvedType type;
+    bool nullable = true;
+    std::string default_value;
+};
+
+/**
+ * Resolved domain ENUM value definition
+ */
+struct ResolvedDomainEnumValue {
+    StringPool::StringId label = StringPool::INVALID_ID;
+    int32_t position = 0;
+};
+
+/**
  * Resolved CREATE TABLE statement
  */
 struct ResolvedCreateTableStmt : public ResolvedStatement {
@@ -681,10 +701,24 @@ struct ResolvedCreateDatabaseStmt : public ResolvedStatement {
 struct ResolvedCreateDomainStmt : public ResolvedStatement {
     bool if_not_exists = false;
     SchemaPath domain_path;
+    DomainKind domain_kind = DomainKind::BASIC;
     ResolvedType base_type;
+    std::vector<ResolvedDomainRecordField> record_fields;
+    std::vector<ResolvedDomainEnumValue> enum_values;
+    ResolvedType set_element_type;
+    std::vector<ResolvedType> variant_allowed_types;
     bool nullable = true;
     std::string default_value;
     std::vector<ResolvedDomainConstraint> constraints;
+    bool has_inherits = false;
+    ID parent_domain_id{};
+    bool has_collation = false;
+    std::string collation_name;
+    bool has_dialect = false;
+    std::string dialect_tag;
+    bool has_compat = false;
+    std::string compat_name;
+    bool enum_wrap = false;
     bool has_integrity = false;
     DomainIntegrityOptions integrity;
     bool has_security = false;
@@ -952,6 +986,12 @@ struct ResolvedSetStmt : public ResolvedStatement {
 
     // For SET PARSER VERSION
     uint8_t parser_version = 0;  // 1 or 2 (0 = not set)
+
+    // For SET SQL DIALECT
+    uint8_t sql_dialect = 0;  // 1, 2, or 3 (0 = not set)
+
+    // For SET LOCAL_TIMEOUT
+    uint32_t local_timeout_seconds = 0;
 };
 
 /**

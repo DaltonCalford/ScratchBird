@@ -26,19 +26,16 @@
 
 #include <gtest/gtest.h>
 
-#include <string>
+#include "scratchbird/parser/parser_v2.h"
 
-using namespace scratchbird::parser;
+#include <string>
 
 class TextSearchTest : public ::testing::Test
 {
 protected:
     void testParse(const std::string &sql, bool should_succeed = true)
     {
-        Lexer lexer(sql);
-        ASTArena arena;
-        Parser parser(lexer, arena);
-
+        scratchbird::parser::v2::Parser parser(sql);
         auto result = parser.parseStatement();
         if (should_succeed)
         {

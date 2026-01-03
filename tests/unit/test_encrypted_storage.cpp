@@ -76,7 +76,7 @@ protected:
         data_col.has_default = false;
         columns.push_back(data_col);
 
-        ASSERT_EQ(catalog_->createTable(schema_id, "encrypted_storage", columns, table_id_, &ctx),
+        ASSERT_EQ(catalog_->createTable(schema_id, "encrypted_storage", columns, table_id_, 0, &ctx),
                   Status::OK);
     }
 

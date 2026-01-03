@@ -3,12 +3,12 @@
 /**
  * ScratchBird Parser - Shared Types
  *
- * This header contains type definitions shared between V1 and V2 parsers,
+ * This header contains type definitions shared across ScratchBird parsers,
  * the optimizer, and the executor. These types are independent of the
  * specific AST implementation and can be used by any component.
  *
  * This file enables the optimizer and plan nodes to function independently
- * of the V1 parser while still using compatible type definitions.
+ * of parser implementation details while still using compatible type definitions.
  */
 
 #include <cstdint>
@@ -153,7 +153,7 @@ enum class NullsOrder : uint8_t {
 // =============================================================================
 // Note: AST-level structs (FrameBoundary, OrderByItem, WindowSpec) remain
 // in ast.h as they contain Expression* pointers. These shared types are
-// enums only, which can be used by both V1 AST, V2 AST, and plan nodes.
+// enums only, which can be used by V2 ASTs, emulated parser ASTs, and plan nodes.
 // =============================================================================
 
 // =============================================================================

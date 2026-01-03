@@ -14,97 +14,104 @@
  */
 
 #include <gtest/gtest.h>
-#include <scratchbird/core/database.h>
-#include <scratchbird/core/catalog_manager.h>
 
-
-#include <scratchbird/sblr/executor.h>
+#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/database.h"
+#include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/query_compiler_v2.h"
+#include "test_helpers.h"
+
 #include <cmath>
+#include <memory>
+#include <string>
 
 using namespace scratchbird;
+using scratchbird::testing::TestDatabaseFile;
 
 class StatisticalFunctionsTest : public ::testing::Test
 {
 protected:
-    std::shared_ptr<core::Database> db;
-    std::string test_db_path = "/tmp/test_stats.db";
+    std::unique_ptr<core::Database> db_;
+    std::unique_ptr<sblr::Executor> executor_;
+    std::unique_ptr<sblr::QueryCompilerV2> compiler_;
+    std::unique_ptr<TestDatabaseFile> db_file_;
+    core::ID schema_id_;
 
     void SetUp() override
     {
-        // Clean up any existing database
-        std::remove(test_db_path.c_str());
+        db_file_ = std::make_unique<TestDatabaseFile>("test_stats");
 
-        // Create new database
         core::ErrorContext ctx;
-        auto status = core::Database::create(test_db_path, 16384, &ctx);
-        ASSERT_EQ(status, core::Status::OK) << "Failed to create database: " << ctx.message;
+        ASSERT_EQ(core::Database::create(db_file_->path(), 16384, &ctx), core::Status::OK)
+            << "Failed to create database: " << ctx.message;
 
-        db = core::Database::open(test_db_path, &ctx);
-        ASSERT_NE(db, nullptr) << "Failed to open database: " << ctx.message;
-        ASSERT_EQ(status, core::Status::OK);
+        db_ = std::make_unique<core::Database>();
+        ASSERT_EQ(db_->open(db_file_->path(), &ctx), core::Status::OK)
+            << "Failed to open database: " << ctx.message;
+
+        core::CatalogManager::SchemaInfo schema;
+        ASSERT_EQ(db_->catalog_manager()->getSchema("PUBLIC", schema, &ctx), core::Status::OK)
+            << "Failed to get PUBLIC schema: " << ctx.message;
+        schema_id_ = schema.schema_id;
+
+        compiler_ = std::make_unique<sblr::QueryCompilerV2>(db_.get());
+        compiler_->setCurrentSchema(schema_id_);
+        executor_ = std::make_unique<sblr::Executor>(db_.get());
+        executor_->setCurrentSchema(schema_id_);
     }
 
     void TearDown() override
     {
-        db.reset();
-        std::remove(test_db_path.c_str());
+        executor_.reset();
+        compiler_.reset();
+        db_.reset();
+        db_file_.reset();
     }
 
     bool executeSQL(const std::string& sql, std::string* error_msg = nullptr)
     {
-        parser::Lexer lexer(sql);
-        parser::ASTArena arena;
-        parser::Parser parser(lexer, arena);
-
-        auto stmt = parser.parseStatement();
-        if (!stmt)
+        auto compile_result = compiler_->compile(sql);
+        if (!compile_result.success())
         {
-            if (error_msg) *error_msg = "Parse failed";
+            if (error_msg && !compile_result.errors().empty())
+            {
+                *error_msg = compile_result.errors().front();
+            }
             return false;
         }
 
-        sblr::BytecodeGenerator gen;
-        auto bytecode = gen.generate(stmt);
-
-        sblr::Executor executor(db.get());
-        auto exec_result = executor.execute(bytecode);
-
-        if (!exec_result.isSuccess())
+        auto exec_result = executor_->execute(compile_result.bytecode());
+        if (!exec_result.success())
         {
-            if (error_msg) *error_msg = "Execution failed";
+            if (error_msg)
+            {
+                *error_msg = exec_result.error();
+            }
             return false;
         }
 
         return true;
     }
 
-    std::unique_ptr<sblr::ResultSet> executeQuery(const std::string& sql, std::string* error_msg = nullptr)
+    sblr::ExecutionResult executeQuery(const std::string& sql, std::string* error_msg = nullptr)
     {
-        parser::Lexer lexer(sql);
-        parser::ASTArena arena;
-        parser::Parser parser(lexer, arena);
-
-        auto stmt = parser.parseStatement();
-        if (!stmt)
+        auto compile_result = compiler_->compile(sql);
+        if (!compile_result.success())
         {
-            if (error_msg) *error_msg = "Parse failed";
-            return nullptr;
+            if (error_msg && !compile_result.errors().empty())
+            {
+                *error_msg = compile_result.errors().front();
+            }
+            return sblr::ExecutionResult("Compile failed");
         }
 
-        sblr::BytecodeGenerator gen;
-        auto bytecode = gen.generate(stmt);
-
-        sblr::Executor executor(db.get());
-        auto exec_result = executor.execute(bytecode);
-
-        if (!exec_result.isSuccess())
+        auto exec_result = executor_->execute(compile_result.bytecode());
+        if (!exec_result.success() && error_msg)
         {
-            if (error_msg) *error_msg = "Execution failed";
-            return nullptr;
+            *error_msg = exec_result.error();
         }
 
-        return executor.getResultSet();
+        return exec_result;
     }
 };
 
@@ -123,13 +130,14 @@ TEST_F(StatisticalFunctionsTest, STDDEV_SAMP_BasicTest)
 
     std::string error_msg;
     auto result = executeQuery("SELECT STDDEV(value) FROM numbers", &error_msg);
-    ASSERT_NE(result, nullptr) << "Query failed: " << error_msg;
-    ASSERT_EQ(result->rowCount(), 1);
+    ASSERT_TRUE(result.success()) << "Query failed: " << error_msg;
+    ASSERT_TRUE(result.hasResultSet());
 
-    auto row = result->getRow(0);
-    ASSERT_EQ(row.size(), 1);
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
 
-    double stddev = row[0].toDouble();
+    double stddev = rs->getValue(0, 0).toDouble();
     EXPECT_NEAR(stddev, 1.5811, 0.001);
 }
 
@@ -148,13 +156,14 @@ TEST_F(StatisticalFunctionsTest, STDDEV_POP_BasicTest)
 
     std::string error_msg;
     auto result = executeQuery("SELECT STDDEV_POP(value) FROM numbers", &error_msg);
-    ASSERT_NE(result, nullptr) << "Query failed: " << error_msg;
-    ASSERT_EQ(result->rowCount(), 1);
+    ASSERT_TRUE(result.success()) << "Query failed: " << error_msg;
+    ASSERT_TRUE(result.hasResultSet());
 
-    auto row = result->getRow(0);
-    ASSERT_EQ(row.size(), 1);
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
 
-    double stddev_pop = row[0].toDouble();
+    double stddev_pop = rs->getValue(0, 0).toDouble();
     EXPECT_NEAR(stddev_pop, 1.4142, 0.001);
 }
 
@@ -173,13 +182,14 @@ TEST_F(StatisticalFunctionsTest, VAR_SAMP_BasicTest)
 
     std::string error_msg;
     auto result = executeQuery("SELECT VARIANCE(value) FROM numbers", &error_msg);
-    ASSERT_NE(result, nullptr) << "Query failed: " << error_msg;
-    ASSERT_EQ(result->rowCount(), 1);
+    ASSERT_TRUE(result.success()) << "Query failed: " << error_msg;
+    ASSERT_TRUE(result.hasResultSet());
 
-    auto row = result->getRow(0);
-    ASSERT_EQ(row.size(), 1);
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
 
-    double var_samp = row[0].toDouble();
+    double var_samp = rs->getValue(0, 0).toDouble();
     EXPECT_NEAR(var_samp, 2.5, 0.001);
 }
 
@@ -198,13 +208,14 @@ TEST_F(StatisticalFunctionsTest, VAR_POP_BasicTest)
 
     std::string error_msg;
     auto result = executeQuery("SELECT VAR_POP(value) FROM numbers", &error_msg);
-    ASSERT_NE(result, nullptr) << "Query failed: " << error_msg;
-    ASSERT_EQ(result->rowCount(), 1);
+    ASSERT_TRUE(result.success()) << "Query failed: " << error_msg;
+    ASSERT_TRUE(result.hasResultSet());
 
-    auto row = result->getRow(0);
-    ASSERT_EQ(row.size(), 1);
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
 
-    double var_pop = row[0].toDouble();
+    double var_pop = rs->getValue(0, 0).toDouble();
     EXPECT_NEAR(var_pop, 2.0, 0.001);
 }
 
@@ -223,13 +234,14 @@ TEST_F(StatisticalFunctionsTest, CORR_BasicTest)
 
     std::string error_msg;
     auto result = executeQuery("SELECT CORR(y, x) FROM data", &error_msg);
-    ASSERT_NE(result, nullptr) << "Query failed: " << error_msg;
-    ASSERT_EQ(result->rowCount(), 1);
+    ASSERT_TRUE(result.success()) << "Query failed: " << error_msg;
+    ASSERT_TRUE(result.hasResultSet());
 
-    auto row = result->getRow(0);
-    ASSERT_EQ(row.size(), 1);
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
 
-    double corr = row[0].toDouble();
+    double corr = rs->getValue(0, 0).toDouble();
     EXPECT_NEAR(corr, 1.0, 0.001);
 }
 
@@ -247,15 +259,15 @@ TEST_F(StatisticalFunctionsTest, COVAR_POP_BasicTest)
 
     std::string error_msg;
     auto result = executeQuery("SELECT COVAR_POP(y, x) FROM data", &error_msg);
-    ASSERT_NE(result, nullptr) << "Query failed: " << error_msg;
-    ASSERT_EQ(result->rowCount(), 1);
+    ASSERT_TRUE(result.success()) << "Query failed: " << error_msg;
+    ASSERT_TRUE(result.hasResultSet());
 
-    auto row = result->getRow(0);
-    ASSERT_EQ(row.size(), 1);
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
 
     // For y = 2x, covariance should be 2 * variance(x)
     // variance(x) = 2.0 (population), so covar = 4.0
-    double covar_pop = row[0].toDouble();
+    double covar_pop = rs->getValue(0, 0).toDouble();
     EXPECT_NEAR(covar_pop, 4.0, 0.001);
 }
-

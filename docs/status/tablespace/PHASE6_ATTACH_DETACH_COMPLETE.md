@@ -39,16 +39,16 @@ All infrastructure methods were already implemented in Phase 1:
 ### SQL Parser Integration ✅ COMPLETE (THIS SESSION)
 
 #### Lexer Changes
-**File**: `include/scratchbird/parser/token.h` (lines 175-176)
+**File**: `include/scratchbird/parser/lexer_v2.h` (lines 175-176)
 - Added `KW_ATTACH` token
 - Added `KW_DETACH` token
 
-**File**: `src/parser/lexer.cpp` (lines 145-146)
+**File**: `src/parser/lexer_v2.cpp` (lines 145-146)
 - Registered "ATTACH" → `TokenType::KW_ATTACH`
 - Registered "DETACH" → `TokenType::KW_DETACH`
 
 #### AST Nodes
-**File**: `include/scratchbird/parser/ast.h`
+**File**: `include/scratchbird/parser/ast_v2.h`
 - Added `ATTACH_TABLESPACE` and `DETACH_TABLESPACE` to ASTKind enum (lines 38-39)
 - Created `AttachTablespaceStmt` class (lines 760-784)
   - Fields: `file_path`, `tablespace_name` (optional)
@@ -57,12 +57,12 @@ All infrastructure methods were already implemented in Phase 1:
   - Fields: `tablespace_name`, `force` flag
   - Methods: `tablespaceName()`, `force()`, `accept()`
 
-**File**: `src/parser/ast.cpp` (lines 116-124, 242-260)
+**File**: `src/parser/ast_v2.cpp` (lines 116-124, 242-260)
 - Implemented `accept()` methods for both statement types
 - Implemented `ASTPrinter::visit()` methods for statement formatting
 
 #### Parser Grammar
-**File**: `src/parser/parser.cpp`
+**File**: `src/parser/parser_v2.cpp`
 - Added statement dispatch (lines 192-215)
 - Implemented `parseAttachTablespace()` (lines 1395-1432)
   - Syntax: `ATTACH TABLESPACE 'file_path' [AS 'name']`
@@ -73,11 +73,11 @@ All infrastructure methods were already implemented in Phase 1:
   - Requires IDENTIFIER for tablespace name
   - Optional FORCE keyword
 
-**File**: `include/scratchbird/parser/parser.h` (lines 112-113)
+**File**: `include/scratchbird/parser/parser_v2.h` (lines 112-113)
 - Declared parser methods
 
 #### Visitor Interface
-**File**: `include/scratchbird/parser/ast.h` (lines 969-970, 1002-1003)
+**File**: `include/scratchbird/parser/ast_v2.h` (lines 969-970, 1002-1003)
 - Added abstract visitor methods to `ASTVisitor`
 - Added concrete visitor methods to `ASTPrinter`
 
@@ -89,13 +89,13 @@ All infrastructure methods were already implemented in Phase 1:
 - `DETACH_TABLESPACE = 0x1E`
 
 #### Bytecode Generator
-**File**: `src/sblr/bytecode_generator.cpp` (lines 226-248)
+**File**: `src/sblr/bytecode_generator_v2.cpp` (lines 226-248)
 - Implemented `visit(AttachTablespaceStmt*)`
   - Writes: OPCODE + file_path (StringId) + tablespace_name (StringId)
 - Implemented `visit(DetachTablespaceStmt*)`
   - Writes: OPCODE + tablespace_name (StringId) + force (byte)
 
-**File**: `include/scratchbird/sblr/bytecode_generator.h` (lines 106-107)
+**File**: `include/scratchbird/sblr/bytecode_generator_v2.h` (lines 106-107)
 - Added visitor method declarations
 
 ### Executor Integration ✅ COMPLETE (THIS SESSION)
@@ -124,15 +124,15 @@ All infrastructure methods were already implemented in Phase 1:
 ## Code Statistics
 
 **Files Modified** (this session):
-- `include/scratchbird/parser/token.h`: +2 lines
-- `src/parser/lexer.cpp`: +2 lines
-- `include/scratchbird/parser/ast.h`: +76 lines (enums + classes + methods)
-- `src/parser/ast.cpp`: +28 lines (implementations)
-- `src/parser/parser.cpp`: +72 lines (grammar methods)
-- `include/scratchbird/parser/parser.h`: +2 lines
+- `include/scratchbird/parser/lexer_v2.h`: +2 lines
+- `src/parser/lexer_v2.cpp`: +2 lines
+- `include/scratchbird/parser/ast_v2.h`: +76 lines (enums + classes + methods)
+- `src/parser/ast_v2.cpp`: +28 lines (implementations)
+- `src/parser/parser_v2.cpp`: +72 lines (grammar methods)
+- `include/scratchbird/parser/parser_v2.h`: +2 lines
 - `include/scratchbird/sblr/opcodes.h`: +2 lines
-- `src/sblr/bytecode_generator.cpp`: +23 lines
-- `include/scratchbird/sblr/bytecode_generator.h`: +2 lines
+- `src/sblr/bytecode_generator_v2.cpp`: +23 lines
+- `include/scratchbird/sblr/bytecode_generator_v2.h`: +2 lines
 - `src/sblr/executor.cpp`: +61 lines
 - `include/scratchbird/sblr/executor.h`: +2 lines
 

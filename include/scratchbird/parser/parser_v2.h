@@ -248,6 +248,7 @@ private:
     void parseDomainSecurityBlock(CreateDomainStmt* stmt);
     void parseDomainValidationBlock(CreateDomainStmt* stmt);
     void parseDomainQualityBlock(CreateDomainStmt* stmt);
+    void parseDomainOptionsBlock(CreateDomainStmt* stmt);
     std::string extractExpressionText(Expression* expr);
     ColumnConstraint parseColumnConstraint();
 
@@ -267,12 +268,18 @@ private:
     // ==========================================================================
 
     Expression* parseExpression();
+    Expression* parseExpressionWithLeft(Expression* left);
     Expression* parseOrExpr();
+    Expression* parseOrExprWithLeft(Expression* left);
     Expression* parseAndExpr();
+    Expression* parseAndExprWithLeft(Expression* left);
     Expression* parseNotExpr();
     Expression* parseComparisonExpr();
+    Expression* parseComparisonExprWithLeft(Expression* left);
     Expression* parseAddExpr();
+    Expression* parseAddExprWithLeft(Expression* left);
     Expression* parseMulExpr();
+    Expression* parseMulExprWithLeft(Expression* left);
     Expression* parseUnaryExpr();
     Expression* parsePrimaryExpr();
     Expression* parseLiteral();

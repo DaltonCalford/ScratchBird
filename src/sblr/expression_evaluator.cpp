@@ -11,17 +11,14 @@ namespace scratchbird::sblr
 {
     // Task 17 MGA Phase 1.4: Updated constructor to include transaction context
     ExpressionEvaluator::ExpressionEvaluator(const std::vector<core::CatalogManager::ColumnInfo> &columns,
-                                             parser::StringPool *pool,
                                              core::Database *db,
                                              uint64_t xid)
-        : pool_(pool), db_(db), xid_(xid)
+        : db_(db), xid_(xid)
     {
         // Build column position map for fast lookups
         for (size_t i = 0; i < columns.size(); i++)
         {
-            // Get StringId for column name from pool
-            parser::StringPool::StringId col_id = pool_->intern(columns[i].column_name);
-            column_positions_[col_id] = i;
+            column_positions_[normalizeIdentifier(columns[i].column_name)] = i;
         }
     }
 
@@ -35,40 +32,35 @@ namespace scratchbird::sblr
 
         switch (expr->kind())
         {
-        case ASTKind::LITERAL:
+        case ExprKind::LITERAL:
             return evaluateLiteral(static_cast<const LiteralExpr *>(expr), row);
 
-        case ASTKind::IDENTIFIER:
+        case ExprKind::IDENTIFIER:
             return evaluateIdentifier(static_cast<const IdentifierExpr *>(expr), row);
 
-        case ASTKind::BINARY_OP:
+        case ExprKind::BINARY_OP:
             return evaluateBinaryOp(static_cast<const BinaryOpExpr *>(expr), row);
 
-        case ASTKind::FUNCTION_CALL:
+        case ExprKind::FUNCTION_CALL:
             return evaluateFunctionCall(static_cast<const FunctionCallExpr *>(expr), row);
 
-        case ASTKind::CAST:
+        case ExprKind::CAST:
             return evaluateCast(static_cast<const CastExpr *>(expr), row);
 
-        case ASTKind::CASE:
+        case ExprKind::CASE:
             return evaluateCase(static_cast<const CaseExpr *>(expr), row);
 
-        case ASTKind::AGGREGATE_FUNC:
+        case ExprKind::AGGREGATE:
             return evaluateAggregate(static_cast<const AggregateExpr *>(expr), row);
 
-        case ASTKind::COALESCE:
+        case ExprKind::COALESCE:
             return evaluateCoalesce(static_cast<const CoalesceExpr *>(expr), row);
 
-        case ASTKind::NULLIF:
+        case ExprKind::NULLIF:
             return evaluateNullIf(static_cast<const NullIfExpr *>(expr), row);
 
-        case ASTKind::WINDOW_FUNC:
-        case ASTKind::JSON_FUNC:
-            // Window and JSON functions not supported in expression indexes
-            throw std::runtime_error("Window/JSON functions not supported in expression indexes");
-
-        case ASTKind::SUBQUERY:
-            throw std::runtime_error("Subqueries not supported in expression indexes");
+        case ExprKind::EXTRACT:
+            throw std::runtime_error("EXTRACT not supported in expression indexes");
 
         default:
             throw std::runtime_error("Unsupported expression type for evaluation");
@@ -91,25 +83,22 @@ namespace scratchbird::sblr
     {
         switch (expr->literalType())
         {
-        case parser::LiteralExpr::LiteralType::INTEGER:
+        case core::LiteralExpr::LiteralType::INTEGER:
         {
             int64_t int_val = expr->intValue();
             return TypedValue::makeInt64(int_val);
         }
 
-        case parser::LiteralExpr::LiteralType::FLOAT:
+        case core::LiteralExpr::LiteralType::FLOAT:
         {
             double float_val = expr->floatValue();
             return TypedValue::makeFloat64(float_val);
         }
 
-        case parser::LiteralExpr::LiteralType::STRING:
-        {
-            std::string_view str_val = pool_->get(expr->stringValue());
-            return TypedValue::makeVarchar(std::string(str_val));
-        }
+        case core::LiteralExpr::LiteralType::STRING:
+            return TypedValue::makeVarchar(expr->stringValue());
 
-        case parser::LiteralExpr::LiteralType::NULL_LITERAL:
+        case core::LiteralExpr::LiteralType::NULL_LITERAL:
             return TypedValue::makeNull();
 
         default:
@@ -121,11 +110,10 @@ namespace scratchbird::sblr
                                                         const std::vector<TypedValue> &row)
     {
         // Look up column in position map
-        auto it = column_positions_.find(expr->name());
+        auto it = column_positions_.find(normalizeIdentifier(expr->name()));
         if (it == column_positions_.end())
         {
-            std::string col_name(pool_->get(expr->name()));
-            throw std::runtime_error("Column not found: " + col_name);
+            throw std::runtime_error("Column not found: " + expr->name());
         }
 
         size_t pos = it->second;
@@ -193,7 +181,7 @@ namespace scratchbird::sblr
             return TypedValue::makeNull();
         }
 
-        using parser::BinaryOp;
+        using core::BinaryOp;
 
         switch (expr->op())
         {
@@ -310,16 +298,16 @@ namespace scratchbird::sblr
     TypedValue ExpressionEvaluator::evaluateFunctionCall(const FunctionCallExpr *expr,
                                                           const std::vector<TypedValue> &row)
     {
-        std::string func_name(pool_->get(expr->name()));
+        std::string func_name(expr->name());
         std::transform(func_name.begin(), func_name.end(), func_name.begin(), ::toupper);
 
         const auto &args = expr->args();
 
         // Evaluate arguments
         std::vector<TypedValue> arg_values;
-        for (auto *arg : args)
+        for (const auto &arg : args)
         {
-            arg_values.push_back(evaluate(arg, row));
+            arg_values.push_back(evaluate(arg.get(), row));
         }
 
         // String functions
@@ -393,10 +381,10 @@ namespace scratchbird::sblr
         const auto &whens = expr->whenClauses();
         for (const auto &when_clause : whens)
         {
-            TypedValue condition = evaluate(when_clause.condition, row);
+            TypedValue condition = evaluate(when_clause.condition.get(), row);
             if (isTruthy(condition))
             {
-                return evaluate(when_clause.result, row);
+                return evaluate(when_clause.result.get(), row);
             }
         }
 
@@ -421,9 +409,9 @@ namespace scratchbird::sblr
                                                       const std::vector<TypedValue> &row)
     {
         const auto &args = expr->args();
-        for (auto *arg : args)
+        for (const auto &arg : args)
         {
-            TypedValue value = evaluate(arg, row);
+            TypedValue value = evaluate(arg.get(), row);
             if (!value.isNull())
             {
                 return value;
@@ -538,6 +526,13 @@ namespace scratchbird::sblr
         }
     }
 
+    std::string ExpressionEvaluator::normalizeIdentifier(std::string_view name)
+    {
+        std::string normalized(name);
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(), ::toupper);
+        return normalized;
+    }
+
     // ========================================================================
     // Task 17 MGA Phase 1.4: Transaction-Aware Evaluation
     // ========================================================================
@@ -618,9 +613,7 @@ namespace scratchbird::sblr
         column_positions_.clear();
         for (size_t i = 0; i < column_names.size(); ++i)
         {
-            // Create string ID for the column name and store position
-            StringPool::StringId id = pool_->intern(column_names[i]);
-            column_positions_[id] = i;
+            column_positions_[normalizeIdentifier(column_names[i])] = i;
         }
 
         // Evaluate using existing method
@@ -635,8 +628,7 @@ namespace scratchbird::sblr
         column_positions_.clear();
         for (size_t i = 0; i < column_names.size(); ++i)
         {
-            StringPool::StringId id = pool_->intern(column_names[i]);
-            column_positions_[id] = i;
+            column_positions_[normalizeIdentifier(column_names[i])] = i;
         }
 
         // Evaluate using existing method

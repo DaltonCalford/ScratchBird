@@ -2,8 +2,8 @@
 
 **Plan:** Domain DDL (CREATE/ALTER/DROP DOMAIN) with full WITH block support
 **Version:** 1.0
-**Last Updated:** 2026-01-01
-**Overall Status:** ⚠️ IN PROGRESS - V2 CREATE/ALTER/DROP DOMAIN wired (basic + WITH blocks); advanced domain kinds + enforcement pending
+**Last Updated:** 2026-01-02
+**Overall Status:** ⚠️ IN PROGRESS - V2 full domain kinds wired (BASIC/RECORD/ENUM/SET/VARIANT) with dialect/compat/collation/inherits; remaining v1 AST + semantic validation + emulated parser coverage + conflict opcodes
 
 ---
 
@@ -12,8 +12,8 @@
 | Phase | Status | Details |
 |-------|--------|---------|
 | **Specification** | ✅ COMPLETE | All specifications written and reviewed |
-| **Prerequisites** | ⚠️ PARTIAL | Plan 02B resolved; Plan 03B in progress |
-| **Implementation** | ⚠️ IN PROGRESS | CREATE/ALTER/DROP DOMAIN (basic + WITH blocks) wired in v2 pipeline |
+| **Prerequisites** | ✅ COMPLETE | Plan 02B resolved; Plan 03B complete (verification pending) |
+| **Implementation** | ⚠️ IN PROGRESS | CREATE/ALTER/DROP + advanced domain kinds wired in v2 pipeline; semantic validation + emulated parsers pending |
 
 ---
 
@@ -110,25 +110,52 @@
    - SBLR domain payload spec added
    - Parser/bytecode tests added for WITH blocks + ALTER/DROP DOMAIN
 
+### ✅ Phase 5: Advanced Domain Types + Payload Alignment (2026-01-01)
+
+1. **Advanced Domain Types Wired (V2)** ✅
+   - RECORD/ENUM/SET/VARIANT parsing + schema-qualified types
+   - INHERITS, COLLATE, WITH DIALECT/COMPAT, WITH OPTIONS (ENUM WRAP)
+   - Type references for domain-typed fields/elements
+
+2. **Domain Catalog & Serialization Updates** ✅
+   - DomainTypeRef for SET/VARIANT payloads
+   - Dialect/compat persisted + default tag
+   - Record field defaults stored in domain fields payload
+
+3. **SBLR + Executor Updates** ✅
+   - EXT_CREATE_DOMAIN payloads updated for all domain kinds
+   - Executor reads domain kind/type refs and persists options
+   - SHOW DOMAIN renders SET/VARIANT type refs
+
+4. **Tests Added/Updated** ✅
+   - Parser tests for RECORD/ENUM/SET/VARIANT + INHERITS/COLLATE
+   - Bytecode tests for all domain kinds
+   - Dialect/compat persistence in domain reload test
+
+### ✅ Phase 6: Domain Enforcement Pipeline Corrections (2026-01-02)
+
+1. **DML Constraint Enforcement** ✅
+   - INSERT/UPDATE now call `DomainManager::validateValue` for domain CHECK/NOT NULL/inherited constraints
+
 ---
 
 ## Current Dependencies
 
 ### 🟡 Dependency #1: Plan 03B Domain Infrastructure
 
-**Status:** PARTIAL - Global uniqueness done; remaining WITH block infrastructure pending
-**Severity:** CRITICAL
+**Status:** ✅ COMPLETE (verification pending external runner)
+**Severity:** RESOLVED
 
 **Why it matters:**
 - WITH blocks (SECURITY/INTEGRITY/VALIDATION/QUALITY) require the Plan 03B infrastructure.
 - Domain enforcement depends on audit, masking, validation, and quality pipelines.
 
 **Dependencies:**
-- Plan 03B (Domain Infrastructure) - 138-192 hours
+- Plan 03B (Domain Infrastructure) - COMPLETE
 
 **Note:** Plan 02B (Schema/Database DDL) is now core complete; remaining alignment/testing is tracked separately.
 
-**Status Update:** Plan 03B enforcement work is pending; parser/bytecode/executor wiring is complete.
+**Status Update:** Plan 03B enforcement work is complete; domain DDL wiring uses the enforcement pipeline.
 
 **Detailed Analysis:** `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md`
 
@@ -156,14 +183,14 @@
 
 ### Plan 03B: Domain Infrastructure (138-192 hours)
 
-**Status:** IN PROGRESS - Global uniqueness + domain uniqueness integration complete
+**Status:** COMPLETE (verification pending external runner)
 **Assigned To:** This AI (Plan 04 team)
 **Dependencies:** Plan 02B core complete; remaining alignment/testing can proceed in parallel
 
 **Key Components:**
 - ✅ Specification complete (35 tasks defined)
-- ⚠️ Implementation in progress (masking/uniqueness complete; normalization/validation/quality pending)
-- ❌ Testing not started
+- ✅ Implementation complete (masking/encryption/normalization/validation/quality/uniqueness)
+- ⚠️ Verification pending external runner
 
 ### Plan 02B: Schema/Database DDL (60-80 hours)
 
@@ -182,11 +209,12 @@
 
 ## Next Steps
 
-1. Finish Plan 03B enforcement work (normalization, validation, quality pipeline).
-2. Complete remaining Plan 04 items (advanced domain types, dialect/compat, executor enforcement).
-3. Track remaining Plan 02B alignment/testing items (path defaults, cascade semantics, tests).
+1. Finish v1 AST updates for domain DDL (Create/Alter/Drop) and update AST printer.
+2. Complete semantic analyzer validation (type checks, inheritance cycles, dependency checks).
+3. Finish emulated parser coverage + guardrails (Firebird/PostgreSQL/MySQL).
+4. Track remaining Plan 02B alignment/testing items (path defaults, cascade semantics, tests).
 
-**Timeline:** 138-192 hours before Plan 04 starts (Plan 03B).
+**Timeline:** Remaining work is validation + v1/emulated parser coverage + alignment tests.
 
 ---
 

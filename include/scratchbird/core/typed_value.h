@@ -33,6 +33,8 @@ namespace scratchbird::core
      */
     class TypedValue
     {
+        friend class GlobalUniquenessIndex;
+
     public:
         // Constructors
         TypedValue();  // NULL value
@@ -215,7 +217,7 @@ namespace scratchbird::core
         bool equals(const TypedValue& other) const { return *this == other; }
         static TypedValue makeInt8(int8_t value) { return makeInt32(value); }
         static TypedValue makeInt16(int16_t value) { return makeInt32(value); }
-        static TypedValue makeJSON(const std::string& value) { return makeText(value); }
+        static TypedValue makeJSON(const std::string& value);
 
         // Encryption support
         bool isEncrypted() const { return is_encrypted_; }

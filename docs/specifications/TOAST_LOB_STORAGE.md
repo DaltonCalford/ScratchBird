@@ -35,7 +35,7 @@ TOAST (The Oversized-Attribute Storage Technique) is a mechanism for storing lar
 
 ```cpp
 constexpr uint32_t TOAST_TUPLE_THRESHOLD = 2000;  // 2KB
-constexpr uint32_t TOAST_MAX_CHUNK_SIZE = 1996;   // ~2KB chunks
+constexpr uint32_t TOAST_MAX_CHUNK_SIZE = 1996;   // Legacy 8KB default; dynamic sizing uses ToastSettings
 ```
 
 Values larger than `TOAST_TUPLE_THRESHOLD` or 1/4 of the page size are candidates for TOASTing.
@@ -57,13 +57,11 @@ struct ToastPointer {
 
 Each regular table can have an associated TOAST table named `pg_toast_<table_id>` with chunks stored as tuples.
 
-**TOAST Chunk Format** (MGA-Compliant, 28-byte header):
+**TOAST Chunk Format** (MGA-Compliant, TupleHeader + metadata):
 
 ```cpp
 struct ToastChunk {
-    // MGA Transaction Fields (16 bytes)
-    uint64_t xmin;           // Creating transaction ID
-    uint64_t xmax;           // Deleting transaction ID (0 = not deleted)
+    TupleHeader header;      // MGA/TIP visibility metadata
 
     // TOAST Metadata (12 bytes)
     uint32_t value_id;       // TOAST value ID
@@ -75,11 +73,11 @@ struct ToastChunk {
 };
 ```
 
-**Total Header Size**: 28 bytes (xmin + xmax + value_id + chunk_seq + chunk_size)
+**Total Header Size**: sizeof(TupleHeader) + 12 bytes (TupleHeader + chunk metadata)
 
 **Key MGA Compliance Features**:
-- **xmin**: Transaction that created this chunk (for visibility)
-- **xmax**: Transaction that deleted this chunk (0 = active, non-zero = deleted)
+- **header.xmin**: Transaction that created this chunk (for visibility)
+- **header.xmax**: Transaction that deleted this chunk (0 = active, non-zero = deleted)
 - **TIP-based visibility**: Chunk visibility determined by TIP state, NOT snapshots
 - **Independent lifecycle**: Each chunk is independently versioned
 

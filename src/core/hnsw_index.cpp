@@ -166,7 +166,7 @@ std::unique_ptr<HnswIndex> HnswIndex::open(Database *db,
         return nullptr;
     }
 
-    SBHnswIndex index_info;
+    SBHnswIndex index_info{};
     std::memcpy(index_info.idx_uuid.bytes.data(), index_uuid.bytes.data(), 16);
     index_info.idx_root_page = root_page;
     index_info.idx_m = 16;
@@ -174,6 +174,39 @@ std::unique_ptr<HnswIndex> HnswIndex::open(Database *db,
     index_info.idx_ef_search = 100;
     index_info.idx_dimensions = 1536; // Default for OpenAI embeddings
     index_info.idx_distance_metric = static_cast<uint8_t>(DistanceMetric::EUCLIDEAN);
+
+    BufferPool *buffer_pool = db->buffer_pool();
+    if (!buffer_pool)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Missing buffer pool");
+        return nullptr;
+    }
+
+    void *page_buffer = nullptr;
+    Status status = buffer_pool->pinPage(root_page, &page_buffer, ctx);
+    if (status != Status::OK || !page_buffer)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Failed to pin HNSW root page");
+        return nullptr;
+    }
+
+    SBHnswPage *root = reinterpret_cast<SBHnswPage*>(page_buffer);
+    if (std::memcmp(root->hnsw_index_uuid.bytes.data(),
+                    index_uuid.bytes.data(), 16) != 0)
+    {
+        buffer_pool->unpinPage(root_page, false, ctx);
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "HNSW root page does not match index UUID");
+        return nullptr;
+    }
+
+    index_info.idx_table_uuid = root->hnsw_table_uuid;
+    index_info.idx_m = root->hnsw_m;
+    index_info.idx_dimensions = root->hnsw_dimensions;
+    index_info.idx_total_nodes = root->hnsw_total_nodes;
+    index_info.idx_creation_xid = root->hnsw_xmin;
+    index_info.idx_distance_metric = root->hnsw_distance_metric;
+
+    buffer_pool->unpinPage(root_page, false, ctx);
 
     return std::make_unique<HnswIndex>(db, index_info);
 }

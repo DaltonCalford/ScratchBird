@@ -2,53 +2,57 @@
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/query_compiler_v2.h"
 
-
-#include "scratchbird/parser/ast.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/storage_engine.h"
+#include "scratchbird/core/error_context.h"
+#include "test_helpers.h"
 #include <memory>
 
 using namespace scratchbird;
 using namespace scratchbird::sblr;
-using namespace scratchbird::parser;
+using namespace scratchbird::testing;
 
 class JSONIntegrationTest : public ::testing::Test
 {
 protected:
     std::unique_ptr<core::Database> db_;
     std::unique_ptr<Executor> executor_;
+    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<TestDatabaseFile> db_file_;
 
     void SetUp() override
     {
-        // Create a test database
-        db_ = std::make_unique<core::Database>("test_json.db");
+        db_file_ = std::make_unique<TestDatabaseFile>("test_json");
+
+        core::ErrorContext ctx;
+        auto status = core::Database::create(db_file_->path(), 16384, &ctx);
+        ASSERT_EQ(status, core::Status::OK) << ctx.message;
+
+        db_ = std::make_unique<core::Database>();
+        status = db_->open(db_file_->path(), &ctx);
+        ASSERT_EQ(status, core::Status::OK) << ctx.message;
+
         executor_ = std::make_unique<Executor>(db_.get());
+        compiler_ = std::make_unique<QueryCompilerV2>(db_.get());
     }
 
     void TearDown() override
     {
+        compiler_.reset();
         executor_.reset();
         db_.reset();
-        // Clean up test database file
-        std::remove("test_json.db");
+        db_file_.reset();
     }
 
     // Helper to execute SQL and return result
     ExecutionResult executeSQL(const std::string& sql)
     {
-        Lexer lexer(sql);
-        ASTArena arena;
-        Parser parser(lexer, arena);
-        auto parse_result = parser.parseStatement();
-
-        if (!parse_result.success()) {
-            return ExecutionResult("Parse error");
+        auto result = compiler_->compile(sql);
+        if (!result.success()) {
+            return ExecutionResult("Compile error");
         }
 
-        BytecodeGenerator generator(db_.get());
-        auto bytecode = generator.generate(parse_result.statement());
-
-        return executor_->execute(bytecode);
+        return executor_->execute(result.bytecode());
     }
 };
 

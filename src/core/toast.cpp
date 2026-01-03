@@ -6,6 +6,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/btree.h"
 #include "scratchbird/core/compression.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/logger.h"
@@ -64,29 +65,58 @@ namespace scratchbird::core
 
     auto ToastManager::initializeNextValueId(ErrorContext *ctx) -> Status
     {
-        StorageEngine *storage = db_->storage_engine();
-
-        // Scan TOAST table to find maximum value_id
-        auto scan = storage->createScan(toast_table_id_, ctx);
-        if (!scan)
+        CatalogManager *catalog = db_->catalog_manager();
+        if (catalog == nullptr)
         {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Failed to scan TOAST table");
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "CatalogManager not available");
             return Status::INVALID_ARGUMENT;
         }
 
-        uint32_t max_value_id = 0;
-        Tuple tuple;
-        Status status;
-        while ((status = scan->next(&tuple, ctx)) == Status::OK)
+        // Use the TOAST index to find the maximum chunk_id without heap scans.
+        std::string toast_name = "sb_toast_" + table_id_.toString();
+        std::string index_name = toast_name + "_idx";
+        CatalogManager::IndexInfo index_info;
+        Status status = catalog->getIndex(toast_table_id_, index_name, index_info, ctx);
+        if (status != Status::OK)
         {
-            // Parse tuple format: chunk_id | chunk_seq | chunk_size | data
-            if ((tuple.data != nullptr) && tuple.data_size >= 4)
+            next_value_id_ = 1;
+            return Status::OK;
+        }
+
+        SBBTreeIndex btree_info;
+        btree_info.idx_uuid = index_info.index_id;
+        btree_info.idx_table_uuid = index_info.table_id;
+        btree_info.idx_root_page = index_info.root_page;
+
+        BTree btree(db_, btree_info);
+        auto iter = btree.rangeScan(nullptr, nullptr, 0, true, true, ctx);
+        if (!iter)
+        {
+            next_value_id_ = 1;
+            return Status::OK;
+        }
+
+        uint32_t max_value_id = 0;
+        std::vector<uint8_t> key;
+        TID tid;
+        while (iter->hasNext())
+        {
+            Status next_status = iter->next(&key, &tid, ctx);
+            if (next_status != Status::OK)
             {
-                uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(tuple.data);
-                if (chunk_id > max_value_id)
-                {
-                    max_value_id = chunk_id;
-                }
+                break;
+            }
+
+            if (key.size() < sizeof(uint32_t))
+            {
+                continue;
+            }
+
+            uint32_t chunk_id = 0;
+            std::memcpy(&chunk_id, key.data(), sizeof(uint32_t));
+            if (chunk_id > max_value_id)
+            {
+                max_value_id = chunk_id;
             }
         }
 
@@ -104,14 +134,30 @@ namespace scratchbird::core
         // TOAST table naming convention: sb_toast_<table_id>
         std::string toast_name = "sb_toast_" + table_id_.toString();
 
-        // Get the schema of the parent table first
+        // Get the schema of the parent table first (policy TOAST uses a sys fallback).
         CatalogManager::TableInfo parent_info;
         Status status = catalog->getTable(table_id_, parent_info, ctx);
         if (status != Status::OK)
         {
-            // If we can't get parent table info, something is wrong
-            SET_ERROR_CONTEXT(ctx, status, "Failed to get parent table info");
-            return status;
+            if (catalog && table_id_ == catalog->policyToastTableId())
+            {
+                CatalogManager::SchemaInfo schema_info;
+                Status schema_status = catalog->getSchema("sys", schema_info, ctx);
+                if (schema_status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, schema_status,
+                                      "Failed to resolve sys schema for policy TOAST");
+                    return schema_status;
+                }
+                parent_info.schema_id = schema_info.schema_id;
+                parent_info.tablespace_id = 0;
+            }
+            else
+            {
+                // If we can't get parent table info, something is wrong
+                SET_ERROR_CONTEXT(ctx, status, "Failed to get parent table info");
+                return status;
+            }
         }
 
         CatalogManager::TableInfo info;
@@ -133,10 +179,11 @@ namespace scratchbird::core
         }
 
         // Create TOAST table if it doesn't exist
-        return createToastTable(ctx);
+        return createToastTableWithParent(parent_info.schema_id, parent_info.tablespace_id, ctx);
     }
 
-    auto ToastManager::createToastTable(ErrorContext *ctx) -> Status
+    auto ToastManager::createToastTableWithParent(const ID& schema_id, uint16_t tablespace_id,
+                                                 ErrorContext *ctx) -> Status
     {
         CatalogManager *catalog = db_->catalog_manager();
 
@@ -176,18 +223,9 @@ namespace scratchbird::core
 
         std::string toast_name = "sb_toast_" + table_id_.toString();
 
-        // Get the schema of the parent table
-        CatalogManager::TableInfo parent_info;
-        Status status = catalog->getTable(table_id_, parent_info, ctx);
-        if (status != Status::OK)
-        {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to get parent table info");
-            return status;
-        }
-
         // Create TOAST table in same tablespace as parent (Phase 2 Task 2.3)
-        status = catalog->createTable(parent_info.schema_id, toast_name, columns, toast_table_id_,
-                                      parent_info.tablespace_id, ctx);
+        Status status = catalog->createTable(schema_id, toast_name, columns, toast_table_id_,
+                                             tablespace_id, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to create TOAST table");
@@ -202,7 +240,7 @@ namespace scratchbird::core
         std::string index_name = toast_name + "_idx";
         // Create TOAST index in same tablespace as parent (Phase 2 Task 2.3)
         status = catalog->createIndex(toast_table_id_, index_name, index_columns, index_id, false,
-                                      IndexType::BTREE, parent_info.tablespace_id, ctx);
+                                      IndexType::BTREE, tablespace_id, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status,
@@ -213,12 +251,31 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto ToastManager::createToastTable(ErrorContext *ctx) -> Status
+    {
+        CatalogManager *catalog = db_->catalog_manager();
+
+        // Get the schema of the parent table
+        CatalogManager::TableInfo parent_info;
+        Status status = catalog->getTable(table_id_, parent_info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to get parent table info");
+            return status;
+        }
+
+        return createToastTableWithParent(parent_info.schema_id, parent_info.tablespace_id, ctx);
+    }
+
     auto ToastManager::toastValue(const uint8_t *data, uint32_t size, ToastStrategy strategy,
                                   uint64_t xmin, ToastPointer *pointer_out, ErrorContext *ctx)
         -> Status
     {
         if ((data == nullptr) || (pointer_out == nullptr))
         {
+            LOG_ERROR(STORAGE, "ToastManager::toastValue null input: data=%p pointer=%p",
+                      static_cast<const void *>(data),
+                      static_cast<void *>(pointer_out));
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null pointer in toast_value");
             return Status::INVALID_ARGUMENT;
         }
@@ -248,16 +305,28 @@ namespace scratchbird::core
         {
             case ToastStrategy::PLAIN:
                 // Shouldn't happen - PLAIN means no TOAST
+                LOG_ERROR(STORAGE, "ToastManager::toastValue invalid strategy: PLAIN");
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "PLAIN strategy used for TOAST");
                 return Status::INVALID_ARGUMENT;
 
             case ToastStrategy::EXTENDED:
                 // Store out-of-line, uncompressed
                 pointer_out->va_extsize = size;
-                return writeToastChunks(value_id, data, size, xmin, ctx);
+                {
+                    Status status = writeToastChunks(value_id, data, size, xmin, ctx);
+                    if (status != Status::OK)
+                    {
+                        LOG_ERROR(STORAGE, "ToastManager::toastValue failed to write chunks (table=%s): %d %s",
+                                  toast_table_id_.toString().c_str(),
+                                  static_cast<int>(status),
+                                  ctx ? ctx->message.c_str() : "");
+                    }
+                    return status;
+                }
 
             case ToastStrategy::COMPRESSED:
                 // This strategy would store compressed inline - not for TOAST
+                LOG_ERROR(STORAGE, "ToastManager::toastValue invalid strategy: COMPRESSED");
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                   "COMPRESSED strategy not supported for TOAST");
                 return Status::INVALID_ARGUMENT;
@@ -272,14 +341,26 @@ namespace scratchbird::core
                     // Fall back to uncompressed
                     pointer_out->va_tag = static_cast<uint8_t>(ToastStrategy::EXTENDED);
                     pointer_out->va_extsize = size;
-                    return writeToastChunks(value_id, data, size, xmin, ctx);
+                {
+                    Status status = writeToastChunks(value_id, data, size, xmin, ctx);
+                    if (status != Status::OK)
+                    {
+                        LOG_ERROR(STORAGE, "ToastManager::toastValue failed to write chunks (table=%s): %d %s",
+                                  toast_table_id_.toString().c_str(),
+                                  static_cast<int>(status),
+                                  ctx ? ctx->message.c_str() : "");
+                    }
+                    return status;
                 }
+            }
 
                 pointer_out->va_extsize = compressed.size();
                 return writeToastChunks(value_id, compressed.data(), compressed.size(), xmin, ctx);
             }
 
             default:
+                LOG_ERROR(STORAGE, "ToastManager::toastValue invalid strategy: %u",
+                          static_cast<unsigned int>(strategy));
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Unknown TOAST strategy");
                 return Status::INVALID_ARGUMENT;
         }
@@ -379,12 +460,14 @@ namespace scratchbird::core
         while ((status = scan->next(&tuple, ctx)) == Status::OK)
         {
             // Parse tuple to verify it's for our value_id
-            if ((tuple.data == nullptr) || tuple.data_size < 4)
+            if ((tuple.data == nullptr) ||
+                tuple.data_size < sizeof(TupleHeader) + sizeof(uint32_t))
             {
                 continue;
             }
 
-            uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(tuple.data);
+            const uint8_t *ptr = tuple.data + sizeof(TupleHeader);
+            uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(ptr);
             if (chunk_id != value_id)
             {
                 // We've moved past our value_id in the index
@@ -425,12 +508,14 @@ namespace scratchbird::core
         Status status;
         while ((status = scan->next(&tuple, ctx)) == Status::OK)
         {
-            if ((tuple.data == nullptr) || tuple.data_size < 4)
+            if ((tuple.data == nullptr) ||
+                tuple.data_size < sizeof(TupleHeader) + sizeof(uint32_t))
             {
                 continue;
             }
 
-            uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(tuple.data);
+            const uint8_t *ptr = tuple.data + sizeof(TupleHeader);
+            uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(ptr);
             if (chunk_id == value_id)
             {
                 // MGA-compliant soft delete: Update xmax field only (do not mark item pointer as deleted)
@@ -537,6 +622,12 @@ namespace scratchbird::core
             return Status::OUT_OF_RANGE;
         }
 
+        uint64_t effective_xmin = xmin;
+        if (effective_xmin == 0)
+        {
+            effective_xmin = storage->getCurrentXid();
+        }
+
         // Split data into chunks
         uint32_t chunks_needed = (size + max_chunk_size - 1) / max_chunk_size;
         uint32_t offset = 0;
@@ -558,20 +649,26 @@ namespace scratchbird::core
 
             uint32_t chunk_size = std::min(max_chunk_size, size - offset);
 
-            // Build tuple data with Firebird MGA compliance
-            // Format: xmin (8) | xmax (8) | chunk_id (4) | chunk_seq (4) | chunk_size (4) | data
-            // 28-byte header + data
+            // Build tuple data with TupleHeader + TOAST chunk metadata
+            // Format: TupleHeader | chunk_id (4) | chunk_seq (4) | chunk_size (4) | data
             std::vector<uint8_t> tuple_data;
-            tuple_data.reserve(28 + chunk_size);
+            tuple_data.reserve(sizeof(TupleHeader) + 12 + chunk_size);
 
-            // Add xmin (transaction that created this chunk) - Firebird MGA
-            tuple_data.insert(tuple_data.end(), reinterpret_cast<const uint8_t *>(&xmin),
-                              reinterpret_cast<const uint8_t *>(&xmin) + 8);
+            TupleHeader toast_hdr{};
+            toast_hdr.xmin = effective_xmin;
+            toast_hdr.xmax = 0;
+            toast_hdr.back_version_gpid = INVALID_GPID;
+            toast_hdr.back_version_slot = 0;
+            toast_hdr.reserved1 = 0;
+            toast_hdr.ctid_gpid = INVALID_GPID;
+            toast_hdr.ctid_slot = 0;
+            toast_hdr.infomask = 0;
+            toast_hdr.null_bitmap_offset = 0;
+            toast_hdr.padding = 0;
 
-            // Add xmax (initially 0 - not deleted) - Firebird MGA
-            uint64_t xmax_value = 0;
-            tuple_data.insert(tuple_data.end(), reinterpret_cast<const uint8_t *>(&xmax_value),
-                              reinterpret_cast<const uint8_t *>(&xmax_value) + 8);
+            tuple_data.insert(tuple_data.end(),
+                              reinterpret_cast<const uint8_t *>(&toast_hdr),
+                              reinterpret_cast<const uint8_t *>(&toast_hdr) + sizeof(TupleHeader));
 
             // Add chunk_id
             uint32_t id = value_id;
@@ -623,8 +720,10 @@ namespace scratchbird::core
         CatalogManager *catalog = db_->catalog_manager();
         BufferPool *buffer_pool = db_->buffer_pool();
 
-        // Use page-size-based chunk size for validation
+        // Use page-size-based chunk size for validation (allow legacy chunk sizing)
         uint32_t max_chunk_size = ToastSettings::getMaxChunkSize(db_->page_size());
+        uint32_t max_chunk_size_allowed = std::max(
+            max_chunk_size, ToastSettings::getLegacyMaxChunkSize(db_->page_size()));
 
         // Get the index ID for the TOAST table
         std::string toast_name = "sb_toast_" + table_id_.toString();
@@ -634,6 +733,12 @@ namespace scratchbird::core
         if (status != Status::OK)
         {
             // Fall back to heap scan if index not found
+            return readToastChunksHeapScan(value_id, data_out, xmin, ctx);
+        }
+        // The index scan only supports exact key lookup. For composite keys, we
+        // cannot search by prefix (chunk_id) yet, so fall back to heap scan.
+        if (index_info.column_ids.size() != 1)
+        {
             return readToastChunksHeapScan(value_id, data_out, xmin, ctx);
         }
 
@@ -653,8 +758,7 @@ namespace scratchbird::core
         status = scan->seek(key, ctx);
         if (status != Status::OK)
         {
-            SET_ERROR_CONTEXT(ctx, status, "TOAST value not found");
-            return status;
+            return readToastChunksHeapScan(value_id, data_out, xmin, ctx);
         }
 
         // ========================================================================
@@ -674,8 +778,7 @@ namespace scratchbird::core
 
         if (chunk_tids.empty())
         {
-            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "TOAST value not found");
-            return Status::NOT_FOUND;
+            return readToastChunksHeapScan(value_id, data_out, xmin, ctx);
         }
 
         // ========================================================================
@@ -712,24 +815,20 @@ namespace scratchbird::core
                 continue; // Skip failed reads
             }
 
-            // Parse tuple format: xmin (8) | xmax (8) | chunk_id (4) | chunk_seq (4) | chunk_size (4) | data
-            // 28-byte header + data (Firebird MGA compliant)
-            if ((tuple.data == nullptr) || tuple.data_size < 28)
+            // Parse tuple format: TupleHeader | chunk_id | chunk_seq | chunk_size | data
+            if ((tuple.data == nullptr) ||
+                tuple.data_size < sizeof(TupleHeader) + 12)
             {
                 continue;
             }
 
             const uint8_t *ptr = tuple.data;
+            auto *tuple_hdr = reinterpret_cast<const TupleHeader *>(ptr);
+            uint64_t chunk_xmin = tuple_hdr->xmin;
+            uint64_t chunk_xmax = tuple_hdr->xmax;
+            ptr += sizeof(TupleHeader);
 
-            // Parse xmin (bytes 0-7) - Firebird MGA
-            uint64_t chunk_xmin = *reinterpret_cast<const uint64_t *>(ptr);
-            ptr += 8;
-
-            // Parse xmax (bytes 8-15) - Firebird MGA
-            uint64_t chunk_xmax = *reinterpret_cast<const uint64_t *>(ptr);
-            ptr += 8;
-
-            // Parse chunk_id (bytes 16-19)
+            // Parse chunk_id
             uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(ptr);
 
             if (chunk_id != value_id)
@@ -739,25 +838,29 @@ namespace scratchbird::core
             }
 
             ptr += 4;
-            // Parse chunk_seq (bytes 20-23)
+            // Parse chunk_seq
             uint32_t chunk_seq = *reinterpret_cast<const uint32_t *>(ptr);
             ptr += 4;
-            // Parse chunk_size (bytes 24-27)
+            // Parse chunk_size
             uint32_t chunk_size = *reinterpret_cast<const uint32_t *>(ptr);
             ptr += 4;
 
             // Validate chunk size against page-size-based maximum
-            if (chunk_size > max_chunk_size || 28 + chunk_size > tuple.data_size)
+            if (chunk_size > max_chunk_size_allowed ||
+                sizeof(TupleHeader) + 12 + chunk_size > tuple.data_size)
             {
                 continue;
             }
 
-            // Phase 2: TIP-based visibility check (Firebird MGA)
-            // Check if this chunk is visible to the current transaction
-            TransactionManager *tm = db_->transaction_manager();
-            if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax, xmin, tm))
+            if (xmin != 0)
             {
-                continue; // Skip invisible chunk
+                // Phase 2: TIP-based visibility check (Firebird MGA)
+                // Check if this chunk is visible to the current transaction
+                TransactionManager *tm = db_->transaction_manager();
+                if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax, xmin, tm))
+                {
+                    continue; // Skip invisible chunk
+                }
             }
 
             // Extract chunk data
@@ -769,8 +872,7 @@ namespace scratchbird::core
 
         if (chunks.empty())
         {
-            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "TOAST value not found");
-            return Status::NOT_FOUND;
+            return readToastChunksHeapScan(value_id, data_out, xmin, ctx);
         }
 
         // Sort chunks by sequence number (index should return them in order, but be safe)
@@ -794,6 +896,8 @@ namespace scratchbird::core
 
         // Use page-size-based chunk size for validation
         uint32_t max_chunk_size = ToastSettings::getMaxChunkSize(db_->page_size());
+        uint32_t max_chunk_size_allowed = std::max(
+            max_chunk_size, ToastSettings::getLegacyMaxChunkSize(db_->page_size()));
 
         // Scan TOAST table for chunks with this value_id
         // In a real implementation, we'd use an index
@@ -816,24 +920,20 @@ namespace scratchbird::core
         Status status;
         while ((status = scan->next(&tuple, ctx)) == Status::OK)
         {
-            // Parse tuple format: xmin (8) | xmax (8) | chunk_id (4) | chunk_seq (4) | chunk_size (4) | data
-            // 28-byte header + data (Firebird MGA compliant)
-            if ((tuple.data == nullptr) || tuple.data_size < 28)
+            // Parse tuple format: TupleHeader | chunk_id | chunk_seq | chunk_size | data
+            if ((tuple.data == nullptr) ||
+                tuple.data_size < sizeof(TupleHeader) + 12)
             {
                 continue;
             }
 
             const uint8_t *ptr = tuple.data;
+            auto *tuple_hdr = reinterpret_cast<const TupleHeader *>(ptr);
+            uint64_t chunk_xmin = tuple_hdr->xmin;
+            uint64_t chunk_xmax = tuple_hdr->xmax;
+            ptr += sizeof(TupleHeader);
 
-            // Parse xmin (bytes 0-7) - Firebird MGA
-            uint64_t chunk_xmin = *reinterpret_cast<const uint64_t *>(ptr);
-            ptr += 8;
-
-            // Parse xmax (bytes 8-15) - Firebird MGA
-            uint64_t chunk_xmax = *reinterpret_cast<const uint64_t *>(ptr);
-            ptr += 8;
-
-            // Parse chunk_id (bytes 16-19)
+            // Parse chunk_id
             uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(ptr);
             ptr += 4;
 
@@ -842,24 +942,28 @@ namespace scratchbird::core
                 continue;
             }
 
-            // Parse chunk_seq (bytes 20-23)
+            // Parse chunk_seq
             uint32_t chunk_seq = *reinterpret_cast<const uint32_t *>(ptr);
             ptr += 4;
 
-            // Parse chunk_size (bytes 24-27)
+            // Parse chunk_size
             uint32_t chunk_size = *reinterpret_cast<const uint32_t *>(ptr);
             ptr += 4;
 
-            // Phase 2: TIP-based visibility check (Firebird MGA)
-            // Check if this chunk is visible to the current transaction
-            TransactionManager *tm = db_->transaction_manager();
-            if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax, xmin, tm))
+            if (xmin != 0)
             {
-                continue; // Skip invisible chunk
+                // Phase 2: TIP-based visibility check (Firebird MGA)
+                // Check if this chunk is visible to the current transaction
+                TransactionManager *tm = db_->transaction_manager();
+                if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax, xmin, tm))
+                {
+                    continue; // Skip invisible chunk
+                }
             }
 
             // Validate chunk size against page-size-based maximum
-            if (chunk_size > max_chunk_size || 28 + chunk_size > tuple.data_size)
+            if (chunk_size > max_chunk_size_allowed ||
+                sizeof(TupleHeader) + 12 + chunk_size > tuple.data_size)
             {
                 continue;
             }

@@ -439,9 +439,25 @@ TypeName Parser::parseTypeName() {
 
     TypeName type;
 
+    if (state_.check(TokenType::DOT) || state_.check(TokenType::DOUBLE_DOT) ||
+        state_.check(TokenType::EXCLAIM_COLON)) {
+        type.schema_path = parseSchemaPath(state_);
+        type.has_schema_path = true;
+        type.span = makeSpan(start);
+        return type;
+    }
+
     // Type name (contextual keyword)
     if (!isIdentifier()) {
         error("Expected data type name");
+        return type;
+    }
+
+    Token next = state_.lexer().peekToken();
+    if (next.type == TokenType::DOT) {
+        type.schema_path = parseSchemaPath(state_);
+        type.has_schema_path = true;
+        type.span = makeSpan(start);
         return type;
     }
 
@@ -506,16 +522,30 @@ TypeName Parser::parseTypeName() {
         expect(TokenType::RIGHT_BRACKET, "Expected ']' after array size");
     }
 
-    // Check for WITH TIME ZONE (WITH is a Gatekeeper keyword)
-    if (match(TokenType::KW_WITH)) {
-        if (matchContextual("TIME")) {
+    auto peek_contextual = [&](const Token& token, const char* keyword) -> bool {
+        if (token.type != TokenType::IDENTIFIER) {
+            return false;
+        }
+        return caseInsensitiveEquals(stringPool().get(token.value.string_id), keyword);
+    };
+
+    // Check for WITH/WITHOUT TIME ZONE (don't consume unrelated WITH tokens)
+    if (check(TokenType::KW_WITH)) {
+        Token next = state_.lexer().peekToken();
+        if (peek_contextual(next, "TIME")) {
+            match(TokenType::KW_WITH);
+            expectContextual("TIME", "Expected TIME after WITH");
             expectContextual("ZONE", "Expected ZONE after WITH TIME");
             type.with_time_zone = true;
         }
-    } else if (matchContextual("WITHOUT")) {
-        matchContextual("TIME");
-        matchContextual("ZONE");
-        type.with_time_zone = false;
+    } else if (state_.checkContextual("WITHOUT")) {
+        Token next = state_.lexer().peekToken();
+        if (peek_contextual(next, "TIME")) {
+            matchContextual("WITHOUT");
+            expectContextual("TIME", "Expected TIME after WITHOUT");
+            matchContextual("ZONE");
+            type.with_time_zone = false;
+        }
     }
 
     type.span = makeSpan(start);
@@ -698,6 +728,11 @@ void Parser::parseDomainIntegrityBlock(CreateDomainStmt* stmt) {
             auto id = currentIdentifier();
             return std::string(stringPool().get(id));
         }
+        if (isGatekeeperKeyword(current().type)) {
+            std::string text(state_.getTokenText(current()));
+            advance();
+            return text;
+        }
         error("Expected identifier or string literal");
         return {};
     };
@@ -772,6 +807,11 @@ void Parser::parseDomainSecurityBlock(CreateDomainStmt* stmt) {
             auto id = currentIdentifier();
             return std::string(stringPool().get(id));
         }
+        if (isGatekeeperKeyword(current().type)) {
+            std::string text(state_.getTokenText(current()));
+            advance();
+            return text;
+        }
         error("Expected identifier or string literal");
         return {};
     };
@@ -832,6 +872,11 @@ void Parser::parseDomainValidationBlock(CreateDomainStmt* stmt) {
             auto id = currentIdentifier();
             return std::string(stringPool().get(id));
         }
+        if (isGatekeeperKeyword(current().type)) {
+            std::string text(state_.getTokenText(current()));
+            advance();
+            return text;
+        }
         error("Expected identifier or string literal");
         return {};
     };
@@ -875,6 +920,11 @@ void Parser::parseDomainQualityBlock(CreateDomainStmt* stmt) {
             auto id = currentIdentifier();
             return std::string(stringPool().get(id));
         }
+        if (isGatekeeperKeyword(current().type)) {
+            std::string text(state_.getTokenText(current()));
+            advance();
+            return text;
+        }
         error("Expected identifier or string literal");
         return {};
     };
@@ -902,6 +952,43 @@ void Parser::parseDomainQualityBlock(CreateDomainStmt* stmt) {
     }
 
     expect(TokenType::RIGHT_PAREN, "Expected ')' after WITH QUALITY options");
+}
+
+void Parser::parseDomainOptionsBlock(CreateDomainStmt* stmt) {
+    if (!stmt) {
+        return;
+    }
+
+    expect(TokenType::LEFT_PAREN, "Expected '(' after WITH OPTIONS");
+
+    auto parse_bool = [&]() -> bool {
+        if (match(TokenType::KW_TRUE)) {
+            return true;
+        }
+        if (match(TokenType::KW_FALSE)) {
+            return false;
+        }
+        error("Expected TRUE or FALSE");
+        return false;
+    };
+
+    while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+        if (matchContextual("WRAP")) {
+            expect(TokenType::EQUAL, "Expected '=' after WRAP");
+            stmt->enum_wrap = parse_bool();
+        } else {
+            error("Unknown WITH OPTIONS entry for CREATE DOMAIN");
+            while (!check(TokenType::COMMA) && !check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+                advance();
+            }
+        }
+
+        if (!match(TokenType::COMMA)) {
+            break;
+        }
+    }
+
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after WITH OPTIONS options");
 }
 
 std::string Parser::extractExpressionText(Expression* expr) {
@@ -1318,6 +1405,7 @@ CreateDomainStmt* Parser::parseCreateDomain() {
     SourceLocation start = currentLocation();
 
     auto* stmt = arena_.create<CreateDomainStmt>();
+    // Spec: docs/specifications/DDL_DOMAINS_COMPREHENSIVE.md
 
     if (match(TokenType::KW_IF)) {
         expect(TokenType::KW_NOT, "Expected NOT after IF");
@@ -1333,34 +1421,196 @@ CreateDomainStmt* Parser::parseCreateDomain() {
     // Optional AS keyword
     match(TokenType::KW_AS);
 
-    stmt->base_type = parseTypeName();
+    if (matchContextual("RECORD")) {
+        stmt->domain_kind = DomainKind::RECORD;
+        expect(TokenType::LEFT_PAREN, "Expected '(' after RECORD");
+        while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+            SourceLocation field_start = currentLocation();
+            DomainRecordField field;
+            field.name = expectIdentifier("Expected field name");
+            field.type = parseTypeName();
 
-    stmt->constraints = parseDomainConstraints();
+            if (match(TokenType::KW_NOT)) {
+                expect(TokenType::KW_NULL, "Expected NULL after NOT");
+                field.nullable = false;
+            } else if (match(TokenType::KW_NULL)) {
+                field.nullable = true;
+            }
 
-    while (match(TokenType::KW_WITH)) {
-        if (matchContextual("INTEGRITY")) {
-            parseDomainIntegrityBlock(stmt);
-        } else if (matchContextual("SECURITY")) {
-            parseDomainSecurityBlock(stmt);
-        } else if (matchContextual("VALIDATION")) {
-            parseDomainValidationBlock(stmt);
-        } else if (matchContextual("QUALITY")) {
-            parseDomainQualityBlock(stmt);
+            if (match(TokenType::KW_DEFAULT)) {
+                Expression* expr = parseExpression();
+                field.default_value = extractExpressionText(expr);
+                field.has_default = true;
+            }
+
+            field.span = makeSpan(field_start);
+            stmt->record_fields.push_back(std::move(field));
+
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after RECORD fields");
+    } else if (matchContextual("ENUM")) {
+        stmt->domain_kind = DomainKind::ENUM;
+        expect(TokenType::LEFT_PAREN, "Expected '(' after ENUM");
+        while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+            SourceLocation value_start = currentLocation();
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected string literal for ENUM label");
+                break;
+            }
+            DomainEnumValue value;
+            value.label = current().value.string_id;
+            advance();
+            if (match(TokenType::EQUAL)) {
+                if (!check(TokenType::INTEGER_LITERAL)) {
+                    error("Expected integer position after '='");
+                } else {
+                    value.has_position = true;
+                    value.position = static_cast<int32_t>(current().value.int_value);
+                    advance();
+                }
+            }
+            value.span = makeSpan(value_start);
+            stmt->enum_values.push_back(std::move(value));
+
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after ENUM values");
+    } else if (match(TokenType::KW_SET) || matchContextual("SET")) {
+        stmt->domain_kind = DomainKind::SET;
+        expectContextual("OF", "Expected OF after SET");
+        stmt->set_element_type = parseTypeName();
+    } else if (matchContextual("VARIANT")) {
+        stmt->domain_kind = DomainKind::VARIANT;
+        expect(TokenType::LEFT_PAREN, "Expected '(' after VARIANT");
+        while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+            stmt->variant_allowed_types.push_back(parseTypeName());
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after VARIANT types");
+    } else {
+        stmt->domain_kind = DomainKind::BASIC;
+        stmt->base_type = parseTypeName();
+    }
+
+    if (matchContextual("INHERITS")) {
+        expect(TokenType::LEFT_PAREN, "Expected '(' after INHERITS");
+        stmt->parent_domain_path = parseSchemaPath(state_);
+        stmt->has_inherits = true;
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after INHERITS");
+    }
+
+    auto parse_option_string = [&]() -> std::string {
+        expect(TokenType::LEFT_PAREN, "Expected '('");
+        std::string out;
+        if (check(TokenType::STRING_LITERAL)) {
+            auto id = current().value.string_id;
+            out = std::string(stringPool().get(id));
+            advance();
+        } else if (isIdentifier()) {
+            auto id = currentIdentifier();
+            out = std::string(stringPool().get(id));
+            advance();
         } else {
-            error("WITH block type not supported for CREATE DOMAIN");
-            // Best-effort consume block for recovery
-            if (match(TokenType::LEFT_PAREN)) {
-                int depth = 1;
-                while (!isAtEnd() && depth > 0) {
-                    if (match(TokenType::LEFT_PAREN)) {
-                        depth++;
-                    } else if (match(TokenType::RIGHT_PAREN)) {
-                        depth--;
-                    } else {
-                        advance();
+            error("Expected identifier or string literal");
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')'");
+        return out;
+    };
+
+    while (true) {
+        bool parsed_any = false;
+
+        // Domain constraints and options (DEFAULT/NOT NULL/CHECK)
+        StringPool::StringId constraint_name = StringPool::INVALID_ID;
+        SourceLocation constraint_start = currentLocation();
+        if (matchContextual("CONSTRAINT")) {
+            constraint_name = expectIdentifier("Expected constraint name");
+        }
+
+        DomainConstraint constraint;
+        constraint.name = constraint_name;
+        bool found_constraint = false;
+
+        if (match(TokenType::KW_NOT)) {
+            expect(TokenType::KW_NULL, "Expected NULL after NOT");
+            constraint.type = DomainConstraintType::NOT_NULL;
+            found_constraint = true;
+        } else if (match(TokenType::KW_NULL)) {
+            constraint.type = DomainConstraintType::NULL_ALLOWED;
+            found_constraint = true;
+        } else if (matchContextual("CHECK")) {
+            expect(TokenType::LEFT_PAREN, "Expected '(' after CHECK");
+            Expression* expr = parseExpression();
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after CHECK expression");
+            constraint.type = DomainConstraintType::CHECK;
+            constraint.expression = extractExpressionText(expr);
+            found_constraint = true;
+        } else if (match(TokenType::KW_DEFAULT)) {
+            Expression* expr = parseExpression();
+            constraint.type = DomainConstraintType::DEFAULT;
+            constraint.expression = extractExpressionText(expr);
+            found_constraint = true;
+        }
+
+        if (found_constraint) {
+            constraint.span = makeSpan(constraint_start);
+            stmt->constraints.push_back(std::move(constraint));
+            parsed_any = true;
+        } else if (constraint_name != StringPool::INVALID_ID) {
+            error("Expected domain constraint after CONSTRAINT name");
+            parsed_any = true;
+        }
+
+        if (matchContextual("COLLATE")) {
+            stmt->has_collation = true;
+            stmt->collation_name = std::string(stringPool().get(expectIdentifier("Expected collation name")));
+            parsed_any = true;
+        }
+
+        if (match(TokenType::KW_WITH)) {
+            if (matchContextual("DIALECT")) {
+                stmt->dialect_tag = parse_option_string();
+                stmt->has_dialect = true;
+            } else if (matchContextual("COMPAT")) {
+                stmt->compat_name = parse_option_string();
+                stmt->has_compat = true;
+            } else if (matchContextual("INTEGRITY")) {
+                parseDomainIntegrityBlock(stmt);
+            } else if (matchContextual("SECURITY")) {
+                parseDomainSecurityBlock(stmt);
+            } else if (matchContextual("VALIDATION")) {
+                parseDomainValidationBlock(stmt);
+            } else if (matchContextual("QUALITY")) {
+                parseDomainQualityBlock(stmt);
+            } else if (matchContextual("OPTIONS")) {
+                parseDomainOptionsBlock(stmt);
+            } else {
+                error("WITH block type not supported for CREATE DOMAIN");
+                if (match(TokenType::LEFT_PAREN)) {
+                    int depth = 1;
+                    while (!isAtEnd() && depth > 0) {
+                        if (match(TokenType::LEFT_PAREN)) {
+                            depth++;
+                        } else if (match(TokenType::RIGHT_PAREN)) {
+                            depth--;
+                        } else {
+                            advance();
+                        }
                     }
                 }
             }
+            parsed_any = true;
+        }
+
+        if (!parsed_any) {
+            break;
         }
     }
 
@@ -2013,27 +2263,21 @@ SelectItem* Parser::parseSelectItem() {
 
     // Check for table.* (qualified star)
     if (isIdentifier()) {
-        // Look ahead for table.*
         SchemaPath path = parseSchemaPath(state_);
+        bool saw_trailing_dot = (previous().type == TokenType::DOT);
 
-        // parseSchemaPath consumes dots between identifiers, but stops when
-        // it sees a non-identifier after a dot. So if current token is STAR,
-        // it means the path ended with a dot followed by *
-        if (match(TokenType::STAR)) {
+        if (saw_trailing_dot && match(TokenType::STAR)) {
             item->item_type = SelectItem::Type::TABLE_STAR;
             item->table_path = std::move(path);
             item->span = makeSpan(start);
             return item;
         }
 
-        // Not table.*, so it's an expression starting with identifier
         item->item_type = SelectItem::Type::EXPRESSION;
-        // We need to convert path back to expression
+        Expression* left = nullptr;
         if (check(TokenType::LEFT_PAREN)) {
-            // Function call
-            item->expr = parseFunctionCall(std::move(path));
+            left = parseFunctionCall(std::move(path));
         } else {
-            // Column reference
             auto* colRef = arena_.create<ColumnRefExpr>();
             if (path.components.size() == 1) {
                 colRef->column.column_name = path.components[0];
@@ -2043,8 +2287,9 @@ SelectItem* Parser::parseSelectItem() {
                 colRef->column.table_path.type = path.type;
                 colRef->column.table_path.components = path.schemaComponents();
             }
-            item->expr = colRef;
+            left = colRef;
         }
+        item->expr = parseExpressionWithLeft(left);
     } else {
         // Parse expression
         item->item_type = SelectItem::Type::EXPRESSION;
@@ -2808,7 +3053,21 @@ Expression* Parser::parseArrayExpr() {
 // =============================================================================
 
 Expression* Parser::parseExpression() {
-    return parseOrExpr();
+    SourceLocation start = currentLocation();
+    Expression* expr = parseOrExpr();
+    if (expr && expr->span.length == 0) {
+        expr->span = makeSpan(start);
+    }
+    return expr;
+}
+
+Expression* Parser::parseExpressionWithLeft(Expression* left) {
+    SourceLocation start = currentLocation();
+    Expression* expr = parseOrExprWithLeft(left);
+    if (expr && expr->span.length == 0) {
+        expr->span = makeSpan(start);
+    }
+    return expr;
 }
 
 Expression* Parser::parseOrExpr() {
@@ -2825,8 +3084,36 @@ Expression* Parser::parseOrExpr() {
     return left;
 }
 
+Expression* Parser::parseOrExprWithLeft(Expression* left) {
+    left = parseAndExprWithLeft(left);
+
+    while (match(TokenType::KW_OR)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::OR;
+        expr->left = left;
+        expr->right = parseAndExpr();
+        left = expr;
+    }
+
+    return left;
+}
+
 Expression* Parser::parseAndExpr() {
     Expression* left = parseNotExpr();
+
+    while (match(TokenType::KW_AND)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::AND;
+        expr->left = left;
+        expr->right = parseNotExpr();
+        left = expr;
+    }
+
+    return left;
+}
+
+Expression* Parser::parseAndExprWithLeft(Expression* left) {
+    left = parseComparisonExprWithLeft(left);
 
     while (match(TokenType::KW_AND)) {
         auto* expr = arena_.create<BinaryExpr>();
@@ -2967,7 +3254,191 @@ Expression* Parser::parseComparisonExpr() {
         return parseLikeExpr(left);
     }
 
+    if (match(TokenType::TILDE)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::REGEX_MATCH;
+        expr->left = left;
+        expr->right = parseAddExpr();
+        return expr;
+    }
+    if (match(TokenType::TILDE_STAR)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::REGEX_MATCH_CI;
+        expr->left = left;
+        expr->right = parseAddExpr();
+        return expr;
+    }
+    if (match(TokenType::EXCLAIM_TILDE)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::REGEX_NOT_MATCH;
+        expr->left = left;
+        expr->right = parseAddExpr();
+        return expr;
+    }
+    if (match(TokenType::EXCLAIM_TILDE_STAR)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::REGEX_NOT_MATCH_CI;
+        expr->left = left;
+        expr->right = parseAddExpr();
+        return expr;
+    }
+
     // Comparison operators
+    BinaryOp op;
+    bool found = false;
+
+    if (match(TokenType::EQUAL)) { op = BinaryOp::EQ; found = true; }
+    else if (match(TokenType::NOT_EQUAL)) { op = BinaryOp::NE; found = true; }
+    else if (match(TokenType::LESS_THAN)) { op = BinaryOp::LT; found = true; }
+    else if (match(TokenType::LESS_EQUAL)) { op = BinaryOp::LE; found = true; }
+    else if (match(TokenType::GREATER_THAN)) { op = BinaryOp::GT; found = true; }
+    else if (match(TokenType::GREATER_EQUAL)) { op = BinaryOp::GE; found = true; }
+
+    if (found) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = op;
+        expr->left = left;
+        expr->right = parseAddExpr();
+        return expr;
+    }
+
+    return left;
+}
+
+Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
+    left = parseAddExprWithLeft(left);
+
+    if (match(TokenType::KW_IS)) {
+        bool is_not = match(TokenType::KW_NOT);
+
+        if (match(TokenType::KW_NULL)) {
+            auto* expr = arena_.create<IsNullExpr>();
+            expr->expr = left;
+            expr->negated = is_not;
+            return expr;
+        } else if (match(TokenType::KW_TRUE)) {
+            auto* expr = arena_.create<BinaryExpr>();
+            expr->op = is_not ? BinaryOp::NE : BinaryOp::EQ;
+            expr->left = left;
+            auto* rhs = arena_.create<LiteralExpr>();
+            rhs->literal_type = LiteralType::BOOLEAN;
+            rhs->bool_value = true;
+            expr->right = rhs;
+            return expr;
+        } else if (match(TokenType::KW_FALSE)) {
+            auto* expr = arena_.create<BinaryExpr>();
+            expr->op = is_not ? BinaryOp::NE : BinaryOp::EQ;
+            expr->left = left;
+            auto* rhs = arena_.create<LiteralExpr>();
+            rhs->literal_type = LiteralType::BOOLEAN;
+            rhs->bool_value = false;
+            expr->right = rhs;
+            return expr;
+        } else if (matchContextual("DISTINCT")) {
+            expectContextual("FROM", "Expected FROM after DISTINCT");
+            auto* expr = arena_.create<BinaryExpr>();
+            expr->op = is_not ? BinaryOp::EQ : BinaryOp::NE;
+            expr->left = left;
+            expr->right = parseAddExpr();
+            return expr;
+        }
+
+        error("Expected NULL, TRUE, FALSE, or DISTINCT after IS");
+        return left;
+    }
+
+    if (match(TokenType::KW_NOT)) {
+        if (match(TokenType::KW_IN)) {
+            auto* expr = parseInExpr(left);
+            if (auto* inExpr = dynamic_cast<InExpr*>(expr)) {
+                inExpr->negated = true;
+            }
+            return expr;
+        } else if (match(TokenType::KW_BETWEEN)) {
+            auto* expr = parseBetweenExpr(left);
+            if (auto* betweenExpr = dynamic_cast<BetweenExpr*>(expr)) {
+                betweenExpr->negated = true;
+            }
+            return expr;
+        } else if (match(TokenType::KW_LIKE)) {
+            auto* expr = parseLikeExpr(left);
+            if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
+                likeExpr->negated = true;
+            }
+            return expr;
+        } else if (matchContextual("ILIKE")) {
+            auto* expr = parseLikeExpr(left);
+            if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
+                likeExpr->negated = true;
+                likeExpr->case_insensitive = true;
+            }
+            return expr;
+        } else if (matchContextual("SIMILAR")) {
+            expectContextual("TO", "Expected TO after SIMILAR");
+            auto* expr = parseLikeExpr(left);
+            if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
+                likeExpr->negated = true;
+            }
+            return expr;
+        }
+        error("Expected IN, BETWEEN, LIKE, ILIKE, or SIMILAR after NOT");
+        return left;
+    }
+
+    if (match(TokenType::KW_IN)) {
+        return parseInExpr(left);
+    }
+
+    if (match(TokenType::KW_BETWEEN)) {
+        return parseBetweenExpr(left);
+    }
+
+    if (match(TokenType::KW_LIKE)) {
+        return parseLikeExpr(left);
+    }
+
+    if (matchContextual("ILIKE")) {
+        auto* expr = parseLikeExpr(left);
+        if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
+            likeExpr->case_insensitive = true;
+        }
+        return expr;
+    }
+
+    if (matchContextual("SIMILAR")) {
+        expectContextual("TO", "Expected TO after SIMILAR");
+        return parseLikeExpr(left);
+    }
+
+    if (match(TokenType::TILDE)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::REGEX_MATCH;
+        expr->left = left;
+        expr->right = parseAddExpr();
+        return expr;
+    }
+    if (match(TokenType::TILDE_STAR)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::REGEX_MATCH_CI;
+        expr->left = left;
+        expr->right = parseAddExpr();
+        return expr;
+    }
+    if (match(TokenType::EXCLAIM_TILDE)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::REGEX_NOT_MATCH;
+        expr->left = left;
+        expr->right = parseAddExpr();
+        return expr;
+    }
+    if (match(TokenType::EXCLAIM_TILDE_STAR)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::REGEX_NOT_MATCH_CI;
+        expr->left = left;
+        expr->right = parseAddExpr();
+        return expr;
+    }
+
     BinaryOp op;
     bool found = false;
 
@@ -3009,6 +3480,26 @@ Expression* Parser::parseAddExpr() {
     return left;
 }
 
+Expression* Parser::parseAddExprWithLeft(Expression* left) {
+    left = parseMulExprWithLeft(left);
+
+    while (true) {
+        BinaryOp op;
+        if (match(TokenType::PLUS)) op = BinaryOp::ADD;
+        else if (match(TokenType::MINUS)) op = BinaryOp::SUB;
+        else if (match(TokenType::DOUBLE_PIPE)) op = BinaryOp::CONCAT;
+        else break;
+
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = op;
+        expr->left = left;
+        expr->right = parseMulExpr();
+        left = expr;
+    }
+
+    return left;
+}
+
 Expression* Parser::parseMulExpr() {
     Expression* left = parseUnaryExpr();
 
@@ -3017,6 +3508,32 @@ Expression* Parser::parseMulExpr() {
         if (match(TokenType::STAR)) op = BinaryOp::MUL;
         else if (match(TokenType::SLASH)) op = BinaryOp::DIV;
         else if (match(TokenType::PERCENT)) op = BinaryOp::MOD;
+        else if (match(TokenType::ARROW)) op = BinaryOp::JSON_EXTRACT;
+        else if (match(TokenType::DOUBLE_ARROW)) op = BinaryOp::JSON_EXTRACT_TEXT;
+        else if (match(TokenType::HASH_ARROW)) op = BinaryOp::JSON_HASH_EXTRACT;
+        else if (match(TokenType::HASH_DOUBLE_ARROW)) op = BinaryOp::JSON_HASH_EXTRACT_TEXT;
+        else break;
+
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = op;
+        expr->left = left;
+        expr->right = parseUnaryExpr();
+        left = expr;
+    }
+
+    return left;
+}
+
+Expression* Parser::parseMulExprWithLeft(Expression* left) {
+    while (true) {
+        BinaryOp op;
+        if (match(TokenType::STAR)) op = BinaryOp::MUL;
+        else if (match(TokenType::SLASH)) op = BinaryOp::DIV;
+        else if (match(TokenType::PERCENT)) op = BinaryOp::MOD;
+        else if (match(TokenType::ARROW)) op = BinaryOp::JSON_EXTRACT;
+        else if (match(TokenType::DOUBLE_ARROW)) op = BinaryOp::JSON_EXTRACT_TEXT;
+        else if (match(TokenType::HASH_ARROW)) op = BinaryOp::JSON_HASH_EXTRACT;
+        else if (match(TokenType::HASH_DOUBLE_ARROW)) op = BinaryOp::JSON_HASH_EXTRACT_TEXT;
         else break;
 
         auto* expr = arena_.create<BinaryExpr>();
@@ -3149,6 +3666,85 @@ Expression* Parser::parseFunctionCall(SchemaPath path) {
     expr->function_path = std::move(path);
 
     expect(TokenType::LEFT_PAREN, "Expected '(' for function call");
+
+    std::string upper_name;
+    if (!expr->function_path.components.empty())
+    {
+        std::string_view func_name = stringPool().get(expr->function_path.components.back());
+        upper_name.reserve(func_name.size());
+        for (char c : func_name)
+        {
+            upper_name.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+        }
+    }
+
+    // Special-case COUNT(*)
+    if (check(TokenType::STAR)) {
+        if (upper_name != "COUNT") {
+            error("'*' is only allowed in COUNT(*)");
+        }
+
+        // COUNT(*) is equivalent to COUNT(1)
+        auto* literal = arena_.create<LiteralExpr>();
+        literal->literal_type = LiteralType::INTEGER;
+        literal->int_value = 1;
+        expr->arguments.push_back(literal);
+
+        advance();  // consume '*'
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after function arguments");
+        return expr;
+    }
+
+    if (upper_name == "POSITION")
+    {
+        if (check(TokenType::RIGHT_PAREN))
+        {
+            error("POSITION requires arguments");
+            return expr;
+        }
+
+        Expression* needle = parseAddExpr();
+        expect(TokenType::KW_IN, "Expected IN in POSITION");
+        Expression* haystack = parseAddExpr();
+        expr->arguments.push_back(needle);
+        expr->arguments.push_back(haystack);
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after POSITION arguments");
+        return expr;
+    }
+
+    if (upper_name == "OVERLAY")
+    {
+        if (check(TokenType::RIGHT_PAREN))
+        {
+            error("OVERLAY requires arguments");
+            return expr;
+        }
+
+        Expression* source = parseExpression();
+        if (!expectContextual("PLACING", "Expected PLACING in OVERLAY"))
+        {
+            return expr;
+        }
+        Expression* replacement = parseExpression();
+        expect(TokenType::KW_FROM, "Expected FROM in OVERLAY");
+        Expression* start_pos = parseExpression();
+        Expression* length = nullptr;
+        if (matchContextual("FOR"))
+        {
+            length = parseExpression();
+        }
+
+        expr->arguments.push_back(source);
+        expr->arguments.push_back(replacement);
+        expr->arguments.push_back(start_pos);
+        if (length)
+        {
+            expr->arguments.push_back(length);
+        }
+
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after OVERLAY arguments");
+        return expr;
+    }
 
     // Parse arguments
     if (!check(TokenType::RIGHT_PAREN)) {
@@ -3882,6 +4478,54 @@ SetStmt* Parser::parseSet() {
         return stmt;
     }
 
+    if (matchContextual("SQL")) {
+        expectContextual("DIALECT", "Expected DIALECT after SQL");
+        stmt->set_type = SetStmt::SetType::SQL_DIALECT;
+
+        if (check(TokenType::INTEGER_LITERAL)) {
+            int64_t dialect = current().value.int_value;
+            advance();
+            if (dialect >= 1 && dialect <= 3) {
+                stmt->sql_dialect = static_cast<uint8_t>(dialect);
+            } else {
+                error("SQL DIALECT must be 1, 2, or 3");
+            }
+        } else {
+            error("Expected SQL dialect number (1, 2, or 3)");
+        }
+
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    if (matchContextual("NAMES")) {
+        stmt->set_type = SetStmt::SetType::NAMES;
+        if (check(TokenType::IDENTIFIER)) {
+            stmt->name = expectIdentifier("Expected character set name after SET NAMES");
+        } else {
+            error("Expected character set name after SET NAMES");
+        }
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    if (matchContextual("LOCAL_TIMEOUT")) {
+        stmt->set_type = SetStmt::SetType::LOCAL_TIMEOUT;
+        if (check(TokenType::INTEGER_LITERAL)) {
+            int64_t value = current().value.int_value;
+            advance();
+            if (value < 0 || value > std::numeric_limits<uint32_t>::max()) {
+                error("LOCAL_TIMEOUT out of range");
+            } else {
+                stmt->local_timeout_seconds = static_cast<uint32_t>(value);
+            }
+        } else {
+            error("Expected integer literal after SET LOCAL_TIMEOUT");
+        }
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
     if (matchContextual("ROLE")) {
         stmt->set_type = SetStmt::SetType::ROLE;
         if (matchContextual("NONE") || matchContextual("DEFAULT")) {
@@ -3893,22 +4537,22 @@ SetStmt* Parser::parseSet() {
         return stmt;
     }
 
-    // SET PARSER VERSION 1|2
+    // SET PARSER VERSION 2
     if (matchContextual("PARSER")) {
         expectContextual("VERSION", "Expected VERSION after PARSER");
         stmt->set_type = SetStmt::SetType::PARSER_VERSION;
 
-        // Expect integer 1 or 2
+        // Expect integer 2
         if (check(TokenType::INTEGER_LITERAL)) {
             int64_t version = current().value.int_value;
             advance();
-            if (version == 1 || version == 2) {
+            if (version == 2) {
                 stmt->parser_version = static_cast<uint8_t>(version);
             } else {
-                error("Parser version must be 1 or 2");
+                error("Parser version must be 2");
             }
         } else {
-            error("Expected parser version (1 or 2)");
+            error("Expected parser version (2)");
         }
         stmt->span = makeSpan(start);
         return stmt;
@@ -4027,15 +4671,19 @@ ShowStmt* Parser::parseShow() {
         }
     }
     // SHOW CREATE TABLE name
-    else if (matchContextual("CREATE")) {
+    else if (match(TokenType::KW_CREATE) || matchContextual("CREATE")) {
         expectContextual("TABLE", "Expected TABLE after CREATE");
         stmt->show_type = ShowStmt::ShowType::CREATE_TABLE;
         stmt->name = expectIdentifier("Expected table name");
     }
     // SHOW TABLE name - Firebird style detailed table info
     else if (matchContextual("TABLE")) {
-        stmt->show_type = ShowStmt::ShowType::TABLE;
-        stmt->name = expectIdentifier("Expected table name");
+        if (check(TokenType::IDENTIFIER)) {
+            stmt->show_type = ShowStmt::ShowType::TABLE;
+            stmt->name = expectIdentifier("Expected table name");
+        } else {
+            stmt->show_type = ShowStmt::ShowType::TABLES;
+        }
     }
     // SHOW TRIGGER name
     else if (matchContextual("TRIGGER") || matchContextual("TRIGGERS")) {
@@ -4112,6 +4760,25 @@ ShowStmt* Parser::parseShow() {
     else if (matchContextual("COLLATIONS") || matchContextual("COLLATION")) {
         stmt->show_type = ShowStmt::ShowType::COLLATIONS;
         parseLikeClause();
+    }
+    // SHOW COMMENTS [object_name]
+    else if (matchContextual("COMMENTS") || matchContextual("COMMENT")) {
+        stmt->show_type = ShowStmt::ShowType::COMMENTS;
+        if (check(TokenType::IDENTIFIER)) {
+            stmt->name = expectIdentifier("Expected object name");
+        }
+    }
+    // SHOW DEPENDENCIES [object_name]
+    else if (matchContextual("DEPENDENCIES") || matchContextual("DEPENDENCY")) {
+        stmt->show_type = ShowStmt::ShowType::DEPENDENCIES;
+        if (check(TokenType::IDENTIFIER)) {
+            stmt->name = expectIdentifier("Expected object name");
+        }
+    }
+    // SHOW PACKAGE name
+    else if (matchContextual("PACKAGE") || matchContextual("PACKAGES")) {
+        stmt->show_type = ShowStmt::ShowType::PACKAGE;
+        stmt->name = expectIdentifier("Expected package name");
     }
     // SHOW SQL DIALECT
     else if (matchContextual("SQL")) {

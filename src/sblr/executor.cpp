@@ -2,7 +2,7 @@
 #include <unordered_set>
 #include <chrono>
 #include <optional>
-#include "scratchbird/parser/ast.h"        // For shared types (JoinType, etc.)
+#include "scratchbird/parser/shared_types.h"
 #include "scratchbird/sblr/query_compiler_v2.h"  // Parser V2 pipeline for view compilation
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/domain_manager.h"
@@ -108,6 +108,11 @@ namespace scratchbird
             bool isTableScopedType(core::CatalogManager::ObjectType type);
             bool resolveEmulatedRootPath(const core::ConnectionContext* conn_ctx,
                                          std::string& root_path_out);
+            bool isExpressionAt(const uint8_t* bytecode, size_t bytecode_size, size_t pc);
+            bool decryptValueForColumn(core::Database* db,
+                                       const core::CatalogManager::ColumnInfo& column,
+                                       core::TypedValue& value,
+                                       core::ErrorContext* ctx);
 
             enum class ColumnEncryptionState
             {
@@ -2204,10 +2209,14 @@ namespace scratchbird
             }
 
             core::CatalogManager::SchemaInfo schema_info;
-            auto status = catalog->getSchema("root", schema_info, ctx);
+            auto status = catalog->getSchema("public", schema_info, ctx);
             if (status != core::Status::OK)
             {
-                return status;
+                status = catalog->getSchema("root", schema_info, ctx);
+                if (status != core::Status::OK)
+                {
+                    return status;
+                }
             }
             schema_id_out = schema_info.schema_id;
             return core::Status::OK;
@@ -3148,7 +3157,7 @@ namespace scratchbird
             core::ID schema_id;
             std::string resolved_table_name;
             core::Status status = resolveSchemaIdForQualifiedName(table_name, resolved_table_name,
-                                                                  schema_id, &schema_ctx, false);
+                                                                  schema_id, &schema_ctx, true);
             if (status != core::Status::OK)
             {
                 std::string err_msg = "Schema not found for table '" + table_name + "'";
@@ -3468,20 +3477,18 @@ namespace scratchbird
             }
 
             // 3. Deserialize expressions and predicate
-            parser::StringPool temp_pool;
-            auto expressions_unique = std::vector<std::unique_ptr<parser::Expression>>();
-            auto predicate_unique = std::unique_ptr<parser::Expression>();
+            auto expressions_unique = std::vector<std::unique_ptr<core::Expression>>();
+            auto predicate_unique = std::unique_ptr<core::Expression>();
 
             // Create raw pointer vectors for evaluator (will be cleaned up automatically)
-            std::vector<parser::Expression *> expressions;
-            parser::Expression *predicate = nullptr;
+            std::vector<core::Expression *> expressions;
+            core::Expression *predicate = nullptr;
 
             if (index_info.is_expression_index)
             {
                 expressions_unique = core::ExpressionSerializer::deserializeList(
                     index_info.expression_data.data(),
-                    index_info.expression_data.size(),
-                    temp_pool);
+                    index_info.expression_data.size());
                 for (auto& expr : expressions_unique)
                 {
                     expressions.push_back(expr.get());
@@ -3492,14 +3499,13 @@ namespace scratchbird
             {
                 predicate_unique = core::ExpressionSerializer::deserialize(
                     index_info.predicate_data.data(),
-                    index_info.predicate_data.size(),
-                    temp_pool);
+                    index_info.predicate_data.size());
                 predicate = predicate_unique.get();
             }
 
             // 4. Create expression evaluator
             // Task 17 MGA Phase 1.4: Pass database and transaction ID for visibility checks
-            ExpressionEvaluator evaluator(columns, &temp_pool, db_, xid);
+            ExpressionEvaluator evaluator(columns, db_, xid);
 
             // 5. Open B-tree for this index
             auto btree = core::BTree::open(db_, index_info.index_id, index_info.root_page, nullptr);
@@ -3749,20 +3755,18 @@ namespace scratchbird
                 // Previous bug: Basic indexes were skipped, causing data integrity violations
 
                 // Deserialize expression/predicate (only if needed)
-                parser::StringPool temp_pool;
-                auto expressions_unique = std::vector<std::unique_ptr<parser::Expression>>();
-                auto predicate_unique = std::unique_ptr<parser::Expression>();
+                auto expressions_unique = std::vector<std::unique_ptr<core::Expression>>();
+                auto predicate_unique = std::unique_ptr<core::Expression>();
 
                 // Create raw pointer vectors for evaluator (will be cleaned up automatically)
-                std::vector<parser::Expression *> expressions;
-                parser::Expression *predicate = nullptr;
+                std::vector<core::Expression *> expressions;
+                core::Expression *predicate = nullptr;
 
                 if (index_info.is_expression_index)
                 {
                     expressions_unique = core::ExpressionSerializer::deserializeList(
                         index_info.expression_data.data(),
-                        index_info.expression_data.size(),
-                        temp_pool);
+                        index_info.expression_data.size());
                     for (auto& expr : expressions_unique)
                     {
                         expressions.push_back(expr.get());
@@ -3773,14 +3777,13 @@ namespace scratchbird
                 {
                     predicate_unique = core::ExpressionSerializer::deserialize(
                         index_info.predicate_data.data(),
-                        index_info.predicate_data.size(),
-                        temp_pool);
+                        index_info.predicate_data.size());
                     predicate = predicate_unique.get();
                 }
 
                 // Create evaluator
                 // Task 17 MGA Phase 1.4: Pass database and transaction ID for visibility checks
-                ExpressionEvaluator evaluator(all_columns, &temp_pool, db_, xid);
+                ExpressionEvaluator evaluator(all_columns, db_, xid);
 
                 // Check predicate
                 if (predicate)
@@ -3891,20 +3894,18 @@ namespace scratchbird
                 // CRITICAL FIX (Nov 20, 2025): Maintain ALL indexes, not just expression/partial
                 // Previous bug: Basic indexes were skipped during UPDATE, causing stale entries
 
-                parser::StringPool temp_pool;
-                auto expressions_unique = std::vector<std::unique_ptr<parser::Expression>>();
-                auto predicate_unique = std::unique_ptr<parser::Expression>();
+                auto expressions_unique = std::vector<std::unique_ptr<core::Expression>>();
+                auto predicate_unique = std::unique_ptr<core::Expression>();
 
                 // Create raw pointer vectors for evaluator (will be cleaned up automatically)
-                std::vector<parser::Expression *> expressions;
-                parser::Expression *predicate = nullptr;
+                std::vector<core::Expression *> expressions;
+                core::Expression *predicate = nullptr;
 
                 if (index_info.is_expression_index)
                 {
                     expressions_unique = core::ExpressionSerializer::deserializeList(
                         index_info.expression_data.data(),
-                        index_info.expression_data.size(),
-                        temp_pool);
+                        index_info.expression_data.size());
                     for (auto& expr : expressions_unique)
                     {
                         expressions.push_back(expr.get());
@@ -3915,13 +3916,12 @@ namespace scratchbird
                 {
                     predicate_unique = core::ExpressionSerializer::deserialize(
                         index_info.predicate_data.data(),
-                        index_info.predicate_data.size(),
-                        temp_pool);
+                        index_info.predicate_data.size());
                     predicate = predicate_unique.get();
                 }
 
                 // Task 17 MGA Phase 1.4: Pass database and transaction ID for visibility checks
-                ExpressionEvaluator evaluator(all_columns, &temp_pool, db_, xid);
+                ExpressionEvaluator evaluator(all_columns, db_, xid);
 
                 // Check predicate for both old and new
                 bool in_old = true, in_new = true;
@@ -4094,20 +4094,18 @@ namespace scratchbird
                 // CRITICAL FIX (Nov 20, 2025): Maintain ALL indexes, not just expression/partial
                 // Previous bug: Basic indexes were skipped during DELETE, causing orphaned entries
 
-                parser::StringPool temp_pool;
-                auto expressions_unique = std::vector<std::unique_ptr<parser::Expression>>();
-                auto predicate_unique = std::unique_ptr<parser::Expression>();
+                auto expressions_unique = std::vector<std::unique_ptr<core::Expression>>();
+                auto predicate_unique = std::unique_ptr<core::Expression>();
 
                 // Create raw pointer vectors for evaluator (will be cleaned up automatically)
-                std::vector<parser::Expression *> expressions;
-                parser::Expression *predicate = nullptr;
+                std::vector<core::Expression *> expressions;
+                core::Expression *predicate = nullptr;
 
                 if (index_info.is_expression_index)
                 {
                     expressions_unique = core::ExpressionSerializer::deserializeList(
                         index_info.expression_data.data(),
-                        index_info.expression_data.size(),
-                        temp_pool);
+                        index_info.expression_data.size());
                     for (auto& expr : expressions_unique)
                     {
                         expressions.push_back(expr.get());
@@ -4118,13 +4116,12 @@ namespace scratchbird
                 {
                     predicate_unique = core::ExpressionSerializer::deserialize(
                         index_info.predicate_data.data(),
-                        index_info.predicate_data.size(),
-                        temp_pool);
+                        index_info.predicate_data.size());
                     predicate = predicate_unique.get();
                 }
 
                 // Task 17 MGA Phase 1.4: Pass database and transaction ID for visibility checks
-                ExpressionEvaluator evaluator(all_columns, &temp_pool, db_, xid);
+                ExpressionEvaluator evaluator(all_columns, db_, xid);
 
                 // Check if row was in index
                 bool in_index = true;
@@ -5226,31 +5223,113 @@ namespace scratchbird
             bool has_validation = (flags & 0x08) != 0;
             bool has_quality = (flags & 0x10) != 0;
 
+            uint8_t domain_kind = readByte();
             std::string domain_path = readString();
 
-            Opcode type_op = static_cast<Opcode>(readByte());
-            uint32_t precision = 0;
-            uint32_t scale = 0;
+            auto read_base_type = [&]() -> core::DomainTypeRef {
+                core::DomainTypeRef ref;
+                Opcode type_op = static_cast<Opcode>(readByte());
+                uint32_t precision = 0;
+                uint32_t scale = 0;
 
-            switch (type_op)
+                switch (type_op)
+                {
+                    case Opcode::TYPE_VARCHAR:
+                    case Opcode::TYPE_CHAR:
+                        precision = readInt32();
+                        break;
+                    case Opcode::TYPE_DECIMAL:
+                        precision = readInt32();
+                        scale = readInt32();
+                        break;
+                    default:
+                        break;
+                }
+
+                ref.type = convertDataType(type_op, precision);
+                ref.precision = precision;
+                ref.scale = scale;
+                return ref;
+            };
+
+            auto read_type_ref = [&]() -> core::DomainTypeRef {
+                uint8_t kind = readByte();
+                if (kind == 1)
+                {
+                    core::DomainTypeRef ref;
+                    ref.domain_id = readId();
+                    return ref;
+                }
+                return read_base_type();
+            };
+
+            core::DomainTypeRef base_type;
+            std::vector<core::RecordField> record_fields;
+            std::vector<core::EnumValue> enum_values;
+            core::DomainTypeRef set_element_type;
+            std::vector<core::DomainTypeRef> variant_allowed_types;
+            bool enum_wrap = false;
+
+            switch (static_cast<parser::v2::DomainKind>(domain_kind))
             {
-                case Opcode::TYPE_VARCHAR:
-                case Opcode::TYPE_CHAR:
-                    precision = readInt32();
+                case parser::v2::DomainKind::BASIC:
+                    base_type = read_base_type();
                     break;
-                case Opcode::TYPE_DECIMAL:
-                    precision = readInt32();
-                    scale = readInt32();
+                case parser::v2::DomainKind::RECORD:
+                {
+                    uint32_t field_count = readInt32();
+                    record_fields.reserve(field_count);
+                    for (uint32_t i = 0; i < field_count; ++i)
+                    {
+                        core::RecordField field;
+                        field.name = readString();
+                        core::DomainTypeRef field_type = read_type_ref();
+                        field.type = field_type.type;
+                        field.precision = field_type.precision;
+                        field.scale = field_type.scale;
+                        field.domain_id = field_type.domain_id;
+                        field.nullable = readByte() != 0;
+                        field.default_value = readString();
+                        field.has_default = !field.default_value.empty();
+                        record_fields.push_back(std::move(field));
+                    }
                     break;
+                }
+                case parser::v2::DomainKind::ENUM:
+                {
+                    uint32_t value_count = readInt32();
+                    enum_values.reserve(value_count);
+                    for (uint32_t i = 0; i < value_count; ++i)
+                    {
+                        core::EnumValue value;
+                        value.label = readString();
+                        value.position = static_cast<int32_t>(readInt32());
+                        enum_values.push_back(std::move(value));
+                    }
+                    enum_wrap = readByte() != 0;
+                    break;
+                }
+                case parser::v2::DomainKind::SET:
+                    set_element_type = read_type_ref();
+                    break;
+                case parser::v2::DomainKind::VARIANT:
+                {
+                    uint32_t type_count = readInt32();
+                    variant_allowed_types.reserve(type_count);
+                    for (uint32_t i = 0; i < type_count; ++i)
+                    {
+                        variant_allowed_types.push_back(read_type_ref());
+                    }
+                    break;
+                }
                 default:
+                    error("Unknown CREATE DOMAIN kind");
                     break;
             }
 
-            core::DataType base_type = convertDataType(type_op, precision);
-            (void)scale;
-
             bool nullable = readByte() != 0;
             std::string default_value = readString();
+            std::string collation_name = readString();
 
             uint32_t constraint_count = readInt32();
             std::vector<core::DomainConstraint> constraints;
@@ -5289,6 +5368,16 @@ namespace scratchbird
                         error("Unknown domain constraint type");
                 }
             }
+
+            bool has_parent = readByte() != 0;
+            core::ID parent_domain_id{};
+            if (has_parent)
+            {
+                parent_domain_id = readId();
+            }
+
+            std::string dialect_tag = readString();
+            std::string compat_name = readString();
 
             core::ID schema_id;
             std::string resolved_domain_name;
@@ -5343,16 +5432,63 @@ namespace scratchbird
             }
 
             core::ID domain_id;
-            status = domain_mgr->createBasicDomain(schema_id,
-                                                   resolved_domain_name,
-                                                   base_type,
-                                                   precision,
-                                                   scale,
-                                                   nullable,
-                                                   default_value,
-                                                   constraints,
-                                                   domain_id,
-                                                   &ctx);
+            core::DomainManager::DomainCreateOptions options;
+            options.nullable = nullable;
+            options.default_value = default_value;
+            options.constraints = constraints;
+            options.collation_name = collation_name;
+            options.dialect_tag = dialect_tag;
+            options.compat_name = compat_name;
+            options.enum_wrap = enum_wrap;
+
+            switch (static_cast<parser::v2::DomainKind>(domain_kind))
+            {
+                case parser::v2::DomainKind::BASIC:
+                    status = domain_mgr->createBasicDomain(schema_id,
+                                                           resolved_domain_name,
+                                                           base_type.type,
+                                                           base_type.precision,
+                                                           base_type.scale,
+                                                           options,
+                                                           domain_id,
+                                                           &ctx);
+                    break;
+                case parser::v2::DomainKind::RECORD:
+                    status = domain_mgr->createRecordDomain(schema_id,
+                                                            resolved_domain_name,
+                                                            record_fields,
+                                                            options,
+                                                            domain_id,
+                                                            &ctx);
+                    break;
+                case parser::v2::DomainKind::ENUM:
+                    status = domain_mgr->createEnumDomain(schema_id,
+                                                          resolved_domain_name,
+                                                          enum_values,
+                                                          options,
+                                                          domain_id,
+                                                          &ctx);
+                    break;
+                case parser::v2::DomainKind::SET:
+                    status = domain_mgr->createSetDomain(schema_id,
+                                                         resolved_domain_name,
+                                                         set_element_type,
+                                                         options,
+                                                         domain_id,
+                                                         &ctx);
+                    break;
+                case parser::v2::DomainKind::VARIANT:
+                    status = domain_mgr->createVariantDomain(schema_id,
+                                                             resolved_domain_name,
+                                                             variant_allowed_types,
+                                                             options,
+                                                             domain_id,
+                                                             &ctx);
+                    break;
+                default:
+                    error("Unsupported CREATE DOMAIN kind");
+                    break;
+            }
             if (status != core::Status::OK)
             {
                 std::string err_msg = "CREATE DOMAIN failed";
@@ -5361,6 +5497,20 @@ namespace scratchbird
                     err_msg += ": " + ctx.message;
                 }
                 error(err_msg);
+            }
+
+            if (!isZeroUuid(parent_domain_id))
+            {
+                status = domain_mgr->setParentDomain(domain_id, parent_domain_id, &ctx);
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = "Failed to set domain parent";
+                    if (!ctx.message.empty())
+                    {
+                        err_msg += ": " + ctx.message;
+                    }
+                    error(err_msg);
+                }
             }
 
             if (has_integrity)
@@ -5476,7 +5626,7 @@ namespace scratchbird
             if (has_validation)
             {
                 uint8_t val_flags = readByte();
-                core::DomainValidation validation;
+                core::DomainValidationConfig validation;
                 if (val_flags & 0x01)
                 {
                     validation.validation_function = readString();
@@ -7633,7 +7783,6 @@ namespace scratchbird
                     error(err_msg);
                 }
             }
-
             // Build tuple in binary format
             // Format: TupleHeader + null bitmap (if needed) + column data
             // HeapPage will overwrite some TupleHeader fields (xmin, xmax, ctid, etc.)
@@ -8191,6 +8340,31 @@ namespace scratchbird
                 }
             }
 
+            // Plan 03B: Enforce domain constraints (NOT NULL, CHECK, inherited)
+            for (size_t i = 0; i < all_columns.size(); i++)
+            {
+                const auto& col = all_columns[i];
+                if (col.domain_id == core::ID())
+                {
+                    continue;
+                }
+
+                core::ErrorContext constraint_ctx;
+                auto constraint_status = domain_mgr->validateValue(col.domain_id,
+                                                                  row_values[i],
+                                                                  &constraint_ctx);
+                if (constraint_status != core::Status::OK)
+                {
+                    std::string err_msg = "Domain constraint violation for column '" +
+                                          col.column_name + "'";
+                    if (!constraint_ctx.message.empty())
+                    {
+                        err_msg += ": " + constraint_ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+
             // ALPHA Phase A+: Enforce PRIMARY KEY constraints (Nov 19, 2025)
             for (size_t i = 0; i < all_columns.size(); i++)
             {
@@ -8568,21 +8742,13 @@ namespace scratchbird
                 // Save start of value expression
                 size_t expr_start = pc_;
 
-                // Skip over the expression to find its end
+                // Skip over the expression to find its end.
+                // Track expression stack depth (postfix): literals/refs push, binary ops pop.
                 int depth = 0;
                 while (pc_ < bytecode_size_)
                 {
-                    Opcode op = static_cast<Opcode>(bytecode_[pc_]);
+                    Opcode op = static_cast<Opcode>(readByte());
 
-                    // Check if we've reached the next ASSIGNMENT or END_LIST
-                    if (depth == 0 && (op == Opcode::ASSIGNMENT || op == Opcode::END_LIST))
-                    {
-                        break;
-                    }
-
-                    readByte(); // consume opcode
-
-                    // Handle opcodes that affect depth or have data
                     if (op == Opcode::LITERAL_INT32)
                     {
                         pc_ += 4;
@@ -8612,6 +8778,27 @@ namespace scratchbird
                     {
                         depth--; // Binary operators: consume 2, produce 1
                     }
+
+                    if (depth == 1)
+                    {
+                        if (pc_ >= bytecode_size_)
+                        {
+                            break;
+                        }
+
+                        uint8_t next_op = bytecode_[pc_];
+                        if (next_op == static_cast<uint8_t>(Opcode::END_LIST) ||
+                            next_op == static_cast<uint8_t>(Opcode::ASSIGNMENT))
+                        {
+                            break;
+                        }
+
+                        if (!isExpressionAt(bytecode_, bytecode_size_, pc_))
+                        {
+                            break;
+                        }
+                    }
+
                 }
 
                 size_t expr_end = pc_;
@@ -8626,6 +8813,7 @@ namespace scratchbird
 
             // Check for WHERE clause
             size_t where_start_pc = 0;
+            size_t where_end_pc = 0;
             bool has_where = false;
 
             if (pc_ < bytecode_size_ &&
@@ -8671,6 +8859,7 @@ namespace scratchbird
                         depth--;
                     }
                 }
+                where_end_pc = pc_;
             }
 
             // P1-14: Parse RETURNING clause before the loop (Alpha 1 - Advanced SQL)
@@ -8762,8 +8951,7 @@ namespace scratchbird
 
                     try
                     {
-                        evaluateExpression();
-                        Value where_result = pop();
+                        Value where_result = evaluateExpressionRange(where_end_pc);
 
                         current_row_values_ = nullptr;
                         current_row_columns_ = nullptr;
@@ -8921,7 +9109,8 @@ namespace scratchbird
                             break;
                         case core::DataType::INT64:
                             type_compatible = (val.type() == core::DataType::INT32 ||
-                                             val.type() == core::DataType::INT64);
+                                             val.type() == core::DataType::INT64 ||
+                                             val.type() == core::DataType::FLOAT64);
                             break;
                         case core::DataType::FLOAT64:
                             type_compatible = (val.type() == core::DataType::FLOAT64 ||
@@ -8934,7 +9123,55 @@ namespace scratchbird
                                              val.type() == core::DataType::TEXT);
                             break;
                         case core::DataType::BOOLEAN:
-                            type_compatible = (val.type() == core::DataType::BOOLEAN);
+                            type_compatible = (val.type() == core::DataType::BOOLEAN ||
+                                             val.type() == core::DataType::INT32 ||
+                                             val.type() == core::DataType::INT64);
+                            break;
+                        case core::DataType::INT16:
+                            type_compatible = (val.type() == core::DataType::INT16 ||
+                                             val.type() == core::DataType::INT32 ||
+                                             val.type() == core::DataType::INT64);
+                            break;
+                        case core::DataType::FLOAT32:
+                            type_compatible = (val.type() == core::DataType::FLOAT32 ||
+                                             val.type() == core::DataType::FLOAT64 ||
+                                             val.type() == core::DataType::INT32 ||
+                                             val.type() == core::DataType::INT64);
+                            break;
+                        case core::DataType::DECIMAL:
+                            type_compatible = (val.type() == core::DataType::DECIMAL ||
+                                             val.type() == core::DataType::FLOAT64 ||
+                                             val.type() == core::DataType::FLOAT32 ||
+                                             val.type() == core::DataType::INT32 ||
+                                             val.type() == core::DataType::INT64);
+                            break;
+                        case core::DataType::CHAR:
+                            type_compatible = (val.type() == core::DataType::CHAR ||
+                                             val.type() == core::DataType::VARCHAR ||
+                                             val.type() == core::DataType::TEXT);
+                            break;
+                        case core::DataType::DATE:
+                            type_compatible = (val.type() == core::DataType::DATE ||
+                                             val.type() == core::DataType::INT32 ||
+                                             val.type() == core::DataType::VARCHAR);
+                            break;
+                        case core::DataType::TIME:
+                            type_compatible = (val.type() == core::DataType::TIME ||
+                                             val.type() == core::DataType::INT32 ||
+                                             val.type() == core::DataType::VARCHAR);
+                            break;
+                        case core::DataType::TIMESTAMP:
+                            type_compatible = (val.type() == core::DataType::TIMESTAMP ||
+                                             val.type() == core::DataType::INT64 ||
+                                             val.type() == core::DataType::VARCHAR);
+                            break;
+                        case core::DataType::BLOB:
+                        case core::DataType::BINARY:
+                        case core::DataType::VARBINARY:
+                            type_compatible = (val.type() == core::DataType::BLOB ||
+                                             val.type() == core::DataType::BINARY ||
+                                             val.type() == core::DataType::VARBINARY ||
+                                             val.type() == core::DataType::VARCHAR);
                             break;
                         default:
                             type_compatible = (val.type() == static_cast<core::DataType>(col.data_type));
@@ -8999,11 +9236,11 @@ namespace scratchbird
                             err_msg += ": " + uniq_ctx.message;
                         }
                         error(err_msg);
-                    }
                 }
+            }
 
-                // Plan 03B: Execute domain validation functions for updated columns
-                for (const auto& assign : assignments)
+            // Plan 03B: Execute domain validation functions for updated columns
+            for (const auto& assign : assignments)
                 {
                     const auto& col = all_columns[assign.column_index];
                     if (col.domain_id == core::ID())
@@ -9028,22 +9265,47 @@ namespace scratchbird
                         }
                         error(err_msg);
                     }
-                    if (!is_valid)
+                if (!is_valid)
+                {
+                    std::string err_msg = "Domain validation failed for column '" +
+                                          col.column_name + "'";
+                    if (!val_ctx.message.empty())
                     {
-                        std::string err_msg = "Domain validation failed for column '" +
-                                              col.column_name + "'";
-                        if (!val_ctx.message.empty())
-                        {
-                            err_msg += ": " + val_ctx.message;
-                        }
-                        error(err_msg);
+                        err_msg += ": " + val_ctx.message;
                     }
+                    error(err_msg);
+                }
+            }
+
+            // Plan 03B: Enforce domain constraints for updated columns
+            for (const auto& assign : assignments)
+            {
+                const auto& col = all_columns[assign.column_index];
+                if (col.domain_id == core::ID())
+                {
+                    continue;
                 }
 
-                // ALPHA Phase A+: Enforce PRIMARY KEY constraints on updated columns (Nov 19, 2025)
-                for (const auto& assign : assignments)
+                core::ErrorContext constraint_ctx;
+                auto constraint_status = domain_mgr->validateValue(col.domain_id,
+                                                                  row_values[assign.column_index],
+                                                                  &constraint_ctx);
+                if (constraint_status != core::Status::OK)
                 {
-                    const auto& col = all_columns[assign.column_index];
+                    std::string err_msg = "Domain constraint violation for column '" +
+                                          col.column_name + "'";
+                    if (!constraint_ctx.message.empty())
+                    {
+                        err_msg += ": " + constraint_ctx.message;
+                    }
+                    error(err_msg);
+                }
+            }
+
+            // ALPHA Phase A+: Enforce PRIMARY KEY constraints on updated columns (Nov 19, 2025)
+            for (const auto& assign : assignments)
+            {
+                const auto& col = all_columns[assign.column_index];
                     if (col.is_primary_key)
                     {
                         // PRIMARY KEY = NOT NULL + UNIQUE
@@ -9225,7 +9487,19 @@ namespace scratchbird
                     {
                         case core::DataType::INT32:
                         {
-                            int32_t int_val = static_cast<int32_t>(val.toInt64());
+                            int32_t int_val;
+                            if (val.type() == core::DataType::INT32)
+                            {
+                                int_val = val.getInt32();
+                            }
+                            else if (val.type() == core::DataType::INT64)
+                            {
+                                int_val = static_cast<int32_t>(val.getInt64());
+                            }
+                            else
+                            {
+                                error("Cannot convert value to INT32");
+                            }
                             new_tuple_data.insert(new_tuple_data.end(),
                                                   reinterpret_cast<const uint8_t *>(&int_val),
                                                   reinterpret_cast<const uint8_t *>(&int_val) + 4);
@@ -9233,7 +9507,23 @@ namespace scratchbird
                         }
                         case core::DataType::INT64:
                         {
-                            int64_t long_val = val.toInt64();
+                            int64_t long_val;
+                            if (val.type() == core::DataType::INT64)
+                            {
+                                long_val = val.getInt64();
+                            }
+                            else if (val.type() == core::DataType::INT32)
+                            {
+                                long_val = static_cast<int64_t>(val.getInt32());
+                            }
+                            else if (val.type() == core::DataType::FLOAT64)
+                            {
+                                long_val = static_cast<int64_t>(val.toDouble());
+                            }
+                            else
+                            {
+                                error("Cannot convert value to INT64");
+                            }
                             new_tuple_data.insert(new_tuple_data.end(),
                                                   reinterpret_cast<const uint8_t *>(&long_val),
                                                   reinterpret_cast<const uint8_t *>(&long_val) + 8);
@@ -9247,13 +9537,198 @@ namespace scratchbird
                                                   reinterpret_cast<const uint8_t *>(&dbl_val) + 8);
                             break;
                         }
+                        case core::DataType::VARCHAR:
+                        case core::DataType::CHAR:
+                        case core::DataType::TEXT:
+                        {
+                            std::string str_val = val.toString();
+                            uint32_t str_len = static_cast<uint32_t>(str_val.size());
+                            new_tuple_data.insert(new_tuple_data.end(),
+                                                  reinterpret_cast<const uint8_t *>(&str_len),
+                                                  reinterpret_cast<const uint8_t *>(&str_len) + 4);
+                            new_tuple_data.insert(new_tuple_data.end(), str_val.begin(), str_val.end());
+                            break;
+                        }
+                        case core::DataType::INT16:
+                        {
+                            int16_t int_val = static_cast<int16_t>(val.getInt32());
+                            new_tuple_data.insert(new_tuple_data.end(),
+                                                  reinterpret_cast<const uint8_t *>(&int_val),
+                                                  reinterpret_cast<const uint8_t *>(&int_val) + sizeof(int16_t));
+                            break;
+                        }
+                        case core::DataType::FLOAT32:
+                        {
+                            float flt_val = static_cast<float>(val.toDouble());
+                            new_tuple_data.insert(new_tuple_data.end(),
+                                                  reinterpret_cast<const uint8_t *>(&flt_val),
+                                                  reinterpret_cast<const uint8_t *>(&flt_val) + sizeof(float));
+                            break;
+                        }
+                        case core::DataType::DECIMAL:
+                        {
+                            double dec_val = val.toDouble();
+                            new_tuple_data.insert(new_tuple_data.end(),
+                                                  reinterpret_cast<const uint8_t *>(&dec_val),
+                                                  reinterpret_cast<const uint8_t *>(&dec_val) + sizeof(double));
+                            break;
+                        }
                         case core::DataType::BOOLEAN:
                         {
-                            bool bool_val = val.toBoolean();
+                            bool bool_val;
+                            if (val.type() == core::DataType::BOOLEAN)
+                            {
+                                bool_val = val.getBool();
+                            }
+                            else if (val.type() == core::DataType::INT32)
+                            {
+                                bool_val = val.getInt32() != 0;
+                            }
+                            else if (val.type() == core::DataType::INT64)
+                            {
+                                bool_val = val.getInt64() != 0;
+                            }
+                            else
+                            {
+                                error("Cannot convert value to BOOLEAN");
+                            }
                             new_tuple_data.push_back(bool_val ? 1 : 0);
                             break;
                         }
-                        case core::DataType::VARCHAR:
+                        case core::DataType::DATE:
+                        {
+                            constexpr int32_t UNIX_EPOCH_MJD = 40587;
+                            int32_t mjd;
+                            if (val.type() == core::DataType::INT32)
+                            {
+                                mjd = val.getInt32();
+                            }
+                            else if (val.type() == core::DataType::VARCHAR ||
+                                     val.type() == core::DataType::TEXT)
+                            {
+                                std::string str = val.toString();
+                                int year = 0, month = 0, day = 0;
+                                if (sscanf(str.c_str(), "%d-%d-%d", &year, &month, &day) == 3)
+                                {
+                                    std::tm tm = {};
+                                    tm.tm_year = year - 1900;
+                                    tm.tm_mon = month - 1;
+                                    tm.tm_mday = day;
+                                    tm.tm_hour = 0;
+                                    std::time_t time = timegm(&tm);
+                                    int32_t unix_days = (time >= 0) ? static_cast<int32_t>(time / 86400)
+                                                                    : static_cast<int32_t>((time - 86399) / 86400);
+                                    mjd = unix_days + UNIX_EPOCH_MJD;
+                                }
+                                else
+                                {
+                                    error("Invalid DATE format: " + str + " (expected YYYY-MM-DD)");
+                                }
+                            }
+                            else
+                            {
+                                error("Cannot convert value to DATE");
+                            }
+                            new_tuple_data.insert(new_tuple_data.end(),
+                                                  reinterpret_cast<const uint8_t *>(&mjd),
+                                                  reinterpret_cast<const uint8_t *>(&mjd) + sizeof(int32_t));
+                            break;
+                        }
+                        case core::DataType::TIME:
+                        {
+                            int32_t deci_ms;
+                            if (val.type() == core::DataType::INT32)
+                            {
+                                deci_ms = val.getInt32();
+                            }
+                            else if (val.type() == core::DataType::VARCHAR ||
+                                     val.type() == core::DataType::TEXT)
+                            {
+                                std::string str = val.toString();
+                                int hour = 0, min = 0, sec = 0, frac = 0;
+                                int parsed = sscanf(str.c_str(), "%d:%d:%d.%d",
+                                                    &hour, &min, &sec, &frac);
+                                if (parsed >= 2)
+                                {
+                                    deci_ms = (hour * 3600 + min * 60 + sec) * 10000;
+                                    if (parsed >= 4)
+                                    {
+                                        deci_ms += frac;
+                                    }
+                                }
+                                else
+                                {
+                                    error("Invalid TIME format: " + str + " (expected HH:MM:SS)");
+                                }
+                            }
+                            else
+                            {
+                                error("Cannot convert value to TIME");
+                            }
+                            new_tuple_data.insert(new_tuple_data.end(),
+                                                  reinterpret_cast<const uint8_t *>(&deci_ms),
+                                                  reinterpret_cast<const uint8_t *>(&deci_ms) + sizeof(int32_t));
+                            break;
+                        }
+                        case core::DataType::TIMESTAMP:
+                        {
+                            constexpr int32_t UNIX_EPOCH_MJD = 40587;
+                            int32_t mjd_date;
+                            int32_t deci_ms_time;
+                            if (val.type() == core::DataType::INT64)
+                            {
+                                int64_t micros = val.getInt64();
+                                int64_t unix_seconds = micros / 1000000;
+                                int32_t unix_days = static_cast<int32_t>(unix_seconds / 86400);
+                                int32_t day_seconds = static_cast<int32_t>(unix_seconds % 86400);
+                                mjd_date = unix_days + UNIX_EPOCH_MJD;
+                                deci_ms_time = day_seconds * 10000;
+                            }
+                            else if (val.type() == core::DataType::VARCHAR ||
+                                     val.type() == core::DataType::TEXT)
+                            {
+                                std::string str = val.toString();
+                                int year = 0, month = 0, day = 0, hour = 0, min = 0, sec = 0, frac = 0;
+                                int parsed = sscanf(str.c_str(), "%d-%d-%d %d:%d:%d.%d",
+                                                    &year, &month, &day, &hour, &min, &sec, &frac);
+                                if (parsed >= 3)
+                                {
+                                    std::tm tm = {};
+                                    tm.tm_year = year - 1900;
+                                    tm.tm_mon = month - 1;
+                                    tm.tm_mday = day;
+                                    tm.tm_hour = 0;
+                                    std::time_t time = timegm(&tm);
+                                    int32_t unix_days = (time >= 0) ? static_cast<int32_t>(time / 86400)
+                                                                    : static_cast<int32_t>((time - 86399) / 86400);
+                                    mjd_date = unix_days + UNIX_EPOCH_MJD;
+                                    deci_ms_time = (hour * 3600 + min * 60 + sec) * 10000;
+                                    if (parsed >= 7)
+                                    {
+                                        deci_ms_time += frac;
+                                    }
+                                }
+                                else
+                                {
+                                    error("Invalid TIMESTAMP format: " + str +
+                                          " (expected YYYY-MM-DD HH:MM:SS)");
+                                }
+                            }
+                            else
+                            {
+                                error("Cannot convert value to TIMESTAMP");
+                            }
+                            new_tuple_data.insert(new_tuple_data.end(),
+                                                  reinterpret_cast<const uint8_t *>(&mjd_date),
+                                                  reinterpret_cast<const uint8_t *>(&mjd_date) + sizeof(int32_t));
+                            new_tuple_data.insert(new_tuple_data.end(),
+                                                  reinterpret_cast<const uint8_t *>(&deci_ms_time),
+                                                  reinterpret_cast<const uint8_t *>(&deci_ms_time) + sizeof(int32_t));
+                            break;
+                        }
+                        case core::DataType::BLOB:
+                        case core::DataType::BINARY:
+                        case core::DataType::VARBINARY:
                         {
                             std::string str_val = val.toString();
                             uint32_t str_len = static_cast<uint32_t>(str_val.size());
@@ -9634,8 +10109,7 @@ namespace scratchbird
 
                     try
                     {
-                        evaluateExpression();
-                        Value where_result = pop();
+                        Value where_result = evaluateExpressionRange(where_end_pc);
 
                         current_row_values_ = nullptr;
                         current_row_columns_ = nullptr;
@@ -11233,8 +11707,7 @@ namespace scratchbird
 
                     try
                     {
-                        evaluateExpression();
-                        Value where_result = pop();
+                        Value where_result = evaluateExpressionRange(where_end_pc);
                         current_row_values_ = nullptr;
                         current_row_columns_ = nullptr;
                         pc_ = saved_pc;
@@ -11843,8 +12316,7 @@ namespace scratchbird
 
                         try
                         {
-                            evaluateExpression();
-                            Value where_result = pop();
+                            Value where_result = evaluateExpressionRange(where_end_pc);
                             current_row_values_ = nullptr;
                             current_row_columns_ = nullptr;
                             pc_ = saved_pc;
@@ -13170,8 +13642,7 @@ namespace scratchbird
 
                     try
                     {
-                        evaluateExpression();
-                        Value where_result = pop();
+                        Value where_result = evaluateExpressionRange(where_end_pc);
 
                         current_row_values_ = nullptr;
                         current_row_columns_ = nullptr;
@@ -13689,7 +14160,6 @@ namespace scratchbird
                 {
                     continue; // Skip malformed tuples
                 }
-
                 // Evaluate WHERE clause if present
                 if (has_where)
                 {
@@ -13703,8 +14173,7 @@ namespace scratchbird
 
                     try
                     {
-                        evaluateExpression();
-                        Value where_result = pop();
+                        Value where_result = evaluateExpressionRange(where_end_pc);
 
                         current_row_values_ = nullptr;
                         current_row_columns_ = nullptr;
@@ -16720,7 +17189,11 @@ namespace scratchbird
                 {
                     uint16_t ext_op = readExtendedOpcode();
 
-                    if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CHECK_DOMAIN_CONSTRAINT))
+                    if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_VAR_LOAD))
+                    {
+                        executeVarLoad();
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CHECK_DOMAIN_CONSTRAINT))
                     {
                         core::ID domain_id = readId();
                         uint16_t value_offset = readInt16();
@@ -22305,6 +22778,329 @@ namespace scratchbird
             }
         }
 
+        namespace
+        {
+            bool isExpressionExtendedOpcode(ExtendedOpcode op)
+            {
+                static const std::unordered_set<uint16_t> kExpressionExt = {
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_APPLY_DOMAIN_MASKING),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_APPLY_QUALITY_PIPELINE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_APPEND),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_CAT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_CONSTRUCT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_CONTAINED_BY),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_CONTAINS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_DIMS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_LENGTH),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_LOWER),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_OVERLAP),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_PREPEND),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_REMOVE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_REPLACE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ARRAY_UPPER),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ASCII),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_AUDIT_DOMAIN_ACCESS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_BIT_AND),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_BIT_COUNT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_BIT_LENGTH),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_BIT_MASK),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_BIT_NOT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_BIT_OR),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_BIT_SHIFT_LEFT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_BIT_SHIFT_RIGHT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_BIT_SHIFT_RIGHT_LOGICAL),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_BIT_XOR),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_CHECK_DOMAIN_CONSTRAINT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_CHECK_DOMAIN_PRIVILEGE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_CHECK_GLOBAL_UNIQUENESS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_CHR),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_COLUMNSTORE_INSERT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_COLUMNSTORE_SCAN),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_CORR),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_COVAR_POP),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_DECODE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_DECRYPT_DOMAIN_VALUE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ENCODE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ENCRYPT_DOMAIN_VALUE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_EXTRACT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ABS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ACOS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ACOSH),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_AGE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ASIN),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ASINH),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ATAN),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ATAN2),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ATANH),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CBRT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_CEIL),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_COS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_COSH),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_COT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_DEGREES),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_EXP),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_FLOOR),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LN),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LOG),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LOG10),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LOG2),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_MOD),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_PI),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_POWER),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_RADIANS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ROUND),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_SIGN),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_SIN),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_SINH),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_SQRT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_TAN),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_TANH),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_TRUNC),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_GET_BIT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_GET_BYTE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_GIN_INSERT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_GIN_SEARCH),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_GROUPING_FUNC),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_HNSW_INSERT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_HNSW_SEARCH),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_DELETE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_INSERT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_SCAN),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_SEARCH),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_INITCAP),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_IN_LIST),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_LPAD),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_MD5),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_NORMALIZE_DOMAIN_VALUE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_OVERLAY),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_PHRASETO_TSQUERY),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_PLAINTO_TSQUERY),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_POSITION),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_QUOTE_IDENT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_QUOTE_LITERAL),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_REGEXP_MATCHES),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_REGEXP_REPLACE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_REGEXP_SPLIT_TO_ARRAY),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_REGEXP_SPLIT_TO_TABLE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_REGEX_MATCH),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_REGEX_MATCH_CI),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_REGEX_NOT_MATCH),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_REGEX_NOT_MATCH_CI),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_REPEAT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_REVERSE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_RPAD),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_SET_BIT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_SET_BYTE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_SHA1),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_SHA256),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_SHA512),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_SPLIT_PART),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_STDDEV_POP),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_STDDEV_SAMP),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_STRING_TO_TABLE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_STRPOS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_AREA),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_ASBINARY),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_ASTEXT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_BUFFER),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_COLLECT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_CONTAINS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_CONVEXHULL),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_CROSSES),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_DIFFERENCE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_DISJOINT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_DISTANCE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_ENVELOPE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_EQUALS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_GEOMETRYCOLLECTION),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_GEOMETRYN),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_GEOMETRYTYPE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_INTERSECTION),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_INTERSECTS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_ISVALID),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_LENGTH),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_MAKELINE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_MAKEPOLYGON),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_MULTILINESTRING),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_MULTIPOINT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_MULTIPOLYGON),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_NUMGEOMETRIES),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_OVERLAPS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_PERIMETER),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_POINT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_TOUCHES),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_UNION),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ST_WITHIN),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_SUBQUERY_ARRAY),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_SUBQUERY_END),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_SUBQUERY_EXISTS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_SUBQUERY_IN),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_SUBQUERY_NOT_IN),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_SUBQUERY_SCALAR),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_TO_TSQUERY),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_TO_TSVECTOR),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_TSMATCH),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_TS_RANK),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_UNNEST_TEXT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_VALIDATE_DOMAIN_VALUE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_VAR_LOAD),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_VAR_POP),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_VAR_SAMP),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_XMLCOMMENT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_XMLCONCAT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_XMLELEMENT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_XMLEXISTS),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_XMLFOREST),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_XMLPARSE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_XMLROOT),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_XMLSERIALIZE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_XPATH),
+                };
+
+                return kExpressionExt.count(static_cast<uint16_t>(op)) != 0;
+            }
+
+            bool isExpressionOpcode(Opcode op)
+            {
+                static const std::unordered_set<uint8_t> kExpressionOps = {
+                    static_cast<uint8_t>(Opcode::LITERAL_NULL),
+                    static_cast<uint8_t>(Opcode::LITERAL_INT32),
+                    static_cast<uint8_t>(Opcode::LITERAL_INT64),
+                    static_cast<uint8_t>(Opcode::LITERAL_DOUBLE),
+                    static_cast<uint8_t>(Opcode::LITERAL_STRING),
+                    static_cast<uint8_t>(Opcode::LITERAL_CHARSET),
+                    static_cast<uint8_t>(Opcode::LITERAL_COLLATION),
+                    static_cast<uint8_t>(Opcode::COLUMN_REF),
+                    static_cast<uint8_t>(Opcode::EXPR_ADD),
+                    static_cast<uint8_t>(Opcode::EXPR_SUBTRACT),
+                    static_cast<uint8_t>(Opcode::EXPR_MULTIPLY),
+                    static_cast<uint8_t>(Opcode::EXPR_DIVIDE),
+                    static_cast<uint8_t>(Opcode::EXPR_MODULO),
+                    static_cast<uint8_t>(Opcode::EXPR_EQ),
+                    static_cast<uint8_t>(Opcode::EXPR_NE),
+                    static_cast<uint8_t>(Opcode::EXPR_LT),
+                    static_cast<uint8_t>(Opcode::EXPR_GT),
+                    static_cast<uint8_t>(Opcode::EXPR_LE),
+                    static_cast<uint8_t>(Opcode::EXPR_GE),
+                    static_cast<uint8_t>(Opcode::EXPR_AND),
+                    static_cast<uint8_t>(Opcode::EXPR_OR),
+                    static_cast<uint8_t>(Opcode::EXPR_CAST),
+                    static_cast<uint8_t>(Opcode::EXPR_LIKE),
+                    static_cast<uint8_t>(Opcode::EXPR_ILIKE),
+                    static_cast<uint8_t>(Opcode::TYPE_INTEGER),
+                    static_cast<uint8_t>(Opcode::TYPE_BIGINT),
+                    static_cast<uint8_t>(Opcode::TYPE_DOUBLE),
+                    static_cast<uint8_t>(Opcode::TYPE_VARCHAR),
+                    static_cast<uint8_t>(Opcode::FUNC_LENGTH),
+                    static_cast<uint8_t>(Opcode::FUNC_SUBSTRING),
+                    static_cast<uint8_t>(Opcode::FUNC_UPPER),
+                    static_cast<uint8_t>(Opcode::FUNC_LOWER),
+                    static_cast<uint8_t>(Opcode::FUNC_TRIM),
+                    static_cast<uint8_t>(Opcode::FUNC_CHAR_LENGTH),
+                    static_cast<uint8_t>(Opcode::FUNC_OCTET_LENGTH),
+                    static_cast<uint8_t>(Opcode::FUNC_CONVERT),
+                    static_cast<uint8_t>(Opcode::FUNC_COLLATE),
+                    static_cast<uint8_t>(Opcode::AGG_SUM),
+                    static_cast<uint8_t>(Opcode::AGG_AVG),
+                    static_cast<uint8_t>(Opcode::AGG_MIN),
+                    static_cast<uint8_t>(Opcode::AGG_MAX),
+                    static_cast<uint8_t>(Opcode::AGG_COUNT),
+                    static_cast<uint8_t>(Opcode::AGG_STDDEV_SAMP),
+                    static_cast<uint8_t>(Opcode::AGG_STDDEV_POP),
+                    static_cast<uint8_t>(Opcode::AGG_VAR_SAMP),
+                    static_cast<uint8_t>(Opcode::AGG_VAR_POP),
+                    static_cast<uint8_t>(Opcode::AGG_CORR),
+                    static_cast<uint8_t>(Opcode::AGG_COVAR_POP),
+                    static_cast<uint8_t>(Opcode::AGG_REGR_SLOPE),
+                    static_cast<uint8_t>(Opcode::AGG_REGR_INTERCEPT),
+                    static_cast<uint8_t>(Opcode::AGG_REGR_COUNT),
+                    static_cast<uint8_t>(Opcode::AGG_REGR_R2),
+                    static_cast<uint8_t>(Opcode::AGG_REGR_AVGX),
+                    static_cast<uint8_t>(Opcode::AGG_REGR_AVGY),
+                    static_cast<uint8_t>(Opcode::AGG_REGR_SXX),
+                    static_cast<uint8_t>(Opcode::AGG_REGR_SYY),
+                    static_cast<uint8_t>(Opcode::AGG_REGR_SXY),
+                    static_cast<uint8_t>(Opcode::FUNC_DATE_ADD),
+                    static_cast<uint8_t>(Opcode::FUNC_DATE_SUB),
+                    static_cast<uint8_t>(Opcode::FUNC_DATE_DIFF),
+                    static_cast<uint8_t>(Opcode::FUNC_NOW),
+                    static_cast<uint8_t>(Opcode::FUNC_AT_TIME_ZONE),
+                    static_cast<uint8_t>(Opcode::FUNC_CURRENT_DATE),
+                    static_cast<uint8_t>(Opcode::JSON_EXTRACT),
+                    static_cast<uint8_t>(Opcode::JSON_ARROW),
+                    static_cast<uint8_t>(Opcode::JSON_DOUBLE_ARROW),
+                    static_cast<uint8_t>(Opcode::JSONB_EXTRACT_PATH),
+                    static_cast<uint8_t>(Opcode::JSON_HASH_ARROW),
+                    static_cast<uint8_t>(Opcode::JSON_HASH_DOUBLE_ARROW),
+                    static_cast<uint8_t>(Opcode::JSON_OBJECT),
+                    static_cast<uint8_t>(Opcode::JSONB_BUILD_OBJECT),
+                    static_cast<uint8_t>(Opcode::JSON_ARRAY),
+                    static_cast<uint8_t>(Opcode::JSONB_BUILD_ARRAY),
+                    static_cast<uint8_t>(Opcode::JSON_SET),
+                    static_cast<uint8_t>(Opcode::JSONB_SET),
+                    static_cast<uint8_t>(Opcode::JSON_INSERT),
+                    static_cast<uint8_t>(Opcode::JSON_REMOVE),
+                    static_cast<uint8_t>(Opcode::COALESCE),
+                    static_cast<uint8_t>(Opcode::NULLIF),
+                    static_cast<uint8_t>(Opcode::CASE_WHEN),
+                    static_cast<uint8_t>(Opcode::ARRAY_AGG),
+                    static_cast<uint8_t>(Opcode::ARRAY_TO_STRING),
+                    static_cast<uint8_t>(Opcode::STRING_TO_ARRAY),
+                    static_cast<uint8_t>(Opcode::EXTENDED_OPCODE),
+                };
+
+                return kExpressionOps.count(static_cast<uint8_t>(op)) != 0;
+            }
+
+            bool isExpressionAt(const uint8_t* bytecode, size_t bytecode_size, size_t pc)
+            {
+                if (!bytecode || pc >= bytecode_size)
+                {
+                    return false;
+                }
+
+                Opcode op = static_cast<Opcode>(bytecode[pc]);
+                if (op == Opcode::EXTENDED_OPCODE)
+                {
+                    if (pc + sizeof(uint16_t) >= bytecode_size)
+                    {
+                        return false;
+                    }
+
+                    uint16_t ext_raw = sblr::readInt16(&bytecode[pc + 1]);
+                    return isExpressionExtendedOpcode(static_cast<ExtendedOpcode>(ext_raw));
+                }
+
+                return isExpressionOpcode(op);
+            }
+        } // namespace
+
+        Value Executor::evaluateExpressionRange(size_t end_pc)
+        {
+            size_t stack_before = stack_.size();
+            size_t limit = end_pc == 0 ? bytecode_size_ : std::min(end_pc, bytecode_size_);
+            bool saw_opcode = false;
+            while (pc_ < limit)
+            {
+                if (saw_opcode && !isExpressionAt(bytecode_, bytecode_size_, pc_))
+                {
+                    break;
+                }
+
+                evaluateExpression();
+                saw_opcode = true;
+            }
+
+            size_t produced = stack_.size() - stack_before;
+            if (produced != 1)
+            {
+                error("Expression produced " + std::to_string(produced) +
+                      " values, expected 1");
+            }
+
+            return pop();
+        }
+
         void Executor::executeBinaryOp(Opcode op)
         {
             // Pop right operand first (stack order)
@@ -23110,8 +23906,7 @@ namespace scratchbird
             bool result = true;
             try
             {
-                evaluateExpression();
-                Value condition_result = pop();
+                Value condition_result = evaluateExpressionRange(condition_end_pc);
                 result = condition_result.toBoolean();
             }
             catch (...)
@@ -23754,15 +24549,19 @@ namespace scratchbird
 
             // Check EXECUTE permission
             auto ctx = core::ConnectionContext::getCurrent();
-            if (ctx && !ctx->isSuperuser())
+            if (ctx)
             {
-                if (!db_->catalog_manager()->hasObjectPermission(
-                    function_info.function_id,
-                    ctx->getCurrentUserId(),
-                    0x0001, // PERM_EXECUTE
-                    &err_ctx))
+                auto security_ctx = ctx->getCurrentSecurityContext();
+                if (!security_ctx.is_superuser && !isZeroUuid(security_ctx.effective_user_id))
                 {
-                    error("Permission denied: EXECUTE on function " + function_name);
+                    if (!db_->catalog_manager()->hasObjectPermission(
+                        function_info.function_id,
+                        security_ctx.effective_user_id,
+                        0x0001, // PERM_EXECUTE
+                        &err_ctx))
+                    {
+                        error("Permission denied: EXECUTE on function " + function_name);
+                    }
                 }
             }
 
@@ -24206,6 +25005,12 @@ namespace scratchbird
                             case ExtendedOpcode::EXT_RAISE:
                                 executeRaiseStatement();
                                 break;
+                            case ExtendedOpcode::EXT_VAR_LOAD:
+                                executeVarLoad();
+                                break;
+                            case ExtendedOpcode::EXT_VAR_STORE:
+                                executeVarStore();
+                                break;
                             default:
                                 // Unknown extended opcode
                                 break;
@@ -24267,17 +25072,21 @@ namespace scratchbird
             }
 
             auto conn_ctx = core::ConnectionContext::getCurrent();
-            if (conn_ctx && !conn_ctx->isSuperuser())
+            if (conn_ctx)
             {
-                if (!db_->catalog_manager()->hasObjectPermission(
-                        function_info.function_id,
-                        conn_ctx->getCurrentUserId(),
-                        0x0001,
-                        &err_ctx))
+                auto security_ctx = conn_ctx->getCurrentSecurityContext();
+                if (!security_ctx.is_superuser && !isZeroUuid(security_ctx.effective_user_id))
                 {
-                    SET_ERROR_CONTEXT(ctx, core::Status::PERMISSION_DENIED,
-                                      "Permission denied: EXECUTE on function");
-                    return core::Status::PERMISSION_DENIED;
+                    if (!db_->catalog_manager()->hasObjectPermission(
+                            function_info.function_id,
+                            security_ctx.effective_user_id,
+                            0x0001,
+                            &err_ctx))
+                    {
+                        SET_ERROR_CONTEXT(ctx, core::Status::PERMISSION_DENIED,
+                                          "Permission denied: EXECUTE on function");
+                        return core::Status::PERMISSION_DENIED;
+                    }
                 }
             }
 
@@ -24354,6 +25163,21 @@ namespace scratchbird
                 }
             }
 
+            struct StackGuard
+            {
+                Executor* exec;
+                std::stack<Value> saved;
+                explicit StackGuard(Executor* executor)
+                    : exec(executor), saved(std::move(executor->stack_))
+                {
+                    exec->stack_ = std::stack<Value>();
+                }
+                ~StackGuard()
+                {
+                    exec->stack_ = std::move(saved);
+                }
+            } stack_guard(this);
+
             const uint8_t* saved_bytecode = bytecode_;
             size_t saved_size = bytecode_size_;
             size_t saved_pc = pc_;
@@ -24414,6 +25238,12 @@ namespace scratchbird
                                 break;
                             case ExtendedOpcode::EXT_RAISE:
                                 executeRaiseStatement();
+                                break;
+                            case ExtendedOpcode::EXT_VAR_LOAD:
+                                executeVarLoad();
+                                break;
+                            case ExtendedOpcode::EXT_VAR_STORE:
+                                executeVarStore();
                                 break;
                             default:
                                 break;
@@ -24765,8 +25595,19 @@ namespace scratchbird
 
             if (has_value)
             {
-                // Evaluate return expression
-                evaluateExpression();
+                // Evaluate all expression opcodes until END sentinel.
+                while (pc_ < bytecode_size_ &&
+                       bytecode_[pc_] != static_cast<uint8_t>(Opcode::END))
+                {
+                    evaluateExpression();
+                }
+
+                if (stack_.size() != 1)
+                {
+                    error("RETURN expression produced " + std::to_string(stack_.size()) +
+                          " values, expected 1");
+                }
+
                 return_value_ = pop();
             }
             else
@@ -28221,6 +29062,19 @@ namespace scratchbird
                 }
             };
 
+            auto format_domain_type_ref = [&](const core::DomainTypeRef& ref) -> std::string {
+                if (!isZeroUuid(ref.domain_id))
+                {
+                    core::DomainInfo ref_domain;
+                    if (domain_mgr->getDomain(ref.domain_id, ref_domain, &err_ctx) == core::Status::OK)
+                    {
+                        return ref_domain.domain_name;
+                    }
+                    return "DOMAIN";
+                }
+                return formatType(ref.type, ref.precision, ref.scale);
+            };
+
             auto constraint_to_string = [](const core::DomainConstraint& constraint) {
                 std::string text;
                 switch (constraint.type)
@@ -28279,6 +29133,24 @@ namespace scratchbird
             current_result_set_->addRow({Value::makeVarchar("Domain Type"),
                                          Value::makeVarchar(domain_type_to_string(domain_info.domain_type))});
 
+            if (!domain_info.collation_name.empty())
+            {
+                current_result_set_->addRow({Value::makeVarchar("Collation"),
+                                             Value::makeVarchar(domain_info.collation_name)});
+            }
+
+            if (!domain_info.dialect_tag.empty())
+            {
+                current_result_set_->addRow({Value::makeVarchar("Dialect"),
+                                             Value::makeVarchar(domain_info.dialect_tag)});
+            }
+
+            if (!domain_info.compat_name.empty())
+            {
+                current_result_set_->addRow({Value::makeVarchar("Compat Name"),
+                                             Value::makeVarchar(domain_info.compat_name)});
+            }
+
             if (domain_info.domain_type == core::DomainType::BASIC)
             {
                 current_result_set_->addRow({Value::makeVarchar("Base Type"),
@@ -28289,7 +29161,7 @@ namespace scratchbird
             else if (domain_info.domain_type == core::DomainType::SET)
             {
                 current_result_set_->addRow({Value::makeVarchar("Element Type"),
-                                             Value::makeVarchar(dataTypeToString(domain_info.set_element_type))});
+                                             Value::makeVarchar(format_domain_type_ref(domain_info.set_element_type))});
             }
             else if (domain_info.domain_type == core::DomainType::VARIANT)
             {
@@ -28300,7 +29172,7 @@ namespace scratchbird
                     {
                         out << ", ";
                     }
-                    out << dataTypeToString(domain_info.variant_allowed_types[i]);
+                    out << format_domain_type_ref(domain_info.variant_allowed_types[i]);
                 }
                 current_result_set_->addRow({Value::makeVarchar("Allowed Types"),
                                              Value::makeVarchar(redact_details ? "Redacted" : out.str())});
@@ -28380,6 +29252,8 @@ namespace scratchbird
                 }
                 current_result_set_->addRow({Value::makeVarchar("Values"),
                                              Value::makeVarchar(redact_details ? "Redacted" : out.str())});
+                current_result_set_->addRow({Value::makeVarchar("Wrap"),
+                                             Value::makeVarchar(domain_info.enum_wrap ? "TRUE" : "FALSE")});
             }
 
             if (!isZeroUuid(domain_info.parent_domain_id))
@@ -30207,6 +31081,11 @@ namespace scratchbird
             // Read bytecode parameter (1 byte version)
             uint8_t version = readByte();
 
+            if (version != 2)
+            {
+                error("Only parser version 2 is supported");
+            }
+
             // Store in connection context for ServerSession to pick up
             if (conn_ctx_)
             {
@@ -30218,7 +31097,7 @@ namespace scratchbird
             result->addColumn("parser_version", core::DataType::VARCHAR);
 
             std::vector<TypedValue> row;
-            std::string version_str = (version == 2) ? "V2" : "V1";
+            std::string version_str = "V2";
             row.push_back(TypedValue::makeVarchar(version_str.c_str()));
             result->addRow(row);
 

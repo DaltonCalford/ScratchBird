@@ -1810,7 +1810,7 @@ SELECT * FROM documents WHERE content @@ 'database search';
 
 ### AST Additions
 
-**File:** `include/scratchbird/parser/ast.h`
+**File:** `include/scratchbird/parser/ast_v2.h`
 
 ```cpp
 struct InvertedIndexOptions {
@@ -1849,9 +1849,7 @@ Extend CREATE_INDEX (0x50) for inverted indexes:
 ### Bytecode Generation
 
 ```cpp
-Status BytecodeGenerator::generateCreateIndex(const CreateIndexStmt* stmt,
-                                              std::vector<uint8_t>* bytecode_out,
-                                              ErrorContext* ctx) {
+void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
     // ... existing encoding ...
 
     // NEW: For INVERTED indexes, encode options
@@ -1861,11 +1859,9 @@ Status BytecodeGenerator::generateCreateIndex(const CreateIndexStmt* stmt,
         if (stmt->inverted_options.enable_stemming) flags |= 0x02;
         if (stmt->inverted_options.filter_stop_words) flags |= 0x04;
 
-        encodeUint8(flags, bytecode_out);
-        encodeString(stmt->inverted_options.language, bytecode_out);
+        encodeUint8(flags, &bytecode_);
+        encodeString(stmt->inverted_options.language, &bytecode_);
     }
-
-    return Status::OK;
 }
 ```
 

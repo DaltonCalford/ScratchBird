@@ -1,479 +1,368 @@
 #include <gtest/gtest.h>
 #include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "scratchbird/optimizer/expression_matcher.h"
 
-
 using namespace scratchbird::optimizer;
-using namespace scratchbird::parser;
+using namespace scratchbird::core;
 
-/**
- * Test suite for ExpressionMatcher (Task 17 Phase 8)
- *
- * Tests expression matching for expression index support in query planner.
- */
-class ExpressionMatcherTest : public ::testing::Test
+namespace {
+
+std::unique_ptr<Expression> litInt(int64_t value)
 {
-protected:
-    struct ParseResult {
-        std::unique_ptr<Lexer> lexer;
-        std::unique_ptr<ASTArena> arena;
-        std::unique_ptr<Parser> parser;
-        Expression *expr;
+    auto expr = std::make_unique<LiteralExpr>(LiteralExpr::LiteralType::INTEGER);
+    expr->setIntValue(value);
+    return expr;
+}
 
-        ParseResult() : expr(nullptr) {}
-    };
+std::unique_ptr<Expression> litFloat(double value)
+{
+    auto expr = std::make_unique<LiteralExpr>(LiteralExpr::LiteralType::FLOAT);
+    expr->setFloatValue(value);
+    return expr;
+}
 
-    ParseResult parseExpression(const std::string &expr_str)
-    {
-        ParseResult result;
+std::unique_ptr<Expression> litString(std::string value)
+{
+    auto expr = std::make_unique<LiteralExpr>(LiteralExpr::LiteralType::STRING);
+    expr->setStringValue(std::move(value));
+    return expr;
+}
 
-        // Parse as part of a SELECT statement
-        std::string sql = "SELECT * FROM t WHERE " + expr_str;
-        result.lexer = std::make_unique<Lexer>(sql);
-        result.arena = std::make_unique<ASTArena>();
-        result.parser = std::make_unique<Parser>(*result.lexer, *result.arena);
+std::unique_ptr<Expression> col(std::string name)
+{
+    return std::make_unique<IdentifierExpr>(std::move(name));
+}
 
-        auto parse_result = result.parser->parseStatement();
-        if (!parse_result.success())
-        {
-            return result;
-        }
+std::unique_ptr<Expression> bin(BinaryOp op, std::unique_ptr<Expression> left,
+                                std::unique_ptr<Expression> right)
+{
+    return std::make_unique<BinaryOpExpr>(op, std::move(left), std::move(right));
+}
 
-        auto *select_stmt = dynamic_cast<SelectStmt *>(parse_result.statement());
-        if (!select_stmt || !select_stmt->whereClause())
-        {
-            return result;
-        }
+template <typename... Args>
+std::vector<std::unique_ptr<Expression>> makeArgs(Args&&... args)
+{
+    std::vector<std::unique_ptr<Expression>> out;
+    out.reserve(sizeof...(Args));
+    (out.emplace_back(std::forward<Args>(args)), ...);
+    return out;
+}
 
-        result.expr = select_stmt->whereClause();
-        return result;
-    }
-};
+std::unique_ptr<Expression> func(std::string name, std::vector<std::unique_ptr<Expression>> args)
+{
+    return std::make_unique<FunctionCallExpr>(std::move(name), std::move(args));
+}
+
+std::unique_ptr<Expression> extractYear(std::unique_ptr<Expression> source)
+{
+    return std::make_unique<ExtractExpr>(1, "YEAR", std::move(source));
+}
+
+} // namespace
 
 // ============================================================================
 // Exact Match Tests
 // ============================================================================
 
-TEST_F(ExpressionMatcherTest, ExactMatchLiteral)
+TEST(ExpressionMatcherTest, ExactMatchLiteral)
 {
-    auto result1 = parseExpression("42");
-    auto result2 = parseExpression("42");
+    auto result1 = litInt(42);
+    auto result2 = litInt(42);
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    // Use result1's StringPool since both expressions should match structurally
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                           &result1.parser->stringPool(),
-                                           &result2.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
-TEST_F(ExpressionMatcherTest, ExactMatchIdentifier)
+TEST(ExpressionMatcherTest, ExactMatchIdentifier)
 {
-    auto result1 = parseExpression("email");
-    auto result2 = parseExpression("email");
+    auto result1 = col("email");
+    auto result2 = col("email");
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                           &result1.parser->stringPool(),
-                                           &result2.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
-TEST_F(ExpressionMatcherTest, ExactMatchFunctionCall)
+TEST(ExpressionMatcherTest, ExactMatchFunctionCall)
 {
-    auto result1 = parseExpression("LOWER(email)");
-    auto result2 = parseExpression("LOWER(email)");
+    auto result1 = func("LOWER", makeArgs(col("email")));
+    auto result2 = func("LOWER", makeArgs(col("email")));
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                           &result1.parser->stringPool(),
-                                           &result2.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
-TEST_F(ExpressionMatcherTest, ExactMatchBinaryOp)
+TEST(ExpressionMatcherTest, ExactMatchBinaryOp)
 {
-    auto result1 = parseExpression("price * quantity");
-    auto result2 = parseExpression("price * quantity");
+    auto result1 = bin(BinaryOp::MULTIPLY, col("price"), col("quantity"));
+    auto result2 = bin(BinaryOp::MULTIPLY, col("price"), col("quantity"));
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                           &result1.parser->stringPool(),
-                                           &result2.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
-TEST_F(ExpressionMatcherTest, ExactMatchComplex)
+TEST(ExpressionMatcherTest, ExactMatchComplex)
 {
-    auto result1 = parseExpression("(price * 1.1) + tax");
-    auto result2 = parseExpression("(price * 1.1) + tax");
+    auto result1 = bin(BinaryOp::ADD,
+                       bin(BinaryOp::MULTIPLY, col("price"), litFloat(1.1)),
+                       col("tax"));
+    auto result2 = bin(BinaryOp::ADD,
+                       bin(BinaryOp::MULTIPLY, col("price"), litFloat(1.1)),
+                       col("tax"));
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                           &result1.parser->stringPool(),
-                                           &result2.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
 // ============================================================================
 // Commutative Operator Tests
 // ============================================================================
 
-TEST_F(ExpressionMatcherTest, CommutativeAddition)
+TEST(ExpressionMatcherTest, CommutativeAddition)
 {
-    auto result1 = parseExpression("a + b");
-    auto result2 = parseExpression("b + a");
+    auto result1 = bin(BinaryOp::ADD, col("a"), col("b"));
+    auto result2 = bin(BinaryOp::ADD, col("b"), col("a"));
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                           &result1.parser->stringPool(),
-                                           &result2.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
-TEST_F(ExpressionMatcherTest, CommutativeMultiplication)
+TEST(ExpressionMatcherTest, CommutativeMultiplication)
 {
-    auto result1 = parseExpression("price * quantity");
-    auto result2 = parseExpression("quantity * price");
+    auto result1 = bin(BinaryOp::MULTIPLY, col("price"), col("quantity"));
+    auto result2 = bin(BinaryOp::MULTIPLY, col("quantity"), col("price"));
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                           &result1.parser->stringPool(),
-                                           &result2.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
-TEST_F(ExpressionMatcherTest, CommutativeEquality)
+TEST(ExpressionMatcherTest, CommutativeEquality)
 {
-    auto result1 = parseExpression("a = b");
-    auto result2 = parseExpression("b = a");
+    auto result1 = bin(BinaryOp::EQ, col("a"), col("b"));
+    auto result2 = bin(BinaryOp::EQ, col("b"), col("a"));
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                           &result1.parser->stringPool(),
-                                           &result2.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
-TEST_F(ExpressionMatcherTest, NonCommutativeSubtraction)
+TEST(ExpressionMatcherTest, NonCommutativeSubtraction)
 {
-    auto result1 = parseExpression("a - b");
-    auto result2 = parseExpression("b - a");
+    auto result1 = bin(BinaryOp::SUBTRACT, col("a"), col("b"));
+    auto result2 = bin(BinaryOp::SUBTRACT, col("b"), col("a"));
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                            &result1.parser->stringPool(),
-                                            &result2.parser->stringPool()));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
-TEST_F(ExpressionMatcherTest, NonCommutativeDivision)
+TEST(ExpressionMatcherTest, NonCommutativeDivision)
 {
-    auto result1 = parseExpression("a / b");
-    auto result2 = parseExpression("b / a");
+    auto result1 = bin(BinaryOp::DIVIDE, col("a"), col("b"));
+    auto result2 = bin(BinaryOp::DIVIDE, col("b"), col("a"));
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                            &result1.parser->stringPool(),
-                                            &result2.parser->stringPool()));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
 // ============================================================================
 // No Match Tests
 // ============================================================================
 
-TEST_F(ExpressionMatcherTest, NoMatchDifferentLiterals)
+TEST(ExpressionMatcherTest, NoMatchDifferentLiterals)
 {
-    auto result1 = parseExpression("42");
-    auto result2 = parseExpression("99");
+    auto result1 = litInt(42);
+    auto result2 = litInt(99);
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                            &result1.parser->stringPool(),
-                                            &result2.parser->stringPool()));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
-TEST_F(ExpressionMatcherTest, NoMatchDifferentIdentifiers)
+TEST(ExpressionMatcherTest, NoMatchDifferentIdentifiers)
 {
-    auto result1 = parseExpression("email");
-    auto result2 = parseExpression("name");
+    auto result1 = col("email");
+    auto result2 = col("name");
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                            &result1.parser->stringPool(),
-                                            &result2.parser->stringPool()));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
-TEST_F(ExpressionMatcherTest, NoMatchDifferentFunctions)
+TEST(ExpressionMatcherTest, NoMatchDifferentFunctions)
 {
-    auto result1 = parseExpression("LOWER(email)");
-    auto result2 = parseExpression("UPPER(email)");
+    auto result1 = func("LOWER", makeArgs(col("email")));
+    auto result2 = func("UPPER", makeArgs(col("email")));
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                            &result1.parser->stringPool(),
-                                            &result2.parser->stringPool()));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
-TEST_F(ExpressionMatcherTest, NoMatchDifferentOperators)
+TEST(ExpressionMatcherTest, NoMatchDifferentOperators)
 {
-    auto result1 = parseExpression("a + b");
-    auto result2 = parseExpression("a - b");
+    auto result1 = bin(BinaryOp::ADD, col("a"), col("b"));
+    auto result2 = bin(BinaryOp::SUBTRACT, col("a"), col("b"));
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                            &result1.parser->stringPool(),
-                                            &result2.parser->stringPool()));
+    EXPECT_FALSE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
 // ============================================================================
-// canUse() Tests - Operator Compatibility
+// Can Use Tests
 // ============================================================================
 
-TEST_F(ExpressionMatcherTest, CanUseExactMatch)
+TEST(ExpressionMatcherTest, CanUseExactMatch)
 {
-    auto result_query = parseExpression("LOWER(email) = 'test@example.com'");
-    auto result_index = parseExpression("LOWER(email)");
+    auto result_query = bin(BinaryOp::EQ,
+                            func("LOWER", makeArgs(col("email"))),
+                            litString("test@example.com"));
+    auto result_index = func("LOWER", makeArgs(col("email")));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
-                                                              &result_query.parser->stringPool(),
-                                                              &result_index.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.get(), result_index.get());
     EXPECT_EQ(match_type, ExpressionMatchType::EXACT_MATCH);
 }
 
-TEST_F(ExpressionMatcherTest, CanUseRangeScanGreater)
+TEST(ExpressionMatcherTest, CanUseRangeScanGreater)
 {
-    auto result_query = parseExpression("LOWER(email) > 'a'");
-    auto result_index = parseExpression("LOWER(email)");
+    auto result_query = bin(BinaryOp::GT,
+                            func("LOWER", makeArgs(col("email"))),
+                            litString("a"));
+    auto result_index = func("LOWER", makeArgs(col("email")));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
-                                                              &result_query.parser->stringPool(),
-                                                              &result_index.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.get(), result_index.get());
     EXPECT_EQ(match_type, ExpressionMatchType::RANGE_SCAN);
 }
 
-TEST_F(ExpressionMatcherTest, CanUseRangeScanLess)
+TEST(ExpressionMatcherTest, CanUseRangeScanLess)
 {
-    auto result_query = parseExpression("LOWER(email) < 'z'");
-    auto result_index = parseExpression("LOWER(email)");
+    auto result_query = bin(BinaryOp::LT,
+                            func("LOWER", makeArgs(col("email"))),
+                            litString("z"));
+    auto result_index = func("LOWER", makeArgs(col("email")));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
-                                                              &result_query.parser->stringPool(),
-                                                              &result_index.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.get(), result_index.get());
     EXPECT_EQ(match_type, ExpressionMatchType::RANGE_SCAN);
 }
 
-TEST_F(ExpressionMatcherTest, CanUseLikePrefixScan)
+TEST(ExpressionMatcherTest, CanUseLikePrefixScan)
 {
-    auto result_query = parseExpression("LOWER(email) LIKE 'test%'");
-    auto result_index = parseExpression("LOWER(email)");
+    auto result_query = bin(BinaryOp::LIKE,
+                            func("LOWER", makeArgs(col("email"))),
+                            litString("test%"));
+    auto result_index = func("LOWER", makeArgs(col("email")));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
-                                                              &result_query.parser->stringPool(),
-                                                              &result_index.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.get(), result_index.get());
     EXPECT_EQ(match_type, ExpressionMatchType::RANGE_SCAN);
 }
 
-TEST_F(ExpressionMatcherTest, CannotUseLikeSuffixScan)
+TEST(ExpressionMatcherTest, CannotUseLikeSuffixScan)
 {
-    auto result_query = parseExpression("LOWER(email) LIKE '%@example.com'");
-    auto result_index = parseExpression("LOWER(email)");
+    auto result_query = bin(BinaryOp::LIKE,
+                            func("LOWER", makeArgs(col("email"))),
+                            litString("%@example.com"));
+    auto result_index = func("LOWER", makeArgs(col("email")));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
-                                                              &result_query.parser->stringPool(),
-                                                              &result_index.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.get(), result_index.get());
     EXPECT_EQ(match_type, ExpressionMatchType::NO_MATCH);
 }
 
-TEST_F(ExpressionMatcherTest, CannotUseDifferentExpression)
+TEST(ExpressionMatcherTest, CannotUseDifferentExpression)
 {
-    auto result_query = parseExpression("UPPER(email) = 'TEST'");
-    auto result_index = parseExpression("LOWER(email)");
+    auto result_query = bin(BinaryOp::EQ,
+                            func("UPPER", makeArgs(col("email"))),
+                            litString("TEST"));
+    auto result_index = func("LOWER", makeArgs(col("email")));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
-                                                              &result_query.parser->stringPool(),
-                                                              &result_index.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.get(), result_index.get());
     EXPECT_EQ(match_type, ExpressionMatchType::NO_MATCH);
 }
 
 // ============================================================================
-// Case-Insensitive Matching Tests
+// Case Insensitive Matching
 // ============================================================================
 
-TEST_F(ExpressionMatcherTest, CaseInsensitiveColumnNames)
+TEST(ExpressionMatcherTest, CaseInsensitiveColumnNames)
 {
-    auto result1 = parseExpression("Email");
-    auto result2 = parseExpression("email");
+    auto result1 = col("Email");
+    auto result2 = col("email");
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                           &result1.parser->stringPool(),
-                                           &result2.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
-TEST_F(ExpressionMatcherTest, CaseInsensitiveFunctionNames)
+TEST(ExpressionMatcherTest, CaseInsensitiveFunctionNames)
 {
-    auto result1 = parseExpression("LOWER(email)");
-    auto result2 = parseExpression("lower(email)");
+    auto result1 = func("LOWER", makeArgs(col("email")));
+    auto result2 = func("lower", makeArgs(col("email")));
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                           &result1.parser->stringPool(),
-                                           &result2.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
 // ============================================================================
 // Complex Expression Tests
 // ============================================================================
 
-TEST_F(ExpressionMatcherTest, ComplexArithmeticExpression)
+TEST(ExpressionMatcherTest, ComplexArithmeticExpression)
 {
-    auto result1 = parseExpression("(price * quantity) + tax");
-    auto result2 = parseExpression("(price * quantity) + tax");
+    auto result1 = bin(BinaryOp::ADD,
+                       bin(BinaryOp::MULTIPLY, col("price"), col("quantity")),
+                       col("tax"));
+    auto result2 = bin(BinaryOp::ADD,
+                       bin(BinaryOp::MULTIPLY, col("price"), col("quantity")),
+                       col("tax"));
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                           &result1.parser->stringPool(),
-                                           &result2.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
-TEST_F(ExpressionMatcherTest, NestedFunctionCalls)
+TEST(ExpressionMatcherTest, NestedFunctionCalls)
 {
-    auto result1 = parseExpression("LOWER(TRIM(email))");
-    auto result2 = parseExpression("LOWER(TRIM(email))");
+    auto result1 = func("LOWER", makeArgs(func("TRIM", makeArgs(col("email")))));
+    auto result2 = func("LOWER", makeArgs(func("TRIM", makeArgs(col("email")))));
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                           &result1.parser->stringPool(),
-                                           &result2.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
-TEST_F(ExpressionMatcherTest, MultipleArguments)
+TEST(ExpressionMatcherTest, MultipleArguments)
 {
-    auto result1 = parseExpression("SUBSTRING(email, 1, 10)");
-    auto result2 = parseExpression("SUBSTRING(email, 1, 10)");
+    auto result1 = func("SUBSTRING", makeArgs(col("email"), litInt(1), litInt(10)));
+    auto result2 = func("SUBSTRING", makeArgs(col("email"), litInt(1), litInt(10)));
 
-    ASSERT_NE(result1.expr, nullptr);
-    ASSERT_NE(result2.expr, nullptr);
-
-    EXPECT_TRUE(ExpressionMatcher::matches(result1.expr, result2.expr,
-                                           &result1.parser->stringPool(),
-                                           &result2.parser->stringPool()));
+    EXPECT_TRUE(ExpressionMatcher::matches(result1.get(), result2.get()));
 }
 
 // ============================================================================
-// Edge Cases
+// Null Checks
 // ============================================================================
 
-TEST_F(ExpressionMatcherTest, NullExpressions)
+TEST(ExpressionMatcherTest, NullExpressions)
 {
-    StringPool pool;
-    EXPECT_FALSE(ExpressionMatcher::matches(nullptr, nullptr, &pool));
+    EXPECT_FALSE(ExpressionMatcher::matches(nullptr, nullptr));
 }
 
-TEST_F(ExpressionMatcherTest, OneNullExpression)
+TEST(ExpressionMatcherTest, OneNullExpression)
 {
-    auto result = parseExpression("email");
-
-    EXPECT_FALSE(ExpressionMatcher::matches(result.expr, nullptr, &result.parser->stringPool()));
-    EXPECT_FALSE(ExpressionMatcher::matches(nullptr, result.expr, &result.parser->stringPool()));
-}
-
-TEST_F(ExpressionMatcherTest, NullStringPool)
-{
-    auto result1 = parseExpression("email");
-    auto result2 = parseExpression("email");
-
-    EXPECT_FALSE(ExpressionMatcher::matches(result1.expr, result2.expr, nullptr));
+    auto result = col("email");
+    EXPECT_FALSE(ExpressionMatcher::matches(result.get(), nullptr));
+    EXPECT_FALSE(ExpressionMatcher::matches(nullptr, result.get()));
 }
 
 // ============================================================================
-// Real-World Use Cases
+// Real-World Examples
 // ============================================================================
 
-TEST_F(ExpressionMatcherTest, RealWorldLowerEmailIndex)
+TEST(ExpressionMatcherTest, RealWorldLowerEmailIndex)
 {
-    auto result_query = parseExpression("LOWER(email) = 'test@example.com'");
-    auto result_index = parseExpression("LOWER(email)");
+    auto result_query = bin(BinaryOp::EQ,
+                            func("LOWER", makeArgs(col("email"))),
+                            litString("test@example.com"));
+    auto result_index = func("LOWER", makeArgs(col("email")));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
-                                                              &result_query.parser->stringPool(),
-                                                              &result_index.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.get(), result_index.get());
     EXPECT_EQ(match_type, ExpressionMatchType::EXACT_MATCH);
 }
 
-TEST_F(ExpressionMatcherTest, RealWorldExtractYearIndex)
+TEST(ExpressionMatcherTest, RealWorldExtractYearIndex)
 {
-    auto result_query = parseExpression("EXTRACT(YEAR FROM created_at) = 2024");
-    auto result_index = parseExpression("EXTRACT(YEAR FROM created_at)");
+    auto result_query = bin(BinaryOp::EQ,
+                            extractYear(col("created_at")),
+                            litInt(2024));
+    auto result_index = extractYear(col("created_at"));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
-                                                              &result_query.parser->stringPool(),
-                                                              &result_index.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.get(), result_index.get());
     EXPECT_EQ(match_type, ExpressionMatchType::EXACT_MATCH);
 }
 
-TEST_F(ExpressionMatcherTest, RealWorldComputedPriceIndex)
+TEST(ExpressionMatcherTest, RealWorldComputedPriceIndex)
 {
-    auto result_query = parseExpression("(price * quantity) > 1000");
-    auto result_index = parseExpression("price * quantity");
+    auto result_query = bin(BinaryOp::GT,
+                            bin(BinaryOp::MULTIPLY, col("price"), col("quantity")),
+                            litInt(1000));
+    auto result_index = bin(BinaryOp::MULTIPLY, col("price"), col("quantity"));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.expr, result_index.expr,
-                                                              &result_query.parser->stringPool(),
-                                                              &result_index.parser->stringPool());
+    ExpressionMatchType match_type = ExpressionMatcher::canUse(result_query.get(), result_index.get());
     EXPECT_EQ(match_type, ExpressionMatchType::RANGE_SCAN);
 }

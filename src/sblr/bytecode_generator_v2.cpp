@@ -6,6 +6,8 @@
 
 #include "scratchbird/sblr/bytecode_generator_v2.h"
 #include "scratchbird/sblr/semantic_analyzer_v2.h"
+#include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <sstream>
 #include <cmath>
@@ -340,59 +342,59 @@ void BytecodeGeneratorV2::generateInsert(ResolvedInsertStmt* stmt) {
 }
 
 void BytecodeGeneratorV2::generateUpdate(ResolvedUpdateStmt* stmt) {
+    // Generate v1-compatible bytecode format (executor expects TABLE_REF + column names).
     current_result_->writeOpcode(sblr::Opcode::UPDATE);
 
-    // Write target table UUID
-    current_result_->writeUUID(stmt->target_table.table_uuid);
+    current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
+    writeStringId(stmt->target_table.name);
 
-    // Write assignment count
+    current_result_->writeOpcode(sblr::Opcode::BEGIN_LIST);
     current_result_->writeInt32(static_cast<uint32_t>(stmt->assignments.size()));
 
-    // Write each assignment: column_index, expression
     for (const auto& [col_idx, expr] : stmt->assignments) {
         current_result_->writeOpcode(sblr::Opcode::ASSIGNMENT);
-        current_result_->writeInt32(col_idx);
+        current_result_->writeOpcode(sblr::Opcode::COLUMN_REF);
+        if (col_idx < stmt->target_table.columns.size()) {
+            writeStringId(stmt->target_table.columns[col_idx].name);
+        } else {
+            current_result_->writeString("?column?");
+        }
         generateExpression(expr);
     }
 
-    // Generate FROM clause if present
-    if (!stmt->from_tables.empty()) {
-        generateFromClause(stmt->from_tables, stmt->joins);
+    current_result_->writeOpcode(sblr::Opcode::END_LIST);
+
+    if (!stmt->from_tables.empty() || !stmt->joins.empty()) {
+        current_result_->addWarning("UPDATE ... FROM not supported in v1 executor; ignored");
     }
 
-    // Generate WHERE clause
     if (stmt->where) {
         generateWhereClause(stmt->where);
     }
 
-    // Handle RETURNING
     if (!stmt->returning.empty()) {
-        current_result_->writeExtendedOpcode(
-            sblr::ExtendedOpcode::EXT_RETURNING);
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_RETURNING);
         generateSelectList(stmt->returning);
     }
 }
 
 void BytecodeGeneratorV2::generateDelete(ResolvedDeleteStmt* stmt) {
+    // Generate v1-compatible bytecode format (executor expects TABLE_REF + table name).
     current_result_->writeOpcode(sblr::Opcode::DELETE);
 
-    // Write target table UUID
-    current_result_->writeUUID(stmt->target_table.table_uuid);
+    current_result_->writeOpcode(sblr::Opcode::TABLE_REF);
+    writeStringId(stmt->target_table.name);
 
-    // Generate USING clause if present
-    if (!stmt->using_tables.empty()) {
-        generateFromClause(stmt->using_tables, stmt->using_joins);
+    if (!stmt->using_tables.empty() || !stmt->using_joins.empty()) {
+        current_result_->addWarning("DELETE ... USING not supported in v1 executor; ignored");
     }
 
-    // Generate WHERE clause
     if (stmt->where) {
         generateWhereClause(stmt->where);
     }
 
-    // Handle RETURNING
     if (!stmt->returning.empty()) {
-        current_result_->writeExtendedOpcode(
-            sblr::ExtendedOpcode::EXT_RETURNING);
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_RETURNING);
         generateSelectList(stmt->returning);
     }
 }
@@ -637,6 +639,7 @@ void BytecodeGeneratorV2::generateCreateDatabase(ResolvedCreateDatabaseStmt* stm
 }
 
 void BytecodeGeneratorV2::generateCreateDomain(ResolvedCreateDomainStmt* stmt) {
+    // Spec: docs/specifications/SBLR_DOMAIN_PAYLOADS.md
     current_result_->writeOpcode(sblr::Opcode::EXTENDED_OPCODE);
     current_result_->writeInt16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_DOMAIN));
 
@@ -658,11 +661,44 @@ void BytecodeGeneratorV2::generateCreateDomain(ResolvedCreateDomainStmt* stmt) {
     }
     current_result_->writeByte(flags);
 
+    current_result_->writeByte(static_cast<uint8_t>(stmt->domain_kind));
     current_result_->writeString(schemaPathToString(stmt->domain_path, string_pool_));
-    generateDataType(stmt->base_type);
+
+    switch (stmt->domain_kind) {
+        case DomainKind::BASIC:
+            generateDataType(stmt->base_type);
+            break;
+        case DomainKind::RECORD:
+            current_result_->writeInt32(static_cast<uint32_t>(stmt->record_fields.size()));
+            for (const auto& field : stmt->record_fields) {
+                writeStringId(field.name);
+                writeTypeRef(field.type);
+                current_result_->writeByte(field.nullable ? 1 : 0);
+                current_result_->writeString(field.default_value);
+            }
+            break;
+        case DomainKind::ENUM:
+            current_result_->writeInt32(static_cast<uint32_t>(stmt->enum_values.size()));
+            for (const auto& value : stmt->enum_values) {
+                writeStringId(value.label);
+                current_result_->writeInt32(static_cast<uint32_t>(value.position));
+            }
+            current_result_->writeByte(stmt->enum_wrap ? 1 : 0);
+            break;
+        case DomainKind::SET:
+            writeTypeRef(stmt->set_element_type);
+            break;
+        case DomainKind::VARIANT:
+            current_result_->writeInt32(static_cast<uint32_t>(stmt->variant_allowed_types.size()));
+            for (const auto& type_ref : stmt->variant_allowed_types) {
+                writeTypeRef(type_ref);
+            }
+            break;
+    }
 
     current_result_->writeByte(stmt->nullable ? 1 : 0);
     current_result_->writeString(stmt->default_value);
+    current_result_->writeString(stmt->has_collation ? stmt->collation_name : std::string());
 
     current_result_->writeInt32(static_cast<uint32_t>(stmt->constraints.size()));
     for (const auto& constraint : stmt->constraints) {
@@ -674,6 +710,14 @@ void BytecodeGeneratorV2::generateCreateDomain(ResolvedCreateDomainStmt* stmt) {
         }
         current_result_->writeString(constraint.expression);
     }
+
+    current_result_->writeByte(stmt->has_inherits ? 1 : 0);
+    if (stmt->has_inherits) {
+        current_result_->writeUUID(stmt->parent_domain_id);
+    }
+
+    current_result_->writeString(stmt->has_dialect ? stmt->dialect_tag : std::string());
+    current_result_->writeString(stmt->has_compat ? stmt->compat_name : std::string());
 
     if (stmt->has_integrity) {
         current_result_->writeByte(stmt->integrity.uniqueness ? 1 : 0);
@@ -1241,6 +1285,24 @@ void BytecodeGeneratorV2::generateSet(ResolvedSetStmt* stmt) {
             }
             break;
 
+        case SetStmt::SetType::SQL_DIALECT:
+            current_result_->writeExtendedOpcode(
+                sblr::ExtendedOpcode::EXT_SET_SQL_DIALECT);
+            current_result_->writeByte(stmt->sql_dialect);
+            break;
+
+        case SetStmt::SetType::NAMES:
+            current_result_->writeExtendedOpcode(
+                sblr::ExtendedOpcode::EXT_SET_NAMES);
+            writeStringId(stmt->variable_name);
+            break;
+
+        case SetStmt::SetType::LOCAL_TIMEOUT:
+            current_result_->writeExtendedOpcode(
+                sblr::ExtendedOpcode::EXT_SET_LOCAL_TIMEOUT);
+            current_result_->writeInt32(stmt->local_timeout_seconds);
+            break;
+
         case SetStmt::SetType::ROLE:
             current_result_->writeExtendedOpcode(
                 sblr::ExtendedOpcode::EXT_SET_ROLE);
@@ -1413,6 +1475,24 @@ void BytecodeGeneratorV2::generateShow(ResolvedShowStmt* stmt) {
             current_result_->writeExtendedOpcode(
                 sblr::ExtendedOpcode::EXT_SHOW_COLLATIONS);
             writeStringId(stmt->like_pattern);   // Optional LIKE pattern
+            break;
+
+        case ShowStmt::ShowType::COMMENTS:
+            current_result_->writeExtendedOpcode(
+                sblr::ExtendedOpcode::EXT_SHOW_COMMENTS);
+            writeStringId(stmt->variable_name);  // Optional object name
+            break;
+
+        case ShowStmt::ShowType::DEPENDENCIES:
+            current_result_->writeExtendedOpcode(
+                sblr::ExtendedOpcode::EXT_SHOW_DEPENDENCIES);
+            writeStringId(stmt->variable_name);  // Optional object name
+            break;
+
+        case ShowStmt::ShowType::PACKAGE:
+            current_result_->writeExtendedOpcode(
+                sblr::ExtendedOpcode::EXT_SHOW_PACKAGE);
+            writeStringId(stmt->variable_name);  // Package name
             break;
 
         case ShowStmt::ShowType::SQL_DIALECT:
@@ -1593,8 +1673,32 @@ void BytecodeGeneratorV2::generateBinaryExpr(ResolvedBinaryExpr* expr) {
     generateExpression(expr->left);
     generateExpression(expr->right);
 
+    if (expr->op == BinaryOp::REGEX_MATCH) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_REGEX_MATCH);
+        return;
+    }
+    if (expr->op == BinaryOp::REGEX_MATCH_CI) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_REGEX_MATCH_CI);
+        return;
+    }
+    if (expr->op == BinaryOp::REGEX_NOT_MATCH) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_REGEX_NOT_MATCH);
+        return;
+    }
+    if (expr->op == BinaryOp::REGEX_NOT_MATCH_CI) {
+        current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_REGEX_NOT_MATCH_CI);
+        return;
+    }
+
     // Generate operator
-    current_result_->writeOpcode(binaryOpToOpcode(expr->op));
+    auto opcode = binaryOpToOpcode(expr->op);
+    current_result_->writeOpcode(opcode);
+
+    // JSON operators are encoded like functions (opcode + arg_count)
+    if (expr->op == BinaryOp::JSON_EXTRACT || expr->op == BinaryOp::JSON_EXTRACT_TEXT ||
+        expr->op == BinaryOp::JSON_HASH_EXTRACT || expr->op == BinaryOp::JSON_HASH_EXTRACT_TEXT) {
+        current_result_->writeByte(2);
+    }
 }
 
 void BytecodeGeneratorV2::generateUnaryExpr(ResolvedUnaryExpr* expr) {
@@ -1636,74 +1740,270 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
         generateExpression(arg);
     }
 
+    auto arg_count = expr->arguments.size();
+    auto write_arg_count = [&]() {
+        if (arg_count > std::numeric_limits<uint8_t>::max()) {
+            current_result_->addError("Function argument count exceeds byte limit");
+            current_result_->writeByte(0);
+            return;
+        }
+        current_result_->writeByte(static_cast<uint8_t>(arg_count));
+    };
+
+    std::string func_name(getString(expr->function.function_name));
+    std::transform(func_name.begin(), func_name.end(), func_name.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+
     // Check for aggregate functions
     if (expr->function.is_aggregate) {
-        std::string_view name = getString(expr->function.function_name);
-
-        if (name == "COUNT") {
+        if (func_name == "COUNT") {
             current_result_->writeOpcode(sblr::Opcode::AGG_COUNT);
-        } else if (name == "SUM") {
+        } else if (func_name == "SUM") {
             current_result_->writeOpcode(sblr::Opcode::AGG_SUM);
-        } else if (name == "AVG") {
+        } else if (func_name == "AVG") {
             current_result_->writeOpcode(sblr::Opcode::AGG_AVG);
-        } else if (name == "MIN") {
+        } else if (func_name == "MIN") {
             current_result_->writeOpcode(sblr::Opcode::AGG_MIN);
-        } else if (name == "MAX") {
+        } else if (func_name == "MAX") {
             current_result_->writeOpcode(sblr::Opcode::AGG_MAX);
+        } else if (func_name == "STDDEV" || func_name == "STDDEV_SAMP") {
+            current_result_->writeOpcode(sblr::Opcode::AGG_STDDEV_SAMP);
+        } else if (func_name == "STDDEV_POP") {
+            current_result_->writeOpcode(sblr::Opcode::AGG_STDDEV_POP);
+        } else if (func_name == "VARIANCE" || func_name == "VAR_SAMP") {
+            current_result_->writeOpcode(sblr::Opcode::AGG_VAR_SAMP);
+        } else if (func_name == "VAR_POP") {
+            current_result_->writeOpcode(sblr::Opcode::AGG_VAR_POP);
+        } else if (func_name == "CORR") {
+            current_result_->writeOpcode(sblr::Opcode::AGG_CORR);
+        } else if (func_name == "COVAR_POP") {
+            current_result_->writeOpcode(sblr::Opcode::AGG_COVAR_POP);
+        } else if (func_name == "ARRAY_AGG") {
+            current_result_->writeOpcode(sblr::Opcode::ARRAY_AGG);
         } else {
             // Generic function call
             writeStringId(expr->function.function_name);
             current_result_->writeInt32(static_cast<uint32_t>(expr->arguments.size()));
+            return;
         }
+        write_arg_count();
         return;
     }
 
     // Built-in functions
-    std::string_view name = getString(expr->function.function_name);
-
     // String functions
-    if (name == "LENGTH" || name == "LEN") {
+    if (func_name == "LENGTH" || func_name == "LEN") {
         current_result_->writeOpcode(sblr::Opcode::FUNC_LENGTH);
-    } else if (name == "UPPER") {
+        write_arg_count();
+    } else if (func_name == "UPPER") {
         current_result_->writeOpcode(sblr::Opcode::FUNC_UPPER);
-    } else if (name == "LOWER") {
+        write_arg_count();
+    } else if (func_name == "LOWER") {
         current_result_->writeOpcode(sblr::Opcode::FUNC_LOWER);
-    } else if (name == "TRIM") {
+        write_arg_count();
+    } else if (func_name == "TRIM") {
         current_result_->writeOpcode(sblr::Opcode::FUNC_TRIM);
-    } else if (name == "SUBSTRING" || name == "SUBSTR") {
+        write_arg_count();
+    } else if (func_name == "SUBSTRING" || func_name == "SUBSTR") {
         current_result_->writeOpcode(sblr::Opcode::FUNC_SUBSTRING);
+        write_arg_count();
+    } else if (func_name == "CHAR_LENGTH") {
+        current_result_->writeOpcode(sblr::Opcode::FUNC_CHAR_LENGTH);
+        write_arg_count();
+    } else if (func_name == "OCTET_LENGTH") {
+        current_result_->writeOpcode(sblr::Opcode::FUNC_OCTET_LENGTH);
+        write_arg_count();
+    } else if (func_name == "CONVERT") {
+        current_result_->writeOpcode(sblr::Opcode::FUNC_CONVERT);
+        write_arg_count();
+    } else if (func_name == "COLLATE") {
+        current_result_->writeOpcode(sblr::Opcode::FUNC_COLLATE);
+        write_arg_count();
     }
     // Date/time functions
-    else if (name == "NOW" || name == "CURRENT_TIMESTAMP") {
+    else if (func_name == "NOW" || func_name == "CURRENT_TIMESTAMP") {
         current_result_->writeOpcode(sblr::Opcode::FUNC_NOW);
-    } else if (name == "CURRENT_DATE") {
+        write_arg_count();
+    } else if (func_name == "CURRENT_DATE") {
         current_result_->writeOpcode(sblr::Opcode::FUNC_CURRENT_DATE);
+        write_arg_count();
+    } else if (func_name == "DATE_ADD") {
+        current_result_->writeOpcode(sblr::Opcode::FUNC_DATE_ADD);
+        write_arg_count();
+    } else if (func_name == "DATE_SUB") {
+        current_result_->writeOpcode(sblr::Opcode::FUNC_DATE_SUB);
+        write_arg_count();
+    } else if (func_name == "DATE_DIFF" || func_name == "DATEDIFF") {
+        current_result_->writeOpcode(sblr::Opcode::FUNC_DATE_DIFF);
+        write_arg_count();
     }
     // Math functions
-    else if (name == "ABS") {
+    else if (func_name == "ABS") {
         current_result_->writeExtendedOpcode(
             sblr::ExtendedOpcode::EXT_FUNC_ABS);
-    } else if (name == "ROUND") {
+        write_arg_count();
+    } else if (func_name == "SIGN") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_SIGN);
+        write_arg_count();
+    } else if (func_name == "ROUND") {
         current_result_->writeExtendedOpcode(
             sblr::ExtendedOpcode::EXT_FUNC_ROUND);
-    } else if (name == "FLOOR") {
+        write_arg_count();
+    } else if (func_name == "FLOOR") {
         current_result_->writeExtendedOpcode(
             sblr::ExtendedOpcode::EXT_FUNC_FLOOR);
-    } else if (name == "CEIL" || name == "CEILING") {
+        write_arg_count();
+    } else if (func_name == "CEIL" || func_name == "CEILING") {
         current_result_->writeExtendedOpcode(
             sblr::ExtendedOpcode::EXT_FUNC_CEIL);
-    } else if (name == "SQRT") {
+        write_arg_count();
+    } else if (func_name == "TRUNC") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_TRUNC);
+        write_arg_count();
+    } else if (func_name == "MOD") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_MOD);
+        write_arg_count();
+    } else if (func_name == "SQRT") {
         current_result_->writeExtendedOpcode(
             sblr::ExtendedOpcode::EXT_FUNC_SQRT);
-    } else if (name == "POWER" || name == "POW") {
+        write_arg_count();
+    } else if (func_name == "CBRT") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_CBRT);
+        write_arg_count();
+    } else if (func_name == "POWER" || func_name == "POW") {
         current_result_->writeExtendedOpcode(
             sblr::ExtendedOpcode::EXT_FUNC_POWER);
+        write_arg_count();
+    } else if (func_name == "EXP") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_EXP);
+        write_arg_count();
+    } else if (func_name == "LN") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_LN);
+        write_arg_count();
+    } else if (func_name == "LOG") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_LOG);
+        write_arg_count();
+    } else if (func_name == "LOG10") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_LOG10);
+        write_arg_count();
+    } else if (func_name == "LOG2") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_LOG2);
+        write_arg_count();
+    } else if (func_name == "SIN") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_SIN);
+        write_arg_count();
+    } else if (func_name == "COS") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_COS);
+        write_arg_count();
+    } else if (func_name == "TAN") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_TAN);
+        write_arg_count();
+    } else if (func_name == "ASIN") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_ASIN);
+        write_arg_count();
+    } else if (func_name == "ACOS") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_ACOS);
+        write_arg_count();
+    } else if (func_name == "ATAN") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_ATAN);
+        write_arg_count();
+    } else if (func_name == "ATAN2") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_ATAN2);
+        write_arg_count();
+    } else if (func_name == "DEGREES") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_DEGREES);
+        write_arg_count();
+    } else if (func_name == "RADIANS") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_RADIANS);
+        write_arg_count();
+    } else if (func_name == "PI") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_PI);
+        write_arg_count();
+    } else if (func_name == "SINH") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_SINH);
+        write_arg_count();
+    } else if (func_name == "COSH") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_COSH);
+        write_arg_count();
+    } else if (func_name == "TANH") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_TANH);
+        write_arg_count();
+    } else if (func_name == "ASINH") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_ASINH);
+        write_arg_count();
+    } else if (func_name == "ACOSH") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_ACOSH);
+        write_arg_count();
+    } else if (func_name == "ATANH") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_ATANH);
+        write_arg_count();
+    } else if (func_name == "COT") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_COT);
+        write_arg_count();
+    }
+    // JSON functions
+    else if (func_name == "JSON_EXTRACT") {
+        current_result_->writeOpcode(sblr::Opcode::JSON_EXTRACT);
+        write_arg_count();
+    } else if (func_name == "JSON_OBJECT") {
+        current_result_->writeOpcode(sblr::Opcode::JSON_OBJECT);
+        write_arg_count();
+    } else if (func_name == "JSON_ARRAY") {
+        current_result_->writeOpcode(sblr::Opcode::JSON_ARRAY);
+        write_arg_count();
+    } else if (func_name == "JSON_SET") {
+        current_result_->writeOpcode(sblr::Opcode::JSON_SET);
+        write_arg_count();
+    } else if (func_name == "JSON_INSERT") {
+        current_result_->writeOpcode(sblr::Opcode::JSON_INSERT);
+        write_arg_count();
+    } else if (func_name == "JSON_REMOVE") {
+        current_result_->writeOpcode(sblr::Opcode::JSON_REMOVE);
+        write_arg_count();
+    } else if (func_name == "JSONB_EXTRACT_PATH") {
+        current_result_->writeOpcode(sblr::Opcode::JSONB_EXTRACT_PATH);
+        write_arg_count();
+    } else if (func_name == "JSONB_BUILD_OBJECT") {
+        current_result_->writeOpcode(sblr::Opcode::JSONB_BUILD_OBJECT);
+        write_arg_count();
+    } else if (func_name == "JSONB_BUILD_ARRAY") {
+        current_result_->writeOpcode(sblr::Opcode::JSONB_BUILD_ARRAY);
+        write_arg_count();
+    } else if (func_name == "JSONB_SET") {
+        current_result_->writeOpcode(sblr::Opcode::JSONB_SET);
+        write_arg_count();
     }
     // Null handling
-    else if (name == "COALESCE") {
+    else if (func_name == "COALESCE") {
         current_result_->writeOpcode(sblr::Opcode::COALESCE);
-        current_result_->writeInt32(static_cast<uint32_t>(expr->arguments.size()));
-    } else if (name == "NULLIF") {
+        write_arg_count();
+    } else if (func_name == "NULLIF") {
         current_result_->writeOpcode(sblr::Opcode::NULLIF);
     }
     // Generic function call
@@ -2069,6 +2369,16 @@ sblr::Opcode BytecodeGeneratorV2::dataTypeToOpcode(DataType type) {
     }
 }
 
+void BytecodeGeneratorV2::writeTypeRef(const ResolvedType& type) {
+    if (type.is_domain && type.domain_id != ID{}) {
+        current_result_->writeByte(1);
+        current_result_->writeUUID(type.domain_id);
+        return;
+    }
+    current_result_->writeByte(0);
+    generateDataType(type);
+}
+
 // =============================================================================
 // Utility Methods
 // =============================================================================
@@ -2124,6 +2434,10 @@ sblr::Opcode BytecodeGeneratorV2::binaryOpToOpcode(BinaryOp op) {
         case BinaryOp::GE: return sblr::Opcode::EXPR_GE;
         case BinaryOp::AND: return sblr::Opcode::EXPR_AND;
         case BinaryOp::OR: return sblr::Opcode::EXPR_OR;
+        case BinaryOp::JSON_EXTRACT: return sblr::Opcode::JSON_ARROW;
+        case BinaryOp::JSON_EXTRACT_TEXT: return sblr::Opcode::JSON_DOUBLE_ARROW;
+        case BinaryOp::JSON_HASH_EXTRACT: return sblr::Opcode::JSON_HASH_ARROW;
+        case BinaryOp::JSON_HASH_EXTRACT_TEXT: return sblr::Opcode::JSON_HASH_DOUBLE_ARROW;
         default: return sblr::Opcode::EXPR_ADD;  // Default
     }
 }
@@ -2267,10 +2581,106 @@ std::string BytecodeDisassemblerV2::disassemble(const std::vector<uint8_t>& byte
     std::ostringstream out;
     size_t offset = 0;
 
+    auto canRead = [&](size_t count) {
+        return count <= bytecode.size() && offset <= bytecode.size() - count;
+    };
+    auto readByte = [&]() -> uint8_t {
+        if (!canRead(1)) {
+            offset = bytecode.size();
+            return 0;
+        }
+        return bytecode[offset++];
+    };
+    auto readInt16 = [&]() -> uint16_t {
+        if (!canRead(2)) {
+            offset = bytecode.size();
+            return 0;
+        }
+        uint16_t val = sblr::readInt16(&bytecode[offset]);
+        offset += 2;
+        return val;
+    };
+    auto readInt32 = [&]() -> uint32_t {
+        if (!canRead(4)) {
+            offset = bytecode.size();
+            return 0;
+        }
+        uint32_t val = sblr::readInt32(&bytecode[offset]);
+        offset += 4;
+        return val;
+    };
+    auto readString = [&]() -> std::string {
+        uint32_t len = readInt32();
+        if (len == 0) {
+            return std::string();
+        }
+        if (!canRead(len)) {
+            offset = bytecode.size();
+            return std::string();
+        }
+        std::string out_str(reinterpret_cast<const char*>(&bytecode[offset]), len);
+        offset += len;
+        return out_str;
+    };
+
+    auto disassembleTransactionPayload = [&]() {
+        uint16_t flags = readInt16();
+        readByte();  // conflict_action
+
+        if (flags & sblr::TransactionFlags::HAS_CONFLICT_ERROR_CODE) {
+            readInt32();
+        }
+        if (flags & sblr::TransactionFlags::HAS_AUTOCOMMIT) {
+            readByte();
+        }
+        if (flags & sblr::TransactionFlags::HAS_ISOLATION) {
+            readByte();
+        }
+        if (flags & sblr::TransactionFlags::HAS_READ_COMMITTED_MODE) {
+            readByte();
+        }
+        if (flags & sblr::TransactionFlags::HAS_ACCESS_MODE) {
+            readByte();
+        }
+        if (flags & sblr::TransactionFlags::HAS_DEFERRABLE) {
+            readByte();
+        }
+        if (flags & sblr::TransactionFlags::HAS_WAIT_MODE) {
+            readByte();
+        }
+        if (flags & sblr::TransactionFlags::HAS_LOCK_TIMEOUT) {
+            readInt32();
+        }
+        if (flags & sblr::TransactionFlags::HAS_RESERVATIONS) {
+            auto list_op = static_cast<sblr::Opcode>(readByte());
+            if (list_op == sblr::Opcode::BEGIN_LIST) {
+                uint32_t count = readInt32();
+                out << "BEGIN_LIST " << std::dec << count << "\n";
+                for (uint32_t i = 0; i < count; ++i) {
+                    auto item_op = static_cast<sblr::Opcode>(readByte());
+                    if (item_op == sblr::Opcode::TABLE_REF) {
+                        std::string name = readString();
+                        out << "TABLE_REF \"" << name << "\"\n";
+                        readByte();  // lock_mode
+                        readByte();  // for_write
+                    } else {
+                        out << "OPCODE_" << std::hex << static_cast<int>(item_op) << "\n";
+                    }
+                }
+                auto end_op = static_cast<sblr::Opcode>(readByte());
+                if (end_op == sblr::Opcode::END_LIST) {
+                    out << "END_LIST\n";
+                } else {
+                    out << "OPCODE_" << std::hex << static_cast<int>(end_op) << "\n";
+                }
+            }
+        }
+    };
+
     while (offset < bytecode.size()) {
         out << std::hex << std::setw(4) << std::setfill('0') << offset << ": ";
 
-        uint8_t op = bytecode[offset++];
+        uint8_t op = readByte();
         auto opcode = static_cast<sblr::Opcode>(op);
 
         switch (opcode) {
@@ -2278,7 +2688,7 @@ std::string BytecodeDisassemblerV2::disassemble(const std::vector<uint8_t>& byte
                 out << "END\n";
                 break;
             case sblr::Opcode::VERSION:
-                out << "VERSION " << static_cast<int>(bytecode[offset++]) << "\n";
+                out << "VERSION " << static_cast<int>(readByte()) << "\n";
                 break;
             case sblr::Opcode::SELECT:
                 out << "SELECT\n";
@@ -2297,6 +2707,32 @@ std::string BytecodeDisassemblerV2::disassemble(const std::vector<uint8_t>& byte
                 break;
             case sblr::Opcode::DROP_TABLE:
                 out << "DROP_TABLE\n";
+                break;
+            case sblr::Opcode::START_TRANSACTION:
+                out << "START_TRANSACTION\n";
+                disassembleTransactionPayload();
+                break;
+            case sblr::Opcode::SET_TRANSACTION:
+                out << "SET_TRANSACTION\n";
+                disassembleTransactionPayload();
+                break;
+            case sblr::Opcode::COMMIT:
+                out << "COMMIT\n";
+                readByte();
+                break;
+            case sblr::Opcode::ROLLBACK:
+                out << "ROLLBACK\n";
+                readByte();
+                break;
+            case sblr::Opcode::TABLE_REF:
+                out << "TABLE_REF \"" << readString() << "\"\n";
+                break;
+            case sblr::Opcode::BEGIN_LIST:
+                out << "BEGIN_LIST\n";
+                readInt32();
+                break;
+            case sblr::Opcode::END_LIST:
+                out << "END_LIST\n";
                 break;
             case sblr::Opcode::LITERAL_INT32:
                 if (offset + 4 <= bytecode.size()) {

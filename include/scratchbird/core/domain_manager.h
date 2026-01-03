@@ -67,19 +67,33 @@ namespace scratchbird::core
     /**
      * RECORD field definition
      */
-    struct RecordField
-    {
-        std::string name;
-        DataType type;
-        uint32_t precision;
-        uint32_t scale;
-        bool nullable;
-        ID domain_id;  // If field uses a domain instead of base type
+struct RecordField
+{
+    std::string name;
+    DataType type;
+    uint32_t precision;
+    uint32_t scale;
+    bool nullable;
+    bool has_default = false;
+    std::string default_value;
+    ID domain_id;  // If field uses a domain instead of base type
 
-        RecordField() : type(DataType::UNKNOWN), precision(0), scale(0), nullable(true) {}
-        RecordField(const std::string& n, DataType t, bool null = true)
-            : name(n), type(t), precision(0), scale(0), nullable(null) {}
-    };
+    RecordField() : type(DataType::UNKNOWN), precision(0), scale(0), nullable(true) {}
+    RecordField(const std::string& n, DataType t, bool null = true)
+        : name(n), type(t), precision(0), scale(0), nullable(null) {}
+};
+
+/**
+ * Domain type reference (base type or domain ID)
+ */
+struct DomainTypeRef
+{
+    DataType type = DataType::UNKNOWN;
+    uint32_t precision = 0;
+    uint32_t scale = 0;
+    bool with_time_zone = false;
+    ID domain_id{};  // Non-zero when referencing another domain
+};
 
     /**
      * ENUM value definition
@@ -128,12 +142,12 @@ namespace scratchbird::core
     /**
      * Domain validation options (Phase 6)
      */
-    struct DomainValidation
+    struct DomainValidationConfig
     {
         std::string validation_function;  // Custom validation function name
         std::string error_message;        // Custom error message
 
-        DomainValidation() = default;
+        DomainValidationConfig() = default;
     };
 
     /**
@@ -151,8 +165,8 @@ namespace scratchbird::core
     /**
      * Domain information
      */
-    struct DomainInfo
-    {
+struct DomainInfo
+{
         ID domain_id;
         ID schema_id;
         std::string domain_name;
@@ -173,10 +187,10 @@ namespace scratchbird::core
         std::vector<EnumValue> enum_values;
 
         // For SET domains
-        DataType set_element_type;    // Element type for SET
+        DomainTypeRef set_element_type;    // Element type for SET
 
         // For VARIANT domains
-        std::vector<DataType> variant_allowed_types;  // Allowed types for VARIANT
+        std::vector<DomainTypeRef> variant_allowed_types;  // Allowed types for VARIANT
 
         // Constraints
         std::vector<DomainConstraint> constraints;
@@ -184,11 +198,17 @@ namespace scratchbird::core
         // Advanced features (Phase 6)
         DomainSecurity security;
         DomainIntegrity integrity;
-        DomainValidation validation;
+        DomainValidationConfig validation;
         DomainQuality quality;
 
         // Domain uniqueness (Plan 03B Task 3.2)
         bool enforce_global_uniqueness = false;
+
+        // Domain collation (Plan 04)
+        std::string collation_name;
+
+        // Enum options (Plan 04)
+        bool enum_wrap = false;
 
         // Cross-dialect compatibility (Plan 04)
         std::string dialect_tag;      // e.g., "firebird", "postgresql", "mysql"
@@ -199,9 +219,9 @@ namespace scratchbird::core
 
         DomainInfo()
             : domain_type(DomainType::BASIC), base_type(DataType::UNKNOWN),
-              precision(0), scale(0), nullable(true), set_element_type(DataType::UNKNOWN),
+              precision(0), scale(0), nullable(true),
               created_time(0), last_modified_time(0) {}
-    };
+};
 
     /**
      * DomainManager - Manages user-defined domains
@@ -230,6 +250,26 @@ namespace scratchbird::core
         // ====================
 
         // Create basic domain
+        struct DomainCreateOptions
+        {
+            bool nullable = true;
+            std::string default_value;
+            std::vector<DomainConstraint> constraints;
+            std::string collation_name;
+            std::string dialect_tag;
+            std::string compat_name;
+            bool enum_wrap = false;
+        };
+
+        auto createBasicDomain(const ID& schema_id,
+                              const std::string& domain_name,
+                              DataType base_type,
+                              uint32_t precision,
+                              uint32_t scale,
+                              const DomainCreateOptions& options,
+                              ID& domain_id,
+                              ErrorContext* ctx = nullptr) -> Status;
+        // Compatibility overload (pre-Plan 04 signature)
         auto createBasicDomain(const ID& schema_id,
                               const std::string& domain_name,
                               DataType base_type,
@@ -335,6 +375,13 @@ namespace scratchbird::core
         auto createRecordDomain(const ID& schema_id,
                                const std::string& domain_name,
                                const std::vector<RecordField>& fields,
+                               const DomainCreateOptions& options,
+                               ID& domain_id,
+                               ErrorContext* ctx = nullptr) -> Status;
+        // Compatibility overload (pre-Plan 04 signature)
+        auto createRecordDomain(const ID& schema_id,
+                               const std::string& domain_name,
+                               const std::vector<RecordField>& fields,
                                ID& domain_id,
                                ErrorContext* ctx = nullptr) -> Status;
 
@@ -355,6 +402,13 @@ namespace scratchbird::core
         // ====================
 
         // Create ENUM domain
+        auto createEnumDomain(const ID& schema_id,
+                             const std::string& domain_name,
+                             const std::vector<EnumValue>& values,
+                             const DomainCreateOptions& options,
+                             ID& domain_id,
+                             ErrorContext* ctx = nullptr) -> Status;
+        // Compatibility overload (pre-Plan 04 signature)
         auto createEnumDomain(const ID& schema_id,
                              const std::string& domain_name,
                              const std::vector<EnumValue>& values,
@@ -391,6 +445,13 @@ namespace scratchbird::core
         // ====================
 
         // Create SET domain
+        auto createSetDomain(const ID& schema_id,
+                            const std::string& domain_name,
+                            const DomainTypeRef& element_type,
+                            const DomainCreateOptions& options,
+                            ID& domain_id,
+                            ErrorContext* ctx = nullptr) -> Status;
+        // Compatibility overload (pre-Plan 04 signature)
         auto createSetDomain(const ID& schema_id,
                             const std::string& domain_name,
                             DataType element_type,
@@ -434,6 +495,13 @@ namespace scratchbird::core
         // Create VARIANT domain
         auto createVariantDomain(const ID& schema_id,
                                 const std::string& domain_name,
+                                const std::vector<DomainTypeRef>& allowed_types,
+                                const DomainCreateOptions& options,
+                                ID& domain_id,
+                                ErrorContext* ctx = nullptr) -> Status;
+        // Compatibility overload (pre-Plan 04 signature)
+        auto createVariantDomain(const ID& schema_id,
+                                const std::string& domain_name,
                                 const std::vector<DataType>& allowed_types,
                                 ID& domain_id,
                                 ErrorContext* ctx = nullptr) -> Status;
@@ -471,7 +539,7 @@ namespace scratchbird::core
 
         // Set validation options
         auto setValidationOptions(const ID& domain_id,
-                                 const DomainValidation& validation,
+                                 const DomainValidationConfig& validation,
                                  ErrorContext* ctx = nullptr) -> Status;
 
         // Set quality options
@@ -510,9 +578,9 @@ namespace scratchbird::core
         Database* db_;
         mutable std::mutex mutex_;
 
-        // Catalog page
-        static constexpr uint32_t DOMAINS_TABLE_PAGE = 10;  // After TABLESPACE_FILES_TABLE_PAGE (page 9)
-        uint32_t domains_table_page_ = DOMAINS_TABLE_PAGE;
+        // Catalog page (resolved via CatalogManager during initialize)
+        static constexpr uint32_t DOMAINS_TABLE_PAGE = 10;  // Legacy default
+        uint32_t domains_table_page_ = 0;
 
         // In-memory cache
         std::unordered_map<ID, DomainInfo> domain_cache_;

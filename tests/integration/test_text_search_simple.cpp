@@ -1,37 +1,13 @@
-#include <iostream>
+#include <gtest/gtest.h>
 
+#include "scratchbird/parser/parser_v2.h"
 
+TEST(TextSearchSimple, ParseIlikeExpression)
+{
+    const std::string sql = "SELECT * FROM users WHERE email ILIKE '%@gmail.com'";
 
-int main() {
-    using namespace scratchbird::parser;
-    
-    std::string sql = "SELECT * FROM users WHERE email ILIKE '%@gmail.com'";
-    
-    Lexer lexer(sql);
-    ASTArena arena;
-    Parser parser(lexer, arena);
-    
+    scratchbird::parser::v2::Parser parser(sql);
     auto result = parser.parseStatement();
-    if (!result.success()) {
-        std::cout << "Parse failed";
-        for (const auto& err : result.errors()) {
-            std::cout << ": " << err.message;
-        }
-        std::cout << std::endl;
-        return 1;
-    }
 
-    SemanticAnalyzer analyzer(parser.stringPool());
-    auto semantic_result = analyzer.analyze(result.statement());
-    if (!semantic_result.success()) {
-        std::cout << "Semantic analysis failed";
-        for (const auto& err : semantic_result.errors()) {
-            std::cout << ": " << err.message;
-        }
-        std::cout << std::endl;
-        return 1;
-    }
-    
-    std::cout << "Success!" << std::endl;
-    return 0;
+    ASSERT_TRUE(result.success());
 }

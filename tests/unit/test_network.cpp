@@ -29,6 +29,13 @@
 using namespace scratchbird::network;
 using namespace scratchbird::core;
 
+namespace {
+bool isNetworkRestrictedError(const ErrorContext& ctx) {
+    return ctx.message.find("Operation not permitted") != std::string::npos ||
+           ctx.message.find("Permission denied") != std::string::npos;
+}
+} // namespace
+
 // ============================================================================
 // Test Fixtures
 // ============================================================================
@@ -37,6 +44,11 @@ class NetworkTest : public ::testing::Test {
 protected:
     void SetUp() override {
         ASSERT_TRUE(initNetwork());
+        ErrorContext ctx;
+        auto probe = Socket::create(AddressFamily::IPV4, SocketType::STREAM, &ctx);
+        if (!probe && isNetworkRestrictedError(ctx)) {
+            GTEST_SKIP() << "Sockets not permitted in this environment: " << ctx.message;
+        }
     }
 
     void TearDown() override {

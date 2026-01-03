@@ -128,7 +128,7 @@ TEST(AdvancedDomainTest, Comprehensive) {
     // Test 4: Set validation options
     std::cout << "Test 4: Set validation options\n";
     {
-        DomainValidation validation;
+        DomainValidationConfig validation;
         validation.validation_function = "ssn_validator";
 
         status = dm->setValidationOptions(ssn_domain_id, validation, &ctx);

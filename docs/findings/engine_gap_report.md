@@ -166,7 +166,7 @@ Note on design: each parser is standalone and emits SBLR bytecode. The ScratchBi
    - **Expected**: Implement missing CREATE/ALTER paths in V2 parser to keep the superset dialect complete.
 
 24. **V2 procedural/PSQL visitor stubs**
-   - **Where**: `src/parser/ast.cpp#L1478`
+   - **Where**: `src/parser/ast_v2.cpp#L1478`
    - **Observed**: Procedural language statement visitors are stub implementations.
    - **Impact**: Even if parsed, procedural constructs may not be lowered to bytecode correctly.
    - **Expected**: Implement full visitors for procedural statements used by ScratchBird/Firebird-compatible features.

@@ -954,7 +954,7 @@ SELECT SUM(revenue), AVG(price) FROM sales;
    - Remediation: TASK-DML-1 through TASK-DML-8
 
 4. **No Bytecode Support** (Priority: P2)
-   - Files: `src/sblr/opcodes.h`, `bytecode_generator.cpp`, `executor.cpp`
+   - Files: `src/sblr/opcodes.h`, `bytecode_generator_v2.cpp`, `executor.cpp`
    - Issue: Indexes not accessible from SQL/bytecode layer
    - Remediation: TASK-BYTECODE-1 through TASK-BYTECODE-4
 

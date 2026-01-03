@@ -905,6 +905,13 @@ namespace scratchbird::core
             return status;
         }
 
+        status = catalog_manager_->initializePolicyToastIfNeeded(ctx);
+        if (status != Status::OK)
+        {
+            close();
+            return status;
+        }
+
         // Initialize TID resolver (Sprint 4 Task 5.4.2)
         try
         {
@@ -1053,6 +1060,15 @@ namespace scratchbird::core
         {
             // Domain catalog not initialized yet is OK
             if (status != Status::NOT_FOUND && status != Status::PAGE_CORRUPT)
+            {
+                close();
+                return status;
+            }
+        }
+        else
+        {
+            status = domain_manager_->load(ctx);
+            if (status != Status::OK)
             {
                 close();
                 return status;

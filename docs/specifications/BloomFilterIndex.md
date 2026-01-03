@@ -795,7 +795,7 @@ REINDEX INDEX idx_email;
 
 ### AST Additions
 
-**File:** `include/scratchbird/parser/ast.h`
+**File:** `include/scratchbird/parser/ast_v2.h`
 
 ```cpp
 struct IndexOptions {
@@ -834,12 +834,10 @@ struct CreateIndexStmt : public Statement {
 
 ### Bytecode Generation
 
-**File:** `src/sblr/bytecode_generator.cpp`
+**File:** `src/sblr/bytecode_generator_v2.cpp`
 
 ```cpp
-Status BytecodeGenerator::generateCreateIndex(const CreateIndexStmt* stmt,
-                                              std::vector<uint8_t>* bytecode_out,
-                                              ErrorContext* ctx) {
+void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
     // ... existing bytecode generation ...
 
     // NEW: Encode index options
@@ -847,14 +845,13 @@ Status BytecodeGenerator::generateCreateIndex(const CreateIndexStmt* stmt,
     if (stmt->options.bloom_filter_enabled) {
         options_flags |= 0x01;  // Bit 0: Bloom filter
     }
-    encodeUint32(options_flags, bytecode_out);
+    encodeUint32(options_flags, &bytecode_);
 
     // Encode Bloom filter FPR if enabled
     if (stmt->options.bloom_filter_enabled) {
-        encodeDouble(stmt->options.bloom_fpr, bytecode_out);
+        encodeDouble(stmt->options.bloom_fpr, &bytecode_);
     }
 
-    return Status::OK;
 }
 ```
 

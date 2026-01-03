@@ -1,561 +1,360 @@
 #include <gtest/gtest.h>
 #include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "scratchbird/optimizer/predicate_matcher.h"
 
-
 using namespace scratchbird::optimizer;
-using namespace scratchbird::parser;
+using namespace scratchbird::core;
 
-/**
- * Test suite for PredicateMatcher (Task 17 Phase 9)
- *
- * Tests predicate implication logic for filtered index support in query planner.
- */
-class PredicateMatcherTest : public ::testing::Test
+namespace {
+
+std::unique_ptr<Expression> litInt(int64_t value)
 {
-protected:
-    struct ParseResult {
-        std::unique_ptr<Lexer> lexer;
-        std::unique_ptr<ASTArena> arena;
-        std::unique_ptr<Parser> parser;
-        Expression *expr;
+    auto expr = std::make_unique<LiteralExpr>(LiteralExpr::LiteralType::INTEGER);
+    expr->setIntValue(value);
+    return expr;
+}
 
-        ParseResult() : expr(nullptr) {}
-    };
+std::unique_ptr<Expression> litFloat(double value)
+{
+    auto expr = std::make_unique<LiteralExpr>(LiteralExpr::LiteralType::FLOAT);
+    expr->setFloatValue(value);
+    return expr;
+}
 
-    // Parse result for two predicates using the same StringPool
-    struct ParseResultPair {
-        std::unique_ptr<Lexer> lexer1;
-        std::unique_ptr<Lexer> lexer2;
-        std::unique_ptr<ASTArena> arena;
-        std::unique_ptr<Parser> parser1;
-        std::unique_ptr<Parser> parser2;
-        Expression *expr1;
-        Expression *expr2;
-        StringPool shared_pool;
+std::unique_ptr<Expression> litString(std::string value)
+{
+    auto expr = std::make_unique<LiteralExpr>(LiteralExpr::LiteralType::STRING);
+    expr->setStringValue(std::move(value));
+    return expr;
+}
 
-        ParseResultPair() : expr1(nullptr), expr2(nullptr) {}
-    };
+std::unique_ptr<Expression> col(std::string name)
+{
+    return std::make_unique<IdentifierExpr>(std::move(name));
+}
 
-    ParseResult parsePredicate(const std::string &pred_str)
-    {
-        ParseResult result;
+std::unique_ptr<Expression> bin(BinaryOp op,
+                                std::unique_ptr<Expression> left,
+                                std::unique_ptr<Expression> right)
+{
+    return std::make_unique<BinaryOpExpr>(op, std::move(left), std::move(right));
+}
 
-        // Parse as part of a SELECT statement
-        std::string sql = "SELECT * FROM t WHERE " + pred_str;
-        result.lexer = std::make_unique<Lexer>(sql);
-        result.arena = std::make_unique<ASTArena>();
-        result.parser = std::make_unique<Parser>(*result.lexer, *result.arena);
-
-        auto parse_result = result.parser->parseStatement();
-        if (!parse_result.success())
-        {
-            return result;
-        }
-
-        auto *select_stmt = dynamic_cast<SelectStmt *>(parse_result.statement());
-        if (!select_stmt || !select_stmt->whereClause())
-        {
-            return result;
-        }
-
-        result.expr = select_stmt->whereClause();
-        return result;
-    }
-
-    // Parse two predicates using the same StringPool for proper comparison
-    // This simulates real-world usage where both predicates come from the same database
-    ParseResultPair parsePredicatePair(const std::string &pred1, const std::string &pred2)
-    {
-        ParseResultPair result;
-
-        // Parse first predicate
-        std::string sql1 = "SELECT * FROM t WHERE " + pred1;
-        result.lexer1 = std::make_unique<Lexer>(sql1);
-        result.arena = std::make_unique<ASTArena>();
-        result.parser1 = std::make_unique<Parser>(*result.lexer1, *result.arena);
-
-        auto parse_result1 = result.parser1->parseStatement();
-        if (!parse_result1.success())
-        {
-            return result;
-        }
-
-        auto *select1 = dynamic_cast<SelectStmt *>(parse_result1.statement());
-        if (select1 && select1->whereClause())
-        {
-            result.expr1 = select1->whereClause();
-        }
-
-        // Parse second predicate - use same arena but new lexer/parser
-        std::string sql2 = "SELECT * FROM t WHERE " + pred2;
-        result.lexer2 = std::make_unique<Lexer>(sql2);
-        result.parser2 = std::make_unique<Parser>(*result.lexer2, *result.arena);
-
-        auto parse_result2 = result.parser2->parseStatement();
-        if (!parse_result2.success())
-        {
-            return result;
-        }
-
-        auto *select2 = dynamic_cast<SelectStmt *>(parse_result2.statement());
-        if (select2 && select2->whereClause())
-        {
-            result.expr2 = select2->whereClause();
-        }
-
-        return result;
-    }
-};
+} // namespace
 
 // ============================================================================
 // Exact Match Tests
 // ============================================================================
 
-TEST_F(PredicateMatcherTest, ExactMatchEquality)
+TEST(PredicateMatcherTest, ExactMatchEquality)
 {
-    auto result_query = parsePredicate("status = 'active'");
-    auto result_index = parsePredicate("status = 'active'");
+    auto query = bin(BinaryOp::EQ, col("status"), litString("active"));
+    auto index = bin(BinaryOp::EQ, col("status"), litString("active"));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, ExactMatchComparison)
+TEST(PredicateMatcherTest, ExactMatchComparison)
 {
-    auto result_query = parsePredicate("age > 18");
-    auto result_index = parsePredicate("age > 18");
+    auto query = bin(BinaryOp::GT, col("age"), litInt(18));
+    auto index = bin(BinaryOp::GT, col("age"), litInt(18));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
 // ============================================================================
 // Range Implication Tests
 // ============================================================================
 
-TEST_F(PredicateMatcherTest, RangeImplicationGreater)
+TEST(PredicateMatcherTest, RangeImplicationGreater)
 {
-    auto result_query = parsePredicate("age > 30");
-    auto result_index = parsePredicate("age > 18");
+    auto query = bin(BinaryOp::GT, col("age"), litInt(30));
+    auto index = bin(BinaryOp::GT, col("age"), litInt(18));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, RangeImplicationLess)
+TEST(PredicateMatcherTest, RangeImplicationLess)
 {
-    auto result_query = parsePredicate("age < 10");
-    auto result_index = parsePredicate("age < 20");
+    auto query = bin(BinaryOp::LT, col("age"), litInt(10));
+    auto index = bin(BinaryOp::LT, col("age"), litInt(20));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, RangeImplicationGreaterEqual)
+TEST(PredicateMatcherTest, RangeImplicationGreaterEqual)
 {
-    auto result_query = parsePredicate("age >= 30");
-    auto result_index = parsePredicate("age >= 18");
+    auto query = bin(BinaryOp::GE, col("age"), litInt(30));
+    auto index = bin(BinaryOp::GE, col("age"), litInt(18));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, RangeImplicationLessEqual)
+TEST(PredicateMatcherTest, RangeImplicationLessEqual)
 {
-    auto result_query = parsePredicate("age <= 10");
-    auto result_index = parsePredicate("age <= 20");
+    auto query = bin(BinaryOp::LE, col("age"), litInt(10));
+    auto index = bin(BinaryOp::LE, col("age"), litInt(20));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, RangeDoesNotImplyWeaker)
+TEST(PredicateMatcherTest, RangeDoesNotImplyWeaker)
 {
-    auto result_query = parsePredicate("age > 18");
-    auto result_index = parsePredicate("age > 30");
+    auto query = bin(BinaryOp::GT, col("age"), litInt(18));
+    auto index = bin(BinaryOp::GT, col("age"), litInt(30));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                           &result_query.parser->stringPool(),
-                                           &result_index.parser->stringPool()));
+    EXPECT_FALSE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
 // ============================================================================
 // Equality Implies Range Tests
 // ============================================================================
 
-TEST_F(PredicateMatcherTest, EqualityImpliesGreater)
+TEST(PredicateMatcherTest, EqualityImpliesGreater)
 {
-    auto result_query = parsePredicate("price = 100");
-    auto result_index = parsePredicate("price > 50");
+    auto query = bin(BinaryOp::EQ, col("price"), litInt(100));
+    auto index = bin(BinaryOp::GT, col("price"), litInt(50));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, EqualityImpliesLess)
+TEST(PredicateMatcherTest, EqualityImpliesLess)
 {
-    auto result_query = parsePredicate("price = 50");
-    auto result_index = parsePredicate("price < 100");
+    auto query = bin(BinaryOp::EQ, col("price"), litInt(50));
+    auto index = bin(BinaryOp::LT, col("price"), litInt(100));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, EqualityImpliesGreaterEqual)
+TEST(PredicateMatcherTest, EqualityImpliesGreaterEqual)
 {
-    auto result_query = parsePredicate("price = 100");
-    auto result_index = parsePredicate("price >= 50");
+    auto query = bin(BinaryOp::EQ, col("price"), litInt(100));
+    auto index = bin(BinaryOp::GE, col("price"), litInt(50));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, EqualityImpliesLessEqual)
+TEST(PredicateMatcherTest, EqualityImpliesLessEqual)
 {
-    auto result_query = parsePredicate("price = 50");
-    auto result_index = parsePredicate("price <= 100");
+    auto query = bin(BinaryOp::EQ, col("price"), litInt(50));
+    auto index = bin(BinaryOp::LE, col("price"), litInt(100));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, EqualityDoesNotImplyWrongRange)
+TEST(PredicateMatcherTest, EqualityDoesNotImplyWrongRange)
 {
-    auto result_query = parsePredicate("price = 25");
-    auto result_index = parsePredicate("price > 50");
+    auto query = bin(BinaryOp::EQ, col("price"), litInt(25));
+    auto index = bin(BinaryOp::GT, col("price"), litInt(50));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                           &result_query.parser->stringPool(),
-                                           &result_index.parser->stringPool()));
+    EXPECT_FALSE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
 // ============================================================================
 // Conjunct Detection Tests
 // ============================================================================
 
-TEST_F(PredicateMatcherTest, ConjunctInAND)
+TEST(PredicateMatcherTest, ConjunctInAND)
 {
-    auto result_query = parsePredicate("is_active = 1 AND verified = 1");
-    auto result_index = parsePredicate("is_active = 1");
+    auto query = bin(BinaryOp::AND,
+                     bin(BinaryOp::EQ, col("is_active"), litInt(1)),
+                     bin(BinaryOp::EQ, col("verified"), litInt(1)));
+    auto index = bin(BinaryOp::EQ, col("is_active"), litInt(1));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, ConjunctInMultipleAND)
+TEST(PredicateMatcherTest, ConjunctInMultipleAND)
 {
-    auto result_query = parsePredicate("a = 1 AND b = 2 AND c = 3");
-    auto result_index = parsePredicate("b = 2");
+    auto query = bin(BinaryOp::AND,
+                     bin(BinaryOp::AND,
+                         bin(BinaryOp::EQ, col("a"), litInt(1)),
+                         bin(BinaryOp::EQ, col("b"), litInt(2))),
+                     bin(BinaryOp::EQ, col("c"), litInt(3)));
+    auto index = bin(BinaryOp::EQ, col("b"), litInt(2));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, ConjunctRightSide)
+TEST(PredicateMatcherTest, ConjunctRightSide)
 {
-    auto result_query = parsePredicate("a = 1 AND b = 2");
-    auto result_index = parsePredicate("b = 2");
+    auto query = bin(BinaryOp::AND,
+                     bin(BinaryOp::EQ, col("a"), litInt(1)),
+                     bin(BinaryOp::EQ, col("b"), litInt(2)));
+    auto index = bin(BinaryOp::EQ, col("b"), litInt(2));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, NoConjunctInOR)
+TEST(PredicateMatcherTest, NoConjunctInOR)
 {
-    auto result_query = parsePredicate("is_active = 1 OR verified = 1");
-    auto result_index = parsePredicate("is_active = 1");
+    auto query = bin(BinaryOp::OR,
+                     bin(BinaryOp::EQ, col("is_active"), litInt(1)),
+                     bin(BinaryOp::EQ, col("verified"), litInt(1)));
+    auto index = bin(BinaryOp::EQ, col("is_active"), litInt(1));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                           &result_query.parser->stringPool(),
-                                           &result_index.parser->stringPool()));
+    EXPECT_FALSE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
 // ============================================================================
 // Different Predicates (No Match)
 // ============================================================================
 
-TEST_F(PredicateMatcherTest, DifferentEquality)
+TEST(PredicateMatcherTest, DifferentEquality)
 {
-    auto result_query = parsePredicate("status = 'active'");
-    auto result_index = parsePredicate("status = 'inactive'");
+    auto query = bin(BinaryOp::EQ, col("status"), litString("active"));
+    auto index = bin(BinaryOp::EQ, col("status"), litString("inactive"));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                           &result_query.parser->stringPool(),
-                                           &result_index.parser->stringPool()));
+    EXPECT_FALSE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, DifferentColumn)
+TEST(PredicateMatcherTest, DifferentColumn)
 {
-    auto result_query = parsePredicate("age > 18");
-    auto result_index = parsePredicate("salary > 18");
+    auto query = bin(BinaryOp::GT, col("age"), litInt(18));
+    auto index = bin(BinaryOp::GT, col("salary"), litInt(18));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                           &result_query.parser->stringPool(),
-                                           &result_index.parser->stringPool()));
+    EXPECT_FALSE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, CompletelyDifferent)
+TEST(PredicateMatcherTest, CompletelyDifferent)
 {
-    auto result_query = parsePredicate("email LIKE 'test%'");
-    auto result_index = parsePredicate("age > 18");
+    auto query = bin(BinaryOp::LIKE, col("email"), litString("test%"));
+    auto index = bin(BinaryOp::GT, col("age"), litInt(18));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                           &result_query.parser->stringPool(),
-                                           &result_index.parser->stringPool()));
+    EXPECT_FALSE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
 // ============================================================================
 // containsConjunct() Tests
 // ============================================================================
 
-TEST_F(PredicateMatcherTest, ContainsConjunctSimple)
+TEST(PredicateMatcherTest, ContainsConjunctSimple)
 {
-    auto result_query = parsePredicate("a = 1 AND b = 2");
-    auto result_index = parsePredicate("a = 1");
+    auto query = bin(BinaryOp::AND,
+                     bin(BinaryOp::EQ, col("a"), litInt(1)),
+                     bin(BinaryOp::EQ, col("b"), litInt(2)));
+    auto index = bin(BinaryOp::EQ, col("a"), litInt(1));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::containsConjunct(result_query.expr, result_index.expr,
-                                                   &result_query.parser->stringPool(),
-                                                   &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::containsConjunct(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, ContainsConjunctNested)
+TEST(PredicateMatcherTest, ContainsConjunctNested)
 {
-    auto result_query = parsePredicate("a = 1 AND b = 2 AND c = 3");
-    auto result_index = parsePredicate("c = 3");
+    auto query = bin(BinaryOp::AND,
+                     bin(BinaryOp::AND,
+                         bin(BinaryOp::EQ, col("a"), litInt(1)),
+                         bin(BinaryOp::EQ, col("b"), litInt(2))),
+                     bin(BinaryOp::EQ, col("c"), litInt(3)));
+    auto index = bin(BinaryOp::EQ, col("c"), litInt(3));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::containsConjunct(result_query.expr, result_index.expr,
-                                                   &result_query.parser->stringPool(),
-                                                   &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::containsConjunct(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, DoesNotContainConjunct)
+TEST(PredicateMatcherTest, DoesNotContainConjunct)
 {
-    auto result_query = parsePredicate("a = 1 AND b = 2");
-    auto result_index = parsePredicate("c = 3");
+    auto query = bin(BinaryOp::AND,
+                     bin(BinaryOp::EQ, col("a"), litInt(1)),
+                     bin(BinaryOp::EQ, col("b"), litInt(2)));
+    auto index = bin(BinaryOp::EQ, col("c"), litInt(3));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_FALSE(PredicateMatcher::containsConjunct(result_query.expr, result_index.expr,
-                                                    &result_query.parser->stringPool(),
-                                                    &result_index.parser->stringPool()));
+    EXPECT_FALSE(PredicateMatcher::containsConjunct(query.get(), index.get()));
 }
 
 // ============================================================================
 // Edge Cases
 // ============================================================================
 
-TEST_F(PredicateMatcherTest, NullPredicates)
+TEST(PredicateMatcherTest, NullPredicates)
 {
-    StringPool pool;
-    EXPECT_FALSE(PredicateMatcher::implies(nullptr, nullptr, &pool));
+    EXPECT_FALSE(PredicateMatcher::implies(nullptr, nullptr));
 }
 
-TEST_F(PredicateMatcherTest, OneNullPredicate)
+TEST(PredicateMatcherTest, OneNullPredicate)
 {
-    auto result = parsePredicate("status = 'active'");
+    auto query = bin(BinaryOp::EQ, col("status"), litString("active"));
 
-    EXPECT_FALSE(PredicateMatcher::implies(result.expr, nullptr, &result.parser->stringPool()));
-    EXPECT_FALSE(PredicateMatcher::implies(nullptr, result.expr, &result.parser->stringPool()));
-}
-
-TEST_F(PredicateMatcherTest, NullStringPool)
-{
-    auto result_query = parsePredicate("status = 'active'");
-    auto result_index = parsePredicate("status = 'active'");
-
-    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr, nullptr));
+    EXPECT_FALSE(PredicateMatcher::implies(query.get(), nullptr));
+    EXPECT_FALSE(PredicateMatcher::implies(nullptr, query.get()));
 }
 
 // ============================================================================
 // Real-World Use Cases
 // ============================================================================
 
-TEST_F(PredicateMatcherTest, RealWorldActiveUsersFilter)
+TEST(PredicateMatcherTest, RealWorldActiveUsersFilter)
 {
-    auto result_query = parsePredicate("status = 'active' AND verified = true");
-    auto result_index = parsePredicate("status = 'active'");
+    auto query = bin(BinaryOp::AND,
+                     bin(BinaryOp::EQ, col("status"), litString("active")),
+                     bin(BinaryOp::EQ, col("verified"), litInt(1)));
+    auto index = bin(BinaryOp::EQ, col("status"), litString("active"));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, RealWorldRecentOrdersFilter)
+TEST(PredicateMatcherTest, RealWorldRecentOrdersFilter)
 {
-    auto result_query = parsePredicate("created_at > '2024-10-15'");
-    auto result_index = parsePredicate("created_at > '2024-10-01'");
+    auto query = bin(BinaryOp::GT, col("created_at"), litString("2024-10-15"));
+    auto index = bin(BinaryOp::GT, col("created_at"), litString("2024-10-01"));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, RealWorldExpensiveProductsFilter)
+TEST(PredicateMatcherTest, RealWorldExpensiveProductsFilter)
 {
-    auto result_query = parsePredicate("price = 1200");
-    auto result_index = parsePredicate("price > 1000");
+    auto query = bin(BinaryOp::EQ, col("price"), litInt(1200));
+    auto index = bin(BinaryOp::GT, col("price"), litInt(1000));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, RealWorldCannotUseWrongDateRange)
+TEST(PredicateMatcherTest, RealWorldCannotUseWrongDateRange)
 {
-    auto result_query = parsePredicate("created_at > '2024-09-01'");
-    auto result_index = parsePredicate("created_at > '2024-10-01'");
+    auto query = bin(BinaryOp::GT, col("created_at"), litString("2024-09-01"));
+    auto index = bin(BinaryOp::GT, col("created_at"), litString("2024-10-01"));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_FALSE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                           &result_query.parser->stringPool(),
-                                           &result_index.parser->stringPool()));
+    EXPECT_FALSE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
 // ============================================================================
 // String Comparison Tests
 // ============================================================================
 
-TEST_F(PredicateMatcherTest, StringRangeImplication)
+TEST(PredicateMatcherTest, StringRangeImplication)
 {
-    auto result_query = parsePredicate("name > 'm'");
-    auto result_index = parsePredicate("name > 'a'");
+    auto query = bin(BinaryOp::GT, col("name"), litString("m"));
+    auto index = bin(BinaryOp::GT, col("name"), litString("a"));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, StringEqualityImpliesRange)
+TEST(PredicateMatcherTest, StringEqualityImpliesRange)
 {
-    auto result_query = parsePredicate("name = 'test'");
-    auto result_index = parsePredicate("name > 'a'");
+    auto query = bin(BinaryOp::EQ, col("name"), litString("test"));
+    auto index = bin(BinaryOp::GT, col("name"), litString("a"));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
 // ============================================================================
 // Numeric Type Tests
 // ============================================================================
 
-TEST_F(PredicateMatcherTest, FloatRangeImplication)
+TEST(PredicateMatcherTest, FloatRangeImplication)
 {
-    auto result_query = parsePredicate("price > 99.99");
-    auto result_index = parsePredicate("price > 50.0");
+    auto query = bin(BinaryOp::GT, col("price"), litFloat(99.99));
+    auto index = bin(BinaryOp::GT, col("price"), litFloat(50.0));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }
 
-TEST_F(PredicateMatcherTest, IntegerRangeImplication)
+TEST(PredicateMatcherTest, IntegerRangeImplication)
 {
-    auto result_query = parsePredicate("quantity > 100");
-    auto result_index = parsePredicate("quantity > 10");
+    auto query = bin(BinaryOp::GT, col("quantity"), litInt(100));
+    auto index = bin(BinaryOp::GT, col("quantity"), litInt(10));
 
-    ASSERT_NE(result_query.expr, nullptr);
-    ASSERT_NE(result_index.expr, nullptr);
-
-    EXPECT_TRUE(PredicateMatcher::implies(result_query.expr, result_index.expr,
-                                          &result_query.parser->stringPool(),
-                                          &result_index.parser->stringPool()));
+    EXPECT_TRUE(PredicateMatcher::implies(query.get(), index.get()));
 }

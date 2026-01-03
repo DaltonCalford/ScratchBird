@@ -66,7 +66,7 @@ TEST(SetDomainTest, Comprehensive) {
         ASSERT_EQ(status, Status::OK);
         ASSERT_EQ(info.domain_type, DomainType::SET);
         ASSERT_EQ(info.base_type, DataType::VECTOR);
-        ASSERT_EQ(info.set_element_type, DataType::VARCHAR);
+        ASSERT_EQ(info.set_element_type.type, DataType::VARCHAR);
         std::cout << "  Retrieved Tags domain: SET<VARCHAR> ✓\n";
     }
     std::cout << "  ✓ Get SET domain info passed\n\n";
@@ -125,9 +125,9 @@ TEST(SetDomainTest, Comprehensive) {
 
         // Create an ENUM domain
         std::vector<EnumValue> values;
-        EnumValue val1; val1.label = "SMALL"; val1.position = 0;
-        EnumValue val2; val2.label = "MEDIUM"; val2.position = 1;
-        EnumValue val3; val3.label = "LARGE"; val3.position = 2;
+        EnumValue val1; val1.label = "SMALL"; val1.position = 1;
+        EnumValue val2; val2.label = "MEDIUM"; val2.position = 2;
+        EnumValue val3; val3.label = "LARGE"; val3.position = 3;
         values.push_back(val1);
         values.push_back(val2);
         values.push_back(val3);
@@ -157,7 +157,7 @@ TEST(SetDomainTest, Comprehensive) {
             } else if (domain.domain_type == DomainType::SET) {
                 set_count++;
                 std::cout << "    - " << domain.domain_name
-                         << " (SET<" << static_cast<int>(domain.set_element_type) << ">)\n";
+                         << " (SET<" << static_cast<int>(domain.set_element_type.type) << ">)\n";
             } else {
                 std::cout << "    - " << domain.domain_name
                          << " (";

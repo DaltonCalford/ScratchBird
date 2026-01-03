@@ -451,6 +451,14 @@ namespace scratchbird::core
         return tv;
     }
 
+    TypedValue TypedValue::makeJSON(const std::string& value)
+    {
+        TypedValue tv(DataType::JSON);
+        tv.is_null_ = false;
+        tv.string_data_ = value;
+        return tv;
+    }
+
     TypedValue TypedValue::makeChar(const std::string& value)
     {
         TypedValue tv(DataType::CHAR);
@@ -1189,6 +1197,8 @@ namespace scratchbird::core
             case DataType::VARCHAR:
             case DataType::TEXT:
             case DataType::CHAR:
+            case DataType::JSON:
+            case DataType::JSONB:
                 return string_data_;
             case DataType::DATE:
                 return "DATE(" + std::to_string(data_.int64_val) + ")";
@@ -2683,7 +2693,7 @@ namespace scratchbird::core
                     return Status::DATA_CORRUPTED;
                 }
                 complex_data_ = std::make_unique<ComplexData>();
-                complex_data_->tsquery = std::make_shared<TSQuery>(*parsed);
+                complex_data_->tsquery = std::make_shared<TSQuery>(std::move(*parsed));
                 offset = data.size();
                 break;
             }

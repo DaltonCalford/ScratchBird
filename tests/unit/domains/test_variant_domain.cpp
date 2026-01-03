@@ -104,7 +104,7 @@ TEST(VariantDomainTest, Comprehensive) {
         dm->createRecordDomain(schema_id, "Record", fields, record_id, &ctx);
 
         std::vector<EnumValue> values;
-        EnumValue v1; v1.label = "A"; v1.position = 0;
+        EnumValue v1; v1.label = "A"; v1.position = 1;
         values.push_back(v1);
         ID enum_id;
         dm->createEnumDomain(schema_id, "Enum", values, enum_id, &ctx);

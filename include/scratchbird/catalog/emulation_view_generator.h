@@ -51,13 +51,8 @@ using namespace scratchbird::core;
  * - {server_name} - Name of the emulation server
  * - {database_name} - Name of the emulated database
  */
-struct EmulatedViewDefinition {
-    std::string view_name;              // e.g., "RDB$RELATIONS"
-    std::string source_query;           // SQL that maps to internal catalog
-    std::vector<std::string> columns;   // Column names
-    std::vector<DataType> column_types; // Column types
-    std::string description;            // Documentation
-};
+
+// EmulatedViewDefinition is defined in virtual_catalog.h
 
 /**
  * EmulationViewGenerator - Generates protocol-specific emulation views
@@ -102,7 +97,7 @@ public:
         std::string protocolName = protocolTypeToString(protocol);
         std::string schemaPath = "remote.emulated." + protocolName + "." + server_name;
         ID schema_id;
-        return catalog_->createSchemaPath(schemaPath, SchemaType::REMOTE_EMULATED,
+        return catalog_->createSchemaPath(schemaPath, CatalogManager::SchemaType::REMOTE_EMULATED,
                                           schema_id, ctx);
     }
 
@@ -128,7 +123,7 @@ public:
                                   server_name + "." + database_name;
 
         ID schema_id;
-        Status s = catalog_->createSchemaPath(schemaPath, SchemaType::REMOTE_EMULATED,
+        Status s = catalog_->createSchemaPath(schemaPath, CatalogManager::SchemaType::REMOTE_EMULATED,
                                               schema_id, ctx);
         if (s != Status::OK) return s;
 

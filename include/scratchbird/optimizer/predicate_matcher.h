@@ -1,7 +1,8 @@
 #pragma once
 
-#include "scratchbird/parser/ast.h"
-#include "scratchbird/parser/token.h"
+#include "scratchbird/core/expression.h"
+#include <string>
+#include <string_view>
 #include <vector>
 
 /**
@@ -44,7 +45,7 @@
 
 namespace scratchbird::optimizer
 {
-    using namespace scratchbird::parser;
+    using namespace scratchbird::core;
 
     /**
      * PredicateMatcher - Determines if query predicate implies index predicate
@@ -73,9 +74,7 @@ namespace scratchbird::optimizer
          * @return true if query_pred implies index_pred
          */
         static bool implies(const Expression *query_pred,
-                           const Expression *index_pred,
-                           const StringPool *query_pool,
-                           const StringPool *index_pool = nullptr);
+                           const Expression *index_pred);
 
         /**
          * Check if query predicate contains (implies) index predicate as a conjunct
@@ -94,9 +93,7 @@ namespace scratchbird::optimizer
          * @return true if index_pred appears as conjunct in query_pred
          */
         static bool containsConjunct(const Expression *query_pred,
-                                     const Expression *index_pred,
-                                     const StringPool *query_pool,
-                                     const StringPool *index_pool = nullptr);
+                                     const Expression *index_pred);
 
     private:
         /**
@@ -105,9 +102,7 @@ namespace scratchbird::optimizer
          * Uses ExpressionMatcher::matches() internally.
          */
         static bool predicatesEqual(const Expression *pred1,
-                                    const Expression *pred2,
-                                    const StringPool *query_pool,
-                                    const StringPool *index_pool);
+                                    const Expression *pred2);
 
         /**
          * Check if query range implies index range
@@ -124,9 +119,7 @@ namespace scratchbird::optimizer
          * @return true if query range implies index range
          */
         static bool rangeImplies(const BinaryOpExpr *query_binop,
-                                const BinaryOpExpr *index_binop,
-                                const StringPool *query_pool,
-                                const StringPool *index_pool);
+                                const BinaryOpExpr *index_binop);
 
         /**
          * Check if NOT NULL predicate is implied
@@ -142,9 +135,7 @@ namespace scratchbird::optimizer
          * @return true if query implies NOT NULL
          */
         static bool impliesNotNull(const Expression *query_pred,
-                                   const Expression *index_not_null,
-                                   const StringPool *query_pool,
-                                   const StringPool *index_pool);
+                                   const Expression *index_not_null);
 
         /**
          * Extract column identifier from expression if possible
@@ -162,8 +153,7 @@ namespace scratchbird::optimizer
          *  1 if lit1 > lit2
          *  INT_MIN if incomparable (different types, NULL, etc.)
          */
-        static int compareLiterals(const LiteralExpr *lit1, const LiteralExpr *lit2,
-                                   const StringPool *pool1, const StringPool *pool2);
+        static int compareLiterals(const LiteralExpr *lit1, const LiteralExpr *lit2);
 
         /**
          * Check if operator implies NOT NULL
@@ -180,6 +170,8 @@ namespace scratchbird::optimizer
          */
         static void collectConjuncts(const Expression *expr,
                                      std::vector<const Expression *> &conjuncts);
+
+        static std::string normalizeIdentifier(std::string_view name);
     };
 
 } // namespace scratchbird::optimizer

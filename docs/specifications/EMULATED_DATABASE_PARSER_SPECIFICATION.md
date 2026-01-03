@@ -39,9 +39,9 @@ Copy the patterns, not the code.
 - The engine executes only SBLR; parsers are isolated front-ends that generate it.
 
 ### Rule 2: No V1 Parser Usage
-**The V1 parser is deprecated and being removed.**
+**The V1 parser has been removed.**
 
-- DO NOT use the V1 parser for anything
+- DO NOT reintroduce V1 parser code
 - DO NOT write code that depends on V1 parser behavior
 - DO NOT reference V1 parser code patterns
 

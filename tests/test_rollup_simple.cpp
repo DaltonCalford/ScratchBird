@@ -29,6 +29,7 @@ using namespace scratchbird;
 class SimpleTest {
 private:
     std::unique_ptr<core::Database> db_;
+    std::unique_ptr<sblr::QueryCompilerV2> compiler_;
     const std::string db_path_ = "/tmp/test_rollup_simple_db";
     int test_count_ = 0;
     int passed_count_ = 0;
@@ -38,32 +39,17 @@ private:
             std::cout << description << std::endl;
         }
 
-        parser::Lexer lexer(sql);
-        parser::ASTArena arena;
-        parser::Parser parser(lexer, arena);
-
-        auto result = parser.parseStatement();
-        if (!result.success()) {
-            std::cerr << "❌ Parse error: " << sql << std::endl;
-            for (const auto& err : result.errors()) {
-                std::cerr << "   " << err.message << std::endl;
-            }
-            return;
-        }
-
-        sblr::BytecodeGenerator generator(lexer.stringPool(), db_.get());
-        auto bytecode = generator.generate(result.statement());
-
-        if (!bytecode.success()) {
-            std::cerr << "❌ Bytecode generation error: " << sql << std::endl;
-            for (const auto& err : bytecode.errors()) {
+        auto compile_result = compiler_->compile(sql);
+        if (!compile_result.success()) {
+            std::cerr << "❌ Compile error: " << sql << std::endl;
+            for (const auto& err : compile_result.errors()) {
                 std::cerr << "   " << err << std::endl;
             }
             return;
         }
 
         sblr::Executor executor(db_.get());
-        auto exec_result = executor.execute(bytecode.bytecode());
+        auto exec_result = executor.execute(compile_result.bytecode());
 
         if (!exec_result.success()) {
             std::cerr << "❌ Execution error: " << sql << std::endl;
@@ -80,26 +66,14 @@ private:
         }
         std::cout << "Query: " << sql << std::endl;
 
-        parser::Lexer lexer(sql);
-        parser::ASTArena arena;
-        parser::Parser parser(lexer, arena);
-
-        auto result = parser.parseStatement();
-        if (!result.success()) {
-            std::cerr << "❌ Parse error" << std::endl;
-            return;
-        }
-
-        sblr::BytecodeGenerator generator(lexer.stringPool(), db_.get());
-        auto bytecode = generator.generate(result.statement());
-
-        if (!bytecode.success()) {
-            std::cerr << "❌ Bytecode generation error" << std::endl;
+        auto compile_result = compiler_->compile(sql);
+        if (!compile_result.success()) {
+            std::cerr << "❌ Compile error" << std::endl;
             return;
         }
 
         sblr::Executor executor(db_.get());
-        auto exec_result = executor.execute(bytecode.bytecode());
+        auto exec_result = executor.execute(compile_result.bytecode());
 
         if (!exec_result.success()) {
             std::cerr << "❌ Execution error: " << exec_result.error() << std::endl;
@@ -164,6 +138,8 @@ public:
             std::cerr << "Failed to open database: " << ctx.message << std::endl;
             return false;
         }
+
+        compiler_ = std::make_unique<sblr::QueryCompilerV2>(db_.get());
 
         std::cout << "Database ready!" << std::endl;
         return true;

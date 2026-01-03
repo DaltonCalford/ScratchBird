@@ -449,6 +449,7 @@ TEST_F(ParserV2DDLTest, CreateDomain_WithIntegrity) {
 
     EXPECT_TRUE(stmt->if_not_exists);
     EXPECT_EQ(getPathString(parser, stmt->domain_path), "public.user_name");
+    EXPECT_EQ(stmt->domain_kind, DomainKind::BASIC);
     EXPECT_EQ(getString(parser, stmt->base_type.name), "TEXT");
 
     bool saw_not_null = false;
@@ -491,6 +492,7 @@ TEST_F(ParserV2DDLTest, CreateDomain_WithSecurityValidationQuality) {
     ASSERT_NE(stmt, nullptr);
 
     EXPECT_EQ(getPathString(parser, stmt->domain_path), "public.email");
+    EXPECT_EQ(stmt->domain_kind, DomainKind::BASIC);
     EXPECT_TRUE(stmt->has_security);
     EXPECT_TRUE(stmt->security.has_masking);
     EXPECT_EQ(stmt->security.masking, "PARTIAL");
@@ -516,6 +518,99 @@ TEST_F(ParserV2DDLTest, CreateDomain_WithSecurityValidationQuality) {
     EXPECT_EQ(stmt->quality.standardize_function, "std_email");
     EXPECT_TRUE(stmt->quality.has_enrich_function);
     EXPECT_EQ(stmt->quality.enrich_function, "enrich_email");
+}
+
+TEST_F(ParserV2DDLTest, CreateDomain_InheritsAndCollate) {
+    Parser parser(
+        "CREATE DOMAIN public.child_domain AS TEXT "
+        "INHERITS (public.parent_domain) COLLATE utf8");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success()) << "Errors: "
+                                  << (result.errors().empty() ? "none" : result.errors()[0].message);
+
+    auto* stmt = dynamic_cast<CreateDomainStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+
+    EXPECT_EQ(stmt->domain_kind, DomainKind::BASIC);
+    EXPECT_TRUE(stmt->has_inherits);
+    EXPECT_EQ(getPathString(parser, stmt->parent_domain_path), "public.parent_domain");
+    EXPECT_TRUE(stmt->has_collation);
+    EXPECT_EQ(stmt->collation_name, "utf8");
+}
+
+TEST_F(ParserV2DDLTest, CreateDomain_RecordWithDomainField) {
+    Parser parser(
+        "CREATE DOMAIN contact_info AS RECORD ("
+        "name VARCHAR(100) NOT NULL, "
+        "email public.email_domain DEFAULT 'none') "
+        "WITH DIALECT ('postgresql') WITH COMPAT ('composite')");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success()) << "Errors: "
+                                  << (result.errors().empty() ? "none" : result.errors()[0].message);
+
+    auto* stmt = dynamic_cast<CreateDomainStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+
+    EXPECT_EQ(stmt->domain_kind, DomainKind::RECORD);
+    ASSERT_EQ(stmt->record_fields.size(), 2u);
+    EXPECT_EQ(getString(parser, stmt->record_fields[0].name), "name");
+    EXPECT_EQ(getString(parser, stmt->record_fields[0].type.name), "VARCHAR");
+    EXPECT_FALSE(stmt->record_fields[0].nullable);
+
+    EXPECT_EQ(getString(parser, stmt->record_fields[1].name), "email");
+    EXPECT_TRUE(stmt->record_fields[1].type.has_schema_path);
+    EXPECT_EQ(getPathString(parser, stmt->record_fields[1].type.schema_path), "public.email_domain");
+    EXPECT_TRUE(stmt->record_fields[1].has_default);
+    EXPECT_EQ(stmt->record_fields[1].default_value, "'none'");
+
+    EXPECT_TRUE(stmt->has_dialect);
+    EXPECT_EQ(stmt->dialect_tag, "postgresql");
+    EXPECT_TRUE(stmt->has_compat);
+    EXPECT_EQ(stmt->compat_name, "composite");
+}
+
+TEST_F(ParserV2DDLTest, CreateDomain_EnumWithWrap) {
+    Parser parser(
+        "CREATE DOMAIN day_of_week AS ENUM ('MON', 'TUE' = 2) "
+        "WITH OPTIONS (WRAP = TRUE)");
+    auto result = parser.parseStatement();
+
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<CreateDomainStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+
+    EXPECT_EQ(stmt->domain_kind, DomainKind::ENUM);
+    EXPECT_TRUE(stmt->enum_wrap);
+    ASSERT_EQ(stmt->enum_values.size(), 2u);
+    EXPECT_EQ(getString(parser, stmt->enum_values[0].label), "MON");
+    EXPECT_FALSE(stmt->enum_values[0].has_position);
+    EXPECT_EQ(getString(parser, stmt->enum_values[1].label), "TUE");
+    EXPECT_TRUE(stmt->enum_values[1].has_position);
+    EXPECT_EQ(stmt->enum_values[1].position, 2);
+}
+
+TEST_F(ParserV2DDLTest, CreateDomain_SetAndVariant) {
+    Parser parser("CREATE DOMAIN tag_ids AS SET OF INTEGER");
+
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success());
+    auto* stmt = dynamic_cast<CreateDomainStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+    EXPECT_EQ(stmt->domain_kind, DomainKind::SET);
+    EXPECT_EQ(getString(parser, stmt->set_element_type.name), "INTEGER");
+
+    Parser parser2("CREATE DOMAIN mixed_value AS VARIANT (TEXT, public.email_domain)");
+    auto result2 = parser2.parseStatement();
+    ASSERT_TRUE(result2.success());
+    auto* stmt2 = dynamic_cast<CreateDomainStmt*>(result2.statement());
+    ASSERT_NE(stmt2, nullptr);
+    EXPECT_EQ(stmt2->domain_kind, DomainKind::VARIANT);
+    ASSERT_EQ(stmt2->variant_allowed_types.size(), 2u);
+    EXPECT_EQ(getString(parser2, stmt2->variant_allowed_types[0].name), "TEXT");
+    EXPECT_TRUE(stmt2->variant_allowed_types[1].has_schema_path);
+    EXPECT_EQ(getPathString(parser2, stmt2->variant_allowed_types[1].schema_path), "public.email_domain");
 }
 
 TEST_F(ParserV2DDLTest, AlterDomain_SetDefault) {

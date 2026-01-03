@@ -13,7 +13,7 @@
 - ✅ **WHERE Clause** - Row context evaluation
 
 **Implementation files:**
-- `src/sblr/bytecode_generator.cpp` - AST to bytecode conversion
+- `src/sblr/bytecode_generator_v2.cpp` - AST to bytecode conversion
 - `src/sblr/executor.cpp` - Bytecode execution (lines 23-1218)
 - `include/scratchbird/sblr/executor.h` - Executor interface
 - `include/scratchbird/sblr/opcodes.h` - Opcode definitions

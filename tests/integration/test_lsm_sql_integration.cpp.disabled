@@ -12,7 +12,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/parser/parser.h"
+#include "scratchbird/sblr/query_compiler_v2.h"
 #include <iostream>
 #include <cstdlib>
 #include <cstring>
@@ -33,24 +33,31 @@ bool executeSQL(Database *db, const std::string &sql, bool expect_success = true
 {
     std::cout << "  Executing: " << sql << "\n";
 
-    // Parse SQL
-    parser::Parser parser(sql, db->catalog_manager()->getStringPool());
-    auto stmt = parser.parseStatement();
-
-    if (!stmt)
+    ErrorContext ctx;
+    CatalogManager::SchemaInfo schema_info;
+    ID schema_id{};
+    if (db->catalog_manager()->getSchema("PUBLIC", schema_info, &ctx) == Status::OK)
     {
-        std::cout << "    ✗ Parse failed\n";
+        schema_id = schema_info.schema_id;
+    }
+
+    QueryCompilerV2 compiler(db);
+    compiler.setCurrentSchema(schema_id);
+    auto compile_result = compiler.compile(sql);
+    if (!compile_result.success())
+    {
+        std::cout << "    ✗ Compile failed: "
+                  << (compile_result.errors().empty() ? "unknown" : compile_result.errors().front())
+                  << "\n";
         return !expect_success;
     }
 
-    // Execute statement
     Executor executor(db);
-    ErrorContext ctx;
-    Status status = executor.execute(stmt.get(), &ctx);
-
-    if (status != Status::OK)
+    executor.setCurrentSchema(schema_id);
+    auto exec_result = executor.execute(compile_result.bytecode());
+    if (!exec_result.success())
     {
-        std::cout << "    ✗ Execution failed: " << ctx.message << "\n";
+        std::cout << "    ✗ Execution failed: " << exec_result.error() << "\n";
         return !expect_success;
     }
 

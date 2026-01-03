@@ -296,7 +296,7 @@ if (matchContextual("DOMAIN")) {
 
 ### 4.1 Basic CreateDomainStmt - EXISTS ✅
 
-**Location:** `include/scratchbird/parser/ast.h` lines 2767-2794
+**Location:** `include/scratchbird/parser/ast_v2.h` lines 2767-2794
 
 ```cpp
 class CreateDomainStmt : public Statement

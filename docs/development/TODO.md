@@ -183,7 +183,7 @@ This document tracks actual implementation work needed based on comprehensive co
 ---
 
 ### ALPHA-004: UTF-8 Character Counting for Identifiers ⚠️ MEDIUM PRIORITY
-**Files:** New `src/core/utf8_utils.cpp`, `src/parser/lexer.cpp`
+**Files:** New `src/core/utf8_utils.cpp`, `src/parser/lexer_v2.cpp`
 **Effort:** 1 week
 **Impact:** SQL standard compliance, international identifier support
 **Priority:** MEDIUM
@@ -203,7 +203,7 @@ This document tracks actual implementation work needed based on comprehensive co
 ---
 
 ### ALPHA-005: Add Comment Support for Database Objects 💬 MEDIUM PRIORITY
-**Files:** `src/core/catalog_manager.cpp`, `src/parser/parser.cpp`
+**Files:** `src/core/catalog_manager.cpp`, `src/parser/parser_v2.cpp`
 **Effort:** 1 week
 **Impact:** Self-documenting database schemas
 **Priority:** MEDIUM
@@ -1107,7 +1107,7 @@ LOG_WARNING(STORAGE,
 ## Parser/Lexer Improvements (Stage 1.2 Features)
 
 ### PARSER-001: Implement JOIN Support
-**Files:** `src/parser/parser.cpp`, `src/parser/ast.cpp`
+**Files:** `src/parser/parser_v2.cpp`, `src/parser/ast_v2.cpp`
 **Effort:** 2-3 weeks
 **Impact:** SQL completeness
 
@@ -1125,7 +1125,7 @@ LOG_WARNING(STORAGE,
 ---
 
 ### PARSER-002: Implement Subquery Support
-**Files:** `src/parser/parser.cpp`
+**Files:** `src/parser/parser_v2.cpp`
 **Effort:** 2-3 weeks
 **Impact:** SQL expressiveness
 
@@ -1142,7 +1142,7 @@ LOG_WARNING(STORAGE,
 ---
 
 ### PARSER-003: Implement Constraint Parsing
-**Files:** `src/parser/parser.cpp`
+**Files:** `src/parser/parser_v2.cpp`
 **Effort:** 1-2 weeks
 **Impact:** Data integrity
 
@@ -1160,7 +1160,7 @@ LOG_WARNING(STORAGE,
 ---
 
 ### PARSER-004: Implement Table Aliases
-**Files:** `src/parser/parser.cpp`
+**Files:** `src/parser/parser_v2.cpp`
 **Effort:** 3-5 days
 **Impact:** SQL usability
 
@@ -1176,7 +1176,7 @@ LOG_WARNING(STORAGE,
 ---
 
 ### LEXER-001: Fix Edge Cases
-**Files:** `src/parser/lexer.cpp`
+**Files:** `src/parser/lexer_v2.cpp`
 **Effort:** 1 week
 **Impact:** Robustness
 
@@ -1193,7 +1193,7 @@ LOG_WARNING(STORAGE,
 ---
 
 ### LEXER-002: Add Security Validations
-**Files:** `src/parser/lexer.cpp`
+**Files:** `src/parser/lexer_v2.cpp`
 **Effort:** 1 week
 **Impact:** Security
 
@@ -1210,7 +1210,7 @@ LOG_WARNING(STORAGE,
 ---
 
 ### LEXER-003: Implement Error Recovery
-**Files:** `src/parser/lexer.cpp`
+**Files:** `src/parser/lexer_v2.cpp`
 **Effort:** 1 week
 **Impact:** User experience
 

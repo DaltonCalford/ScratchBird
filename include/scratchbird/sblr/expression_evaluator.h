@@ -1,13 +1,13 @@
 #pragma once
 
-#include "scratchbird/parser/ast.h"
-#include "scratchbird/parser/token.h"
+#include "scratchbird/core/expression.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/tid.h"
-#include <vector>
-#include <map>
 #include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
 
 /**
  * Expression Evaluator for Task 17: Expression and Filtered Indexes
@@ -26,7 +26,6 @@
 
 namespace scratchbird::sblr
 {
-    using namespace scratchbird::parser;
     using namespace scratchbird::core;
 
     class ExpressionEvaluator
@@ -42,7 +41,6 @@ namespace scratchbird::sblr
          * @param xid Transaction ID (for visibility checks, 0 if not needed)
          */
         ExpressionEvaluator(const std::vector<CatalogManager::ColumnInfo> &columns,
-                           StringPool *pool,
                            Database *db = nullptr,
                            uint64_t xid = 0);
 
@@ -115,8 +113,7 @@ namespace scratchbird::sblr
                                      const std::vector<TypedValue>& column_values);
 
     private:
-        StringPool *pool_;
-        std::map<StringPool::StringId, size_t> column_positions_; // column name -> row index
+        std::unordered_map<std::string, size_t> column_positions_; // normalized column name -> row index
 
         // Task 17 MGA Phase 1.4: Transaction context for visibility checks
         Database *db_;   // Database instance for tuple fetching (nullable)
@@ -139,6 +136,7 @@ namespace scratchbird::sblr
         // Helper methods
         TypedValue castValue(const TypedValue &value, DataType target_type);
         bool isTruthy(const TypedValue &value);
+        static std::string normalizeIdentifier(std::string_view name);
         int compareValues(const TypedValue &left, const TypedValue &right);
     };
 

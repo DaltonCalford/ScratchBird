@@ -318,6 +318,10 @@ const char* binaryOpToString(BinaryOp op) {
         case BinaryOp::AND: return "AND";
         case BinaryOp::OR: return "OR";
         case BinaryOp::CONCAT: return "||";
+        case BinaryOp::REGEX_MATCH: return "~";
+        case BinaryOp::REGEX_MATCH_CI: return "~*";
+        case BinaryOp::REGEX_NOT_MATCH: return "!~";
+        case BinaryOp::REGEX_NOT_MATCH_CI: return "!~*";
         case BinaryOp::BIT_AND: return "&";
         case BinaryOp::BIT_OR: return "|";
         case BinaryOp::BIT_XOR: return "#";
@@ -325,6 +329,8 @@ const char* binaryOpToString(BinaryOp op) {
         case BinaryOp::SHIFT_RIGHT: return ">>";
         case BinaryOp::JSON_EXTRACT: return "->";
         case BinaryOp::JSON_EXTRACT_TEXT: return "->>";
+        case BinaryOp::JSON_HASH_EXTRACT: return "#>";
+        case BinaryOp::JSON_HASH_EXTRACT_TEXT: return "#>>";
         case BinaryOp::ARRAY_CONTAINS: return "@>";
         case BinaryOp::ARRAY_CONTAINED_BY: return "<@";
         case BinaryOp::ARRAY_OVERLAP: return "&&";

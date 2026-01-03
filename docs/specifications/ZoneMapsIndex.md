@@ -1540,7 +1540,7 @@ REINDEX INDEX idx_timestamp_zm;
 
 ### AST Additions
 
-**File:** `include/scratchbird/parser/ast.h`
+**File:** `include/scratchbird/parser/ast_v2.h`
 
 ```cpp
 struct ZoneMapOptions {
@@ -1572,21 +1572,17 @@ No new opcodes needed - extend CREATE_INDEX (0x50):
 
 ### Bytecode Generation
 
-**File:** `src/sblr/bytecode_generator.cpp`
+**File:** `src/sblr/bytecode_generator_v2.cpp`
 
 ```cpp
-Status BytecodeGenerator::generateCreateIndex(const CreateIndexStmt* stmt,
-                                              std::vector<uint8_t>* bytecode_out,
-                                              ErrorContext* ctx) {
+void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
     // ... existing encoding ...
 
     // NEW: For ZONEMAP indexes, encode options
     if (stmt->index_type == IndexType::ZONEMAP) {
-        encodeUint32(stmt->zonemap_options.extent_size_kb, bytecode_out);
-        encodeUint32(stmt->zonemap_options.max_string_len, bytecode_out);
+        encodeUint32(stmt->zonemap_options.extent_size_kb, &bytecode_);
+        encodeUint32(stmt->zonemap_options.max_string_len, &bytecode_);
     }
-
-    return Status::OK;
 }
 ```
 

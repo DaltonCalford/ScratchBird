@@ -9,6 +9,9 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googletest)
 
+# Allow test sources to include test_helpers.h across all test targets.
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+
 # Test sources (exclude deprecated tests)
 file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
     "unit/*.cpp"
@@ -45,19 +48,15 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/deprecated/.*")
 # These require additional manual fixes beyond automated script capabilities
 # TODO: Fix these in Phase 3 using test_bitmap_dml.cpp as template
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_bytecode_executor\\.cpp$")  # 40+ errors - executor API refactor
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_cte_basic\\.cpp$")  # 40+ errors - CTE/parser API refactor
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gist_dml\\.cpp$")  # Incomplete transaction API fixes
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gist_mvcc\\.cpp$")  # Incomplete transaction API fixes
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_tree_simple\\.cpp$")  # LSMTreeIndex not declared
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_lsm_tree_comprehensive\\.cpp$")  # LSMTreeIndex not declared
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_hnsw_dml\\.cpp$")  # UuidV7::generate() → generateUuidV7(), Database constructor signature, TransactionManager forward declaration
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_rtree_dml\\.cpp$")  # Duplicate Status declarations
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_query_plan_security\\.cpp$")  # ErrorContext.status field removed
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_dml\\.cpp$")  # commit() → commitTransaction(), beginTransaction() signature, Database constructor, search() results parameter
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_spgist_mvcc\\.cpp$")  # Incomplete transaction API fixes
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_statistical_functions\\.cpp$")  # API compatibility issues
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_.*toast.*\\.cpp$")  # Transaction API issues, TupleHeader, ToastPointer fields need fixing
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_subquery_parser\\.cpp$")  # API compatibility issues
 # btree_page_test.cpp was fixed: Tuple struct initializer corrected to use TID{gpid, slot}
 
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_mga_compliance.cpp$")  # Phase 2C auto-exclusion
@@ -74,8 +73,6 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_heap_page_memory.cpp$")  # 
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_hnsw_distance_metrics.cpp$")  # Phase 2C auto-exclusion
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_hnsw_index.cpp$")  # Phase 2C auto-exclusion
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_index_mga_compliance.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_json_functions.cpp$")  # Phase 2C auto-exclusion
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_json_integration.cpp$")  # Phase 2C auto-exclusion
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_lsm_compaction.cpp$")  # Phase 2C auto-exclusion
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_lsm_memtable.cpp$")  # Phase 2C auto-exclusion
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_lsm_range_scan.cpp$")  # Phase 2C auto-exclusion
@@ -125,7 +122,6 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_gc\.cpp$")  # Phase 2
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_btree_vacuum\.cpp$")  # Phase 2C: API issues
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_security_phase.*\.cpp$")  # Database API issues (open/create)
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/manual_test_planner_integration\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_array_functions\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_btree_delete_parent_update\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_btree_mga_compliance\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_btree_rightmost_child\.cpp$")  # Standalone main()
@@ -142,7 +138,6 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_predicate\.cpp$")  #
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_rle\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_segments\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_columnstore_simple_e2e\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_cte_basic\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_defragment_pdlower_fix\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_dirty_bit_protection\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_fsm_durability\.cpp$")  # Standalone main()
@@ -167,22 +162,18 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_materialized_views_parser\.cpp$"
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_multi_index_mga\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_network_types\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_psql_control_flow\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_query_plan_security\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_range_lexer\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_range_operators\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_range_types\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_rtree\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_snapshot_sorted\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_snapshot_xids\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_subquery_parser\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_subtransactions\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_temporal_range_types\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_term_conn\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_terminate_connection\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_text_search_functions\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_text_search_phase2\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_text_search_phase3\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_text_search_simple\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_text_search_types\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_tip_performance_benchmark\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_toast_cleanup\.cpp$")  # Standalone main()
@@ -191,35 +182,13 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_transaction_deadlock_simple\.cpp
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_transaction_markers_race\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_version_chain_cycle\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_views_comprehensive\.cpp$")  # Standalone main()
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_wave1_integration\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_wraparound_detection\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_xid_validation_fix\.cpp$")  # Standalone main()
 
 # Integration tests with API issues
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/.*\.cpp$")  # Exclude all integration tests (API incompatibilities)
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_rollup_simple\.cpp$")  # Root-level test with API issues
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_advanced_grouping\.cpp$")  # Root-level test with API issues
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_views_expansion\.cpp$")  # Root-level test with API issues
-
-# V1 Parser dependent tests (excluded during V1 parser deprecation)
-# TODO: Update these tests to use V2 parser or QueryCompilerV2
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_query_planner_integration\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_conditional_functions\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_sql_to_bytecode\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_show_set_commands\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_charset_loader\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_cte\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_extract\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_json_functions\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_json_integration\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_sweep_mechanism\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_text_search\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_transaction_advanced\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_triggers\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_week3_week4_comprehensive\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_window_functions\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_predicate_matcher\.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_expression_matcher\.cpp$")
 
 # Test executable
 add_executable(scratchbird_tests ${TEST_SOURCES})
@@ -496,8 +465,8 @@ set_tests_properties(RangeOperators PROPERTIES
     TIMEOUT 60
 )
 
-# Task 15 Phase 4: Range Lexer Tests - REMOVED (V1 parser deprecated)
-# test_range_lexer.cpp removed as part of V1 parser deprecation
+# Task 15 Phase 4: Range Lexer Tests - REMOVED (legacy parser path removed)
+# test_range_lexer.cpp removed alongside legacy parser cleanup
 
 # ============================================================================
 # Task 16: Network Types Tests
@@ -1043,8 +1012,8 @@ set_tests_properties(GiSTMVCC PROPERTIES
 #     TIMEOUT 60
 # )
 
-# Bit Manipulation Functions Tests - DISABLED (uses V1 parser parseExpression)
-# TODO: Update to use V2 parser or QueryCompilerV2
+# Bit Manipulation Functions Tests - DISABLED (scalar SELECT not supported)
+# TODO: Enable once scalar SELECT execution is supported
 # add_executable(test_bit_manipulation
 #     integration/test_bit_manipulation.cpp
 # )
@@ -1206,29 +1175,6 @@ set_tests_properties(ForeignKeys PROPERTIES
 )
 
 
-# Tests removed as part of V1 parser deprecation:
-# - test_views_comprehensive (used V1 parser::Lexer/Parser)
-# - test_materialized_views_parser (used V1 parser::Lexer/Parser)
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
-list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/integration/test_statistical_functions.cpp$")
 # Phase 2C: Exclude all standalone tests with main() functions
 
 # Index Bytecode Generation Tests - DISABLED (V2 bytecode generator issue with CREATE/DROP INDEX)
@@ -1478,8 +1424,7 @@ gtest_discover_tests(test_postgresql_parser
 # Parser V2 Performance Benchmarks (Phase 9)
 # ============================================================================
 
-# Parser V2 Benchmark - DISABLED (uses V1 parser for comparison benchmark)
-# TODO: Remove V1 benchmark code or update to V2-only benchmark
+# Parser V2 Benchmark - DISABLED (no V2-only benchmark implementation yet)
 # add_executable(test_parser_v2_benchmark
 #     benchmark/test_parser_v2_benchmark.cpp
 # )

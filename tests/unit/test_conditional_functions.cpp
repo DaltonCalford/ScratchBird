@@ -1,57 +1,136 @@
 #include <gtest/gtest.h>
 
-#include "scratchbird/sblr/query_compiler_v2.h"
-#include "scratchbird/sblr/executor.h"
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/sblr/executor.h"
+#include "scratchbird/sblr/query_compiler_v2.h"
+#include "test_helpers.h"
+#include <sstream>
 #include <string>
 
-using namespace scratchbird::parser;
 using namespace scratchbird::sblr;
 using namespace scratchbird::core;
+using scratchbird::testing::TestDatabaseFile;
 
 class ConditionalFunctionTest : public ::testing::Test
 {
 protected:
+    std::unique_ptr<Database> db_;
+    std::unique_ptr<Executor> executor_;
+    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<TestDatabaseFile> db_file_;
+    ID schema_id_;
+
+    void SetUp() override
+    {
+        db_file_ = std::make_unique<TestDatabaseFile>("test_conditional_functions");
+
+        ErrorContext ctx;
+        ASSERT_EQ(Database::create(db_file_->path(), 16384, &ctx), Status::OK) << ctx.message;
+
+        db_ = std::make_unique<Database>();
+        ASSERT_EQ(db_->open(db_file_->path(), &ctx), Status::OK) << ctx.message;
+
+        CatalogManager::SchemaInfo schema;
+        ASSERT_EQ(db_->catalog_manager()->getSchema("PUBLIC", schema, &ctx), Status::OK)
+            << ctx.message;
+        schema_id_ = schema.schema_id;
+
+        compiler_ = std::make_unique<QueryCompilerV2>(db_.get());
+        compiler_->setCurrentSchema(schema_id_);
+        executor_ = std::make_unique<Executor>(db_.get());
+        executor_->setCurrentSchema(schema_id_);
+
+        createTables();
+    }
+
+    void TearDown() override
+    {
+        executor_.reset();
+        compiler_.reset();
+        db_.reset();
+        db_file_.reset();
+    }
+
+    void createTables()
+    {
+        const std::vector<std::string> ddl = {
+            "CREATE TABLE users ("
+            "id INT, name TEXT, status TEXT, age INT, default_age INT, "
+            "optional_email TEXT, backup_email TEXT, email TEXT, "
+            "a INT, b INT, c INT, d INT, child_name TEXT, adult_name TEXT, premium INT"
+            ")",
+            "CREATE TABLE stats (value INT)",
+            "CREATE TABLE changes (current_value INT, previous_value INT)",
+            "CREATE TABLE calculations (a INT, b INT, c INT, d INT)",
+            "CREATE TABLE data (a INT, b INT, c INT, status INT, value INT)",
+            "CREATE TABLE grades (grade TEXT)",
+            "CREATE TABLE colors (color TEXT)",
+            "CREATE TABLE scores (score INT)",
+            "CREATE TABLE points (x INT)"
+        };
+
+        for (const auto& sql : ddl)
+        {
+            auto compile_result = compiler_->compile(sql);
+            ASSERT_TRUE(compile_result.success()) << "Compile failed for: " << sql;
+            auto exec_result = executor_->execute(compile_result.bytecode());
+            ASSERT_TRUE(exec_result.success()) << "Execution failed for: " << sql
+                                               << " error: " << exec_result.error();
+        }
+    }
+
+    static std::string formatDiagnostics(const CompilationResultV2& result)
+    {
+        std::ostringstream oss;
+        if (!result.errors().empty())
+        {
+            oss << "\nErrors:";
+            for (const auto& err : result.errors())
+            {
+                oss << "\n  " << err;
+            }
+        }
+        if (!result.warnings().empty())
+        {
+            oss << "\nWarnings:";
+            for (const auto& warn : result.warnings())
+            {
+                oss << "\n  " << warn;
+            }
+        }
+        return oss.str();
+    }
+
     void testParse(const std::string &sql, bool should_succeed = true)
     {
-        Lexer lexer(sql);
-        ASTArena arena;
-        Parser parser(lexer, arena);
-
-        auto result = parser.parseStatement();
+        auto result = compiler_->compile(sql);
         if (should_succeed)
         {
-            ASSERT_TRUE(result.success()) << "Parse failed for: " << sql;
-            // Note: We only test parsing here, not semantic analysis.
-            // Semantic analysis requires tables to exist in the symbol table,
-            // but these parser tests just verify SQL syntax is accepted.
+            ASSERT_TRUE(result.success()) << "Compile failed for: " << sql
+                                          << formatDiagnostics(result);
         }
         else
         {
-            EXPECT_FALSE(result.success()) << "Parse should have failed for: " << sql;
+            EXPECT_FALSE(result.success()) << "Compile should have failed for: " << sql
+                                           << formatDiagnostics(result);
         }
     }
 
     void testBytecodeGeneration(const std::string &sql, bool should_succeed = true)
     {
-        Lexer lexer(sql);
-        ASTArena arena;
-        Parser parser(lexer, arena);
-
-        auto result = parser.parseStatement();
-        ASSERT_TRUE(result.success()) << "Parse failed for: " << sql;
-
-        BytecodeGenerator generator(parser.stringPool());
-        auto bytecode_result = generator.generate(result.statement());
+        auto result = compiler_->compile(sql);
 
         if (should_succeed)
         {
-            EXPECT_TRUE(bytecode_result.success()) << "Bytecode generation failed for: " << sql;
-            EXPECT_FALSE(bytecode_result.bytecode().empty()) << "Bytecode is empty";
+            EXPECT_TRUE(result.success()) << "Bytecode generation failed for: " << sql
+                                          << formatDiagnostics(result);
+            EXPECT_FALSE(result.bytecode().empty()) << "Bytecode is empty";
         }
         else
         {
-            EXPECT_FALSE(bytecode_result.success()) << "Bytecode generation should have failed for: " << sql;
+            EXPECT_FALSE(result.success()) << "Bytecode generation should have failed for: " << sql
+                                           << formatDiagnostics(result);
         }
     }
 };

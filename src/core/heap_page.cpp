@@ -202,7 +202,8 @@ namespace scratchbird::core
             // TOAST the data portion (after TupleHeader)
             ToastPointer toast_ptr;
             // Use EXTERNAL strategy for automatic compression when available
-            Status s = toast_mgr_->toastValue(tuple_data, tuple_size - sizeof(TupleHeader),
+            Status s = toast_mgr_->toastValue(tuple_data + sizeof(TupleHeader),
+                                              tuple_size - sizeof(TupleHeader),
                                               ToastStrategy::EXTERNAL, xmin, &toast_ptr, ctx);
             if (s != Status::OK)
             {
@@ -562,6 +563,14 @@ namespace scratchbird::core
             special->pd_special != page_size_ - sizeof(HeapPageSpecial))
         {
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid page boundaries");
+            return Status::PAGE_CORRUPT;
+        }
+
+        uint32_t item_bytes = special->pd_lower - sizeof(PageHeader);
+        uint32_t max_items = item_bytes / sizeof(ItemPointer);
+        if (hdr->item_count > max_items)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Item count exceeds page bounds");
             return Status::PAGE_CORRUPT;
         }
 

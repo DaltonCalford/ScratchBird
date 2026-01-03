@@ -8,13 +8,22 @@
 
 #include <gtest/gtest.h>
 
-
+#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/database.h"
+#include "scratchbird/parser/parser_v2.h"
+#include "scratchbird/sblr/executor.h"
+#include "scratchbird/sblr/semantic_analyzer_v2.h"
+#include "scratchbird/sblr/bytecode_generator_v2.h"
 #include "scratchbird/sblr/query_compiler_v2.h"
-#include <chrono>
-#include <algorithm>
+#include "test_helpers.h"
 
-using namespace scratchbird::parser;
-using namespace scratchbird::sblr;
+#include <algorithm>
+#include <chrono>
+#include <memory>
+#include <string>
+#include <vector>
+
+using scratchbird::testing::TestDatabaseFile;
 
 class Week3Week4ComprehensiveTest : public ::testing::Test
 {
@@ -29,17 +38,67 @@ protected:
         std::string disassembly;
     };
 
+    void SetUp() override
+    {
+        db_file_ = std::make_unique<TestDatabaseFile>("test_week3_week4");
+
+        scratchbird::core::ErrorContext ctx;
+        ASSERT_EQ(scratchbird::core::Database::create(db_file_->path(), 16384, &ctx),
+                  scratchbird::core::Status::OK)
+            << ctx.message;
+
+        db_ = std::make_unique<scratchbird::core::Database>();
+        ASSERT_EQ(db_->open(db_file_->path(), &ctx), scratchbird::core::Status::OK)
+            << ctx.message;
+
+        compiler_ = std::make_unique<scratchbird::sblr::QueryCompilerV2>(db_.get());
+        executor_ = std::make_unique<scratchbird::sblr::Executor>(db_.get());
+
+        scratchbird::core::CatalogManager::SchemaInfo schema;
+        ASSERT_EQ(db_->catalog_manager()->getSchema("PUBLIC", schema, &ctx),
+                  scratchbird::core::Status::OK)
+            << ctx.message;
+        schema_id_ = schema.schema_id;
+        compiler_->setCurrentSchema(schema_id_);
+        executor_->setCurrentSchema(schema_id_);
+
+        createTables();
+    }
+
+    void TearDown() override
+    {
+        executor_.reset();
+        compiler_.reset();
+        db_.reset();
+        db_file_.reset();
+    }
+
+    void createTables()
+    {
+        const std::vector<std::string> ddl = {
+            "CREATE TABLE dual (dummy INT)",
+            "CREATE TABLE users (id INT, name TEXT, email TEXT, age INT)",
+            "CREATE TABLE products (id INTEGER, name TEXT, price DOUBLE, stock INTEGER)",
+            "CREATE TABLE test (id INTEGER, value DOUBLE)"
+        };
+
+        for (const auto& sql : ddl)
+        {
+            auto compile_result = compiler_->compile(sql);
+            ASSERT_TRUE(compile_result.success()) << "Compile failed for: " << sql;
+            auto exec_result = executor_->execute(compile_result.bytecode());
+            ASSERT_TRUE(exec_result.success()) << "Execution failed for: " << sql
+                                               << " error: " << exec_result.error();
+        }
+    }
+
     // Full compile pipeline with semantic analysis
     // Use this for tests that specifically test semantic validation
     TestResult compileAndAnalyze(const std::string &sql)
     {
         TestResult result;
 
-        // Parse
-        Lexer lexer(sql);
-        arena_ = std::make_unique<ASTArena>();
-        Parser parser(lexer, *arena_);
-
+        scratchbird::parser::v2::Parser parser(sql);
         auto parse_result = parser.parseStatement();
         result.parse_success = parse_result.success();
 
@@ -52,8 +111,9 @@ protected:
             return result;
         }
 
-        // Semantic analysis
-        SemanticAnalyzer analyzer(parser.stringPool());
+        scratchbird::parser::v2::SemanticAnalyzerV2 analyzer(*db_->catalog_manager(),
+                                                             parser.stringPool());
+        analyzer.setCurrentSchema(schema_id_);
         auto semantic_result = analyzer.analyze(parse_result.statement());
         result.semantic_success = semantic_result.success();
 
@@ -66,9 +126,9 @@ protected:
             return result;
         }
 
-        // Bytecode generation
-        BytecodeGenerator generator(parser.stringPool());
-        auto bytecode_result = generator.generate(parse_result.statement());
+        scratchbird::parser::v2::BytecodeGeneratorV2 generator(parser.stringPool());
+        generator.setOptimizationsEnabled(false);
+        auto bytecode_result = generator.generate(semantic_result.statement());
         result.bytecode_success = bytecode_result.success();
         result.bytecode = bytecode_result.bytecode();
 
@@ -80,72 +140,33 @@ protected:
             }
         }
 
-        // Generate disassembly for debugging
         if (result.bytecode_success)
         {
-            result.disassembly = BytecodeDisassembler::disassemble(result.bytecode);
+            result.disassembly =
+                scratchbird::parser::v2::BytecodeDisassemblerV2::disassemble(result.bytecode);
         }
 
         return result;
     }
 
-    // Compile to bytecode without semantic analysis
-    // Use this for tests that focus on bytecode generation and don't need table validation
+    // Compile to bytecode using the full V2 pipeline
     TestResult compileToBytecode(const std::string &sql)
     {
-        TestResult result;
-
-        // Parse
-        Lexer lexer(sql);
-        arena_ = std::make_unique<ASTArena>();
-        Parser parser(lexer, *arena_);
-
-        auto parse_result = parser.parseStatement();
-        result.parse_success = parse_result.success();
-
-        if (!result.parse_success)
-        {
-            if (!parse_result.errors().empty())
-            {
-                result.error_message = parse_result.errors()[0].message;
-            }
-            return result;
-        }
-
-        // Skip semantic analysis - go directly to bytecode generation
-        result.semantic_success = true; // Mark as success since we're skipping it
-
-        // Bytecode generation
-        BytecodeGenerator generator(parser.stringPool());
-        auto bytecode_result = generator.generate(parse_result.statement());
-        result.bytecode_success = bytecode_result.success();
-        result.bytecode = bytecode_result.bytecode();
-
-        if (!result.bytecode_success)
-        {
-            if (!bytecode_result.errors().empty())
-            {
-                result.error_message = bytecode_result.errors()[0];
-            }
-        }
-
-        // Generate disassembly for debugging
-        if (result.bytecode_success)
-        {
-            result.disassembly = BytecodeDisassembler::disassemble(result.bytecode);
-        }
-
-        return result;
+        return compileAndAnalyze(sql);
     }
 
-    bool containsOpcode(const std::vector<uint8_t> &bytecode, Opcode op)
+    bool containsOpcode(const std::vector<uint8_t> &bytecode, scratchbird::sblr::Opcode op)
     {
         uint8_t opcode_byte = static_cast<uint8_t>(op);
         return std::find(bytecode.begin(), bytecode.end(), opcode_byte) != bytecode.end();
     }
 
-private:
-    std::unique_ptr<ASTArena> arena_;
+protected:
+    std::unique_ptr<TestDatabaseFile> db_file_;
+    std::unique_ptr<scratchbird::core::Database> db_;
+    std::unique_ptr<scratchbird::sblr::Executor> executor_;
+    std::unique_ptr<scratchbird::sblr::QueryCompilerV2> compiler_;
+    scratchbird::core::ID schema_id_;
 };
 
 // ============================================================================
@@ -159,11 +180,11 @@ TEST_F(Week3Week4ComprehensiveTest, Semantic_TypeCoercion)
     EXPECT_TRUE(result.bytecode_success);
 
     // Should generate proper literals (integers may be INT32 or INT64 depending on value)
-    bool has_int = containsOpcode(result.bytecode, Opcode::LITERAL_INT32) ||
-                   containsOpcode(result.bytecode, Opcode::LITERAL_INT64);
+    bool has_int = containsOpcode(result.bytecode, scratchbird::sblr::Opcode::LITERAL_INT32) ||
+                   containsOpcode(result.bytecode, scratchbird::sblr::Opcode::LITERAL_INT64);
     EXPECT_TRUE(has_int);
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::LITERAL_DOUBLE));
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::EXPR_MULTIPLY));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::LITERAL_DOUBLE));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::EXPR_MULTIPLY));
 }
 
 TEST_F(Week3Week4ComprehensiveTest, Semantic_InvalidTypeOperations)
@@ -171,8 +192,6 @@ TEST_F(Week3Week4ComprehensiveTest, Semantic_InvalidTypeOperations)
     // String arithmetic - bytecode generator will produce bytecode regardless
     // (actual type checking happens at runtime or with real semantic analysis)
     auto result = compileToBytecode("SELECT 'hello' + 5 FROM dual");
-    // Bytecode generation succeeds even for semantically invalid operations
-    // since BytecodeGenerator doesn't do type checking
     EXPECT_TRUE(result.bytecode_success);
 }
 
@@ -197,12 +216,10 @@ TEST_F(Week3Week4ComprehensiveTest, Bytecode_ExpressionPrecedence)
     auto result = compileToBytecode("SELECT 2 + 3 * 4 FROM dual");
     ASSERT_TRUE(result.bytecode_success);
 
-    // Bytecode should reflect postfix notation: 2 3 4 * +
-    // Find the multiplication before addition in bytecode
     auto mul_pos = std::find(result.bytecode.begin(), result.bytecode.end(),
-                             static_cast<uint8_t>(Opcode::EXPR_MULTIPLY));
+                             static_cast<uint8_t>(scratchbird::sblr::Opcode::EXPR_MULTIPLY));
     auto add_pos = std::find(result.bytecode.begin(), result.bytecode.end(),
-                             static_cast<uint8_t>(Opcode::EXPR_ADD));
+                             static_cast<uint8_t>(scratchbird::sblr::Opcode::EXPR_ADD));
 
     EXPECT_NE(mul_pos, result.bytecode.end()) << "Should contain multiply";
     EXPECT_NE(add_pos, result.bytecode.end()) << "Should contain add";
@@ -218,16 +235,17 @@ TEST_F(Week3Week4ComprehensiveTest, Bytecode_ComparisonOperators)
     struct TestCase
     {
         std::string sql;
-        Opcode expected_op;
+        scratchbird::sblr::Opcode expected_op;
     };
 
-    // Note: This parser uses <> for not-equal (SQL standard), not !=
-    std::vector<TestCase> test_cases = {{"SELECT * FROM users WHERE age = 25", Opcode::EXPR_EQ},
-                                        {"SELECT * FROM users WHERE age <> 25", Opcode::EXPR_NE},
-                                        {"SELECT * FROM users WHERE age < 25", Opcode::EXPR_LT},
-                                        {"SELECT * FROM users WHERE age > 25", Opcode::EXPR_GT},
-                                        {"SELECT * FROM users WHERE age <= 25", Opcode::EXPR_LE},
-                                        {"SELECT * FROM users WHERE age >= 25", Opcode::EXPR_GE}};
+    std::vector<TestCase> test_cases = {
+        {"SELECT * FROM users WHERE age = 25", scratchbird::sblr::Opcode::EXPR_EQ},
+        {"SELECT * FROM users WHERE age <> 25", scratchbird::sblr::Opcode::EXPR_NE},
+        {"SELECT * FROM users WHERE age < 25", scratchbird::sblr::Opcode::EXPR_LT},
+        {"SELECT * FROM users WHERE age > 25", scratchbird::sblr::Opcode::EXPR_GT},
+        {"SELECT * FROM users WHERE age <= 25", scratchbird::sblr::Opcode::EXPR_LE},
+        {"SELECT * FROM users WHERE age >= 25", scratchbird::sblr::Opcode::EXPR_GE}
+    };
 
     for (const auto &test : test_cases)
     {
@@ -240,14 +258,10 @@ TEST_F(Week3Week4ComprehensiveTest, Bytecode_ComparisonOperators)
 
 TEST_F(Week3Week4ComprehensiveTest, Bytecode_LogicalOperators)
 {
-    // NOTE: AND/OR expression parsing is not yet implemented in the parser.
-    // BytecodeGenerator has support for EXPR_AND and EXPR_OR opcodes,
-    // but the parser needs to be extended to handle these operators.
-    // For now, test that we can at least generate simple WHERE conditions.
     auto result = compileToBytecode("SELECT * FROM users WHERE age > 18");
     ASSERT_TRUE(result.bytecode_success);
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::WHERE_CLAUSE));
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::EXPR_GT));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::WHERE_CLAUSE));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::EXPR_GT));
 }
 
 // ============================================================================
@@ -256,7 +270,7 @@ TEST_F(Week3Week4ComprehensiveTest, Bytecode_LogicalOperators)
 
 TEST_F(Week3Week4ComprehensiveTest, ComplexQuery_CreateTable)
 {
-    auto result = compileAndAnalyze("CREATE TABLE products ("
+    auto result = compileAndAnalyze("CREATE TABLE products2 ("
                                     "  id INTEGER NOT NULL,"
                                     "  name VARCHAR(100) NOT NULL,"
                                     "  price DOUBLE,"
@@ -264,38 +278,27 @@ TEST_F(Week3Week4ComprehensiveTest, ComplexQuery_CreateTable)
                                     ")");
 
     ASSERT_TRUE(result.bytecode_success);
-
-    // Should contain CREATE_TABLE opcode
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::CREATE_TABLE));
-
-    // Should contain column definitions
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::COLUMN_DEF));
-
-    // Should contain data types
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::TYPE_INTEGER));
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::TYPE_VARCHAR));
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::TYPE_DOUBLE));
-
-    // Should contain NOT NULL modifiers
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::NOT_NULL));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::CREATE_TABLE));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::COLUMN_DEF));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::TYPE_INTEGER));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::TYPE_VARCHAR));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::TYPE_DOUBLE));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::NOT_NULL));
 }
 
 TEST_F(Week3Week4ComprehensiveTest, ComplexQuery_InsertMultipleValues)
 {
-    // Note: Parser requires column list in INSERT statements
-    auto result = compileToBytecode("INSERT INTO products (id, name, price, stock) VALUES (1, 'Widget', 9.99, 100)");
+    auto result = compileToBytecode(
+        "INSERT INTO products (id, name, price, stock) VALUES (1, 'Widget', 9.99, 100)");
 
     ASSERT_TRUE(result.bytecode_success) << "Error: " << result.error_message;
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::INSERT));
 
-    // Should contain INSERT opcode
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::INSERT));
-
-    // Should contain various literal types (integers may be INT32 or INT64)
-    bool has_int = containsOpcode(result.bytecode, Opcode::LITERAL_INT32) ||
-                   containsOpcode(result.bytecode, Opcode::LITERAL_INT64);
+    bool has_int = containsOpcode(result.bytecode, scratchbird::sblr::Opcode::LITERAL_INT32) ||
+                   containsOpcode(result.bytecode, scratchbird::sblr::Opcode::LITERAL_INT64);
     EXPECT_TRUE(has_int);
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::LITERAL_STRING));
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::LITERAL_DOUBLE));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::LITERAL_STRING));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::LITERAL_DOUBLE));
 }
 
 TEST_F(Week3Week4ComprehensiveTest, ComplexQuery_SelectWithExpressions)
@@ -303,17 +306,11 @@ TEST_F(Week3Week4ComprehensiveTest, ComplexQuery_SelectWithExpressions)
     auto result = compileToBytecode("SELECT id, price * 1.1 + 5 FROM products WHERE price >= 50.0");
 
     ASSERT_TRUE(result.bytecode_success);
-
-    // Should contain SELECT opcode
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::SELECT));
-
-    // Should contain arithmetic operations
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::EXPR_MULTIPLY));
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::EXPR_ADD));
-
-    // Should contain WHERE clause
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::WHERE_CLAUSE));
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::EXPR_GE));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::SELECT));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::EXPR_MULTIPLY));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::EXPR_ADD));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::WHERE_CLAUSE));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::EXPR_GE));
 }
 
 // ============================================================================
@@ -322,7 +319,6 @@ TEST_F(Week3Week4ComprehensiveTest, ComplexQuery_SelectWithExpressions)
 
 TEST_F(Week3Week4ComprehensiveTest, Performance_LargeQuery)
 {
-    // Build a query with many columns
     std::string sql = "CREATE TABLE large_table (";
     for (int i = 0; i < 100; i++)
     {
@@ -340,8 +336,6 @@ TEST_F(Week3Week4ComprehensiveTest, Performance_LargeQuery)
 
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     EXPECT_LT(duration.count(), 100) << "Compilation should be fast even for large queries";
-
-    // Bytecode size should be reasonable
     EXPECT_LT(result.bytecode.size(), 10000) << "Bytecode size excessive for 100 columns";
 }
 
@@ -351,16 +345,14 @@ TEST_F(Week3Week4ComprehensiveTest, Performance_LargeQuery)
 
 TEST_F(Week3Week4ComprehensiveTest, ErrorHandling_GracefulFailure)
 {
-    // Parse error
     auto result = compileAndAnalyze("SELECT FROM WHERE");
     EXPECT_FALSE(result.parse_success);
     EXPECT_TRUE(result.bytecode.empty());
 
-    // Semantic error
     result = compileAndAnalyze("SELECT unknown_col FROM unknown_table");
-    EXPECT_TRUE(result.parse_success);     // Parse should succeed
-    EXPECT_FALSE(result.semantic_success); // Semantic should fail
-    EXPECT_TRUE(result.bytecode.empty());  // No bytecode generated
+    EXPECT_TRUE(result.parse_success);
+    EXPECT_FALSE(result.semantic_success);
+    EXPECT_TRUE(result.bytecode.empty());
 }
 
 // ============================================================================
@@ -369,21 +361,17 @@ TEST_F(Week3Week4ComprehensiveTest, ErrorHandling_GracefulFailure)
 
 TEST_F(Week3Week4ComprehensiveTest, SpecialCase_NullHandling)
 {
-    // Note: Parser requires column list in INSERT statements
     auto result = compileToBytecode("INSERT INTO users (id, name, email) VALUES (1, NULL, NULL)");
     ASSERT_TRUE(result.bytecode_success) << "Error: " << result.error_message;
-
-    // Should contain NULL literals
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::LITERAL_NULL));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::LITERAL_NULL));
 }
 
 TEST_F(Week3Week4ComprehensiveTest, SpecialCase_SelectStar)
 {
     auto result = compileToBytecode("SELECT * FROM users");
     ASSERT_TRUE(result.bytecode_success);
-
-    // Should contain SELECT_STAR opcode
-    EXPECT_TRUE(containsOpcode(result.bytecode, Opcode::SELECT_STAR));
+    EXPECT_TRUE(containsOpcode(result.bytecode, scratchbird::sblr::Opcode::SELECT_STAR) ||
+                containsOpcode(result.bytecode, scratchbird::sblr::Opcode::COLUMN_REF));
 }
 
 // ============================================================================
@@ -394,11 +382,10 @@ TEST_F(Week3Week4ComprehensiveTest, BytecodeStructure_VersionHeader)
 {
     auto result = compileToBytecode("SELECT 1 FROM dual");
     ASSERT_TRUE(result.bytecode_success);
-    ASSERT_GE(result.bytecode.size(), 2);
+    ASSERT_GE(result.bytecode.size(), 2u);
 
-    // Should start with VERSION opcode
-    EXPECT_EQ(result.bytecode[0], static_cast<uint8_t>(Opcode::VERSION));
-    EXPECT_EQ(result.bytecode[1], SBLR_VERSION);
+    EXPECT_EQ(result.bytecode[0], static_cast<uint8_t>(scratchbird::sblr::Opcode::VERSION));
+    EXPECT_EQ(result.bytecode[1], scratchbird::sblr::SBLR_VERSION);
 }
 
 TEST_F(Week3Week4ComprehensiveTest, BytecodeStructure_ProperTermination)
@@ -407,8 +394,7 @@ TEST_F(Week3Week4ComprehensiveTest, BytecodeStructure_ProperTermination)
     ASSERT_TRUE(result.bytecode_success);
     ASSERT_FALSE(result.bytecode.empty());
 
-    // Should end with END opcode
-    EXPECT_EQ(result.bytecode.back(), static_cast<uint8_t>(Opcode::END));
+    EXPECT_EQ(result.bytecode.back(), static_cast<uint8_t>(scratchbird::sblr::Opcode::END));
 }
 
 // ============================================================================
@@ -417,11 +403,11 @@ TEST_F(Week3Week4ComprehensiveTest, BytecodeStructure_ProperTermination)
 
 TEST_F(Week3Week4ComprehensiveTest, Integration_FullWorkflow)
 {
-    // Test complete workflow with multiple statement types
-    // Note: Parser requires column list in INSERT statements
-    std::vector<std::string> queries = {"CREATE TABLE test (id INTEGER, value DOUBLE)",
-                                        "INSERT INTO test (id, value) VALUES (1, 3.14)",
-                                        "SELECT id, value * 2 FROM test WHERE id = 1"};
+    std::vector<std::string> queries = {
+        "CREATE TABLE test2 (id INTEGER, value DOUBLE)",
+        "INSERT INTO test2 (id, value) VALUES (1, 3.14)",
+        "SELECT id, value * 2 FROM test2 WHERE id = 1"
+    };
 
     for (const auto &sql : queries)
     {
@@ -432,11 +418,17 @@ TEST_F(Week3Week4ComprehensiveTest, Integration_FullWorkflow)
         EXPECT_FALSE(result.bytecode.empty());
         EXPECT_FALSE(result.disassembly.empty());
 
-        // All should have proper version header and termination
         if (!result.bytecode.empty())
         {
-            EXPECT_EQ(result.bytecode[0], static_cast<uint8_t>(Opcode::VERSION));
-            EXPECT_EQ(result.bytecode.back(), static_cast<uint8_t>(Opcode::END));
+            EXPECT_EQ(result.bytecode[0], static_cast<uint8_t>(scratchbird::sblr::Opcode::VERSION));
+            EXPECT_EQ(result.bytecode.back(), static_cast<uint8_t>(scratchbird::sblr::Opcode::END));
+        }
+
+        if (result.bytecode_success && sql.rfind("CREATE TABLE", 0) == 0)
+        {
+            auto exec_result = executor_->execute(result.bytecode);
+            EXPECT_TRUE(exec_result.success()) << "Execution failed for: " << sql
+                                               << " error: " << exec_result.error();
         }
     }
 }

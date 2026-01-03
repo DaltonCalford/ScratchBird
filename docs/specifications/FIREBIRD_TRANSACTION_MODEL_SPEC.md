@@ -1270,7 +1270,7 @@ private:
 **Files:**
 - `src/core/snapshot.cpp` (new)
 - `src/core/visibility.cpp`
-- `src/parser/parser.cpp`
+- `src/parser/parser_v2.cpp`
 
 ### 9.3 Phase 3: Sweep Mechanism (2 weeks)
 
@@ -1345,7 +1345,7 @@ private:
 4. Parser support for full SET TRANSACTION syntax
 
 **Files:**
-- `src/parser/parser.cpp`
+- `src/parser/parser_v2.cpp`
 - `src/core/lock_manager.cpp`
 - `src/core/transaction_manager.cpp`
 

@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/uuidv7.h"
@@ -134,6 +135,11 @@ protected:
         compiler_->setCurrentSchema(schema_id_);
         executor_ = std::make_unique<Executor>(&db_);
         executor_->setCurrentSchema(schema_id_);
+        Status conn_status = db_.connect(connection_ctx_, &ctx);
+        ASSERT_EQ(conn_status, Status::OK) << ctx.message;
+        connection_ctx_->setCurrentUser(catalog_->getSystemUserId(&ctx), true);
+        ConnectionContext::setCurrent(connection_ctx_.get());
+        executor_->setConnectionContext(connection_ctx_.get());
 
         CatalogManager::ParameterInfo param;
         param.name = "value";
@@ -197,6 +203,8 @@ protected:
     {
         executor_.reset();
         compiler_.reset();
+        ConnectionContext::setCurrent(nullptr);
+        connection_ctx_.reset();
         db_.close();
         db_file_.reset();
     }
@@ -249,6 +257,7 @@ protected:
     ID conditional_table_id_{};
     std::unique_ptr<QueryCompilerV2> compiler_;
     std::unique_ptr<Executor> executor_;
+    std::unique_ptr<ConnectionContext> connection_ctx_;
 };
 
 TEST_F(DomainValidationIntegrationTest, AllowsValidDomainValue)

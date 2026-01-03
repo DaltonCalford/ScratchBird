@@ -6,6 +6,7 @@
 
 #include "scratchbird/server/service_controller.h"
 #include "scratchbird/version.h"
+#include "scratchbird/core/permission_cache.h"
 
 #include <iostream>
 #include <fstream>

@@ -3,7 +3,6 @@
 #include "scratchbird/sblr/opcodes.h"
 #include "scratchbird/sblr/index_cache.h"
 #include "scratchbird/sblr/query_limits.h"
-#include "scratchbird/parser/token.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/charset.h"
@@ -482,6 +481,7 @@ namespace scratchbird
 
             // Expression evaluation
             void evaluateExpression();
+            Value evaluateExpressionRange(size_t end_pc);
             void executeBinaryOp(Opcode op);
 
             // Pattern matching helpers

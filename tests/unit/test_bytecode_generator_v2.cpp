@@ -38,6 +38,23 @@ static std::string generateUniqueDbPath() {
 
 class BytecodeGeneratorV2Test : public ::testing::Test {
 protected:
+    static std::string formatDiagnostics(const BytecodeResultV2& result) {
+        std::ostringstream oss;
+        if (!result.errors().empty()) {
+            oss << "\nErrors:";
+            for (const auto& err : result.errors()) {
+                oss << "\n  " << err;
+            }
+        }
+        if (!result.warnings().empty()) {
+            oss << "\nWarnings:";
+            for (const auto& warn : result.warnings()) {
+                oss << "\n  " << warn;
+            }
+        }
+        return oss.str();
+    }
+
     void SetUp() override {
         // Create a temporary database for testing with unique path
         test_db_path_ = generateUniqueDbPath();
@@ -486,7 +503,8 @@ TEST_F(BytecodeGeneratorV2Test, StartTransactionExtendedPayload) {
     EXPECT_EQ(payload.lock_timeout, 12u);
     EXPECT_TRUE(payload.has_reservations);
     EXPECT_EQ(payload.reservation_count, 1u);
-    EXPECT_EQ(payload.first_lock_mode, static_cast<uint8_t>(TableLockMode::PROTECTED));
+    EXPECT_EQ(payload.first_lock_mode,
+              static_cast<uint8_t>(scratchbird::parser::v2::TableLockMode::PROTECTED));
     EXPECT_EQ(payload.first_for_write, 1u);
 }
 
@@ -582,7 +600,7 @@ TEST_F(BytecodeGeneratorV2Test, CreateTable) {
 
 TEST_F(BytecodeGeneratorV2Test, CreateDomain) {
     auto result = generateBytecode(
-        "CREATE DOMAIN test_domain AS TEXT "
+        "CREATE DOMAIN test_domain AS TEXT DEFAULT 5 "
         "WITH INTEGRITY (UNIQUENESS = TRUE) "
         "WITH SECURITY (MASKING = FULL) "
         "WITH VALIDATION (FUNCTION = validate_domain) "
@@ -602,6 +620,9 @@ TEST_F(BytecodeGeneratorV2Test, CreateDomain) {
     EXPECT_EQ(flags & 0x08, 0x08);  // WITH VALIDATION set
     EXPECT_EQ(flags & 0x10, 0x10);  // WITH QUALITY set
 
+    uint8_t domain_kind = result.bytecode()[payload_offset++];
+    EXPECT_EQ(domain_kind, static_cast<uint8_t>(DomainKind::BASIC));
+
     ASSERT_LE(payload_offset + 4, result.bytecode().size());
     uint32_t name_len = sblr::readInt32(&result.bytecode()[payload_offset]);
     payload_offset += 4;
@@ -611,6 +632,14 @@ TEST_F(BytecodeGeneratorV2Test, CreateDomain) {
     EXPECT_EQ(domain_name, "test_domain");
     payload_offset += name_len;
 
+    // Base type opcode
+    ASSERT_LT(payload_offset, result.bytecode().size());
+    payload_offset += 1;
+
+    // Nullable flag
+    ASSERT_LT(payload_offset, result.bytecode().size());
+    payload_offset += 1;
+
     ASSERT_LE(payload_offset + 4, result.bytecode().size());
     uint32_t value_len = sblr::readInt32(&result.bytecode()[payload_offset]);
     payload_offset += 4;
@@ -618,6 +647,167 @@ TEST_F(BytecodeGeneratorV2Test, CreateDomain) {
     std::string default_value(result.bytecode().begin() + payload_offset,
                               result.bytecode().begin() + payload_offset + value_len);
     EXPECT_EQ(default_value, "5");
+}
+
+TEST_F(BytecodeGeneratorV2Test, CreateDomainRecord) {
+    auto result = generateBytecode(
+        "CREATE DOMAIN person_record AS RECORD (id INT NOT NULL, name TEXT DEFAULT 'anon')");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    size_t payload_offset = 0;
+    ASSERT_TRUE(findExtendedOpcode(result.bytecode(),
+                                   sblr::ExtendedOpcode::EXT_CREATE_DOMAIN,
+                                   payload_offset));
+
+    auto read_string = [&](size_t& offset) -> std::string {
+        if (offset + 4 > result.bytecode().size()) {
+            ADD_FAILURE() << "String length out of range";
+            return {};
+        }
+        uint32_t len = sblr::readInt32(&result.bytecode()[offset]);
+        offset += 4;
+        if (offset + len > result.bytecode().size()) {
+            ADD_FAILURE() << "String data out of range";
+            return {};
+        }
+        std::string out(result.bytecode().begin() + offset,
+                        result.bytecode().begin() + offset + len);
+        offset += len;
+        return out;
+    };
+
+    payload_offset += 1;  // flags
+    uint8_t domain_kind = result.bytecode()[payload_offset++];
+    EXPECT_EQ(domain_kind, static_cast<uint8_t>(DomainKind::RECORD));
+
+    std::string domain_name = read_string(payload_offset);
+    EXPECT_EQ(domain_name, "person_record");
+
+    uint32_t field_count = sblr::readInt32(&result.bytecode()[payload_offset]);
+    payload_offset += 4;
+    EXPECT_EQ(field_count, 2u);
+
+    std::string field1_name = read_string(payload_offset);
+    EXPECT_EQ(field1_name, "id");
+    EXPECT_EQ(result.bytecode()[payload_offset++], 0);  // type_ref kind
+    EXPECT_EQ(result.bytecode()[payload_offset++], static_cast<uint8_t>(Opcode::TYPE_INTEGER));
+    EXPECT_EQ(result.bytecode()[payload_offset++], 0);  // nullable
+    std::string field1_default = read_string(payload_offset);
+    EXPECT_TRUE(field1_default.empty());
+
+    std::string field2_name = read_string(payload_offset);
+    EXPECT_EQ(field2_name, "name");
+    EXPECT_EQ(result.bytecode()[payload_offset++], 0);  // type_ref kind
+    EXPECT_EQ(result.bytecode()[payload_offset++], static_cast<uint8_t>(Opcode::TYPE_TEXT));
+    EXPECT_EQ(result.bytecode()[payload_offset++], 1);  // nullable
+    std::string field2_default = read_string(payload_offset);
+    EXPECT_EQ(field2_default, "'anon'");
+}
+
+TEST_F(BytecodeGeneratorV2Test, CreateDomainEnum) {
+    auto result = generateBytecode(
+        "CREATE DOMAIN status AS ENUM ('NEW', 'DONE') WITH OPTIONS (WRAP = TRUE)");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    size_t payload_offset = 0;
+    ASSERT_TRUE(findExtendedOpcode(result.bytecode(),
+                                   sblr::ExtendedOpcode::EXT_CREATE_DOMAIN,
+                                   payload_offset));
+
+    auto read_string = [&](size_t& offset) -> std::string {
+        if (offset + 4 > result.bytecode().size()) {
+            ADD_FAILURE() << "String length out of range";
+            return {};
+        }
+        uint32_t len = sblr::readInt32(&result.bytecode()[offset]);
+        offset += 4;
+        if (offset + len > result.bytecode().size()) {
+            ADD_FAILURE() << "String data out of range";
+            return {};
+        }
+        std::string out(result.bytecode().begin() + offset,
+                        result.bytecode().begin() + offset + len);
+        offset += len;
+        return out;
+    };
+
+    payload_offset += 1;  // flags
+    uint8_t domain_kind = result.bytecode()[payload_offset++];
+    EXPECT_EQ(domain_kind, static_cast<uint8_t>(DomainKind::ENUM));
+
+    std::string domain_name = read_string(payload_offset);
+    EXPECT_EQ(domain_name, "status");
+
+    uint32_t value_count = sblr::readInt32(&result.bytecode()[payload_offset]);
+    payload_offset += 4;
+    EXPECT_EQ(value_count, 2u);
+
+    std::string label1 = read_string(payload_offset);
+    int32_t pos1 = static_cast<int32_t>(sblr::readInt32(&result.bytecode()[payload_offset]));
+    payload_offset += 4;
+    EXPECT_EQ(label1, "NEW");
+    EXPECT_EQ(pos1, 1);
+
+    std::string label2 = read_string(payload_offset);
+    int32_t pos2 = static_cast<int32_t>(sblr::readInt32(&result.bytecode()[payload_offset]));
+    payload_offset += 4;
+    EXPECT_EQ(label2, "DONE");
+    EXPECT_EQ(pos2, 2);
+
+    uint8_t wrap = result.bytecode()[payload_offset++];
+    EXPECT_EQ(wrap, 1);
+}
+
+TEST_F(BytecodeGeneratorV2Test, CreateDomainSet) {
+    auto result = generateBytecode("CREATE DOMAIN tag_set AS SET OF TEXT");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed"
+                                  << formatDiagnostics(result);
+
+    size_t payload_offset = 0;
+    ASSERT_TRUE(findExtendedOpcode(result.bytecode(),
+                                   sblr::ExtendedOpcode::EXT_CREATE_DOMAIN,
+                                   payload_offset));
+
+    payload_offset += 1;  // flags
+    uint8_t domain_kind = result.bytecode()[payload_offset++];
+    EXPECT_EQ(domain_kind, static_cast<uint8_t>(DomainKind::SET));
+
+    ASSERT_LE(payload_offset + 4, result.bytecode().size());
+    uint32_t name_len = sblr::readInt32(&result.bytecode()[payload_offset]);
+    payload_offset += 4 + name_len;
+    ASSERT_LE(payload_offset, result.bytecode().size());
+
+    EXPECT_EQ(result.bytecode()[payload_offset++], 0);  // type_ref kind
+    EXPECT_EQ(result.bytecode()[payload_offset++], static_cast<uint8_t>(Opcode::TYPE_TEXT));
+}
+
+TEST_F(BytecodeGeneratorV2Test, CreateDomainVariant) {
+    auto result = generateBytecode("CREATE DOMAIN flex AS VARIANT (INTEGER, TEXT)");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    size_t payload_offset = 0;
+    ASSERT_TRUE(findExtendedOpcode(result.bytecode(),
+                                   sblr::ExtendedOpcode::EXT_CREATE_DOMAIN,
+                                   payload_offset));
+
+    payload_offset += 1;  // flags
+    uint8_t domain_kind = result.bytecode()[payload_offset++];
+    EXPECT_EQ(domain_kind, static_cast<uint8_t>(DomainKind::VARIANT));
+
+    ASSERT_LE(payload_offset + 4, result.bytecode().size());
+    uint32_t name_len = sblr::readInt32(&result.bytecode()[payload_offset]);
+    payload_offset += 4 + name_len;
+    ASSERT_LE(payload_offset + 4, result.bytecode().size());
+
+    uint32_t type_count = sblr::readInt32(&result.bytecode()[payload_offset]);
+    payload_offset += 4;
+    EXPECT_EQ(type_count, 2u);
+
+    EXPECT_EQ(result.bytecode()[payload_offset++], 0);  // type_ref kind
+    EXPECT_EQ(result.bytecode()[payload_offset++], static_cast<uint8_t>(Opcode::TYPE_INTEGER));
+
+    EXPECT_EQ(result.bytecode()[payload_offset++], 0);  // type_ref kind
+    EXPECT_EQ(result.bytecode()[payload_offset++], static_cast<uint8_t>(Opcode::TYPE_TEXT));
 }
 
 TEST_F(BytecodeGeneratorV2Test, AlterDomainSetDefault) {

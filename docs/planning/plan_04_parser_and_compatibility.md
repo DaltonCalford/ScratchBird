@@ -34,7 +34,7 @@ P1 (blocks SQL feature coverage and compatibility).
     - `Parser::parseCommit()` / `Parser::parseRollback()` (add RETAINING + 2PC syntax).
     - `Parser::parseSet()` (add SET AUTOCOMMIT and SET TRANSACTION AUTOCOMMIT).
     - Implement `parseCreateDomain`, `parseAlterDomain`, `parseCreateFunction`, `parseCreateProcedure`, `parseCreateTrigger`, `parseCreatePackage`, `parseCreateException`, `parseCreateUDR`.
-  - `include/scratchbird/parser/ast.h`:
+  - `include/scratchbird/parser/ast_v2.h`:
     - Extend `CreateDomainStmt` to include `domain_kind`, `dialect_tag`, `compat_name`, `inherits`, WITH blocks.
     - Add AST nodes for `AlterDomainStmt`, `DropDomainStmt`, `RebindDomainStmt` if not present.
   - `include/scratchbird/parser/ast_v2.h`:

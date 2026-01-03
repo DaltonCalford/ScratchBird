@@ -37,12 +37,54 @@ namespace scratchbird::core
             return "scratchbird";
         }
 
+        bool isDomainTypeCompatible(DataType value_type, DataType domain_type)
+        {
+            if (value_type == domain_type)
+            {
+                return true;
+            }
+
+            switch (domain_type)
+            {
+                case DataType::INT32:
+                case DataType::INT64:
+                    return value_type == DataType::INT32 || value_type == DataType::INT64;
+                case DataType::FLOAT32:
+                case DataType::FLOAT64:
+                case DataType::DECIMAL:
+                    return value_type == DataType::FLOAT32 || value_type == DataType::FLOAT64 ||
+                           value_type == DataType::INT32 || value_type == DataType::INT64 ||
+                           value_type == DataType::DECIMAL;
+                case DataType::VARCHAR:
+                case DataType::TEXT:
+                case DataType::CHAR:
+                    return value_type == DataType::VARCHAR || value_type == DataType::TEXT ||
+                           value_type == DataType::CHAR;
+                case DataType::DATE:
+                    return value_type == DataType::DATE || value_type == DataType::INT32 ||
+                           value_type == DataType::VARCHAR;
+                case DataType::TIME:
+                    return value_type == DataType::TIME || value_type == DataType::INT32 ||
+                           value_type == DataType::VARCHAR;
+                case DataType::TIMESTAMP:
+                    return value_type == DataType::TIMESTAMP || value_type == DataType::INT64 ||
+                           value_type == DataType::VARCHAR;
+                case DataType::BLOB:
+                case DataType::BINARY:
+                case DataType::VARBINARY:
+                    return value_type == DataType::BLOB || value_type == DataType::BINARY ||
+                           value_type == DataType::VARBINARY || value_type == DataType::VARCHAR;
+                default:
+                    return false;
+            }
+        }
+
         constexpr uint8_t DOMAIN_SECURITY_VERSION = 2;
         constexpr uint8_t DOMAIN_INTEGRITY_VERSION = 1;
         constexpr uint8_t DOMAIN_VALIDATION_VERSION = 1;
         constexpr uint8_t DOMAIN_QUALITY_VERSION = 1;
-        constexpr uint8_t DOMAIN_CONSTRAINTS_VERSION = 1;
-        constexpr uint8_t DOMAIN_FIELDS_VERSION = 1;
+        constexpr uint8_t DOMAIN_CONSTRAINTS_VERSION = 2;
+        constexpr uint8_t DOMAIN_FIELDS_VERSION = 2;
         constexpr uint8_t DOMAIN_ENUM_VALUES_VERSION = 1;
 
         void appendUint8(std::string& out, uint8_t value)
@@ -130,6 +172,53 @@ namespace scratchbird::core
             return true;
         }
 
+        void appendTypeRef(std::string& out, const DomainTypeRef& ref)
+        {
+            if (!isZeroUuidLocal(ref.domain_id))
+            {
+                appendUint8(out, 1);
+                appendId(out, ref.domain_id);
+                return;
+            }
+            appendUint8(out, 0);
+            appendUint32(out, static_cast<uint32_t>(ref.type));
+            appendUint32(out, ref.precision);
+            appendUint32(out, ref.scale);
+            appendUint8(out, ref.with_time_zone ? 1 : 0);
+        }
+
+        bool readTypeRef(const std::string& blob, size_t& offset, DomainTypeRef& out)
+        {
+            uint8_t kind = 0;
+            if (!readUint8(blob, offset, kind))
+            {
+                return false;
+            }
+            if (kind == 1)
+            {
+                out = DomainTypeRef{};
+                return readId(blob, offset, out.domain_id);
+            }
+
+            uint32_t type = 0;
+            uint32_t precision = 0;
+            uint32_t scale = 0;
+            uint8_t with_tz = 0;
+            if (!readUint32(blob, offset, type) ||
+                !readUint32(blob, offset, precision) ||
+                !readUint32(blob, offset, scale) ||
+                !readUint8(blob, offset, with_tz))
+            {
+                return false;
+            }
+            out.type = static_cast<DataType>(type);
+            out.precision = precision;
+            out.scale = scale;
+            out.with_time_zone = (with_tz != 0);
+            out.domain_id = ID{};
+            return true;
+        }
+
         bool isDefaultSecurity(const DomainSecurity& security)
         {
             return security.masking_config.type == MaskingType::NONE &&
@@ -150,7 +239,7 @@ namespace scratchbird::core
                    integrity.normalization_function.empty();
         }
 
-        bool isDefaultValidation(const DomainValidation& validation)
+        bool isDefaultValidation(const DomainValidationConfig& validation)
         {
             return validation.validation_function.empty() &&
                    validation.error_message.empty();
@@ -197,8 +286,8 @@ namespace scratchbird::core
             uint8_t version = 0;
             if (!readUint8(blob, offset, version))
             {
-                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain security format");
-                return Status::CORRUPTION;
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain security format");
+                return Status::DATA_CORRUPTED;
             }
 
             uint8_t type = 0;
@@ -221,8 +310,8 @@ namespace scratchbird::core
                     !readString(blob, offset, mask_char) ||
                     !readString(blob, offset, privilege))
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain security payload");
-                    return Status::CORRUPTION;
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain security payload");
+                    return Status::DATA_CORRUPTED;
                 }
 
                 algorithm = static_cast<uint8_t>(EncryptionAlgorithm::NONE);
@@ -240,14 +329,14 @@ namespace scratchbird::core
                     !readString(blob, offset, privilege) ||
                     !readId(blob, offset, key_id))
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain security payload");
-                    return Status::CORRUPTION;
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain security payload");
+                    return Status::DATA_CORRUPTED;
                 }
             }
             else
             {
-                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain security format");
-                return Status::CORRUPTION;
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain security format");
+                return Status::DATA_CORRUPTED;
             }
 
             security.masking_config.type = static_cast<MaskingType>(type);
@@ -301,8 +390,8 @@ namespace scratchbird::core
                 !readUint8(blob, offset, reserved) ||
                 !readString(blob, offset, function))
             {
-                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain integrity payload");
-                return Status::CORRUPTION;
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain integrity payload");
+                return Status::DATA_CORRUPTED;
             }
 
             integrity.uniqueness_check = (uniqueness != 0);
@@ -312,7 +401,7 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        std::string serializeDomainValidation(const DomainValidation& validation)
+        std::string serializeDomainValidation(const DomainValidationConfig& validation)
         {
             if (isDefaultValidation(validation))
             {
@@ -327,7 +416,7 @@ namespace scratchbird::core
         }
 
         Status deserializeDomainValidation(const std::string& blob,
-                                           DomainValidation& validation,
+                                           DomainValidationConfig& validation,
                                            ErrorContext* ctx)
         {
             if (blob.empty())
@@ -344,8 +433,8 @@ namespace scratchbird::core
                 !readString(blob, offset, function) ||
                 !readString(blob, offset, message))
             {
-                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain validation payload");
-                return Status::CORRUPTION;
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain validation payload");
+                return Status::DATA_CORRUPTED;
             }
 
             validation.validation_function = std::move(function);
@@ -389,8 +478,8 @@ namespace scratchbird::core
                 !readString(blob, offset, standardize_function) ||
                 !readString(blob, offset, enrich_function))
             {
-                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain quality payload");
-                return Status::CORRUPTION;
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain quality payload");
+                return Status::DATA_CORRUPTED;
             }
 
             quality.parse_function = std::move(parse_function);
@@ -402,7 +491,13 @@ namespace scratchbird::core
 
         std::string serializeDomainConstraints(const DomainInfo& domain)
         {
-            if (domain.constraints.empty() && domain.variant_allowed_types.empty())
+            bool has_set_element = domain.set_element_type.type != DataType::UNKNOWN ||
+                                   !isZeroUuidLocal(domain.set_element_type.domain_id);
+            if (domain.constraints.empty() &&
+                domain.variant_allowed_types.empty() &&
+                domain.collation_name.empty() &&
+                !domain.enum_wrap &&
+                !has_set_element)
             {
                 return {};
             }
@@ -416,21 +511,36 @@ namespace scratchbird::core
                 appendString(out, constraint.expression);
                 appendString(out, constraint.name);
             }
+
+            appendString(out, domain.collation_name);
+            appendUint8(out, domain.enum_wrap ? 1 : 0);
+
+            appendUint8(out, has_set_element ? 1 : 0);
+            if (has_set_element)
+            {
+                appendTypeRef(out, domain.set_element_type);
+            }
+
             appendUint32(out, static_cast<uint32_t>(domain.variant_allowed_types.size()));
             for (const auto& type : domain.variant_allowed_types)
             {
-                appendUint32(out, static_cast<uint32_t>(type));
+                appendTypeRef(out, type);
             }
             return out;
         }
 
         Status deserializeDomainConstraints(const std::string& blob,
                                             std::vector<DomainConstraint>& constraints_out,
-                                            std::vector<DataType>& variant_types_out,
+                                            std::vector<DomainTypeRef>& variant_types_out,
+                                            std::string& collation_out,
+                                            bool& enum_wrap_out,
+                                            DomainTypeRef& set_element_out,
                                             ErrorContext* ctx)
         {
             constraints_out.clear();
             variant_types_out.clear();
+            collation_out.clear();
+            enum_wrap_out = false;
             if (blob.empty())
             {
                 return Status::OK;
@@ -438,17 +548,23 @@ namespace scratchbird::core
 
             size_t offset = 0;
             uint8_t version = 0;
-            if (!readUint8(blob, offset, version) || version != DOMAIN_CONSTRAINTS_VERSION)
+            if (!readUint8(blob, offset, version))
             {
-                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain constraints payload");
-                return Status::CORRUPTION;
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain constraints payload");
+                return Status::DATA_CORRUPTED;
+            }
+
+            if (version != DOMAIN_CONSTRAINTS_VERSION && version != 1)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain constraints payload");
+                return Status::DATA_CORRUPTED;
             }
 
             uint32_t count = 0;
             if (!readUint32(blob, offset, count))
             {
-                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain constraints payload");
-                return Status::CORRUPTION;
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain constraints payload");
+                return Status::DATA_CORRUPTED;
             }
 
             constraints_out.reserve(count);
@@ -461,34 +577,89 @@ namespace scratchbird::core
                     !readString(blob, offset, expression) ||
                     !readString(blob, offset, name))
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain constraints payload");
-                    return Status::CORRUPTION;
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain constraints payload");
+                    return Status::DATA_CORRUPTED;
                 }
                 constraints_out.emplace_back(static_cast<ConstraintType>(type), expression, name);
             }
 
-            if (offset >= blob.size())
+            if (version == 1)
             {
+                if (offset >= blob.size())
+                {
+                    return Status::OK;
+                }
+
+                uint32_t type_count = 0;
+                if (!readUint32(blob, offset, type_count))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain constraints payload");
+                    return Status::DATA_CORRUPTED;
+                }
+
+                variant_types_out.reserve(type_count);
+                for (uint32_t i = 0; i < type_count; i++)
+                {
+                    uint32_t type = 0;
+                    if (!readUint32(blob, offset, type))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain constraints payload");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    DomainTypeRef ref;
+                    ref.type = static_cast<DataType>(type);
+                    variant_types_out.push_back(std::move(ref));
+                }
+
                 return Status::OK;
+            }
+
+            if (!readString(blob, offset, collation_out))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain constraints payload");
+                return Status::DATA_CORRUPTED;
+            }
+
+            uint8_t enum_wrap = 0;
+            if (!readUint8(blob, offset, enum_wrap))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain constraints payload");
+                return Status::DATA_CORRUPTED;
+            }
+            enum_wrap_out = enum_wrap != 0;
+
+            uint8_t has_set = 0;
+            if (!readUint8(blob, offset, has_set))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain constraints payload");
+                return Status::DATA_CORRUPTED;
+            }
+            if (has_set)
+            {
+                if (!readTypeRef(blob, offset, set_element_out))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain constraints payload");
+                    return Status::DATA_CORRUPTED;
+                }
             }
 
             uint32_t type_count = 0;
             if (!readUint32(blob, offset, type_count))
             {
-                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain constraints payload");
-                return Status::CORRUPTION;
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain constraints payload");
+                return Status::DATA_CORRUPTED;
             }
 
             variant_types_out.reserve(type_count);
             for (uint32_t i = 0; i < type_count; i++)
             {
-                uint32_t type = 0;
-                if (!readUint32(blob, offset, type))
+                DomainTypeRef ref;
+                if (!readTypeRef(blob, offset, ref))
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain constraints payload");
-                    return Status::CORRUPTION;
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain constraints payload");
+                    return Status::DATA_CORRUPTED;
                 }
-                variant_types_out.push_back(static_cast<DataType>(type));
+                variant_types_out.push_back(std::move(ref));
             }
 
             return Status::OK;
@@ -511,6 +682,8 @@ namespace scratchbird::core
                 appendUint32(out, field.precision);
                 appendUint32(out, field.scale);
                 appendUint8(out, field.nullable ? 1 : 0);
+                appendUint8(out, field.has_default ? 1 : 0);
+                appendString(out, field.default_value);
                 appendId(out, field.domain_id);
             }
             return out;
@@ -528,17 +701,18 @@ namespace scratchbird::core
 
             size_t offset = 0;
             uint8_t version = 0;
-            if (!readUint8(blob, offset, version) || version != DOMAIN_FIELDS_VERSION)
+            if (!readUint8(blob, offset, version) ||
+                (version != DOMAIN_FIELDS_VERSION && version != 1))
             {
-                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain fields payload");
-                return Status::CORRUPTION;
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain fields payload");
+                return Status::DATA_CORRUPTED;
             }
 
             uint32_t count = 0;
             if (!readUint32(blob, offset, count))
             {
-                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain fields payload");
-                return Status::CORRUPTION;
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain fields payload");
+                return Status::DATA_CORRUPTED;
             }
 
             fields_out.reserve(count);
@@ -554,11 +728,32 @@ namespace scratchbird::core
                     !readUint32(blob, offset, type) ||
                     !readUint32(blob, offset, precision) ||
                     !readUint32(blob, offset, scale) ||
-                    !readUint8(blob, offset, nullable) ||
-                    !readId(blob, offset, domain_id))
+                    !readUint8(blob, offset, nullable))
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain fields payload");
-                    return Status::CORRUPTION;
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain fields payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                bool has_default = false;
+                std::string default_value;
+                if (version == 1)
+                {
+                    if (!readId(blob, offset, domain_id))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain fields payload");
+                        return Status::DATA_CORRUPTED;
+                    }
+                }
+                else
+                {
+                    uint8_t has_default_flag = 0;
+                    if (!readUint8(blob, offset, has_default_flag) ||
+                        !readString(blob, offset, default_value) ||
+                        !readId(blob, offset, domain_id))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain fields payload");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    has_default = has_default_flag != 0;
                 }
                 RecordField field;
                 field.name = std::move(name);
@@ -566,6 +761,8 @@ namespace scratchbird::core
                 field.precision = precision;
                 field.scale = scale;
                 field.nullable = nullable != 0;
+                field.has_default = has_default;
+                field.default_value = std::move(default_value);
                 field.domain_id = domain_id;
                 fields_out.push_back(std::move(field));
             }
@@ -605,15 +802,15 @@ namespace scratchbird::core
             uint8_t version = 0;
             if (!readUint8(blob, offset, version) || version != DOMAIN_ENUM_VALUES_VERSION)
             {
-                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain enum values payload");
-                return Status::CORRUPTION;
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain enum values payload");
+                return Status::DATA_CORRUPTED;
             }
 
             uint32_t count = 0;
             if (!readUint32(blob, offset, count))
             {
-                SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain enum values payload");
-                return Status::CORRUPTION;
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain enum values payload");
+                return Status::DATA_CORRUPTED;
             }
 
             values_out.reserve(count);
@@ -624,8 +821,8 @@ namespace scratchbird::core
                 if (!readString(blob, offset, label) ||
                     !readUint32(blob, offset, position))
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::CORRUPTION, "Invalid domain enum values payload");
-                    return Status::CORRUPTION;
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid domain enum values payload");
+                    return Status::DATA_CORRUPTED;
                 }
                 values_out.emplace_back(label, static_cast<int32_t>(position));
             }
@@ -699,24 +896,33 @@ namespace scratchbird::core
 
         LOG_INFO(CATALOG, "Initializing domain manager");
 
-        // Allocate domains catalog page
-        PageManager* pm = db_->page_manager();
-        if (!pm)
+        CatalogManager* catalog = db_ ? db_->catalog_manager() : nullptr;
+        if (!catalog)
         {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "PageManager not available");
-            return Status::IO_ERROR;
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "CatalogManager not available");
+            return Status::INVALID_ARGUMENT;
         }
 
-        Status status = pm->allocatePage(domains_table_page_, ctx);
+        Status status = catalog->ensureDomainsTablePage(ctx);
         if (status != Status::OK)
         {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to allocate domains table page");
             return status;
         }
+        domains_table_page_ = catalog->domainsTablePage();
+        if (domains_table_page_ == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Domains table page not initialized");
+            return Status::PAGE_CORRUPT;
+        }
 
-        // Initialize the domains catalog page
+        // Initialize the domains catalog page if needed.
         BufferPool* bp = db_->buffer_pool();
-        void* page_buffer;
+        if (!bp)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BufferPool not available");
+            return Status::INVALID_ARGUMENT;
+        }
+        void* page_buffer = nullptr;
         status = bp->pinPage(domains_table_page_, &page_buffer, ctx);
         if (status != Status::OK)
         {
@@ -725,12 +931,34 @@ namespace scratchbird::core
         }
 
         auto* catalog_page = reinterpret_cast<DomainCatalogPage*>(page_buffer);
-        catalog_page->header.page_id = domains_table_page_;
-        catalog_page->header.page_type = PAGE_TYPE_HEAP;
-        catalog_page->record_count = 0;
-        catalog_page->free_offset = sizeof(DomainCatalogPage);
+        bool needs_init = catalog_page->header.magic != K_MAGIC_SBRD ||
+                          catalog_page->header.page_type != PAGE_TYPE_HEAP ||
+                          catalog_page->header.page_id != domains_table_page_;
 
-        status = bp->unpinPage(domains_table_page_, true, ctx);
+        if (needs_init)
+        {
+            std::memset(page_buffer, 0, db_->page_size());
+            catalog_page = reinterpret_cast<DomainCatalogPage*>(page_buffer);
+
+            catalog_page->header.magic = K_MAGIC_SBRD;
+            catalog_page->header.version = 1;
+            catalog_page->header.page_type = PAGE_TYPE_HEAP;
+            catalog_page->header.page_size = db_->page_size();
+            catalog_page->header.page_id = domains_table_page_;
+            catalog_page->header.flags = 0;
+            std::memcpy(catalog_page->header.database_uuid, db_->uuid().bytes.data(), 16);
+            catalog_page->header.generation = 1;
+            catalog_page->header.item_count = 0;
+            catalog_page->header.free_offset = sizeof(DomainCatalogPage);
+            catalog_page->header.free_space =
+                static_cast<uint16_t>(db_->page_size() - sizeof(DomainCatalogPage));
+            catalog_page->header.special_size = 0;
+
+            catalog_page->record_count = 0;
+            catalog_page->free_offset = sizeof(DomainCatalogPage);
+        }
+
+        status = bp->unpinPage(domains_table_page_, needs_init, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to unpin domains catalog page");
@@ -784,9 +1012,7 @@ namespace scratchbird::core
                                          DataType base_type,
                                          uint32_t precision,
                                          uint32_t scale,
-                                         bool nullable,
-                                         const std::string& default_value,
-                                         const std::vector<DomainConstraint>& constraints,
+                                         const DomainCreateOptions& options,
                                          ID& domain_id,
                                          ErrorContext* ctx) -> Status
     {
@@ -804,9 +1030,13 @@ namespace scratchbird::core
         info.base_type = base_type;
         info.precision = precision;
         info.scale = scale;
-        info.nullable = nullable;
-        info.default_value = default_value;
-        info.constraints = constraints;
+        info.nullable = options.nullable;
+        info.default_value = options.default_value;
+        info.constraints = options.constraints;
+        info.collation_name = options.collation_name;
+        info.dialect_tag = options.dialect_tag;
+        info.compat_name = options.compat_name;
+        info.enum_wrap = options.enum_wrap;
         info.created_time = std::time(nullptr);
         info.last_modified_time = info.created_time;
         if (info.dialect_tag.empty())
@@ -830,6 +1060,25 @@ namespace scratchbird::core
                 domain_name.c_str(), domain_id.toString().c_str());
 
         return Status::OK;
+    }
+
+    auto DomainManager::createBasicDomain(const ID& schema_id,
+                                         const std::string& domain_name,
+                                         DataType base_type,
+                                         uint32_t precision,
+                                         uint32_t scale,
+                                         bool nullable,
+                                         const std::string& default_value,
+                                         const std::vector<DomainConstraint>& constraints,
+                                         ID& domain_id,
+                                         ErrorContext* ctx) -> Status
+    {
+        DomainCreateOptions options;
+        options.nullable = nullable;
+        options.default_value = default_value;
+        options.constraints = constraints;
+        return createBasicDomain(schema_id, domain_name, base_type, precision, scale,
+                                 options, domain_id, ctx);
     }
 
     auto DomainManager::getDomain(const ID& domain_id,
@@ -896,7 +1145,7 @@ namespace scratchbird::core
     auto DomainManager::dropDomain(const ID& domain_id,
                                   ErrorContext* ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::unique_lock<std::mutex> lock(mutex_);
 
         auto it = domain_cache_.find(domain_id);
         if (it == domain_cache_.end())
@@ -1184,7 +1433,7 @@ namespace scratchbird::core
         }
 
         // Check type compatibility
-        if (!value.isNull() && value.type() != domain.base_type)
+        if (!value.isNull() && !isDomainTypeCompatible(value.type(), domain.base_type))
         {
             SET_ERROR_CONTEXT(ctx, Status::TYPE_MISMATCH, "Value type does not match domain type");
             return Status::TYPE_MISMATCH;
@@ -1549,6 +1798,7 @@ namespace scratchbird::core
     auto DomainManager::createRecordDomain(const ID& schema_id,
                                           const std::string& domain_name,
                                           const std::vector<RecordField>& fields,
+                                          const DomainCreateOptions& options,
                                           ID& domain_id,
                                           ErrorContext* ctx) -> Status
     {
@@ -1584,6 +1834,13 @@ namespace scratchbird::core
         info.domain_type = DomainType::RECORD;
         info.base_type = DataType::COMPOSITE;
         info.fields = fields;
+        info.nullable = options.nullable;
+        info.default_value = options.default_value;
+        info.constraints = options.constraints;
+        info.collation_name = options.collation_name;
+        info.dialect_tag = options.dialect_tag;
+        info.compat_name = options.compat_name;
+        info.enum_wrap = options.enum_wrap;
         info.created_time = std::time(nullptr);
         info.last_modified_time = info.created_time;
         if (info.dialect_tag.empty())
@@ -1607,6 +1864,16 @@ namespace scratchbird::core
                 domain_name.c_str(), fields.size());
 
         return Status::OK;
+    }
+
+    auto DomainManager::createRecordDomain(const ID& schema_id,
+                                          const std::string& domain_name,
+                                          const std::vector<RecordField>& fields,
+                                          ID& domain_id,
+                                          ErrorContext* ctx) -> Status
+    {
+        DomainCreateOptions options;
+        return createRecordDomain(schema_id, domain_name, fields, options, domain_id, ctx);
     }
 
     auto DomainManager::getRecordField(const ID& domain_id,
@@ -1758,6 +2025,7 @@ namespace scratchbird::core
     auto DomainManager::createEnumDomain(const ID& schema_id,
                                         const std::string& domain_name,
                                         const std::vector<EnumValue>& values,
+                                        const DomainCreateOptions& options,
                                         ID& domain_id,
                                         ErrorContext* ctx) -> Status
     {
@@ -1782,13 +2050,14 @@ namespace scratchbird::core
             value_set.insert(enum_val.label);
         }
 
-        // Validate positions are sequential starting from 0
+        // Validate positions are sequential starting from 1
         for (size_t i = 0; i < values.size(); i++)
         {
-            if (values[i].position != static_cast<uint32_t>(i))
+            uint32_t expected = static_cast<uint32_t>(i + 1);
+            if (values[i].position != expected)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                 "ENUM positions must be sequential starting from 0");
+                                 "ENUM positions must be sequential starting from 1");
                 return Status::INVALID_ARGUMENT;
             }
         }
@@ -1804,6 +2073,13 @@ namespace scratchbird::core
         info.domain_type = DomainType::ENUM;
         info.base_type = DataType::VARCHAR;  // ENUMs stored as VARCHAR
         info.enum_values = values;
+        info.nullable = options.nullable;
+        info.default_value = options.default_value;
+        info.constraints = options.constraints;
+        info.collation_name = options.collation_name;
+        info.dialect_tag = options.dialect_tag;
+        info.compat_name = options.compat_name;
+        info.enum_wrap = options.enum_wrap;
         info.created_time = std::time(nullptr);
         info.last_modified_time = info.created_time;
         if (info.dialect_tag.empty())
@@ -1829,6 +2105,16 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto DomainManager::createEnumDomain(const ID& schema_id,
+                                        const std::string& domain_name,
+                                        const std::vector<EnumValue>& values,
+                                        ID& domain_id,
+                                        ErrorContext* ctx) -> Status
+    {
+        DomainCreateOptions options;
+        return createEnumDomain(schema_id, domain_name, values, options, domain_id, ctx);
+    }
+
     auto DomainManager::setNextEnumValue(const ID& domain_id,
                                         const std::string& current_label,
                                         std::string& next_label,
@@ -1850,33 +2136,37 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        // Find current value position
-        int32_t current_position = -1;
-        for (const auto& enum_val : domain.enum_values)
+        // Find current value index
+        int32_t current_index = -1;
+        for (size_t i = 0; i < domain.enum_values.size(); ++i)
         {
-            if (enum_val.label == current_label)
+            if (domain.enum_values[i].label == current_label)
             {
-                current_position = static_cast<int32_t>(enum_val.position);
+                current_index = static_cast<int32_t>(i);
                 break;
             }
         }
 
-        if (current_position == -1)
+        if (current_index == -1)
         {
             SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Current value not found in ENUM");
             return Status::NOT_FOUND;
         }
 
         // Check if there's a next value
-        int32_t next_position = current_position + 1;
-        if (next_position >= static_cast<int32_t>(domain.enum_values.size()))
+        int32_t next_index = current_index + 1;
+        if (next_index >= static_cast<int32_t>(domain.enum_values.size()))
         {
-            SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "No next value (already at last position)");
-            return Status::OUT_OF_RANGE;
+            if (!domain.enum_wrap)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "No next value (already at last position)");
+                return Status::OUT_OF_RANGE;
+            }
+            next_index = 0;
         }
 
         // Return next value
-        next_label = domain.enum_values[next_position].label;
+        next_label = domain.enum_values[next_index].label;
         return Status::OK;
     }
 
@@ -1901,15 +2191,15 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        // Validate position
-        if (position < 0 || position >= static_cast<int32_t>(domain.enum_values.size()))
+        // Validate position (1-based)
+        if (position < 1 || position > static_cast<int32_t>(domain.enum_values.size()))
         {
             SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Position out of range");
             return Status::OUT_OF_RANGE;
         }
 
         // Return value at position
-        label = domain.enum_values[position].label;
+        label = domain.enum_values[static_cast<size_t>(position - 1)].label;
         return Status::OK;
     }
 
@@ -2021,14 +2311,15 @@ namespace scratchbird::core
 
     auto DomainManager::createSetDomain(const ID& schema_id,
                                        const std::string& domain_name,
-                                       DataType element_type,
+                                       const DomainTypeRef& element_type,
+                                       const DomainCreateOptions& options,
                                        ID& domain_id,
                                        ErrorContext* ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
         // Validate element type
-        if (element_type == DataType::UNKNOWN)
+        if (element_type.type == DataType::UNKNOWN && element_type.domain_id == ID{})
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "SET element type cannot be UNKNOWN");
             return Status::INVALID_ARGUMENT;
@@ -2045,6 +2336,13 @@ namespace scratchbird::core
         info.domain_type = DomainType::SET;
         info.base_type = DataType::VECTOR;  // SETs stored as VECTOR with unique elements
         info.set_element_type = element_type;
+        info.nullable = options.nullable;
+        info.default_value = options.default_value;
+        info.constraints = options.constraints;
+        info.collation_name = options.collation_name;
+        info.dialect_tag = options.dialect_tag;
+        info.compat_name = options.compat_name;
+        info.enum_wrap = options.enum_wrap;
         info.created_time = std::time(nullptr);
         info.last_modified_time = info.created_time;
         if (info.dialect_tag.empty())
@@ -2065,9 +2363,21 @@ namespace scratchbird::core
         domain_count_++;
 
         LOG_INFO(CATALOG, "Created SET domain '%s' with element type %d",
-                domain_name.c_str(), static_cast<int>(element_type));
+                domain_name.c_str(), static_cast<int>(element_type.type));
 
         return Status::OK;
+    }
+
+    auto DomainManager::createSetDomain(const ID& schema_id,
+                                       const std::string& domain_name,
+                                       DataType element_type,
+                                       ID& domain_id,
+                                       ErrorContext* ctx) -> Status
+    {
+        DomainTypeRef ref;
+        ref.type = element_type;
+        DomainCreateOptions options;
+        return createSetDomain(schema_id, domain_name, ref, options, domain_id, ctx);
     }
 
     auto DomainManager::setContains(const TypedValue& set_value,
@@ -2392,7 +2702,8 @@ namespace scratchbird::core
 
     auto DomainManager::createVariantDomain(const ID& schema_id,
                                            const std::string& domain_name,
-                                           const std::vector<DataType>& allowed_types,
+                                           const std::vector<DomainTypeRef>& allowed_types,
+                                           const DomainCreateOptions& options,
                                            ID& domain_id,
                                            ErrorContext* ctx) -> Status
     {
@@ -2405,26 +2716,31 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        // Check for UNKNOWN type
+        // Check for UNKNOWN type and duplicates
+        std::unordered_set<std::string> type_set;
         for (const auto& type : allowed_types)
         {
-            if (type == DataType::UNKNOWN)
+            if (type.type == DataType::UNKNOWN && type.domain_id == ID{})
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "VARIANT cannot allow UNKNOWN type");
                 return Status::INVALID_ARGUMENT;
             }
-        }
-
-        // Check for duplicate types
-        std::unordered_set<DataType> type_set;
-        for (const auto& type : allowed_types)
-        {
-            if (type_set.count(type) > 0)
+            std::string key;
+            if (type.domain_id != ID{})
+            {
+                key = type.domain_id.toString();
+            }
+            else
+            {
+                key = std::to_string(static_cast<uint32_t>(type.type)) + ":" +
+                      std::to_string(type.precision) + ":" + std::to_string(type.scale);
+            }
+            if (type_set.count(key) > 0)
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Duplicate type in VARIANT allowed types");
                 return Status::INVALID_ARGUMENT;
             }
-            type_set.insert(type);
+            type_set.insert(key);
         }
 
         // Generate new domain ID
@@ -2436,8 +2752,15 @@ namespace scratchbird::core
         info.schema_id = schema_id;
         info.domain_name = domain_name;
         info.domain_type = DomainType::VARIANT;
-        info.base_type = DataType::UNKNOWN;  // VARIANT doesn't have fixed base type
+        info.base_type = DataType::VARIANT;  // VARIANT stores tagged union
         info.variant_allowed_types = allowed_types;
+        info.nullable = options.nullable;
+        info.default_value = options.default_value;
+        info.constraints = options.constraints;
+        info.collation_name = options.collation_name;
+        info.dialect_tag = options.dialect_tag;
+        info.compat_name = options.compat_name;
+        info.enum_wrap = options.enum_wrap;
         info.created_time = std::time(nullptr);
         info.last_modified_time = info.created_time;
         if (info.dialect_tag.empty())
@@ -2461,6 +2784,24 @@ namespace scratchbird::core
                 domain_name.c_str(), allowed_types.size());
 
         return Status::OK;
+    }
+
+    auto DomainManager::createVariantDomain(const ID& schema_id,
+                                           const std::string& domain_name,
+                                           const std::vector<DataType>& allowed_types,
+                                           ID& domain_id,
+                                           ErrorContext* ctx) -> Status
+    {
+        std::vector<DomainTypeRef> refs;
+        refs.reserve(allowed_types.size());
+        for (auto type : allowed_types)
+        {
+            DomainTypeRef ref;
+            ref.type = type;
+            refs.push_back(ref);
+        }
+        DomainCreateOptions options;
+        return createVariantDomain(schema_id, domain_name, refs, options, domain_id, ctx);
     }
 
     auto DomainManager::extractDataType(const TypedValue& variant_value,
@@ -2535,7 +2876,7 @@ namespace scratchbird::core
          *
          * ERROR CASES:
          *   - Status::TYPE_MISMATCH: Value is not VARIANT type
-         *   - Status::CORRUPTION: Type tag is invalid/corrupted
+         *   - Status::DATA_CORRUPTED: Type tag is invalid/corrupted
          *
          * ESTIMATED EFFORT: 4-5 hours
          *   - TypedValue VARIANT storage design: 2-3 hours
@@ -2735,7 +3076,7 @@ namespace scratchbird::core
          * ERROR CASES:
          *   - Status::TYPE_MISMATCH: variant doesn't hold target_type
          *   - Status::INVALID_ARGUMENT: target_type not in domain's allowed_types
-         *   - Status::CORRUPTION: variant type tag is invalid
+         *   - Status::DATA_CORRUPTED: variant type tag is invalid
          *
          * RELATED FUNCTIONS:
          *   - extractDataType(): Get current type without extracting value
@@ -2886,7 +3227,7 @@ namespace scratchbird::core
     }
 
     auto DomainManager::setValidationOptions(const ID& domain_id,
-                                            const DomainValidation& validation,
+                                            const DomainValidationConfig& validation,
                                             ErrorContext* ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -3473,7 +3814,7 @@ namespace scratchbird::core
         record->is_valid = 1;
         record->created_time = domain.created_time;
         record->last_modified_time = domain.last_modified_time;
-        record->set_element_type = static_cast<uint16_t>(domain.set_element_type);
+        record->set_element_type = static_cast<uint16_t>(domain.set_element_type.type);
 
         std::strncpy(record->dialect_tag, domain.dialect_tag.c_str(), sizeof(record->dialect_tag) - 1);
         record->dialect_tag[sizeof(record->dialect_tag) - 1] = '\0';
@@ -3622,7 +3963,7 @@ namespace scratchbird::core
                 info.parent_domain_id = record->parent_domain_id;
                 info.created_time = record->created_time;
                 info.last_modified_time = record->last_modified_time;
-                info.set_element_type = static_cast<DataType>(record->set_element_type);
+                info.set_element_type.type = static_cast<DataType>(record->set_element_type);
                 info.dialect_tag = record->dialect_tag;
                 if (info.dialect_tag.empty())
                 {
@@ -3724,8 +4065,13 @@ namespace scratchbird::core
                         bp->unpinPage(domains_table_page_, false, ctx);
                         return load_status;
                     }
-                    load_status = deserializeDomainConstraints(blob, info.constraints,
-                                                               info.variant_allowed_types, ctx);
+                    load_status = deserializeDomainConstraints(blob,
+                                                               info.constraints,
+                                                               info.variant_allowed_types,
+                                                               info.collation_name,
+                                                               info.enum_wrap,
+                                                               info.set_element_type,
+                                                               ctx);
                     if (load_status != Status::OK)
                     {
                         bp->unpinPage(domains_table_page_, false, ctx);
@@ -3773,6 +4119,14 @@ namespace scratchbird::core
                 if (info.domain_type != DomainType::VARIANT)
                 {
                     info.variant_allowed_types.clear();
+                }
+                if (info.domain_type != DomainType::SET)
+                {
+                    info.set_element_type = DomainTypeRef{};
+                }
+                if (info.domain_type != DomainType::ENUM)
+                {
+                    info.enum_wrap = false;
                 }
 
                 domain_cache_[info.domain_id] = info;

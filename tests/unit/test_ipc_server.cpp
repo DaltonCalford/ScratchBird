@@ -24,6 +24,13 @@
 using namespace scratchbird::server;
 using namespace scratchbird::core;
 
+namespace {
+bool isNetworkRestrictedError(const ErrorContext& ctx) {
+    return ctx.message.find("Operation not permitted") != std::string::npos ||
+           ctx.message.find("Permission denied") != std::string::npos;
+}
+} // namespace
+
 // ============================================================================
 // Platform Detection Tests
 // ============================================================================
@@ -192,6 +199,9 @@ TEST_F(TCPIntegrationTest, ServerListenAndClose) {
 
     // Start listening
     Status status = server->listen(&ctx);
+    if (status != Status::OK && isNetworkRestrictedError(ctx)) {
+        GTEST_SKIP() << "TCP sockets not permitted in this environment: " << ctx.message;
+    }
     ASSERT_EQ(status, Status::OK) << "Listen failed: " << ctx.message;
     EXPECT_TRUE(server->isListening());
     EXPECT_EQ(server->getConnectionCount(), 0u);
@@ -226,6 +236,10 @@ TEST_F(TCPIntegrationTest, ClientConnectToServer) {
     ASSERT_NE(server, nullptr);
 
     Status status = server->listen(&server_ctx);
+    if (status != Status::OK && isNetworkRestrictedError(server_ctx)) {
+        GTEST_SKIP() << "TCP sockets not permitted in this environment: "
+                     << server_ctx.message;
+    }
     ASSERT_EQ(status, Status::OK) << "Server listen failed: " << server_ctx.message;
 
     // Start accept thread
@@ -278,6 +292,10 @@ TEST_F(TCPIntegrationTest, DataTransfer) {
     ASSERT_NE(server, nullptr);
 
     Status status = server->listen(&server_ctx);
+    if (status != Status::OK && isNetworkRestrictedError(server_ctx)) {
+        GTEST_SKIP() << "TCP sockets not permitted in this environment: "
+                     << server_ctx.message;
+    }
     ASSERT_EQ(status, Status::OK);
 
     // Server accept thread
@@ -296,6 +314,10 @@ TEST_F(TCPIntegrationTest, DataTransfer) {
 
     auto client = IPCClient::create(client_config, &client_ctx);
     status = client->connect(&client_ctx);
+    if (status != Status::OK && isNetworkRestrictedError(client_ctx)) {
+        GTEST_SKIP() << "TCP sockets not permitted in this environment: "
+                     << client_ctx.message;
+    }
     ASSERT_EQ(status, Status::OK);
 
     accept_thread.join();
@@ -343,7 +365,11 @@ TEST_F(TCPIntegrationTest, LargeDataTransfer) {
     ErrorContext ctx;
 
     auto server = IPCServer::create(server_config, &ctx);
-    server->listen(&ctx);
+    Status status = server->listen(&ctx);
+    if (status != Status::OK && isNetworkRestrictedError(ctx)) {
+        GTEST_SKIP() << "TCP sockets not permitted in this environment: " << ctx.message;
+    }
+    ASSERT_EQ(status, Status::OK);
 
     std::unique_ptr<IPCConnection> server_conn;
     std::thread accept_thread([&]() {
@@ -356,7 +382,11 @@ TEST_F(TCPIntegrationTest, LargeDataTransfer) {
     IPCClientConfig client_config("tcp_large_test", IPCMethod::TCP_LOCALHOST);
     client_config.tcp_port = test_port_;
     auto client = IPCClient::create(client_config, &ctx);
-    client->connect(&ctx);
+    status = client->connect(&ctx);
+    if (status != Status::OK && isNetworkRestrictedError(ctx)) {
+        GTEST_SKIP() << "TCP sockets not permitted in this environment: " << ctx.message;
+    }
+    ASSERT_EQ(status, Status::OK);
 
     accept_thread.join();
     ASSERT_NE(server_conn, nullptr);
@@ -374,7 +404,7 @@ TEST_F(TCPIntegrationTest, LargeDataTransfer) {
     auto* client_conn = client->getConnection();
 
     // Send from client
-    Status status = client_conn->writeExact(send_data.data(), data_size, &ctx);
+    status = client_conn->writeExact(send_data.data(), data_size, &ctx);
     EXPECT_EQ(status, Status::OK) << "Large write failed: " << ctx.message;
 
     // Receive on server
@@ -395,7 +425,11 @@ TEST_F(TCPIntegrationTest, ConnectionStats) {
     ErrorContext ctx;
 
     auto server = IPCServer::create(server_config, &ctx);
-    server->listen(&ctx);
+    Status status = server->listen(&ctx);
+    if (status != Status::OK && isNetworkRestrictedError(ctx)) {
+        GTEST_SKIP() << "TCP sockets not permitted in this environment: " << ctx.message;
+    }
+    ASSERT_EQ(status, Status::OK);
 
     std::unique_ptr<IPCConnection> server_conn;
     std::thread accept_thread([&]() {
@@ -408,7 +442,11 @@ TEST_F(TCPIntegrationTest, ConnectionStats) {
     IPCClientConfig client_config("tcp_stats_test", IPCMethod::TCP_LOCALHOST);
     client_config.tcp_port = test_port_;
     auto client = IPCClient::create(client_config, &ctx);
-    client->connect(&ctx);
+    status = client->connect(&ctx);
+    if (status != Status::OK && isNetworkRestrictedError(ctx)) {
+        GTEST_SKIP() << "TCP sockets not permitted in this environment: " << ctx.message;
+    }
+    ASSERT_EQ(status, Status::OK);
 
     accept_thread.join();
     ASSERT_NE(server_conn, nullptr);
@@ -467,6 +505,9 @@ TEST_F(UnixSocketTest, ServerListenAndClose) {
     EXPECT_EQ(server->getMethod(), IPCMethod::UNIX_SOCKET);
 
     Status status = server->listen(&ctx);
+    if (status != Status::OK && isNetworkRestrictedError(ctx)) {
+        GTEST_SKIP() << "Unix sockets not permitted in this environment: " << ctx.message;
+    }
     ASSERT_EQ(status, Status::OK) << "Listen failed: " << ctx.message;
     EXPECT_TRUE(server->isListening());
 
@@ -485,7 +526,11 @@ TEST_F(UnixSocketTest, ClientConnectToServer) {
     ErrorContext ctx;
 
     auto server = IPCServer::create(server_config, &ctx);
-    server->listen(&ctx);
+    Status status = server->listen(&ctx);
+    if (status != Status::OK && isNetworkRestrictedError(ctx)) {
+        GTEST_SKIP() << "Unix sockets not permitted in this environment: " << ctx.message;
+    }
+    ASSERT_EQ(status, Status::OK) << "Listen failed: " << ctx.message;
 
     std::unique_ptr<IPCConnection> server_conn;
     std::thread accept_thread([&]() {
@@ -497,7 +542,10 @@ TEST_F(UnixSocketTest, ClientConnectToServer) {
 
     IPCClientConfig client_config(db_name_, IPCMethod::UNIX_SOCKET);
     auto client = IPCClient::create(client_config, &ctx);
-    Status status = client->connect(&ctx);
+    status = client->connect(&ctx);
+    if (status != Status::OK && isNetworkRestrictedError(ctx)) {
+        GTEST_SKIP() << "Unix sockets not permitted in this environment: " << ctx.message;
+    }
     EXPECT_EQ(status, Status::OK) << "Connect failed: " << ctx.message;
 
     accept_thread.join();

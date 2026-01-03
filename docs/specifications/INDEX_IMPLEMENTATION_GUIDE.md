@@ -122,7 +122,7 @@ Use this checklist to track implementation progress:
 
 ### Phase 5: Bytecode Support (12-16h)
 - [ ] Define opcodes in `src/sblr/opcodes.h`
-- [ ] Implement bytecode generation in `bytecode_generator.cpp`
+- [ ] Implement bytecode generation in `bytecode_generator_v2.cpp`
 - [ ] Implement executor handlers in `executor.cpp`
 - [ ] Add query planner integration (cost estimation)
 - [ ] Test CREATE/DROP INDEX statements
@@ -769,36 +769,32 @@ constexpr uint8_t INDEX_SCAN = 0x53;
 
 ### Step 2: Bytecode Generation
 
-**File:** `src/sblr/bytecode_generator.cpp`
+**File:** `src/sblr/bytecode_generator_v2.cpp`
 
 ```cpp
-Status BytecodeGenerator::generateCreateIndex(const CreateIndexStmt* stmt,
-                                              std::vector<uint8_t>* bytecode_out,
-                                              ErrorContext* ctx) {
+void BytecodeGeneratorV2::generateCreateIndex(ResolvedCreateIndexStmt* stmt) {
     // Opcode
-    bytecode_out->push_back(CREATE_INDEX);
+    bytecode_.push_back(CREATE_INDEX);
 
     // Index type
-    bytecode_out->push_back(static_cast<uint8_t>(stmt->index_type));
+    bytecode_.push_back(static_cast<uint8_t>(stmt->index_type));
 
     // Table name (length + bytes)
-    encodeString(stmt->table_name, bytecode_out);
+    encodeString(stmt->table_name, &bytecode_);
 
     // Index name (length + bytes)
-    encodeString(stmt->index_name, bytecode_out);
+    encodeString(stmt->index_name, &bytecode_);
 
     // Column count
-    bytecode_out->push_back(stmt->columns.size());
+    bytecode_.push_back(stmt->columns.size());
 
     // Column IDs
     for (uint16_t col_id : stmt->columns) {
-        encodeUint16(col_id, bytecode_out);
+        encodeUint16(col_id, &bytecode_);
     }
 
     // Flags (UNIQUE, etc.)
-    encodeUint16(stmt->flags, bytecode_out);
-
-    return Status::OK;
+    encodeUint16(stmt->flags, &bytecode_);
 }
 ```
 

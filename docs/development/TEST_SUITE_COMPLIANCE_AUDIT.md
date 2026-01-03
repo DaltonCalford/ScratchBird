@@ -289,7 +289,7 @@ The ScratchBird test infrastructure demonstrates strong foundational coverage ac
 - `test_parser_comprehensive.cpp` - ParserComprehensiveTest
 - `test_parser_integration.cpp` - ParserIntegrationTest
 - `test_semantic_analyzer.cpp` - SemanticAnalyzerTest
-- `test_bytecode_generator.cpp` - BytecodeGeneratorTest (16+ tests)
+- `test_bytecode_generator_v2.cpp` - BytecodeGeneratorV2Test (16+ tests)
 - `test_sql_to_bytecode.cpp` - SQL to bytecode integration
 
 ### Disabled Test Files

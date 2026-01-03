@@ -1178,17 +1178,17 @@ namespace scratchbird::core
         while (toast_scan->next(&toast_tuple, ctx) == Status::OK)
         {
             // Parse TOAST chunk to extract value_id
-            // ToastChunk format: [xmin:8][xmax:8][chunk_id:4][chunk_seq:4][chunk_size:4][data...]
+            // Format: [TupleHeader][chunk_id:4][chunk_seq:4][chunk_data_len:4][data...]
             const uint8_t* chunk_data = toast_tuple.data;
             uint32_t chunk_size = toast_tuple.data_size;
 
-            if (chunk_size < sizeof(TupleHeader) + 16)
+            if (chunk_size < sizeof(TupleHeader) + sizeof(uint32_t))
             {
                 continue; // Malformed chunk
             }
 
             // Skip TupleHeader, read chunk_id (value_id)
-            size_t chunk_id_offset = sizeof(TupleHeader) + 16; // After xmin(8) + xmax(8)
+            size_t chunk_id_offset = sizeof(TupleHeader);
             uint32_t value_id;
             std::memcpy(&value_id, chunk_data + chunk_id_offset, sizeof(uint32_t));
 
@@ -1260,13 +1260,13 @@ namespace scratchbird::core
             const uint8_t* chunk_data = toast_tuple.data;
             uint32_t chunk_size = toast_tuple.data_size;
 
-            if (chunk_size < sizeof(TupleHeader) + 16)
+            if (chunk_size < sizeof(TupleHeader) + sizeof(uint32_t))
             {
                 continue;
             }
 
             // Extract value_id (chunk_id)
-            size_t chunk_id_offset = sizeof(TupleHeader) + 16;
+            size_t chunk_id_offset = sizeof(TupleHeader);
             uint32_t value_id;
             std::memcpy(&value_id, chunk_data + chunk_id_offset, sizeof(uint32_t));
 
@@ -1352,15 +1352,14 @@ namespace scratchbird::core
             const uint8_t* chunk_data = toast_tuple.data;
             uint32_t chunk_size = toast_tuple.data_size;
 
-            if (chunk_size < sizeof(TupleHeader) + 16)
+            if (chunk_size < sizeof(TupleHeader))
             {
                 continue;
             }
 
-            // ToastChunk: [TupleHeader][xmin:8][xmax:8][chunk_id:4]...
-            uint64_t chunk_xmin, chunk_xmax;
-            std::memcpy(&chunk_xmin, chunk_data + sizeof(TupleHeader), sizeof(uint64_t));
-            std::memcpy(&chunk_xmax, chunk_data + sizeof(TupleHeader) + 8, sizeof(uint64_t));
+            const auto* tuple_hdr = reinterpret_cast<const TupleHeader*>(chunk_data);
+            uint64_t chunk_xmin = tuple_hdr->xmin;
+            uint64_t chunk_xmax = tuple_hdr->xmax;
 
             // If chunk has xmax set
             if (chunk_xmax != 0)

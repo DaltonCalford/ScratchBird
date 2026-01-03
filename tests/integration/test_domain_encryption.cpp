@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/heap_page.h"
@@ -79,12 +80,19 @@ protected:
         compiler_ = std::make_unique<QueryCompilerV2>(&db_);
         compiler_->setCurrentSchema(schema_id_);
         executor_ = std::make_unique<Executor>(&db_);
+        Status conn_status = db_.connect(connection_ctx_, &ctx);
+        ASSERT_EQ(conn_status, Status::OK) << ctx.message;
+        connection_ctx_->setCurrentUser(catalog_->getSystemUserId(&ctx), true);
+        ConnectionContext::setCurrent(connection_ctx_.get());
+        executor_->setConnectionContext(connection_ctx_.get());
     }
 
     void TearDown() override
     {
         compiler_.reset();
         executor_.reset();
+        ConnectionContext::setCurrent(nullptr);
+        connection_ctx_.reset();
         db_.close();
         std::filesystem::remove(test_db_path_);
         std::filesystem::remove(test_db_path_ + "-lock");
@@ -115,6 +123,7 @@ protected:
     std::vector<CatalogManager::ColumnInfo> columns_;
     std::unique_ptr<QueryCompilerV2> compiler_;
     std::unique_ptr<Executor> executor_;
+    std::unique_ptr<ConnectionContext> connection_ctx_;
 };
 
 TEST_F(DomainEncryptionIntegrationTest, EncryptsOnInsertAndDecryptsOnSelect)

@@ -20,62 +20,78 @@
 
 #include <gtest/gtest.h>
 
-#include "scratchbird/parser/ast.h"
+#include "scratchbird/core/database.h"
+#include "scratchbird/core/error_context.h"
 #include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/opcodes.h"
+#include "test_helpers.h"
 #include <sstream>
 
-using namespace scratchbird::parser;
 using namespace scratchbird::sblr;
+using namespace scratchbird::testing;
 
 class ShowSetCommandsTest : public ::testing::Test
 {
 protected:
-    // Helper to parse SQL and return the statement
-    Statement* parseStatement(const std::string &sql)
+    void SetUp() override
     {
-        lexer_ = std::make_unique<Lexer>(sql);
-        arena_ = std::make_unique<ASTArena>();
-        parser_ = std::make_unique<Parser>(*lexer_, *arena_);
+        db_file_ = std::make_unique<TestDatabaseFile>("show_set_commands");
 
-        auto parse_result = parser_->parseStatement();
+        scratchbird::core::ErrorContext ctx;
+        auto status = scratchbird::core::Database::create(db_file_->path(), 16384, &ctx);
+        ASSERT_EQ(status, scratchbird::core::Status::OK) << ctx.message;
 
-        if (!parse_result.success())
-        {
-            for (const auto &err : parse_result.errors())
-            {
-                last_error_ = err.message;
-            }
-            return nullptr;
-        }
+        db_ = std::make_unique<scratchbird::core::Database>();
+        status = db_->open(db_file_->path(), &ctx);
+        ASSERT_EQ(status, scratchbird::core::Status::OK) << ctx.message;
 
-        return parse_result.statement();
+        compiler_ = std::make_unique<QueryCompilerV2>(db_.get());
     }
 
-    // Helper to check if parsing succeeds
-    bool parseSucceeds(const std::string &sql)
+    void TearDown() override
     {
-        return parseStatement(sql) != nullptr;
+        compiler_.reset();
+        db_.reset();
+        db_file_.reset();
+    }
+
+    // Helper to check if compilation succeeds
+    bool compileSucceeds(const std::string &sql)
+    {
+        last_error_.clear();
+        auto result = compiler_->compile(sql);
+        if (!result.success())
+        {
+            if (!result.errors().empty())
+            {
+                last_error_ = result.errors().front();
+            }
+            else
+            {
+                last_error_ = "Compilation failed";
+            }
+            return false;
+        }
+        return true;
     }
 
     // Helper to generate bytecode
     std::vector<uint8_t> generateBytecode(const std::string &sql)
     {
-        auto stmt = parseStatement(sql);
-        if (!stmt) return {};
-
-        BytecodeGenerator generator(parser_->stringPool());
-        auto result = generator.generate(stmt);
-
+        last_error_.clear();
+        auto result = compiler_->compile(sql);
         if (!result.success())
         {
-            for (const auto &err : result.errors())
+            if (!result.errors().empty())
             {
-                last_error_ = err;
+                last_error_ = result.errors().front();
+            }
+            else
+            {
+                last_error_ = "Compilation failed";
             }
             return {};
         }
-
         return result.bytecode();
     }
 
@@ -86,7 +102,7 @@ protected:
         {
             if (bc[i] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
             {
-                uint16_t op = sblr::readInt16(&bc[i + 1]);
+                uint16_t op = readInt16(&bc[i + 1]);
                 if (op == static_cast<uint16_t>(ext_op))
                 {
                     return true;
@@ -96,12 +112,11 @@ protected:
         return false;
     }
 
-    std::string last_error_;
-
 private:
-    std::unique_ptr<Lexer> lexer_;
-    std::unique_ptr<ASTArena> arena_;
-    std::unique_ptr<Parser> parser_;
+    std::unique_ptr<TestDatabaseFile> db_file_;
+    std::unique_ptr<scratchbird::core::Database> db_;
+    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::string last_error_;
 };
 
 // =============================================================================
@@ -110,9 +125,9 @@ private:
 
 TEST_F(ShowSetCommandsTest, ShowTableParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW TABLE users"));
-    EXPECT_TRUE(parseSucceeds("SHOW TABLE my_table"));
-    EXPECT_TRUE(parseSucceeds("SHOW TABLE \"CaseSensitiveTable\""));
+    EXPECT_TRUE(compileSucceeds("SHOW TABLE users"));
+    EXPECT_TRUE(compileSucceeds("SHOW TABLE my_table"));
+    EXPECT_TRUE(compileSucceeds("SHOW TABLE \"CaseSensitiveTable\""));
 }
 
 TEST_F(ShowSetCommandsTest, ShowTableBytecode)
@@ -128,8 +143,8 @@ TEST_F(ShowSetCommandsTest, ShowTableBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowIndexParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW INDEX idx_users_name"));
-    EXPECT_TRUE(parseSucceeds("SHOW INDEX pk_table"));
+    EXPECT_TRUE(compileSucceeds("SHOW INDEX idx_users_name"));
+    EXPECT_TRUE(compileSucceeds("SHOW INDEX pk_table"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowIndexBytecode)
@@ -145,8 +160,8 @@ TEST_F(ShowSetCommandsTest, ShowIndexBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowTriggerParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW TRIGGER trg_before_insert"));
-    EXPECT_TRUE(parseSucceeds("SHOW TRIGGER my_trigger"));
+    EXPECT_TRUE(compileSucceeds("SHOW TRIGGER trg_before_insert"));
+    EXPECT_TRUE(compileSucceeds("SHOW TRIGGER my_trigger"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowTriggerBytecode)
@@ -162,8 +177,8 @@ TEST_F(ShowSetCommandsTest, ShowTriggerBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowProcedureParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW PROCEDURE sp_get_users"));
-    EXPECT_TRUE(parseSucceeds("SHOW PROCEDURE my_proc"));
+    EXPECT_TRUE(compileSucceeds("SHOW PROCEDURE sp_get_users"));
+    EXPECT_TRUE(compileSucceeds("SHOW PROCEDURE my_proc"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowProcedureBytecode)
@@ -179,8 +194,8 @@ TEST_F(ShowSetCommandsTest, ShowProcedureBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowFunctionParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW FUNCTION fn_calculate"));
-    EXPECT_TRUE(parseSucceeds("SHOW FUNCTION my_func"));
+    EXPECT_TRUE(compileSucceeds("SHOW FUNCTION fn_calculate"));
+    EXPECT_TRUE(compileSucceeds("SHOW FUNCTION my_func"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowFunctionBytecode)
@@ -196,8 +211,8 @@ TEST_F(ShowSetCommandsTest, ShowFunctionBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowViewParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW VIEW v_active_users"));
-    EXPECT_TRUE(parseSucceeds("SHOW VIEW my_view"));
+    EXPECT_TRUE(compileSucceeds("SHOW VIEW v_active_users"));
+    EXPECT_TRUE(compileSucceeds("SHOW VIEW my_view"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowViewBytecode)
@@ -213,8 +228,8 @@ TEST_F(ShowSetCommandsTest, ShowViewBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowDomainParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW DOMAIN d_email"));
-    EXPECT_TRUE(parseSucceeds("SHOW DOMAIN my_domain"));
+    EXPECT_TRUE(compileSucceeds("SHOW DOMAIN d_email"));
+    EXPECT_TRUE(compileSucceeds("SHOW DOMAIN my_domain"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowDomainBytecode)
@@ -230,8 +245,8 @@ TEST_F(ShowSetCommandsTest, ShowDomainBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowGeneratorParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW GENERATOR gen_user_id"));
-    EXPECT_TRUE(parseSucceeds("SHOW GENERATOR my_sequence"));
+    EXPECT_TRUE(compileSucceeds("SHOW GENERATOR gen_user_id"));
+    EXPECT_TRUE(compileSucceeds("SHOW GENERATOR my_sequence"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowGeneratorBytecode)
@@ -247,9 +262,9 @@ TEST_F(ShowSetCommandsTest, ShowGeneratorBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowSchemaParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW SCHEMA"));
-    EXPECT_TRUE(parseSucceeds("SHOW SCHEMA public"));
-    EXPECT_TRUE(parseSucceeds("SHOW SCHEMA my_schema"));
+    EXPECT_TRUE(compileSucceeds("SHOW SCHEMA"));
+    EXPECT_TRUE(compileSucceeds("SHOW SCHEMA public"));
+    EXPECT_TRUE(compileSucceeds("SHOW SCHEMA my_schema"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowSchemaBytecode)
@@ -265,8 +280,8 @@ TEST_F(ShowSetCommandsTest, ShowSchemaBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowRoleParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW ROLE admin"));
-    EXPECT_TRUE(parseSucceeds("SHOW ROLE my_role"));
+    EXPECT_TRUE(compileSucceeds("SHOW ROLE admin"));
+    EXPECT_TRUE(compileSucceeds("SHOW ROLE my_role"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowRoleBytecode)
@@ -282,9 +297,9 @@ TEST_F(ShowSetCommandsTest, ShowRoleBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowGrantsParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW GRANTS"));
-    EXPECT_TRUE(parseSucceeds("SHOW GRANTS FOR users"));
-    EXPECT_TRUE(parseSucceeds("SHOW GRANTS FOR my_table"));
+    EXPECT_TRUE(compileSucceeds("SHOW GRANTS"));
+    EXPECT_TRUE(compileSucceeds("SHOW GRANTS FOR users"));
+    EXPECT_TRUE(compileSucceeds("SHOW GRANTS FOR my_table"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowGrantsBytecode)
@@ -304,9 +319,9 @@ TEST_F(ShowSetCommandsTest, ShowGrantsBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowChecksParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW CHECKS"));
-    EXPECT_TRUE(parseSucceeds("SHOW CHECKS users"));
-    EXPECT_TRUE(parseSucceeds("SHOW CHECKS my_table"));
+    EXPECT_TRUE(compileSucceeds("SHOW CHECKS"));
+    EXPECT_TRUE(compileSucceeds("SHOW CHECKS users"));
+    EXPECT_TRUE(compileSucceeds("SHOW CHECKS my_table"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowChecksBytecode)
@@ -326,8 +341,8 @@ TEST_F(ShowSetCommandsTest, ShowChecksBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowCollationsParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW COLLATIONS"));
-    EXPECT_TRUE(parseSucceeds("SHOW COLLATIONS LIKE 'UTF%'"));
+    EXPECT_TRUE(compileSucceeds("SHOW COLLATIONS"));
+    EXPECT_TRUE(compileSucceeds("SHOW COLLATIONS LIKE 'UTF%'"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowCollationsBytecode)
@@ -343,8 +358,8 @@ TEST_F(ShowSetCommandsTest, ShowCollationsBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowCommentsParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW COMMENTS users"));
-    EXPECT_TRUE(parseSucceeds("SHOW COMMENTS my_object"));
+    EXPECT_TRUE(compileSucceeds("SHOW COMMENTS users"));
+    EXPECT_TRUE(compileSucceeds("SHOW COMMENTS my_object"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowCommentsBytecode)
@@ -360,8 +375,8 @@ TEST_F(ShowSetCommandsTest, ShowCommentsBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowDependenciesParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW DEPENDENCIES users"));
-    EXPECT_TRUE(parseSucceeds("SHOW DEPENDENCIES my_view"));
+    EXPECT_TRUE(compileSucceeds("SHOW DEPENDENCIES users"));
+    EXPECT_TRUE(compileSucceeds("SHOW DEPENDENCIES my_view"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowDependenciesBytecode)
@@ -377,8 +392,8 @@ TEST_F(ShowSetCommandsTest, ShowDependenciesBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowPackageParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW PACKAGE pkg_utils"));
-    EXPECT_TRUE(parseSucceeds("SHOW PACKAGE my_package"));
+    EXPECT_TRUE(compileSucceeds("SHOW PACKAGE pkg_utils"));
+    EXPECT_TRUE(compileSucceeds("SHOW PACKAGE my_package"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowPackageBytecode)
@@ -394,7 +409,7 @@ TEST_F(ShowSetCommandsTest, ShowPackageBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowSystemParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW SYSTEM"));
+    EXPECT_TRUE(compileSucceeds("SHOW SYSTEM"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowSystemBytecode)
@@ -410,7 +425,7 @@ TEST_F(ShowSetCommandsTest, ShowSystemBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowSqlDialectParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW SQL DIALECT"));
+    EXPECT_TRUE(compileSucceeds("SHOW SQL DIALECT"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowSqlDialectBytecode)
@@ -426,7 +441,7 @@ TEST_F(ShowSetCommandsTest, ShowSqlDialectBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowVersionParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW VERSION"));
+    EXPECT_TRUE(compileSucceeds("SHOW VERSION"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowVersionBytecode)
@@ -442,7 +457,7 @@ TEST_F(ShowSetCommandsTest, ShowVersionBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowDatabaseParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW DATABASE"));
+    EXPECT_TRUE(compileSucceeds("SHOW DATABASE"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowDatabaseBytecode)
@@ -458,20 +473,11 @@ TEST_F(ShowSetCommandsTest, ShowDatabaseBytecode)
 
 TEST_F(ShowSetCommandsTest, SetSqlDialectParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SET SQL DIALECT 1"));
-    EXPECT_TRUE(parseSucceeds("SET SQL DIALECT 2"));
-    EXPECT_TRUE(parseSucceeds("SET SQL DIALECT 3"));
+    EXPECT_TRUE(compileSucceeds("SET SQL DIALECT 1"));
+    EXPECT_TRUE(compileSucceeds("SET SQL DIALECT 2"));
+    EXPECT_TRUE(compileSucceeds("SET SQL DIALECT 3"));
 }
 
-TEST_F(ShowSetCommandsTest, SetSqlDialectASTValues)
-{
-    auto stmt = parseStatement("SET SQL DIALECT 3");
-    ASSERT_NE(stmt, nullptr);
-    EXPECT_EQ(stmt->kind(), ASTKind::SET_SQL_DIALECT);
-
-    auto* set_stmt = static_cast<SetSqlDialectStmt*>(stmt);
-    EXPECT_EQ(set_stmt->dialect(), 3);
-}
 
 TEST_F(ShowSetCommandsTest, SetSqlDialectBytecode)
 {
@@ -486,17 +492,11 @@ TEST_F(ShowSetCommandsTest, SetSqlDialectBytecode)
 
 TEST_F(ShowSetCommandsTest, SetNamesParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SET NAMES UTF8"));
-    EXPECT_TRUE(parseSucceeds("SET NAMES ISO8859_1"));
-    EXPECT_TRUE(parseSucceeds("SET NAMES WIN1252"));
+    EXPECT_TRUE(compileSucceeds("SET NAMES UTF8"));
+    EXPECT_TRUE(compileSucceeds("SET NAMES ISO8859_1"));
+    EXPECT_TRUE(compileSucceeds("SET NAMES WIN1252"));
 }
 
-TEST_F(ShowSetCommandsTest, SetNamesASTValues)
-{
-    auto stmt = parseStatement("SET NAMES UTF8");
-    ASSERT_NE(stmt, nullptr);
-    EXPECT_EQ(stmt->kind(), ASTKind::SET_NAMES);
-}
 
 TEST_F(ShowSetCommandsTest, SetNamesBytecode)
 {
@@ -511,20 +511,11 @@ TEST_F(ShowSetCommandsTest, SetNamesBytecode)
 
 TEST_F(ShowSetCommandsTest, SetLocalTimeoutParsing)
 {
-    EXPECT_TRUE(parseSucceeds("SET LOCAL_TIMEOUT 30"));
-    EXPECT_TRUE(parseSucceeds("SET LOCAL_TIMEOUT 0"));
-    EXPECT_TRUE(parseSucceeds("SET LOCAL_TIMEOUT 3600"));
+    EXPECT_TRUE(compileSucceeds("SET LOCAL_TIMEOUT 30"));
+    EXPECT_TRUE(compileSucceeds("SET LOCAL_TIMEOUT 0"));
+    EXPECT_TRUE(compileSucceeds("SET LOCAL_TIMEOUT 3600"));
 }
 
-TEST_F(ShowSetCommandsTest, SetLocalTimeoutASTValues)
-{
-    auto stmt = parseStatement("SET LOCAL_TIMEOUT 60");
-    ASSERT_NE(stmt, nullptr);
-    EXPECT_EQ(stmt->kind(), ASTKind::SET_LOCAL_TIMEOUT);
-
-    auto* timeout_stmt = static_cast<SetLocalTimeoutStmt*>(stmt);
-    EXPECT_EQ(timeout_stmt->timeoutSeconds(), 60u);
-}
 
 TEST_F(ShowSetCommandsTest, SetLocalTimeoutBytecode)
 {
@@ -539,7 +530,7 @@ TEST_F(ShowSetCommandsTest, SetLocalTimeoutBytecode)
 
 TEST_F(ShowSetCommandsTest, ShowTablesStillWorks)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW TABLES"));
+    EXPECT_TRUE(compileSucceeds("SHOW TABLES"));
     auto bc = generateBytecode("SHOW TABLES");
     ASSERT_FALSE(bc.empty());
     EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_TABLES));
@@ -547,7 +538,7 @@ TEST_F(ShowSetCommandsTest, ShowTablesStillWorks)
 
 TEST_F(ShowSetCommandsTest, ShowDatabasesStillWorks)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW DATABASES"));
+    EXPECT_TRUE(compileSucceeds("SHOW DATABASES"));
     auto bc = generateBytecode("SHOW DATABASES");
     ASSERT_FALSE(bc.empty());
     EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_DATABASES));
@@ -555,7 +546,7 @@ TEST_F(ShowSetCommandsTest, ShowDatabasesStillWorks)
 
 TEST_F(ShowSetCommandsTest, ShowColumnsStillWorks)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW COLUMNS FROM users"));
+    EXPECT_TRUE(compileSucceeds("SHOW COLUMNS FROM users"));
     auto bc = generateBytecode("SHOW COLUMNS FROM users");
     ASSERT_FALSE(bc.empty());
     EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_COLUMNS));
@@ -563,7 +554,7 @@ TEST_F(ShowSetCommandsTest, ShowColumnsStillWorks)
 
 TEST_F(ShowSetCommandsTest, ShowIndexesStillWorks)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW INDEXES FROM users"));
+    EXPECT_TRUE(compileSucceeds("SHOW INDEXES FROM users"));
     auto bc = generateBytecode("SHOW INDEXES FROM users");
     ASSERT_FALSE(bc.empty());
     EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_INDEXES));
@@ -571,7 +562,7 @@ TEST_F(ShowSetCommandsTest, ShowIndexesStillWorks)
 
 TEST_F(ShowSetCommandsTest, ShowCreateTableStillWorks)
 {
-    EXPECT_TRUE(parseSucceeds("SHOW CREATE TABLE users"));
+    EXPECT_TRUE(compileSucceeds("SHOW CREATE TABLE users"));
     auto bc = generateBytecode("SHOW CREATE TABLE users");
     ASSERT_FALSE(bc.empty());
     EXPECT_TRUE(bytecodeContainsExtOpcode(bc, ExtendedOpcode::EXT_SHOW_CREATE_TABLE));
@@ -584,30 +575,30 @@ TEST_F(ShowSetCommandsTest, ShowCreateTableStillWorks)
 TEST_F(ShowSetCommandsTest, ShowTableAllowsOptionalObjectName)
 {
     // SHOW TABLE without object name shows all tables (Firebird ISQL behavior)
-    EXPECT_TRUE(parseSucceeds("SHOW TABLE"));
-    EXPECT_TRUE(parseSucceeds("SHOW TABLE users"));
+    EXPECT_TRUE(compileSucceeds("SHOW TABLE"));
+    EXPECT_TRUE(compileSucceeds("SHOW TABLE users"));
 }
 
 TEST_F(ShowSetCommandsTest, ShowIndexAllowsOptionalObjectName)
 {
     // SHOW INDEX without object name shows all indexes (Firebird ISQL behavior)
-    EXPECT_TRUE(parseSucceeds("SHOW INDEX"));
-    EXPECT_TRUE(parseSucceeds("SHOW INDEX idx_users_email"));
+    EXPECT_TRUE(compileSucceeds("SHOW INDEX"));
+    EXPECT_TRUE(compileSucceeds("SHOW INDEX idx_users_email"));
 }
 
 TEST_F(ShowSetCommandsTest, SetSqlDialectRequiresNumber)
 {
-    EXPECT_FALSE(parseSucceeds("SET SQL DIALECT"));
-    EXPECT_FALSE(parseSucceeds("SET SQL DIALECT abc"));
+    EXPECT_FALSE(compileSucceeds("SET SQL DIALECT"));
+    EXPECT_FALSE(compileSucceeds("SET SQL DIALECT abc"));
 }
 
 TEST_F(ShowSetCommandsTest, SetNamesRequiresCharset)
 {
-    EXPECT_FALSE(parseSucceeds("SET NAMES"));
+    EXPECT_FALSE(compileSucceeds("SET NAMES"));
 }
 
 TEST_F(ShowSetCommandsTest, SetLocalTimeoutRequiresNumber)
 {
-    EXPECT_FALSE(parseSucceeds("SET LOCAL_TIMEOUT"));
-    EXPECT_FALSE(parseSucceeds("SET LOCAL_TIMEOUT abc"));
+    EXPECT_FALSE(compileSucceeds("SET LOCAL_TIMEOUT"));
+    EXPECT_FALSE(compileSucceeds("SET LOCAL_TIMEOUT abc"));
 }

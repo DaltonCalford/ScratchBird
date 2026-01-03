@@ -5,6 +5,7 @@
 #include <vector>
 #include "scratchbird/core/audit_logger.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/quality_pipeline.h"
@@ -188,6 +189,11 @@ protected:
         compiler_->setCurrentSchema(schema_id_);
         executor_ = std::make_unique<Executor>(&db_);
         executor_->setCurrentSchema(schema_id_);
+        ASSERT_EQ(db_.connect(conn_ctx_, &ctx), Status::OK) << ctx.message;
+        ID system_user_id = catalog_->getSystemUserId(&ctx);
+        conn_ctx_->setCurrentUser(system_user_id, true);
+        conn_ctx_->setCurrentSchemaId(schema_id_);
+        executor_->setConnectionContext(conn_ctx_.get());
 
         CatalogManager::ParameterInfo text_param;
         text_param.name = "value";
@@ -330,6 +336,7 @@ protected:
     {
         executor_.reset();
         compiler_.reset();
+        conn_ctx_.reset();
         db_.close();
         db_file_.reset();
     }
@@ -374,8 +381,12 @@ protected:
         std::vector<CatalogManager::ColumnInfo> columns{id_col, val_col};
 
         ID table_id;
-        ASSERT_EQ(catalog_->createTable(schema_id_, name, columns, table_id, 0, &ctx),
-                  Status::OK) << ctx.message;
+        Status status = catalog_->createTable(schema_id_, name, columns, table_id, 0, &ctx);
+        if (status != Status::OK)
+        {
+            ADD_FAILURE() << ctx.message;
+            return ID{};
+        }
         return table_id;
     }
 
@@ -435,6 +446,7 @@ protected:
     CatalogManager* catalog_ = nullptr;
     DomainManager* domain_mgr_ = nullptr;
     ID schema_id_{};
+    std::unique_ptr<ConnectionContext> conn_ctx_;
 
     ID ssn_domain_id_{};
     ID email_domain_id_{};

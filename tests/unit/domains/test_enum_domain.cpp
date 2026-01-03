@@ -46,9 +46,9 @@ TEST(EnumDomainTest, Comprehensive) {
     std::cout << "Test 1: Create ENUM domain\n";
     {
         std::vector<EnumValue> values;
-        EnumValue val1; val1.label = "SMALL"; val1.position = 0;
-        EnumValue val2; val2.label = "MEDIUM"; val2.position = 1;
-        EnumValue val3; val3.label = "LARGE"; val3.position = 2;
+        EnumValue val1; val1.label = "SMALL"; val1.position = 1;
+        EnumValue val2; val2.label = "MEDIUM"; val2.position = 2;
+        EnumValue val3; val3.label = "LARGE"; val3.position = 3;
         values.push_back(val1);
         values.push_back(val2);
         values.push_back(val3);
@@ -73,11 +73,11 @@ TEST(EnumDomainTest, Comprehensive) {
 
         // Verify enum values
         ASSERT_EQ(info.enum_values[0].label, "SMALL");
-        ASSERT_EQ(info.enum_values[0].position, 0);
+        ASSERT_EQ(info.enum_values[0].position, 1);
         ASSERT_EQ(info.enum_values[1].label, "MEDIUM");
-        ASSERT_EQ(info.enum_values[1].position, 1);
+        ASSERT_EQ(info.enum_values[1].position, 2);
         ASSERT_EQ(info.enum_values[2].label, "LARGE");
-        ASSERT_EQ(info.enum_values[2].position, 2);
+        ASSERT_EQ(info.enum_values[2].position, 3);
 
         std::cout << "  All enum values verified ✓\n";
     }
@@ -91,10 +91,10 @@ TEST(EnumDomainTest, Comprehensive) {
         ASSERT_EQ(status, Status::OK);
 
         std::string label;
-        status = dm->getEnumValueForPosition(info.domain_id, 1, label, &ctx);
+        status = dm->getEnumValueForPosition(info.domain_id, 2, label, &ctx);
         ASSERT_EQ(status, Status::OK);
         ASSERT_EQ(label, "MEDIUM");
-        std::cout << "  Position 1 = 'MEDIUM' ✓\n";
+        std::cout << "  Position 2 = 'MEDIUM' ✓\n";
 
         // Try invalid position
         status = dm->getEnumValueForPosition(info.domain_id, 10, label, &ctx);
@@ -113,8 +113,8 @@ TEST(EnumDomainTest, Comprehensive) {
         int32_t position;
         status = dm->getPositionForEnumValue(info.domain_id, "LARGE", position, &ctx);
         ASSERT_EQ(status, Status::OK);
-        ASSERT_EQ(position, 2);
-        std::cout << "  'LARGE' = position 2 ✓\n";
+        ASSERT_EQ(position, 3);
+        std::cout << "  'LARGE' = position 3 ✓\n";
 
         // Try non-existent value
         status = dm->getPositionForEnumValue(info.domain_id, "XLARGE", position, &ctx);
@@ -177,9 +177,9 @@ TEST(EnumDomainTest, Comprehensive) {
     std::cout << "Test 7: Reject duplicate values\n";
     {
         std::vector<EnumValue> values;
-        EnumValue v1; v1.label = "RED"; v1.position = 0;
-        EnumValue v2; v2.label = "GREEN"; v2.position = 1;
-        EnumValue v3; v3.label = "RED"; v3.position = 2;  // Duplicate!
+        EnumValue v1; v1.label = "RED"; v1.position = 1;
+        EnumValue v2; v2.label = "GREEN"; v2.position = 2;
+        EnumValue v3; v3.label = "RED"; v3.position = 3;  // Duplicate!
         values.push_back(v1);
         values.push_back(v2);
         values.push_back(v3);
@@ -207,8 +207,8 @@ TEST(EnumDomainTest, Comprehensive) {
     std::cout << "Test 9: Reject invalid positions\n";
     {
         std::vector<EnumValue> values;
-        EnumValue v1; v1.label = "FIRST"; v1.position = 0;
-        EnumValue v2; v2.label = "SECOND"; v2.position = 5;  // Position not sequential!
+        EnumValue v1; v1.label = "FIRST"; v1.position = 1;
+        EnumValue v2; v2.label = "SECOND"; v2.position = 3;  // Position not sequential!
         values.push_back(v1);
         values.push_back(v2);
 
@@ -227,7 +227,7 @@ TEST(EnumDomainTest, Comprehensive) {
         for (int i = 0; i < 7; i++) {
             EnumValue val;
             val.label = days[i];
-            val.position = i;
+            val.position = i + 1;
             values.push_back(val);
         }
 

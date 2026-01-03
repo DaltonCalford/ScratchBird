@@ -12,12 +12,10 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/proc_array.h"
 
-
 #include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/executor.h"
 
 using namespace scratchbird;
-using namespace scratchbird::parser;
 using namespace scratchbird::sblr;
 
 class CTETest
@@ -26,7 +24,9 @@ private:
     std::string test_db_path_;
     std::unique_ptr<core::Database> db_;
     std::unique_ptr<core::ConnectionContext> conn_ctx_;
+    std::unique_ptr<QueryCompilerV2> compiler_;
     std::unique_ptr<Executor> executor_;
+    core::ID schema_id_{};
     uint32_t proc_id_ = 0;
 
 public:
@@ -71,8 +71,21 @@ public:
             return false;
         }
 
+        core::CatalogManager::SchemaInfo schema;
+        status = db_->catalog_manager()->getSchema("PUBLIC", schema, &ctx);
+        if (status != core::Status::OK)
+        {
+            std::cerr << "Failed to get PUBLIC schema: " << ctx.message << std::endl;
+            return false;
+        }
+        schema_id_ = schema.schema_id;
+
+        compiler_ = std::make_unique<QueryCompilerV2>(db_.get());
+        compiler_->setCurrentSchema(schema_id_);
+
         executor_ = std::make_unique<Executor>(db_.get());
         executor_->setConnectionContext(conn_ctx_.get());
+        executor_->setCurrentSchema(schema_id_);
 
         return createTestTable();
     }
@@ -80,6 +93,7 @@ public:
     void cleanup()
     {
         executor_.reset();
+        compiler_.reset();
         conn_ctx_.reset();
 
         if (db_)
@@ -110,7 +124,6 @@ public:
             return false;
         }
 
-        // Insert test data
         std::vector<std::string> inserts = {
             "INSERT INTO employees VALUES (1, 'Alice', 'Engineering', 100000)",
             "INSERT INTO employees VALUES (2, 'Bob', 'Engineering', 95000)",
@@ -128,7 +141,6 @@ public:
             }
         }
 
-        // Commit the inserts
         core::ErrorContext ctx;
         auto status = conn_ctx_->commit(&ctx);
         if (status != core::Status::OK)
@@ -142,22 +154,16 @@ public:
 
     bool executeSQL(const std::string &sql)
     {
-        Lexer lexer(sql);
-        ASTArena arena;
-        Parser parser(lexer, arena);
-
-        auto parse_result = parser.parseStatement();
-        if (!parse_result.success())
+        auto compile_result = compiler_->compile(sql);
+        if (!compile_result.success())
         {
-            std::cerr << "Parse error: " << parse_result.error_message() << std::endl;
+            std::cerr << "Compile error: "
+                      << (compile_result.errors().empty() ? "unknown" : compile_result.errors().front())
+                      << std::endl;
             return false;
         }
 
-        BytecodeGenerator generator(db_.get());
-        generator.generateStatement(parse_result.statement());
-        auto bytecode = generator.finalize();
-
-        auto result = executor_->execute(bytecode);
+        auto result = executor_->execute(compile_result.bytecode());
         if (!result.success())
         {
             std::cerr << "Execution error: " << result.error() << std::endl;
@@ -169,21 +175,16 @@ public:
 
     ExecutionResult executeSQLWithResult(const std::string &sql)
     {
-        Lexer lexer(sql);
-        ASTArena arena;
-        Parser parser(lexer, arena);
-
-        auto parse_result = parser.parseStatement();
-        if (!parse_result.success())
+        auto compile_result = compiler_->compile(sql);
+        if (!compile_result.success())
         {
-            return ExecutionResult("Parse error: " + parse_result.error_message());
+            auto message = compile_result.errors().empty()
+                ? "Compile error"
+                : compile_result.errors().front();
+            return ExecutionResult(message);
         }
 
-        BytecodeGenerator generator(db_.get());
-        generator.generateStatement(parse_result.statement());
-        auto bytecode = generator.finalize();
-
-        return executor_->execute(bytecode);
+        return executor_->execute(compile_result.bytecode());
     }
 
     bool testSingleCTE()

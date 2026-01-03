@@ -46,7 +46,7 @@ These files provide the foundational understanding of the project:
 ├── parser/         # SQL parser (7 .cpp files)
 │   ├── lexer.cpp, parser.cpp, ast.cpp, semantic_analyzer.cpp
 ├── sblr/           # Query executor (2 .cpp files)
-│   ├── bytecode_generator.cpp, executor.cpp
+│   ├── bytecode_generator_v2.cpp, executor.cpp
 └── main.cpp        # Entry point
 ```
 

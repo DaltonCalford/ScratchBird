@@ -35,8 +35,14 @@ TEST(DomainPersistenceTest, ReloadsDomainMetadata)
     constraints.emplace_back(ConstraintType::CHECK, "value > 0", "positive_value");
 
     ID basic_id;
-    status = dm->createBasicDomain(schema_id, "positive_int", DataType::INT32, 0, 0, false,
-                                   "", constraints, basic_id, &ctx);
+    DomainManager::DomainCreateOptions options;
+    options.nullable = false;
+    options.default_value = "";
+    options.constraints = constraints;
+    options.dialect_tag = "postgresql";
+    options.compat_name = "int4";
+    status = dm->createBasicDomain(schema_id, "positive_int", DataType::INT32, 0, 0,
+                                   options, basic_id, &ctx);
     ASSERT_EQ(status, Status::OK) << ctx.message;
 
     std::vector<RecordField> fields;
@@ -53,9 +59,9 @@ TEST(DomainPersistenceTest, ReloadsDomainMetadata)
     ASSERT_EQ(status, Status::OK) << ctx.message;
 
     std::vector<EnumValue> enum_values;
-    enum_values.emplace_back("small", 0);
-    enum_values.emplace_back("medium", 1);
-    enum_values.emplace_back("large", 2);
+    enum_values.emplace_back("small", 1);
+    enum_values.emplace_back("medium", 2);
+    enum_values.emplace_back("large", 3);
 
     ID enum_id;
     status = dm->createEnumDomain(schema_id, "size_enum", enum_values, enum_id, &ctx);
@@ -84,6 +90,8 @@ TEST(DomainPersistenceTest, ReloadsDomainMetadata)
     EXPECT_EQ(basic_info.constraints[0].type, ConstraintType::CHECK);
     EXPECT_EQ(basic_info.constraints[0].expression, "value > 0");
     EXPECT_EQ(basic_info.constraints[0].name, "positive_value");
+    EXPECT_EQ(basic_info.dialect_tag, "postgresql");
+    EXPECT_EQ(basic_info.compat_name, "int4");
 
     DomainInfo record_info;
     status = dm_reopen->getDomain(schema_id, "person_record", record_info, &ctx);
@@ -101,15 +109,15 @@ TEST(DomainPersistenceTest, ReloadsDomainMetadata)
     EXPECT_EQ(enum_info.domain_id, enum_id);
     ASSERT_EQ(enum_info.enum_values.size(), 3u);
     EXPECT_EQ(enum_info.enum_values[1].label, "medium");
-    EXPECT_EQ(enum_info.enum_values[1].position, 1);
+    EXPECT_EQ(enum_info.enum_values[1].position, 2);
 
     DomainInfo variant_info;
     status = dm_reopen->getDomain(schema_id, "flexible_value", variant_info, &ctx);
     ASSERT_EQ(status, Status::OK) << ctx.message;
     EXPECT_EQ(variant_info.domain_id, variant_id);
     ASSERT_EQ(variant_info.variant_allowed_types.size(), 2u);
-    EXPECT_EQ(variant_info.variant_allowed_types[0], DataType::INT32);
-    EXPECT_EQ(variant_info.variant_allowed_types[1], DataType::TEXT);
+    EXPECT_EQ(variant_info.variant_allowed_types[0].type, DataType::INT32);
+    EXPECT_EQ(variant_info.variant_allowed_types[1].type, DataType::TEXT);
 
     db_reopen.close();
     std::remove(test_db);

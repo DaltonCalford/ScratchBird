@@ -271,7 +271,7 @@ JOIN ../hr/employees AS e ON o.emp_id = e.id
 
 ## 8. Implementation Roadmap
 
-1. **Lexer Refactor:** Remove 450+ keywords from `token.h`. Keep only the ~30 Gatekeepers.
+1. **Lexer Refactor:** Remove 450+ keywords from `lexer_v2.h`. Keep only the ~30 Gatekeepers.
 
 2. **ParserState Class:** Create a class to track the current mode (`SESSION`, `DDL`, `DML`, `EXPRESSION`).
 

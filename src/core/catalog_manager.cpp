@@ -1,5 +1,6 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/domain_manager.h"
+#include "scratchbird/core/audit_logger.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
@@ -2044,6 +2045,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // ========================================================================
         DEBUG_LOG_DB("Initializing TOAST storage for RLS policy expressions");
 
+        if (!db_ || db_->storage_engine() == nullptr)
+        {
+            DEBUG_LOG_DB("Policy TOAST initialization deferred - storage engine not ready");
+            return Status::OK;
+        }
+
         if (isZeroUuidLocal(policy_toast_table_id_))
         {
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
@@ -2603,7 +2610,14 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // (ToastManager::initialize calls getTable which needs mutex)
         if (needs_toast_init)
         {
-            initializePolicyToast(ctx);
+            if (db_->storage_engine() != nullptr)
+            {
+                initializePolicyToast(ctx);
+            }
+            else
+            {
+                DEBUG_LOG_DB("Policy TOAST initialization deferred - storage engine not ready");
+            }
         }
 
         return Status::OK;
@@ -2813,8 +2827,28 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
             if (status != Status::OK)
             {
+                LOG_ERROR(CATALOG,
+                          "Policy TOAST write failed: status=%d parent_table_id=%s toast_table_id=%s size=%zu detail=%s",
+                          static_cast<int>(status),
+                          policy_toast_table_id_.toString().c_str(),
+                          policy_toast_manager_->toastTableId().toString().c_str(),
+                          data.size(),
+                          (ctx && !ctx->message.empty()) ? ctx->message.c_str() : "");
                 DEBUG_LOG_DB("Failed to TOAST policy expression: " << static_cast<int>(status));
-                SET_ERROR_CONTEXT(ctx, status, "Failed to store expression in TOAST");
+                std::string detail;
+                if (ctx && !ctx->message.empty())
+                {
+                    detail = ctx->message;
+                }
+                if (!detail.empty())
+                {
+                    std::string message = "Failed to store expression in TOAST: " + detail;
+                    SET_ERROR_CONTEXT(ctx, status, message.c_str());
+                }
+                else
+                {
+                    SET_ERROR_CONTEXT(ctx, status, "Failed to store expression in TOAST");
+                }
                 return status;
             }
 
@@ -2850,6 +2884,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             ToastPointer pointer;
             memset(&pointer, 0, sizeof(ToastPointer));
             pointer.va_header = 0x01;  // TOAST magic byte
+            pointer.va_tag = static_cast<uint8_t>(ToastStrategy::EXTENDED);
+            pointer.va_rawsize = 0;
+            pointer.va_extsize = 0;
             pointer.va_valueid = oid;
             pointer.va_toastrelid = static_cast<uint32_t>(
                 *reinterpret_cast<const uint32_t*>(policy_toast_table_id_.bytes.data()));
@@ -2877,6 +2914,48 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
                          "TOAST manager not available - using in-memory cache");
         return Status::NOT_IMPLEMENTED;
+    }
+
+    auto CatalogManager::initializePolicyToastIfNeeded(ErrorContext* ctx) -> Status
+    {
+        if (policy_toast_manager_)
+        {
+            return Status::OK;
+        }
+
+        if (!db_ || db_->storage_engine() == nullptr)
+        {
+            DEBUG_LOG_DB("Policy TOAST initialization deferred - storage engine not ready");
+            return Status::OK;
+        }
+
+        return initializePolicyToast(ctx);
+    }
+
+    auto CatalogManager::ensureDomainsTablePage(ErrorContext* ctx) -> Status
+    {
+        std::lock_guard<CatalogMutex> lock(mutex_);
+
+        if (domains_table_page_ != 0)
+        {
+            return Status::OK;
+        }
+
+        Status status = allocateCatalogPage(domains_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to allocate domains table page");
+            return status;
+        }
+
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to persist domains table page");
+            return status;
+        }
+
+        return Status::OK;
     }
 
     auto CatalogManager::ensureEncryptionKeysTable(ErrorContext* ctx) -> Status
@@ -5990,6 +6069,14 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         BufferPool *bp = db_->buffer_pool();
         PageManager *pm = db_->page_manager();
         uint32_t current_page_id = page_id;
+        {
+            std::lock_guard<std::mutex> lock(heap_page_tail_mutex_);
+            auto it = heap_page_tail_cache_.find(page_id);
+            if (it != heap_page_tail_cache_.end())
+            {
+                current_page_id = it->second;
+            }
+        }
         uint32_t iteration_count = 0;
         constexpr uint32_t MAX_ITERATIONS = 1000;  // Safety limit
 
@@ -6023,6 +6110,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 heap->header.free_space -= sizeof(RecordType);
                 heap->header.generation++;
 
+                {
+                    std::lock_guard<std::mutex> lock(heap_page_tail_mutex_);
+                    heap_page_tail_cache_[page_id] = current_page_id;
+                }
                 return bp->unpinPage(current_page_id, true, ctx);
             }
 
@@ -6039,22 +6130,22 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             // No overflow page exists - save next_page info and unpin current page first
             // to avoid holding too many pins during allocation
             uint32_t saved_page_id = current_page_id;
-            LOG_INFO(STORAGE, "writeRecordToHeapPage: Page %u is full, allocating overflow page", saved_page_id);
+            LOG_DEBUG(STORAGE, "writeRecordToHeapPage: Page %u is full, allocating overflow page", saved_page_id);
             bp->unpinPage(current_page_id, false, ctx);
 
             // Allocate new overflow page using buffer pool
             void *new_page_buffer = nullptr;
             uint32_t new_page_id = 0;
-            LOG_INFO(STORAGE, "writeRecordToHeapPage: Calling bp->allocatePage()");
+            LOG_DEBUG(STORAGE, "writeRecordToHeapPage: Calling bp->allocatePage()");
             status = bp->allocatePage(&new_page_id, &new_page_buffer, ctx);
-            LOG_INFO(STORAGE, "writeRecordToHeapPage: bp->allocatePage() returned status=%d, page_id=%u",
-                     static_cast<int>(status), new_page_id);
+            LOG_DEBUG(STORAGE, "writeRecordToHeapPage: bp->allocatePage() returned status=%d, page_id=%u",
+                      static_cast<int>(status), new_page_id);
             if (status != Status::OK)
             {
                 return status;
             }
 
-            LOG_INFO(STORAGE, "writeRecordToHeapPage: Initializing overflow page %u", new_page_id);
+            LOG_DEBUG(STORAGE, "writeRecordToHeapPage: Initializing overflow page %u", new_page_id);
 
             // Initialize the new overflow page in the buffer pool
             memset(new_page_buffer, 0, db_->page_size());
@@ -6086,34 +6177,38 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             new_heap->header.free_space -= sizeof(RecordType);
             new_heap->header.generation++;
 
-            LOG_INFO(STORAGE, "writeRecordToHeapPage: Unpinning new page %u", new_page_id);
+            LOG_DEBUG(STORAGE, "writeRecordToHeapPage: Unpinning new page %u", new_page_id);
 
             // Unpin the new page (mark as dirty)
             status = bp->unpinPage(new_page_id, true, ctx);
             if (status != Status::OK)
             {
-                LOG_INFO(STORAGE, "writeRecordToHeapPage: Failed to unpin new page: status=%d", static_cast<int>(status));
+                LOG_DEBUG(STORAGE, "writeRecordToHeapPage: Failed to unpin new page: status=%d", static_cast<int>(status));
                 return status;
             }
 
-            LOG_INFO(STORAGE, "writeRecordToHeapPage: Re-pinning original page %u", saved_page_id);
+            LOG_DEBUG(STORAGE, "writeRecordToHeapPage: Re-pinning original page %u", saved_page_id);
 
             // Re-pin the original page to update its next_page pointer
             status = bp->pinPage(saved_page_id, &page_buffer, ctx);
             if (status != Status::OK)
             {
-                LOG_INFO(STORAGE, "writeRecordToHeapPage: Failed to re-pin: status=%d", static_cast<int>(status));
+                LOG_DEBUG(STORAGE, "writeRecordToHeapPage: Failed to re-pin: status=%d", static_cast<int>(status));
                 return status;
             }
             heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
 
-            LOG_INFO(STORAGE, "writeRecordToHeapPage: Linking page %u -> %u", saved_page_id, new_page_id);
+            LOG_DEBUG(STORAGE, "writeRecordToHeapPage: Linking page %u -> %u", saved_page_id, new_page_id);
 
             // Link the current page to the new overflow page
             heap->next_page = new_page_id;
             heap->header.generation++;
             status = bp->unpinPage(saved_page_id, true, ctx);
-            LOG_INFO(STORAGE, "writeRecordToHeapPage: Overflow chain complete, status=%d", static_cast<int>(status));
+            {
+                std::lock_guard<std::mutex> lock(heap_page_tail_mutex_);
+                heap_page_tail_cache_[page_id] = new_page_id;
+            }
+            LOG_DEBUG(STORAGE, "writeRecordToHeapPage: Overflow chain complete, status=%d", static_cast<int>(status));
             return status;
         }
     }
@@ -18335,10 +18430,10 @@ auto CatalogManager::createDependencyInternal(const ID& dependent_object_id, Obj
         return status;
     }
 
-    LOG_INFO(CATALOG, "Created dependency: %s (%d) -> %s (%d) [type=%d]",
-             dependent_object_id.toString().c_str(), static_cast<int>(dependent_type),
-             referenced_object_id.toString().c_str(), static_cast<int>(referenced_type),
-             static_cast<int>(dep_type));
+    LOG_DEBUG(CATALOG, "Created dependency: %s (%d) -> %s (%d) [type=%d]",
+              dependent_object_id.toString().c_str(), static_cast<int>(dependent_type),
+              referenced_object_id.toString().c_str(), static_cast<int>(referenced_type),
+              static_cast<int>(dep_type));
 
     return Status::OK;
 }
@@ -18399,7 +18494,7 @@ auto CatalogManager::deleteDependencyInternal(const ID& dependency_id, ErrorCont
         // In production, would need transaction rollback here
     }
 
-    LOG_INFO(CATALOG, "Deleted dependency: %s", dependency_id.toString().c_str());
+    LOG_DEBUG(CATALOG, "Deleted dependency: %s", dependency_id.toString().c_str());
 
     return Status::OK;
 }
@@ -18416,10 +18511,14 @@ void CatalogManager::getDependenciesForInternal(const ID& object_id,
     // NO LOCK - caller must hold dependency_cache_mutex_
     dependencies_out.clear();
 
-    // Find all dependencies where this object is the dependent
-    for (const auto& [dep_id, dep_info] : dependency_cache_) {
-        if (dep_info.dependent_object_id == object_id) {
-            dependencies_out.push_back(dep_info);
+    auto range = object_to_dependencies_.equal_range(object_id);
+    for (auto it = range.first; it != range.second; ++it)
+    {
+        auto dep_it = dependency_cache_.find(it->second);
+        if (dep_it != dependency_cache_.end() &&
+            dep_it->second.dependent_object_id == object_id)
+        {
+            dependencies_out.push_back(dep_it->second);
         }
     }
 }
@@ -18441,10 +18540,14 @@ auto CatalogManager::getDependents(const ID& object_id,
 
     dependents_out.clear();
 
-    // Find all dependencies where this object is referenced
-    for (const auto& [dep_id, dep_info] : dependency_cache_) {
-        if (dep_info.referenced_object_id == object_id) {
-            dependents_out.push_back(dep_info);
+    auto range = object_to_dependencies_.equal_range(object_id);
+    for (auto it = range.first; it != range.second; ++it)
+    {
+        auto dep_it = dependency_cache_.find(it->second);
+        if (dep_it != dependency_cache_.end() &&
+            dep_it->second.referenced_object_id == object_id)
+        {
+            dependents_out.push_back(dep_it->second);
         }
     }
 
@@ -18474,10 +18577,14 @@ void CatalogManager::getDependentsInternal(const ID& object_id,
     // NO LOCK - caller must hold dependency_cache_mutex_
     dependents_out.clear();
 
-    // Find all dependencies where this object is referenced
-    for (const auto& [dep_id, dep_info] : dependency_cache_) {
-        if (dep_info.referenced_object_id == object_id) {
-            dependents_out.push_back(dep_info);
+    auto range = object_to_dependencies_.equal_range(object_id);
+    for (auto it = range.first; it != range.second; ++it)
+    {
+        auto dep_it = dependency_cache_.find(it->second);
+        if (dep_it != dependency_cache_.end() &&
+            dep_it->second.referenced_object_id == object_id)
+        {
+            dependents_out.push_back(dep_it->second);
         }
     }
 }
@@ -18489,9 +18596,13 @@ auto CatalogManager::hasDependents(const ID& object_id, bool& has_dependents,
 
     has_dependents = false;
 
-    // Check if any dependency references this object
-    for (const auto& [dep_id, dep_info] : dependency_cache_) {
-        if (dep_info.referenced_object_id == object_id) {
+    auto range = object_to_dependencies_.equal_range(object_id);
+    for (auto it = range.first; it != range.second; ++it)
+    {
+        auto dep_it = dependency_cache_.find(it->second);
+        if (dep_it != dependency_cache_.end() &&
+            dep_it->second.referenced_object_id == object_id)
+        {
             has_dependents = true;
             break;
         }
@@ -27684,6 +27795,12 @@ auto CatalogManager::getDomainByName(const ID& schema_id, const std::string& dom
                                      DomainInfo& info_out, ErrorContext* ctx) -> Status
 {
     return db_->domain_manager()->getDomain(schema_id, domain_name, info_out, ctx);
+}
+
+auto CatalogManager::getDomainById(const ID& domain_id,
+                                   DomainInfo& info_out, ErrorContext* ctx) -> Status
+{
+    return db_->domain_manager()->getDomain(domain_id, info_out, ctx);
 }
 
 // ============================================================================
