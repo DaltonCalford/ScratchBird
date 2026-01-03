@@ -12,6 +12,7 @@
 #include "scratchbird/sblr/semantic_analyzer_v2.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/domain_manager.h"
 #include "unit/test_user_helpers.h"
 #include <cstdio>
 #include <filesystem>
@@ -457,6 +458,50 @@ TEST_F(SemanticAnalyzerV2Test, CreateDomainDuplicateConstraintNames) {
         "CONSTRAINT chk CHECK (1 = 1) "
         "CONSTRAINT chk CHECK (2 = 2)");
     EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateDomainDuplicateName) {
+    auto* domain_mgr = db_.domain_manager();
+    ASSERT_NE(domain_mgr, nullptr);
+
+    ErrorContext ctx;
+    DomainManager::DomainCreateOptions options;
+    ID domain_id{};
+    ASSERT_EQ(domain_mgr->createBasicDomain(
+                  test_schema_id_,
+                  "dup_domain",
+                  DataType::INT32,
+                  0,
+                  0,
+                  options,
+                  domain_id,
+                  &ctx),
+              Status::OK);
+
+    auto result = analyze("CREATE DOMAIN test.dup_domain AS INT");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateDomainIfNotExistsAllowsDuplicate) {
+    auto* domain_mgr = db_.domain_manager();
+    ASSERT_NE(domain_mgr, nullptr);
+
+    ErrorContext ctx;
+    DomainManager::DomainCreateOptions options;
+    ID domain_id{};
+    ASSERT_EQ(domain_mgr->createBasicDomain(
+                  test_schema_id_,
+                  "dup_domain",
+                  DataType::INT32,
+                  0,
+                  0,
+                  options,
+                  domain_id,
+                  &ctx),
+              Status::OK);
+
+    auto result = analyze("CREATE DOMAIN IF NOT EXISTS test.dup_domain AS INT");
+    EXPECT_TRUE(result.success());
 }
 
 TEST_F(SemanticAnalyzerV2Test, DropTableStatement) {

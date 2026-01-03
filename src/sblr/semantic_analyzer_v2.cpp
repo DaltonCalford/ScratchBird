@@ -2198,6 +2198,30 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
     resolved->domain_path = stmt->domain_path;
     resolved->domain_kind = stmt->domain_kind;
 
+    core::ObjectPath obj_path = buildObjectPath(stmt->domain_path, string_pool_);
+    core::CatalogManager::ObjectType resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+    core::ErrorContext ctx;
+    core::CatalogManager::ResolveOptions opts;
+    opts.allow_search_path = false;
+    ID existing_id{};
+    Status status = catalog_.resolveObjectPath(
+        obj_path,
+        core::CatalogManager::ObjectType::DOMAIN,
+        opts,
+        existing_id,
+        resolved_type,
+        &ctx);
+    if (status == Status::OK) {
+        if (!stmt->if_not_exists) {
+            error(stmt->span, "Domain already exists");
+            return nullptr;
+        }
+    } else if (status != Status::NOT_FOUND) {
+        std::string msg = ctx.message.empty() ? "Failed to resolve domain" : ctx.message;
+        error(stmt->span, msg);
+        return nullptr;
+    }
+
     resolved->nullable = true;
     bool default_set = false;
     std::unordered_set<std::string> constraint_names;

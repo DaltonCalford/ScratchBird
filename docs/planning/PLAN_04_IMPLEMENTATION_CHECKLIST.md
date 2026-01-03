@@ -1065,7 +1065,7 @@ if (matchKeyword("DOMAIN")) {
 6. Check for circular inheritance
 7. Populate ResolvedStatement with domain_id
 
-**Update (2026-01-03):** Duplicate domain constraint names are now rejected (case-insensitive) in `SemanticAnalyzerV2::analyzeCreateDomain()` with unit tests in `tests/unit/test_semantic_analyzer_v2.cpp`.
+**Update (2026-01-03):** Duplicate domain names (schema-scoped) and constraint names (case-insensitive) are now rejected in `SemanticAnalyzerV2::analyzeCreateDomain()` with unit tests in `tests/unit/test_semantic_analyzer_v2.cpp`.
 
 **Acceptance Criteria:**
 - [ ] All validation rules enforced
@@ -2098,7 +2098,7 @@ Status SemanticAnalyzerV2::validateGroupBy(SelectStmt* stmt)
 **Test File:** `tests/unit/test_domain_errors.cpp` (NEW)
 
 **Test Coverage:**
-- [ ] Duplicate domain name → error
+- [x] Duplicate domain name → error (covered in `tests/unit/test_semantic_analyzer_v2.cpp`)
 - [ ] Invalid CHECK expression → error
 - [ ] Circular inheritance → error
 - [ ] Invalid ENUM positions → error

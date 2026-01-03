@@ -11,7 +11,7 @@ P1 (blocks SQL feature coverage and compatibility).
 - ✅ Quick wins completed (NULL-safe, ESCAPE, placeholders, GROUP BY, window specs)
 - ✅ Emulated parser domain DDL implemented (Firebird/PostgreSQL)
 - ✅ MySQL explicit DOMAIN rejection added
-- ✅ Domain semantic guardrails (duplicate constraint/record field/enum label checks)
+- ✅ Domain semantic guardrails (duplicate constraint/record field/enum label/domain name checks)
 - ⚠️ Dialect guardrails partial (domain WITH blocks rejected; PG/MYSQL transaction/show guardrails added; qualified-name restrictions enforced; Firebird schema path guardrails added; MySQL/Firebird ALTER DATABASE rename blocked; MySQL table-option allowlist + index USING guardrails added); comprehensive tests pending
 
 ## References

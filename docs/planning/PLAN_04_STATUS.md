@@ -163,6 +163,7 @@
    - Duplicate domain constraint names rejected (case-insensitive)
    - Duplicate RECORD field names rejected (case-insensitive)
    - Duplicate ENUM labels rejected (case-sensitive)
+   - Duplicate domain names rejected (schema-scoped, IF NOT EXISTS allowed)
 2. **Tests Added** ✅
    - Semantic analyzer unit tests cover duplicate constraint/field/label cases
 

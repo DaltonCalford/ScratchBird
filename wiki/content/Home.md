@@ -1,3 +1,5 @@
+![ScratchBird Logo](images/logos/TransparentScratchBirdLogoHeader.png)
+
 # Welcome to ScratchBird Wiki
 
 **Version:** Beta 0.9.x

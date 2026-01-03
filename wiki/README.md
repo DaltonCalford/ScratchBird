@@ -116,10 +116,15 @@ wiki/
 │   └── update-timestamps.sh      # Update "last updated" timestamps
 │
 ├── images/                        # Wiki images and diagrams
-│   ├── architecture/
-│   ├── screenshots/
-│   ├── diagrams/
-│   └── logos/
+│   ├── architecture/              # Architecture diagrams
+│   ├── screenshots/               # UI screenshots
+│   ├── diagrams/                  # General diagrams
+│   └── logos/                     # ScratchBird logos ✅
+│       ├── TransparentScratchBirdLogoHeader.png  # Primary header logo
+│       ├── ScratchBirdLogo.png    # Icon/avatar logo
+│       ├── ScratchBirdLogoHeader.png  # Header with background
+│       ├── LogoWork.svg           # Vector source
+│       └── README.md              # Logo usage guide
 │
 └── assets/                        # Additional assets
     ├── code-samples/              # Tested code examples
@@ -162,6 +167,31 @@ GitHub Actions workflow runs on push to `main`:
 cd wiki
 ./scripts/sync-to-wiki.sh
 ```
+
+---
+
+## Logos and Branding
+
+ScratchBird logos are available in `images/logos/`:
+
+### Primary Logo
+**TransparentScratchBirdLogoHeader.png** - Use this for wiki pages
+```markdown
+![ScratchBird Logo](images/logos/TransparentScratchBirdLogoHeader.png)
+```
+
+### Icon/Avatar
+**ScratchBirdLogo.png** - Use for icons, avatars, small spaces
+
+### Usage Guide
+See [`LOGO_USAGE.md`](LOGO_USAGE.md) for complete guidelines and examples.
+
+### Adding Logos to Pages
+- ✅ Add to major pages (Home, Getting Started, installation guides)
+- ✅ Add to tutorial headers
+- ✅ Add to driver documentation
+- ❌ Don't add to every page (avoid repetition)
+- ❌ Don't use multiple times on same page
 
 ---
 
