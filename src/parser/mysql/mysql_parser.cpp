@@ -2202,39 +2202,16 @@ void Parser::parseAlterStmt() {
         return;
     }
     if (matchKeyword(TokenType::KW_DATABASE) || matchKeyword(TokenType::KW_SCHEMA)) {
-        std::string db_name = parseIdentifier();
-
-        auto emit_alter_database = [&](sblr::AlterDatabaseAction action,
-                                       std::string_view payload) {
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_DATABASE));
-            emitByte(static_cast<uint8_t>(action));
-
-            std::string db_path = buildEmulatedServerRoot(default_schema_);
-            if (!db_path.empty()) {
-                db_path.push_back('.');
-            }
-            db_path += db_name;
-            emitString(db_path);
-            emitString(payload);
-        };
-
+        parseIdentifier();  // database name
         if (matchKeyword(TokenType::KW_RENAME)) {
             consumeKeyword(TokenType::KW_TO, "Expected TO after RENAME");
-            std::string new_name = parseIdentifier();
-            emit_alter_database(sblr::AlterDatabaseAction::RENAME, new_name);
+            parseIdentifier();
+            error("MySQL does not support ALTER DATABASE RENAME");
+            synchronize();
             return;
         }
 
-        // TODO: Add OWNER keyword support
-        // if (matchKeyword(TokenType::KW_OWNER)) {
-        //     consumeKeyword(TokenType::KW_TO, "Expected TO after OWNER");
-        //     std::string owner = parseIdentifier();
-        //     emit_alter_database(sblr::AlterDatabaseAction::SET_OWNER, owner);
-        //     return;
-        // }
-
-        error("ALTER DATABASE supports only RENAME TO in MySQL parser");
+        error("ALTER DATABASE options are not supported in MySQL parser");
         synchronize();
         return;
     }

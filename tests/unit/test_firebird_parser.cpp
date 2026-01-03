@@ -175,6 +175,7 @@ TEST_F(FirebirdParserTest, ParseUnexpectedToken) {
 TEST_F(FirebirdParserTest, DialectGuardrails) {
     expectError("CREATE TABLE a.b (id INTEGER)");
     expectError("SELECT a.b.c FROM t");
+    expectError("ALTER DATABASE testdb RENAME TO otherdb");
 }
 
 // =============================================================================

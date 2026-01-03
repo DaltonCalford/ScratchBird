@@ -479,6 +479,11 @@ TEST_F(MySQLParserTest, TransactionGuardrails) {
     expectError("SET TRANSACTION AUTOCOMMIT ON");
 }
 
+TEST_F(MySQLParserTest, AlterDatabaseGuardrails) {
+    expectError("ALTER DATABASE testdb RENAME TO otherdb");
+    expectError("ALTER SCHEMA testdb RENAME TO otherdb");
+}
+
 TEST_F(MySQLParserTest, QualifiedNameGuardrails) {
     expectError("SHOW COLUMNS FROM a.b.c");
     expectError("SHOW CREATE TABLE a.b.c");
