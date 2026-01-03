@@ -145,13 +145,16 @@ void Parser::parseSelectList() {
                     emit(sblr::Opcode::COLUMN_REF);
                     std::string col = parseIdentifier();
                     emitString(first + "." + col);
+                    parsePostfixTail();
                 } else if (match(TokenType::LEFT_PAREN)) {
                     // Function call
                     parseFunctionCall(first);
+                    parsePostfixTail();
                 } else {
                     // Simple column reference
                     emit(sblr::Opcode::COLUMN_REF);
                     emitString(first);
+                    parsePostfixTail();
                 }
             } else {
                 parseExpression();

@@ -3201,6 +3201,7 @@ Expression* Parser::parseComparisonExpr() {
             auto* expr = parseLikeExpr(left);
             if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
                 likeExpr->negated = true;
+                likeExpr->match_kind = LikeMatchKind::LIKE;
             }
             return expr;
         } else if (matchContextual("ILIKE")) {
@@ -3208,6 +3209,7 @@ Expression* Parser::parseComparisonExpr() {
             if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
                 likeExpr->negated = true;
                 likeExpr->case_insensitive = true;
+                likeExpr->match_kind = LikeMatchKind::ILIKE;
             }
             return expr;
         } else if (matchContextual("SIMILAR")) {
@@ -3216,6 +3218,7 @@ Expression* Parser::parseComparisonExpr() {
             auto* expr = parseLikeExpr(left);
             if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
                 likeExpr->negated = true;
+                likeExpr->match_kind = LikeMatchKind::SIMILAR;
             }
             return expr;
         }
@@ -3235,7 +3238,11 @@ Expression* Parser::parseComparisonExpr() {
 
     // LIKE
     if (match(TokenType::KW_LIKE)) {
-        return parseLikeExpr(left);
+        auto* expr = parseLikeExpr(left);
+        if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
+            likeExpr->match_kind = LikeMatchKind::LIKE;
+        }
+        return expr;
     }
 
     // ILIKE (PostgreSQL case-insensitive LIKE)
@@ -3243,6 +3250,7 @@ Expression* Parser::parseComparisonExpr() {
         auto* expr = parseLikeExpr(left);
         if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
             likeExpr->case_insensitive = true;
+            likeExpr->match_kind = LikeMatchKind::ILIKE;
         }
         return expr;
     }
@@ -3251,7 +3259,11 @@ Expression* Parser::parseComparisonExpr() {
     if (matchContextual("SIMILAR")) {
         expectContextual("TO", "Expected TO after SIMILAR");
         // SIMILAR TO is treated as LIKE with regex semantics
-        return parseLikeExpr(left);
+        auto* expr = parseLikeExpr(left);
+        if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
+            likeExpr->match_kind = LikeMatchKind::SIMILAR;
+        }
+        return expr;
     }
 
     if (match(TokenType::TILDE)) {
@@ -3364,6 +3376,7 @@ Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
             auto* expr = parseLikeExpr(left);
             if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
                 likeExpr->negated = true;
+                likeExpr->match_kind = LikeMatchKind::LIKE;
             }
             return expr;
         } else if (matchContextual("ILIKE")) {
@@ -3371,6 +3384,7 @@ Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
             if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
                 likeExpr->negated = true;
                 likeExpr->case_insensitive = true;
+                likeExpr->match_kind = LikeMatchKind::ILIKE;
             }
             return expr;
         } else if (matchContextual("SIMILAR")) {
@@ -3378,6 +3392,7 @@ Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
             auto* expr = parseLikeExpr(left);
             if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
                 likeExpr->negated = true;
+                likeExpr->match_kind = LikeMatchKind::SIMILAR;
             }
             return expr;
         }
@@ -3394,20 +3409,29 @@ Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
     }
 
     if (match(TokenType::KW_LIKE)) {
-        return parseLikeExpr(left);
+        auto* expr = parseLikeExpr(left);
+        if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
+            likeExpr->match_kind = LikeMatchKind::LIKE;
+        }
+        return expr;
     }
 
     if (matchContextual("ILIKE")) {
         auto* expr = parseLikeExpr(left);
         if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
             likeExpr->case_insensitive = true;
+            likeExpr->match_kind = LikeMatchKind::ILIKE;
         }
         return expr;
     }
 
     if (matchContextual("SIMILAR")) {
         expectContextual("TO", "Expected TO after SIMILAR");
-        return parseLikeExpr(left);
+        auto* expr = parseLikeExpr(left);
+        if (auto* likeExpr = dynamic_cast<LikeExpr*>(expr)) {
+            likeExpr->match_kind = LikeMatchKind::SIMILAR;
+        }
+        return expr;
     }
 
     if (match(TokenType::TILDE)) {
@@ -4537,23 +4561,12 @@ SetStmt* Parser::parseSet() {
         return stmt;
     }
 
-    // SET PARSER VERSION 2
     if (matchContextual("PARSER")) {
         expectContextual("VERSION", "Expected VERSION after PARSER");
-        stmt->set_type = SetStmt::SetType::PARSER_VERSION;
-
-        // Expect integer 2
         if (check(TokenType::INTEGER_LITERAL)) {
-            int64_t version = current().value.int_value;
             advance();
-            if (version == 2) {
-                stmt->parser_version = static_cast<uint8_t>(version);
-            } else {
-                error("Parser version must be 2");
-            }
-        } else {
-            error("Expected parser version (2)");
         }
+        error("SET PARSER VERSION is not supported (V1 parser removed)");
         stmt->span = makeSpan(start);
         return stmt;
     }
@@ -4797,10 +4810,11 @@ ShowStmt* Parser::parseShow() {
     else if (matchContextual("SYSTEM")) {
         stmt->show_type = ShowStmt::ShowType::SYSTEM;
     }
-    // SHOW PARSER VERSION
+    // SHOW PARSER VERSION (unsupported)
     else if (matchContextual("PARSER")) {
         expectContextual("VERSION", "Expected VERSION after PARSER");
-        stmt->show_type = ShowStmt::ShowType::PARSER_VERSION;
+        error("SHOW PARSER VERSION is not supported (V1 parser removed)");
+        stmt->show_type = ShowStmt::ShowType::VARIABLE;
     }
     // Default: SHOW variable_name
     else {

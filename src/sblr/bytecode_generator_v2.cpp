@@ -6,6 +6,7 @@
 
 #include "scratchbird/sblr/bytecode_generator_v2.h"
 #include "scratchbird/sblr/semantic_analyzer_v2.h"
+#include "scratchbird/core/catalog_manager.h"
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -13,6 +14,7 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <unordered_set>
 
 namespace scratchbird::parser::v2 {
 
@@ -35,6 +37,233 @@ uint8_t mapIsolationLevel(IsolationLevel level) {
 
 uint8_t mapWaitMode(TransactionWaitMode mode) {
     return mode == TransactionWaitMode::WAIT ? 1 : 0;
+}
+
+using ObjectType = scratchbird::core::CatalogManager::ObjectType;
+
+bool isZeroUuid(const scratchbird::core::ID& id) {
+    for (auto byte : id.bytes) {
+        if (byte != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+ObjectType mapTableRefType(ResolvedTableRef::ObjectType type) {
+    switch (type) {
+        case ResolvedTableRef::ObjectType::TABLE:
+            return ObjectType::TABLE;
+        case ResolvedTableRef::ObjectType::VIEW:
+        case ResolvedTableRef::ObjectType::MATERIALIZED_VIEW:
+            return ObjectType::VIEW;
+        default:
+            return ObjectType::UNKNOWN;
+    }
+}
+
+void addDependency(std::vector<std::pair<scratchbird::core::ID, ObjectType>>& deps,
+                   std::unordered_set<scratchbird::core::ID, scratchbird::core::IDHash>& seen,
+                   const scratchbird::core::ID& id,
+                   ObjectType type) {
+    if (type == ObjectType::UNKNOWN || isZeroUuid(id)) {
+        return;
+    }
+    if (seen.insert(id).second) {
+        deps.emplace_back(id, type);
+    }
+}
+
+void collectDependenciesFromStatement(ResolvedStatement* stmt,
+                                      std::vector<std::pair<scratchbird::core::ID, ObjectType>>& deps,
+                                      std::unordered_set<scratchbird::core::ID, scratchbird::core::IDHash>& seen);
+
+void collectDependenciesFromExpression(ResolvedExpression* expr,
+                                       std::vector<std::pair<scratchbird::core::ID, ObjectType>>& deps,
+                                       std::unordered_set<scratchbird::core::ID, scratchbird::core::IDHash>& seen);
+
+void collectDependenciesFromOrderBy(ResolvedOrderByItem* item,
+                                    std::vector<std::pair<scratchbird::core::ID, ObjectType>>& deps,
+                                    std::unordered_set<scratchbird::core::ID, scratchbird::core::IDHash>& seen) {
+    if (!item) {
+        return;
+    }
+    collectDependenciesFromExpression(item->expr, deps, seen);
+}
+
+void collectDependenciesFromWindow(ResolvedWindowSpec* window,
+                                   std::vector<std::pair<scratchbird::core::ID, ObjectType>>& deps,
+                                   std::unordered_set<scratchbird::core::ID, scratchbird::core::IDHash>& seen) {
+    if (!window) {
+        return;
+    }
+    for (auto* expr : window->partition_by) {
+        collectDependenciesFromExpression(expr, deps, seen);
+    }
+    for (auto* item : window->order_by) {
+        collectDependenciesFromOrderBy(item, deps, seen);
+    }
+    if (window->has_frame) {
+        collectDependenciesFromExpression(window->frame_start.offset, deps, seen);
+        collectDependenciesFromExpression(window->frame_end.offset, deps, seen);
+    }
+}
+
+void collectDependenciesFromExpression(ResolvedExpression* expr,
+                                       std::vector<std::pair<scratchbird::core::ID, ObjectType>>& deps,
+                                       std::unordered_set<scratchbird::core::ID, scratchbird::core::IDHash>& seen) {
+    if (!expr) {
+        return;
+    }
+
+    if (auto* binary = dynamic_cast<ResolvedBinaryExpr*>(expr)) {
+        collectDependenciesFromExpression(binary->left, deps, seen);
+        collectDependenciesFromExpression(binary->right, deps, seen);
+    } else if (auto* unary = dynamic_cast<ResolvedUnaryExpr*>(expr)) {
+        collectDependenciesFromExpression(unary->operand, deps, seen);
+    } else if (auto* fn = dynamic_cast<ResolvedFunctionCall*>(expr)) {
+        if (!isZeroUuid(fn->function.function_uuid) && !fn->function.is_builtin) {
+            addDependency(deps, seen, fn->function.function_uuid, ObjectType::FUNCTION);
+        }
+        for (auto* arg : fn->arguments) {
+            collectDependenciesFromExpression(arg, deps, seen);
+        }
+        collectDependenciesFromExpression(fn->filter, deps, seen);
+        collectDependenciesFromExpression(fn->separator, deps, seen);
+        for (auto* item : fn->internal_order_by) {
+            collectDependenciesFromOrderBy(item, deps, seen);
+        }
+        if (fn->is_window) {
+            collectDependenciesFromWindow(fn->window, deps, seen);
+        }
+    } else if (auto* cast = dynamic_cast<ResolvedCast*>(expr)) {
+        collectDependenciesFromExpression(cast->expr, deps, seen);
+    } else if (auto* case_expr = dynamic_cast<ResolvedCase*>(expr)) {
+        collectDependenciesFromExpression(case_expr->operand, deps, seen);
+        for (const auto& when : case_expr->when_clauses) {
+            collectDependenciesFromExpression(when.when_expr, deps, seen);
+            collectDependenciesFromExpression(when.then_expr, deps, seen);
+        }
+        collectDependenciesFromExpression(case_expr->else_expr, deps, seen);
+    } else if (auto* sub = dynamic_cast<ResolvedSubqueryExpr*>(expr)) {
+        collectDependenciesFromStatement(sub->subquery, deps, seen);
+    } else if (auto* exists_expr = dynamic_cast<ResolvedExistsExpr*>(expr)) {
+        collectDependenciesFromStatement(exists_expr->subquery, deps, seen);
+    } else if (auto* in_expr = dynamic_cast<ResolvedInExpr*>(expr)) {
+        collectDependenciesFromExpression(in_expr->expr, deps, seen);
+        for (auto* value : in_expr->values) {
+            collectDependenciesFromExpression(value, deps, seen);
+        }
+        if (in_expr->has_subquery) {
+            collectDependenciesFromStatement(in_expr->subquery, deps, seen);
+        }
+    } else if (auto* between = dynamic_cast<ResolvedBetweenExpr*>(expr)) {
+        collectDependenciesFromExpression(between->expr, deps, seen);
+        collectDependenciesFromExpression(between->low, deps, seen);
+        collectDependenciesFromExpression(between->high, deps, seen);
+    } else if (auto* like_expr = dynamic_cast<ResolvedLikeExpr*>(expr)) {
+        collectDependenciesFromExpression(like_expr->expr, deps, seen);
+        collectDependenciesFromExpression(like_expr->pattern, deps, seen);
+        collectDependenciesFromExpression(like_expr->escape, deps, seen);
+    } else if (auto* is_null = dynamic_cast<ResolvedIsNullExpr*>(expr)) {
+        collectDependenciesFromExpression(is_null->expr, deps, seen);
+    } else if (auto* array_expr = dynamic_cast<ResolvedArrayExpr*>(expr)) {
+        for (auto* element : array_expr->elements) {
+            collectDependenciesFromExpression(element, deps, seen);
+        }
+        if (array_expr->has_subquery) {
+            collectDependenciesFromStatement(array_expr->subquery, deps, seen);
+        }
+    }
+}
+
+void collectDependenciesFromTableRef(ResolvedTableRef* table_ref,
+                                     std::vector<std::pair<scratchbird::core::ID, ObjectType>>& deps,
+                                     std::unordered_set<scratchbird::core::ID, scratchbird::core::IDHash>& seen) {
+    if (!table_ref) {
+        return;
+    }
+    ObjectType obj_type = mapTableRefType(table_ref->object_type);
+    addDependency(deps, seen, table_ref->table_uuid, obj_type);
+    addDependency(deps, seen, table_ref->schema_uuid, ObjectType::SCHEMA);
+    if (table_ref->subquery) {
+        collectDependenciesFromStatement(table_ref->subquery, deps, seen);
+    }
+}
+
+void collectDependenciesFromStatement(ResolvedStatement* stmt,
+                                      std::vector<std::pair<scratchbird::core::ID, ObjectType>>& deps,
+                                      std::unordered_set<scratchbird::core::ID, scratchbird::core::IDHash>& seen) {
+    if (!stmt) {
+        return;
+    }
+
+    if (auto* select = dynamic_cast<ResolvedSelectStmt*>(stmt)) {
+        for (auto* table_ref : select->from_tables) {
+            collectDependenciesFromTableRef(table_ref, deps, seen);
+        }
+        for (auto* join : select->joins) {
+            if (join) {
+                collectDependenciesFromTableRef(join->left, deps, seen);
+                collectDependenciesFromTableRef(join->right, deps, seen);
+                collectDependenciesFromExpression(join->on_condition, deps, seen);
+            }
+        }
+        for (auto& item : select->select_list) {
+            if (item.item_type == ResolvedSelectItem::ItemType::EXPRESSION) {
+                collectDependenciesFromExpression(item.expr, deps, seen);
+            }
+        }
+        collectDependenciesFromExpression(select->where, deps, seen);
+        for (auto* expr : select->group_by) {
+            collectDependenciesFromExpression(expr, deps, seen);
+        }
+        collectDependenciesFromExpression(select->having, deps, seen);
+        for (auto* item : select->order_by) {
+            collectDependenciesFromOrderBy(item, deps, seen);
+        }
+        collectDependenciesFromExpression(select->limit, deps, seen);
+        collectDependenciesFromExpression(select->offset, deps, seen);
+        if (select->set_op_right) {
+            collectDependenciesFromStatement(select->set_op_right, deps, seen);
+        }
+    } else if (auto* insert = dynamic_cast<ResolvedInsertStmt*>(stmt)) {
+        collectDependenciesFromTableRef(&insert->target_table, deps, seen);
+        for (auto& row : insert->values_rows) {
+            for (auto* expr : row) {
+                collectDependenciesFromExpression(expr, deps, seen);
+            }
+        }
+        if (insert->select_source) {
+            collectDependenciesFromStatement(insert->select_source, deps, seen);
+        }
+    } else if (auto* update = dynamic_cast<ResolvedUpdateStmt*>(stmt)) {
+        collectDependenciesFromTableRef(&update->target_table, deps, seen);
+        for (const auto& table_ref : update->from_tables) {
+            collectDependenciesFromTableRef(table_ref, deps, seen);
+        }
+        for (const auto& assignment : update->assignments) {
+            collectDependenciesFromExpression(assignment.second, deps, seen);
+        }
+        for (const auto& join : update->joins) {
+            if (join) {
+                collectDependenciesFromTableRef(join->left, deps, seen);
+                collectDependenciesFromTableRef(join->right, deps, seen);
+                collectDependenciesFromExpression(join->on_condition, deps, seen);
+            }
+        }
+        collectDependenciesFromExpression(update->where, deps, seen);
+    } else if (auto* del = dynamic_cast<ResolvedDeleteStmt*>(stmt)) {
+        collectDependenciesFromTableRef(&del->target_table, deps, seen);
+        collectDependenciesFromExpression(del->where, deps, seen);
+    }
+}
+
+std::vector<std::pair<scratchbird::core::ID, ObjectType>> collectDependencies(ResolvedStatement* stmt) {
+    std::vector<std::pair<scratchbird::core::ID, ObjectType>> deps;
+    std::unordered_set<scratchbird::core::ID, scratchbird::core::IDHash> seen;
+    collectDependenciesFromStatement(stmt, deps, seen);
+    return deps;
 }
 
 } // namespace
@@ -574,11 +803,17 @@ void BytecodeGeneratorV2::generateCreateView(ResolvedCreateViewStmt* stmt) {
         current_result_->writeOpcode(sblr::Opcode::CREATE_VIEW);
     }
 
+    std::vector<std::pair<scratchbird::core::ID, ObjectType>> deps;
+    if (stmt->query) {
+        deps = collectDependencies(stmt->query);
+    }
+
     // Write flags
     uint8_t flags = 0;
     if (stmt->or_replace) flags |= 0x01;
     if (stmt->materialized) flags |= 0x02;
     if (stmt->check_option) flags |= 0x04;
+    if (!deps.empty()) flags |= 0x10;
     current_result_->writeByte(flags);
 
     // Write schema UUID
@@ -596,6 +831,14 @@ void BytecodeGeneratorV2::generateCreateView(ResolvedCreateViewStmt* stmt) {
     // Write query
     if (stmt->query) {
         generateSelect(stmt->query);
+    }
+
+    if (!deps.empty()) {
+        current_result_->writeInt32(static_cast<uint32_t>(deps.size()));
+        for (const auto& dep : deps) {
+            current_result_->writeUUID(dep.first);
+            current_result_->writeByte(static_cast<uint8_t>(dep.second));
+        }
     }
 }
 
@@ -1323,12 +1566,6 @@ void BytecodeGeneratorV2::generateSet(ResolvedSetStmt* stmt) {
             }
             break;
 
-        case SetStmt::SetType::PARSER_VERSION:
-            current_result_->writeExtendedOpcode(
-                sblr::ExtendedOpcode::EXT_SET_PARSER_VERSION);
-            current_result_->writeByte(stmt->parser_version);  // 1 or 2
-            break;
-
         default:
             // Generic SET variable = value
             current_result_->writeExtendedOpcode(
@@ -1513,13 +1750,6 @@ void BytecodeGeneratorV2::generateShow(ResolvedShowStmt* stmt) {
         case ShowStmt::ShowType::SYSTEM:
             current_result_->writeExtendedOpcode(
                 sblr::ExtendedOpcode::EXT_SHOW_SYSTEM);
-            break;
-
-        case ShowStmt::ShowType::PARSER_VERSION:
-            current_result_->writeExtendedOpcode(
-                sblr::ExtendedOpcode::EXT_SHOW_VARIABLE);
-            // Write "parser_version" as the variable name
-            writeStringId(stmt->variable_name);
             break;
 
         default:
@@ -2129,13 +2359,42 @@ void BytecodeGeneratorV2::generateBetween(ResolvedBetweenExpr* expr) {
 }
 
 void BytecodeGeneratorV2::generateLike(ResolvedLikeExpr* expr) {
+    if (expr->match_kind == LikeMatchKind::SIMILAR) {
+        generateExpression(expr->expr);
+        generateExpression(expr->pattern);
+
+        if (expr->escape) {
+            current_result_->addWarning("SIMILAR TO ESCAPE is not supported; ignoring ESCAPE clause");
+        }
+
+        if (expr->negated) {
+            current_result_->writeExtendedOpcode(expr->case_insensitive ?
+                                                    sblr::ExtendedOpcode::EXT_REGEX_NOT_MATCH_CI :
+                                                    sblr::ExtendedOpcode::EXT_REGEX_NOT_MATCH);
+        } else {
+            current_result_->writeExtendedOpcode(expr->case_insensitive ?
+                                                    sblr::ExtendedOpcode::EXT_REGEX_MATCH_CI :
+                                                    sblr::ExtendedOpcode::EXT_REGEX_MATCH);
+        }
+        return;
+    }
+
     generateExpression(expr->expr);
     generateExpression(expr->pattern);
 
-    if (expr->case_insensitive) {
-        current_result_->writeOpcode(sblr::Opcode::EXPR_ILIKE);
+    if (expr->escape) {
+        generateExpression(expr->escape);
+        if (expr->case_insensitive) {
+            current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_ILIKE_ESCAPE);
+        } else {
+            current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_LIKE_ESCAPE);
+        }
     } else {
-        current_result_->writeOpcode(sblr::Opcode::EXPR_LIKE);
+        if (expr->case_insensitive) {
+            current_result_->writeOpcode(sblr::Opcode::EXPR_ILIKE);
+        } else {
+            current_result_->writeOpcode(sblr::Opcode::EXPR_LIKE);
+        }
     }
 
     // Handle NOT LIKE
@@ -2149,9 +2408,9 @@ void BytecodeGeneratorV2::generateLike(ResolvedLikeExpr* expr) {
 void BytecodeGeneratorV2::generateIsNull(ResolvedIsNullExpr* expr) {
     generateExpression(expr->expr);
 
-    // IS NULL: compare with NULL using special opcode
+    // IS NULL: NULL-safe equality against NULL literal
     current_result_->writeOpcode(sblr::Opcode::LITERAL_NULL);
-    current_result_->writeOpcode(sblr::Opcode::EXPR_EQ);
+    current_result_->writeExtendedOpcode(sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ);
 
     // Handle IS NOT NULL
     if (expr->negated) {

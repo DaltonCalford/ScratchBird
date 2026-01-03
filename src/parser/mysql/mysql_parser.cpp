@@ -307,6 +307,7 @@ void Parser::emitString(std::string_view str) {
 ParseResult Parser::parseStatement() {
     bytecode_.clear();
     errors_.clear();
+    next_placeholder_index_ = 1;
 
     // Emit SBLR version header
     emit(sblr::Opcode::VERSION);
@@ -932,22 +933,41 @@ void Parser::parseComparisonExpr() {
     } else if (match(TokenType::NULL_SAFE_EQUAL)) {
         // MySQL's <=> operator
         parseBitwiseOrExpr();
-        emit(sblr::Opcode::EXPR_EQ);  // TODO: NULL-safe semantics
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
     } else if (matchKeyword(TokenType::KW_IS)) {
         // IS [NOT] NULL / IS [NOT] TRUE / IS [NOT] FALSE
         bool is_not = matchKeyword(TokenType::KW_NOT);
 
         if (matchKeyword(TokenType::KW_NULL)) {
             emit(sblr::Opcode::LITERAL_NULL);
-            emit(is_not ? sblr::Opcode::EXPR_NE : sblr::Opcode::EXPR_EQ);
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
+            if (is_not) {
+                emit(sblr::Opcode::LITERAL_INT32);
+                emitU32(0);
+                emit(sblr::Opcode::EXPR_EQ);
+            }
         } else if (matchKeyword(TokenType::KW_TRUE)) {
             emit(sblr::Opcode::LITERAL_INT32);
             emitU32(1);
-            emit(is_not ? sblr::Opcode::EXPR_NE : sblr::Opcode::EXPR_EQ);
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
+            if (is_not) {
+                emit(sblr::Opcode::LITERAL_INT32);
+                emitU32(0);
+                emit(sblr::Opcode::EXPR_EQ);
+            }
         } else if (matchKeyword(TokenType::KW_FALSE)) {
             emit(sblr::Opcode::LITERAL_INT32);
             emitU32(0);
-            emit(is_not ? sblr::Opcode::EXPR_NE : sblr::Opcode::EXPR_EQ);
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
+            if (is_not) {
+                emit(sblr::Opcode::LITERAL_INT32);
+                emitU32(0);
+                emit(sblr::Opcode::EXPR_EQ);
+            }
         }
     } else if (matchKeyword(TokenType::KW_IN)) {
         // IN (value_list) or IN (subquery)
@@ -991,12 +1011,17 @@ void Parser::parseComparisonExpr() {
         emit(sblr::Opcode::EXPR_AND);
     } else if (matchKeyword(TokenType::KW_LIKE)) {
         parseAdditiveExpr();
-        emit(sblr::Opcode::EXPR_LIKE);
-
-        // Optional ESCAPE
+        bool has_escape = false;
         if (matchKeyword(TokenType::KW_ESCAPE)) {
             parseAdditiveExpr();
-            // TODO: Handle escape character
+            has_escape = true;
+        }
+
+        if (has_escape) {
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_LIKE_ESCAPE));
+        } else {
+            emit(sblr::Opcode::EXPR_LIKE);
         }
     } else if (matchKeyword(TokenType::KW_REGEXP) || matchKeyword(TokenType::KW_RLIKE)) {
         parseAdditiveExpr();
@@ -1196,7 +1221,14 @@ void Parser::parsePrimaryExpr() {
 
     // Placeholder (?)
     if (match(TokenType::PLACEHOLDER)) {
-        emit(sblr::Opcode::LITERAL_NULL);  // TODO: Proper placeholder handling
+        if (next_placeholder_index_ > std::numeric_limits<uint16_t>::max()) {
+            error("Too many placeholders in statement");
+            return;
+        }
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_PLACEHOLDER));
+        emitU16(static_cast<uint16_t>(next_placeholder_index_++));
+        emitU16(0);  // type hint unknown
         return;
     }
 
@@ -2023,6 +2055,11 @@ void Parser::parseReplaceStmt() {
 
 void Parser::parseCreateStmt() {
     advance();  // Consume CREATE
+    if (matchIdentifierKeyword("DOMAIN")) {
+        error("MySQL does not support CREATE DOMAIN");
+        synchronize();
+        return;
+    }
     if (matchKeyword(TokenType::KW_DATABASE) || matchKeyword(TokenType::KW_SCHEMA)) {
         parseCreateDatabase();
         return;
@@ -2154,6 +2191,11 @@ void Parser::parseRenameStmt() {
 
 void Parser::parseAlterStmt() {
     advance();  // Consume ALTER
+    if (matchIdentifierKeyword("DOMAIN")) {
+        error("MySQL does not support ALTER DOMAIN");
+        synchronize();
+        return;
+    }
     if (matchKeyword(TokenType::KW_DATABASE) || matchKeyword(TokenType::KW_SCHEMA)) {
         std::string db_name = parseIdentifier();
 
@@ -2311,6 +2353,11 @@ void Parser::parseAlterStmt() {
 
 void Parser::parseDropStmt() {
     advance();  // Consume DROP
+    if (matchIdentifierKeyword("DOMAIN")) {
+        error("MySQL does not support DROP DOMAIN");
+        synchronize();
+        return;
+    }
     if (matchKeyword(TokenType::KW_DATABASE) || matchKeyword(TokenType::KW_SCHEMA)) {
         bool if_exists = false;
         if (matchKeyword(TokenType::KW_IF)) {
@@ -2369,6 +2416,7 @@ void Parser::parseCreateTable() {
     }
     resolveTableName(schema, table);
 
+    emit(sblr::Opcode::TABLE_REF);
     emitString(schema + "/" + table);
 
     // Column definitions
@@ -2380,57 +2428,136 @@ void Parser::parseCreateTable() {
 
     uint32_t col_count = 0;
     do {
-        // Check for constraint definitions
+        bool emitted_entry = false;
         if (check(TokenType::KW_PRIMARY) || check(TokenType::KW_UNIQUE) ||
             check(TokenType::KW_FOREIGN) || check(TokenType::KW_KEY) ||
             check(TokenType::KW_INDEX) || check(TokenType::KW_FULLTEXT) ||
             check(TokenType::KW_SPATIAL) || check(TokenType::KW_CONSTRAINT) ||
             check(TokenType::KW_CHECK)) {
-            // TODO: Parse table constraints
-            // For now, skip to end
-            while (!check(TokenType::RIGHT_PAREN) && !check(TokenType::COMMA) &&
-                   !check(TokenType::END_OF_FILE)) {
-                advance();
+            std::string constraint_name;
+            if (matchKeyword(TokenType::KW_CONSTRAINT)) {
+                constraint_name = parseIdentifier();
             }
-            continue;
-        }
 
-        // Column definition
-        ColumnDef col = parseColumnDef();
+            if (matchKeyword(TokenType::KW_PRIMARY)) {
+                consumeKeyword(TokenType::KW_KEY, "Expected KEY after PRIMARY");
+                IndexDef idx = parseIndexDef();
+                idx.type = IndexDef::Type::PRIMARY;
 
-        emit(sblr::Opcode::COLUMN_DEF);
-        emitString(col.name);
+                emit(sblr::Opcode::PRIMARY_KEY);
+                emitString(!constraint_name.empty() ? constraint_name : idx.name);
+                emit(sblr::Opcode::BEGIN_LIST);
+                size_t pk_count_pos = bytecode_.size();
+                emitU32(0);
+                uint32_t pk_count = 0;
+                for (const auto& col : idx.columns) {
+                    emit(sblr::Opcode::COLUMN_REF);
+                    emitString(col);
+                    pk_count++;
+                }
+                sblr::writeInt32(&bytecode_[pk_count_pos], pk_count);
+                emit(sblr::Opcode::END_LIST);
+                emitted_entry = true;
+            } else if (matchKeyword(TokenType::KW_UNIQUE)) {
+                matchKeyword(TokenType::KW_KEY);
+                matchKeyword(TokenType::KW_INDEX);
+                IndexDef idx = parseIndexDef();
+                idx.type = IndexDef::Type::UNIQUE;
 
-        // Emit type
-        emit(typeToOpcode(col.type.kind));
-        if (col.type.length > 0) {
-            emitU32(col.type.length);
-        }
+                emit(sblr::Opcode::UNIQUE_CONSTRAINT);
+                emitString(!constraint_name.empty() ? constraint_name : idx.name);
+                emit(sblr::Opcode::BEGIN_LIST);
+                size_t uq_count_pos = bytecode_.size();
+                emitU32(0);
+                uint32_t uq_count = 0;
+                for (const auto& col : idx.columns) {
+                    emit(sblr::Opcode::COLUMN_REF);
+                    emitString(col);
+                    uq_count++;
+                }
+                sblr::writeInt32(&bytecode_[uq_count_pos], uq_count);
+                emit(sblr::Opcode::END_LIST);
+                emitted_entry = true;
+            } else if (matchKeyword(TokenType::KW_FOREIGN)) {
+                consumeKeyword(TokenType::KW_KEY, "Expected KEY after FOREIGN");
+                ForeignKeyDef fk = parseForeignKeyDef();
+                if (!constraint_name.empty() && fk.name.empty()) {
+                    fk.name = constraint_name;
+                }
 
-        // Constraints
-        if (!col.type.nullable) {
-            emit(sblr::Opcode::NOT_NULL);
-        }
-        if (col.primary_key) {
-            emit(sblr::Opcode::PRIMARY_KEY);
-        }
-        if (col.unique) {
-            emit(sblr::Opcode::UNIQUE_CONSTRAINT);
-        }
-        if (col.auto_increment) {
-            emit(sblr::Opcode::IDENTITY_COLUMN);
-        }
-        if (col.has_default) {
-            emit(sblr::Opcode::DEFAULT_VALUE);
-            if (col.default_is_null) {
-                emit(sblr::Opcode::LITERAL_NULL);
-            } else {
-                emit(sblr::Opcode::LITERAL_STRING);
-                emitString(col.default_value);
+                emit(sblr::Opcode::TABLE_FK);
+                emitString(fk.name);
+                emit(sblr::Opcode::BEGIN_LIST);
+                emitU32(static_cast<uint32_t>(fk.columns.size()));
+                for (const auto& col : fk.columns) {
+                    emit(sblr::Opcode::COLUMN_REF);
+                    emitString(col);
+                }
+                emit(sblr::Opcode::END_LIST);
+                emitString(fk.ref_table);
+                emit(sblr::Opcode::BEGIN_LIST);
+                emitU32(static_cast<uint32_t>(fk.ref_columns.size()));
+                for (const auto& col : fk.ref_columns) {
+                    emit(sblr::Opcode::COLUMN_REF);
+                    emitString(col);
+                }
+                emit(sblr::Opcode::END_LIST);
+                emitted_entry = true;
+            } else if (matchKeyword(TokenType::KW_CHECK)) {
+                emit(sblr::Opcode::CHECK_CONSTRAINT);
+                emitString(constraint_name);
+                consume(TokenType::LEFT_PAREN, "Expected (");
+                parseExpression();
+                consume(TokenType::RIGHT_PAREN, "Expected )");
+                emitted_entry = true;
+            } else if (matchKeyword(TokenType::KW_FULLTEXT) || matchKeyword(TokenType::KW_SPATIAL)) {
+                matchKeyword(TokenType::KW_KEY);
+                matchKeyword(TokenType::KW_INDEX);
+                parseIndexDef(); // Accept syntax; no-op emission for now.
+            } else if (matchKeyword(TokenType::KW_KEY) || matchKeyword(TokenType::KW_INDEX)) {
+                parseIndexDef(); // Accept syntax; no-op emission for now.
             }
+        } else {
+            ColumnDef col = parseColumnDef();
+
+            emit(sblr::Opcode::COLUMN_DEF);
+            emitString(col.name);
+
+            emit(typeToOpcode(col.type.kind));
+            if (col.type.length > 0) {
+                emitU32(col.type.length);
+            }
+
+            if (!col.type.nullable) {
+                emit(sblr::Opcode::NOT_NULL);
+            }
+            if (col.primary_key) {
+                emit(sblr::Opcode::PRIMARY_KEY);
+                emitString("");
+            }
+            if (col.unique) {
+                emit(sblr::Opcode::UNIQUE_CONSTRAINT);
+                emitString("");
+            }
+            if (col.auto_increment) {
+                emit(sblr::Opcode::IDENTITY_COLUMN);
+            }
+            if (col.has_default) {
+                emit(sblr::Opcode::DEFAULT_VALUE);
+                if (col.default_is_null) {
+                    emit(sblr::Opcode::LITERAL_NULL);
+                } else {
+                    emit(sblr::Opcode::LITERAL_STRING);
+                    emitString(col.default_value);
+                }
+            }
+
+            emitted_entry = true;
         }
 
-        col_count++;
+        if (emitted_entry) {
+            col_count++;
+        }
     } while (match(TokenType::COMMA));
 
     sblr::writeInt32(&bytecode_[col_count_pos], col_count);
@@ -2603,6 +2730,12 @@ MySQLDataType Parser::parseDataType() {
         type.kind = MySQLDataType::Kind::JSON;
     } else if (matchKeyword(TokenType::KW_GEOMETRY)) {
         type.kind = MySQLDataType::Kind::GEOMETRY;
+    } else if (matchKeyword(TokenType::KW_POINT)) {
+        type.kind = MySQLDataType::Kind::POINT;
+    } else if (matchKeyword(TokenType::KW_LINESTRING)) {
+        type.kind = MySQLDataType::Kind::LINESTRING;
+    } else if (matchKeyword(TokenType::KW_POLYGON)) {
+        type.kind = MySQLDataType::Kind::POLYGON;
     } else {
         error("Expected data type");
         return type;
@@ -2698,7 +2831,10 @@ sblr::Opcode Parser::typeToOpcode(MySQLDataType::Kind kind) {
         case MySQLDataType::Kind::JSON:
             return sblr::Opcode::TYPE_JSON;
         case MySQLDataType::Kind::GEOMETRY:
-            return sblr::Opcode::EXTENDED_OPCODE;  // TODO: Proper geometry type
+        case MySQLDataType::Kind::POINT:
+        case MySQLDataType::Kind::LINESTRING:
+        case MySQLDataType::Kind::POLYGON:
+            return sblr::Opcode::TYPE_BLOB;
         default:
             return sblr::Opcode::TYPE_VARCHAR;
     }
@@ -2771,13 +2907,115 @@ void Parser::parseCreateTrigger() {
 }
 
 IndexDef Parser::parseIndexDef() {
-    // TODO: Implement
-    return IndexDef();
+    IndexDef idx;
+
+    if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
+        idx.name = parseIdentifier();
+    }
+
+    if (matchKeyword(TokenType::KW_USING)) {
+        idx.algorithm = parseIdentifier();
+    }
+
+    consume(TokenType::LEFT_PAREN, "Expected (");
+    do {
+        idx.columns.push_back(parseIdentifier());
+        int length = 0;
+        if (match(TokenType::LEFT_PAREN)) {
+            if (check(TokenType::INTEGER_LITERAL)) {
+                length = static_cast<int>(current_token_.value.int_value);
+                advance();
+            }
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+        }
+        idx.column_lengths.push_back(length);
+
+        if (matchKeyword(TokenType::KW_ASC) || matchKeyword(TokenType::KW_DESC)) {
+            // Ignore sort order for now.
+        }
+    } while (match(TokenType::COMMA));
+    consume(TokenType::RIGHT_PAREN, "Expected )");
+
+    while (!check(TokenType::COMMA) && !check(TokenType::RIGHT_PAREN) &&
+           !check(TokenType::END_OF_FILE)) {
+        if (matchKeyword(TokenType::KW_USING)) {
+            idx.algorithm = parseIdentifier();
+        } else if (matchKeyword(TokenType::KW_COMMENT)) {
+            if (check(TokenType::STRING_LITERAL)) {
+                idx.comment = std::string(lexer_.stringPool().get(current_token_.value.string_id));
+                advance();
+            } else if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
+                idx.comment = parseIdentifier();
+            }
+        } else if (matchKeyword(TokenType::KW_WITH)) {
+            if (matchIdentifierKeyword("PARSER")) {
+                parseIdentifier();
+            }
+        } else {
+            advance();
+        }
+    }
+
+    return idx;
 }
 
 ForeignKeyDef Parser::parseForeignKeyDef() {
-    // TODO: Implement
-    return ForeignKeyDef();
+    ForeignKeyDef fk;
+
+    if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
+        fk.name = parseIdentifier();
+    }
+
+    consume(TokenType::LEFT_PAREN, "Expected (");
+    do {
+        fk.columns.push_back(parseIdentifier());
+    } while (match(TokenType::COMMA));
+    consume(TokenType::RIGHT_PAREN, "Expected )");
+
+    consumeKeyword(TokenType::KW_REFERENCES, "Expected REFERENCES");
+    std::string ref_schema;
+    std::string ref_table = parseIdentifier();
+    if (match(TokenType::DOT)) {
+        ref_schema = ref_table;
+        ref_table = parseIdentifier();
+    }
+    resolveTableName(ref_schema, ref_table);
+    fk.ref_table = ref_schema + "/" + ref_table;
+
+    if (match(TokenType::LEFT_PAREN)) {
+        do {
+            fk.ref_columns.push_back(parseIdentifier());
+        } while (match(TokenType::COMMA));
+        consume(TokenType::RIGHT_PAREN, "Expected )");
+    }
+
+    while (matchKeyword(TokenType::KW_ON)) {
+        std::string* action = nullptr;
+        if (matchKeyword(TokenType::KW_DELETE)) {
+            action = &fk.on_delete;
+        } else if (matchKeyword(TokenType::KW_UPDATE)) {
+            action = &fk.on_update;
+        }
+
+        if (action) {
+            if (matchKeyword(TokenType::KW_CASCADE)) {
+                *action = "CASCADE";
+            } else if (matchKeyword(TokenType::KW_RESTRICT)) {
+                *action = "RESTRICT";
+            } else if (matchKeyword(TokenType::KW_SET)) {
+                if (matchKeyword(TokenType::KW_NULL)) {
+                    *action = "SET NULL";
+                } else if (matchKeyword(TokenType::KW_DEFAULT)) {
+                    *action = "SET DEFAULT";
+                }
+            } else if (matchKeyword(TokenType::KW_NO)) {
+                consumeKeyword(TokenType::KW_ACTION, "Expected ACTION");
+                *action = "NO ACTION";
+            }
+        }
+    }
+
+    return fk;
 }
 
 // ============================================================================

@@ -12,7 +12,9 @@ and replaces parser-coupled expression logic with an engine-owned expression IR.
 P0 (architecture correction, required before Beta).
 
 ## Status (Current)
-Draft. No remediation work started.
+In progress. Compiler/runtime build split started (new compiler target + optimizer runtime/compiler split);
+engine targets no longer link parser libraries; executor compiler paths are now gated. Remaining work
+is parser-agnostic IR, optimizer decoupling, and full compiler relocation.
 
 ## Last Updated
 2026-01-02
@@ -26,13 +28,11 @@ Draft. No remediation work started.
 
 ## Observed Deviations (Concrete)
 1) **Engine links parser libraries.**
-   - `src/CMakeLists.txt` links `scratchbird_parser` into `scratchbird_sblr`,
-     `scratchbird_optimizer`, and the `scratchbird` binary.
+   - Partially resolved: `scratchbird_sblr` and engine binaries no longer link parser libs,
+     but executor still references compiler-only features when enabled.
 2) **Compiler pipeline lives inside engine libs.**
-   - `src/sblr/query_compiler_v2.cpp` + `include/scratchbird/sblr/query_compiler_v2.h`
-     compile SQL inside the engine using parser V2.
-   - `src/sblr/semantic_analyzer_v2.cpp` and `src/sblr/bytecode_generator_v2.cpp`
-     live in the SBLR runtime library.
+   - Partially resolved: compiler sources are now built as `scratchbird_compiler`,
+     but executor still uses compiler for view execution/refresh paths.
 3) **Engine uses parser AST + tokens.**
    - `include/scratchbird/core/expression_serializer.h`
    - `include/scratchbird/sblr/expression_evaluator.h`
@@ -64,6 +64,16 @@ Tasks:
   - Link compiler/parsers only into server/IPC binaries (`sb_server`, `sb_isql`,
     protocol services).
 
+**Progress:**
+- Added `scratchbird_compiler` (parsers + semantic + bytecode + dialect compilers).
+- Split optimizer into `scratchbird_optimizer_runtime` (engine) and
+  `scratchbird_optimizer_compiler` (parser-dependent).
+- `scratchbird_sblr` now excludes compiler sources; engine targets no longer link parser libs.
+- Added `SCRATCHBIRD_WITH_COMPILER` build flag and executor guards.
+- Core database now owns only the statistics manager; query planner/cost model are compiler-side.
+- Executor no longer compiles SQL for view/function/package dependency extraction; dependencies now come from SBLR payloads.
+- Compiler emitters now append dependency lists for CREATE VIEW (v2) and PostgreSQL CREATE FUNCTION/PROCEDURE.
+
 Deliverable: Engine libraries build without linking any parser sources.
 
 ### 0.2 V1 Parser Removal (Hard Requirement)
@@ -73,6 +83,7 @@ Tasks:
 - Legacy V1 headers and sources are removed; keep them out of the build.
 - Replace all parser AST references with the new engine expression IR (see 0.4).
 - Remove legacy tests that parse SQL via deprecated parser code or move them into compiler-only tests.
+- Remove parser version commands/opcodes and session fields tied to V1.
 
 Deliverable: No V1 parser files exist; no build targets include them.
 

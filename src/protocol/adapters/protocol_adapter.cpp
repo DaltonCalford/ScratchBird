@@ -142,6 +142,25 @@ core::Status ProtocolAdapter::executeQuery(const QueryContext& query, ResultCont
         return status;
     }
 
+    struct ParameterGuard {
+        sblr::Executor* executor = nullptr;
+        explicit ParameterGuard(sblr::Executor* exec, const QueryContext& query_ctx)
+            : executor(exec)
+        {
+            if (executor) {
+                executor->setParameters(query_ctx.parameter_values, query_ctx.parameter_nulls);
+            }
+        }
+        ~ParameterGuard()
+        {
+            if (executor) {
+                executor->clearParameters();
+            }
+        }
+    };
+
+    ParameterGuard param_guard(executor_.get(), query);
+
     // Track the statement for dormant reattach inspection (no cursor state retained).
     if (connection_ctx_) {
         connection_ctx_->beginStatementTracking(query.query);

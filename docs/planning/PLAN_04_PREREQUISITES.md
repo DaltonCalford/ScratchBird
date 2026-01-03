@@ -1,18 +1,18 @@
 # Plan 04 Prerequisites - WITH Block Infrastructure
 
-**Version:** 1.1
-**Date:** 2025-12-26 (Updated)
-**Status:** Updated - Plan 02B core implementation complete (alignment/testing remaining)
+**Version:** 1.2
+**Date:** 2026-01-03 (Updated)
+**Status:** ✅ COMPLETE - Plan 03B infrastructure implemented; Plan 02B alignment/testing remains
 
 ---
 
 ## Executive Summary
 
-This document identifies all infrastructure components that MUST exist before Plan 04 (Domain DDL) can be implemented. The WITH blocks (SECURITY, INTEGRITY, VALIDATION, QUALITY) require significant underlying infrastructure for full Alpha implementation.
+This document identifies the infrastructure components required for Plan 04 (Domain DDL). The WITH blocks (SECURITY, INTEGRITY, VALIDATION, QUALITY) depend on this infrastructure and are now implemented via Plan 03B.
 
 **Previous blocker resolved (2025-12-31):** Schema/Database DDL opcodes and handlers are implemented. Remaining work is path alignment, cascade semantics, and tests (see "Resolved Blocker" section below).
 
-**CRITICAL:** These prerequisites must be completed BEFORE Plan 04 implementation begins, or Plan 04 must be scoped to exclude WITH blocks until prerequisites are ready.
+**Status Update:** Plan 03B infrastructure is complete; Plan 04 can proceed with full WITH block support.
 
 ---
 
@@ -48,16 +48,16 @@ Domains are **schema-scoped**, and the required schema/database DDL infrastructu
 ### Dependencies
 
 **Plan 04 now depends on:**
-- ✅ Plan 03B (WITH block infrastructure) - 138-192 hours
+- ✅ Plan 03B (WITH block infrastructure) - implementation complete
 - ⚠️ **Plan 02B (Schema/Database DDL)** - core complete; remaining alignment/testing
   - See `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md` for status
 
-**Total prerequisite work:** 138-192 hours before Plan 04 can proceed (Plan 03B)
+**Prerequisite work:** COMPLETE (Plan 03B). Remaining work is Plan 02B alignment + verification.
 
 ### Next Steps
 
-1. Proceed with Plan 03B (Domain Infrastructure).
-2. Track remaining Plan 02B alignment items (cascade semantics, adapter path alignment, tests).
+1. Track remaining Plan 02B alignment items (cascade semantics, adapter path alignment, tests).
+2. Maintain verification coverage for domain infrastructure and WITH blocks.
 
 **Detailed Analysis:** See `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md`
 
@@ -378,25 +378,14 @@ TOTAL: 138-192 hours (17-24 working days for single developer)
 
 ### Parallel Workstreams
 
-These can be implemented in parallel by multiple developers:
+Plan 03B delivered the prerequisites in parallel workstreams:
 
-**Stream 1 - Security (60-84 hours):**
-- Encryption Infrastructure
-- Masking Infrastructure
-- Privilege Integration (already exists)
+**Stream 1 - Security:** Encryption, masking, privilege integration
+**Stream 2 - Data Integrity:** Global uniqueness, normalization
+**Stream 3 - Validation & Quality:** Validation integration, quality pipeline
+**Stream 4 - Infrastructure:** SBLR opcodes for WITH blocks
 
-**Stream 2 - Data Integrity (42-56 hours):**
-- Global Uniqueness
-- Normalization
-
-**Stream 3 - Validation & Quality (32-44 hours):**
-- Validation Integration
-- Quality Pipeline
-
-**Stream 4 - Infrastructure (8 hours):**
-- SBLR Opcodes
-
-**Parallel Estimate:** 60-84 hours (7.5-10.5 working days with 3 developers)
+**Implementation Status:** COMPLETE (see `docs/planning/PLAN_03B_DOMAIN_INFRASTRUCTURE.md`)
 
 ---
 
@@ -404,119 +393,28 @@ These can be implemented in parallel by multiple developers:
 
 Before Plan 04 can proceed, verify:
 
-- [ ] **Encryption:** AES-256/128-GCM encryption/decryption implemented
-- [ ] **Key Management:** Secure key generation, storage, and rotation
-- [ ] **Masking:** PARTIAL/FULL masking with pattern support
+- [x] **Encryption:** AES-256/128-GCM encryption/decryption implemented
+- [x] **Key Management:** Secure key generation, storage, and rotation
+- [x] **Masking:** PARTIAL/FULL masking with pattern support
 - [x] **Uniqueness:** Global uniqueness index and enforcement
-- [ ] **Normalization:** Built-in + custom function support
-- [ ] **Validation:** Custom validation function integration
-- [ ] **Quality:** Parse→Standardize→Enrich pipeline
-- [ ] **SBLR Opcodes:** All 10 WITH block opcodes defined
-- [ ] **Testing:** Unit tests for each infrastructure component
-- [ ] **Documentation:** Implementation guides for each component
+- [x] **Normalization:** Built-in + custom function support
+- [x] **Validation:** Custom validation function integration
+- [x] **Quality:** Parse→Standardize→Enrich pipeline
+- [x] **SBLR Opcodes:** All 10 WITH block opcodes defined
+- [ ] **Testing:** Coverage present; expand unit coverage for key mgmt/masking edge cases
+- [ ] **Documentation:** Implementation guides for each component (partial)
 
 ---
 
-## Decision Points
+## Outcome
 
-### Option 1: Implement ALL Prerequisites First (Recommended)
-
-**Timeline:** 17-24 days (single dev) or 7.5-10.5 days (3 devs in parallel)
-**Risk:** Low - Complete infrastructure before domains
-**Benefit:** Full WITH block support in Plan 04 Alpha
-
-### Option 2: Staged Implementation
-
-**Phase 1 - Core Domains (Now):**
-- Implement Plan 04 WITHOUT WITH blocks
-- Basic domains (BASIC, RECORD, ENUM, SET, VARIANT)
-- ALTER/DROP/SHOW
-
-**Phase 2 - WITH SECURITY (Later):**
-- Implement encryption + masking + auditing
-- Add WITH SECURITY support
-
-**Phase 3 - WITH INTEGRITY (Later):**
-- Implement uniqueness + normalization
-- Add WITH INTEGRITY support
-
-**Phase 4 - WITH VALIDATION/QUALITY (Later):**
-- Implement validation + quality pipelines
-- Add WITH VALIDATION and WITH QUALITY
-
-**Timeline:** Core now, WITH blocks deferred
-**Risk:** Medium - violates NO DEFERRALS rule
-**Benefit:** Faster initial delivery
-
-### Option 3: Hybrid - Essential Infrastructure Only
-
-Implement ONLY the infrastructure needed for most common use cases:
-- ✅ Auditing (already exists)
-- ✅ Privilege checking (already exists)
-- ⚠️ Basic masking (PARTIAL only)
-- ⚠️ Built-in normalization only (no custom functions)
-- ❌ Skip encryption (defer to later)
-- ❌ Skip quality pipeline (defer to later)
-
-**Timeline:** ~40-60 hours
-**Risk:** High - still violates NO DEFERRALS
-**Benefit:** Reduced scope
+- Option 1 (implement all prerequisites first) executed.
+- WITH block infrastructure is complete; Plan 04 can proceed with full WITH support.
 
 ---
 
-## Recommendations
+## Remaining Follow-ups
 
-### For User Consideration:
-
-1. **Review Existing Function Infrastructure**
-   - Is UDF (User-Defined Function) support complete?
-   - Can we call custom functions from domain constraints?
-   - Need to audit function execution completeness
-
-2. **Encryption Library Selection**
-   - Which crypto library? (OpenSSL, BoringSSL, libsodium)
-   - Hardware acceleration requirements?
-   - FIPS compliance needed?
-
-3. **Implementation Strategy**
-   - Option 1 (All prerequisites first) - safest, adheres to NO DEFERRALS
-   - Option 2 (Staged) - violates NO DEFERRALS, but pragmatic
-   - Option 3 (Hybrid) - middle ground, still has deferrals
-
-4. **Resource Allocation**
-   - Single developer: 17-24 days
-   - Three developers (parallel): 7.5-10.5 days
-   - Available development capacity?
-
----
-
-## Next Steps
-
-**DECISION REQUIRED:**
-
-1. Does user want to proceed with Option 1 (all prerequisites)?
-2. Should we defer WITH blocks and implement core domains only?
-3. Should we create a separate PRE-PLAN-04 for infrastructure?
-
-**IF PROCEEDING WITH OPTION 1:**
-
-1. Create `PLAN_03B_WITH_BLOCK_INFRASTRUCTURE.md`
-2. Break down into tasks similar to Plan 04 structure
-3. Implement prerequisites first
-4. Then proceed with Plan 04 with full WITH support
-
-**IF PROCEEDING WITH OPTION 2:**
-
-1. Update `DDL_DOMAINS_COMPREHENSIVE.md` to mark WITH blocks as "Phase 2"
-2. Update `PLAN_04_IMPLEMENTATION_CHECKLIST.md` to remove Tasks 10.9-10.12
-3. Reduce task count back to 76 tasks
-4. Implement core domains only
-5. Schedule WITH blocks for later phase
-
----
-
-## Conclusion
-
-Plan 04 as currently specified requires **138-192 hours of prerequisite infrastructure** that does not currently exist. This must be implemented BEFORE Plan 04 or the scope must be reduced to exclude WITH blocks.
-
-**Awaiting user decision on implementation strategy.**
+1. Track Plan 02B alignment (path defaults, cascade semantics, tests).
+2. Expand unit coverage for domain infrastructure edge cases (masking/encryption/key mgmt).
+3. Finish documentation guides for domain infrastructure components.

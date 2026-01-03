@@ -11,8 +11,43 @@
 #include <gtest/gtest.h>
 #include "scratchbird/parser/postgresql/pg_parser.h"
 #include "scratchbird/parser/postgresql/pg_lexer.h"
+#include "scratchbird/sblr/opcodes.h"
 
 using namespace scratchbird::parser::postgresql;
+namespace sblr = scratchbird::sblr;
+
+namespace {
+
+bool hasExtendedOpcode(const std::vector<uint8_t>& bytecode,
+                       sblr::ExtendedOpcode expected) {
+    uint16_t target = static_cast<uint16_t>(expected);
+    for (size_t i = 0; i + 2 < bytecode.size(); ++i) {
+        if (bytecode[i] == static_cast<uint8_t>(sblr::Opcode::EXTENDED_OPCODE)) {
+            uint16_t opcode = sblr::readInt16(&bytecode[i + 1]);
+            if (opcode == target) {
+                return true;
+            }
+            i += 2;
+        }
+    }
+    return false;
+}
+
+std::vector<uint16_t> placeholderPositions(const std::vector<uint8_t>& bytecode) {
+    std::vector<uint16_t> positions;
+    uint16_t target = static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_PLACEHOLDER);
+    for (size_t i = 0; i + 5 < bytecode.size(); ++i) {
+        if (bytecode[i] == static_cast<uint8_t>(sblr::Opcode::EXTENDED_OPCODE)) {
+            uint16_t opcode = sblr::readInt16(&bytecode[i + 1]);
+            if (opcode == target) {
+                positions.push_back(sblr::readInt16(&bytecode[i + 3]));
+            }
+        }
+    }
+    return positions;
+}
+
+}  // namespace
 
 // ============================================================================
 // Lexer Tests
@@ -223,6 +258,38 @@ protected:
         EXPECT_FALSE(result.success()) << "Expected error for: " << sql;
     }
 };
+
+TEST_F(PostgreSQLParserTest, IsDistinctFromUsesNullSafeEquality) {
+    Parser parser("SELECT 1 IS DISTINCT FROM NULL");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success()) << "Failed to parse IS DISTINCT FROM";
+    EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
+}
+
+TEST_F(PostgreSQLParserTest, LikeEscapeEmitsExtendedOpcode) {
+    Parser parser("SELECT 'abc' LIKE 'a!%' ESCAPE '!'");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success()) << "Failed to parse LIKE ... ESCAPE";
+    EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_LIKE_ESCAPE));
+}
+
+TEST_F(PostgreSQLParserTest, PlaceholderEmitsExtendedOpcode) {
+    Parser parser("SELECT $1 + $2");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success()) << "Failed to parse placeholders";
+    EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_PLACEHOLDER));
+    auto positions = placeholderPositions(result.bytecode());
+    ASSERT_EQ(positions.size(), 2u);
+    EXPECT_EQ(positions[0], 1);
+    EXPECT_EQ(positions[1], 2);
+}
+
+TEST_F(PostgreSQLParserTest, ArraySubscriptEmitsExtendedOpcode) {
+    Parser parser("SELECT data[1] FROM items");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success()) << "Failed to parse array subscript";
+    EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_ARRAY_SUBSCRIPT));
+}
 
 // ============================================================================
 // SELECT Statement Tests

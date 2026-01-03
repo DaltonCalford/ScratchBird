@@ -70,7 +70,7 @@ set_target_properties(scratchbird_core PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
-# Note: scratchbird_optimizer dependency will be added after optimizer library is defined
+# Note: scratchbird_optimizer_runtime dependency will be added after optimizer library is defined
 
 # Parser library: scratchbird_parser
 file(GLOB_RECURSE SCRATCHBIRD_PARSER_SOURCES
@@ -92,9 +92,21 @@ set_target_properties(scratchbird_parser PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
-# SBLR library: scratchbird_sblr
+# SBLR runtime library: scratchbird_sblr
+set(SCRATCHBIRD_SBLR_COMPILER_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/sblr/bytecode_generator_v2.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/sblr/semantic_analyzer_v2.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/sblr/query_compiler_v2.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/sblr/firebird_query_compiler.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/sblr/mysql_query_compiler.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/sblr/postgresql_query_compiler.cpp
+)
+
 file(GLOB_RECURSE SCRATCHBIRD_SBLR_SOURCES
     sblr/*.cpp
+)
+list(FILTER SCRATCHBIRD_SBLR_SOURCES EXCLUDE REGEX
+    ".*/(bytecode_generator_v2|semantic_analyzer_v2|query_compiler_v2|firebird_query_compiler|mysql_query_compiler|postgresql_query_compiler)\\.cpp$"
 )
 
 add_library(scratchbird_sblr STATIC
@@ -106,7 +118,6 @@ target_include_directories(scratchbird_sblr PUBLIC
 )
 
 target_link_libraries(scratchbird_sblr PUBLIC
-    scratchbird_parser
     scratchbird_core
     nlohmann_json::nlohmann_json
 )
@@ -128,38 +139,96 @@ set_target_properties(scratchbird_sblr PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
-# Optimizer library: scratchbird_optimizer
-file(GLOB_RECURSE SCRATCHBIRD_OPTIMIZER_SOURCES
-    optimizer/*.cpp
+# Compiler library: scratchbird_compiler (parsers + semantic + bytecode)
+if(SCRATCHBIRD_WITH_COMPILER)
+    add_library(scratchbird_compiler STATIC
+        ${SCRATCHBIRD_SBLR_COMPILER_SOURCES}
+    )
+
+    target_include_directories(scratchbird_compiler PUBLIC
+        ${CMAKE_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(scratchbird_compiler PUBLIC
+        scratchbird_parser
+        scratchbird_sblr
+    )
+
+    set_target_properties(scratchbird_compiler PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED YES
+        CXX_EXTENSIONS NO
+        POSITION_INDEPENDENT_CODE ON
+    )
+endif()
+
+# Optimizer runtime library: scratchbird_optimizer_runtime
+set(SCRATCHBIRD_OPTIMIZER_RUNTIME_SOURCES
+    optimizer/cost_model.cpp
+    optimizer/statistics_manager.cpp
+    optimizer/cse.cpp
+    optimizer/expression_matcher.cpp
+    optimizer/predicate_matcher.cpp
+    optimizer/query_profiler.cpp
 )
 
-add_library(scratchbird_optimizer STATIC
-    ${SCRATCHBIRD_OPTIMIZER_SOURCES}
+add_library(scratchbird_optimizer_runtime STATIC
+    ${SCRATCHBIRD_OPTIMIZER_RUNTIME_SOURCES}
 )
 
-target_include_directories(scratchbird_optimizer PUBLIC
+target_include_directories(scratchbird_optimizer_runtime PUBLIC
     ${CMAKE_SOURCE_DIR}/include
 )
 
-target_link_libraries(scratchbird_optimizer PUBLIC
-    # Note: Not linking scratchbird_core to avoid circular dependency
-    # scratchbird_core will link against scratchbird_optimizer instead
-    scratchbird_parser  # OPT-L2: Required for expressionToString in EXPLAIN
-)
 # Link OpenSSL if available for RAND_bytes in statistics_manager.cpp
 if(OPENSSL_FOUND)
-    target_link_libraries(scratchbird_optimizer PUBLIC OpenSSL::Crypto)
+    target_link_libraries(scratchbird_optimizer_runtime PUBLIC OpenSSL::Crypto)
 endif()
 
-set_target_properties(scratchbird_optimizer PROPERTIES
+set_target_properties(scratchbird_optimizer_runtime PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
     CXX_EXTENSIONS NO
     POSITION_INDEPENDENT_CODE ON
 )
 
-# Add optimizer dependency to core (after optimizer is defined)
-target_link_libraries(scratchbird_core PUBLIC scratchbird_optimizer nlohmann_json::nlohmann_json)
+# Optimizer compiler library: scratchbird_optimizer_compiler (parser-dependent)
+if(SCRATCHBIRD_WITH_COMPILER)
+    set(SCRATCHBIRD_OPTIMIZER_COMPILER_SOURCES
+        optimizer/mv_rewriter.cpp
+        optimizer/index_advisor.cpp
+        optimizer/query_planner.cpp
+        optimizer/selectivity_estimator.cpp
+        optimizer/join_ordering.cpp
+    )
+
+    add_library(scratchbird_optimizer_compiler STATIC
+        ${SCRATCHBIRD_OPTIMIZER_COMPILER_SOURCES}
+    )
+
+    target_include_directories(scratchbird_optimizer_compiler PUBLIC
+        ${CMAKE_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(scratchbird_optimizer_compiler PUBLIC
+        scratchbird_optimizer_runtime
+        scratchbird_parser  # Parser dependency for AST-based optimizers
+    )
+
+    set_target_properties(scratchbird_optimizer_compiler PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED YES
+        CXX_EXTENSIONS NO
+        POSITION_INDEPENDENT_CODE ON
+    )
+endif()
+
+if(TARGET scratchbird_compiler AND TARGET scratchbird_optimizer_compiler)
+    target_link_libraries(scratchbird_compiler PUBLIC scratchbird_optimizer_compiler)
+endif()
+
+# Add optimizer runtime dependency to core (after optimizer is defined)
+target_link_libraries(scratchbird_core PUBLIC scratchbird_optimizer_runtime nlohmann_json::nlohmann_json)
 
 # ==============================================================================
 # Security Library: scratchbird_security (Alpha 3 Phase 3.4)
@@ -324,8 +393,10 @@ target_link_libraries(scratchbird_server PUBLIC
     scratchbird_core
     scratchbird_protocol
     scratchbird_sblr
-    scratchbird_parser
 )
+if(SCRATCHBIRD_WITH_COMPILER)
+    target_link_libraries(scratchbird_server PUBLIC scratchbird_compiler)
+endif()
 
 # ==============================================================================
 # Client Library: scratchbird_client (Local Server Architecture - Phase 4)
@@ -505,10 +576,11 @@ target_link_libraries(sb_server PRIVATE
     scratchbird_server
     scratchbird_protocol
     scratchbird_sblr
-    scratchbird_parser
-    scratchbird_optimizer
     scratchbird_core
 )
+if(SCRATCHBIRD_WITH_COMPILER)
+    target_link_libraries(sb_server PRIVATE scratchbird_compiler)
+endif()
 
 set_target_properties(sb_server PROPERTIES
     CXX_STANDARD 17
@@ -522,7 +594,7 @@ message(STATUS "Server executable: sb_server")
 # Main executable (placeholder)
 add_executable(scratchbird main.cpp)
 
-target_link_libraries(scratchbird PRIVATE scratchbird_sblr scratchbird_parser scratchbird_optimizer scratchbird_core)
+target_link_libraries(scratchbird PRIVATE scratchbird_sblr scratchbird_core)
 
 set_target_properties(scratchbird PROPERTIES
     CXX_STANDARD 17
@@ -553,10 +625,11 @@ target_link_libraries(sb_isql PRIVATE
     scratchbird_protocol
     scratchbird_server
     scratchbird_sblr
-    scratchbird_parser
-    scratchbird_optimizer
     scratchbird_core
 )
+if(SCRATCHBIRD_WITH_COMPILER)
+    target_link_libraries(sb_isql PRIVATE scratchbird_compiler)
+endif()
 
 set_target_properties(sb_isql PROPERTIES
     CXX_STANDARD 17
@@ -572,9 +645,10 @@ add_executable(sb_verify cli/sb_verify.cpp)
 target_link_libraries(sb_verify PRIVATE
     scratchbird_core
     scratchbird_sblr
-    scratchbird_parser
-    scratchbird_optimizer
 )
+if(SCRATCHBIRD_WITH_COMPILER)
+    target_link_libraries(sb_verify PRIVATE scratchbird_compiler)
+endif()
 
 set_target_properties(sb_verify PROPERTIES
     CXX_STANDARD 17
@@ -590,9 +664,10 @@ add_executable(sb_backup cli/sb_backup.cpp)
 target_link_libraries(sb_backup PRIVATE
     scratchbird_core
     scratchbird_sblr
-    scratchbird_parser
-    scratchbird_optimizer
 )
+if(SCRATCHBIRD_WITH_COMPILER)
+    target_link_libraries(sb_backup PRIVATE scratchbird_compiler)
+endif()
 
 set_target_properties(sb_backup PROPERTIES
     CXX_STANDARD 17
@@ -610,10 +685,11 @@ target_link_libraries(sb_security PRIVATE
     scratchbird_protocol
     scratchbird_server
     scratchbird_sblr
-    scratchbird_parser
-    scratchbird_optimizer
     scratchbird_core
 )
+if(SCRATCHBIRD_WITH_COMPILER)
+    target_link_libraries(sb_security PRIVATE scratchbird_compiler)
+endif()
 
 set_target_properties(sb_security PROPERTIES
     CXX_STANDARD 17
@@ -628,10 +704,11 @@ add_executable(sb_fb_isql cli/sb_fb_isql.cpp)
 
 target_link_libraries(sb_fb_isql PRIVATE
     scratchbird_sblr
-    scratchbird_parser
-    scratchbird_optimizer
     scratchbird_core
 )
+if(SCRATCHBIRD_WITH_COMPILER)
+    target_link_libraries(sb_fb_isql PRIVATE scratchbird_compiler)
+endif()
 
 set_target_properties(sb_fb_isql PROPERTIES
     CXX_STANDARD 17
@@ -642,8 +719,15 @@ set_target_properties(sb_fb_isql PROPERTIES
 message(STATUS "CLI tool: sb_fb_isql (Firebird SQL shell)")
 
 # Installation (for future use)
-install(TARGETS scratchbird sb_server sb_charset_loader sb_isql sb_fb_isql sb_verify sb_backup sb_security scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer scratchbird_server scratchbird_protocol scratchbird_client scratchbird_pool scratchbird_fdw scratchbird_odbc scratchbird_testing
+install(TARGETS scratchbird sb_server sb_charset_loader sb_isql sb_fb_isql sb_verify sb_backup sb_security scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer_runtime scratchbird_server scratchbird_protocol scratchbird_client scratchbird_pool scratchbird_fdw scratchbird_odbc scratchbird_testing
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib
 )
+
+if(TARGET scratchbird_compiler)
+    install(TARGETS scratchbird_compiler scratchbird_optimizer_compiler
+        ARCHIVE DESTINATION lib
+        LIBRARY DESTINATION lib
+    )
+endif()

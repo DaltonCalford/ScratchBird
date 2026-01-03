@@ -244,9 +244,12 @@ private:
     Expression* parseExistsExpression();
     Expression* parseInExpression(Expression* left);
     Expression* parseBetweenExpression(Expression* left);
-    Expression* parseLikeExpression(Expression* left);
+    Expression* parseLikeExpression(Expression* left, LikeMatchKind kind);
     Expression* parseIsNullExpression(Expression* left);
     Expression* parseArrayExpression();
+    WindowSpec* parseWindowSpec();
+    void parseWindowFrame(WindowSpec* spec);
+    FrameBoundType parseWindowFrameBound(Expression** value_out);
 
     // =========================================================================
     // Type Parsing
@@ -285,6 +288,9 @@ private:
     TableConstraint* parseTableConstraint();
     SchemaPath parseTableReference();
     SchemaPath parseSchemaPath();
+
+    // Extract raw expression text from parsed expression span
+    std::string extractExpressionText(Expression* expr);
 
     // =========================================================================
     // PSQL Parsing (Procedural SQL)
@@ -361,6 +367,7 @@ private:
     v2::DropTableStmt* parseDropTableImpl(bool if_exists);
     v2::DropIndexStmt* parseDropIndexImpl(bool if_exists);
     v2::DropViewStmt* parseDropViewImpl(bool if_exists);
+    v2::DropDomainStmt* parseDropDomainImpl(bool if_exists);
     Statement* parseDropSequenceImpl(bool if_exists);
 };
 

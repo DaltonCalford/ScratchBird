@@ -306,6 +306,7 @@ struct ResolvedLikeExpr : public ResolvedExpression {
     ResolvedExpression* expr = nullptr;
     bool negated = false;
     bool case_insensitive = false;
+    LikeMatchKind match_kind = LikeMatchKind::LIKE;
     ResolvedExpression* pattern = nullptr;
     ResolvedExpression* escape = nullptr;
 };
@@ -984,9 +985,6 @@ struct ResolvedSetStmt : public ResolvedStatement {
     bool has_conflict_error_code = false;
     int32_t conflict_error_code = 0;
 
-    // For SET PARSER VERSION
-    uint8_t parser_version = 0;  // 1 or 2 (0 = not set)
-
     // For SET SQL DIALECT
     uint8_t sql_dialect = 0;  // 1, 2, or 3 (0 = not set)
 
@@ -1003,7 +1001,7 @@ struct ResolvedSetStmt : public ResolvedStatement {
  * - Firebird ISQL: SHOW TABLE, SHOW INDEX, SHOW TRIGGER, SHOW VIEW, SHOW PROCEDURE,
  *                  SHOW FUNCTION, SHOW DOMAIN, SHOW GENERATOR, SHOW SCHEMA, SHOW ROLE,
  *                  SHOW GRANTS, SHOW CHECKS, SHOW COLLATIONS, SHOW SQL DIALECT,
- *                  SHOW VERSION, SHOW DATABASE, SHOW SYSTEM, SHOW PARSER VERSION
+ *                  SHOW VERSION, SHOW DATABASE, SHOW SYSTEM
  */
 struct ResolvedShowStmt : public ResolvedStatement {
     ShowStmt::ShowType show_type;

@@ -87,7 +87,7 @@ struct MySQLDataType {
         // Date/Time types
         DATE, TIME, DATETIME, TIMESTAMP, YEAR,
         // Other types
-        BIT, BOOL, ENUM, SET, JSON, GEOMETRY
+        BIT, BOOL, ENUM, SET, JSON, GEOMETRY, POINT, LINESTRING, POLYGON
     };
 
     Kind kind;
@@ -311,6 +311,7 @@ private:
     Token current_token_;
     std::vector<uint8_t> bytecode_;
     std::vector<ParseError> errors_;
+    uint32_t next_placeholder_index_ = 1;
 
     // Token management
     void advance();

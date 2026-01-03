@@ -350,16 +350,6 @@ namespace scratchbird::core
             return statement_timeout_seconds_;
         }
 
-        // Phase 10: Parser version control (V2 only)
-        void set_parser_version(uint8_t version)
-        {
-            parser_version_ = (version == 2) ? 2 : 2;
-        }
-        uint8_t parser_version() const
-        {
-            return parser_version_;
-        }
-
         void setReadCommittedMode(ReadCommittedMode mode)
         {
             read_committed_mode_ = mode;
@@ -448,7 +438,6 @@ namespace scratchbird::core
         uint8_t sql_dialect_ = 3;             // SQL dialect (1, 2, or 3) - default 3 (modern)
         std::string charset_ = "UTF8";        // Connection character set
         uint32_t statement_timeout_seconds_ = 0;  // Statement timeout (0 = no limit)
-        uint8_t parser_version_ = 2;          // Phase 10: Parser version (V2 only)
 
         // Last statement tracking (for dormant reattach inspection)
         std::string last_statement_text_;

@@ -2,8 +2,8 @@
 
 **Plan:** Domain DDL (CREATE/ALTER/DROP DOMAIN) with full WITH block support
 **Version:** 1.0
-**Last Updated:** 2026-01-02
-**Overall Status:** ⚠️ IN PROGRESS - V2 full domain kinds wired (BASIC/RECORD/ENUM/SET/VARIANT) with dialect/compat/collation/inherits; remaining v1 AST + semantic validation + emulated parser coverage + conflict opcodes
+**Last Updated:** 2026-01-03
+**Overall Status:** ⚠️ IN PROGRESS - V2 domain DDL + executor enforcement complete; remaining work is emulated parser coverage, semantic validation guardrails, conflict opcodes, and comprehensive tests
 
 ---
 
@@ -12,12 +12,12 @@
 | Phase | Status | Details |
 |-------|--------|---------|
 | **Specification** | ✅ COMPLETE | All specifications written and reviewed |
-| **Prerequisites** | ✅ COMPLETE | Plan 02B resolved; Plan 03B complete (verification pending) |
-| **Implementation** | ⚠️ IN PROGRESS | CREATE/ALTER/DROP + advanced domain kinds wired in v2 pipeline; semantic validation + emulated parsers pending |
+| **Prerequisites** | ✅ COMPLETE | Plan 02B core complete (alignment/testing pending); Plan 03B complete (verification pending) |
+| **Implementation** | ⚠️ IN PROGRESS | V2 parser/semantic/bytecode/executor wired; remaining semantic guardrails, emulated parser DDL, conflict opcodes, and comprehensive tests |
 
 ---
 
-## Work Completed (2025-12-21 to 2025-12-26)
+## Work Completed (2025-12-21 to 2026-01-03)
 
 ### ✅ Phase 1: Specification Development (COMPLETE)
 
@@ -136,6 +136,26 @@
 
 1. **DML Constraint Enforcement** ✅
    - INSERT/UPDATE now call `DomainManager::validateValue` for domain CHECK/NOT NULL/inherited constraints
+2. **WITH Block Enforcement Wiring** ✅
+   - EXT_CHECK_DOMAIN_CONSTRAINT / MASKING / ENCRYPTION / NORMALIZATION / VALIDATION / QUALITY opcodes handled in executor
+
+### ✅ Phase 7: Parser Quick Wins (2026-01-02)
+
+1. **NULL-Safe Equality + GROUP BY Validation** ✅
+   - Added `EXT_NULL_SAFE_EQ` and wired MySQL/PostgreSQL `<=>` / `IS` predicates
+   - V2 semantic analyzer enforces GROUP BY grouping rules
+2. **LIKE ESCAPE Handling** ✅
+   - ESCAPE clauses emit `EXT_LIKE_ESCAPE` / `EXT_ILIKE_ESCAPE` and executor honors custom escapes
+3. **Placeholder Handling** ✅
+   - Added `EXT_PLACEHOLDER` and wired MySQL/PostgreSQL placeholders with executor binding
+4. **Firebird Window Specs** ✅
+   - Firebird parser now stores OVER(PARTITION/ORDER/FRAME) in AST
+5. **Firebird Predicate Variants** ✅
+   - LIKE/CONTAINING/STARTING/SIMILAR TO tracked with new match kind + NOT support
+6. **PostgreSQL Array Subscript** ✅
+   - `arr[idx]` now emits `EXT_ARRAY_SUBSCRIPT`
+7. **MySQL Table Constraints + Geometry Mapping** ✅
+   - CREATE TABLE constraints parsed; GEOMETRY/POINT/LINESTRING/POLYGON mapped in type emission
 
 ---
 
@@ -209,12 +229,12 @@
 
 ## Next Steps
 
-1. Finish v1 AST updates for domain DDL (Create/Alter/Drop) and update AST printer.
-2. Complete semantic analyzer validation (type checks, inheritance cycles, dependency checks).
-3. Finish emulated parser coverage + guardrails (Firebird/PostgreSQL/MySQL).
+1. Complete semantic analyzer validation (type checks, inheritance cycles, dependency checks).
+2. Finish emulated parser coverage + guardrails (Firebird/PostgreSQL/MySQL).
+3. Define domain conflict opcodes (EXT_REBIND_DOMAIN / EXT_RESOLVE_DOMAIN_CONFLICT).
 4. Track remaining Plan 02B alignment/testing items (path defaults, cascade semantics, tests).
 
-**Timeline:** Remaining work is validation + v1/emulated parser coverage + alignment tests.
+**Timeline:** Remaining work is validation + emulated parser coverage + alignment/tests.
 
 ---
 
@@ -235,80 +255,64 @@
 
 ---
 
-## Implementation Progress (9/80 tasks complete; partials in progress)
+## Implementation Progress (V2 pipeline complete; remaining items in emulated parsers/validation/tests)
 
-**Current:** V2 CREATE/ALTER/DROP domain wiring is complete; advanced domain types and enforcement pending.
+**Current:** V2 domain DDL (all domain kinds + WITH blocks), SBLR emission, and executor handling (including SHOW DOMAIN and enforcement opcodes) are complete. Remaining work is emulated parser DDL, semantic validation guardrails, conflict opcodes, and comprehensive tests.
 
-### Section 1: Schema Changes (0/1)
-- [ ] Task 1.1: Add dialect_tag/compat_name to domain schema
+### Section 1: Schema Changes (1/1)
+- [x] Task 1.1: Add dialect_tag/compat_name to domain schema
 
-### Section 2: SBLR Opcodes (0/3)
-- [ ] Task 2.1: Define extended domain opcodes (ALTER/DROP done)
-- [ ] Task 2.2: Document SBLR payload structures (BASIC + ALTER/DROP done)
-- [ ] Task 2.3: Define WITH block enforcement opcodes
+### Section 2: SBLR Opcodes (2/3)
+- [ ] Task 2.1: Define extended domain conflict opcodes (EXT_REBIND_DOMAIN/EXT_RESOLVE_DOMAIN_CONFLICT)
+- [x] Task 2.2: Document SBLR payload structures (BASIC/RECORD/ENUM/SET/VARIANT + ALTER/DROP)
+- [x] Task 2.3: Define WITH block enforcement opcodes
 
-### Section 3: AST Extensions (0/3)
-- [ ] Task 3.1: Extend CreateDomainStmt (v2 basic + WITH blocks done)
-- [ ] Task 3.2: Create AlterDomainStmt (v2 done)
-- [ ] Task 3.3: Create DropDomainStmt (v2 done)
+### Section 3: AST Extensions (3/3)
+- [x] Task 3.1: Extend CreateDomainStmt (V2 complete; V1 removed)
+- [x] Task 3.2: Create AlterDomainStmt
+- [x] Task 3.3: Create DropDomainStmt
 
-### Section 4: ScratchBird V2 Parser (5/12)
-- [ ] Tasks 4.1-4.7: parseCreateDomain() all types + WITH blocks (basic + WITH blocks done)
+### Section 4: ScratchBird V2 Parser (12/12)
+- [x] Tasks 4.1-4.7: parseCreateDomain() all types + WITH blocks
 - [x] Task 4.8: parseAlterDomain()
 - [x] Task 4.9: parseDropDomain()
 - [x] Task 4.10-4.12: Update dispatchers
 
 ### Section 5: Firebird Parser (0/3)
-- [ ] Tasks 5.1-5.3: CREATE/ALTER/DROP DOMAIN
+- [ ] Tasks 5.1-5.3: CREATE/ALTER/DROP DOMAIN (Firebird syntax)
 
 ### Section 6: PostgreSQL Parser (0/3)
-- [ ] Tasks 6.1-6.3: CREATE/ALTER/DROP DOMAIN
+- [ ] Tasks 6.1-6.3: CREATE/ALTER/DROP DOMAIN (align payload to SBLR v2)
 
 ### Section 7: MySQL Parser (0/3)
 - [ ] Tasks 7.1-7.3: Reject domain DDL with clear errors
 
-### Section 8: Semantic Analyzer (0/7)
-- [ ] Tasks 8.1-8.7: Analyze all domain types + ALTER/DROP (basic wiring done)
+### Section 8: Semantic Analyzer (partial)
+- [ ] Tasks 8.1-8.7: Full validation + dependency checks (core analysis wired; guardrails/tests pending)
 
-### Section 9: Bytecode Generator (2/7)
-- [ ] Tasks 9.1-9.5: Emit CREATE DOMAIN for all types (basic done; advanced pending)
+### Section 9: Bytecode Generator (7/7)
+- [x] Tasks 9.1-9.5: Emit CREATE DOMAIN for all types
 - [x] Task 9.6: Emit ALTER DOMAIN
 - [x] Task 9.7: Emit DROP DOMAIN
 
-### Section 10: Executor (2/12)
-- [ ] Tasks 10.1-10.5: Execute CREATE DOMAIN for all types (basic done; advanced pending)
+### Section 10: Executor (12/12)
+- [x] Tasks 10.1-10.5: Execute CREATE DOMAIN for all types
 - [x] Task 10.6: Execute ALTER DOMAIN
 - [x] Task 10.7: Execute DROP DOMAIN
-- [ ] Task 10.8: Execute SHOW DOMAIN
-- [ ] Tasks 10.9-10.12: WITH block enforcement
+- [x] Task 10.8: Execute SHOW DOMAIN
+- [x] Tasks 10.9-10.12: WITH block enforcement
 
-### Section 11: Transaction Extensions (0/10)
-- [ ] Tasks 11.1-11.10: Parse + emit extended transaction features
+### Section 11: Transaction Extensions (10/10)
+- [x] Tasks 11.1-11.10: Parse + emit extended transaction features
 
-### Section 12: Quick Wins (0/5)
-- [ ] Tasks 12.1-12.5: Firebird window specs, MySQL NULL-safe, ESCAPE, placeholders, GROUP BY
+### Section 12: Quick Wins (5/5)
+- [x] Tasks 12.1-12.5: Firebird window specs, MySQL NULL-safe, ESCAPE, placeholders, GROUP BY
 
-### Section 13: Testing (0/5)
-- [ ] Tasks 13.1-13.5: Comprehensive test coverage
+### Section 13: Testing (partial)
+- [ ] Tasks 13.1-13.5: Comprehensive test coverage (V2 parser/bytecode tests added; emulated parser + negative tests pending)
 
-### Section 14: Documentation (0/3)
-- [ ] Tasks 14.1-14.3: Update specs and create guides (domain payload doc added)
-
----
-
-## Questions for User
-
-1. **Approval to start Plan 03B?**
-   - Can we proceed with domain infrastructure implementation?
-
-2. **Confirm Plan 02B alignment priorities?**
-   - Adapter/query compiler path defaults
-   - Cascade semantics for DROP SCHEMA/DATABASE
-   - Dedicated tests for schema/database DDL
-
-3. **Timeline expectations?**
-   - 138-192 hours of prerequisites (Plan 03B) before Plan 04
-   - Is this acceptable?
+### Section 14: Documentation (partial)
+- [ ] Tasks 14.1-14.3: Update specs and create guides (domain payload doc added; remaining guides pending)
 
 ---
 
@@ -320,15 +324,15 @@
 2. Read `/docs/findings/CRITICAL_SCHEMA_DATABASE_OPCODE_GAP.md` for historical context
 3. Read `PLAN_04_PREREQUISITES.md` for full prerequisites list
 4. Read `PLAN_04_IMPLEMENTATION_CHECKLIST.md` for task breakdown
-5. Confirm Plan 03B scope and start if approved
+5. Confirm emulated parser/domain DDL alignment tasks
 6. Update this status document with any progress
 
 **Key Context:**
 - Plan 02B core implementation is complete; alignment/testing remains
-- Plan 04 is waiting on Plan 03B domain infrastructure
-- All specifications are complete and committed
+- Plan 03B domain infrastructure is complete; verification is external-runner dependent
+- Plan 04 remaining work centers on emulated parsers, semantic guardrails, conflict opcodes, and tests
 
 ---
 
-**Last Updated:** 2025-12-31
-**Next Update:** After Plan 03B approval or completion
+**Last Updated:** 2026-01-03
+**Next Update:** After emulated parser/domain validation progress

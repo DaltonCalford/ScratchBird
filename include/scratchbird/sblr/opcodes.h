@@ -299,6 +299,7 @@ namespace scratchbird
 
             // Array construction
             EXT_ARRAY_CONSTRUCT = 0x24,    // Construct array from stack elements
+            EXT_ARRAY_SUBSCRIPT = 0x25,   // Array subscript access (array[index])
 
             // Text search and regex functions (Phase 2 Task 13) - 0x30-0x4F range
             // Regex operators (can be used without EXTENDED_OPCODE prefix due to available space)
@@ -870,9 +871,6 @@ namespace scratchbird
             EXT_SHOW_ALL = 0x7C,           // SHOW ALL - show all session variables
             EXT_SHOW_TRANSACTION_LEVEL = 0x7D, // SHOW TRANSACTION ISOLATION LEVEL
 
-            // Phase 10: Parser version control
-            EXT_SET_PARSER_VERSION = 0x7E,     // SET PARSER VERSION 2
-
             // Parser V2 completeness opcodes (0x80-0x8F range)
             EXT_SELECT_TABLE_STAR = 0x80,      // SELECT t.* - qualified table star (followed by table UUID)
             EXT_SET_VARIABLE = 0x81,           // SET variable = value - generic session variable
@@ -915,6 +913,7 @@ namespace scratchbird
             EXT_ARRAY_UPPER = 0x22,  // ARRAY_UPPER(array, dimension) - upper bound
             EXT_ARRAY_LOWER = 0x23,  // ARRAY_LOWER(array, dimension) - lower bound
             EXT_ARRAY_CONSTRUCT = 0x24,  // Construct array from stack elements
+            EXT_ARRAY_SUBSCRIPT = 0x25,  // Array subscript access (array[index])
             EXT_REGEX_MATCH = 0x30,  // ~ operator (regex match case-sensitive)
             EXT_REGEX_MATCH_CI = 0x31,  // ~* operator (regex match case-insensitive)
             EXT_REGEX_NOT_MATCH = 0x32,  // !~ operator (regex not match case-sensitive)
@@ -1232,7 +1231,6 @@ namespace scratchbird
             EXT_SHOW_VARIABLE = 0x7B,  // SHOW variable_name - show session variable value
             EXT_SHOW_ALL = 0x7C,  // SHOW ALL - show all session variables
             EXT_SHOW_TRANSACTION_LEVEL = 0x7D,  // SHOW TRANSACTION ISOLATION LEVEL
-            EXT_SET_PARSER_VERSION = 0x7E,  // SET PARSER VERSION 2
             EXT_SELECT_TABLE_STAR = 0x80,  // SELECT t.* - qualified table star (followed by table UUID)
             EXT_SET_VARIABLE = 0x81,  // SET variable = value - generic session variable
             EXT_ON_CONFLICT = 0x82,  // INSERT ... ON CONFLICT marker
@@ -1264,6 +1262,12 @@ namespace scratchbird
             EXT_ALTER_DATABASE = 0x010D,  // ALTER DATABASE (emulated)
             EXT_ALTER_DOMAIN = 0x010E,  // ALTER DOMAIN
             EXT_DROP_DOMAIN = 0x010F,  // DROP DOMAIN
+
+            // Null-safe comparison operators (MySQL/PostgreSQL)
+            EXT_NULL_SAFE_EQ = 0x0200,  // NULL-safe equality (<=> / IS NOT DISTINCT FROM)
+            EXT_LIKE_ESCAPE = 0x0201,   // LIKE with ESCAPE clause
+            EXT_ILIKE_ESCAPE = 0x0202,  // ILIKE with ESCAPE clause
+            EXT_PLACEHOLDER = 0x0203,   // Placeholder for prepared statements
 
             // Domain enforcement opcodes (Plan 03B)
             EXT_CHECK_DOMAIN_CONSTRAINT = 0x0204,  // Check all domain constraints

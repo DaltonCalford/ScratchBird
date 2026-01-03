@@ -19,7 +19,7 @@ namespace scratchbird::parser::postgresql {
 
 // Check if a keyword token can be used as an identifier in expression context
 // PostgreSQL has ~96 reserved keywords but many can be used as column names
-static bool isNonReservedKeyword(TokenType type) {
+bool Parser::isNonReservedKeyword(TokenType type) const {
     switch (type) {
         // Common column names that are keywords in some contexts
         case TokenType::KW_NAME:

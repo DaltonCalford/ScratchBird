@@ -54,9 +54,9 @@ parser coverage, wire protocol behavior, and metadata/catalog API surfaces.
   support exists, so RENAME TABLE is unsupported.
 
 ### Expression/semantic gaps
-- NULL-safe equality `<=>` is parsed but emitted as normal equality, so
-  NULL-safe semantics are missing. `src/parser/mysql/mysql_parser.cpp:830`.
-- LIKE ESCAPE clause is parsed but ignored. `src/parser/mysql/mysql_parser.cpp:895`.
+- NULL-safe equality `<=>` now emits `EXT_NULL_SAFE_EQ` with NULL-safe semantics
+  (fixed in `src/parser/mysql/mysql_parser.cpp` + executor).
+- LIKE ESCAPE clause emits `EXT_LIKE_ESCAPE` and is enforced in executor.
 - `?` placeholders emit `LITERAL_NULL`, so prepared statements do not bind
   parameters. `src/parser/mysql/mysql_parser.cpp:1095`.
 

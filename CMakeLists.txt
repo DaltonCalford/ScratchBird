@@ -11,6 +11,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Compiler/parsers (engine-only builds can disable)
+option(SCRATCHBIRD_WITH_COMPILER "Build SQL compiler/parsers" ON)
+if(SCRATCHBIRD_WITH_COMPILER)
+    add_compile_definitions(SCRATCHBIRD_WITH_COMPILER=1)
+else()
+    add_compile_definitions(SCRATCHBIRD_WITH_COMPILER=0)
+endif()
+
 # Fetch nlohmann/json library (header-only, no external dependencies needed)
 include(FetchContent)
 FetchContent_Declare(json

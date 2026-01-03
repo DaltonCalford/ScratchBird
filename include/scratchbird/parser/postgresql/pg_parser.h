@@ -288,6 +288,8 @@ private:
     void parseCreateTrigger();
     void parseCreateType();
     void parseCreateDomain();
+    void parseAlterDomain();
+    void parseDropDomain();
     ColumnDef parseColumnDef();
     PgDataType parseDataType();
     IndexDef parseIndexDef();
@@ -313,6 +315,7 @@ private:
 
     // Expression parsing (generates bytecode)
     void parseExpression();
+    std::string parseExpressionText();
     void parseOrExpr();
     void parseAndExpr();
     void parseNotExpr();
@@ -329,6 +332,7 @@ private:
     void parseMultiplicativeExpr();
     void parseUnaryExpr();
     void parsePostfixExpr();
+    void parsePostfixTail();
     void parsePrimaryExpr();
     void parseFunctionCall(const std::string& name);
     void parseCaseExpr();
@@ -344,6 +348,7 @@ private:
     std::string parseIdentifier();
     std::string parseQualifiedName();
     void resolveTableName(std::string& schema, std::string& table);
+    bool isNonReservedKeyword(TokenType type) const;
 };
 
 } // namespace scratchbird::parser::postgresql

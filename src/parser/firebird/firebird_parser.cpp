@@ -219,6 +219,7 @@ bool Parser::isNonReservedKeyword() const {
         case TokenType::KW_FIRST:
         case TokenType::KW_SKIP:
         case TokenType::KW_COUNT:
+        case TokenType::KW_SUM:
         case TokenType::KW_KEY:
         case TokenType::KW_LEVEL:
         case TokenType::KW_MAX:
@@ -285,6 +286,25 @@ ast::StringPool::StringId Parser::parseIdentifier() {
 
 std::string_view Parser::currentText() {
     return lexer_.getTokenText(current_token_);
+}
+
+std::string Parser::extractExpressionText(ast::Expression* expr) {
+    if (!expr) {
+        return {};
+    }
+    std::string_view input = lexer_.input();
+    size_t offset = expr->span.start.offset;
+    size_t length = expr->span.length;
+    if (offset >= input.size() || length == 0 || offset + length > input.size()) {
+        return {};
+    }
+    std::string_view text = input.substr(offset, length);
+    size_t start = text.find_first_not_of(" \t\r\n");
+    if (start == std::string_view::npos) {
+        return {};
+    }
+    size_t end = text.find_last_not_of(" \t\r\n");
+    return std::string(text.substr(start, end - start + 1));
 }
 
 // =============================================================================
@@ -531,6 +551,44 @@ Expression* Parser::parseComparisonExpression() {
         return parseIsNullExpression(left);
     }
 
+    // NOT IN / NOT BETWEEN / NOT LIKE
+    if (matchKeyword(TokenType::KW_NOT)) {
+        if (matchKeyword(TokenType::KW_IN)) {
+            auto* expr = static_cast<ast::InExpr*>(parseInExpression(left));
+            expr->negated = true;
+            return expr;
+        }
+        if (matchKeyword(TokenType::KW_BETWEEN)) {
+            auto* expr = static_cast<ast::BetweenExpr*>(parseBetweenExpression(left));
+            expr->negated = true;
+            return expr;
+        }
+        if (matchKeyword(TokenType::KW_LIKE)) {
+            auto* expr = static_cast<ast::LikeExpr*>(parseLikeExpression(left, ast::LikeMatchKind::LIKE));
+            expr->negated = true;
+            return expr;
+        }
+        if (matchKeyword(TokenType::KW_CONTAINING)) {
+            auto* expr = static_cast<ast::LikeExpr*>(parseLikeExpression(left, ast::LikeMatchKind::CONTAINING));
+            expr->negated = true;
+            return expr;
+        }
+        if (matchKeyword(TokenType::KW_STARTING)) {
+            matchKeyword(TokenType::KW_WITH);
+            auto* expr = static_cast<ast::LikeExpr*>(parseLikeExpression(left, ast::LikeMatchKind::STARTING));
+            expr->negated = true;
+            return expr;
+        }
+        if (matchKeyword(TokenType::KW_SIMILAR)) {
+            consume(TokenType::KW_TO, "Expected TO after SIMILAR");
+            auto* expr = static_cast<ast::LikeExpr*>(parseLikeExpression(left, ast::LikeMatchKind::SIMILAR));
+            expr->negated = true;
+            return expr;
+        }
+        error("Expected IN, BETWEEN, LIKE, CONTAINING, STARTING, or SIMILAR after NOT");
+        return left;
+    }
+
     // IN
     if (matchKeyword(TokenType::KW_IN)) {
         return parseInExpression(left);
@@ -542,10 +600,19 @@ Expression* Parser::parseComparisonExpression() {
     }
 
     // LIKE / SIMILAR TO / CONTAINING / STARTING
-    if (matchKeyword(TokenType::KW_LIKE) ||
-        matchKeyword(TokenType::KW_CONTAINING) ||
-        matchKeyword(TokenType::KW_STARTING)) {
-        return parseLikeExpression(left);
+    if (matchKeyword(TokenType::KW_LIKE)) {
+        return parseLikeExpression(left, ast::LikeMatchKind::LIKE);
+    }
+    if (matchKeyword(TokenType::KW_CONTAINING)) {
+        return parseLikeExpression(left, ast::LikeMatchKind::CONTAINING);
+    }
+    if (matchKeyword(TokenType::KW_STARTING)) {
+        matchKeyword(TokenType::KW_WITH);
+        return parseLikeExpression(left, ast::LikeMatchKind::STARTING);
+    }
+    if (matchKeyword(TokenType::KW_SIMILAR)) {
+        consume(TokenType::KW_TO, "Expected TO after SIMILAR");
+        return parseLikeExpression(left, ast::LikeMatchKind::SIMILAR);
     }
 
     // Comparison operators
@@ -909,10 +976,106 @@ Expression* Parser::parseFunctionCall(const ast::SchemaPath& name) {
     // Check for OVER clause (window function)
     if (matchKeyword(TokenType::KW_OVER)) {
         expr->is_window = true;
-        // TODO: Parse window specification
+        expr->window = parseWindowSpec();
     }
 
     return expr;
+}
+
+ast::WindowSpec* Parser::parseWindowSpec() {
+    auto* spec = allocate<ast::WindowSpec>();
+
+    consume(TokenType::LEFT_PAREN, "Expected '(' after OVER");
+
+    // PARTITION BY
+    if (matchKeyword(TokenType::KW_PARTITION)) {
+        consume(TokenType::KW_BY, "Expected BY after PARTITION");
+        do {
+            spec->partition_by.push_back(parseExpression());
+        } while (match(TokenType::COMMA));
+    }
+
+    // ORDER BY
+    if (matchKeyword(TokenType::KW_ORDER)) {
+        consume(TokenType::KW_BY, "Expected BY after ORDER");
+        spec->order_by = parseOrderByClause();
+    }
+
+    // Frame clause (ROWS/RANGE)
+    if (checkKeyword(TokenType::KW_ROWS) || checkKeyword(TokenType::KW_RANGE)) {
+        parseWindowFrame(spec);
+    }
+
+    consume(TokenType::RIGHT_PAREN, "Expected ')' after window specification");
+
+    return spec;
+}
+
+void Parser::parseWindowFrame(ast::WindowSpec* spec) {
+    if (!spec) {
+        error("Window specification required for frame clause");
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_ROWS)) {
+        spec->frame_type = ast::FrameType::ROWS;
+    } else if (matchKeyword(TokenType::KW_RANGE)) {
+        spec->frame_type = ast::FrameType::RANGE;
+    } else {
+        return;
+    }
+
+    spec->has_frame = true;
+
+    if (matchKeyword(TokenType::KW_BETWEEN)) {
+        spec->frame_start = parseWindowFrameBound(&spec->frame_start_value);
+        consume(TokenType::KW_AND, "Expected AND in window frame");
+        spec->frame_end = parseWindowFrameBound(&spec->frame_end_value);
+    } else {
+        spec->frame_start = parseWindowFrameBound(&spec->frame_start_value);
+        spec->frame_end = ast::FrameBoundType::CURRENT_ROW;
+        spec->frame_end_value = nullptr;
+    }
+}
+
+ast::FrameBoundType Parser::parseWindowFrameBound(ast::Expression** value_out) {
+    if (value_out) {
+        *value_out = nullptr;
+    }
+
+    if (matchKeyword(TokenType::KW_UNBOUNDED)) {
+        if (matchKeyword(TokenType::KW_PRECEDING)) {
+            return ast::FrameBoundType::UNBOUNDED_PRECEDING;
+        }
+        if (matchKeyword(TokenType::KW_FOLLOWING)) {
+            return ast::FrameBoundType::UNBOUNDED_FOLLOWING;
+        }
+        error("Expected PRECEDING or FOLLOWING after UNBOUNDED");
+        return ast::FrameBoundType::UNBOUNDED_PRECEDING;
+    }
+
+    if (matchKeyword(TokenType::KW_CURRENT)) {
+        consume(TokenType::KW_ROW, "Expected ROW after CURRENT");
+        return ast::FrameBoundType::CURRENT_ROW;
+    }
+
+    // Value-based bound: <expr> PRECEDING|FOLLOWING
+    Expression* value = parseExpression();
+    if (matchKeyword(TokenType::KW_PRECEDING)) {
+        if (value_out) {
+            *value_out = value;
+        }
+        return ast::FrameBoundType::VALUE_PRECEDING;
+    }
+    if (matchKeyword(TokenType::KW_FOLLOWING)) {
+        if (value_out) {
+            *value_out = value;
+        }
+        return ast::FrameBoundType::VALUE_FOLLOWING;
+    }
+
+    error("Expected PRECEDING or FOLLOWING after window frame offset");
+    return ast::FrameBoundType::CURRENT_ROW;
 }
 
 Expression* Parser::parseCaseExpression() {
@@ -1017,17 +1180,21 @@ Expression* Parser::parseBetweenExpression(Expression* left) {
     return expr;
 }
 
-Expression* Parser::parseLikeExpression(Expression* left) {
+Expression* Parser::parseLikeExpression(Expression* left, ast::LikeMatchKind kind) {
     auto* expr = allocate<ast::LikeExpr>();
     expr->expr = left;
-
-    // The keyword was already matched
-    // TODO: Track which variant (LIKE, CONTAINING, STARTING, SIMILAR TO)
+    expr->match_kind = kind;
+    if (kind == ast::LikeMatchKind::CONTAINING) {
+        expr->case_insensitive = true;
+    }
 
     expr->pattern = parseAddExpression();
 
     // Check for ESCAPE clause
     if (matchKeyword(TokenType::KW_ESCAPE)) {
+        if (kind == ast::LikeMatchKind::CONTAINING || kind == ast::LikeMatchKind::STARTING) {
+            error("ESCAPE is not allowed with CONTAINING/STARTING predicates");
+        }
         expr->escape = parseAddExpression();
     }
 
@@ -1526,6 +1693,13 @@ Statement* Parser::parseDropStatement() {
         }
         return parseDropViewImpl(if_exists);
     }
+    if (matchKeyword(TokenType::KW_DOMAIN)) {
+        if (matchKeyword(TokenType::KW_IF)) {
+            consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+            if_exists = true;
+        }
+        return parseDropDomainImpl(if_exists);
+    }
     if (matchKeyword(TokenType::KW_GENERATOR) || matchKeyword(TokenType::KW_SEQUENCE)) {
         return parseDropSequenceImpl(if_exists);
     }
@@ -1829,19 +2003,61 @@ ast::AlterTableStmt* Parser::parseAlterTableImpl() {
 }
 
 Statement* Parser::parseAlterDomainImpl() {
-    ast::SchemaPath domain_path = parseSchemaPath();
+    auto* stmt = allocate<ast::AlterDomainStmt>();
+    stmt->domain_path = parseSchemaPath();
+
+    if (matchKeyword(TokenType::KW_SET)) {
+        if (matchKeyword(TokenType::KW_DEFAULT)) {
+            stmt->action = ast::AlterDomainAction::SET_DEFAULT;
+            stmt->value = extractExpressionText(parseExpression());
+            return stmt;
+        }
+        error("Expected DEFAULT after SET in ALTER DOMAIN");
+        return stmt;
+    }
+
+    if (matchKeyword(TokenType::KW_DROP)) {
+        if (matchKeyword(TokenType::KW_DEFAULT)) {
+            stmt->action = ast::AlterDomainAction::DROP_DEFAULT;
+            return stmt;
+        }
+        if (matchKeyword(TokenType::KW_CONSTRAINT)) {
+            stmt->action = ast::AlterDomainAction::DROP_CONSTRAINT;
+            stmt->constraint_name = parseIdentifier();
+            return stmt;
+        }
+        error("Expected DEFAULT or CONSTRAINT after DROP in ALTER DOMAIN");
+        return stmt;
+    }
+
+    if (matchKeyword(TokenType::KW_ADD)) {
+        if (matchKeyword(TokenType::KW_CONSTRAINT)) {
+            if (!check(TokenType::KW_CHECK) && !check(TokenType::KW_DEFAULT) &&
+                !check(TokenType::KW_NOT) && !check(TokenType::KW_NULL)) {
+                // Constraint names aren't supported for ALTER DOMAIN ADD CHECK yet.
+                parseIdentifier();
+            }
+        }
+
+        if (matchKeyword(TokenType::KW_CHECK)) {
+            consume(TokenType::LEFT_PAREN, "Expected ( after CHECK");
+            stmt->action = ast::AlterDomainAction::ADD_CHECK;
+            stmt->value = extractExpressionText(parseExpression());
+            consume(TokenType::RIGHT_PAREN, "Expected ) after CHECK expression");
+            return stmt;
+        }
+        error("Expected CHECK after ADD in ALTER DOMAIN");
+        return stmt;
+    }
 
     if (matchKeyword(TokenType::KW_TO)) {
-        auto* stmt = allocate<ast::RenameObjectStmt>();
-        stmt->object_type = ast::DdlObjectType::DOMAIN;
-        stmt->if_exists = false;
-        stmt->object_path = domain_path;
+        stmt->action = ast::AlterDomainAction::RENAME;
         stmt->new_name = parseIdentifier();
         return stmt;
     }
 
-    error("ALTER DOMAIN supports only TO <new_name> in Firebird parser");
-    return nullptr;
+    error("Expected SET, DROP, ADD, or TO after domain name");
+    return stmt;
 }
 
 // Stub for ALTER INDEX
@@ -1942,6 +2158,28 @@ ast::DropViewStmt* Parser::parseDropViewImpl(bool if_exists) {
     return stmt;
 }
 
+ast::DropDomainStmt* Parser::parseDropDomainImpl(bool if_exists) {
+    auto* stmt = allocate<ast::DropDomainStmt>();
+    stmt->if_exists = if_exists;
+
+    if (!if_exists && matchKeyword(TokenType::KW_IF)) {
+        consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->domains.push_back(parseSchemaPath());
+    } while (match(TokenType::COMMA));
+
+    if (matchKeyword(TokenType::KW_RESTRICT)) {
+        stmt->restrict = true;
+    } else if (matchKeyword(TokenType::KW_CASCADE)) {
+        error("DROP DOMAIN does not support CASCADE");
+    }
+
+    return stmt;
+}
+
 Statement* Parser::parseDropSequenceImpl(bool if_exists) {
     // No DropSequenceStmt in AST yet, use error for now
     error("DROP SEQUENCE/GENERATOR not yet implemented");
@@ -1967,8 +2205,66 @@ Statement* Parser::parseCreateTrigger() {
     return nullptr;
 }
 Statement* Parser::parseCreateDomain() {
-    error("CREATE DOMAIN not yet implemented");
-    return nullptr;
+    auto* stmt = allocate<ast::CreateDomainStmt>();
+    stmt->domain_kind = ast::DomainKind::BASIC;
+    stmt->domain_path = parseSchemaPath();
+
+    // Optional AS keyword
+    matchKeyword(TokenType::KW_AS);
+    stmt->base_type = parseTypeName();
+
+    while (!atEnd()) {
+        if (matchKeyword(TokenType::KW_COLLATE)) {
+            auto collation_id = parseIdentifier();
+            stmt->has_collation = true;
+            stmt->collation_name = std::string(string_pool_.get(collation_id));
+            continue;
+        }
+
+        ast::StringPool::StringId constraint_name = ast::StringPool::INVALID_ID;
+        if (matchKeyword(TokenType::KW_CONSTRAINT)) {
+            if (!check(TokenType::KW_CHECK) && !check(TokenType::KW_DEFAULT) &&
+                !check(TokenType::KW_NOT) && !check(TokenType::KW_NULL)) {
+                constraint_name = parseIdentifier();
+            }
+        }
+
+        ast::DomainConstraint constraint;
+        bool have_constraint = false;
+
+        if (matchKeyword(TokenType::KW_NOT)) {
+            consume(TokenType::KW_NULL, "Expected NULL after NOT");
+            constraint.type = ast::DomainConstraintType::NOT_NULL;
+            have_constraint = true;
+        } else if (matchKeyword(TokenType::KW_NULL)) {
+            constraint.type = ast::DomainConstraintType::NULL_ALLOWED;
+            have_constraint = true;
+        } else if (matchKeyword(TokenType::KW_DEFAULT)) {
+            constraint.type = ast::DomainConstraintType::DEFAULT;
+            constraint.expression = extractExpressionText(parseExpression());
+            have_constraint = true;
+        } else if (matchKeyword(TokenType::KW_CHECK)) {
+            consume(TokenType::LEFT_PAREN, "Expected ( after CHECK");
+            constraint.type = ast::DomainConstraintType::CHECK;
+            constraint.expression = extractExpressionText(parseExpression());
+            consume(TokenType::RIGHT_PAREN, "Expected ) after CHECK expression");
+            have_constraint = true;
+        }
+
+        if (!have_constraint) {
+            if (constraint_name != ast::StringPool::INVALID_ID) {
+                error("Expected constraint after CONSTRAINT");
+            }
+            break;
+        }
+
+        constraint.name = constraint_name;
+        stmt->constraints.push_back(std::move(constraint));
+    }
+
+    stmt->has_dialect = true;
+    stmt->dialect_tag = "firebird";
+    return stmt;
 }
 Statement* Parser::parseCreateException() {
     error("CREATE EXCEPTION not yet implemented");

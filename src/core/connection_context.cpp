@@ -210,7 +210,6 @@ namespace scratchbird::core
           sql_dialect_(other.sql_dialect_),
           charset_(std::move(other.charset_)),
           statement_timeout_seconds_(other.statement_timeout_seconds_),
-          parser_version_(other.parser_version_),
           last_statement_text_(std::move(other.last_statement_text_)),
           last_statement_hash_(other.last_statement_hash_),
           last_statement_type_(other.last_statement_type_),
@@ -343,7 +342,6 @@ namespace scratchbird::core
             sql_dialect_ = other.sql_dialect_;
             charset_ = std::move(other.charset_);
             statement_timeout_seconds_ = other.statement_timeout_seconds_;
-            parser_version_ = other.parser_version_;
             last_statement_text_ = std::move(other.last_statement_text_);
             last_statement_hash_ = other.last_statement_hash_;
             last_statement_type_ = other.last_statement_type_;
@@ -820,8 +818,6 @@ namespace scratchbird::core
         json.append(std::to_string(sql_dialect_));
         json.append(",\"charset\":");
         appendJsonString(json, charset_);
-        json.append(",\"parser_version\":");
-        json.append(std::to_string(parser_version_));
         json.append(",\"statement_timeout\":");
         json.append(std::to_string(statement_timeout_seconds_));
         json.push_back('}');

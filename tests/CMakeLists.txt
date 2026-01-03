@@ -11,6 +11,14 @@ FetchContent_MakeAvailable(googletest)
 
 # Allow test sources to include test_helpers.h across all test targets.
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+set(SCRATCHBIRD_TEST_COMPILER_LIBS scratchbird_parser)
+if(SCRATCHBIRD_WITH_COMPILER)
+    list(APPEND SCRATCHBIRD_TEST_COMPILER_LIBS scratchbird_compiler)
+endif()
+set(SCRATCHBIRD_TEST_OPTIMIZER_LIBS scratchbird_optimizer_runtime)
+if(SCRATCHBIRD_WITH_COMPILER)
+    list(APPEND SCRATCHBIRD_TEST_OPTIMIZER_LIBS scratchbird_optimizer_compiler)
+endif()
 
 # Test sources (exclude deprecated tests)
 file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
@@ -199,9 +207,9 @@ target_include_directories(scratchbird_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 # Link libraries
 target_link_libraries(scratchbird_tests
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     scratchbird_protocol
     scratchbird_client
     scratchbird_server
@@ -305,8 +313,8 @@ target_compile_options(tsan_buffer_pool_race PRIVATE -fsanitize=thread -g -O1)
 target_link_options(tsan_buffer_pool_race PRIVATE -fsanitize=thread)
 target_link_libraries(tsan_buffer_pool_race
     scratchbird_sblr
-    scratchbird_parser
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     scratchbird_core
     GTest::gtest
     GTest::gtest_main
@@ -323,8 +331,8 @@ target_compile_options(tsan_transaction_cache_race PRIVATE -fsanitize=thread -g 
 target_link_options(tsan_transaction_cache_race PRIVATE -fsanitize=thread)
 target_link_libraries(tsan_transaction_cache_race
     scratchbird_sblr
-    scratchbird_parser
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     scratchbird_core
     GTest::gtest
     GTest::gtest_main
@@ -341,8 +349,8 @@ target_compile_options(tsan_lock_ordering PRIVATE -fsanitize=thread -g -O1)
 target_link_options(tsan_lock_ordering PRIVATE -fsanitize=thread)
 target_link_libraries(tsan_lock_ordering
     scratchbird_sblr
-    scratchbird_parser
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     scratchbird_core
     GTest::gtest
     GTest::gtest_main
@@ -363,8 +371,8 @@ set_tests_properties(TSAN_LockOrdering PROPERTIES
 add_executable(helgrind_races helgrind/test_helgrind_races.cpp)
 target_link_libraries(helgrind_races
     scratchbird_sblr
-    scratchbird_parser
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     scratchbird_core
     GTest::gtest
     GTest::gtest_main
@@ -378,8 +386,8 @@ target_link_libraries(helgrind_races
 add_executable(multithreaded_stress stress/test_multithreaded_stress.cpp)
 target_link_libraries(multithreaded_stress
     scratchbird_sblr
-    scratchbird_parser
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     scratchbird_core
     GTest::gtest
     GTest::gtest_main
@@ -516,9 +524,9 @@ add_executable(test_columnstore_rle
 )
 target_link_libraries(test_columnstore_rle
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -537,9 +545,9 @@ add_executable(test_columnstore_dict
 )
 target_link_libraries(test_columnstore_dict
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -558,9 +566,9 @@ add_executable(test_columnstore_bitpack
 )
 target_link_libraries(test_columnstore_bitpack
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -579,9 +587,9 @@ add_executable(test_columnstore_predicate
 )
 target_link_libraries(test_columnstore_predicate
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -600,9 +608,9 @@ add_executable(test_columnstore_batch_performance
 )
 target_link_libraries(test_columnstore_batch_performance
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -624,9 +632,9 @@ add_executable(test_columnstore_segments
 )
 target_link_libraries(test_columnstore_segments
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
 )
 # Temporarily disabled - test hangs due to columnstore scan issue
 # add_test(NAME ColumnstoreSegments COMMAND test_columnstore_segments)
@@ -644,9 +652,9 @@ add_executable(test_columnstore_end_to_end
 )
 target_link_libraries(test_columnstore_end_to_end
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
 )
 add_test(NAME ColumnstoreEndToEnd COMMAND test_columnstore_end_to_end)
 set_tests_properties(ColumnstoreEndToEnd PROPERTIES
@@ -660,9 +668,9 @@ add_executable(test_columnstore_simple_e2e
 )
 target_link_libraries(test_columnstore_simple_e2e
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
 )
 add_test(NAME ColumnstoreSimpleE2E COMMAND test_columnstore_simple_e2e)
 set_tests_properties(ColumnstoreSimpleE2E PROPERTIES
@@ -676,9 +684,9 @@ add_executable(test_columnstore_load
 )
 target_link_libraries(test_columnstore_load
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
 )
 add_test(NAME ColumnstoreLoad COMMAND test_columnstore_load)
 set_tests_properties(ColumnstoreLoad PROPERTIES
@@ -692,9 +700,9 @@ add_executable(test_columnstore_load_simple
 )
 target_link_libraries(test_columnstore_load_simple
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
 )
 add_test(NAME ColumnstoreLoadSimple COMMAND test_columnstore_load_simple)
 set_tests_properties(ColumnstoreLoadSimple PROPERTIES
@@ -871,9 +879,9 @@ add_executable(test_gist_mvcc
 )
 target_link_libraries(test_gist_mvcc
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1037,9 +1045,9 @@ add_executable(test_check_constraints
 )
 target_link_libraries(test_check_constraints
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1055,9 +1063,9 @@ add_executable(test_domain_integrity
 )
 target_link_libraries(test_domain_integrity
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1073,9 +1081,9 @@ add_executable(test_domain_encryption
 )
 target_link_libraries(test_domain_encryption
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1090,9 +1098,9 @@ add_executable(test_domain_security
 )
 target_link_libraries(test_domain_security
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1108,9 +1116,9 @@ add_executable(test_domain_validation
 )
 target_link_libraries(test_domain_validation
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1126,9 +1134,9 @@ add_executable(test_domain_quality
 )
 target_link_libraries(test_domain_quality
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1144,9 +1152,9 @@ add_executable(test_domain_e2e_scenarios
 )
 target_link_libraries(test_domain_e2e_scenarios
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1162,9 +1170,9 @@ add_executable(test_foreign_keys
 )
 target_link_libraries(test_foreign_keys
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1202,7 +1210,7 @@ add_executable(test_join_ordering
 )
 target_link_libraries(test_join_ordering
     scratchbird_core
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
 )
 add_test(NAME JoinOrdering COMMAND test_join_ordering)
 set_tests_properties(JoinOrdering PROPERTIES
@@ -1216,8 +1224,8 @@ add_executable(test_mv_rewriter
 )
 target_link_libraries(test_mv_rewriter
     scratchbird_core
-    scratchbird_parser
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     scratchbird_server
 )
 add_test(NAME MVRewriter COMMAND test_mv_rewriter)
@@ -1236,9 +1244,9 @@ add_executable(test_brin_mvcc
 )
 target_link_libraries(test_brin_mvcc
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1254,9 +1262,9 @@ add_executable(test_brin_dml
 )
 target_link_libraries(test_brin_dml
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1296,9 +1304,9 @@ add_executable(test_composite_fk
 )
 target_link_libraries(test_composite_fk
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1314,9 +1322,9 @@ add_executable(test_exception_safety
 )
 target_link_libraries(test_exception_safety
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1332,9 +1340,9 @@ add_executable(test_concurrent_page_access
 )
 target_link_libraries(test_concurrent_page_access
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1350,9 +1358,9 @@ add_executable(test_buffer_pool_exhaustion
 )
 target_link_libraries(test_buffer_pool_exhaustion
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1368,9 +1376,9 @@ add_executable(test_index_dml_integration
 )
 target_link_libraries(test_index_dml_integration
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1386,9 +1394,9 @@ add_executable(test_gin_dml
 )
 target_link_libraries(test_gin_dml
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )
@@ -1407,9 +1415,9 @@ add_executable(test_postgresql_parser
 )
 target_link_libraries(test_postgresql_parser
     scratchbird_core
-    scratchbird_parser
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
     scratchbird_sblr
-    scratchbird_optimizer
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
     gtest
     gtest_main
 )

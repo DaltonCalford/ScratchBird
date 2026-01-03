@@ -170,7 +170,7 @@ EXT_DROP_DOMAIN = 0x010F,            // Drop domain
 
 ### Task 3.1: Extend CreateDomainStmt for Comprehensive Domains
 
-**Status:** ⚠️ PARTIAL - v2 comprehensive done; v1 AST pending
+**Status:** ✅ COMPLETE - V2 AST complete (V1 removed)
 **Priority:** HIGH
 **Estimated Time:** 6 hours
 
@@ -274,11 +274,11 @@ struct DomainSecurityOptions
 ```
 
 **Acceptance Criteria:**
-- [ ] All new fields added to CreateDomainStmt
-- [ ] All supporting structures defined
-- [ ] Getters and setters for all fields
-- [ ] AST visitor pattern updated
-- [ ] ASTPrinter updated to handle new fields
+- [x] All new fields added to CreateDomainStmt
+- [x] All supporting structures defined
+- [x] Getters and setters for all fields
+- [x] AST visitor pattern updated
+- [x] ASTPrinter updated to handle new fields
 
 **Files to Modify:**
 - `include/scratchbird/parser/ast_v2.h` (struct definitions)
@@ -287,7 +287,7 @@ struct DomainSecurityOptions
 
 ### Task 3.2: Create AlterDomainStmt AST Node
 
-**Status:** ⚠️ PARTIAL - v2 AlterDomainStmt added; v1 AST pending
+**Status:** ✅ COMPLETE - V2 AlterDomainStmt implemented
 **Priority:** HIGH
 **Estimated Time:** 3 hours
 
@@ -348,15 +348,15 @@ private:
 ```
 
 **Acceptance Criteria:**
-- [ ] AlterDomainStmt defined
-- [ ] AlterDomainAction enum defined
-- [ ] All fields and accessors present
-- [ ] Visitor pattern implemented
-- [ ] AST kind added to ASTKind enum
+- [x] AlterDomainStmt defined
+- [x] AlterDomainAction enum defined
+- [x] All fields and accessors present
+- [x] Visitor pattern implemented
+- [x] AST kind added to ASTKind enum
 
 ### Task 3.3: Create DropDomainStmt AST Node
 
-**Status:** ⚠️ PARTIAL - v2 DropDomainStmt added; v1 AST pending
+**Status:** ✅ COMPLETE - V2 DropDomainStmt implemented
 **Priority:** MEDIUM
 **Estimated Time:** 2 hours
 
@@ -384,10 +384,10 @@ private:
 ```
 
 **Acceptance Criteria:**
-- [ ] DropDomainStmt defined
-- [ ] IF EXISTS support
-- [ ] Visitor pattern implemented
-- [ ] AST kind added
+- [x] DropDomainStmt defined
+- [x] IF EXISTS support
+- [x] Visitor pattern implemented
+- [x] AST kind added
 
 ---
 
@@ -669,7 +669,7 @@ INHERITS (parent_domain)
 
 ### Task 4.7: Implement parseCreateDomain() with WITH Blocks (FULL IMPLEMENTATION)
 
-**Status:** ⚠️ PARTIAL - parsed + payload emission + parser tests; enforcement pending
+**Status:** ✅ COMPLETE (parsing + payload emission; enforcement tracked in executor tasks)
 **Priority:** HIGH
 **Estimated Time:** 12 hours (parsing + enforcement)
 
@@ -804,7 +804,7 @@ Statement* Parser::parseCreate() {
 
 ### Task 4.11: Update parseAlter() Dispatcher
 
-**Status:** ⚠️ PARTIAL - base type/inherits resolution wired; validation pending
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 1 hour
 
@@ -854,7 +854,7 @@ Statement* Parser::parseDrop() {
 
 ### Task 5.1: Replace Firebird parseCreateDomain() Stub
 
-**Status:** ⚠️ PARTIAL - field type resolution wired; validation pending
+**Status:** ❌ NOT STARTED - stub throws error
 **Priority:** HIGH
 **Estimated Time:** 6 hours
 
@@ -883,7 +883,7 @@ Statement* Parser::parseCreateDomain() {
 
 ### Task 5.2: Implement Firebird ALTER DOMAIN
 
-**Status:** ⚠️ PARTIAL - position assignment wired; label validation pending
+**Status:** ❌ NOT STARTED
 **Priority:** HIGH
 **Estimated Time:** 4 hours
 
@@ -897,7 +897,7 @@ Statement* Parser::parseCreateDomain() {
 
 ### Task 5.3: Implement Firebird DROP DOMAIN
 
-**Status:** ⚠️ PARTIAL - element type resolution wired; validation pending
+**Status:** ❌ NOT STARTED
 **Priority:** MEDIUM
 **Estimated Time:** 2 hours
 
@@ -917,16 +917,24 @@ Statement* Parser::parseCreateDomain() {
 
 ### Task 6.1: Replace PostgreSQL parseCreateDomain() Stub
 
-**Status:** ⚠️ PARTIAL - type resolution wired; uniqueness validation pending
+**Status:** ⚠️ PARTIAL - CREATE DOMAIN emits legacy payload; v2 alignment pending
 **Priority:** HIGH
 **Estimated Time:** 6 hours
 
 **File to Modify:** `src/parser/postgresql/pg_parser_ddl.cpp` (line 1238)
 
-**Current Code:**
+**Current Code (Legacy Payload):**
 ```cpp
 void Parser::parseCreateDomain() {
-    error("CREATE DOMAIN not yet implemented in PostgreSQL parser");
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_DOMAIN));
+
+    std::string domain_name = parseQualifiedName();
+    emitString(domain_name);
+
+    consumeKeyword(TokenType::KW_AS, "Expected AS");
+    parseDataType();
+    // Constraints parsed but payload is legacy (no flags/kind/WITH blocks).
 }
 ```
 
@@ -947,7 +955,7 @@ void Parser::parseCreateDomain() {
 
 ### Task 6.2: Implement PostgreSQL ALTER DOMAIN
 
-**Status:** ⚠️ PARTIAL - action wiring done; validation pending
+**Status:** ❌ NOT STARTED
 **Priority:** HIGH
 **Estimated Time:** 4 hours
 
@@ -959,7 +967,7 @@ void Parser::parseCreateDomain() {
 
 ### Task 6.3: Implement PostgreSQL DROP DOMAIN
 
-**Status:** ⚠️ PARTIAL - name resolution wired; dependency checks pending
+**Status:** ❌ NOT STARTED
 **Priority:** MEDIUM
 **Estimated Time:** 2 hours
 
@@ -978,7 +986,7 @@ void Parser::parseCreateDomain() {
 
 ### Task 7.1: Reject CREATE DOMAIN in MySQL Parser
 
-**Status:** ✅ COMPLETE
+**Status:** ❌ NOT STARTED
 **Priority:** HIGH
 **Estimated Time:** 2 hours
 
@@ -1005,7 +1013,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 7.2: Reject ALTER DOMAIN in MySQL Parser
 
-**Status:** ✅ COMPLETE (implemented in Plan 03B)
+**Status:** ❌ NOT STARTED
 **Priority:** MEDIUM
 **Estimated Time:** 1 hour
 
@@ -1020,7 +1028,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 7.3: Reject DROP DOMAIN in MySQL Parser
 
-**Status:** ✅ COMPLETE (implemented in Plan 03B)
+**Status:** ❌ NOT STARTED
 **Priority:** MEDIUM
 **Estimated Time:** 1 hour
 
@@ -1039,7 +1047,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 8.1: Implement analyzeDomain() for BASIC Domains
 
-**Status:** ✅ COMPLETE (implemented in Plan 03B)
+**Status:** ⚠️ PARTIAL - core analysis wired; validation guardrails pending
 **Priority:** HIGH
 **Estimated Time:** 8 hours
 
@@ -1068,7 +1076,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 8.2: Implement analyzeDomain() for RECORD Domains
 
-**Status:** ✅ COMPLETE (implemented in Plan 03B)
+**Status:** ⚠️ PARTIAL - field type resolution wired; validation pending
 **Priority:** HIGH
 **Estimated Time:** 6 hours
 
@@ -1086,7 +1094,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 8.3: Implement analyzeDomain() for ENUM Domains
 
-**Status:** ❌ NOT STARTED
+**Status:** ⚠️ PARTIAL - position assignment wired; label uniqueness pending
 **Priority:** HIGH
 **Estimated Time:** 4 hours
 
@@ -1104,7 +1112,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 8.4: Implement analyzeDomain() for SET Domains
 
-**Status:** ❌ NOT STARTED
+**Status:** ⚠️ PARTIAL - element type resolution wired; validation pending
 **Priority:** MEDIUM
 **Estimated Time:** 3 hours
 
@@ -1119,7 +1127,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 8.5: Implement analyzeDomain() for VARIANT Domains
 
-**Status:** ❌ NOT STARTED
+**Status:** ⚠️ PARTIAL - type resolution wired; uniqueness pending
 **Priority:** MEDIUM
 **Estimated Time:** 4 hours
 
@@ -1135,7 +1143,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 8.6: Implement analyzeAlterDomain()
 
-**Status:** ❌ NOT STARTED
+**Status:** ⚠️ PARTIAL - action wiring done; validation pending
 **Priority:** HIGH
 **Estimated Time:** 6 hours
 
@@ -1153,7 +1161,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 8.7: Implement analyzeDropDomain()
 
-**Status:** ❌ NOT STARTED
+**Status:** ⚠️ PARTIAL - drop wiring done; dependency checks pending
 **Priority:** MEDIUM
 **Estimated Time:** 4 hours
 
@@ -1330,7 +1338,7 @@ if (matchKeyword("DOMAIN")) {
 - [x] DomainManager called with correct params
 - [x] Error handling
 - [ ] Transaction integration
-- [ ] Test coverage
+- [x] Test coverage
 
 **Test File:** `tests/integration/test_domain_ddl.cpp` (NEW)
 
@@ -1351,7 +1359,7 @@ if (matchKeyword("DOMAIN")) {
 **Acceptance Criteria:**
 - [x] Field list decoded
 - [x] DomainManager called
-- [ ] Test coverage
+- [x] Test coverage
 
 ### Task 10.3: Implement executeCreateDomain() for ENUM Domains
 
@@ -1369,7 +1377,7 @@ if (matchKeyword("DOMAIN")) {
 **Acceptance Criteria:**
 - [x] Enum values decoded
 - [x] DomainManager called
-- [ ] Test coverage
+- [x] Test coverage
 
 ### Task 10.4: Implement executeCreateDomain() for SET Domains
 
@@ -1385,7 +1393,7 @@ if (matchKeyword("DOMAIN")) {
 **Acceptance Criteria:**
 - [x] Element type decoded
 - [x] DomainManager called
-- [ ] Test coverage
+- [x] Test coverage
 
 ### Task 10.5: Implement executeCreateDomain() for VARIANT Domains
 
@@ -1403,7 +1411,7 @@ if (matchKeyword("DOMAIN")) {
 **Acceptance Criteria:**
 - [x] Type list decoded
 - [x] DomainManager called
-- [ ] Test coverage
+- [x] Test coverage
 
 ### Task 10.6: Implement executeAlterDomain()
 
@@ -1422,7 +1430,7 @@ if (matchKeyword("DOMAIN")) {
 **Acceptance Criteria:**
 - [x] All alter actions supported
 - [x] DomainManager called correctly
-- [ ] Test coverage
+- [x] Test coverage
 
 ### Task 10.7: Implement executeDropDomain()
 
@@ -1442,11 +1450,11 @@ if (matchKeyword("DOMAIN")) {
 **Acceptance Criteria:**
 - [x] Dependency checking enforced
 - [x] IF EXISTS handled
-- [ ] Test coverage
+- [x] Test coverage
 
 ### Task 10.8: Implement executeShowDomain()
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** LOW
 **Estimated Time:** 4 hours
 
@@ -1462,11 +1470,11 @@ if (matchKeyword("DOMAIN")) {
 **Acceptance Criteria:**
 - [x] Shows domain definition
 - [x] Formatted output
-- [ ] Test coverage
+- [x] Test coverage
 
 ### Task 10.9: Implement WITH SECURITY Enforcement
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE (implemented in Plan 03B)
 **Priority:** HIGH
 **Estimated Time:** 16 hours
 
@@ -1493,7 +1501,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 10.10: Implement WITH INTEGRITY Enforcement
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE (implemented in Plan 03B)
 **Priority:** HIGH
 **Estimated Time:** 12 hours
 
@@ -1519,7 +1527,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 10.11: Implement WITH VALIDATION Enforcement
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE (implemented in Plan 03B)
 **Priority:** HIGH
 **Estimated Time:** 10 hours
 
@@ -1545,7 +1553,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 10.12: Implement WITH QUALITY Enforcement
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE (implemented in Plan 03B)
 **Priority:** HIGH
 **Estimated Time:** 14 hours
 
@@ -1577,7 +1585,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 11.1: Extend StartTransactionStmt AST
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 4 hours
 
@@ -1632,13 +1640,13 @@ struct TableReservation
 ```
 
 **Acceptance Criteria:**
-- [ ] All new fields added
-- [ ] Enums defined
-- [ ] Getters/setters added
+- [x] All new fields added
+- [x] Enums defined
+- [x] Getters/setters added
 
 ### Task 11.2: Parse Firebird WAIT / NO WAIT
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 2 hours
 
@@ -1652,14 +1660,14 @@ START TRANSACTION
 ```
 
 **Acceptance Criteria:**
-- [ ] Parses WAIT keyword
-- [ ] Parses NO WAIT keyword
-- [ ] Sets wait_for_locks flag
-- [ ] Test coverage
+- [x] Parses WAIT keyword
+- [x] Parses NO WAIT keyword
+- [x] Sets wait_for_locks flag
+- [x] Test coverage
 
 ### Task 11.3: Parse Firebird LOCK TIMEOUT
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 2 hours
 
@@ -1671,13 +1679,13 @@ START TRANSACTION
 ```
 
 **Acceptance Criteria:**
-- [ ] Parses LOCK TIMEOUT
-- [ ] Reads integer seconds
-- [ ] Test coverage
+- [x] Parses LOCK TIMEOUT
+- [x] Reads integer seconds
+- [x] Test coverage
 
 ### Task 11.4: Parse Firebird RESERVING Clause
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 4 hours
 
@@ -1691,14 +1699,14 @@ START TRANSACTION
 ```
 
 **Acceptance Criteria:**
-- [ ] Parses RESERVING keyword
-- [ ] Parses table list
-- [ ] Parses lock modes
-- [ ] Test coverage
+- [x] Parses RESERVING keyword
+- [x] Parses table list
+- [x] Parses lock modes
+- [x] Test coverage
 
 ### Task 11.5: Parse ON CONFLICT Clause
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 3 hours
 
@@ -1710,16 +1718,16 @@ START TRANSACTION
 ```
 
 **Acceptance Criteria:**
-- [ ] Parses ON CONFLICT
-- [ ] Parses all conflict actions
-- [ ] Parses optional error code
-- [ ] Test coverage
+- [x] Parses ON CONFLICT
+- [x] Parses all conflict actions
+- [x] Parses optional error code
+- [x] Test coverage
 
 **NOTE:** This is ScratchBird-only syntax, NOT in emulated parsers
 
 ### Task 11.6: Parse SET AUTOCOMMIT
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 2 hours
 
@@ -1731,14 +1739,14 @@ SET AUTOCOMMIT {ON|OFF|1|0} [ON CONFLICT action]
 ```
 
 **Acceptance Criteria:**
-- [ ] Parses SET AUTOCOMMIT
-- [ ] Accepts ON/OFF/1/0
-- [ ] Parses optional ON CONFLICT
-- [ ] Test coverage
+- [x] Parses SET AUTOCOMMIT
+- [x] Accepts ON/OFF/1/0
+- [x] Parses optional ON CONFLICT
+- [x] Test coverage
 
 ### Task 11.7: Parse SET TRANSACTION AUTOCOMMIT
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** MEDIUM
 **Estimated Time:** 2 hours
 
@@ -1748,12 +1756,12 @@ SET TRANSACTION AUTOCOMMIT {ON|OFF} [ON CONFLICT action]
 ```
 
 **Acceptance Criteria:**
-- [ ] Parses SET TRANSACTION AUTOCOMMIT
-- [ ] Test coverage
+- [x] Parses SET TRANSACTION AUTOCOMMIT
+- [x] Test coverage
 
 ### Task 11.8: Parse COMMIT/ROLLBACK RETAINING
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 2 hours
 
@@ -1764,13 +1772,13 @@ ROLLBACK [WORK|TRANSACTION] RETAINING
 ```
 
 **Acceptance Criteria:**
-- [ ] Parses RETAINING keyword
-- [ ] Sets retaining flag in AST
-- [ ] Test coverage
+- [x] Parses RETAINING keyword
+- [x] Sets retaining flag in AST
+- [x] Test coverage
 
 ### Task 11.9: Parse 2PC Statements
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** MEDIUM
 **Estimated Time:** 3 hours
 
@@ -1782,15 +1790,15 @@ ROLLBACK PREPARED 'gid'
 ```
 
 **Acceptance Criteria:**
-- [ ] All 3 statements parsed
-- [ ] GID (global transaction ID) parsed
-- [ ] Test coverage
+- [x] All 3 statements parsed
+- [x] GID (global transaction ID) parsed
+- [x] Test coverage
 
 **NOTE:** Executor stubs exist, parser needed for completeness
 
 ### Task 11.10: Emit Extended Transaction Payloads
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 6 hours
 
@@ -1813,9 +1821,9 @@ Emit START_TRANSACTION payload per Plan 03 spec:
 ```
 
 **Acceptance Criteria:**
-- [ ] All flags set correctly
-- [ ] Payload matches Plan 03 spec
-- [ ] Test coverage (bytecode round-trip)
+- [x] All flags set correctly
+- [x] Payload matches Plan 03 spec
+- [x] Test coverage (bytecode round-trip)
 
 ---
 
@@ -1823,7 +1831,7 @@ Emit START_TRANSACTION payload per Plan 03 spec:
 
 ### Task 12.1: Firebird Window Specification Parsing
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 4 hours
 
@@ -1841,18 +1849,18 @@ function_name(...) OVER (
 ```
 
 **Acceptance Criteria:**
-- [ ] Parses OVER keyword
-- [ ] Parses PARTITION BY
-- [ ] Parses ORDER BY
-- [ ] Parses frame clauses (ROWS/RANGE BETWEEN)
-- [ ] Stores in AST
-- [ ] Test coverage
+- [x] Parses OVER keyword
+- [x] Parses PARTITION BY
+- [x] Parses ORDER BY
+- [x] Parses frame clauses (ROWS/RANGE BETWEEN)
+- [x] Stores in AST
+- [x] Test coverage
 
 **Test File:** `tests/unit/test_firebird_parser_window.cpp` (NEW)
 
 ### Task 12.2: MySQL NULL-Safe Equality Operator
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 3 hours
 
@@ -1861,7 +1869,7 @@ function_name(...) OVER (
 **Add Extended Opcode:**
 ```cpp
 // In opcodes.h:
-EXT_NULL_SAFE_EQ = 0x0204  // NULL-safe equality (<=>)
+EXT_NULL_SAFE_EQ = 0x0200  // NULL-safe equality (<=>)
 ```
 
 **Parser Change:**
@@ -1877,22 +1885,30 @@ case ExtendedOpcode::EXT_NULL_SAFE_EQ:
 ```
 
 **Acceptance Criteria:**
-- [ ] Opcode defined
-- [ ] Parser emits opcode
-- [ ] Executor implements NULL-safe semantics
-- [ ] Test coverage
+- [x] Opcode defined
+- [x] Parser emits opcode
+- [x] Executor implements NULL-safe semantics
+- [x] Test coverage
 
-**Test File:** `tests/unit/test_mysql_null_safe_eq.cpp` (NEW)
+**Test File:** `tests/unit/test_mysql_parser.cpp`
 
 ### Task 12.3: ESCAPE Handling for LIKE (PostgreSQL and MySQL)
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 4 hours
 
 **Files to Modify:**
 - `src/parser/postgresql/pg_parser_expr.cpp`
 - `src/parser/mysql/mysql_parser.cpp`
+ - `src/sblr/executor.cpp`
+ - `src/sblr/bytecode_generator_v2.cpp`
+
+**Add Extended Opcodes:**
+```cpp
+EXT_LIKE_ESCAPE = 0x0201   // LIKE with ESCAPE clause
+EXT_ILIKE_ESCAPE = 0x0202  // ILIKE with ESCAPE clause
+```
 
 **Grammar:**
 ```
@@ -1902,21 +1918,22 @@ expr LIKE pattern ESCAPE escape_char
 **Implementation:**
 1. After parsing LIKE pattern, check for ESCAPE keyword
 2. Parse escape character (single-char string literal)
-3. Add escape_char field to EXPR_LIKE payload
+3. Emit `EXT_LIKE_ESCAPE` / `EXT_ILIKE_ESCAPE` with escape expression
 4. Update executor to use escape character
 
 **Acceptance Criteria:**
-- [ ] Both parsers support ESCAPE
-- [ ] Executor honors escape character
-- [ ] Test coverage
+- [x] Both parsers support ESCAPE
+- [x] Executor honors escape character
+- [x] Test coverage
 
 **Test Files:**
-- `tests/unit/test_postgresql_like_escape.cpp` (NEW)
-- `tests/unit/test_mysql_like_escape.cpp` (NEW)
+- `tests/unit/test_postgresql_parser.cpp`
+- `tests/unit/test_mysql_parser.cpp`
+- `tests/unit/test_bytecode_generator_v2.cpp`
 
 ### Task 12.4: Placeholder Handling (MySQL and PostgreSQL)
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** MEDIUM
 **Estimated Time:** 5 hours
 
@@ -1926,7 +1943,7 @@ expr LIKE pattern ESCAPE escape_char
 
 **Add Opcode:**
 ```cpp
-EXT_PLACEHOLDER = 0x0205  // Placeholder for prepared statements
+EXT_PLACEHOLDER = 0x0203  // Placeholder for prepared statements
 ```
 
 **Payload:**
@@ -1937,14 +1954,14 @@ EXT_PLACEHOLDER = 0x0205  // Placeholder for prepared statements
 ```
 
 **Acceptance Criteria:**
-- [ ] Opcode defined
-- [ ] Both parsers emit placeholders
-- [ ] Executor creates placeholder descriptor
-- [ ] Test coverage
+- [x] Opcode defined
+- [x] Both parsers emit placeholders
+- [x] Executor creates placeholder descriptor
+- [x] Test coverage
 
 ### Task 12.5: GROUP BY Validation in Semantic Analyzer
 
-**Status:** ❌ NOT STARTED
+**Status:** ✅ COMPLETE
 **Priority:** HIGH
 **Estimated Time:** 6 hours
 
@@ -1979,13 +1996,13 @@ Status SemanticAnalyzerV2::validateGroupBy(SelectStmt* stmt)
 ```
 
 **Acceptance Criteria:**
-- [ ] Validates all SELECT list items
-- [ ] Allows aggregate functions
-- [ ] Requires non-aggregate columns in GROUP BY
-- [ ] Clear error messages
-- [ ] Test coverage
+- [x] Validates all SELECT list items
+- [x] Allows aggregate functions
+- [x] Requires non-aggregate columns in GROUP BY
+- [x] Clear error messages
+- [x] Test coverage
 
-**Test File:** `tests/unit/test_semantic_analyzer_v2_groupby.cpp` (NEW)
+**Test File:** `tests/unit/test_semantic_analyzer_v2.cpp`
 
 ---
 
@@ -2142,9 +2159,9 @@ Status SemanticAnalyzerV2::validateGroupBy(SelectStmt* stmt)
 - [x] Task 2.2: Document SBLR payload structures (BASIC + ALTER/DROP + advanced types)
 
 ### AST Extensions
-- [ ] Task 3.1: Extend CreateDomainStmt (v2 comprehensive done; v1 pending)
-- [ ] Task 3.2: Create AlterDomainStmt (v2 done; v1 pending)
-- [ ] Task 3.3: Create DropDomainStmt (v2 done; v1 pending)
+- [x] Task 3.1: Extend CreateDomainStmt (V2 complete)
+- [x] Task 3.2: Create AlterDomainStmt
+- [x] Task 3.3: Create DropDomainStmt
 
 ### ScratchBird V2 Parser (12 tasks)
 - [x] Task 4.1-4.7: parseCreateDomain() all types + WITH blocks
@@ -2172,14 +2189,14 @@ Status SemanticAnalyzerV2::validateGroupBy(SelectStmt* stmt)
 - [x] Task 10.9-10.12: WITH block enforcement (SECURITY, INTEGRITY, VALIDATION, QUALITY)
 
 ### Transaction Extensions (10 tasks)
-- [ ] Task 11.1-11.10: Parse + emit extended transaction features
+- [x] Task 11.1-11.10: Parse + emit extended transaction features
 
 ### Quick Wins (5 tasks)
-- [ ] Task 12.1: Firebird window specs
-- [ ] Task 12.2: MySQL NULL-safe equality
-- [ ] Task 12.3: ESCAPE for LIKE
-- [ ] Task 12.4: Placeholder handling
-- [ ] Task 12.5: GROUP BY validation
+- [x] Task 12.1: Firebird window specs
+- [x] Task 12.2: MySQL NULL-safe equality
+- [x] Task 12.3: ESCAPE for LIKE
+- [x] Task 12.4: Placeholder handling
+- [x] Task 12.5: GROUP BY validation
 
 ### Testing (5 test suites)
 - [ ] Task 13.1-13.5: Comprehensive test coverage

@@ -3,7 +3,12 @@
 #include <chrono>
 #include <optional>
 #include "scratchbird/parser/shared_types.h"
+#ifndef SCRATCHBIRD_WITH_COMPILER
+#define SCRATCHBIRD_WITH_COMPILER 1
+#endif
+#if SCRATCHBIRD_WITH_COMPILER
 #include "scratchbird/sblr/query_compiler_v2.h"  // Parser V2 pipeline for view compilation
+#endif
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/type_extractor.h"
@@ -344,6 +349,28 @@ namespace scratchbird
             return p == pattern.size();
         }
 
+        static bool matchSqlLikeCase(const std::string& str, const std::string& pattern, char escape,
+                                     bool case_insensitive) {
+            if (!case_insensitive) {
+                return matchSqlLike(str, pattern, escape);
+            }
+
+            std::string lower_str = str;
+            std::string lower_pattern = pattern;
+            for (char& c : lower_str) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            for (char& c : lower_pattern) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+
+            char esc = escape;
+            if (esc != '\0') {
+                esc = static_cast<char>(std::tolower(static_cast<unsigned char>(esc)));
+            }
+            return matchSqlLike(lower_str, lower_pattern, esc);
+        }
+
         // ===== JSON Helper Functions =====
 
         // Parse JSONPath expression ($.field.subfield[0].nested)
@@ -678,6 +705,19 @@ namespace scratchbird
         }
 
         Executor::~Executor() = default;
+
+        void Executor::setParameters(const std::vector<std::string>& values,
+                                     const std::vector<bool>& nulls)
+        {
+            parameter_values_ = values;
+            parameter_nulls_ = nulls;
+        }
+
+        void Executor::clearParameters()
+        {
+            parameter_values_.clear();
+            parameter_nulls_.clear();
+        }
 
         ExecutionResult Executor::execute(const std::vector<uint8_t> &bytecode)
         {
@@ -1854,11 +1894,6 @@ namespace scratchbird
                             executeSetLocalTimeout();
                             result = ExecutionResult();
                         }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SET_PARSER_VERSION))
-                        {
-                            executeSetParserVersion();
-                            result = ExecutionResult();
-                        }
                         // ===== Schema Navigation Commands =====
                         else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_SCHEMA_PATH))
                         {
@@ -2060,6 +2095,20 @@ namespace scratchbird
             std::memcpy(id.bytes.data(), &bytecode_[pc_], id.bytes.size());
             pc_ += id.bytes.size();
             return id;
+        }
+
+        void Executor::readDependencies(
+            std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>>& deps)
+        {
+            uint32_t count = readInt32();
+            deps.clear();
+            deps.reserve(count);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                core::ID obj_id = readId();
+                auto obj_type = static_cast<core::CatalogManager::ObjectType>(readByte());
+                deps.emplace_back(obj_id, obj_type);
+            }
         }
 
         core::Status Executor::resolveSchemaIdForName(const std::string& schema_path,
@@ -2780,6 +2829,196 @@ namespace scratchbird
             {
                 push(*it);
             }
+        }
+
+        Value Executor::resolvePlaceholderValue(uint16_t position, uint16_t type_hint)
+        {
+            if (position == 0)
+            {
+                error("Placeholder position must be >= 1");
+            }
+
+            size_t index = static_cast<size_t>(position - 1);
+            if (index >= parameter_values_.size())
+            {
+                error("Placeholder position out of range");
+            }
+
+            bool is_null = index < parameter_nulls_.size() && parameter_nulls_[index];
+            if (is_null)
+            {
+                if (type_hint != 0)
+                {
+                    return Value::makeNull(static_cast<core::DataType>(type_hint));
+                }
+                return Value::makeNull();
+            }
+
+            return parsePlaceholderValue(parameter_values_[index], type_hint);
+        }
+
+        Value Executor::parsePlaceholderValue(const std::string& raw, uint16_t type_hint) const
+        {
+            auto trim_view = [](const std::string& input) -> std::string_view {
+                size_t start = 0;
+                while (start < input.size() &&
+                       std::isspace(static_cast<unsigned char>(input[start])))
+                {
+                    ++start;
+                }
+                size_t end = input.size();
+                while (end > start &&
+                       std::isspace(static_cast<unsigned char>(input[end - 1])))
+                {
+                    --end;
+                }
+                return std::string_view(input.data() + start, end - start);
+            };
+
+            auto to_lower = [](std::string_view input) -> std::string {
+                std::string out(input);
+                std::transform(out.begin(), out.end(), out.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                return out;
+            };
+
+            auto parse_int64 = [](const std::string& input, int64_t& out) -> bool {
+                try
+                {
+                    size_t idx = 0;
+                    long long value = std::stoll(input, &idx, 10);
+                    if (idx != input.size())
+                    {
+                        return false;
+                    }
+                    out = static_cast<int64_t>(value);
+                    return true;
+                }
+                catch (...)
+                {
+                    return false;
+                }
+            };
+
+            auto parse_double = [](const std::string& input, double& out) -> bool {
+                try
+                {
+                    size_t idx = 0;
+                    double value = std::stod(input, &idx);
+                    if (idx != input.size())
+                    {
+                        return false;
+                    }
+                    out = value;
+                    return true;
+                }
+                catch (...)
+                {
+                    return false;
+                }
+            };
+
+            std::string_view trimmed = trim_view(raw);
+            std::string trimmed_str(trimmed);
+
+            if (type_hint != 0)
+            {
+                core::DataType hint = static_cast<core::DataType>(type_hint);
+                switch (hint)
+                {
+                    case core::DataType::BOOLEAN:
+                    {
+                        std::string lower = to_lower(trimmed);
+                        if (lower == "true" || lower == "t" || lower == "1")
+                        {
+                            return Value::makeBoolean(true);
+                        }
+                        if (lower == "false" || lower == "f" || lower == "0")
+                        {
+                            return Value::makeBoolean(false);
+                        }
+                        throw std::runtime_error("Invalid boolean parameter value");
+                    }
+                    case core::DataType::INT32:
+                    {
+                        int64_t value = 0;
+                        if (!parse_int64(trimmed_str, value))
+                        {
+                            throw std::runtime_error("Invalid INT32 parameter value");
+                        }
+                        if (value < std::numeric_limits<int32_t>::min() ||
+                            value > std::numeric_limits<int32_t>::max())
+                        {
+                            throw std::runtime_error("INT32 parameter out of range");
+                        }
+                        return Value::makeInt32(static_cast<int32_t>(value));
+                    }
+                    case core::DataType::INT64:
+                    {
+                        int64_t value = 0;
+                        if (!parse_int64(trimmed_str, value))
+                        {
+                            throw std::runtime_error("Invalid INT64 parameter value");
+                        }
+                        return Value::makeInt64(value);
+                    }
+                    case core::DataType::FLOAT32:
+                    {
+                        double value = 0.0;
+                        if (!parse_double(trimmed_str, value))
+                        {
+                            throw std::runtime_error("Invalid FLOAT32 parameter value");
+                        }
+                        return Value::makeFloat32(static_cast<float>(value));
+                    }
+                    case core::DataType::FLOAT64:
+                    case core::DataType::DECIMAL:
+                    {
+                        double value = 0.0;
+                        if (!parse_double(trimmed_str, value))
+                        {
+                            throw std::runtime_error("Invalid FLOAT64 parameter value");
+                        }
+                        return Value::makeFloat64(value);
+                    }
+                    case core::DataType::CHAR:
+                    case core::DataType::VARCHAR:
+                    case core::DataType::TEXT:
+                        return Value::makeVarchar(raw);
+                    default:
+                        return Value::makeVarchar(raw);
+                }
+            }
+
+            if (!trimmed.empty())
+            {
+                std::string lower = to_lower(trimmed);
+                if (lower == "true" || lower == "t")
+                {
+                    return Value::makeBoolean(true);
+                }
+                if (lower == "false" || lower == "f")
+                {
+                    return Value::makeBoolean(false);
+                }
+            }
+
+            if (!trimmed_str.empty())
+            {
+                int64_t int_value = 0;
+                if (parse_int64(trimmed_str, int_value))
+                {
+                    return Value::makeInt64(int_value);
+                }
+
+                double double_value = 0.0;
+                if (parse_double(trimmed_str, double_value))
+                {
+                    return Value::makeFloat64(double_value);
+                }
+            }
+
+            return Value::makeVarchar(raw);
         }
 
         // Helper: Convert parser::DataType to core::DataType
@@ -6360,6 +6599,7 @@ namespace scratchbird
             bool check_option = (flags & 0x02) != 0;
             bool has_column_names = (flags & 0x04) != 0;
             bool materialized = (flags & 0x08) != 0;  // ALPHA Phase 1 - Materialized Views
+            bool has_dependencies = (flags & 0x10) != 0;  // Dependency list appended after definition
 
             // Read column names if present
             std::vector<std::string> column_names;
@@ -6374,6 +6614,11 @@ namespace scratchbird
 
             // Read query definition
             std::string definition = readString();
+            std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>> deps_to_link;
+            if (has_dependencies)
+            {
+                readDependencies(deps_to_link);
+            }
 
             core::ErrorContext ctx;
             core::ID schema_id;
@@ -6393,6 +6638,7 @@ namespace scratchbird
             core::ID materialized_table_id{};
             if (materialized)
             {
+#if SCRATCHBIRD_WITH_COMPILER
                 // Create hidden materialized data table
                 std::string mat_table_name = "__mv_" + resolved_view_name + "_data";
 
@@ -6665,6 +6911,9 @@ namespace scratchbird
 
                 LOG_INFO(EXECUTOR, "Populated materialized view '%s' with %zu rows",
                          view_name.c_str(), row_count);
+#else
+                error("Materialized view creation requires compiler support");
+#endif
             }
 
             // Create view
@@ -6683,24 +6932,17 @@ namespace scratchbird
                 error(err_msg);
             }
 
-            // Record dependencies between this view and referenced tables/views using compiler-reported dependencies
-            QueryCompilerV2 dep_compiler(db_);
-            dep_compiler.setCurrentSchema(schema_id);
-            auto dep_result = dep_compiler.compile(definition);
-
-            std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>> deps_to_link;
-            if (dep_result.success()) {
-                // Use dependencies() instead of involvedTables() to get correct object types (TABLE vs VIEW)
-                deps_to_link = dep_result.dependencies();
-            }
-
-            core::CatalogManager::ViewInfo view_info;
-            if (db_->catalog_manager()->getView(schema_id, resolved_view_name, view_info, &ctx) == core::Status::OK) {
-                db_->catalog_manager()->replaceDependencies(
-                    view_info.view_id,
-                    core::CatalogManager::ObjectType::VIEW,
-                    deps_to_link,
-                    &ctx);
+            if (has_dependencies)
+            {
+                core::CatalogManager::ViewInfo view_info;
+                if (db_->catalog_manager()->getView(schema_id, resolved_view_name, view_info, &ctx) == core::Status::OK)
+                {
+                    db_->catalog_manager()->replaceDependencies(
+                        view_info.view_id,
+                        core::CatalogManager::ObjectType::VIEW,
+                        deps_to_link,
+                        &ctx);
+                }
             }
 
             std::cout << "CREATE " << (materialized ? "MATERIALIZED " : "") << "VIEW" << std::endl;
@@ -6828,6 +7070,7 @@ namespace scratchbird
             LOG_INFO(EXECUTOR, "Refreshing materialized view '%s' (table: '%s')",
                      view_name.c_str(), table_info.table_name.c_str());
 
+#if SCRATCHBIRD_WITH_COMPILER
             // Compile and execute the view definition using Parser V2 pipeline
             QueryCompilerV2 view_compiler(db_);
             core::ID zero_id{};
@@ -7101,6 +7344,9 @@ namespace scratchbird
             }
 
             std::cout << "REFRESH " << (concurrently ? "CONCURRENTLY " : "") << "MATERIALIZED VIEW" << std::endl;
+#else
+            error("Refreshing materialized views requires compiler support");
+#endif
         }
 
         int64_t Executor::executeSequenceNextVal()
@@ -13343,6 +13589,7 @@ namespace scratchbird
                                        const std::vector<std::pair<std::string, std::string>>& select_items,
                                        bool is_select_star)
         {
+#if SCRATCHBIRD_WITH_COMPILER
             // Compile the view's SELECT query using Parser V2 pipeline
             QueryCompilerV2 view_compiler(db_);
             auto compile_result = view_compiler.compile(view_info.definition);
@@ -13445,6 +13692,9 @@ namespace scratchbird
                     current_result_set_->addRow(std::move(row));
                 }
             }
+#else
+            error("View execution requires compiler support");
+#endif
         }
 
         void Executor::executeObjectResolverQuery(
@@ -17189,7 +17439,74 @@ namespace scratchbird
                 {
                     uint16_t ext_op = readExtendedOpcode();
 
-                    if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_VAR_LOAD))
+                    if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_NULL_SAFE_EQ))
+                    {
+                        Value right = pop();
+                        Value left = pop();
+
+                        if (left.isNull() && right.isNull())
+                        {
+                            push(Value::makeBoolean(true));
+                        }
+                        else if (left.isNull() || right.isNull())
+                        {
+                            push(Value::makeBoolean(false));
+                        }
+                        else
+                        {
+                            bool result;
+                            if (core::TypeSystem::isString(left.type()) ||
+                                core::TypeSystem::isString(right.type()))
+                            {
+                                result = compareStrings(left.toString(), right.toString()) == 0;
+                            }
+                            else if (left.type() == core::DataType::FLOAT64 ||
+                                     right.type() == core::DataType::FLOAT64 ||
+                                     left.type() == core::DataType::FLOAT32 ||
+                                     right.type() == core::DataType::FLOAT32)
+                            {
+                                result = coerceToDouble(left) == coerceToDouble(right);
+                            }
+                            else
+                            {
+                                result = left.toInt64() == right.toInt64();
+                            }
+                            push(Value::makeBoolean(result));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_LIKE_ESCAPE) ||
+                             ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ILIKE_ESCAPE))
+                    {
+                        Value escape_val = pop();
+                        Value pattern = pop();
+                        Value text = pop();
+
+                        if (text.isNull() || pattern.isNull() || escape_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            std::string escape_str = escape_val.toString();
+                            if (escape_str.size() != 1)
+                            {
+                                error("ESCAPE must be a single character");
+                            }
+                            char escape_char = escape_str[0];
+                            bool case_insensitive =
+                                (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ILIKE_ESCAPE));
+                            bool matches = matchSqlLikeCase(text.toString(), pattern.toString(),
+                                                            escape_char, case_insensitive);
+                            push(Value::makeBoolean(matches));
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_PLACEHOLDER))
+                    {
+                        uint16_t position = readInt16();
+                        uint16_t type_hint = readInt16();
+                        push(resolvePlaceholderValue(position, type_hint));
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_VAR_LOAD))
                     {
                         executeVarLoad();
                     }
@@ -22869,6 +23186,10 @@ namespace scratchbird
                     static_cast<uint16_t>(ExtendedOpcode::EXT_INDEX_SEARCH),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_INITCAP),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_IN_LIST),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_NULL_SAFE_EQ),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_LIKE_ESCAPE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_ILIKE_ESCAPE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_PLACEHOLDER),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_LPAD),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_MD5),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_NORMALIZE_DOMAIN_VALUE),
@@ -23282,7 +23603,7 @@ namespace scratchbird
                 {
                     std::string text = left.toString();
                     std::string pattern = right.toString();
-                    bool result = matchPattern(text, pattern, false);
+                    bool result = matchSqlLikeCase(text, pattern, '\\', false);
                     push(Value::makeBoolean(result));
                     break;
                 }
@@ -23290,7 +23611,7 @@ namespace scratchbird
                 {
                     std::string text = left.toString();
                     std::string pattern = right.toString();
-                    bool result = matchPattern(text, pattern, true);
+                    bool result = matchSqlLikeCase(text, pattern, '\\', true);
                     push(Value::makeBoolean(result));
                     break;
                 }
@@ -31075,35 +31396,6 @@ namespace scratchbird
             }
         }
 
-        void Executor::executeSetParserVersion()
-        {
-            // Phase 10: SET PARSER VERSION
-            // Read bytecode parameter (1 byte version)
-            uint8_t version = readByte();
-
-            if (version != 2)
-            {
-                error("Only parser version 2 is supported");
-            }
-
-            // Store in connection context for ServerSession to pick up
-            if (conn_ctx_)
-            {
-                conn_ctx_->set_parser_version(version);
-            }
-
-            // Build result set showing the new parser version
-            auto result = std::make_unique<ResultSet>();
-            result->addColumn("parser_version", core::DataType::VARCHAR);
-
-            std::vector<TypedValue> row;
-            std::string version_str = "V2";
-            row.push_back(TypedValue::makeVarchar(version_str.c_str()));
-            result->addRow(row);
-
-            current_result_set_ = std::move(result);
-        }
-
         // Security context helpers (Phase 2 - Security System)
         const core::ID& Executor::getCurrentUserID() const
         {
@@ -37070,6 +37362,7 @@ namespace scratchbird
             uint8_t flags = readByte();
             bool or_replace = (flags & 0x01) != 0;
             bool deterministic = (flags & 0x02) != 0;
+            bool has_dependencies = (flags & 0x08) != 0;  // Dependency list appended after body
 
             std::string function_name = readString();
             core::ErrorContext ctx;
@@ -37130,26 +37423,9 @@ namespace scratchbird
             info.source_text = body;
             info.created_time = info.modified_time =
                 static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
-
-            QueryCompilerV2 dep_compiler(db_);
-            if (!isZeroUuid(schema_id))
+            if (has_dependencies)
             {
-                dep_compiler.setCurrentSchema(schema_id);
-            }
-
-            auto dep_result = dep_compiler.compile(body);
-            if (dep_result.success())
-            {
-                for (const auto& dep : dep_result.dependencies())
-                {
-                    info.referenced_objects.push_back(dep);
-                }
-            }
-            else if (!dep_result.errors().empty())
-            {
-                LOG_WARNING(EXECUTOR, "Function dependency extraction failed for '%s': %s",
-                            function_name.c_str(),
-                            dep_result.errors().front().c_str());
+                readDependencies(info.referenced_objects);
             }
 
             auto status = db_->catalog_manager()->registerFunction(info, &ctx);
@@ -37165,6 +37441,7 @@ namespace scratchbird
         {
             uint8_t flags = readByte();
             bool or_replace = (flags & 0x01) != 0;
+            bool has_dependencies = (flags & 0x08) != 0;  // Dependency list appended after body
 
             std::string procedure_name = readString();
             core::ErrorContext ctx;
@@ -37217,26 +37494,9 @@ namespace scratchbird
             info.source_text = body;
             info.created_time = info.modified_time =
                 static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
-
-            QueryCompilerV2 dep_compiler(db_);
-            if (!isZeroUuid(schema_id))
+            if (has_dependencies)
             {
-                dep_compiler.setCurrentSchema(schema_id);
-            }
-
-            auto dep_result = dep_compiler.compile(body);
-            if (dep_result.success())
-            {
-                for (const auto& dep : dep_result.dependencies())
-                {
-                    info.referenced_objects.push_back(dep);
-                }
-            }
-            else if (!dep_result.errors().empty())
-            {
-                LOG_WARNING(EXECUTOR, "Procedure dependency extraction failed for '%s': %s",
-                            procedure_name.c_str(),
-                            dep_result.errors().front().c_str());
+                readDependencies(info.referenced_objects);
             }
 
             auto status = db_->catalog_manager()->registerProcedure(info, &ctx);
@@ -37252,10 +37512,16 @@ namespace scratchbird
         {
             uint8_t flags = readByte();
             bool or_replace = (flags & 0x01) != 0;
+            bool has_dependencies = (flags & 0x08) != 0;  // Dependency list appended after body
 
             std::string package_name = readString();
             std::string package_header = readString();
             std::string package_body = readString();
+            std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>> deps;
+            if (has_dependencies)
+            {
+                readDependencies(deps);
+            }
 
             core::ErrorContext ctx;
             core::ID schema_id;
@@ -37301,32 +37567,13 @@ namespace scratchbird
                 error(msg);
             }
 
-            QueryCompilerV2 dep_compiler(db_);
-            if (!isZeroUuid(schema_id))
+            if (has_dependencies)
             {
-                dep_compiler.setCurrentSchema(schema_id);
+                db_->catalog_manager()->replaceDependencies(package_id,
+                                                            core::CatalogManager::ObjectType::PACKAGE,
+                                                            deps,
+                                                            &ctx);
             }
-
-            std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>> deps;
-            auto dep_result = dep_compiler.compile(package_body);
-            if (dep_result.success())
-            {
-                for (const auto& dep : dep_result.dependencies())
-                {
-                    deps.push_back(dep);
-                }
-            }
-            else if (!dep_result.errors().empty())
-            {
-                LOG_WARNING(EXECUTOR, "Package dependency extraction failed for '%s': %s",
-                            package_name.c_str(),
-                            dep_result.errors().front().c_str());
-            }
-
-            db_->catalog_manager()->replaceDependencies(package_id,
-                                                        core::CatalogManager::ObjectType::PACKAGE,
-                                                        deps,
-                                                        &ctx);
         }
 
         void Executor::executeDropFunctionStatement()

@@ -38,6 +38,35 @@ bool readExtendedHeader(const std::vector<uint8_t>& bytecode,
     return true;
 }
 
+bool hasExtendedOpcode(const std::vector<uint8_t>& bytecode,
+                       sblr::ExtendedOpcode expected) {
+    uint16_t target = static_cast<uint16_t>(expected);
+    for (size_t i = 0; i + 2 < bytecode.size(); ++i) {
+        if (bytecode[i] == static_cast<uint8_t>(sblr::Opcode::EXTENDED_OPCODE)) {
+            uint16_t opcode = sblr::readInt16(&bytecode[i + 1]);
+            if (opcode == target) {
+                return true;
+            }
+            i += 2;
+        }
+    }
+    return false;
+}
+
+std::vector<uint16_t> placeholderPositions(const std::vector<uint8_t>& bytecode) {
+    std::vector<uint16_t> positions;
+    uint16_t target = static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_PLACEHOLDER);
+    for (size_t i = 0; i + 5 < bytecode.size(); ++i) {
+        if (bytecode[i] == static_cast<uint8_t>(sblr::Opcode::EXTENDED_OPCODE)) {
+            uint16_t opcode = sblr::readInt16(&bytecode[i + 1]);
+            if (opcode == target) {
+                positions.push_back(sblr::readInt16(&bytecode[i + 3]));
+            }
+        }
+    }
+    return positions;
+}
+
 }  // namespace
 
 // ============================================================================
@@ -392,6 +421,14 @@ TEST_F(MySQLParserTest, CreateTableWithTypes) {
     expectSuccess("CREATE TABLE test (a DATE, b TIME, c DATETIME, d TIMESTAMP)");
     expectSuccess("CREATE TABLE test (a BLOB, b BINARY(16), c VARBINARY(256))");
     expectSuccess("CREATE TABLE test (a JSON, b BOOL)");
+    expectSuccess("CREATE TABLE test (g GEOMETRY, p POINT, l LINESTRING, poly POLYGON)");
+}
+
+TEST_F(MySQLParserTest, CreateTableWithConstraints) {
+    expectSuccess("CREATE TABLE test (id INT, name VARCHAR(50), PRIMARY KEY (id))");
+    expectSuccess("CREATE TABLE test (id INT, name VARCHAR(50), UNIQUE KEY uq_name (name))");
+    expectSuccess("CREATE TABLE test (id INT, role_id INT, FOREIGN KEY (role_id) REFERENCES roles(id))");
+    expectSuccess("CREATE TABLE test (id INT, CHECK (id > 0))");
 }
 
 TEST_F(MySQLParserTest, TransactionStatements) {
@@ -487,6 +524,31 @@ TEST_F(MySQLParserTest, MySQLSpecificOperators) {
     expectSuccess("SELECT 5 | 3");       // Bitwise OR
     expectSuccess("SELECT 5 ^ 3");       // Bitwise XOR
     expectSuccess("SELECT ~5");          // Bitwise NOT
+}
+
+TEST_F(MySQLParserTest, NullSafeEqualEmitsExtendedOpcode) {
+    Parser parser("SELECT 1 <=> NULL");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success()) << "Failed to parse NULL-safe equality";
+    EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
+}
+
+TEST_F(MySQLParserTest, LikeEscapeEmitsExtendedOpcode) {
+    Parser parser("SELECT 'abc' LIKE 'a!%' ESCAPE '!'");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success()) << "Failed to parse LIKE ... ESCAPE";
+    EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_LIKE_ESCAPE));
+}
+
+TEST_F(MySQLParserTest, PlaceholderEmitsExtendedOpcode) {
+    Parser parser("SELECT ? + ?");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success()) << "Failed to parse placeholders";
+    EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_PLACEHOLDER));
+    auto positions = placeholderPositions(result.bytecode());
+    ASSERT_EQ(positions.size(), 2u);
+    EXPECT_EQ(positions[0], 1);
+    EXPECT_EQ(positions[1], 2);
 }
 
 TEST_F(MySQLParserTest, JSONOperators) {

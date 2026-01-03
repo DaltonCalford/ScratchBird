@@ -194,6 +194,11 @@ namespace scratchbird
             bool hasCurrentSchema() const { return current_schema_set_; }
             const core::ID& getCurrentSchema() const { return current_schema_id_; }
 
+            // Bind parameters for placeholder evaluation (prepared statements)
+            void setParameters(const std::vector<std::string>& values,
+                               const std::vector<bool>& nulls);
+            void clearParameters();
+
             // Task 17 MGA Phase 2.2: Access index maintenance statistics
             const IndexMaintenanceStats& getIndexStats() const { return index_stats_; }
             void resetIndexStats() { index_stats_.reset(); }
@@ -252,6 +257,10 @@ namespace scratchbird
             const std::vector<Value> *current_row_values_ = nullptr;
             const std::vector<core::CatalogManager::ColumnInfo> *current_row_columns_ = nullptr;
 
+            // Bound parameters for placeholders (prepared statements)
+            std::vector<std::string> parameter_values_;
+            std::vector<bool> parameter_nulls_;
+
             // Grouping context for ROLLUP/CUBE/GROUPING SETS (Phase 3: Advanced Grouping)
             size_t current_grouping_set_index_ = 0;
             std::vector<size_t> current_grouping_set_column_pcs_;  // Expression PCs in current set
@@ -291,6 +300,7 @@ namespace scratchbird
             std::string readString16();
             core::ObjectPath readObjectPath();
             core::ID readId();
+            void readDependencies(std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>>& deps);
             core::Status resolveSchemaIdForName(const std::string& schema_path,
                                                 core::ID& schema_id_out,
                                                 core::ErrorContext* ctx,
@@ -316,6 +326,8 @@ namespace scratchbird
             Value pop();
             Value getStackValueAtOffset(uint16_t offset);
             void setStackValueAtOffset(uint16_t offset, const Value& value);
+            Value resolvePlaceholderValue(uint16_t position, uint16_t type_hint);
+            Value parsePlaceholderValue(const std::string& raw, uint16_t type_hint) const;
 
             // Statement execution
             void executeCreateTable();
@@ -803,7 +815,6 @@ namespace scratchbird
             void executeSetSqlDialect();     // Execute SET SQL DIALECT n
             void executeSetNames();          // Execute SET NAMES charset_name
             void executeSetLocalTimeout();   // Execute SET LOCAL_TIMEOUT n
-            void executeSetParserVersion();  // Phase 10: Execute SET PARSER VERSION
 
             // Security context helpers (Phase 2 - Security System)
             // These wrap ConnectionContext methods for convenience

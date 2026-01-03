@@ -56,8 +56,6 @@ namespace scratchbird
     namespace optimizer
     {
         class StatisticsManager;
-        class QueryPlanner;
-        class CostModel;
     }
 
     namespace core
@@ -268,7 +266,7 @@ namespace scratchbird
                 return storage_engine_.get();
             }
 
-            // Get optimizer components (Phase 1, Task 1.3)
+            // Get optimizer statistics manager (Phase 1, Task 1.3)
             optimizer::StatisticsManager *statistics_manager()
             {
                 return statistics_manager_.get();
@@ -276,15 +274,6 @@ namespace scratchbird
             const optimizer::StatisticsManager *statistics_manager() const
             {
                 return statistics_manager_.get();
-            }
-
-            optimizer::QueryPlanner *query_planner()
-            {
-                return query_planner_.get();
-            }
-            const optimizer::QueryPlanner *query_planner() const
-            {
-                return query_planner_.get();
             }
 
             // Get permission cache (Security Phase 3.2.3)
@@ -535,10 +524,8 @@ namespace scratchbird
             std::unique_ptr<LongTransactionMonitor>
                 long_transaction_monitor_;                     // Long transaction monitor (owned)
 
-            // Optimizer components (Phase 1, Task 1.3)
+            // Optimizer runtime components (Phase 1, Task 1.3)
             std::unique_ptr<optimizer::StatisticsManager> statistics_manager_; // Statistics manager (owned)
-            std::unique_ptr<optimizer::QueryPlanner> query_planner_;          // Query planner (owned)
-            std::unique_ptr<optimizer::CostModel> cost_model_;                // Cost model (owned)
             std::unique_ptr<DomainManager> domain_manager_;                   // Domain manager (owned)
             std::unique_ptr<EncryptionKeyManager> encryption_key_manager_;    // Encryption key manager (owned)
             std::unique_ptr<AuditLogger> audit_logger_;                       // Audit logger (owned)

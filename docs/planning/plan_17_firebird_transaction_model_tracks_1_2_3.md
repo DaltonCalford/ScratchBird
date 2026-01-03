@@ -214,7 +214,7 @@ CREATE TABLE sys.catalog.dormant_transactions (
   lock_timeout INT NOT NULL,
   autocommit_mode SMALLINT NOT NULL,
   current_schema_id UUID NOT NULL,
-  session_settings_oid INT NOT NULL,   -- TOAST JSON: search_path, dialect_tag, sql_dialect, charset, parser_version, stmt_timeout
+  session_settings_oid INT NOT NULL,   -- TOAST JSON: search_path, dialect_tag, sql_dialect, charset, stmt_timeout
   start_time BIGINT NOT NULL,          -- epoch micros
   last_activity_time BIGINT NOT NULL,  -- epoch micros
   dormant_since BIGINT NOT NULL,       -- epoch micros

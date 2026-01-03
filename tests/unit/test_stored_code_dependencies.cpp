@@ -45,15 +45,31 @@ void writeString(std::vector<uint8_t>& buf, const std::string& str) {
     buf.insert(buf.end(), str.begin(), str.end());
 }
 
+void writeId(std::vector<uint8_t>& buf, const scratchbird::core::ID& id) {
+    buf.insert(buf.end(), id.bytes.begin(), id.bytes.end());
+}
+
+void writeDependencies(
+    std::vector<uint8_t>& buf,
+    const std::vector<std::pair<scratchbird::core::ID, CatalogManager::ObjectType>>& deps) {
+    writeInt32(buf, static_cast<int32_t>(deps.size()));
+    for (const auto& dep : deps) {
+        writeId(buf, dep.first);
+        buf.push_back(static_cast<uint8_t>(dep.second));
+    }
+}
+
 std::vector<uint8_t> buildCreateFunctionBytecode(const std::string& name,
-                                                 const std::string& body) {
+                                                 const std::string& body,
+                                                 const std::vector<std::pair<scratchbird::core::ID,
+                                                                             CatalogManager::ObjectType>>& deps) {
     std::vector<uint8_t> bc;
     bc.push_back(static_cast<uint8_t>(Opcode::VERSION));
     bc.push_back(scratchbird::sblr::SBLR_VERSION);
     bc.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
     writeInt16(bc, static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_FUNCTION_STMT));
 
-    uint8_t flags = 0x00; // no OR REPLACE, INVOKER
+    uint8_t flags = 0x08; // dependencies list present
     bc.push_back(flags);
     writeString(bc, name);
 
@@ -64,6 +80,7 @@ std::vector<uint8_t> buildCreateFunctionBytecode(const std::string& name,
     writeInt32(bc, 0); // return scale
 
     writeString(bc, body);
+    writeDependencies(bc, deps);
     bc.push_back(static_cast<uint8_t>(Opcode::END));
     return bc;
 }
@@ -81,17 +98,20 @@ std::vector<uint8_t> buildDropFunctionBytecode(const std::string& name) {
 }
 
 std::vector<uint8_t> buildCreateProcedureBytecode(const std::string& name,
-                                                  const std::string& body) {
+                                                  const std::string& body,
+                                                  const std::vector<std::pair<scratchbird::core::ID,
+                                                                              CatalogManager::ObjectType>>& deps) {
     std::vector<uint8_t> bc;
     bc.push_back(static_cast<uint8_t>(Opcode::VERSION));
     bc.push_back(scratchbird::sblr::SBLR_VERSION);
     bc.push_back(static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
     writeInt16(bc, static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_PROCEDURE_STMT));
 
-    bc.push_back(0x00); // flags
+    bc.push_back(0x08); // dependencies list present
     writeString(bc, name);
     bc.push_back(0); // param count
     writeString(bc, body);
+    writeDependencies(bc, deps);
     bc.push_back(static_cast<uint8_t>(Opcode::END));
     return bc;
 }
@@ -139,7 +159,9 @@ protected:
 };
 
 TEST_F(StoredCodeDependencyTest, CreateFunctionRegistersDependencies) {
-    auto bytecode = buildCreateFunctionBytecode("deps_func", "SELECT id FROM deps");
+    std::vector<std::pair<scratchbird::core::ID, CatalogManager::ObjectType>> deps;
+    deps.emplace_back(table_info_.table_id, CatalogManager::ObjectType::TABLE);
+    auto bytecode = buildCreateFunctionBytecode("deps_func", "SELECT id FROM deps", deps);
     Executor exec(&db_);
     auto result = exec.execute(bytecode);
     ASSERT_TRUE(result.success()) << result.error();
@@ -157,7 +179,9 @@ TEST_F(StoredCodeDependencyTest, CreateFunctionRegistersDependencies) {
 
 TEST_F(StoredCodeDependencyTest, DropFunctionClearsDependencies) {
     Executor exec(&db_);
-    auto create_bc = buildCreateFunctionBytecode("deps_func2", "SELECT id FROM deps");
+    std::vector<std::pair<scratchbird::core::ID, CatalogManager::ObjectType>> deps;
+    deps.emplace_back(table_info_.table_id, CatalogManager::ObjectType::TABLE);
+    auto create_bc = buildCreateFunctionBytecode("deps_func2", "SELECT id FROM deps", deps);
     ASSERT_TRUE(exec.execute(create_bc).success());
 
     CatalogManager::FunctionInfo fn_info;
@@ -173,7 +197,9 @@ TEST_F(StoredCodeDependencyTest, DropFunctionClearsDependencies) {
 }
 
 TEST_F(StoredCodeDependencyTest, CreateProcedureRegistersDependencies) {
-    auto bytecode = buildCreateProcedureBytecode("deps_proc", "SELECT id FROM deps");
+    std::vector<std::pair<scratchbird::core::ID, CatalogManager::ObjectType>> deps;
+    deps.emplace_back(table_info_.table_id, CatalogManager::ObjectType::TABLE);
+    auto bytecode = buildCreateProcedureBytecode("deps_proc", "SELECT id FROM deps", deps);
     Executor exec(&db_);
     ASSERT_TRUE(exec.execute(bytecode).success());
 

@@ -21,8 +21,6 @@
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/optimizer/statistics_manager.h"
-#include "scratchbird/optimizer/query_planner.h"
-#include "scratchbird/optimizer/cost_model.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -1093,7 +1091,7 @@ namespace scratchbird::core
             return status;
         }
 
-        // Initialize optimizer components (Phase 1, Task 1.3)
+        // Initialize optimizer runtime components (Phase 1, Task 1.3)
         try
         {
             statistics_manager_ = std::make_unique<optimizer::StatisticsManager>(this);
@@ -1102,29 +1100,6 @@ namespace scratchbird::core
         {
             close();
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate StatisticsManager");
-            return Status::OOM;
-        }
-
-        try
-        {
-            cost_model_ = std::make_unique<optimizer::CostModel>();
-        }
-        catch (const std::bad_alloc &)
-        {
-            close();
-            SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate CostModel");
-            return Status::OOM;
-        }
-
-        try
-        {
-            query_planner_ = std::make_unique<optimizer::QueryPlanner>(
-                this, *cost_model_, statistics_manager_.get());
-        }
-        catch (const std::bad_alloc &)
-        {
-            close();
-            SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate QueryPlanner");
             return Status::OOM;
         }
 

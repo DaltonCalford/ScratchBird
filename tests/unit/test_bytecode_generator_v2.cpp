@@ -124,6 +124,20 @@ protected:
         return false;
     }
 
+    bool hasExtendedOpcode(const std::vector<uint8_t>& bytecode, sblr::ExtendedOpcode op) {
+        uint16_t target = static_cast<uint16_t>(op);
+        for (size_t i = 0; i + 2 < bytecode.size(); ++i) {
+            if (bytecode[i] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE)) {
+                uint16_t opcode = sblr::readInt16(&bytecode[i + 1]);
+                if (opcode == target) {
+                    return true;
+                }
+                i += 2;
+            }
+        }
+        return false;
+    }
+
     // Get opcode count
     size_t countOpcode(const std::vector<uint8_t>& bytecode, Opcode op) {
         uint8_t target = static_cast<uint8_t>(op);
@@ -443,6 +457,13 @@ TEST_F(BytecodeGeneratorV2Test, LikeExpression) {
     ASSERT_TRUE(result.success()) << "Bytecode generation failed";
 
     EXPECT_TRUE(hasOpcode(result.bytecode(), Opcode::EXPR_LIKE));
+}
+
+TEST_F(BytecodeGeneratorV2Test, LikeEscapeExpression) {
+    auto result = generateBytecode("SELECT 'hello' LIKE 'h!%' ESCAPE '!'");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_LIKE_ESCAPE));
 }
 
 // =============================================================================

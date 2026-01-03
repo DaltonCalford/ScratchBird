@@ -570,6 +570,37 @@ TEST_F(SemanticAnalyzerV2Test, ComplexBooleanExpression) {
 }
 
 // =============================================================================
+// GROUP BY Validation Tests
+// =============================================================================
+
+TEST_F(SemanticAnalyzerV2Test, GroupByRejectsNonGroupedColumn) {
+    auto result = analyze("SELECT id, COUNT(*) FROM users");
+    EXPECT_FALSE(result.success());
+    ASSERT_FALSE(result.errors().empty());
+    EXPECT_NE(result.errors().front().message.find("GROUP BY"), std::string::npos);
+}
+
+TEST_F(SemanticAnalyzerV2Test, GroupByAllowsGroupedColumn) {
+    auto result = analyze("SELECT id, COUNT(*) FROM users GROUP BY id");
+    EXPECT_TRUE(result.success()) << "Analysis failed for grouped column";
+}
+
+TEST_F(SemanticAnalyzerV2Test, GroupByAllowsDerivedExpression) {
+    auto result = analyze("SELECT id + 1, COUNT(*) FROM users GROUP BY id");
+    EXPECT_TRUE(result.success()) << "Analysis failed for derived expression";
+}
+
+TEST_F(SemanticAnalyzerV2Test, GroupByAllowsMatchingExpression) {
+    auto result = analyze("SELECT id + 1, COUNT(*) FROM users GROUP BY id + 1");
+    EXPECT_TRUE(result.success()) << "Analysis failed for matching expression";
+}
+
+TEST_F(SemanticAnalyzerV2Test, GroupByAllowsConstantExpression) {
+    auto result = analyze("SELECT 1 + 2, COUNT(*) FROM users GROUP BY id");
+    EXPECT_TRUE(result.success()) << "Analysis failed for constant expression";
+}
+
+// =============================================================================
 // Error Handling Tests (semantic errors should be caught)
 // =============================================================================
 

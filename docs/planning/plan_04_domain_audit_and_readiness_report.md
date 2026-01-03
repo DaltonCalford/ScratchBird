@@ -1,6 +1,6 @@
 # Plan 04 - Domain Implementation Audit and Readiness Report
 
-**Report Date:** 2025-12-21
+**Report Date:** 2026-01-03
 **Purpose:** Comprehensive audit of domain implementation and Plan 04 readiness assessment
 **Scope:** Domain types, transaction control, parser coverage, and Plan 02/03 dependencies
 
@@ -12,14 +12,14 @@
 
 | Component | Implementation Status | Parser Status | Plan 04 Impact |
 |-----------|----------------------|---------------|----------------|
-| **Domain Backend** | ✅ COMPREHENSIVE (2119 lines) | ❌ NOT CONNECTED | HIGH - Parser work needed |
-| **Transaction Control** | ✅ COMPLETE (see transaction report) | ✅ PARTIAL | MEDIUM - Extension needed |
-| **ScratchBird V2 Parser** | ⚠️ STUBBED | ❌ TODO comments | HIGH - Primary work item |
-| **Emulated Parsers** | ⚠️ STUBBED | ❌ Not implemented | HIGH - Per-dialect work |
-| **Plan 02 Dependency** | N/A | ✅ CAN PROCEED | LOW - Optional for now |
-| **Plan 03 Dependency** | N/A | ✅ READY | NONE - SBLR v2 complete |
+| **Domain Backend** | ✅ COMPREHENSIVE (2119 lines) | ✅ CONNECTED (V2 pipeline) | LOW - Core wired |
+| **Transaction Control** | ✅ COMPLETE | ✅ COMPLETE (V2) | LOW - Emulated guardrails pending |
+| **ScratchBird V2 Parser** | ✅ COMPLETE | ✅ Domain DDL + transactions wired | LOW - V2 coverage done |
+| **Emulated Parsers** | ⚠️ PARTIAL | ❌ Domain DDL pending | HIGH - Per-dialect work |
+| **Plan 02 Dependency** | N/A | ⚠️ Alignment pending | MEDIUM - Path defaults/tests |
+| **Plan 03 Dependency** | N/A | ✅ COMPLETE | NONE - WITH infra wired |
 
-**VERDICT:** Plan 04 can proceed with focus on **connecting existing domain backend to parsers**. The heavy lifting (domain engine) is done; need parser→SBLR→executor wiring.
+**VERDICT:** Plan 04 core pipeline is complete for ScratchBird V2. Remaining work is emulated parser domain DDL, semantic guardrails, conflict opcodes, and comprehensive tests.
 
 ---
 
@@ -233,23 +233,19 @@ Plan 04: "Add SBLR opcodes for ALTER/DROP DOMAIN and conflict resolution operati
 
 ## PART 3: PARSER IMPLEMENTATION STATUS
 
-### 3.1 ScratchBird V2 Parser - PARTIAL ⚠️
+### 3.1 ScratchBird V2 Parser - COMPLETE ✅
 
-**Location:** `src/parser/parser_v2.cpp` lines 279-285
+**Location:** `src/parser/parser_v2.cpp`
 
-```cpp
-// TODO: Add more CREATE types
-// if (matchContextual("FUNCTION"))   return parseCreateFunction(or_replace);
-// if (matchContextual("PROCEDURE"))  return parseCreateProcedure(or_replace);
-// if (matchContextual("TRIGGER"))    return parseCreateTrigger();
-```
+**Note:** V2 still has TODOs for CREATE FUNCTION/PROCEDURE/TRIGGER; those are outside Plan 04 domain scope.
 
-**Domain Parsing:** ⚠️ BASIC + WITH blocks implemented
-- `parseCreateDomain()` (basic + WITH SECURITY/INTEGRITY/VALIDATION/QUALITY)
+**Domain Parsing:** ✅ All domain kinds + WITH blocks implemented
+- `parseCreateDomain()` (BASIC/RECORD/ENUM/SET/VARIANT + WITH SECURITY/INTEGRITY/VALIDATION/QUALITY + WITH OPTIONS)
 - `parseAlterDomain()` implemented
 - `parseDropDomain()` implemented
+- CREATE/ALTER/DROP dispatchers wired
 
-**Status:** ⚠️ V2 domain parsing present; advanced domain kinds pending
+**Status:** ✅ V2 domain parsing complete
 
 ### 3.2 Firebird Parser - STUBBED ❌
 
@@ -264,20 +260,17 @@ Statement* Parser::parseCreateDomain() {
 
 **Status:** ❌ STUB THROWS ERROR
 
-### 3.3 PostgreSQL Parser - STUBBED ❌
+### 3.3 PostgreSQL Parser - PARTIAL ⚠️
 
-**Location:** `src/parser/postgresql/pg_parser_ddl.cpp` line 1238
+**Location:** `src/parser/postgresql/pg_parser_ddl.cpp`
 
-```cpp
-void Parser::parseCreateDomain() {
-    error("CREATE DOMAIN not yet implemented in PostgreSQL parser");
-    // Stub
-}
-```
+**Current:** `parseCreateDomain()` exists and emits `EXT_CREATE_DOMAIN`, but uses legacy payload (no flags/domain kind/WITH blocks). `ALTER DOMAIN` / `DROP DOMAIN` not implemented.
 
-**Status:** ❌ STUB THROWS ERROR
+**Status:** ⚠️ Payload alignment + ALTER/DROP coverage pending
 
-### 3.4 MySQL Parser - NO DOMAIN SUPPORT ✅ (Correct)
+### 3.4 MySQL Parser - PENDING ❌
+
+**Current:** MySQL has no DOMAIN support; parser must explicitly reject CREATE/ALTER/DROP DOMAIN with clear errors. No explicit guardrail yet.
 
 **Status:** ✅ CORRECTLY ABSENT (MySQL has no native DOMAIN support)
 
@@ -329,69 +322,34 @@ private:
 
 **Status:** ✅ BASIC AST NODE EXISTS
 
-### 4.2 Missing AST Fields - CRITICAL ❌
+### 4.2 AST Fields - COMPLETE ✅
 
-**Required by Plan 04:**
+**Status:** ✅ CreateDomainStmt includes domain_kind, dialect_tag/compat_name, inherits, record/enum/set/variant fields, and WITH block options.
 
-```cpp
-// Plan 04 requirement:
-// "Extend CreateDomainStmt to include domain_kind, dialect_tag, compat_name, inherits, WITH blocks"
-```
+**Impact:** None - AST expansion complete for Plan 04 domain scope.
 
-**Missing Fields:**
-- ❌ `DomainType domain_kind` (BASIC/RECORD/ENUM/SET/VARIANT)
-- ❌ `std::string dialect_tag`
-- ❌ `std::string compat_name`
-- ❌ `ID parent_domain_id` (for INHERITS clause)
-- ❌ `std::vector<RecordField> record_fields` (for RECORD domains)
-- ❌ `std::vector<EnumValue> enum_values` (for ENUM domains)
-- ❌ `DataType set_element_type` (for SET domains)
-- ❌ `std::vector<DataType> variant_types` (for VARIANT domains)
-- ❌ `DomainSecurity security_opts` (for WITH SECURITY block)
-- ❌ `DomainIntegrity integrity_opts` (for WITH INTEGRITY block)
-- ❌ `DomainValidation validation_opts` (for WITH VALIDATION block)
-- ❌ `DomainQuality quality_opts` (for WITH QUALITY block)
+### 4.3 AST Nodes - PARTIAL ⚠️
 
-**Impact:** HIGH - Cannot parse comprehensive domain definitions
+**Status:**
+- ✅ `AlterDomainStmt` (V2)
+- ✅ `DropDomainStmt` (V2)
+- ❌ `RebindDomainStmt` (admin conflict workflow)
 
-**Fix Required:**
-1. Extend `CreateDomainStmt` with all missing fields
-2. Add setters/getters for each field
-3. Update AST visitor pattern
-4. Update bytecode generator to emit extended fields
-
-**Estimated Effort:** 1-2 days
-
-### 4.3 Missing AST Nodes - PARTIAL ⚠️
-
-**Required:**
-- ✅ `AlterDomainStmt` - For ALTER DOMAIN operations (v2 AST)
-- ✅ `DropDomainStmt` - For DROP DOMAIN operations (v2 AST)
-- ❌ `RebindDomainStmt` - For REBIND DOMAIN (admin operation)
-
-**Impact:** MEDIUM - REBIND DOMAIN still blocked
-
-**Estimated Effort:** 1 day
+**Impact:** MEDIUM - Conflict opcodes still blocked
 
 ---
 
 ## PART 5: EXECUTOR IMPLEMENTATION
 
-### 5.1 Executor Domain Handlers - PARTIAL ⚠️
+### 5.1 Executor Domain Handlers - COMPLETE ✅
 
-**Status:** ⚠️ CREATE/ALTER/DROP handlers implemented; SHOW pending
+**Status:** ✅ CREATE/ALTER/DROP/SHOW handlers implemented
 
 **Implemented Handlers:**
 - ✅ EXT_CREATE_DOMAIN → executeCreateDomain()
 - ✅ EXT_ALTER_DOMAIN → executeAlterDomain()
 - ✅ EXT_DROP_DOMAIN → executeDropDomain()
-
-**Missing Handler:**
-- ❌ EXT_SHOW_DOMAIN → executeShowDomain()
-
-**Impact:** MEDIUM - SHOW DOMAIN still unavailable
-
-**Estimated Effort:** 1-2 days (SHOW handler + formatting)
+- ✅ EXT_SHOW_DOMAIN → executeShowDomain()
 
 ---
 
@@ -401,17 +359,14 @@ private:
 
 **Location:** `src/sblr/semantic_analyzer_v2.cpp`
 
-**Status:** ⚠️ Basic analyzeCreate/Alter/Drop wired; validation pending
+**Status:** ⚠️ Core analyzeCreate/Alter/Drop wired (all domain kinds); guardrails/tests pending
 
-**Required:**
-- ✅ `analyzeCreateDomain()` / `analyzeAlterDomain()` / `analyzeDropDomain()`
-- ❌ `validateDomainConstraints()` - Semantic validation of CHECK expressions
-- ❌ `resolveDomainInheritance()` - Validate INHERITS clause (no cycles)
-- ❌ `collectDomainDependencies()` - Populate object_uuids for dependency tracking
+**Required (Remaining):**
+- ⚠️ Validate CHECK/default expressions (type compatibility + semantic checks)
+- ⚠️ Inheritance cycle detection + dependency checks
+- ⚠️ Populate dependency metadata for downstream tooling
 
-**Impact:** MEDIUM - Can defer to executor for initial implementation
-
-**Estimated Effort:** 2-3 days (validation + dependency tracking)
+**Impact:** MEDIUM - Core behavior works; hardening still needed
 
 ---
 
@@ -457,220 +412,46 @@ Status status = catalog_->resolveObjectPath(path, ObjectType::DOMAIN, opts, doma
 
 ---
 
-## PART 8: PLAN 04 READINESS ASSESSMENT
+## PART 8: PLAN 04 READINESS ASSESSMENT (Updated 2026-01-03)
 
-### 8.1 Can Plan 04 Start? ✅ YES (With Caveats)
+### 8.1 Current Readiness
 
-**GREEN LIGHT ✅**
-| Task | Readiness | Notes |
-|------|-----------|-------|
-| Transaction control extension | ✅ READY | Parser extensions straightforward |
-| Firebird window specs | ✅ READY | Clear parsing patterns |
-| MySQL NULL-safe equality | ✅ READY | Simple opcode addition |
-| PostgreSQL ESCAPE | ✅ READY | Simple opcode addition |
-| Placeholder handling | ✅ READY | Standard pattern |
-| GROUP BY validation | ✅ READY | Semantic analyzer work |
+**Green (Complete):**
+- V2 domain DDL parser/semantic/bytecode/executor wiring (all domain kinds + WITH blocks)
+- WITH block enforcement opcodes + executor handlers
+- Extended transaction grammar + bytecode emission
+- SHOW DOMAIN support
 
-**YELLOW LIGHT ⚠️**
-| Task | Readiness | Blocker | Fix Time |
-|------|-----------|---------|----------|
-| Basic domain DDL | ⚠️ NEEDS SCHEMA FIX | Missing dialect_tag/compat_name | 4-6 hours |
-| Domain opcodes | ⚠️ NEEDS DEFINITION | Only 2 opcodes exist | 2-3 days |
-| Parser AST extension | ⚠️ NEEDS EXPANSION | Basic AST too simple | 1-2 days |
-| Executor handlers | ⚠️ NEEDS IMPLEMENTATION | Zero handlers exist | 3-4 days |
+**Yellow (Partial):**
+- Semantic validation guardrails (inheritance cycles, dependency checks, label uniqueness)
+- Plan 02B alignment (dot-path defaults, cascade semantics, tests)
 
-**RED LIGHT ❌**
-| Task | Readiness | Blocker | Fix Time |
-|------|-----------|---------|----------|
-| Comprehensive domain spec | ❌ MISSING | No BNF grammar for advanced features | 1-2 weeks |
-| Domain payload encoding spec | ❌ MISSING | SBLR payload structure undefined | 1 week |
-| Dialect-aware resolution | ⚠️ NEEDS IMPLEMENTATION | Plan 02 complete; implement domain lookup rules | 1-2 days |
+**Red (Pending):**
+- Emulated parser domain DDL (Firebird/PostgreSQL)
+- MySQL explicit DOMAIN rejection (clear errors)
+- Conflict opcodes (EXT_REBIND_DOMAIN / EXT_RESOLVE_DOMAIN_CONFLICT)
+- Comprehensive test coverage for emulated dialects and negative cases
 
-### 8.2 Recommended Implementation Sequence
+### 8.2 Recommended Execution Order (Remaining)
 
-**Phase 1: Quick Wins (Start Immediately) - 3-5 days**
-1. ✅ Firebird window specs
-2. ✅ MySQL NULL-safe equality
-3. ✅ PostgreSQL/MySQL ESCAPE handling
-4. ✅ Placeholder handling
-5. ✅ GROUP BY validation
-
-**Phase 2: Basic Domain Support (After Schema Fix) - 1 week**
-1. Add `dialect_tag` and `compat_name` to domain schema
-2. Extend `CreateDomainStmt` AST for basic domains
-3. Implement `parseCreateDomain()` for ScratchBird V2 (basic form only)
-4. Add domain opcodes (EXT_ALTER_DOMAIN, EXT_DROP_DOMAIN)
-5. Implement executor handlers for basic domains
-6. Tests for basic domain DDL
-
-**Phase 3: Transaction Control Extension - 1 week**
-1. Parse Firebird legacy clauses (WAIT/NO WAIT, LOCK TIMEOUT)
-2. Parse ON CONFLICT clause
-3. Parse AUTOCOMMIT statements
-4. Parse RETAINING and 2PC statements
-5. Emit extended transaction payloads
-6. Tests for transaction control
-
-**Phase 4: Emulated Parser Extensions - 1 week**
-1. Firebird domain parsing (basic form)
-2. PostgreSQL domain parsing (basic form)
-3. Dialect guardrails (reject unsupported features)
-4. Cross-dialect compatibility tests
-
-**Phase 5: Advanced Domains (DEFER or Create Spec First) - 2-4 weeks**
-1. Create comprehensive domain specification document
-2. Define SBLR payload structures
-3. Extend AST for RECORD/ENUM/SET/VARIANT
-4. Implement parser support for advanced forms
-5. Implement executor handlers for advanced forms
-6. Comprehensive tests
-
-**Total Time:**
-- **Without Advanced Domains:** 4-6 weeks
-- **With Advanced Domains (spec exists):** 6-10 weeks
-- **With Advanced Domains (create spec):** 8-12 weeks
+1. Emulated parser domain DDL + dialect guardrails (Firebird/PostgreSQL; MySQL rejection)
+2. Semantic analyzer guardrails + dependency checks
+3. Conflict opcodes definition + payload spec
+4. Comprehensive tests (dialect guardrails, negative tests, emulation fixtures)
+5. Plan 02B alignment tests
 
 ---
 
-## PART 9: CRITICAL QUESTIONS FOR DECISION MAKERS
+## PART 9: OPEN QUESTIONS
 
-### 9.1 Domain Scope for Alpha
-
-**Q1:** Is comprehensive domain support (RECORD/ENUM/SET/VARIANT) required for Alpha, or is basic domain support (type alias + constraints) acceptable?
-
-**Options:**
-- **A)** Basic domains only (SQL-92 style) - 1 week implementation
-- **B)** Full domain support (all 5 types) - 4-6 weeks implementation + 1-2 weeks spec
-
-**Recommendation:** Option A for Alpha; defer comprehensive to Beta
-
-### 9.2 dialect_tag and compat_name Schema Change
-
-**Q2:** Can we proceed with schema migration to add dialect_tag/compat_name fields now, or defer to Plan 02?
-
-**Impact:**
-- **If NOW:** Enables dialect-aware domains immediately, 4-6 hour effort
-- **If DEFER:** Basic domains work, but multi-dialect broken until Plan 02
-
-**Recommendation:** DO NOW (small effort, high value)
-
-### 9.3 Plan 02 Coordination
-
-**Q3:** Does Plan 02 work need to complete before Plan 04 domain work, or can they proceed in parallel?
-
-**Analysis:**
-- Parser work: ✅ Independent
-- Executor work: ✅ Independent
-- Semantic analysis: ⚠️ Needs resolver API (can stub)
-
-**Recommendation:** Proceed in parallel; use temporary CatalogManager lookups until Plan 02 provides resolver API
-
-### 9.4 Advanced Domain Specification
-
-**Q4:** Who will create the comprehensive domain specification if needed?
-
-**Required Specification Components:**
-1. Complete BNF grammar for all domain types
-2. SBLR payload encoding for each type
-3. Semantic validation rules
-4. Inheritance semantics
-5. Constraint composition rules
-
-**Estimated Effort:** 40-60 hours (1-2 weeks)
-
-**Recommendation:** If advanced domains required for Alpha, assign specification owner immediately
-
----
-
-## PART 10: FINAL VERDICT
-
-### Implementation Readiness Matrix
-
-| Component | Backend | Parser | SBLR | Executor | Tests | Overall |
-|-----------|---------|--------|------|----------|-------|---------|
-| **Basic Domains** | ✅ 100% | ❌ 0% | ⚠️ 50% | ❌ 0% | ✅ 100% | 🟡 50% |
-| **Advanced Domains** | ✅ 100% | ❌ 0% | ❌ 0% | ❌ 0% | ✅ 100% | 🟡 40% |
-| **Transaction Control** | ✅ 100% | ⚠️ 60% | ✅ 100% | ✅ 80% | ✅ 90% | 🟢 86% |
-| **Window Functions** | ✅ 100% | ❌ 0% | ✅ 80% | ✅ 80% | ✅ 80% | 🟡 68% |
-| **Dialect Guardrails** | N/A | ❌ 0% | N/A | N/A | ❌ 0% | 🔴 0% |
-
-### Can Plan 04 Start?
-
-**Answer:** ✅ **YES, BUT...**
-
-**Proceed Immediately With:**
-1. Quick wins (window specs, NULL-safe, ESCAPE, placeholders, GROUP BY validation)
-2. Transaction control extensions
-3. Basic domain schema fix (dialect_tag/compat_name)
-
-**Defer Until Decisions Made:**
-1. Advanced domain support (RECORD/ENUM/SET/VARIANT)
-2. Comprehensive domain specification
-3. Dialect guardrail implementation strategy
-
-**Total Estimated Time for Plan 04 (Excluding Advanced Domains):**
-- **Optimistic:** 4-5 weeks
-- **Realistic:** 6-7 weeks
-- **Conservative:** 8-9 weeks
-
-**With Advanced Domains:**
-- Add 2-4 weeks (if spec exists)
-- Add 4-6 weeks (if spec must be created)
-
----
-
-## PART 11: ACTION ITEMS
-
-### Immediate (Week 1)
-
-1. **Schema Migration:** Add dialect_tag/compat_name to DomainRecord (4-6 hours)
-2. **Quick Wins:** Implement Phase 1 tasks (window specs, NULL-safe, etc.) (3-5 days)
-3. **Decision Meeting:** Determine domain scope for Alpha (basic vs comprehensive)
-
-### Short-Term (Weeks 2-3)
-
-4. **Domain Opcodes:** Define EXT_ALTER_DOMAIN, EXT_DROP_DOMAIN, etc. (2-3 days)
-5. **AST Extension:** Extend CreateDomainStmt for basic domains (1-2 days)
-6. **Parser Implementation:** Implement parseCreateDomain() for V2 (2-3 days)
-7. **Executor Handlers:** Implement domain opcode handlers (3-4 days)
-
-### Medium-Term (Weeks 4-6)
-
-8. **Transaction Extensions:** Parse Firebird legacy + ON CONFLICT + AUTOCOMMIT (1 week)
-9. **Emulated Parsers:** Domain support for Firebird/PostgreSQL (1 week)
-10. **Dialect Guardrails:** Implement systematic feature rejection (3-4 days)
-11. **Testing:** Comprehensive test coverage (ongoing)
-
-### Long-Term (If Advanced Domains Required)
-
-12. **Specification:** Create comprehensive domain spec (1-2 weeks)
-13. **Implementation:** RECORD/ENUM/SET/VARIANT support (2-4 weeks)
+1. Define conflict opcode semantics for REBIND/RESOLVE (payload + executor behavior).
+2. PostgreSQL payload mapping: align to SBLR v2 payload or add compatibility shim.
+3. MySQL error messaging policy for unsupported DOMAIN statements.
 
 ---
 
 ## CONCLUSION
 
-**Plan 04 wiring is IN PROGRESS with focus on completing advanced domain kinds and enforcement.**
-
-**Key Findings:**
-1. ⚠️ Domain backend supports BASIC + WITH block storage; advanced domain kinds pending
-2. ✅ Transaction control is COMPLETE (just needs parser extension)
-3. ⚠️ Parser-to-executor wiring is present for BASIC + WITH blocks
-4. ⚠️ Schema needs minor fix (dialect_tag/compat_name)
-5. ⚠️ Plan 03B enforcement work still pending (normalization/validation/quality)
-
-**Critical Path:**
-```
-Week 1: Schema fix + Quick wins
-Week 2-3: Basic domain parser→SBLR→executor wiring
-Week 4-5: Transaction extensions + emulated parsers
-Week 6+: Testing + dialect guardrails
-
-Total: 6-8 weeks for core Plan 04 scope
-```
-
-**Recommendation:** **START PLAN 04 IMMEDIATELY** with Phase 1 (quick wins) while clarifying advanced domain requirements.
-
----
+Plan 04 is effectively complete for ScratchBird V2. Remaining work is concentrated in emulated parser coverage, semantic guardrails, conflict opcodes, and test/compatibility alignment.
 
 **END OF REPORT**

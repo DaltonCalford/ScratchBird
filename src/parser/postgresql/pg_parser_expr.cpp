@@ -7,6 +7,7 @@
 #include "scratchbird/parser/postgresql/pg_parser.h"
 #include <algorithm>
 #include <cstring>
+#include <limits>
 
 namespace scratchbird::parser::postgresql {
 
@@ -81,26 +82,55 @@ void Parser::parseIsExpr() {
         if (matchKeyword(TokenType::KW_NULL)) {
             // IS [NOT] NULL
             emit(sblr::Opcode::LITERAL_NULL);
-            emit(is_not ? sblr::Opcode::EXPR_NE : sblr::Opcode::EXPR_EQ);
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
+            if (is_not) {
+                emit(sblr::Opcode::LITERAL_INT32);
+                emitU32(0);
+                emit(sblr::Opcode::EXPR_EQ);
+            }
         } else if (matchKeyword(TokenType::KW_TRUE)) {
             // IS [NOT] TRUE
             emit(sblr::Opcode::LITERAL_INT32);
             emitU32(1);
-            emit(is_not ? sblr::Opcode::EXPR_NE : sblr::Opcode::EXPR_EQ);
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
+            if (is_not) {
+                emit(sblr::Opcode::LITERAL_INT32);
+                emitU32(0);
+                emit(sblr::Opcode::EXPR_EQ);
+            }
         } else if (matchKeyword(TokenType::KW_FALSE)) {
             // IS [NOT] FALSE
             emit(sblr::Opcode::LITERAL_INT32);
             emitU32(0);
-            emit(is_not ? sblr::Opcode::EXPR_NE : sblr::Opcode::EXPR_EQ);
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
+            if (is_not) {
+                emit(sblr::Opcode::LITERAL_INT32);
+                emitU32(0);
+                emit(sblr::Opcode::EXPR_EQ);
+            }
         } else if (matchKeyword(TokenType::KW_DISTINCT)) {
             consumeKeyword(TokenType::KW_FROM, "Expected FROM after DISTINCT");
             parseInExpr();
-            // IS DISTINCT FROM = NULL-safe not equal
-            emit(is_not ? sblr::Opcode::EXPR_EQ : sblr::Opcode::EXPR_NE);
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
+            if (!is_not) {
+                emit(sblr::Opcode::LITERAL_INT32);
+                emitU32(0);
+                emit(sblr::Opcode::EXPR_EQ);
+            }
         } else if (matchKeyword(TokenType::KW_UNKNOWN)) {
             // IS [NOT] UNKNOWN (same as IS [NOT] NULL for boolean)
             emit(sblr::Opcode::LITERAL_NULL);
-            emit(is_not ? sblr::Opcode::EXPR_NE : sblr::Opcode::EXPR_EQ);
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
+            if (is_not) {
+                emit(sblr::Opcode::LITERAL_INT32);
+                emitU32(0);
+                emit(sblr::Opcode::EXPR_EQ);
+            }
         } else {
             error("Expected NULL, TRUE, FALSE, DISTINCT, or UNKNOWN after IS");
         }
@@ -201,18 +231,43 @@ void Parser::parseLikeExpr() {
 
     if (matchKeyword(TokenType::KW_LIKE)) {
         parseBitwiseOrExpr();  // pattern
-        emit(is_not ? sblr::Opcode::EXPR_NE : sblr::Opcode::EXPR_LIKE);
-
+        bool has_escape = false;
         if (matchKeyword(TokenType::KW_ESCAPE)) {
             parseBitwiseOrExpr();  // escape char
-            // TODO: Handle escape character
+            has_escape = true;
+        }
+
+        if (has_escape) {
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_LIKE_ESCAPE));
+        } else {
+            emit(sblr::Opcode::EXPR_LIKE);
+        }
+
+        if (is_not) {
+            emit(sblr::Opcode::LITERAL_INT32);
+            emitU32(0);
+            emit(sblr::Opcode::EXPR_EQ);
         }
     } else if (matchKeyword(TokenType::KW_ILIKE)) {
         parseBitwiseOrExpr();  // pattern
-        emit(is_not ? sblr::Opcode::EXPR_NE : sblr::Opcode::EXPR_ILIKE);
-
+        bool has_escape = false;
         if (matchKeyword(TokenType::KW_ESCAPE)) {
             parseBitwiseOrExpr();
+            has_escape = true;
+        }
+
+        if (has_escape) {
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ILIKE_ESCAPE));
+        } else {
+            emit(sblr::Opcode::EXPR_ILIKE);
+        }
+
+        if (is_not) {
+            emit(sblr::Opcode::LITERAL_INT32);
+            emitU32(0);
+            emit(sblr::Opcode::EXPR_EQ);
         }
     } else if (matchKeyword(TokenType::KW_SIMILAR)) {
         consumeKeyword(TokenType::KW_TO, "Expected TO after SIMILAR");
@@ -344,7 +399,10 @@ void Parser::parseUnaryExpr() {
 
 void Parser::parsePostfixExpr() {
     parsePrimaryExpr();
+    parsePostfixTail();
+}
 
+void Parser::parsePostfixTail() {
     // Handle postfix operators
     while (true) {
         if (match(TokenType::DOUBLE_COLON)) {
@@ -355,7 +413,7 @@ void Parser::parsePostfixExpr() {
             parseExpression();
             consume(TokenType::RIGHT_BRACKET, "Expected ]");
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_LENGTH));  // TODO: array subscript
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_SUBSCRIPT));
         } else if (match(TokenType::ARROW)) {
             // -> JSON object field
             parseExpression();
@@ -505,14 +563,23 @@ void Parser::parsePrimaryExpr() {
     if (check(TokenType::PARAMETER)) {
         // Parameters are stored as their number
         emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_VAR_LOAD));
-        emitU32(static_cast<uint32_t>(current_token_.value.int_value));
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_PLACEHOLDER));
+        int64_t position = current_token_.value.int_value;
+        if (position <= 0 ||
+            position > static_cast<int64_t>(std::numeric_limits<uint16_t>::max())) {
+            error("Parameter index out of range");
+            advance();
+            return;
+        }
+        emitU16(static_cast<uint16_t>(position));
+        emitU16(0);  // type hint unknown
         advance();
         return;
     }
 
     // Identifier (column reference or function call)
-    if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
+    if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) ||
+        isNonReservedKeyword(current_token_.type)) {
         std::string name = parseIdentifier();
 
         // Check for function call

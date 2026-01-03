@@ -65,9 +65,31 @@ bool readU16(const std::vector<uint8_t>& bytecode, size_t* offset, uint16_t* out
     return true;
 }
 
+bool readU32(const std::vector<uint8_t>& bytecode, size_t* offset, uint32_t* out) {
+    if (*offset + 4 > bytecode.size()) {
+        return false;
+    }
+    *out = sblr::readInt32(&bytecode[*offset]);
+    *offset += 4;
+    return true;
+}
+
 bool readString16(const std::vector<uint8_t>& bytecode, size_t* offset, std::string* out) {
     uint16_t length = 0;
     if (!readU16(bytecode, offset, &length)) {
+        return false;
+    }
+    if (*offset + length > bytecode.size()) {
+        return false;
+    }
+    out->assign(reinterpret_cast<const char*>(&bytecode[*offset]), length);
+    *offset += length;
+    return true;
+}
+
+bool readString32(const std::vector<uint8_t>& bytecode, size_t* offset, std::string* out) {
+    uint32_t length = 0;
+    if (!readU32(bytecode, offset, &length)) {
         return false;
     }
     if (*offset + length > bytecode.size()) {
@@ -467,14 +489,24 @@ TEST_F(RenameMoveOpcodeDbTest, FirebirdRenameDomainEmitsExtendedOpcode) {
     ASSERT_FALSE(bytecode.empty());
 
     size_t offset = 0;
-    ASSERT_TRUE(readExtendedHeader(bytecode, sblr::ExtendedOpcode::EXT_RENAME_OBJECT, &offset));
+    ASSERT_TRUE(readExtendedHeader(bytecode, sblr::ExtendedOpcode::EXT_ALTER_DOMAIN, &offset));
 
-    ParsedRename rename;
-    ASSERT_TRUE(readRenamePayload(bytecode, offset, &rename));
-    EXPECT_TRUE(rename.flags & 0x01);
-    EXPECT_FALSE(rename.flags & 0x02);
-    EXPECT_EQ(rename.object_type, core::CatalogManager::ObjectType::DOMAIN);
-    ASSERT_FALSE(rename.path.components.empty());
-    EXPECT_EQ(normalizeName(rename.path.components.back()), "MY_DOMAIN");
-    EXPECT_EQ(normalizeName(rename.new_name), "NEW_DOMAIN");
+    if (offset >= bytecode.size()) {
+        FAIL() << "Unexpected end of bytecode while reading ALTER DOMAIN payload";
+    }
+    uint8_t action = bytecode[offset++];
+    EXPECT_EQ(action, static_cast<uint8_t>(sblr::AlterDomainAction::RENAME));
+
+    std::string domain_path;
+    ASSERT_TRUE(readString32(bytecode, &offset, &domain_path));
+    std::string new_name;
+    ASSERT_TRUE(readString32(bytecode, &offset, &new_name));
+
+    std::string domain_last = domain_path;
+    auto dot_pos = domain_last.find_last_of('.');
+    if (dot_pos != std::string::npos) {
+        domain_last = domain_last.substr(dot_pos + 1);
+    }
+    EXPECT_EQ(normalizeName(domain_last), "MY_DOMAIN");
+    EXPECT_EQ(normalizeName(new_name), "NEW_DOMAIN");
 }

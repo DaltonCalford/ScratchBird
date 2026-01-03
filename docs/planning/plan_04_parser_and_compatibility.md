@@ -6,6 +6,13 @@ Complete V2 (ScratchBird) parser coverage and fill compatibility gaps for Firebi
 ## Priority
 P1 (blocks SQL feature coverage and compatibility).
 
+## Status (2026-01-03)
+- ✅ ScratchBird V2 domain DDL + WITH blocks + transactions wired
+- ✅ Quick wins completed (NULL-safe, ESCAPE, placeholders, GROUP BY, window specs)
+- ⚠️ Emulated parser domain DDL pending (Firebird/PostgreSQL)
+- ⚠️ MySQL explicit DOMAIN rejection pending
+- ⚠️ Semantic guardrails + comprehensive dialect tests pending
+
 ## References
 - `docs/specifications/01_SQL_DIALECT_OVERVIEW.md`
 - `docs/specifications/ScratchBird SQL Language Specification - Master Document.md`
@@ -18,14 +25,17 @@ P1 (blocks SQL feature coverage and compatibility).
 - `docs/planning/plan_03_sblr_version2_extended_opcodes.md` (SBLR v2)
 
 ## Order of Implementation
-1) V2 parser DDL coverage (CREATE/ALTER).
-2) ScratchBird transaction control syntax (SQL-standard + Firebird legacy + conflict action + autocommit).
-3) V2 semantic validation (GROUP BY and dependency collection).
-4) Firebird parser gaps (window specs, predicates).
-5) MySQL parser gaps (NULL-safe, placeholders, constraints, geometry).
-6) PostgreSQL parser gaps (ESCAPE, arrays, CREATE stubs).
+1) V2 parser DDL coverage (CREATE/ALTER) - DONE.
+2) ScratchBird transaction control syntax (SQL-standard + Firebird legacy + conflict action + autocommit) - DONE.
+3) V2 semantic validation (GROUP BY + dependency collection) - PARTIAL (GROUP BY done; dependency guardrails pending).
+4) Firebird parser gaps (predicates) - DONE.
+5) MySQL parser gaps (constraints, geometry) - DONE.
+6) PostgreSQL parser gaps (arrays, CREATE stubs) - PARTIAL (arrays done; domain payload alignment pending).
+7) Emulated parser domain DDL (Firebird/PostgreSQL) - PENDING.
+8) Dialect guardrails + explicit MySQL DOMAIN rejection - PENDING.
 
 ## Concrete Code Touchpoints (Exact Files + Functions)
+**Status Note:** ScratchBird V2 domain DDL + transaction grammar + quick wins are implemented. Remaining work is emulated parser domain DDL, MySQL rejection guardrails, and semantic/dependency hardening.
 - ScratchBird V2:
   - `src/parser/parser_v2.cpp`:
     - `Parser::parseCreate()` (currently commented out for FUNCTION/PROCEDURE/TRIGGER).
@@ -53,38 +63,26 @@ P1 (blocks SQL feature coverage and compatibility).
     - Emit SET AUTOCOMMIT (new extended opcode).
 - MySQL parser:
   - `src/parser/mysql/mysql_parser.cpp`:
-    - `parseComparisonExpr()` (NULL-safe `<=>` TODO).
-    - `parseLikeExpr()` ESCAPE handling TODO.
-    - Placeholder emission TODO.
-    - Table constraints parse TODO in CREATE TABLE.
-    - Geometry types TODO.
+    - `parseComparisonExpr()` (`<=>` NULL-safe equality implemented).
+    - `parseLikeExpr()` ESCAPE handling implemented.
+    - Placeholder emission implemented.
+    - Table constraints parsing implemented in CREATE TABLE.
+    - Geometry types mapped (GEOMETRY/POINT/LINESTRING/POLYGON).
 - PostgreSQL parser:
   - `src/parser/postgresql/pg_parser_expr.cpp`:
-    - ESCAPE handling TODO in `parseLikeExpr()`.
-    - Array subscript TODO in `parsePostfixExpr()`.
-  - `src/parser/postgresql/pg_parser_ddl.cpp`:
-    - Stubbed CREATE statements section.
+    - ESCAPE handling implemented in `parseLikeExpr()`.
+    - Array subscript implemented in `parsePostfixExpr()`.
 - Firebird parser:
   - `src/parser/firebird/firebird_parser.cpp`:
-    - Window specification TODO in `parseFunctionCall()`.
-    - Predicate variant tracking TODO in `parseLikeExpression()`.
+    - Window specification parsing implemented in `parseFunctionCall()`.
+    - Predicate variant tracking implemented in `parseLikeExpression()`.
     - Clause parsing stubs around window/predicates.
 
 ## Known TODO/Stubs (Must Be Removed)
-- `src/parser/mysql/mysql_parser.cpp`:
-  - `emit(EXPR_EQ)` for NULL-safe `<=>` (comment: TODO NULL-safe semantics).
-  - ESCAPE clause TODO in `parseLikeExpr()`.
-  - Placeholder handling TODO (line ~1097: `LITERAL_NULL`).
-  - Table constraints TODO around CREATE TABLE.
-  - Geometry type TODO around `parseGeometryType()`.
-- `src/parser/postgresql/pg_parser_expr.cpp`:
-  - ESCAPE clause TODO in `parseLikeExpr()`.
-  - Array subscript TODO uses `EXT_ARRAY_LENGTH` placeholder.
-- `src/parser/postgresql/pg_parser_ddl.cpp`:
-  - "Other CREATE statements (stubs for now)" block.
-- `src/parser/firebird/firebird_parser.cpp`:
-  - Window specification TODO in `parseFunctionCall()`.
-  - Predicate variant TODO in `parseLikeExpression()`.
+- `src/parser/firebird/firebird_parser.cpp`: `parseCreateDomain()` stub (CREATE/ALTER/DROP DOMAIN missing).
+- `src/parser/postgresql/pg_parser_ddl.cpp`: `parseCreateDomain()` emits legacy payload; ALTER/DROP DOMAIN missing.
+- `src/parser/mysql/mysql_parser.cpp`: No explicit rejection for CREATE/ALTER/DROP DOMAIN.
+- `src/parser/parser_v2.cpp`: CREATE FUNCTION/PROCEDURE/TRIGGER TODOs (out of Plan 04 scope but still present).
 
 ## Dialect Guardrails (No ScratchBird Feature Bleed)
 - For each emulated parser, build a **dialect allowlist** from its specification document and reject any statement not in that allowlist with a clear error (e.g., `Unsupported in MySQL dialect`).
@@ -110,9 +108,9 @@ P1 (blocks SQL feature coverage and compatibility).
 - Implement SET AUTOCOMMIT and SET TRANSACTION AUTOCOMMIT parsing.
 - Implement COMMIT/ROLLBACK RETAINING and 2PC statements (PREPARE TRANSACTION, COMMIT PREPARED, ROLLBACK PREPARED).
 - Implement GROUP BY validation in `SemanticAnalyzerV2`.
-- Complete Firebird parser window/predicate parsing.
-- Complete MySQL parser NULL-safe equality, placeholders, constraints, geometry types.
-- Complete PostgreSQL parser ESCAPE handling, array subscripts, CREATE statements.
+- Complete Firebird parser predicate parsing (window specs done).
+- Complete MySQL parser constraints and geometry types (NULL-safe and placeholders done).
+- Complete PostgreSQL parser array subscripts and CREATE statements.
 - Add dialect guardrails (allowlist-based rejection for non-dialect features and ScratchBird-only constructs).
 - Extend DOMAIN DDL parsing to carry `dialect_tag` and `compat_name` into SBLR.
 - Add SBLR opcodes for ALTER/DROP DOMAIN and conflict resolution operations.
@@ -124,14 +122,16 @@ P1 (blocks SQL feature coverage and compatibility).
 - None (parser/bytecode changes only).
 
 ## Completion Checklist (Developer)
-- [ ] V2 CREATE/ALTER coverage matches specification.
-- [ ] GROUP BY validation rejects invalid queries.
-- [ ] Firebird parser handles window specs and predicate variants.
-- [ ] MySQL parser handles NULL-safe, placeholders, constraints, geometry.
-- [ ] PostgreSQL parser supports ESCAPE, arrays, missing CREATE types.
+- [x] V2 domain DDL + transaction grammar matches specification.
+- [x] GROUP BY validation rejects invalid queries.
+- [x] Firebird parser handles window specs.
+- [x] Firebird parser handles predicate variants.
+- [x] MySQL parser handles NULL-safe and placeholders.
+- [x] MySQL parser handles constraints and geometry.
+- [ ] PostgreSQL parser supports arrays; domain payload alignment pending.
 
 ## Completion Checklist (Auditor)
-- [ ] Parser tests pass per dialect with expected feature coverage.
+- [ ] Parser tests pass per dialect with expected feature coverage (emulated domain DDL pending).
 - [ ] Unsupported dialect features fail gracefully with clear errors.
 - [ ] Compatibility mappings to ScratchBird core are correct.
 
@@ -161,9 +161,9 @@ P1 (blocks SQL feature coverage and compatibility).
 - **DOMAIN advanced forms**: support `CREATE DOMAIN ... AS RECORD (...)`, `AS ENUM (...)`, `AS SET OF <type>`, `AS VARIANT (...)` plus `INHERITS <parent_domain>`.
 - **WITH blocks**: parse `WITH SECURITY(...)`, `WITH INTEGRITY(...)`, `WITH VALIDATION(...)`, `WITH QUALITY(...)`, and `WITH OPTIONS(WRAP=...)` and serialize options into SBLR payloads.
 - **Semantic**: implement `validateGroupBy()`; enforce non-aggregate columns must be in GROUP BY.
-- **Firebird**: add window specification parsing and predicate variants mapping (LIKE/CONTAINING/STARTING/SIMILAR TO).
-- **MySQL**: implement NULL-safe equality (`<=>`), placeholder handling, table constraints, geometry mapping.
-- **PostgreSQL**: implement ESCAPE handling, array subscripts, and missing CREATE variants.
+- **Firebird**: add predicate variants mapping (LIKE/CONTAINING/STARTING/SIMILAR TO); window specs done.
+- **MySQL**: implement table constraints and geometry mapping (NULL-safe equality and placeholders done).
+- **PostgreSQL**: implement array subscripts and missing CREATE variants.
 - **Failure mode**: unsupported syntax must return clear, consistent errors per dialect.
 - **Transaction syntax**: ScratchBird V2 accepts both SQL-standard and Firebird legacy clauses. Emulated parsers accept only their dialect forms.
 
@@ -191,26 +191,26 @@ P1 (blocks SQL feature coverage and compatibility).
 - For domain types in column definitions: emit `TYPE_DOMAIN` + UUID payload and `TYPE_ARRAY` wrappers.
 
 ### 4) Firebird Parser
-- Implement window specs in `firebird_parser.cpp`:
+- Implement window specs in `firebird_parser.cpp` (done):
   - Parse `OVER (PARTITION BY ... ORDER BY ... ROWS ... )` and record in AST.
 - Track predicate variant in `parseLikeExpression()`:
   - Record whether LIKE/CONTAINING/STARTING/SIMILAR TO was used and emit matching opcode.
 
 ### 5) MySQL Parser
 - `<=>` NULL-safe equality:
-  - Emit dedicated opcode (new extended opcode if needed) that compares NULL semantics (NULL <=> NULL is true).
-- Placeholders:
+  - Implemented via `EXT_NULL_SAFE_EQ` (0x0200) with NULL-safe comparison semantics.
+- Placeholders (done):
   - Emit placeholder descriptor with position and expected type; do not emit `LITERAL_NULL` as a proxy.
 - Table constraints:
-  - Parse and emit UNIQUE/PRIMARY/FOREIGN/CHECK table constraints.
+  - Parse and emit UNIQUE/PRIMARY/FOREIGN/CHECK table constraints (implemented).
 - Geometry:
-  - Map geometry types to ScratchBird geometry type set or emit explicit unsupported error.
+  - Map GEOMETRY/POINT/LINESTRING/POLYGON to `TYPE_BLOB` in SBLR emission (implemented).
 
 ### 6) PostgreSQL Parser
 - ESCAPE handling:
-  - Parse ESCAPE literal and emit opcode with escape-char payload.
+  - Implemented via `EXT_LIKE_ESCAPE` / `EXT_ILIKE_ESCAPE` with executor support for ESCAPE chars.
 - Array subscripts:
-  - Emit `EXT_ARRAY_SUBSCRIPT` (new or existing) with base expression and index expression.
+  - Emit `EXT_ARRAY_SUBSCRIPT` with base expression and index expression (implemented).
 - CREATE stubs:
   - Implement remaining CREATE variants in `pg_parser_ddl.cpp` (VIEW/MATERIALIZED VIEW/SEQUENCE/INDEX/TYPE).
 
@@ -283,9 +283,9 @@ ROLLBACK PREPARED '<gid>';
 - **V2**: parse/compile each new CREATE/ALTER statement and execute DDL.
 - **V2 DOMAIN**: parse `CREATE DOMAIN ... WITH DIALECT(...) WITH COMPAT(...)` and verify SBLR payload fields.
 - **V2 DOMAIN advanced**: parse RECORD/ENUM/SET/VARIANT and WITH blocks, verify payload structure.
-- **Firebird**: parse WHERE predicates with CONTAINING/STARTING/SIMILAR TO and window clauses.
-- **MySQL**: parse `<=>`, placeholders, and constraints in CREATE TABLE.
-- **PostgreSQL**: parse ESCAPE in LIKE and array subscripts in expressions.
+- **Firebird**: parse WHERE predicates with CONTAINING/STARTING/SIMILAR TO (window clauses done).
+- **MySQL**: parse constraints in CREATE TABLE (NULL-safe and placeholders done).
+- **PostgreSQL**: parse array subscripts in expressions.
 
 ## Common Failure Patterns
 - Implemented only in executor/parser; `CatalogManager` direct calls still bypass logic.

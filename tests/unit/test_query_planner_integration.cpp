@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "scratchbird/core/database.h"
+#include "scratchbird/optimizer/query_planner.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/bytecode_generator_v2.h"
@@ -142,7 +143,11 @@ TEST_F(QueryPlannerIntegrationTest, DatabaseHasQueryPlannerComponents)
     ASSERT_TRUE(createDatabase());
 
     EXPECT_NE(db_->statistics_manager(), nullptr);
-    EXPECT_NE(db_->query_planner(), nullptr);
+    scratchbird::optimizer::QueryPlanner planner(
+        db_.get(),
+        scratchbird::optimizer::CostModel(),
+        db_->statistics_manager());
+    (void)planner;
 }
 
 TEST_F(QueryPlannerIntegrationTest, CompilerRequiresCatalog)

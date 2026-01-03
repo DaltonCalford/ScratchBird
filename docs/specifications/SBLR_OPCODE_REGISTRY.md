@@ -52,6 +52,10 @@ These extended opcodes are reserved and MUST keep their values:
 - EXT_ROLLBACK_PREPARED   = 0x0107
 - EXT_ALTER_DOMAIN        = 0x010E
 - EXT_DROP_DOMAIN         = 0x010F
+- EXT_NULL_SAFE_EQ        = 0x0200
+- EXT_LIKE_ESCAPE         = 0x0201
+- EXT_ILIKE_ESCAPE        = 0x0202
+- EXT_PLACEHOLDER         = 0x0203
 - EXT_CHECK_DOMAIN_CONSTRAINT = 0x0204
 - EXT_APPLY_DOMAIN_MASKING    = 0x0205
 - EXT_ENCRYPT_DOMAIN_VALUE    = 0x0206
@@ -62,6 +66,9 @@ These extended opcodes are reserved and MUST keep their values:
 - EXT_VALIDATE_DOMAIN_VALUE   = 0x020B
 - EXT_APPLY_QUALITY_PIPELINE  = 0x020C
 - EXT_CHECK_GLOBAL_UNIQUENESS = 0x020D
+
+## Array Extended Opcodes (Low Range)
+- EXT_ARRAY_SUBSCRIPT = 0x0025
 
 ## Change Process (Policy)
 - Add or modify opcodes in `include/scratchbird/sblr/opcodes.h` first.

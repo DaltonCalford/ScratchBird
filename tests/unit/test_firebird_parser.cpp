@@ -359,6 +359,48 @@ TEST_F(FirebirdParserTest, SelectWithWhere) {
     EXPECT_NE(stmt->where, nullptr);
 }
 
+TEST_F(FirebirdParserTest, SelectWithLikeVariants) {
+    {
+        Parser parser("SELECT id FROM employees WHERE name CONTAINING 'Map'");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success);
+        auto* stmt = static_cast<ast::SelectStmt*>(result.statement.get());
+        auto* like = dynamic_cast<ast::LikeExpr*>(stmt->where);
+        ASSERT_NE(like, nullptr);
+        EXPECT_EQ(like->match_kind, ast::LikeMatchKind::CONTAINING);
+        EXPECT_TRUE(like->case_insensitive);
+    }
+    {
+        Parser parser("SELECT id FROM employees WHERE name STARTING WITH 'Jo'");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success);
+        auto* stmt = static_cast<ast::SelectStmt*>(result.statement.get());
+        auto* like = dynamic_cast<ast::LikeExpr*>(stmt->where);
+        ASSERT_NE(like, nullptr);
+        EXPECT_EQ(like->match_kind, ast::LikeMatchKind::STARTING);
+        EXPECT_FALSE(like->case_insensitive);
+    }
+    {
+        Parser parser("SELECT id FROM employees WHERE name SIMILAR TO '[A-Z]+'");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success);
+        auto* stmt = static_cast<ast::SelectStmt*>(result.statement.get());
+        auto* like = dynamic_cast<ast::LikeExpr*>(stmt->where);
+        ASSERT_NE(like, nullptr);
+        EXPECT_EQ(like->match_kind, ast::LikeMatchKind::SIMILAR);
+    }
+    {
+        Parser parser("SELECT id FROM employees WHERE name NOT CONTAINING 'Map'");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success);
+        auto* stmt = static_cast<ast::SelectStmt*>(result.statement.get());
+        auto* like = dynamic_cast<ast::LikeExpr*>(stmt->where);
+        ASSERT_NE(like, nullptr);
+        EXPECT_TRUE(like->negated);
+        EXPECT_EQ(like->match_kind, ast::LikeMatchKind::CONTAINING);
+    }
+}
+
 TEST_F(FirebirdParserTest, SelectWithOrderBy) {
     Parser parser("SELECT id, name FROM employees ORDER BY name ASC, id DESC");
     auto result = parser.parseStatement();

@@ -43,6 +43,7 @@ using parser::NullsOrder;
 class Statement;
 class Expression;
 class ASTVisitor;
+struct WindowSpec;
 
 // =============================================================================
 // AST Node Kinds
@@ -1560,7 +1561,7 @@ public:
 
     // Window function
     bool is_window = false;
-    // WindowSpec* window = nullptr;  // TODO: Add when implementing SELECT
+    WindowSpec* window = nullptr;
 };
 
 /**
@@ -2151,7 +2152,6 @@ public:
         LOCAL_TIMEOUT,  // SET LOCAL_TIMEOUT n
         SESSION_AUTHORIZATION,  // SET SESSION AUTHORIZATION ...
         ROLE,           // SET ROLE ...
-        PARSER_VERSION, // SET PARSER VERSION 2
     };
     SetType set_type = SetType::VARIABLE;
 
@@ -2189,9 +2189,6 @@ public:
     TransactionConflictAction conflict_action = TransactionConflictAction::DEFAULT;
     bool has_conflict_error_code = false;
     int32_t conflict_error_code = 0;
-
-    // For SET PARSER VERSION
-    uint8_t parser_version = 0;  // 2 (0 = not set)
 
     // For SET SQL DIALECT
     uint8_t sql_dialect = 0;  // 1, 2, or 3 (0 = not set)
@@ -2285,7 +2282,6 @@ public:
         VERSION,            // SHOW VERSION
         DATABASE,           // SHOW DATABASE (current database info)
         SYSTEM,             // SHOW SYSTEM (system tables/info)
-        PARSER_VERSION,     // SHOW PARSER VERSION
     };
     ShowType show_type = ShowType::VARIABLE;
 
@@ -2383,6 +2379,14 @@ public:
 /**
  * LIKE/ILIKE expression
  */
+enum class LikeMatchKind : uint8_t {
+    LIKE,
+    ILIKE,
+    SIMILAR,
+    CONTAINING,
+    STARTING
+};
+
 class LikeExpr : public Expression {
 public:
     ASTKind kind() const override { return ASTKind::LikeExpr; }
@@ -2391,6 +2395,7 @@ public:
     Expression* expr = nullptr;
     bool negated = false;  // NOT LIKE
     bool case_insensitive = false;  // ILIKE
+    LikeMatchKind match_kind = LikeMatchKind::LIKE;
     Expression* pattern = nullptr;
     Expression* escape = nullptr;  // ESCAPE 'x'
 };

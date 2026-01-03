@@ -7,6 +7,7 @@
 #include "scratchbird/parser/postgresql/pg_parser.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/sblr/query_compiler_v2.h"
 #include <algorithm>
 #include <cctype>
 #include <limits>
@@ -91,6 +92,51 @@ std::string buildEmulatedServerRoot(std::string_view default_schema) {
         root += parts[i];
     }
     return root;
+}
+
+std::pair<std::string, std::string> splitQualifiedName(const std::string& qualified) {
+    std::vector<std::string> parts;
+    std::string current;
+    for (char ch : qualified) {
+        if (ch == '.') {
+            parts.push_back(current);
+            current.clear();
+        } else {
+            current.push_back(ch);
+        }
+    }
+    parts.push_back(current);
+
+    std::string schema;
+    std::string object = parts.back();
+    if (parts.size() > 1) {
+        for (size_t i = 0; i + 1 < parts.size(); ++i) {
+            if (!schema.empty()) {
+                schema.push_back('.');
+            }
+            schema += parts[i];
+        }
+    }
+    return std::make_pair(schema, object);
+}
+
+std::vector<std::string> splitPath(const std::string& path) {
+    std::vector<std::string> parts;
+    std::string current;
+    for (char ch : path) {
+        if (ch == '/' || ch == '.') {
+            if (!current.empty()) {
+                parts.push_back(current);
+                current.clear();
+            }
+        } else {
+            current.push_back(ch);
+        }
+    }
+    if (!current.empty()) {
+        parts.push_back(current);
+    }
+    return parts;
 }
 } // namespace
 
@@ -1101,8 +1147,9 @@ void Parser::parseCreateFunction() {
         func_name = parseIdentifier();
     }
 
-    // Flags: bit0 = OR REPLACE, bit2 = SQL SECURITY DEFINER (not parsed yet)
+    // Flags: bit0 = OR REPLACE, bit2 = SQL SECURITY DEFINER (not parsed yet), bit3 = dependency list
     uint8_t flags = 0;
+    size_t flags_pos = bytecode_.size();
     emitByte(flags);
     emitString(func_name);
 
@@ -1168,6 +1215,71 @@ void Parser::parseCreateFunction() {
         }
     }
     emitString(body);
+
+    std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>> deps;
+    bool deps_ready = false;
+    if (db_ && !body.empty()) {
+        sblr::QueryCompilerV2 dep_compiler(db_);
+        if (auto* catalog = db_->catalog_manager()) {
+            auto normalize_path = [](const std::string& path) {
+                std::vector<std::string> parts;
+                std::string current;
+                for (char ch : path) {
+                    if (ch == '/' || ch == '.') {
+                        if (!current.empty()) {
+                            parts.push_back(current);
+                            current.clear();
+                        }
+                    } else {
+                        current.push_back(ch);
+                    }
+                }
+                if (!current.empty()) {
+                    parts.push_back(current);
+                }
+
+                std::string normalized;
+                for (size_t i = 0; i < parts.size(); ++i) {
+                    if (i > 0) {
+                        normalized.push_back('.');
+                    }
+                    normalized += parts[i];
+                }
+                return normalized;
+            };
+
+            std::string schema_path = normalize_path(default_schema_);
+            if (!schema.empty()) {
+                if (!schema_path.empty()) {
+                    schema_path.push_back('.');
+                }
+                schema_path += schema;
+            }
+            if (!schema_path.empty()) {
+                core::CatalogManager::SchemaInfo schema_info;
+                if (catalog->getSchema(schema_path, schema_info, nullptr) == core::Status::OK) {
+                    dep_compiler.setCurrentSchema(schema_info.schema_id);
+                }
+            }
+        }
+
+        auto dep_result = dep_compiler.compile(body);
+        if (dep_result.success()) {
+            deps = dep_result.dependencies();
+            deps_ready = true;
+        }
+    }
+
+    if (deps_ready) {
+        bytecode_[flags_pos] |= 0x08;
+        emitU32(static_cast<uint32_t>(deps.size()));
+        for (const auto& dep : deps) {
+            for (auto byte : dep.first.bytes) {
+                emitByte(byte);
+            }
+            emitByte(static_cast<uint8_t>(dep.second));
+        }
+    }
 }
 
 void Parser::parseCreateProcedure() {
@@ -1177,6 +1289,7 @@ void Parser::parseCreateProcedure() {
     std::string proc_name = parseIdentifier();
 
     uint8_t flags = 0;
+    size_t flags_pos = bytecode_.size();
     emitByte(flags);
     emitString(proc_name);
 
@@ -1223,6 +1336,65 @@ void Parser::parseCreateProcedure() {
         }
     }
     emitString(body);
+
+    std::vector<std::pair<core::ID, core::CatalogManager::ObjectType>> deps;
+    bool deps_ready = false;
+    if (db_ && !body.empty()) {
+        sblr::QueryCompilerV2 dep_compiler(db_);
+        if (auto* catalog = db_->catalog_manager()) {
+            auto normalize_path = [](const std::string& path) {
+                std::vector<std::string> parts;
+                std::string current;
+                for (char ch : path) {
+                    if (ch == '/' || ch == '.') {
+                        if (!current.empty()) {
+                            parts.push_back(current);
+                            current.clear();
+                        }
+                    } else {
+                        current.push_back(ch);
+                    }
+                }
+                if (!current.empty()) {
+                    parts.push_back(current);
+                }
+
+                std::string normalized;
+                for (size_t i = 0; i < parts.size(); ++i) {
+                    if (i > 0) {
+                        normalized.push_back('.');
+                    }
+                    normalized += parts[i];
+                }
+                return normalized;
+            };
+
+            std::string schema_path = normalize_path(default_schema_);
+            if (!schema_path.empty()) {
+                core::CatalogManager::SchemaInfo schema_info;
+                if (catalog->getSchema(schema_path, schema_info, nullptr) == core::Status::OK) {
+                    dep_compiler.setCurrentSchema(schema_info.schema_id);
+                }
+            }
+        }
+
+        auto dep_result = dep_compiler.compile(body);
+        if (dep_result.success()) {
+            deps = dep_result.dependencies();
+            deps_ready = true;
+        }
+    }
+
+    if (deps_ready) {
+        bytecode_[flags_pos] |= 0x08;
+        emitU32(static_cast<uint32_t>(deps.size()));
+        for (const auto& dep : deps) {
+            for (auto byte : dep.first.bytes) {
+                emitByte(byte);
+            }
+            emitByte(static_cast<uint8_t>(dep.second));
+        }
+    }
 }
 
 void Parser::parseCreateTrigger() {
@@ -1331,34 +1503,290 @@ void Parser::parseCreateType() {
     }
 }
 
+std::string Parser::parseExpressionText() {
+    size_t bytecode_start = bytecode_.size();
+    size_t start_offset = current_token_.span.start.offset;
+
+    parseExpression();
+
+    size_t end_offset = current_token_.span.start.offset;
+    bytecode_.resize(bytecode_start);
+
+    if (end_offset <= start_offset) {
+        return {};
+    }
+    std::string_view text = lexer_.input().substr(start_offset, end_offset - start_offset);
+    size_t start = text.find_first_not_of(" \t\r\n");
+    if (start == std::string_view::npos) {
+        return {};
+    }
+    size_t end = text.find_last_not_of(" \t\r\n");
+    return std::string(text.substr(start, end - start + 1));
+}
+
 void Parser::parseCreateDomain() {
+    // Spec: docs/specifications/SBLR_DOMAIN_PAYLOADS.md
     emit(sblr::Opcode::EXTENDED_OPCODE);
     emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CREATE_DOMAIN));
 
-    std::string domain_name = parseQualifiedName();
-    emitString(domain_name);
-
-    consumeKeyword(TokenType::KW_AS, "Expected AS");
-    parseDataType();
-
-    // Constraints
-    while (true) {
-        if (matchKeyword(TokenType::KW_DEFAULT)) {
-            parseExpression();
-        } else if (matchKeyword(TokenType::KW_NOT)) {
-            consumeKeyword(TokenType::KW_NULL, "Expected NULL");
-        } else if (matchKeyword(TokenType::KW_NULL)) {
-            // Allow NULL
-        } else if (matchKeyword(TokenType::KW_CHECK)) {
-            consume(TokenType::LEFT_PAREN, "Expected (");
-            parseExpression();
-            consume(TokenType::RIGHT_PAREN, "Expected )");
-        } else if (matchKeyword(TokenType::KW_CONSTRAINT)) {
-            parseIdentifier();  // constraint name
-        } else {
-            break;
-        }
+    bool if_not_exists = false;
+    if (matchKeyword(TokenType::KW_IF)) {
+        consumeKeyword(TokenType::KW_NOT, "Expected NOT");
+        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+        if_not_exists = true;
     }
+
+    auto name_pair = splitQualifiedName(parseQualifiedName());
+    std::string schema = name_pair.first;
+    std::string domain_name = name_pair.second;
+    resolveTableName(schema, domain_name);
+    std::string domain_path = schema.empty() ? domain_name : (schema + "." + domain_name);
+
+    uint8_t flags = if_not_exists ? 0x01 : 0x00;
+    emitByte(flags);
+
+    emitByte(0);  // BASIC domain kind
+    emitString(domain_path);
+
+    // Optional AS keyword
+    matchKeyword(TokenType::KW_AS);
+
+    PgDataType base_type = parseDataType();
+    bool supported_base_type = true;
+    switch (base_type.kind) {
+        case PgDataType::Kind::SMALLINT:
+        case PgDataType::Kind::INTEGER:
+        case PgDataType::Kind::SERIAL:
+        case PgDataType::Kind::SMALLSERIAL:
+        case PgDataType::Kind::BIGINT:
+        case PgDataType::Kind::BIGSERIAL:
+        case PgDataType::Kind::REAL:
+        case PgDataType::Kind::DOUBLE_PRECISION:
+        case PgDataType::Kind::DECIMAL:
+        case PgDataType::Kind::NUMERIC:
+        case PgDataType::Kind::MONEY:
+        case PgDataType::Kind::CHAR:
+        case PgDataType::Kind::VARCHAR:
+        case PgDataType::Kind::TEXT:
+        case PgDataType::Kind::BYTEA:
+        case PgDataType::Kind::DATE:
+        case PgDataType::Kind::TIME:
+        case PgDataType::Kind::TIMETZ:
+        case PgDataType::Kind::TIMESTAMP:
+        case PgDataType::Kind::TIMESTAMPTZ:
+        case PgDataType::Kind::BOOLEAN:
+        case PgDataType::Kind::UUID:
+        case PgDataType::Kind::JSON:
+        case PgDataType::Kind::JSONB:
+            break;
+        default:
+            supported_base_type = false;
+            break;
+    }
+    if (!supported_base_type) {
+        error("CREATE DOMAIN base type is not supported in PostgreSQL parser");
+    }
+
+    emit(typeToOpcode(base_type.kind));
+    if (base_type.kind == PgDataType::Kind::VARCHAR ||
+        base_type.kind == PgDataType::Kind::CHAR) {
+        uint32_t length = base_type.length > 0 ? static_cast<uint32_t>(base_type.length) : 255;
+        emitU32(length);
+    } else if (base_type.kind == PgDataType::Kind::DECIMAL ||
+               base_type.kind == PgDataType::Kind::NUMERIC ||
+               base_type.kind == PgDataType::Kind::MONEY) {
+        uint32_t precision = base_type.precision > 0 ? static_cast<uint32_t>(base_type.precision) : 18;
+        uint32_t scale = base_type.scale > 0 ? static_cast<uint32_t>(base_type.scale) : 0;
+        emitU32(precision);
+        emitU32(scale);
+    }
+
+    bool nullable = true;
+    std::string default_value;
+    bool has_collation = false;
+    std::string collation_name;
+    std::vector<std::pair<std::string, std::string>> checks;
+
+    while (true) {
+        if (matchKeyword(TokenType::KW_COLLATE)) {
+            collation_name = parseIdentifier();
+            has_collation = true;
+            continue;
+        }
+
+        std::string constraint_name;
+        if (matchKeyword(TokenType::KW_CONSTRAINT)) {
+            if (!check(TokenType::KW_CHECK) && !check(TokenType::KW_DEFAULT) &&
+                !check(TokenType::KW_NOT) && !check(TokenType::KW_NULL)) {
+                constraint_name = parseIdentifier();
+            }
+        }
+
+        if (matchKeyword(TokenType::KW_DEFAULT)) {
+            default_value = parseExpressionText();
+            continue;
+        }
+        if (matchKeyword(TokenType::KW_NOT)) {
+            consumeKeyword(TokenType::KW_NULL, "Expected NULL");
+            nullable = false;
+            continue;
+        }
+        if (matchKeyword(TokenType::KW_NULL)) {
+            nullable = true;
+            continue;
+        }
+        if (matchKeyword(TokenType::KW_CHECK)) {
+            consume(TokenType::LEFT_PAREN, "Expected (");
+            std::string expr_text = parseExpressionText();
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+            checks.emplace_back(constraint_name, std::move(expr_text));
+            continue;
+        }
+
+        if (!constraint_name.empty()) {
+            error("Expected domain constraint after CONSTRAINT");
+        }
+        break;
+    }
+
+    emitByte(nullable ? 1 : 0);
+    emitString(default_value);
+    emitString(has_collation ? collation_name : std::string());
+
+    emitU32(static_cast<uint32_t>(checks.size()));
+    for (const auto& constraint : checks) {
+        emitByte(3);  // CHECK constraint
+        emitString(constraint.first);
+        emitString(constraint.second);
+    }
+
+    emitByte(0);  // no inherits
+    emitString("postgresql");
+    emitString("");
+}
+
+void Parser::parseAlterDomain() {
+    // Spec: docs/specifications/SBLR_DOMAIN_PAYLOADS.md
+    auto name_pair = splitQualifiedName(parseQualifiedName());
+    std::string schema = name_pair.first;
+    std::string domain_name = name_pair.second;
+    resolveTableName(schema, domain_name);
+    std::string domain_path = schema.empty() ? domain_name : (schema + "." + domain_name);
+
+    auto emit_string16 = [&](std::string_view str) {
+        if (str.size() > std::numeric_limits<uint16_t>::max()) {
+            error("Identifier length exceeds 16-bit limit");
+            emitU16(0);
+            return;
+        }
+        emitU16(static_cast<uint16_t>(str.size()));
+        for (unsigned char ch : str) {
+            emitByte(static_cast<uint8_t>(ch));
+        }
+    };
+
+    auto emit_object_path = [&](const std::vector<std::string>& components) {
+        emitByte(static_cast<uint8_t>(core::PathType::ABSOLUTE));
+        emitByte(0);  // no_search_path flag (reserved)
+        if (components.size() > std::numeric_limits<uint8_t>::max()) {
+            error("Object path has too many components");
+            emitByte(0);
+            return;
+        }
+        emitByte(static_cast<uint8_t>(components.size()));
+        for (const auto& comp : components) {
+            emit_string16(comp);
+        }
+    };
+
+    auto emit_move = [&](const std::vector<std::string>& components,
+                         const std::vector<std::string>& target_schema) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_MOVE_OBJECT));
+        emitByte(0);
+        emitByte(static_cast<uint8_t>(core::CatalogManager::ObjectType::DOMAIN));
+        emit_object_path(components);
+        emit_object_path(target_schema);
+        emit_string16(std::string_view());
+    };
+
+    if (matchKeyword(TokenType::KW_SET)) {
+        if (matchKeyword(TokenType::KW_DEFAULT)) {
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_DOMAIN));
+            emitByte(static_cast<uint8_t>(sblr::AlterDomainAction::SET_DEFAULT));
+            emitString(domain_path);
+            emitString(parseExpressionText());
+            return;
+        }
+        if (matchKeyword(TokenType::KW_SCHEMA)) {
+            std::string new_schema = parseIdentifier();
+            std::string dummy = "x";
+            resolveTableName(new_schema, dummy);
+            auto target_schema = splitPath(new_schema);
+
+            auto object_components = splitPath(schema);
+            object_components.push_back(domain_name);
+            emit_move(object_components, target_schema);
+            return;
+        }
+        error("Expected DEFAULT or SCHEMA after SET in ALTER DOMAIN");
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_DROP)) {
+        if (matchKeyword(TokenType::KW_DEFAULT)) {
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_DOMAIN));
+            emitByte(static_cast<uint8_t>(sblr::AlterDomainAction::DROP_DEFAULT));
+            emitString(domain_path);
+            return;
+        }
+        if (matchKeyword(TokenType::KW_CONSTRAINT)) {
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_DOMAIN));
+            emitByte(static_cast<uint8_t>(sblr::AlterDomainAction::DROP_CONSTRAINT));
+            emitString(domain_path);
+            emitString(parseIdentifier());
+            return;
+        }
+        error("Expected DEFAULT or CONSTRAINT after DROP in ALTER DOMAIN");
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_ADD)) {
+        if (matchKeyword(TokenType::KW_CONSTRAINT)) {
+            if (!check(TokenType::KW_CHECK) && !check(TokenType::KW_DEFAULT) &&
+                !check(TokenType::KW_NOT) && !check(TokenType::KW_NULL)) {
+                parseIdentifier();
+            }
+        }
+
+        if (matchKeyword(TokenType::KW_CHECK)) {
+            consume(TokenType::LEFT_PAREN, "Expected (");
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_DOMAIN));
+            emitByte(static_cast<uint8_t>(sblr::AlterDomainAction::ADD_CHECK));
+            emitString(domain_path);
+            emitString(parseExpressionText());
+            consume(TokenType::RIGHT_PAREN, "Expected )");
+            return;
+        }
+        error("Expected CHECK after ADD in ALTER DOMAIN");
+        return;
+    }
+
+    if (matchKeyword(TokenType::KW_RENAME)) {
+        consumeKeyword(TokenType::KW_TO, "Expected TO");
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_DOMAIN));
+        emitByte(static_cast<uint8_t>(sblr::AlterDomainAction::RENAME));
+        emitString(domain_path);
+        emitString(parseIdentifier());
+        return;
+    }
+
+    error("Expected SET, DROP, ADD, or RENAME after domain name");
 }
 
 // ============================================================================
@@ -1706,7 +2134,7 @@ void Parser::parseAlterStmt() {
     }
 
     if (matchKeyword(TokenType::KW_DOMAIN)) {
-        parse_rename_move(core::CatalogManager::ObjectType::DOMAIN);
+        parseAlterDomain();
         return;
     }
 
@@ -1769,8 +2197,54 @@ void Parser::parseAlterStmt() {
 // DROP Statement
 // ============================================================================
 
+void Parser::parseDropDomain() {
+    // Spec: docs/specifications/SBLR_DOMAIN_PAYLOADS.md
+    bool if_exists = false;
+    if (matchKeyword(TokenType::KW_IF)) {
+        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+        if_exists = true;
+    }
+
+    std::vector<std::string> domain_paths;
+    do {
+        auto name_pair = splitQualifiedName(parseQualifiedName());
+        std::string schema = name_pair.first;
+        std::string domain_name = name_pair.second;
+        resolveTableName(schema, domain_name);
+        std::string domain_path = schema.empty() ? domain_name : (schema + "." + domain_name);
+        domain_paths.push_back(std::move(domain_path));
+    } while (match(TokenType::COMMA));
+
+    bool restrict = false;
+    if (matchKeyword(TokenType::KW_RESTRICT)) {
+        restrict = true;
+    } else if (matchKeyword(TokenType::KW_CASCADE)) {
+        // CASCADE not supported in domain drop payloads.
+    }
+
+    uint8_t flags = 0;
+    if (if_exists) {
+        flags |= 0x01;
+    }
+    if (restrict) {
+        flags |= 0x02;
+    }
+
+    for (const auto& domain_path : domain_paths) {
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_DROP_DOMAIN));
+        emitByte(flags);
+        emitString(domain_path);
+    }
+}
+
 void Parser::parseDropStmt() {
     consume(TokenType::KW_DROP, "Expected DROP");
+
+    if (matchKeyword(TokenType::KW_DOMAIN)) {
+        parseDropDomain();
+        return;
+    }
 
     if (matchKeyword(TokenType::KW_DATABASE)) {
         bool if_exists = false;

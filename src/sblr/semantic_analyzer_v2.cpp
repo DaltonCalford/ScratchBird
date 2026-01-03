@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <unordered_set>
 
 namespace scratchbird::parser::v2 {
 namespace {
@@ -36,6 +37,527 @@ SchemaPath appendPathComponent(const SchemaPath& base,
     combined.components.push_back(name);
     combined.span = span;
     return combined;
+}
+
+struct GroupByColumnKey {
+    ID table_uuid{};
+    uint32_t column_index = 0;
+
+    bool operator==(const GroupByColumnKey& other) const {
+        return table_uuid == other.table_uuid && column_index == other.column_index;
+    }
+};
+
+struct GroupByColumnKeyHash {
+    size_t operator()(const GroupByColumnKey& key) const noexcept {
+        size_t h = 0;
+        for (auto byte : key.table_uuid.bytes) {
+            h = (h * 131) ^ static_cast<size_t>(byte);
+        }
+        h ^= std::hash<uint32_t>{}(key.column_index) + 0x9e3779b9 + (h << 6) + (h >> 2);
+        return h;
+    }
+};
+
+bool typesEquivalent(const ResolvedType& a, const ResolvedType& b) {
+    if (a.data_type != b.data_type ||
+        a.is_domain != b.is_domain ||
+        a.domain_id != b.domain_id ||
+        a.is_array != b.is_array ||
+        a.with_time_zone != b.with_time_zone) {
+        return false;
+    }
+
+    return a.precision == b.precision &&
+           a.scale == b.scale &&
+           a.length == b.length &&
+           a.array_size == b.array_size;
+}
+
+bool expressionsEqual(const ResolvedExpression* left, const ResolvedExpression* right);
+
+bool expressionListEqual(const std::vector<ResolvedExpression*>& left,
+                         const std::vector<ResolvedExpression*>& right) {
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < left.size(); ++i) {
+        if (!expressionsEqual(left[i], right[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool expressionsEqual(const ResolvedExpression* left, const ResolvedExpression* right) {
+    if (left == right) {
+        return true;
+    }
+    if (!left || !right) {
+        return false;
+    }
+
+    if (auto* lit_left = dynamic_cast<const ResolvedLiteral*>(left)) {
+        auto* lit_right = dynamic_cast<const ResolvedLiteral*>(right);
+        if (!lit_right) {
+            return false;
+        }
+        if (lit_left->literal_type != lit_right->literal_type ||
+            lit_left->is_null != lit_right->is_null ||
+            lit_left->is_default != lit_right->is_default) {
+            return false;
+        }
+        switch (lit_left->literal_type) {
+            case LiteralType::INTEGER:
+                return lit_left->int_value == lit_right->int_value;
+            case LiteralType::FLOAT:
+                return lit_left->float_value == lit_right->float_value;
+            case LiteralType::BOOLEAN:
+                return lit_left->bool_value == lit_right->bool_value;
+            case LiteralType::STRING:
+            case LiteralType::BLOB:
+                return lit_left->string_value == lit_right->string_value;
+            case LiteralType::NULL_VALUE:
+            case LiteralType::DEFAULT:
+                return true;
+        }
+        return false;
+    }
+
+    if (auto* col_left = dynamic_cast<const ResolvedColumnRefExpr*>(left)) {
+        auto* col_right = dynamic_cast<const ResolvedColumnRefExpr*>(right);
+        if (!col_right) {
+            return false;
+        }
+        return col_left->column.table_uuid == col_right->column.table_uuid &&
+               col_left->column.column_index == col_right->column.column_index;
+    }
+
+    if (auto* bin_left = dynamic_cast<const ResolvedBinaryExpr*>(left)) {
+        auto* bin_right = dynamic_cast<const ResolvedBinaryExpr*>(right);
+        if (!bin_right || bin_left->op != bin_right->op) {
+            return false;
+        }
+        return expressionsEqual(bin_left->left, bin_right->left) &&
+               expressionsEqual(bin_left->right, bin_right->right);
+    }
+
+    if (auto* unary_left = dynamic_cast<const ResolvedUnaryExpr*>(left)) {
+        auto* unary_right = dynamic_cast<const ResolvedUnaryExpr*>(right);
+        if (!unary_right || unary_left->op != unary_right->op) {
+            return false;
+        }
+        return expressionsEqual(unary_left->operand, unary_right->operand);
+    }
+
+    if (auto* cast_left = dynamic_cast<const ResolvedCast*>(left)) {
+        auto* cast_right = dynamic_cast<const ResolvedCast*>(right);
+        if (!cast_right || !typesEquivalent(cast_left->target_type, cast_right->target_type)) {
+            return false;
+        }
+        return expressionsEqual(cast_left->expr, cast_right->expr);
+    }
+
+    if (auto* func_left = dynamic_cast<const ResolvedFunctionCall*>(left)) {
+        auto* func_right = dynamic_cast<const ResolvedFunctionCall*>(right);
+        if (!func_right) {
+            return false;
+        }
+        if (func_left->function.function_uuid != func_right->function.function_uuid ||
+            func_left->function.function_name != func_right->function.function_name ||
+            func_left->distinct != func_right->distinct ||
+            func_left->is_window != func_right->is_window) {
+            return false;
+        }
+        if (!expressionListEqual(func_left->arguments, func_right->arguments)) {
+            return false;
+        }
+        if (!expressionsEqual(func_left->filter, func_right->filter)) {
+            return false;
+        }
+        if (!expressionsEqual(func_left->separator, func_right->separator)) {
+            return false;
+        }
+        return true;
+    }
+
+    if (auto* between_left = dynamic_cast<const ResolvedBetweenExpr*>(left)) {
+        auto* between_right = dynamic_cast<const ResolvedBetweenExpr*>(right);
+        if (!between_right ||
+            between_left->negated != between_right->negated ||
+            between_left->symmetric != between_right->symmetric) {
+            return false;
+        }
+        return expressionsEqual(between_left->expr, between_right->expr) &&
+               expressionsEqual(between_left->low, between_right->low) &&
+               expressionsEqual(between_left->high, between_right->high);
+    }
+
+    if (auto* like_left = dynamic_cast<const ResolvedLikeExpr*>(left)) {
+        auto* like_right = dynamic_cast<const ResolvedLikeExpr*>(right);
+        if (!like_right ||
+            like_left->negated != like_right->negated ||
+            like_left->case_insensitive != like_right->case_insensitive ||
+            like_left->match_kind != like_right->match_kind) {
+            return false;
+        }
+        return expressionsEqual(like_left->expr, like_right->expr) &&
+               expressionsEqual(like_left->pattern, like_right->pattern) &&
+               expressionsEqual(like_left->escape, like_right->escape);
+    }
+
+    if (auto* is_null_left = dynamic_cast<const ResolvedIsNullExpr*>(left)) {
+        auto* is_null_right = dynamic_cast<const ResolvedIsNullExpr*>(right);
+        if (!is_null_right || is_null_left->negated != is_null_right->negated) {
+            return false;
+        }
+        return expressionsEqual(is_null_left->expr, is_null_right->expr);
+    }
+
+    if (auto* in_left = dynamic_cast<const ResolvedInExpr*>(left)) {
+        auto* in_right = dynamic_cast<const ResolvedInExpr*>(right);
+        if (!in_right || in_left->negated != in_right->negated ||
+            in_left->has_subquery != in_right->has_subquery) {
+            return false;
+        }
+        if (!expressionsEqual(in_left->expr, in_right->expr)) {
+            return false;
+        }
+        if (in_left->has_subquery) {
+            return false;
+        }
+        return expressionListEqual(in_left->values, in_right->values);
+    }
+
+    if (auto* arr_left = dynamic_cast<const ResolvedArrayExpr*>(left)) {
+        auto* arr_right = dynamic_cast<const ResolvedArrayExpr*>(right);
+        if (!arr_right || arr_left->has_subquery != arr_right->has_subquery) {
+            return false;
+        }
+        if (arr_left->has_subquery) {
+            return false;
+        }
+        return expressionListEqual(arr_left->elements, arr_right->elements);
+    }
+
+    if (auto* case_left = dynamic_cast<const ResolvedCase*>(left)) {
+        auto* case_right = dynamic_cast<const ResolvedCase*>(right);
+        if (!case_right) {
+            return false;
+        }
+        if (!expressionsEqual(case_left->operand, case_right->operand)) {
+            return false;
+        }
+        if (case_left->when_clauses.size() != case_right->when_clauses.size()) {
+            return false;
+        }
+        for (size_t i = 0; i < case_left->when_clauses.size(); ++i) {
+            if (!expressionsEqual(case_left->when_clauses[i].when_expr,
+                                  case_right->when_clauses[i].when_expr) ||
+                !expressionsEqual(case_left->when_clauses[i].then_expr,
+                                  case_right->when_clauses[i].then_expr)) {
+                return false;
+            }
+        }
+        return expressionsEqual(case_left->else_expr, case_right->else_expr);
+    }
+
+    return false;
+}
+
+bool containsAggregateExpr(const ResolvedExpression* expr) {
+    if (!expr) {
+        return false;
+    }
+
+    if (auto* func = dynamic_cast<const ResolvedFunctionCall*>(expr)) {
+        if (func->function.is_aggregate) {
+            return true;
+        }
+        for (auto* arg : func->arguments) {
+            if (containsAggregateExpr(arg)) {
+                return true;
+            }
+        }
+        if (containsAggregateExpr(func->filter) ||
+            containsAggregateExpr(func->separator)) {
+            return true;
+        }
+        return false;
+    }
+
+    if (auto* bin = dynamic_cast<const ResolvedBinaryExpr*>(expr)) {
+        return containsAggregateExpr(bin->left) || containsAggregateExpr(bin->right);
+    }
+    if (auto* unary = dynamic_cast<const ResolvedUnaryExpr*>(expr)) {
+        return containsAggregateExpr(unary->operand);
+    }
+    if (auto* cast_expr = dynamic_cast<const ResolvedCast*>(expr)) {
+        return containsAggregateExpr(cast_expr->expr);
+    }
+    if (auto* between_expr = dynamic_cast<const ResolvedBetweenExpr*>(expr)) {
+        return containsAggregateExpr(between_expr->expr) ||
+               containsAggregateExpr(between_expr->low) ||
+               containsAggregateExpr(between_expr->high);
+    }
+    if (auto* like_expr = dynamic_cast<const ResolvedLikeExpr*>(expr)) {
+        return containsAggregateExpr(like_expr->expr) ||
+               containsAggregateExpr(like_expr->pattern) ||
+               containsAggregateExpr(like_expr->escape);
+    }
+    if (auto* in_expr = dynamic_cast<const ResolvedInExpr*>(expr)) {
+        if (containsAggregateExpr(in_expr->expr)) {
+            return true;
+        }
+        for (auto* val : in_expr->values) {
+            if (containsAggregateExpr(val)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (auto* is_null_expr = dynamic_cast<const ResolvedIsNullExpr*>(expr)) {
+        return containsAggregateExpr(is_null_expr->expr);
+    }
+    if (auto* case_expr = dynamic_cast<const ResolvedCase*>(expr)) {
+        if (containsAggregateExpr(case_expr->operand)) {
+            return true;
+        }
+        for (const auto& clause : case_expr->when_clauses) {
+            if (containsAggregateExpr(clause.when_expr) ||
+                containsAggregateExpr(clause.then_expr)) {
+                return true;
+            }
+        }
+        return containsAggregateExpr(case_expr->else_expr);
+    }
+    if (auto* arr_expr = dynamic_cast<const ResolvedArrayExpr*>(expr)) {
+        for (auto* elem : arr_expr->elements) {
+            if (containsAggregateExpr(elem)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    return false;
+}
+
+bool isConstantExpr(const ResolvedExpression* expr) {
+    if (!expr) {
+        return true;
+    }
+    if (dynamic_cast<const ResolvedLiteral*>(expr)) {
+        return true;
+    }
+    if (auto* bin = dynamic_cast<const ResolvedBinaryExpr*>(expr)) {
+        return isConstantExpr(bin->left) && isConstantExpr(bin->right);
+    }
+    if (auto* unary = dynamic_cast<const ResolvedUnaryExpr*>(expr)) {
+        return isConstantExpr(unary->operand);
+    }
+    if (auto* cast_expr = dynamic_cast<const ResolvedCast*>(expr)) {
+        return isConstantExpr(cast_expr->expr);
+    }
+    if (auto* between_expr = dynamic_cast<const ResolvedBetweenExpr*>(expr)) {
+        return isConstantExpr(between_expr->expr) &&
+               isConstantExpr(between_expr->low) &&
+               isConstantExpr(between_expr->high);
+    }
+    if (auto* like_expr = dynamic_cast<const ResolvedLikeExpr*>(expr)) {
+        return isConstantExpr(like_expr->expr) &&
+               isConstantExpr(like_expr->pattern) &&
+               isConstantExpr(like_expr->escape);
+    }
+    if (auto* is_null_expr = dynamic_cast<const ResolvedIsNullExpr*>(expr)) {
+        return isConstantExpr(is_null_expr->expr);
+    }
+    if (auto* in_expr = dynamic_cast<const ResolvedInExpr*>(expr)) {
+        if (!isConstantExpr(in_expr->expr)) {
+            return false;
+        }
+        for (auto* val : in_expr->values) {
+            if (!isConstantExpr(val)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    if (auto* case_expr = dynamic_cast<const ResolvedCase*>(expr)) {
+        if (!isConstantExpr(case_expr->operand)) {
+            return false;
+        }
+        for (const auto& clause : case_expr->when_clauses) {
+            if (!isConstantExpr(clause.when_expr) ||
+                !isConstantExpr(clause.then_expr)) {
+                return false;
+            }
+        }
+        return isConstantExpr(case_expr->else_expr);
+    }
+    return false;
+}
+
+bool containsColumnRef(const ResolvedExpression* expr) {
+    if (!expr) {
+        return false;
+    }
+
+    if (dynamic_cast<const ResolvedColumnRefExpr*>(expr)) {
+        return true;
+    }
+    if (auto* bin = dynamic_cast<const ResolvedBinaryExpr*>(expr)) {
+        return containsColumnRef(bin->left) || containsColumnRef(bin->right);
+    }
+    if (auto* unary = dynamic_cast<const ResolvedUnaryExpr*>(expr)) {
+        return containsColumnRef(unary->operand);
+    }
+    if (auto* cast_expr = dynamic_cast<const ResolvedCast*>(expr)) {
+        return containsColumnRef(cast_expr->expr);
+    }
+    if (auto* between_expr = dynamic_cast<const ResolvedBetweenExpr*>(expr)) {
+        return containsColumnRef(between_expr->expr) ||
+               containsColumnRef(between_expr->low) ||
+               containsColumnRef(between_expr->high);
+    }
+    if (auto* like_expr = dynamic_cast<const ResolvedLikeExpr*>(expr)) {
+        return containsColumnRef(like_expr->expr) ||
+               containsColumnRef(like_expr->pattern) ||
+               containsColumnRef(like_expr->escape);
+    }
+    if (auto* in_expr = dynamic_cast<const ResolvedInExpr*>(expr)) {
+        if (containsColumnRef(in_expr->expr)) {
+            return true;
+        }
+        if (in_expr->has_subquery) {
+            return false;
+        }
+        for (auto* val : in_expr->values) {
+            if (containsColumnRef(val)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    if (auto* is_null_expr = dynamic_cast<const ResolvedIsNullExpr*>(expr)) {
+        return containsColumnRef(is_null_expr->expr);
+    }
+    if (auto* case_expr = dynamic_cast<const ResolvedCase*>(expr)) {
+        if (containsColumnRef(case_expr->operand)) {
+            return true;
+        }
+        for (const auto& clause : case_expr->when_clauses) {
+            if (containsColumnRef(clause.when_expr) ||
+                containsColumnRef(clause.then_expr)) {
+                return true;
+            }
+        }
+        return containsColumnRef(case_expr->else_expr);
+    }
+    if (auto* func = dynamic_cast<const ResolvedFunctionCall*>(expr)) {
+        for (auto* arg : func->arguments) {
+            if (containsColumnRef(arg)) {
+                return true;
+            }
+        }
+        if (containsColumnRef(func->filter) || containsColumnRef(func->separator)) {
+            return true;
+        }
+        return false;
+    }
+
+    return false;
+}
+
+const ResolvedColumnRefExpr* findUngroupedColumn(
+    const ResolvedExpression* expr,
+    const std::unordered_set<GroupByColumnKey, GroupByColumnKeyHash>& grouped) {
+    if (!expr) {
+        return nullptr;
+    }
+
+    if (auto* col = dynamic_cast<const ResolvedColumnRefExpr*>(expr)) {
+        GroupByColumnKey key{col->column.table_uuid, col->column.column_index};
+        if (grouped.find(key) == grouped.end()) {
+            return col;
+        }
+        return nullptr;
+    }
+
+    if (auto* bin = dynamic_cast<const ResolvedBinaryExpr*>(expr)) {
+        if (auto* found = findUngroupedColumn(bin->left, grouped)) {
+            return found;
+        }
+        return findUngroupedColumn(bin->right, grouped);
+    }
+    if (auto* unary = dynamic_cast<const ResolvedUnaryExpr*>(expr)) {
+        return findUngroupedColumn(unary->operand, grouped);
+    }
+    if (auto* cast_expr = dynamic_cast<const ResolvedCast*>(expr)) {
+        return findUngroupedColumn(cast_expr->expr, grouped);
+    }
+    if (auto* between_expr = dynamic_cast<const ResolvedBetweenExpr*>(expr)) {
+        if (auto* found = findUngroupedColumn(between_expr->expr, grouped)) {
+            return found;
+        }
+        if (auto* found = findUngroupedColumn(between_expr->low, grouped)) {
+            return found;
+        }
+        return findUngroupedColumn(between_expr->high, grouped);
+    }
+    if (auto* like_expr = dynamic_cast<const ResolvedLikeExpr*>(expr)) {
+        if (auto* found = findUngroupedColumn(like_expr->expr, grouped)) {
+            return found;
+        }
+        if (auto* found = findUngroupedColumn(like_expr->pattern, grouped)) {
+            return found;
+        }
+        return findUngroupedColumn(like_expr->escape, grouped);
+    }
+    if (auto* in_expr = dynamic_cast<const ResolvedInExpr*>(expr)) {
+        if (auto* found = findUngroupedColumn(in_expr->expr, grouped)) {
+            return found;
+        }
+        if (in_expr->has_subquery) {
+            return nullptr;
+        }
+        for (auto* val : in_expr->values) {
+            if (auto* found = findUngroupedColumn(val, grouped)) {
+                return found;
+            }
+        }
+        return nullptr;
+    }
+    if (auto* is_null_expr = dynamic_cast<const ResolvedIsNullExpr*>(expr)) {
+        return findUngroupedColumn(is_null_expr->expr, grouped);
+    }
+    if (auto* case_expr = dynamic_cast<const ResolvedCase*>(expr)) {
+        if (auto* found = findUngroupedColumn(case_expr->operand, grouped)) {
+            return found;
+        }
+        for (const auto& clause : case_expr->when_clauses) {
+            if (auto* found = findUngroupedColumn(clause.when_expr, grouped)) {
+                return found;
+            }
+            if (auto* found = findUngroupedColumn(clause.then_expr, grouped)) {
+                return found;
+            }
+        }
+        return findUngroupedColumn(case_expr->else_expr, grouped);
+    }
+    if (auto* func = dynamic_cast<const ResolvedFunctionCall*>(expr)) {
+        for (auto* arg : func->arguments) {
+            if (auto* found = findUngroupedColumn(arg, grouped)) {
+                return found;
+            }
+        }
+        if (auto* found = findUngroupedColumn(func->filter, grouped)) {
+            return found;
+        }
+        return findUngroupedColumn(func->separator, grouped);
+    }
+
+    return nullptr;
 }
 
 std::string stripRootPrefixForDisplay(const std::string& schema_path) {
@@ -1427,8 +1949,6 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeSet(SetStmt* stmt) {
     resolved->has_conflict_error_code = stmt->has_conflict_error_code;
     resolved->conflict_error_code = stmt->conflict_error_code;
 
-    // For SET PARSER VERSION
-    resolved->parser_version = stmt->parser_version;
     resolved->sql_dialect = stmt->sql_dialect;
     resolved->local_timeout_seconds = stmt->local_timeout_seconds;
 
@@ -3184,18 +3704,66 @@ ResolvedExpression* SemanticAnalyzerV2::analyzeLike(LikeExpr* expr) {
         return nullptr;
     }
 
+    auto make_string_literal = [&](std::string_view value) -> ResolvedLiteral* {
+        auto* literal = arena_.create<ResolvedLiteral>();
+        literal->literal_type = LiteralType::STRING;
+        literal->string_value = string_pool_.intern(value);
+        literal->type.data_type = DataType::VARCHAR;
+        literal->type.is_nullable = false;
+        literal->span = expr->span;
+        return literal;
+    };
+
+    auto make_concat = [&](ResolvedExpression* left, ResolvedExpression* right) -> ResolvedBinaryExpr* {
+        auto* concat = arena_.create<ResolvedBinaryExpr>();
+        concat->op = BinaryOp::CONCAT;
+        concat->left = left;
+        concat->right = right;
+        concat->span = expr->span;
+        concat->type.data_type = DataType::VARCHAR;
+        concat->type.is_nullable = left->type.is_nullable || right->type.is_nullable;
+        return concat;
+    };
+
     auto* resolved = arena_.create<ResolvedLikeExpr>();
     resolved->span = expr->span;
     resolved->expr = operand;
     resolved->negated = expr->negated;
-    resolved->case_insensitive = expr->case_insensitive;
-    resolved->pattern = pattern;
+    resolved->match_kind = expr->match_kind;
+    resolved->case_insensitive =
+        (expr->match_kind == LikeMatchKind::ILIKE || expr->match_kind == LikeMatchKind::CONTAINING);
+    if (expr->match_kind == LikeMatchKind::LIKE || expr->match_kind == LikeMatchKind::STARTING ||
+        expr->match_kind == LikeMatchKind::SIMILAR) {
+        resolved->case_insensitive = expr->case_insensitive;
+    }
+
+    if ((expr->match_kind == LikeMatchKind::CONTAINING || expr->match_kind == LikeMatchKind::STARTING) &&
+        expr->escape) {
+        error(expr->escape->span, "ESCAPE is not supported with CONTAINING/STARTING predicates");
+        return nullptr;
+    }
+
+    ResolvedExpression* pattern_expr = pattern;
+    if (expr->match_kind == LikeMatchKind::CONTAINING) {
+        auto* prefix = make_string_literal("%");
+        auto* suffix = make_string_literal("%");
+        pattern_expr = make_concat(make_concat(prefix, pattern), suffix);
+    } else if (expr->match_kind == LikeMatchKind::STARTING) {
+        auto* suffix = make_string_literal("%");
+        pattern_expr = make_concat(pattern, suffix);
+    }
+
+    resolved->pattern = pattern_expr;
     resolved->type.data_type = DataType::BOOLEAN;
     resolved->type.is_nullable = operand->type.is_nullable || pattern->type.is_nullable;
 
     if (expr->escape) {
         resolved->escape = analyzeExpression(expr->escape);
         if (!resolved->escape) {
+            return nullptr;
+        }
+        if (!resolved->escape->type.isString()) {
+            error(expr->escape->span, "LIKE ESCAPE must be a string type");
             return nullptr;
         }
     }
@@ -3315,8 +3883,6 @@ void SemanticAnalyzerV2::analyzeWhereClause(Expression* where, ResolvedExpressio
 }
 
 void SemanticAnalyzerV2::analyzeGroupByClause(SelectStmt* stmt, ResolvedSelectStmt* resolved) {
-    has_aggregates_ = false;
-
     for (auto* expr : stmt->group_by) {
         auto* resolved_expr = analyzeExpression(expr);
         if (resolved_expr) {
@@ -3991,8 +4557,64 @@ bool SemanticAnalyzerV2::isAggregate(const ResolvedExpression* expr) const {
     return false;
 }
 
-bool SemanticAnalyzerV2::validateGroupBy(ResolvedSelectStmt* /*stmt*/) {
-    // TODO: Validate that non-aggregate columns in SELECT are in GROUP BY
+bool SemanticAnalyzerV2::validateGroupBy(ResolvedSelectStmt* stmt) {
+    if (!stmt) {
+        return false;
+    }
+
+    std::unordered_set<GroupByColumnKey, GroupByColumnKeyHash> grouped_columns;
+    for (auto* expr : stmt->group_by) {
+        if (containsAggregateExpr(expr)) {
+            error(expr->span, "GROUP BY clause cannot contain aggregate functions");
+            return false;
+        }
+        if (auto* col = dynamic_cast<const ResolvedColumnRefExpr*>(expr)) {
+            grouped_columns.insert({col->column.table_uuid, col->column.column_index});
+        }
+    }
+
+    auto isGroupedExpression = [&](const ResolvedExpression* expr) -> bool {
+        for (auto* grouped : stmt->group_by) {
+            if (expressionsEqual(expr, grouped)) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    for (const auto& item : stmt->select_list) {
+        if (!item.expr) {
+            continue;
+        }
+
+        if (containsAggregateExpr(item.expr)) {
+            continue;
+        }
+
+        if (isConstantExpr(item.expr)) {
+            continue;
+        }
+
+        if (isGroupedExpression(item.expr)) {
+            continue;
+        }
+
+        if (auto* ungrouped = findUngroupedColumn(item.expr, grouped_columns)) {
+            std::string col_name = std::string(getString(ungrouped->column.column_name));
+            error(item.expr->span,
+                  "Column '" + col_name + "' must appear in the GROUP BY clause or be used in an aggregate function");
+            return false;
+        }
+
+        if (containsColumnRef(item.expr)) {
+            continue;  // All column refs are grouped.
+        }
+
+        error(item.expr->span,
+              "SELECT expression must appear in the GROUP BY clause or be used in an aggregate function");
+        return false;
+    }
+
     return true;
 }
 
