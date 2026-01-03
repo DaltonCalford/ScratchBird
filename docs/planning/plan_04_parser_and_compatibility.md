@@ -11,7 +11,7 @@ P1 (blocks SQL feature coverage and compatibility).
 - ✅ Quick wins completed (NULL-safe, ESCAPE, placeholders, GROUP BY, window specs)
 - ✅ Emulated parser domain DDL implemented (Firebird/PostgreSQL)
 - ✅ MySQL explicit DOMAIN rejection added
-- ⚠️ Dialect guardrails partial (domain WITH blocks rejected in Firebird/PostgreSQL); comprehensive tests pending
+- ⚠️ Dialect guardrails partial (domain WITH blocks rejected; PG/MYSQL transaction/show guardrails added); comprehensive tests pending
 
 ## References
 - `docs/specifications/01_SQL_DIALECT_OVERVIEW.md`
@@ -32,7 +32,7 @@ P1 (blocks SQL feature coverage and compatibility).
 5) MySQL parser gaps (constraints, geometry) - DONE.
 6) PostgreSQL parser gaps (arrays, CREATE stubs) - PARTIAL (arrays + domain payload alignment done; CREATE stubs pending).
 7) Emulated parser domain DDL (Firebird/PostgreSQL) - DONE.
-8) Dialect guardrails + explicit MySQL DOMAIN rejection - PARTIAL (DOMAIN rejection done; allowlist guardrails pending).
+8) Dialect guardrails + explicit MySQL DOMAIN rejection - PARTIAL (DOMAIN rejection + transaction/show guardrails done; allowlist guardrails pending).
 
 ## Concrete Code Touchpoints (Exact Files + Functions)
 **Status Note:** ScratchBird V2 domain DDL + transaction grammar + quick wins are implemented. Remaining work is dialect guardrails, semantic/dependency hardening, and comprehensive tests.
@@ -98,6 +98,7 @@ P1 (blocks SQL feature coverage and compatibility).
 - **PostgreSQL/Firebird guardrails**:\n
   - Accept only domain forms and options present in their specs; reject ScratchBird-only domain kinds (RECORD/SET/VARIANT) and WITH blocks.\n
   - Reject ScratchBird-only schema path tokens (PARENT/CURRENT/ABSOLUTE).\n
+  - Reject ScratchBird-only transaction extensions (ON CONFLICT/AUTOCOMMIT) and non-Postgres SHOW TABLES/DB/COLUMNS/INDEXES.\n
 
 ## Implementation Tasks
 - Implement V2 CREATE/ALTER statement coverage and connect to bytecode generation.

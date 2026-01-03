@@ -470,21 +470,13 @@ TEST_F(MySQLParserTest, SetAutocommitEmitsExtendedOpcode) {
               static_cast<uint8_t>(sblr::TransactionConflictAction::DEFAULT));
 }
 
-TEST_F(MySQLParserTest, SetAutocommitConflictErrorEmitsCode) {
-    Parser parser("SET AUTOCOMMIT = 1 ON CONFLICT ERROR 42");
-    auto result = parser.parseStatement();
-    ASSERT_TRUE(result.success()) << "Failed to parse SET AUTOCOMMIT with conflict";
+TEST_F(MySQLParserTest, SetAutocommitConflictRejected) {
+    expectError("SET AUTOCOMMIT = 1 ON CONFLICT ERROR 42");
+}
 
-    const auto& bytecode = result.bytecode();
-    size_t offset = 0;
-    ASSERT_TRUE(readExtendedHeader(bytecode, sblr::ExtendedOpcode::EXT_SET_AUTOCOMMIT, &offset));
-    ASSERT_LT(offset + 6, bytecode.size());
-
-    EXPECT_EQ(bytecode[offset++], 1);
-    EXPECT_EQ(bytecode[offset++],
-              static_cast<uint8_t>(sblr::TransactionConflictAction::ERROR));
-    uint32_t code = sblr::readInt32(&bytecode[offset]);
-    EXPECT_EQ(code, 42u);
+TEST_F(MySQLParserTest, TransactionGuardrails) {
+    expectError("START TRANSACTION ON CONFLICT COMMIT");
+    expectError("SET TRANSACTION AUTOCOMMIT ON");
 }
 
 TEST_F(MySQLParserTest, ShowStatements) {

@@ -3048,72 +3048,15 @@ void Parser::parseSetStmt() {
         auto conflict_action = sblr::TransactionConflictAction::DEFAULT;
         int32_t conflict_error_code = 0;
 
-        auto parseAutocommitMode = [&]() -> sblr::AutocommitMode {
-            if (matchKeyword(TokenType::KW_ON)) {
-                return sblr::AutocommitMode::ON;
-            }
-            if (matchIdentifierKeyword("ON")) {
-                return sblr::AutocommitMode::ON;
-            }
-            if (matchIdentifierKeyword("OFF")) {
-                return sblr::AutocommitMode::OFF;
-            }
-            if (check(TokenType::INTEGER_LITERAL)) {
-                int64_t value = current_token_.value.int_value;
-                advance();
-                if (value == 0) {
-                    return sblr::AutocommitMode::OFF;
-                }
-                if (value == 1) {
-                    return sblr::AutocommitMode::ON;
-                }
-                error("AUTOCOMMIT expects 0/1 or ON/OFF");
-                return sblr::AutocommitMode::UNCHANGED;
-            }
-            error("Expected AUTOCOMMIT mode (ON/OFF/1/0)");
-            return sblr::AutocommitMode::UNCHANGED;
-        };
-
-        auto parseConflictClause = [&]() {
-            if (!matchIdentifierKeyword("CONFLICT")) {
-                error("Expected CONFLICT after ON");
-                return;
-            }
-
-            if (conflict_action != sblr::TransactionConflictAction::DEFAULT) {
-                error("ON CONFLICT specified more than once");
-            }
-
-            if (matchKeyword(TokenType::KW_COMMIT)) {
-                conflict_action = sblr::TransactionConflictAction::COMMIT;
-            } else if (matchKeyword(TokenType::KW_ROLLBACK)) {
-                conflict_action = sblr::TransactionConflictAction::ROLLBACK;
-            } else if (matchIdentifierKeyword("ERROR")) {
-                conflict_action = sblr::TransactionConflictAction::ERROR;
-                if (check(TokenType::INTEGER_LITERAL)) {
-                    int64_t value = current_token_.value.int_value;
-                    advance();
-                    if (value < std::numeric_limits<int32_t>::min() ||
-                        value > std::numeric_limits<int32_t>::max()) {
-                        error("ON CONFLICT ERROR code out of range");
-                    } else {
-                        has_conflict_error_code = true;
-                        conflict_error_code = static_cast<int32_t>(value);
-                    }
-                }
-            } else if (matchIdentifierKeyword("KEEP")) {
-                conflict_action = sblr::TransactionConflictAction::KEEP;
-            } else {
-                error("Expected conflict action (COMMIT, ROLLBACK, ERROR, KEEP)");
-            }
-        };
-
         while (true) {
             if (matchKeyword(TokenType::KW_ON)) {
-                parseConflictClause();
+                error("MySQL does not support ON CONFLICT in SET TRANSACTION");
+                synchronize();
+                return;
             } else if (matchIdentifierKeyword("AUTOCOMMIT")) {
-                has_autocommit = true;
-                autocommit_mode = parseAutocommitMode();
+                error("MySQL does not support AUTOCOMMIT in SET TRANSACTION");
+                synchronize();
+                return;
             } else if (matchKeyword(TokenType::KW_ISOLATION)) {
                 consumeKeyword(TokenType::KW_LEVEL, "Expected LEVEL");
                 if (matchKeyword(TokenType::KW_SERIALIZABLE)) {
@@ -3235,30 +3178,9 @@ void Parser::parseSetStmt() {
             bool has_conflict_error_code = false;
 
             if (matchKeyword(TokenType::KW_ON)) {
-                if (!matchIdentifierKeyword("CONFLICT")) {
-                    error("Expected CONFLICT after ON");
-                } else if (matchKeyword(TokenType::KW_COMMIT)) {
-                    conflict_action = sblr::TransactionConflictAction::COMMIT;
-                } else if (matchKeyword(TokenType::KW_ROLLBACK)) {
-                    conflict_action = sblr::TransactionConflictAction::ROLLBACK;
-                } else if (matchIdentifierKeyword("ERROR")) {
-                    conflict_action = sblr::TransactionConflictAction::ERROR;
-                    if (check(TokenType::INTEGER_LITERAL)) {
-                        int64_t value = current_token_.value.int_value;
-                        advance();
-                        if (value < std::numeric_limits<int32_t>::min() ||
-                            value > std::numeric_limits<int32_t>::max()) {
-                            error("ON CONFLICT ERROR code out of range");
-                        } else {
-                            has_conflict_error_code = true;
-                            conflict_error_code = static_cast<int32_t>(value);
-                        }
-                    }
-                } else if (matchIdentifierKeyword("KEEP")) {
-                    conflict_action = sblr::TransactionConflictAction::KEEP;
-                } else {
-                    error("Expected conflict action (COMMIT, ROLLBACK, ERROR, KEEP)");
-                }
+                error("MySQL does not support ON CONFLICT for SET AUTOCOMMIT");
+                synchronize();
+                return;
             }
 
             emit(sblr::Opcode::EXTENDED_OPCODE);
@@ -3420,73 +3342,16 @@ void Parser::parseBeginStmt() {
     auto conflict_action = sblr::TransactionConflictAction::DEFAULT;
     int32_t conflict_error_code = 0;
 
-    auto parseAutocommitMode = [&]() -> sblr::AutocommitMode {
-        if (matchKeyword(TokenType::KW_ON)) {
-            return sblr::AutocommitMode::ON;
-        }
-        if (matchIdentifierKeyword("ON")) {
-            return sblr::AutocommitMode::ON;
-        }
-        if (matchIdentifierKeyword("OFF")) {
-            return sblr::AutocommitMode::OFF;
-        }
-        if (check(TokenType::INTEGER_LITERAL)) {
-            int64_t value = current_token_.value.int_value;
-            advance();
-            if (value == 0) {
-                return sblr::AutocommitMode::OFF;
-            }
-            if (value == 1) {
-                return sblr::AutocommitMode::ON;
-            }
-            error("AUTOCOMMIT expects 0/1 or ON/OFF");
-            return sblr::AutocommitMode::UNCHANGED;
-        }
-        error("Expected AUTOCOMMIT mode (ON/OFF/1/0)");
-        return sblr::AutocommitMode::UNCHANGED;
-    };
-
-    auto parseConflictClause = [&]() {
-        if (!matchIdentifierKeyword("CONFLICT")) {
-            error("Expected CONFLICT after ON");
-            return;
-        }
-
-        if (conflict_action != sblr::TransactionConflictAction::DEFAULT) {
-            error("ON CONFLICT specified more than once");
-        }
-
-        if (matchKeyword(TokenType::KW_COMMIT)) {
-            conflict_action = sblr::TransactionConflictAction::COMMIT;
-        } else if (matchKeyword(TokenType::KW_ROLLBACK)) {
-            conflict_action = sblr::TransactionConflictAction::ROLLBACK;
-        } else if (matchIdentifierKeyword("ERROR")) {
-            conflict_action = sblr::TransactionConflictAction::ERROR;
-            if (check(TokenType::INTEGER_LITERAL)) {
-                int64_t value = current_token_.value.int_value;
-                advance();
-                if (value < std::numeric_limits<int32_t>::min() ||
-                    value > std::numeric_limits<int32_t>::max()) {
-                    error("ON CONFLICT ERROR code out of range");
-                } else {
-                    has_conflict_error_code = true;
-                    conflict_error_code = static_cast<int32_t>(value);
-                }
-            }
-        } else if (matchIdentifierKeyword("KEEP")) {
-            conflict_action = sblr::TransactionConflictAction::KEEP;
-        } else {
-            error("Expected conflict action (COMMIT, ROLLBACK, ERROR, KEEP)");
-        }
-    };
-
     // Transaction characteristics
     while (true) {
         if (matchKeyword(TokenType::KW_ON)) {
-            parseConflictClause();
+            error("MySQL does not support ON CONFLICT in START TRANSACTION");
+            synchronize();
+            return;
         } else if (matchIdentifierKeyword("AUTOCOMMIT")) {
-            has_autocommit = true;
-            autocommit_mode = parseAutocommitMode();
+            error("MySQL does not support AUTOCOMMIT in START TRANSACTION");
+            synchronize();
+            return;
         } else if (matchKeyword(TokenType::KW_READ)) {
             if (matchKeyword(TokenType::KW_ONLY)) {
                 has_access_mode = true;

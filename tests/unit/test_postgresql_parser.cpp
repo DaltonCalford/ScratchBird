@@ -517,6 +517,17 @@ TEST_F(PostgreSQLParserTest, TransactionStatements) {
     expectSuccess("RELEASE SAVEPOINT my_savepoint");
 }
 
+TEST_F(PostgreSQLParserTest, DialectGuardrails) {
+    expectError("BEGIN AUTOCOMMIT ON");
+    expectError("SET TRANSACTION AUTOCOMMIT ON");
+    expectError("SET TRANSACTION ON CONFLICT COMMIT");
+    expectError("SET AUTOCOMMIT = 1");
+    expectError("SHOW TABLES");
+    expectError("SHOW DATABASES");
+    expectError("SHOW COLUMNS FROM users");
+    expectError("SHOW INDEXES FROM users");
+}
+
 // ============================================================================
 // GRANT/REVOKE Statement Tests
 // ============================================================================

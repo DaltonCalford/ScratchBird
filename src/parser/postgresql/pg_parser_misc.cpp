@@ -6,6 +6,7 @@
 
 #include "scratchbird/parser/postgresql/pg_parser.h"
 #include <algorithm>
+#include <cctype>
 #include <limits>
 
 namespace scratchbird::parser::postgresql {
@@ -41,70 +42,16 @@ void Parser::parseSetStmt() {
         auto conflict_action = sblr::TransactionConflictAction::DEFAULT;
         int32_t conflict_error_code = 0;
 
-        auto parseAutocommitMode = [&]() -> sblr::AutocommitMode {
-            if (matchKeyword(TokenType::KW_ON) || matchIdentifierKeyword("ON")) {
-                return sblr::AutocommitMode::ON;
-            }
-            if (matchIdentifierKeyword("OFF")) {
-                return sblr::AutocommitMode::OFF;
-            }
-            if (check(TokenType::INTEGER_LITERAL)) {
-                int64_t value = current_token_.value.int_value;
-                advance();
-                if (value == 0) {
-                    return sblr::AutocommitMode::OFF;
-                }
-                if (value == 1) {
-                    return sblr::AutocommitMode::ON;
-                }
-                error("AUTOCOMMIT expects 0/1 or ON/OFF");
-                return sblr::AutocommitMode::UNCHANGED;
-            }
-            error("Expected AUTOCOMMIT mode (ON/OFF/1/0)");
-            return sblr::AutocommitMode::UNCHANGED;
-        };
-
-        auto parseConflictClause = [&]() {
-            if (!(matchKeyword(TokenType::KW_CONFLICT) || matchIdentifierKeyword("CONFLICT"))) {
-                error("Expected CONFLICT after ON");
-                return;
-            }
-
-            if (conflict_action != sblr::TransactionConflictAction::DEFAULT) {
-                error("ON CONFLICT specified more than once");
-            }
-
-            if (matchKeyword(TokenType::KW_COMMIT)) {
-                conflict_action = sblr::TransactionConflictAction::COMMIT;
-            } else if (matchKeyword(TokenType::KW_ROLLBACK)) {
-                conflict_action = sblr::TransactionConflictAction::ROLLBACK;
-            } else if (matchIdentifierKeyword("ERROR")) {
-                conflict_action = sblr::TransactionConflictAction::ERROR;
-                if (check(TokenType::INTEGER_LITERAL)) {
-                    int64_t value = current_token_.value.int_value;
-                    advance();
-                    if (value < std::numeric_limits<int32_t>::min() ||
-                        value > std::numeric_limits<int32_t>::max()) {
-                        error("ON CONFLICT ERROR code out of range");
-                    } else {
-                        has_conflict_error_code = true;
-                        conflict_error_code = static_cast<int32_t>(value);
-                    }
-                }
-            } else if (matchIdentifierKeyword("KEEP")) {
-                conflict_action = sblr::TransactionConflictAction::KEEP;
-            } else {
-                error("Expected conflict action (COMMIT, ROLLBACK, ERROR, KEEP)");
-            }
-        };
-
         // Transaction characteristics
         while (true) {
             if (matchKeyword(TokenType::KW_ON)) {
-                parseConflictClause();
+                error("PostgreSQL does not support ON CONFLICT in SET TRANSACTION");
+                synchronize();
+                return;
             } else if (matchIdentifierKeyword("AUTOCOMMIT")) {
-                has_autocommit = true;
-                autocommit_mode = parseAutocommitMode();
+                error("PostgreSQL does not support AUTOCOMMIT in SET TRANSACTION");
+                synchronize();
+                return;
             } else if (matchKeyword(TokenType::KW_ISOLATION)) {
                 consumeKeyword(TokenType::KW_LEVEL, "Expected LEVEL");
                 if (matchKeyword(TokenType::KW_SERIALIZABLE)) {
@@ -260,6 +207,13 @@ void Parser::parseSetStmt() {
             var_name += ".";
             var_name += parseIdentifier();
         }
+        std::string var_upper = var_name;
+        std::transform(var_upper.begin(), var_upper.end(), var_upper.begin(), ::toupper);
+        if (var_upper == "AUTOCOMMIT") {
+            error("PostgreSQL does not support SET AUTOCOMMIT");
+            synchronize();
+            return;
+        }
         emitString(var_name);
 
         if (matchKeyword(TokenType::KW_TO) || match(TokenType::EQUAL)) {
@@ -288,28 +242,21 @@ void Parser::parseShowStmt() {
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_TRANSACTION_LEVEL));
     } else if (matchKeyword(TokenType::KW_TABLES)) {
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_TABLES));
-        // Optional schema
-        if (matchKeyword(TokenType::KW_FROM) || matchKeyword(TokenType::KW_IN)) {
-            std::string schema = parseIdentifier();
-            emitString(schema);
-        }
+        error("SHOW TABLES is not supported in PostgreSQL dialect");
+        synchronize();
+        return;
     } else if (matchKeyword(TokenType::KW_DATABASES)) {
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_DATABASES));
+        error("SHOW DATABASES is not supported in PostgreSQL dialect");
+        synchronize();
+        return;
     } else if (matchKeyword(TokenType::KW_COLUMNS)) {
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_COLUMNS));
-        consumeKeyword(TokenType::KW_FROM, "Expected FROM");
-        std::string table_name = parseQualifiedName();
-        emitString(table_name);
+        error("SHOW COLUMNS is not supported in PostgreSQL dialect");
+        synchronize();
+        return;
     } else if (matchKeyword(TokenType::KW_INDEXES)) {
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_INDEXES));
-        consumeKeyword(TokenType::KW_FROM, "Expected FROM");
-        std::string table_name = parseQualifiedName();
-        emitString(table_name);
+        error("SHOW INDEXES is not supported in PostgreSQL dialect");
+        synchronize();
+        return;
     } else if (matchKeyword(TokenType::KW_SEARCH_PATH)) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SHOW_SEARCH_PATH));
@@ -350,70 +297,16 @@ void Parser::parseBeginStmt() {
     auto conflict_action = sblr::TransactionConflictAction::DEFAULT;
     int32_t conflict_error_code = 0;
 
-    auto parseAutocommitMode = [&]() -> sblr::AutocommitMode {
-        if (matchKeyword(TokenType::KW_ON) || matchIdentifierKeyword("ON")) {
-            return sblr::AutocommitMode::ON;
-        }
-        if (matchIdentifierKeyword("OFF")) {
-            return sblr::AutocommitMode::OFF;
-        }
-        if (check(TokenType::INTEGER_LITERAL)) {
-            int64_t value = current_token_.value.int_value;
-            advance();
-            if (value == 0) {
-                return sblr::AutocommitMode::OFF;
-            }
-            if (value == 1) {
-                return sblr::AutocommitMode::ON;
-            }
-            error("AUTOCOMMIT expects 0/1 or ON/OFF");
-            return sblr::AutocommitMode::UNCHANGED;
-        }
-        error("Expected AUTOCOMMIT mode (ON/OFF/1/0)");
-        return sblr::AutocommitMode::UNCHANGED;
-    };
-
-    auto parseConflictClause = [&]() {
-        if (!(matchKeyword(TokenType::KW_CONFLICT) || matchIdentifierKeyword("CONFLICT"))) {
-            error("Expected CONFLICT after ON");
-            return;
-        }
-
-        if (conflict_action != sblr::TransactionConflictAction::DEFAULT) {
-            error("ON CONFLICT specified more than once");
-        }
-
-        if (matchKeyword(TokenType::KW_COMMIT)) {
-            conflict_action = sblr::TransactionConflictAction::COMMIT;
-        } else if (matchKeyword(TokenType::KW_ROLLBACK)) {
-            conflict_action = sblr::TransactionConflictAction::ROLLBACK;
-        } else if (matchIdentifierKeyword("ERROR")) {
-            conflict_action = sblr::TransactionConflictAction::ERROR;
-            if (check(TokenType::INTEGER_LITERAL)) {
-                int64_t value = current_token_.value.int_value;
-                advance();
-                if (value < std::numeric_limits<int32_t>::min() ||
-                    value > std::numeric_limits<int32_t>::max()) {
-                    error("ON CONFLICT ERROR code out of range");
-                } else {
-                    has_conflict_error_code = true;
-                    conflict_error_code = static_cast<int32_t>(value);
-                }
-            }
-        } else if (matchIdentifierKeyword("KEEP")) {
-            conflict_action = sblr::TransactionConflictAction::KEEP;
-        } else {
-            error("Expected conflict action (COMMIT, ROLLBACK, ERROR, KEEP)");
-        }
-    };
-
     // Transaction characteristics
     while (true) {
         if (matchKeyword(TokenType::KW_ON)) {
-            parseConflictClause();
+            error("PostgreSQL does not support ON CONFLICT in BEGIN");
+            synchronize();
+            return;
         } else if (matchIdentifierKeyword("AUTOCOMMIT")) {
-            has_autocommit = true;
-            autocommit_mode = parseAutocommitMode();
+            error("PostgreSQL does not support AUTOCOMMIT in BEGIN");
+            synchronize();
+            return;
         } else if (matchKeyword(TokenType::KW_ISOLATION)) {
             consumeKeyword(TokenType::KW_LEVEL, "Expected LEVEL");
             if (matchKeyword(TokenType::KW_SERIALIZABLE)) {

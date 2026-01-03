@@ -3150,6 +3150,9 @@ Statement* Parser::parseWhenStatement() {
         stmt->handler = parsePSQLBlock();
     }
 
+    // Optional terminator after handler statement
+    match(TokenType::SEMICOLON);
+
     return stmt;
 }
 
