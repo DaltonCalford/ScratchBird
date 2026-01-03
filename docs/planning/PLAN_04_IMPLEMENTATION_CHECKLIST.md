@@ -1047,7 +1047,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 8.1: Implement analyzeDomain() for BASIC Domains
 
-**Status:** ⚠️ PARTIAL - core analysis wired; validation guardrails pending
+**Status:** ⚠️ PARTIAL - constraint name uniqueness enforced; remaining validation guardrails pending
 **Priority:** HIGH
 **Estimated Time:** 8 hours
 
@@ -1065,6 +1065,8 @@ if (matchKeyword("DOMAIN")) {
 6. Check for circular inheritance
 7. Populate ResolvedStatement with domain_id
 
+**Update (2026-01-03):** Duplicate domain constraint names are now rejected (case-insensitive) in `SemanticAnalyzerV2::analyzeCreateDomain()` with unit tests in `tests/unit/test_semantic_analyzer_v2.cpp`.
+
 **Acceptance Criteria:**
 - [ ] All validation rules enforced
 - [ ] Clear error messages
@@ -1076,7 +1078,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 8.2: Implement analyzeDomain() for RECORD Domains
 
-**Status:** ⚠️ PARTIAL - field type resolution wired; validation pending
+**Status:** ⚠️ PARTIAL - field name uniqueness enforced; type/cycle validation pending
 **Priority:** HIGH
 **Estimated Time:** 6 hours
 
@@ -1087,6 +1089,8 @@ if (matchKeyword("DOMAIN")) {
 4. Check for circular domain references in fields
 5. Validate DEFAULT expressions for fields
 
+**Update (2026-01-03):** Duplicate RECORD field names are now rejected (case-insensitive) with unit tests in `tests/unit/test_semantic_analyzer_v2.cpp`.
+
 **Acceptance Criteria:**
 - [ ] Field validation complete
 - [ ] Circular reference detection
@@ -1094,7 +1098,7 @@ if (matchKeyword("DOMAIN")) {
 
 ### Task 8.3: Implement analyzeDomain() for ENUM Domains
 
-**Status:** ⚠️ PARTIAL - position assignment wired; label uniqueness pending
+**Status:** ⚠️ PARTIAL - label uniqueness enforced; position validation status unchanged
 **Priority:** HIGH
 **Estimated Time:** 4 hours
 
@@ -1103,6 +1107,8 @@ if (matchKeyword("DOMAIN")) {
 2. Validate positions are sequential (1, 2, 3, ... N)
 3. Validate no position gaps
 4. Auto-assign positions if not explicit
+
+**Update (2026-01-03):** Duplicate ENUM labels are now rejected (case-sensitive) with unit tests in `tests/unit/test_semantic_analyzer_v2.cpp`.
 
 **Acceptance Criteria:**
 - [ ] Label uniqueness enforced

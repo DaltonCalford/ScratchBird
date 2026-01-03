@@ -2200,7 +2200,16 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
 
     resolved->nullable = true;
     bool default_set = false;
+    std::unordered_set<std::string> constraint_names;
     for (const auto& constraint : stmt->constraints) {
+        if (constraint.name != StringPool::INVALID_ID) {
+            std::string name = core::IdentifierUtils::toUpper(
+                std::string(string_pool_.get(constraint.name)));
+            if (!constraint_names.insert(name).second) {
+                error(constraint.span, "Duplicate domain constraint name");
+                return nullptr;
+            }
+        }
         switch (constraint.type) {
             case DomainConstraintType::NOT_NULL:
                 resolved->nullable = false;
@@ -2289,7 +2298,14 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
             break;
         }
         case DomainKind::RECORD: {
+            std::unordered_set<std::string> field_names;
             for (const auto& field : stmt->record_fields) {
+                std::string name = core::IdentifierUtils::toUpper(
+                    std::string(string_pool_.get(field.name)));
+                if (!field_names.insert(name).second) {
+                    error(field.span, "Duplicate RECORD field name");
+                    return nullptr;
+                }
                 ResolvedDomainRecordField resolved_field;
                 resolved_field.name = field.name;
                 resolved_field.type = resolveTypeName(field.type);
@@ -2309,7 +2325,13 @@ ResolvedStatement* SemanticAnalyzerV2::analyzeCreateDomain(CreateDomainStmt* stm
                 return nullptr;
             }
             int32_t next_position = 1;
+            std::unordered_set<std::string> enum_labels;
             for (const auto& value : stmt->enum_values) {
+                std::string label = std::string(string_pool_.get(value.label));
+                if (!enum_labels.insert(label).second) {
+                    error(value.span, "Duplicate ENUM label");
+                    return nullptr;
+                }
                 ResolvedDomainEnumValue resolved_value;
                 resolved_value.label = value.label;
                 if (value.has_position) {

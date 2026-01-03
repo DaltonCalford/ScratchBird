@@ -157,6 +157,15 @@
 7. **MySQL Table Constraints + Geometry Mapping** ✅
    - CREATE TABLE constraints parsed; GEOMETRY/POINT/LINESTRING/POLYGON mapped in type emission
 
+### ✅ Phase 8: Domain Semantic Guardrails (2026-01-03)
+
+1. **Duplicate Guardrails Added** ✅
+   - Duplicate domain constraint names rejected (case-insensitive)
+   - Duplicate RECORD field names rejected (case-insensitive)
+   - Duplicate ENUM labels rejected (case-sensitive)
+2. **Tests Added** ✅
+   - Semantic analyzer unit tests cover duplicate constraint/field/label cases
+
 ---
 
 ## Current Dependencies

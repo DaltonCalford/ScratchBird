@@ -441,6 +441,24 @@ TEST_F(SemanticAnalyzerV2Test, CreateIndexStatement) {
     ASSERT_NE(stmt, nullptr);
 }
 
+TEST_F(SemanticAnalyzerV2Test, CreateDomainDuplicateRecordFields) {
+    auto result = analyze("CREATE DOMAIN test.contact AS RECORD (id INT, id TEXT)");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateDomainDuplicateEnumLabels) {
+    auto result = analyze("CREATE DOMAIN test.status AS ENUM ('A', 'A')");
+    EXPECT_FALSE(result.success());
+}
+
+TEST_F(SemanticAnalyzerV2Test, CreateDomainDuplicateConstraintNames) {
+    auto result = analyze(
+        "CREATE DOMAIN test.email AS TEXT "
+        "CONSTRAINT chk CHECK (1 = 1) "
+        "CONSTRAINT chk CHECK (2 = 2)");
+    EXPECT_FALSE(result.success());
+}
+
 TEST_F(SemanticAnalyzerV2Test, DropTableStatement) {
     auto result = analyze("DROP TABLE users");  // Simpler syntax
     // Drop may return errors for non-existent tables
