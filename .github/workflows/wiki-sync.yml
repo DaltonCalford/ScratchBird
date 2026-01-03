@@ -1,0 +1,178 @@
+name: Sync Wiki Documentation
+
+on:
+  # Trigger on push to main when wiki content changes
+  push:
+    branches: [main]
+    paths:
+      - 'wiki/content/**'
+      - 'wiki/images/**'
+      - 'wiki/scripts/sync-to-wiki.sh'
+
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force overwrite wiki content'
+        required: false
+        default: 'false'
+        type: boolean
+
+  # Optional: Schedule daily sync to catch any manual wiki edits
+  # schedule:
+  #   - cron: '0 2 * * *'  # Daily at 2 AM UTC
+
+jobs:
+  sync-wiki:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write  # Needed to push to wiki
+
+    steps:
+      - name: Checkout main repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better commit messages
+
+      - name: Checkout wiki repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}.wiki
+          path: wiki-repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+
+      - name: Sync content to wiki
+        run: |
+          # Create sync script inline or use existing
+          echo "Syncing wiki content..."
+
+          # Copy content files
+          rsync -av --delete \
+            --exclude='.git' \
+            --exclude='README.md' \
+            wiki/content/ \
+            wiki-repo/
+
+          # Copy images
+          if [ -d "wiki/images" ]; then
+            mkdir -p wiki-repo/images
+            rsync -av --delete \
+              wiki/images/ \
+              wiki-repo/images/
+          fi
+
+      - name: Check for changes
+        id: check_changes
+        working-directory: wiki-repo
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No changes to sync"
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "Changes detected"
+          fi
+
+      - name: Commit and push to wiki
+        if: steps.check_changes.outputs.has_changes == 'true'
+        working-directory: wiki-repo
+        run: |
+          git add -A
+
+          # Create commit message with context
+          cat > commit_message.txt << EOF
+          Sync from main repository
+
+          Synced at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          Source commit: ${{ github.sha }}
+          Triggered by: ${{ github.event_name }}
+          Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+
+          git commit -F commit_message.txt
+          git push origin master
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.check_changes.outputs.has_changes }}" == "true" ]; then
+            echo "✅ Wiki synchronized successfully"
+            echo "📝 Changes from commit: ${{ github.sha }}"
+          else
+            echo "ℹ️  No changes to sync"
+          fi
+
+      - name: Update sync status
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          # Update SYNC_STATUS.md with sync information
+          cat > wiki/SYNC_STATUS.md << EOF
+          # Wiki Sync Status
+
+          **Last Sync:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          **Sync Method:** GitHub Actions
+          **Status:** ✅ Success
+
+          ---
+
+          ## Latest Sync Information
+
+          \`\`\`
+          Last Successful Sync: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          Source Commit: ${{ github.sha }}
+          Synced By: GitHub Actions
+          Triggered By: ${{ github.event_name }}
+          Workflow Run: ${{ github.run_id }}
+          \`\`\`
+
+          ---
+
+          **Auto-updated by:** GitHub Actions workflow
+          **Workflow:** .github/workflows/wiki-sync.yml
+          EOF
+
+          # Commit status update back to main repo
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+          git add wiki/SYNC_STATUS.md
+          git commit -m "Update wiki sync status [skip ci]" || echo "No status changes"
+          git push || echo "No changes to push"
+
+  notify-sync:
+    needs: sync-wiki
+    runs-on: ubuntu-latest
+    if: success()
+
+    steps:
+      - name: Send Discord notification
+        if: env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          curl -H "Content-Type: application/json" \
+               -d "{
+                 \"embeds\": [{
+                   \"title\": \"📖 Wiki Synchronized\",
+                   \"description\": \"Documentation updated from main repository\",
+                   \"color\": 3066993,
+                   \"fields\": [
+                     {
+                       \"name\": \"Commit\",
+                       \"value\": \"[\`${GITHUB_SHA:0:7}\`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})\",
+                       \"inline\": true
+                     },
+                     {
+                       \"name\": \"Workflow\",
+                       \"value\": \"[Run #${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})\",
+                       \"inline\": true
+                     }
+                   ],
+                   \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
+                 }]
+               }" \
+               "$DISCORD_WEBHOOK"
