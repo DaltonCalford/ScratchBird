@@ -50,6 +50,7 @@ beta_requirements/
 | **C# / .NET** | `dotnet-csharp/` | ADO.NET data provider | ~28% of developers |
 | **Go** | `golang/` | database/sql compliant driver | Growing adoption |
 | **PHP** | `php/` | mysqli/PDO compatibility verification | ~18% of developers, 80% of websites |
+| **Pascal/Delphi** | `pascal-delphi/` | FireDAC, IBX, Zeos components | Firebird migration strategy |
 
 **Python Requirements:**
 - PEP 249 DB-API 2.0 compliance
@@ -84,6 +85,14 @@ beta_requirements/
 - PDO driver or mysqli compatibility
 - WordPress compatibility (43% of websites)
 - Laravel framework support
+
+**Pascal/Delphi/FreePascal Requirements:**
+- FireDAC driver implementation (Delphi XE5+)
+- IBX (InterBase Express) compatibility layer
+- Zeos database components support
+- FreePascal/Lazarus SQLdb components
+- Firebird migration toolkit
+- Support for Delphi 7, XE-11, 12 and FreePascal 3.x
 
 ### P1 - High Priority Drivers
 
@@ -336,7 +345,7 @@ beta_requirements/
 ### Phase 1: Beta Release (P0 - Critical)
 
 **Must Have:**
-1. **Drivers**: Python, Node.js, Java (JDBC), C#/.NET, Go, PHP
+1. **Drivers**: Python, Node.js, Java (JDBC), C#/.NET, Go, PHP, Pascal/Delphi
 2. **Connectivity**: ODBC, JDBC
 3. **ORMs**: SQLAlchemy, Hibernate, Entity Framework Core, Prisma
 4. **Big Data**: Kafka connector, Spark connector

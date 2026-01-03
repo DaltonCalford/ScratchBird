@@ -431,6 +431,20 @@ TEST_F(MySQLParserTest, CreateTableWithConstraints) {
     expectSuccess("CREATE TABLE test (id INT, CHECK (id > 0))");
 }
 
+TEST_F(MySQLParserTest, CreateTableOptionAllowlist) {
+    expectSuccess("CREATE TABLE test (id INT) ENGINE=InnoDB");
+    expectSuccess("CREATE TABLE test (id INT) DEFAULT CHARSET=utf8");
+    expectError("CREATE TABLE test (id INT) WITH (fillfactor=90)");
+    expectError("CREATE TABLE test (id INT) INHERITS (parent)");
+    expectError("CREATE TABLE test (id INT) FOO=1");
+}
+
+TEST_F(MySQLParserTest, IndexAlgorithmGuardrails) {
+    expectSuccess("CREATE TABLE test (id INT, INDEX idx USING BTREE (id))");
+    expectSuccess("CREATE TABLE test (id INT, INDEX idx (id) USING HASH)");
+    expectError("CREATE TABLE test (id INT, INDEX idx (id) USING GIN)");
+}
+
 TEST_F(MySQLParserTest, TransactionStatements) {
     expectSuccess("BEGIN");
     expectSuccess("BEGIN WORK");

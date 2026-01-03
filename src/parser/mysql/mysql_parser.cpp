@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <stdexcept>
 #include <limits>
+#include <unordered_set>
 
 namespace scratchbird::parser::mysql {
 
@@ -2548,8 +2549,217 @@ void Parser::parseCreateTable() {
     consume(TokenType::RIGHT_PAREN, "Expected )");
 
     // Table options (ENGINE, CHARSET, etc.)
+    auto to_upper = [](std::string value) {
+        std::transform(value.begin(), value.end(), value.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+        return value;
+    };
+    auto parse_table_option_value = [&]() {
+        match(TokenType::EQUAL);
+        if (check(TokenType::STRING_LITERAL) || check(TokenType::INTEGER_LITERAL) ||
+            check(TokenType::FLOAT_LITERAL)) {
+            advance();
+            return true;
+        }
+        if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
+            parseIdentifier();
+            return true;
+        }
+        if (isNonReservedKeyword(current_token_.type)) {
+            tokenToString(current_token_.type);
+            advance();
+            return true;
+        }
+        if (check(TokenType::KW_DEFAULT)) {
+            advance();
+            return true;
+        }
+        return false;
+    };
+    auto require_table_option_value = [&](std::string_view option) {
+        if (!parse_table_option_value()) {
+            error("Expected value for table option " + std::string(option));
+            synchronize();
+            return false;
+        }
+        return true;
+    };
+    auto parse_option_identifier = [&]() -> std::string {
+        if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
+            return parseIdentifier();
+        }
+        if (isNonReservedKeyword(current_token_.type)) {
+            std::string name = tokenToString(current_token_.type);
+            advance();
+            return name;
+        }
+        return "";
+    };
+    const std::unordered_set<std::string> allowed_options = {
+        "AUTOEXTEND_SIZE",
+        "AVG_ROW_LENGTH",
+        "CHECKSUM",
+        "COMPRESSION",
+        "CONNECTION",
+        "DATA",
+        "DELAY_KEY_WRITE",
+        "ENCRYPTION",
+        "ENGINE_ATTRIBUTE",
+        "INDEX",
+        "INSERT_METHOD",
+        "KEY_BLOCK_SIZE",
+        "MAX_ROWS",
+        "MIN_ROWS",
+        "PACK_KEYS",
+        "PASSWORD",
+        "ROW_FORMAT",
+        "SECONDARY_ENGINE_ATTRIBUTE",
+        "STATS_AUTO_RECALC",
+        "STATS_PERSISTENT",
+        "STATS_SAMPLE_PAGES",
+        "TABLESPACE",
+        "UNION"
+    };
     while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
-        advance();  // Skip table options for now
+        if (match(TokenType::COMMA)) {
+            continue;
+        }
+        if (matchKeyword(TokenType::KW_WITH)) {
+            error("MySQL does not support WITH table options");
+            synchronize();
+            return;
+        }
+        if (matchKeyword(TokenType::KW_PARTITION) || matchKeyword(TokenType::KW_PARTITIONS)) {
+            error("MySQL partition options are not supported");
+            synchronize();
+            return;
+        }
+        if (matchKeyword(TokenType::KW_ENGINE)) {
+            if (!require_table_option_value("ENGINE")) {
+                return;
+            }
+            continue;
+        }
+        if (matchKeyword(TokenType::KW_AUTO_INCREMENT)) {
+            if (!require_table_option_value("AUTO_INCREMENT")) {
+                return;
+            }
+            continue;
+        }
+        if (matchKeyword(TokenType::KW_CHARSET)) {
+            if (!require_table_option_value("CHARSET")) {
+                return;
+            }
+            continue;
+        }
+        if (matchKeyword(TokenType::KW_CHARACTER)) {
+            if (!(matchKeyword(TokenType::KW_SET) || matchIdentifierKeyword("SET"))) {
+                error("Expected SET after CHARACTER");
+                synchronize();
+                return;
+            }
+            if (!require_table_option_value("CHARACTER SET")) {
+                return;
+            }
+            continue;
+        }
+        if (matchKeyword(TokenType::KW_COLLATE)) {
+            if (!require_table_option_value("COLLATE")) {
+                return;
+            }
+            continue;
+        }
+        if (matchKeyword(TokenType::KW_COMMENT)) {
+            if (!require_table_option_value("COMMENT")) {
+                return;
+            }
+            continue;
+        }
+        if (matchKeyword(TokenType::KW_DEFAULT)) {
+            if (matchKeyword(TokenType::KW_CHARSET)) {
+                if (!require_table_option_value("DEFAULT CHARSET")) {
+                    return;
+                }
+                continue;
+            }
+            if (matchKeyword(TokenType::KW_CHARACTER)) {
+                matchKeyword(TokenType::KW_SET) || matchIdentifierKeyword("SET");
+                if (!require_table_option_value("DEFAULT CHARACTER SET")) {
+                    return;
+                }
+                continue;
+            }
+            if (matchKeyword(TokenType::KW_COLLATE)) {
+                if (!require_table_option_value("DEFAULT COLLATE")) {
+                    return;
+                }
+                continue;
+            }
+            error("Unsupported DEFAULT table option");
+            synchronize();
+            return;
+        }
+        if (matchKeyword(TokenType::KW_DATA)) {
+            if (!matchIdentifierKeyword("DIRECTORY")) {
+                error("Expected DIRECTORY after DATA");
+                synchronize();
+                return;
+            }
+            if (!require_table_option_value("DATA DIRECTORY")) {
+                return;
+            }
+            continue;
+        }
+        if (matchKeyword(TokenType::KW_INDEX)) {
+            if (!matchIdentifierKeyword("DIRECTORY")) {
+                error("Expected DIRECTORY after INDEX");
+                synchronize();
+                return;
+            }
+            if (!require_table_option_value("INDEX DIRECTORY")) {
+                return;
+            }
+            continue;
+        }
+        if (matchKeyword(TokenType::KW_UNION)) {
+            match(TokenType::EQUAL);
+            if (match(TokenType::LEFT_PAREN)) {
+                int depth = 1;
+                while (depth > 0 && !check(TokenType::END_OF_FILE)) {
+                    if (match(TokenType::LEFT_PAREN)) {
+                        depth++;
+                    } else if (match(TokenType::RIGHT_PAREN)) {
+                        depth--;
+                    } else {
+                        advance();
+                    }
+                }
+            } else if (!require_table_option_value("UNION")) {
+                return;
+            }
+            continue;
+        }
+
+        std::string option_name = parse_option_identifier();
+        if (option_name.empty()) {
+            error("Unexpected token in table options");
+            synchronize();
+            return;
+        }
+        std::string upper = to_upper(option_name);
+        if (upper == "INHERITS") {
+            error("MySQL does not support INHERITS");
+            synchronize();
+            return;
+        }
+        if (allowed_options.find(upper) == allowed_options.end()) {
+            error("Unsupported MySQL table option: " + option_name);
+            synchronize();
+            return;
+        }
+        if (!require_table_option_value(option_name)) {
+            return;
+        }
     }
 }
 
@@ -2890,13 +3100,43 @@ void Parser::parseCreateTrigger() {
 
 IndexDef Parser::parseIndexDef() {
     IndexDef idx;
+    auto to_upper = [](std::string value) {
+        std::transform(value.begin(), value.end(), value.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+        return value;
+    };
+    auto parse_algorithm_name = [&]() -> std::string {
+        if (check(TokenType::KW_BTREE)) {
+            advance();
+            return "BTREE";
+        }
+        if (check(TokenType::KW_HASH)) {
+            advance();
+            return "HASH";
+        }
+        if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
+            return parseIdentifier();
+        }
+        error("Expected index type");
+        return "";
+    };
+    auto validate_algorithm = [&](const std::string& algorithm) {
+        if (algorithm.empty()) {
+            return;
+        }
+        std::string upper = to_upper(algorithm);
+        if (upper != "BTREE" && upper != "HASH") {
+            error("MySQL index type must be BTREE or HASH");
+        }
+    };
 
     if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
         idx.name = parseIdentifier();
     }
 
     if (matchKeyword(TokenType::KW_USING)) {
-        idx.algorithm = parseIdentifier();
+        idx.algorithm = parse_algorithm_name();
+        validate_algorithm(idx.algorithm);
     }
 
     consume(TokenType::LEFT_PAREN, "Expected (");
@@ -2921,7 +3161,8 @@ IndexDef Parser::parseIndexDef() {
     while (!check(TokenType::COMMA) && !check(TokenType::RIGHT_PAREN) &&
            !check(TokenType::END_OF_FILE)) {
         if (matchKeyword(TokenType::KW_USING)) {
-            idx.algorithm = parseIdentifier();
+            idx.algorithm = parse_algorithm_name();
+            validate_algorithm(idx.algorithm);
         } else if (matchKeyword(TokenType::KW_COMMENT)) {
             if (check(TokenType::STRING_LITERAL)) {
                 idx.comment = std::string(lexer_.stringPool().get(current_token_.value.string_id));
