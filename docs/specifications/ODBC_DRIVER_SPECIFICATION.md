@@ -22,6 +22,16 @@ The ScratchBird ODBC driver provides standard ODBC connectivity for:
 | macOS | x86_64, arm64 | `libscratchbird_odbc.dylib` |
 | Windows | x64, x86 | `scratchbird_odbc.dll` |
 
+### 1.4 Alpha Limitations (Core/Basic)
+
+- Core/Basic ODBC only (API Level 1, SQL Core, SQL-92 Entry).
+- SQLBrowseConnect is not supported (returns HYC00).
+- SQLCancel is not supported (returns HYC00).
+- Multiple result sets are not supported (SQLMoreResults returns SQL_NO_DATA).
+- Positioned updates and bulk operations are not supported (SQLSetPos/SQLBulkOperations return HYC00).
+- Descriptor handles are not exposed (SQL_ATTR_IMP_ROW_DESC / SQL_ATTR_IMP_PARAM_DESC return NULL).
+- ODBC connects via the network listener only (no direct embedded engine access).
+
 ---
 
 ## 2. Architecture
@@ -315,8 +325,8 @@ Driver={ScratchBird};Server=/var/run/scratchbird/.s.SBIRD.3092;Database=mydb;UID
 | SQL_DRIVER_VER | "01.00.0000" |
 | SQL_DRIVER_ODBC_VER | "03.80" |
 | SQL_ODBC_VER | "03.80.0000" |
-| SQL_ODBC_API_CONFORMANCE | SQL_OAC_LEVEL2 |
-| SQL_ODBC_SQL_CONFORMANCE | SQL_OSC_EXTENDED |
+| SQL_ODBC_API_CONFORMANCE | SQL_OAC_LEVEL1 |
+| SQL_ODBC_SQL_CONFORMANCE | SQL_OSC_CORE |
 
 ### 7.2 DBMS Information
 
@@ -332,7 +342,7 @@ Driver={ScratchBird};Server=/var/run/scratchbird/.s.SBIRD.3092;Database=mydb;UID
 
 | InfoType | Value |
 |----------|-------|
-| SQL_SQL_CONFORMANCE | SQL_SC_SQL92_FULL |
+| SQL_SQL_CONFORMANCE | SQL_SC_SQL92_ENTRY |
 | SQL_SQL92_DATETIME_FUNCTIONS | SQL_SDF_CURRENT_DATE \| SQL_SDF_CURRENT_TIME \| SQL_SDF_CURRENT_TIMESTAMP |
 | SQL_SQL92_NUMERIC_VALUE_FUNCTIONS | SQL_SNVF_BIT_LENGTH \| SQL_SNVF_CHAR_LENGTH \| ... |
 | SQL_SQL92_STRING_FUNCTIONS | SQL_SSF_CONVERT \| SQL_SSF_LOWER \| SQL_SSF_UPPER \| ... |

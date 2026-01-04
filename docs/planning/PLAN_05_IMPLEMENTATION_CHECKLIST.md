@@ -75,7 +75,7 @@
 - [x] Add smoke tests for connect/exec/fetch
 - [ ] unixODBC isql sanity tests
 - [ ] Basic Excel/PowerBI/Tableau connection tests (manual)
-- [ ] Document known limitations for Alpha
+- [x] Document known limitations for Alpha
 
 ---
 
