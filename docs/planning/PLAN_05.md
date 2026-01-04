@@ -3,7 +3,7 @@
 **Plan:** ScratchBird Native ODBC 3.x Driver using libscratchbird.so/dll
 **Version:** 1.0
 **Date:** 2025-12-26
-**Status:** 🔍 ANALYSIS COMPLETE - AWAITING DECISIONS
+**Status:** ✅ IMPLEMENTATION COMPLETE (ALPHA) - EXTERNAL TESTING PENDING
 
 ---
 
@@ -12,12 +12,10 @@
 Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird native wire protocol. This is NOT about emulated database protocols (PostgreSQL/MySQL/Firebird use their own ODBC drivers for server-side emulation). This driver allows ODBC client applications to connect directly to ScratchBird using the native wire protocol.
 
 **Current State:**
-- ✅ **5,627 lines of ODBC code** already implemented across 5 files
-- ✅ **75% of core ODBC functions** have skeleton or partial implementations (39/52)
-- ✅ **Complete wire protocol specification** exists
-- ✅ **Local IPC client library exists** (`scratchbird_client`, Protocol v1.0 over IPC/TCP localhost)
-- ⚠️ **Critical gaps identified**: Wire protocol target mismatch, catalog functions, type conversion
-- ⚠️ **Decisions needed**: See "Open Questions" section below
+- ✅ **ODBC driver implementation complete for Alpha** (core/basics + full catalog)
+- ✅ **Network/TLS client path implemented** (native wire protocol over network listener)
+- ✅ **Type conversion, catalog, fetch/bind, and autocommit semantics implemented**
+- ⚠️ **External validation pending** (unixODBC isql + BI tools)
 
 **Scope:**
 - ODBC 3.x full specification compliance (NOT a subset)
@@ -34,6 +32,22 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 - Complex type mapping: **Hybrid** (text for JSON/XML/ARRAY/RECORD, binary for GEOMETRY/VECTOR).
 - Catalog scope: **All 10 catalog functions**.
 - Federation visibility: **Current database only** (Alpha).
+
+---
+
+## Status Update (2026-01-XX)
+
+**Implementation Status:**
+- ✅ libscratchbird network client + ODBC bridge implemented (TLS 1.3 supported)
+- ✅ Catalog functions (all 10) implemented with tests
+- ✅ Type conversion implemented (hybrid strategy) with tests
+- ✅ Result binding/fetch implemented with tests
+- ✅ Autocommit + isolation mapping implemented with tests
+- ✅ Core conformance cleanup complete (unsupported functions return HYC00)
+
+**Remaining (Testing/Validation Only):**
+- unixODBC `isql` sanity tests
+- Manual BI tool checks (Excel/PowerBI/Tableau)
 
 ---
 
@@ -57,9 +71,8 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 
 **Repo Reality Check (Implementation Today):**
 - **Implemented protocol:** `include/scratchbird/protocol/wire_protocol.h` uses a **12-byte header** with magic **"SBDB"**, version **1.0**.
-- **Transport:** **IPC** (Unix socket / named pipe / TCP localhost) via `scratchbird::server::IPCClient`.
-- **Client library:** `scratchbird_client` (static) implements connect/auth/query/txn over IPC (no TLS).
-- **Mismatch:** Spec requires **v1.1** with **40-byte header** and **TLS 1.3**; current code does **not** implement that wire format or TLS.
+- **Transport:** **Network listener** (TCP) with optional TLS 1.3 via libscratchbird network client.
+- **Client library:** libscratchbird network client implements connect/auth/query/txn over the native wire protocol.
 
 ### ODBC Implementation (Partial) ⚠️
 
@@ -102,21 +115,19 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 
 ### Gap 1: Wire Protocol Client Library ⚠️
 
-**Status:** Local IPC client exists; **network/TLS client is missing**
+**Status:** ✅ RESOLVED (network/TLS client implemented)
 
 **Requirement (Alpha):**
-ODBC must connect via **network listener → parser → engine** using libscratchbird client APIs.
+ODBC connects via **network listener → parser → engine** using libscratchbird client APIs.
 
-**Implication:**
-We need a **network/TLS-capable libscratchbird client** aligned with the native wire protocol spec; current repo only has IPC client plumbing.
-
-**Estimated Effort:** 40-60 hours to implement or complete the network client path
+**Implementation:**
+Network client path implemented with TLS 1.3 support (see `src/client/network_client.cpp` and ODBC bridge).
 
 ---
 
 ### Gap 2: Catalog Function Implementation 🔴 MISSING
 
-**Status:** All 10 functions are STUBS returning SQL_SUCCESS with no data
+**Status:** ✅ RESOLVED (all 10 functions implemented with tests)
 
 **Functions Needed:**
 1. **SQLTables** - List tables/views/system tables (line 1874 in odbc_handles.cpp)
@@ -137,17 +148,16 @@ We need a **network/TLS-capable libscratchbird client** aligned with the native 
 - Support wildcard matching ('%', '_')
 - Map ScratchBird metadata to ODBC expected columns
 
-**Estimated Effort:** 20-30 hours
+**Implementation:** Catalog functions implemented in `src/odbc/odbc_handles.cpp` with unit coverage.
 
 ---
 
 ### Gap 3: Type Conversion Infrastructure ⚠️ PARTIAL
 
-**Status:** Basic framework exists, but incomplete for 86 ScratchBird types
+**Status:** ✅ RESOLVED (hybrid mapping + conversion tests)
 
 **Current State:**
-- Some conversions in `convertAndStore()` (line 1810, odbc_handles.cpp) - marked TODO
-- No comprehensive mapping table
+- Type mapping and conversion implemented in ODBC bridge with tests.
 
 **Requirements:**
 - **ODBC SQL Types → ScratchBird Types** (for parameter binding)
@@ -170,9 +180,7 @@ We need a **network/TLS-capable libscratchbird client** aligned with the native 
   - GEOMETRY → SQL_BINARY or WKB format?
   - INTERVAL types → Map to SQL_INTERVAL_* types
 
-**Estimated Effort:** 15-20 hours
-
-**Decision Required:** How should complex ScratchBird types be exposed via ODBC?
+**Decision:** Hybrid mapping (text for JSON/XML/ARRAY/RECORD/VARIANT, binary for GEOMETRY/VECTOR).
 
 ---
 

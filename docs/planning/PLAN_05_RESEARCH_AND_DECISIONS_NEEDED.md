@@ -1,8 +1,8 @@
 # Plan 05 - Research and Decisions Needed
 
-**Date:** 2025-12-26
-**Status:** DECISIONS RESOLVED FOR ALPHA
-**Purpose:** Track remaining research tasks and confirm Alpha decisions for Plan 05
+**Date:** 2026-01-XX
+**Status:** IMPLEMENTATION COMPLETE (EXTERNAL TESTING PENDING)
+**Purpose:** Track research/decision items for Plan 05 and confirm resolution
 
 ---
 
@@ -13,7 +13,7 @@ Plan 05 analysis is **COMPLETE**. We have identified:
 - ✅ What's missing (catalog functions, type conversion, result binding)
 - ✅ Alpha decisions confirmed (autocommit semantics, core conformance, ScratchBird-only scope)
 
-**Blocking:** libscratchbird **network client capability** (ODBC must use the network listener + parser bridge).
+**Blocking:** None (network client implemented; external testing pending only).
 
 **Decisions Confirmed (Alpha):**
 - Autocommit: commit after every statement when ON; always in a transaction.
@@ -26,24 +26,22 @@ Plan 05 analysis is **COMPLETE**. We have identified:
 
 ---
 
-## 🔴 CRITICAL RESEARCH REQUIRED
+## 🔴 CRITICAL RESEARCH (RESOLVED)
 
 ### Research Task 1: libscratchbird Network Client Capability
 
-**STATUS:** 🔴 BLOCKING IMPLEMENTATION
+**STATUS:** ✅ RESOLVED
 
 **Requirement:**
 ODBC uses libscratchbird over the **network listener**; the parser is the required bridge to the engine.
 
-**Remaining Questions:**
-1. What API surface does libscratchbird expose for network connections?
-2. Is TLS 1.3 support present or required to be added?
-3. What connection string/DSN parameters should be passed through?
+**Resolution:**
+- Implemented a network client with TLS 1.3 support.
+- Connection string parameters mapped into the client config.
 
 **Current Findings (Repo):**
-- `scratchbird_client` exists (static) and connects via IPC/localhost TCP.
-- `include/scratchbird/protocol/wire_protocol.h` defines protocol v1.0 with a 12-byte header (magic "SBDB").
-- No TLS implementation is present in the client path.
+- Network client now connects via the network listener and supports TLS 1.3.
+- Protocol v1.0 header is used for native wire protocol.
 
 ---
 
@@ -63,7 +61,7 @@ Confirm the authoritative list of ScratchBird types and wire type codes for conv
 
 ---
 
-**Status:** READY FOR IMPLEMENTATION
-**Blocking:** libscratchbird network client capability
+**Status:** IMPLEMENTATION COMPLETE (EXTERNAL TESTING PENDING)
+**Blocking:** None
 
-**Last Updated:** 2025-12-26
+**Last Updated:** 2026-01-XX

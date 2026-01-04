@@ -1,5 +1,9 @@
 # Plan 05 - Protocols, ODBC, Connection Pool
 
+**Status Update (2026-01-XX):**
+- The ODBC portion has been completed under Plan 05 (see `docs/planning/PLAN_05_IMPLEMENTATION_CHECKLIST.md`).
+- Protocol adapter and connection pool work are tracked in their respective plans; this document is legacy for the combined scope.
+
 ## Scope
 Complete network protocol adapters, ODBC driver, and connection pool implementation, aligned with full native client compatibility for emulated engines and ScratchBird's always-in-transaction model. Include attachment multiplexing support on the native protocol.
 

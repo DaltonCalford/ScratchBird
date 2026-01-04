@@ -1,26 +1,33 @@
 # Plan 05 Analysis: ScratchBird Native ODBC Driver Implementation Status
 
-**Date:** 2025-12-26
-**Purpose:** Complete analysis of existing ODBC implementation vs ODBC 3.x specification
-**Goal:** Full ODBC 3.x compliant driver for ScratchBird using `scratchbird_client` or a shared lib (TBD)
-**Wire Protocol:** Native protocol target **TBD** (local IPC v1.0 vs network/TLS v1.1)
+**Date:** 2026-01-XX
+**Purpose:** Historical analysis of existing ODBC implementation vs ODBC 3.x specification
+**Goal:** Alpha ODBC implementation complete; external testing pending
+**Wire Protocol:** Native protocol v1.0 over the network listener with TLS 1.3 support
 
 ---
 
 ## Executive Summary
 
+**Status Update (2026-01-XX):**
+- ✅ ODBC driver implementation complete for Alpha (core/basics + full catalog)
+- ✅ Network/TLS client path implemented for the native wire protocol
+- ✅ Type conversion, fetch/bind, and autocommit semantics implemented with tests
+- ⚠️ External validation pending (unixODBC isql + BI tools)
+
+**Note:** The detailed function status tables below are a historical snapshot from 2025-12-26.
+Refer to `docs/planning/PLAN_05_IMPLEMENTATION_CHECKLIST.md` for current status.
+
 **Current State:**
-- 5,627 lines of ODBC code already implemented
-- 56+ ODBC API functions have skeleton/partial implementations
-- Native wire protocol fully specified (1,946 lines)
-- Foundation exists; completion work needed
+- ODBC driver completed for Alpha scope
+- Native wire protocol is implemented over the network listener
 
 **Key Finding:**
 The codebase has substantial ODBC infrastructure already in place. Plan 05 should focus on **completing** the ODBC driver implementation, not creating it from scratch.
 
 **Repo Reality Check:**
-- `scratchbird_client` exists and speaks the **local IPC protocol** (v1.0, 12-byte header, magic "SBDB").
-- No client implementation for the **network/TLS spec** (v1.1, 40-byte header, magic "SBWP") is present.
+- libscratchbird network client speaks the native protocol (v1.0, 12-byte header, magic "SBDB").
+- TLS 1.3 support is integrated in the network client path.
 
 **Alpha Decisions (Confirmed):**
 - ODBC uses **libscratchbird** over the **network listener → parser → engine** path (no direct engine access).
