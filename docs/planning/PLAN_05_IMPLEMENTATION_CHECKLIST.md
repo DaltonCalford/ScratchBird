@@ -72,7 +72,7 @@
 
 ## PHASE 7: TESTING + VALIDATION
 
-- [ ] Add smoke tests for connect/exec/fetch
+- [x] Add smoke tests for connect/exec/fetch
 - [ ] unixODBC isql sanity tests
 - [ ] Basic Excel/PowerBI/Tableau connection tests (manual)
 - [ ] Document known limitations for Alpha

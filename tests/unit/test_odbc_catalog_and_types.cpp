@@ -284,6 +284,11 @@ class RecordingClientBridge : public scratchbird::odbc::OdbcClientBridge {
 public:
     bool connected{true};
     std::vector<std::string> sql_log;
+    SQLRETURN connect(const scratchbird::odbc::ConnectionParams& /*params*/,
+                      std::string& /*error*/) override {
+        connected = true;
+        return SQL_SUCCESS;
+    }
     SQLRETURN executeSQL(const std::string& sql,
                          std::vector<std::vector<std::string>>& results,
                          std::vector<scratchbird::odbc::ColumnMetadata>& columns,
@@ -296,6 +301,29 @@ public:
     }
     bool isConnected() const override {
         return connected;
+    }
+};
+
+class SmokeClientBridge : public RecordingClientBridge {
+public:
+    SQLRETURN executeSQL(const std::string& sql,
+                         std::vector<std::vector<std::string>>& results,
+                         std::vector<scratchbird::odbc::ColumnMetadata>& columns,
+                         SQLLEN& rows_affected) override {
+        results.clear();
+        columns.clear();
+        rows_affected = 0;
+        sql_log.push_back(sql);
+
+        if (sql == "SELECT 1") {
+            scratchbird::odbc::ColumnMetadata col;
+            col.name = "one";
+            col.sql_type = SQL_INTEGER;
+            columns.push_back(col);
+            results.push_back({"1"});
+            return SQL_SUCCESS;
+        }
+        return SQL_SUCCESS;
     }
 };
 
@@ -390,6 +418,35 @@ TEST(OdbcFetchTest, BindAndFetchPopulateBuffers) {
     ASSERT_EQ(rc, SQL_SUCCESS);
     EXPECT_EQ(out_int, 100);
     EXPECT_EQ(text_ind, SQL_NULL_DATA);
+}
+
+TEST(OdbcSmokeTest, ConnectExecFetch) {
+    scratchbird::odbc::OdbcEnvironment env;
+    scratchbird::odbc::OdbcConnection conn(&env);
+
+    auto bridge = std::make_unique<SmokeClientBridge>();
+    auto* bridge_ptr = bridge.get();
+    conn.client_bridge_ = std::move(bridge);
+
+    SQLRETURN rc = conn.connect(nullptr, 0, nullptr, 0, nullptr, 0);
+    ASSERT_EQ(rc, SQL_SUCCESS);
+    ASSERT_TRUE(conn.connected_);
+    ASSERT_GE(bridge_ptr->sql_log.size(), 2u);
+    EXPECT_EQ(bridge_ptr->sql_log[0],
+              "SET TRANSACTION ISOLATION LEVEL READ COMMITTED ON CONFLICT COMMIT");
+    EXPECT_EQ(bridge_ptr->sql_log[1], "SET AUTOCOMMIT ON ON CONFLICT COMMIT");
+
+    auto* stmt = conn.createStatement();
+    ASSERT_NE(stmt, nullptr);
+    rc = stmt->execDirect(reinterpret_cast<const SQLCHAR*>("SELECT 1"), SQL_NTS);
+    ASSERT_EQ(rc, SQL_SUCCESS);
+
+    SQLINTEGER out_value = 0;
+    SQLLEN ind = 0;
+    ASSERT_EQ(stmt->bindCol(1, SQL_C_LONG, &out_value, sizeof(out_value), &ind), SQL_SUCCESS);
+    rc = stmt->fetch();
+    ASSERT_EQ(rc, SQL_SUCCESS);
+    EXPECT_EQ(out_value, 1);
 }
 
 } // namespace
