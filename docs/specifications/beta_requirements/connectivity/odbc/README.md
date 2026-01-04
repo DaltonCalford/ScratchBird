@@ -9,7 +9,7 @@
 
 ## Overview
 
-ODBC (Open Database Connectivity) is the industry-standard database access method for Windows and cross-platform applications. ODBC support is absolutely critical for ScratchBird adoption in business intelligence, enterprise reporting, and Microsoft Office integration.
+ODBC (Open Database Connectivity) is the industry-standard database access method for Windows and cross-platform applications. ODBC support is absolutely critical for ScratchBird adoption in business intelligence, enterprise reporting, and Microsoft Office integration. ScratchBird uses its native ODBC driver, which connects to the ScratchBird network listener (default port 3092) using the ScratchBird wire protocol.
 
 **Key Requirements:**
 - ODBC 3.8 specification compliance
@@ -19,6 +19,7 @@ ODBC (Open Database Connectivity) is the industry-standard database access metho
 - SQL-92 and SQL-99 compliance
 - Cursor library support
 - Connection pooling
+- Native ScratchBird wire protocol via network listener (no direct engine access)
 - Installer packages (MSI for Windows, packages for Linux)
 - Signed drivers for Windows
 
@@ -144,7 +145,7 @@ Example Power BI connection:
 1. Open Power BI Desktop
 2. Get Data → ODBC
 3. Enter Data Source Name (DSN) or connection string:
-   Driver={ScratchBird ODBC Driver};Server=localhost;Port=5432;Database=mydb;UID=user;PWD=pass
+   Driver={ScratchBird ODBC Driver};Server=localhost;Port=3092;Database=mydb;UID=user;PWD=pass
 4. Choose DirectQuery or Import mode
 5. Select tables or write DAX queries
 ```
@@ -190,7 +191,7 @@ Example Windows DSN:
    Data Source Name: ScratchBird_Production
    Description: Production ScratchBird Database
    Server: db.example.com
-   Port: 5432
+   Port: 3092
    Database: production
    Username: readonly_user
    SSL Mode: require
@@ -210,10 +211,10 @@ Example unixODBC configuration:
 
 **/etc/odbcinst.ini:**
 ```ini
-[ScratchBird ODBC Driver]
+[ScratchBird]
 Description = ScratchBird ODBC Driver
-Driver = /usr/lib/x86_64-linux-gnu/odbc/libscratchbirdodbc.so
-Setup = /usr/lib/x86_64-linux-gnu/odbc/libscratchbirdsq.so
+Driver = /usr/lib/x86_64-linux-gnu/odbc/libscratchbird_odbc.so
+Setup = /usr/lib/x86_64-linux-gnu/odbc/libscratchbird_odbc.so
 UsageCount = 1
 Threading = 2
 ```
@@ -222,15 +223,15 @@ Threading = 2
 ```ini
 [ScratchBird_Production]
 Description = Production ScratchBird Database
-Driver = ScratchBird ODBC Driver
+Driver = ScratchBird
 Server = db.example.com
-Port = 5432
+Port = 3092
 Database = production
-Username = myuser
-Password = mypassword
+UID = myuser
+PWD = mypassword
 SSLMode = require
 ReadOnly = 0
-Protocol = 7.4
+AutoCommit = 1
 ```
 
 Test connection:
@@ -291,30 +292,33 @@ isql -v ScratchBird_Production
 DSN=ScratchBird;UID=myuser;PWD=mypassword;
 
 // DSN-less connection (full connection string)
-Driver={ScratchBird ODBC Driver};Server=localhost;Port=5432;Database=mydb;UID=myuser;PWD=mypassword;
+Driver={ScratchBird ODBC Driver};Server=localhost;Port=3092;Database=mydb;UID=myuser;PWD=mypassword;
 
 // Common parameters:
-Driver       - ODBC driver name (DSN-less only)
+Driver       - ODBC driver name (DSN-less only; must match odbcinst entry)
 DSN          - Data Source Name (DSN-based only)
 Server       - Database host
-Port         - Database port (default: 5432)
+Port         - Database port (default: 3092)
 Database     - Database name
 UID / User   - Username
 PWD / Password - Password
-SSL / SSLMode - SSL mode (disable, allow, prefer, require, verify-ca, verify-full)
+SSLMode      - SSL mode (disable, allow, prefer, require, verify_ca, verify_full)
+SSLCert      - Client certificate path
+SSLKey       - Client key path
+SSLRootCert  - CA certificate path
 ReadOnly     - Read-only connection (0=no, 1=yes)
-Protocol     - Protocol version
+AutoCommit   - Autocommit (0=no, 1=yes)
 Timeout      - Connection timeout in seconds
-UseDeclareFetch - Use server-side cursors (0=no, 1=yes)
-Fetch        - Default fetch size
-MaxVarcharSize - Maximum VARCHAR length
-MaxLongVarcharSize - Maximum TEXT length
-UnknownSizes - How to handle unknown type sizes
-BoolsAsChar  - Return BOOLEANs as CHAR (0=no, 1=yes)
+QueryTimeout - Query timeout in seconds
+ApplicationName - Application name
+Schema / CurrentSchema - Default schema
+Charset / Encoding - Client encoding
+PacketSize  - Packet size in bytes
+Pooling     - Driver-manager pooling hint (0=no, 1=yes)
 
 // Example connection strings:
-Driver={ScratchBird ODBC Driver};Server=localhost;Port=5432;Database=mydb;UID=admin;PWD=secret;
-Driver={ScratchBird ODBC Driver};Server=db.example.com;Database=production;UID=user;PWD=pass;SSLMode=require;ReadOnly=1;
+Driver={ScratchBird ODBC Driver};Server=localhost;Port=3092;Database=mydb;UID=admin;PWD=secret;
+Driver={ScratchBird ODBC Driver};Server=db.example.com;Port=3092;Database=production;UID=user;PWD=pass;SSLMode=require;ReadOnly=1;
 ```
 
 ### Type Mappings
