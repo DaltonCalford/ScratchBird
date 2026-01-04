@@ -970,6 +970,10 @@ namespace scratchbird
             EXT_WIN_CUME_DIST = 0x6A,  // CUME_DIST() - cumulative distribution
             EXT_WIN_PERCENT_RANK = 0x6B,  // PERCENT_RANK() - relative rank percentile
             EXT_FUNC_AGE = 0x6C,  // AGE(timestamp [, timestamp]) - age between timestamps
+            EXT_FUNC_FORMAT_TYPE = 0x0300,  // FORMAT_TYPE(type_oid, typmod)
+            EXT_FUNC_OBJ_DESCRIPTION = 0x0301,  // OBJ_DESCRIPTION(oid, catalog_name)
+            EXT_FUNC_COL_DESCRIPTION = 0x0302,  // COL_DESCRIPTION(rel_oid, attnum)
+            EXT_FUNC_SHOBJ_DESCRIPTION = 0x0303,  // SHOBJ_DESCRIPTION(oid, catalog_name)
             EXT_CREATE_DB_TRIGGER = 0x6D,  // CREATE TRIGGER (database trigger)
             EXT_DROP_DB_TRIGGER = 0x6E,  // DROP TRIGGER (database trigger)
             EXT_FIRE_DB_TRIGGER = 0x6F,  // Internal: Fire database trigger

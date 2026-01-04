@@ -231,11 +231,144 @@ endif()
 
 # Register tests
 include(GoogleTest)
+set(SCRATCHBIRD_SMOKE_TESTS
+    V2DataTypesTest.*
+    TextSearchTest.*
+    SemanticAnalyzerV2Test.*
+    ParserSessionV2Test.*
+    ParserV2DDLTest.*
+    FirebirdParserTest.*
+    ShowSetCommandsTest.*
+    PostgreSQLParserTest.*
+    LexerV2Test.*
+    SchemaPathV2Test.*
+    ParserDMLV2Test.*
+    BytecodeGeneratorV2Test.*
+    MySQLParserTest.*
+    ConditionalFunctionTest.*
+    ArithmeticOverflow.*
+    NaNInfinityHandling.*
+    PredicateMatcherTest.*
+    FirebirdLexerTest.*
+    CharsetTest.*
+    ExpressionMatcherTest.*
+    ParserStateV2Test.*
+    ConfigTest.*
+)
+list(JOIN SCRATCHBIRD_SMOKE_TESTS ":" SCRATCHBIRD_SMOKE_FILTER)
+
+set(SCRATCHBIRD_STRESS_TESTS
+    StorageStressTest.*
+    *Stress*
+)
+list(JOIN SCRATCHBIRD_STRESS_TESTS ":" SCRATCHBIRD_STRESS_FILTER)
+
+set(SCRATCHBIRD_PERFORMANCE_TESTS
+    DependencyPerformanceTest.*
+    StoragePerformanceTest.*
+    ThroughputTest.*
+    AtomicXIDTest.PerformanceBenchmark
+    *Benchmark*
+)
+list(JOIN SCRATCHBIRD_PERFORMANCE_TESTS ":" SCRATCHBIRD_PERFORMANCE_FILTER)
+
+set(SCRATCHBIRD_QUARANTINE_TESTS
+    StoredCodeDependencyTest.DropFunctionFailsIfCalledByAnotherFunction
+    StoredCodeDependencyTest.DropProcedureFailsIfCalled
+    StoredCodeDependencyTest.ComplexFunctionChain
+    StoredCodeDependencyTest.MixedFunctionProcedureDependencies
+    BytecodeOpcodesTest.SBLRVersionIsDefined
+    JSONFunctionTest.JSON_OBJECT_OddArgs
+    JSONFunctionTest.JSON_EXTRACT_WrongArgCount
+)
+list(JOIN SCRATCHBIRD_QUARANTINE_TESTS ":" SCRATCHBIRD_QUARANTINE_FILTER)
+
+set(SCRATCHBIRD_INTEGRATION_TESTS
+    TCPIntegrationTest.*
+    UnixSocketTest.*
+    NetworkTest.*
+    ProtocolSessionTest.*
+    SweepMechanismTest.*
+    *Integration*
+    *EndToEnd*
+    *E2E*
+    QueryCompilerV2Test.*
+    Week3Week4ComprehensiveTest.*
+)
+list(JOIN SCRATCHBIRD_INTEGRATION_TESTS ":" SCRATCHBIRD_INTEGRATION_FILTER)
+
+set(SCRATCHBIRD_UNIT_EXCLUDE_FILTER "${SCRATCHBIRD_SMOKE_FILTER}")
+if(SCRATCHBIRD_STRESS_FILTER)
+    set(SCRATCHBIRD_UNIT_EXCLUDE_FILTER
+        "${SCRATCHBIRD_UNIT_EXCLUDE_FILTER}:${SCRATCHBIRD_STRESS_FILTER}"
+    )
+endif()
+if(SCRATCHBIRD_PERFORMANCE_FILTER)
+    set(SCRATCHBIRD_UNIT_EXCLUDE_FILTER
+        "${SCRATCHBIRD_UNIT_EXCLUDE_FILTER}:${SCRATCHBIRD_PERFORMANCE_FILTER}"
+    )
+endif()
+if(SCRATCHBIRD_INTEGRATION_FILTER)
+    set(SCRATCHBIRD_UNIT_EXCLUDE_FILTER
+        "${SCRATCHBIRD_UNIT_EXCLUDE_FILTER}:${SCRATCHBIRD_INTEGRATION_FILTER}"
+    )
+endif()
+if(SCRATCHBIRD_QUARANTINE_FILTER)
+    set(SCRATCHBIRD_UNIT_EXCLUDE_FILTER
+        "${SCRATCHBIRD_UNIT_EXCLUDE_FILTER}:${SCRATCHBIRD_QUARANTINE_FILTER}"
+    )
+endif()
+
 gtest_discover_tests(scratchbird_tests
     PROPERTIES
         TIMEOUT 60  # Per-test timeout: 60 seconds
         LABELS "unit"
+    TEST_FILTER "*-${SCRATCHBIRD_UNIT_EXCLUDE_FILTER}"
 )
+
+gtest_discover_tests(scratchbird_tests
+    PROPERTIES
+        TIMEOUT 60  # Per-test timeout: 60 seconds
+        LABELS "unit\\;smoke"
+    TEST_FILTER "${SCRATCHBIRD_SMOKE_FILTER}"
+)
+
+if(SCRATCHBIRD_STRESS_FILTER)
+    gtest_discover_tests(scratchbird_tests
+        PROPERTIES
+            TIMEOUT 300
+            LABELS "stress"
+        TEST_FILTER "${SCRATCHBIRD_STRESS_FILTER}"
+    )
+endif()
+
+if(SCRATCHBIRD_PERFORMANCE_FILTER)
+    gtest_discover_tests(scratchbird_tests
+        PROPERTIES
+            TIMEOUT 300
+            LABELS "performance"
+        TEST_FILTER "${SCRATCHBIRD_PERFORMANCE_FILTER}"
+    )
+endif()
+
+if(SCRATCHBIRD_INTEGRATION_FILTER)
+    gtest_discover_tests(scratchbird_tests
+        PROPERTIES
+            TIMEOUT 120
+            LABELS "integration"
+        TEST_FILTER "${SCRATCHBIRD_INTEGRATION_FILTER}"
+    )
+endif()
+
+if(SCRATCHBIRD_QUARANTINE_FILTER)
+    gtest_discover_tests(scratchbird_tests
+        PROPERTIES
+            TIMEOUT 60
+            LABELS "quarantine\\;disabled"
+        TEST_FILTER "${SCRATCHBIRD_QUARANTINE_FILTER}"
+    )
+endif()
+
 
 # ==============================================================================
 # IPC Server Infrastructure Tests (Local Server Architecture - Phase 1)
@@ -249,7 +382,7 @@ target_link_libraries(test_ipc_server
 )
 add_test(NAME IPC_ServerTests COMMAND test_ipc_server)
 set_tests_properties(IPC_ServerTests PROPERTIES
-    LABELS "server;ipc"
+    LABELS "integration;server;ipc"
     TIMEOUT 60
 )
 
@@ -266,7 +399,7 @@ target_link_libraries(test_wire_protocol
 )
 add_test(NAME WireProtocolTests COMMAND test_wire_protocol)
 set_tests_properties(WireProtocolTests PROPERTIES
-    LABELS "server;protocol;wire"
+    LABELS "integration;server;protocol;wire"
     TIMEOUT 60
 )
 
@@ -283,7 +416,7 @@ target_link_libraries(test_client_connection
 )
 add_test(NAME ClientConnectionTests COMMAND test_client_connection)
 set_tests_properties(ClientConnectionTests PROPERTIES
-    LABELS "client;connection;pool"
+    LABELS "integration;client;connection;pool"
     TIMEOUT 120
 )
 
@@ -1594,3 +1727,18 @@ set_tests_properties(ShadowIndexRebuild PROPERTIES
     LABELS "integration;index;shadow;rebuild;versioning;plan01"
     TIMEOUT 60
 )
+
+# Aggregate target for building all test executables.
+get_property(SCRATCHBIRD_TEST_TARGETS
+    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    PROPERTY BUILDSYSTEM_TARGETS
+)
+set(SCRATCHBIRD_TEST_BINARY_TARGETS "")
+foreach(target_name ${SCRATCHBIRD_TEST_TARGETS})
+    if(target_name MATCHES "^(scratchbird_tests|test_.*|tsan_.*|helgrind_.*|multithreaded_stress)$")
+        list(APPEND SCRATCHBIRD_TEST_BINARY_TARGETS ${target_name})
+    endif()
+endforeach()
+if(SCRATCHBIRD_TEST_BINARY_TARGETS)
+    add_custom_target(scratchbird_test_binaries DEPENDS ${SCRATCHBIRD_TEST_BINARY_TARGETS})
+endif()

@@ -1,0 +1,61 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  CTEST_OUTPUT_ON_FAILURE: 1
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    name: Smoke Tests
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libgtest-dev libssl-dev libxml2-dev liblz4-dev libgeos-dev libproj-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Run Smoke Tests
+        run: bash tests/run_tests.sh smoke
+
+  unit:
+    runs-on: ubuntu-latest
+    name: Unit Tests
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libgtest-dev libssl-dev libxml2-dev liblz4-dev libgeos-dev libproj-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Run Unit Tests
+        run: bash tests/run_tests.sh unit
+
+  integration:
+    runs-on: ubuntu-latest
+    name: Integration Tests
+    env:
+      SCRATCHBIRD_TEST_NETWORK: 1
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libgtest-dev libssl-dev libxml2-dev liblz4-dev libgeos-dev libproj-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Run Integration Tests
+        run: bash tests/run_tests.sh integration

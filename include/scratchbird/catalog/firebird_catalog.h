@@ -193,6 +193,9 @@ private:
     void getRdbIndexSegmentsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
     void getRdbGeneratorsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
     void getMonDatabaseColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getMonAttachmentsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getMonTransactionsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
+    void getMonStatementsColumns(std::vector<CatalogManager::ColumnInfo>& cols);
     void getSecUsersColumns(std::vector<CatalogManager::ColumnInfo>& cols);
 
     // Helper to uppercase a name (Firebird convention)

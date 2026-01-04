@@ -10,6 +10,7 @@
 
 #include "scratchbird/network/network.h"
 #include "scratchbird/core/error_context.h"
+#include "test_helpers.h"
 
 #include <chrono>
 #include <thread>
@@ -43,6 +44,9 @@ bool isNetworkRestrictedError(const ErrorContext& ctx) {
 class NetworkTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        if (!scratchbird::testing::networkTestsEnabled()) {
+            GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
+        }
         ASSERT_TRUE(initNetwork());
         ErrorContext ctx;
         auto probe = Socket::create(AddressFamily::IPV4, SocketType::STREAM, &ctx);

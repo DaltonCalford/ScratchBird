@@ -91,10 +91,15 @@ log_info "Collecting Beta requirements statistics..."
 BETA_DIRS=$(find docs/specifications/beta_requirements/ -mindepth 1 -type d 2>/dev/null | wc -l || echo 0)
 
 # Count P0/P1/P2 items (search for priority markers in README files)
-# Use simpler approach to avoid hanging
-P0_COUNT=$(grep -l "Priority.*P0" docs/specifications/beta_requirements/*/README.md 2>/dev/null | wc -l || echo 0)
-P1_COUNT=$(grep -l "Priority.*P1" docs/specifications/beta_requirements/*/README.md 2>/dev/null | wc -l || echo 0)
-P2_COUNT=$(grep -l "Priority.*P2" docs/specifications/beta_requirements/*/README.md 2>/dev/null | wc -l || echo 0)
+# Search in all README.md files recursively
+P0_COUNT=$(find docs/specifications/beta_requirements/ -name "README.md" -exec grep -l "Priority.*P0" {} \; 2>/dev/null | wc -l | tr -d ' \n')
+P1_COUNT=$(find docs/specifications/beta_requirements/ -name "README.md" -exec grep -l "Priority.*P1" {} \; 2>/dev/null | wc -l | tr -d ' \n')
+P2_COUNT=$(find docs/specifications/beta_requirements/ -name "README.md" -exec grep -l "Priority.*P2" {} \; 2>/dev/null | wc -l | tr -d ' \n')
+
+# Ensure they're valid integers
+P0_COUNT=${P0_COUNT:-0}
+P1_COUNT=${P1_COUNT:-0}
+P2_COUNT=${P2_COUNT:-0}
 
 log_info "Collecting test statistics..."
 

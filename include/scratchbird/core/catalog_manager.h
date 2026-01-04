@@ -8,6 +8,7 @@
 #include <mutex>
 #include <map>
 #include <optional>
+#include <deque>
 #include <cstring>  // for std::memcpy
 #include <array>
 #include "scratchbird/core/status.h"
@@ -27,6 +28,7 @@ namespace scratchbird::core
     class TIDResolver;
     class ToastManager;
     struct DomainInfo;
+    struct LockSnapshot;
     struct AuditEvent;
     struct AuditQuery;
 
@@ -1678,6 +1680,14 @@ public:
         auto listSequencesBySchema(const ID& schema_id, std::vector<ID>& sequence_ids_out,
                                    ErrorContext* ctx = nullptr) -> Status;
 
+        // List sequences with full metadata for a schema (helper for information_schema).
+        auto listSequences(const ID& schema_id, std::vector<SequenceInfo>& sequences_out,
+                           ErrorContext* ctx = nullptr) -> Status;
+
+        // Get sequence metadata by ID (helper for information_schema privileges).
+        auto getSequenceById(const ID& sequence_id, SequenceInfo& info_out,
+                             ErrorContext* ctx = nullptr) -> Status;
+
         // View operations (ALPHA Phase 1 - Views)
         auto createView(const ID& schema_id, const std::string& name,
                         const std::string& definition, bool or_replace, bool check_option,
@@ -1787,6 +1797,9 @@ public:
                               ErrorContext* ctx = nullptr) -> Status;
 
         // Domain lookup wrappers (delegate to DomainManager)
+        auto listDomains(const ID& schema_id,
+                         std::vector<DomainInfo>& domains_out,
+                         ErrorContext* ctx = nullptr) -> Status;
         auto getDomainByName(const ID& schema_id, const std::string& domain_name,
                              DomainInfo& info_out, ErrorContext* ctx = nullptr) -> Status;
         auto getDomainById(const ID& domain_id,
@@ -2388,7 +2401,161 @@ public:
         auto getSession(const ID& session_id, SessionInfo& session_out,
                        ErrorContext* ctx = nullptr) -> Status;
 
+        auto listSessions(std::vector<SessionInfo>& sessions_out,
+                         ErrorContext* ctx = nullptr) -> Status;
+
         auto closeSession(const ID& session_id, ErrorContext* ctx = nullptr) -> Status;
+
+        // Runtime monitoring
+        struct TransactionHistoryEntry
+        {
+            uint32_t thread_id = 0;
+            uint64_t event_id = 0;
+            uint64_t end_event_id = 0;
+            uint64_t trx_id = 0;
+            uint64_t timer_start = 0;
+            uint64_t timer_end = 0;
+            uint64_t timer_wait = 0;
+            bool read_only = false;
+            uint8_t isolation_level = 0;
+            bool autocommit = false;
+            bool committed = false;
+        };
+
+        struct WaitHistoryEntry
+        {
+            uint32_t thread_id = 0;
+            uint64_t event_id = 0;
+            uint64_t timer_start = 0;
+            uint64_t timer_end = 0;
+            uint64_t timer_wait = 0;
+            uint64_t object_instance_begin = 0;
+            bool timed_out = false;
+        };
+
+        static constexpr size_t kDigestHistogramBuckets = 18;
+        static constexpr std::array<uint64_t, kDigestHistogramBuckets> kDigestHistogramUpperBounds = {
+            1ULL,
+            5ULL,
+            10ULL,
+            50ULL,
+            100ULL,
+            500ULL,
+            1000ULL,
+            5000ULL,
+            10000ULL,
+            50000ULL,
+            100000ULL,
+            500000ULL,
+            1000000ULL,
+            5000000ULL,
+            10000000ULL,
+            50000000ULL,
+            100000000ULL,
+            1000000000ULL
+        };
+
+        static size_t digestHistogramBucket(uint64_t value)
+        {
+            for (size_t i = 0; i < kDigestHistogramBuckets; ++i)
+            {
+                if (value <= kDigestHistogramUpperBounds[i])
+                {
+                    return i;
+                }
+            }
+            return kDigestHistogramBuckets - 1;
+        }
+
+        static uint64_t digestHistogramUpperBound(size_t bucket)
+        {
+            if (bucket >= kDigestHistogramBuckets)
+            {
+                return kDigestHistogramUpperBounds[kDigestHistogramBuckets - 1];
+            }
+            return kDigestHistogramUpperBounds[bucket];
+        }
+
+        static uint64_t digestHistogramLowerBound(size_t bucket)
+        {
+            if (bucket == 0)
+            {
+                return 0;
+            }
+            if (bucket >= kDigestHistogramBuckets)
+            {
+                bucket = kDigestHistogramBuckets - 1;
+            }
+            return kDigestHistogramUpperBounds[bucket - 1] + 1;
+        }
+
+        struct StatementDigestEntry
+        {
+            std::string schema_name;
+            std::string user_name;
+            std::string host_name;
+            std::string digest;
+            std::string digest_text;
+            uint64_t count_star = 0;
+            uint64_t sum_timer_wait = 0;
+            uint64_t min_timer_wait = 0;
+            uint64_t max_timer_wait = 0;
+            uint64_t sum_lock_time = 0;
+            uint64_t sum_errors = 0;
+            uint64_t sum_warnings = 0;
+            uint64_t sum_rows_affected = 0;
+            uint64_t sum_rows_sent = 0;
+            uint64_t sum_rows_examined = 0;
+            uint64_t sum_created_tmp_disk_tables = 0;
+            uint64_t sum_created_tmp_tables = 0;
+            uint64_t sum_select_full_join = 0;
+            uint64_t sum_select_full_range_join = 0;
+            uint64_t sum_select_range = 0;
+            uint64_t sum_select_range_check = 0;
+            uint64_t sum_select_scan = 0;
+            uint64_t sum_sort_merge_passes = 0;
+            uint64_t sum_sort_range = 0;
+            uint64_t sum_sort_rows = 0;
+            uint64_t sum_sort_scan = 0;
+            uint64_t sum_no_index_used = 0;
+            uint64_t sum_no_good_index_used = 0;
+            uint64_t sum_cpu_time = 0;
+            uint64_t max_controlled_memory = 0;
+            uint64_t max_total_memory = 0;
+            uint64_t count_secondary = 0;
+            uint64_t first_seen = 0;
+            uint64_t last_seen = 0;
+            uint64_t quantile_95 = 0;
+            uint64_t quantile_99 = 0;
+            uint64_t quantile_999 = 0;
+            std::string query_sample_text;
+            uint64_t query_sample_seen = 0;
+            uint64_t query_sample_timer_wait = 0;
+            std::array<uint64_t, kDigestHistogramBuckets> histogram_counts{};
+        };
+
+        auto listLocks(std::vector<LockSnapshot>& locks_out,
+                       ErrorContext* ctx = nullptr) -> Status;
+        auto recordTransactionHistory(const TransactionHistoryEntry& entry,
+                                      ErrorContext* ctx = nullptr) -> Status;
+        auto listTransactionHistory(std::vector<TransactionHistoryEntry>& entries_out,
+                                    ErrorContext* ctx = nullptr) const -> Status;
+        auto recordWaitHistory(const WaitHistoryEntry& entry,
+                               ErrorContext* ctx = nullptr) -> Status;
+        auto listWaitHistory(std::vector<WaitHistoryEntry>& entries_out,
+                             ErrorContext* ctx = nullptr) const -> Status;
+        auto recordStatementDigest(const StatementDigestEntry& entry,
+                                   ErrorContext* ctx = nullptr) -> Status;
+        auto listStatementDigestSummary(std::vector<StatementDigestEntry>& entries_out,
+                                        ErrorContext* ctx = nullptr) const -> Status;
+        auto listStatementDigestSummaryByAccount(std::vector<StatementDigestEntry>& entries_out,
+                                                 ErrorContext* ctx = nullptr) const -> Status;
+        auto listStatementDigestSummaryByUser(std::vector<StatementDigestEntry>& entries_out,
+                                              ErrorContext* ctx = nullptr) const -> Status;
+        auto listStatementDigestSummaryByHost(std::vector<StatementDigestEntry>& entries_out,
+                                              ErrorContext* ctx = nullptr) const -> Status;
+        auto getStatementDigestHistogramGlobal(std::array<uint64_t, kDigestHistogramBuckets>& counts_out,
+                                               ErrorContext* ctx = nullptr) const -> Status;
 
         // P1-12: Session timeout management
         auto updateSessionActivity(const ID& session_id, ErrorContext* ctx = nullptr) -> Status;
@@ -3494,6 +3661,22 @@ public:
 
         Database *db_;
         mutable CatalogMutex mutex_;
+        mutable std::mutex history_mutex_;
+        std::deque<TransactionHistoryEntry> transaction_history_;
+        std::deque<WaitHistoryEntry> wait_history_;
+        size_t transaction_history_limit_ = 1024;
+        size_t wait_history_limit_ = 2048;
+        mutable std::mutex digest_mutex_;
+        std::unordered_map<std::string, StatementDigestEntry> digest_summary_;
+        std::deque<std::string> digest_order_;
+        size_t digest_summary_limit_ = 1024;
+        std::array<uint64_t, kDigestHistogramBuckets> digest_histogram_global_{};
+        std::unordered_map<std::string, StatementDigestEntry> digest_summary_by_account_;
+        std::unordered_map<std::string, StatementDigestEntry> digest_summary_by_user_;
+        std::unordered_map<std::string, StatementDigestEntry> digest_summary_by_host_;
+        std::deque<std::string> digest_order_by_account_;
+        std::deque<std::string> digest_order_by_user_;
+        std::deque<std::string> digest_order_by_host_;
 
         // TRUNCATE TABLE async job tracking (ALPHA Phase 1 - DDL Modifications)
         std::unordered_map<uint64_t, std::shared_ptr<TruncateJob>> truncate_jobs_;

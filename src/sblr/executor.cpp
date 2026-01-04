@@ -55,6 +55,7 @@
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"  // For LOG_ERROR macro
 #include "scratchbird/core/audit_logger.h"
+#include "scratchbird/catalog/virtual_catalog.h"
 #include "scratchbird/catalog/emulation_view_generator.h"
 #include "scratchbird/sblr/query_result_cache.h"  // P2-19: Query Result Caching
 #include <nlohmann/json.hpp>
@@ -13949,6 +13950,294 @@ namespace scratchbird
             }
         }
 
+        bool Executor::executeVirtualCatalogQuery(
+            const std::string& table_name,
+            const std::vector<std::pair<std::string, std::string>>& select_items,
+            bool is_select_star)
+        {
+            catalog::VirtualCatalogRouter& router = catalog::VirtualCatalogRouter::getInstance();
+            if (!router.isInitialized())
+            {
+                return false;
+            }
+
+            core::ErrorContext err_ctx;
+            core::ObjectPath path;
+            if (buildObjectPathFromName(table_name, path, &err_ctx) != core::Status::OK)
+            {
+                return false;
+            }
+
+            std::string schema_name;
+            std::string base_name;
+            if (path.components.size() >= 2)
+            {
+                base_name = path.components.back();
+                std::vector<std::string> schema_components(path.components.begin(),
+                                                           path.components.end() - 1);
+                schema_name = joinSchemaComponents(schema_components);
+            }
+            else if (path.components.size() == 1)
+            {
+                base_name = path.components.front();
+                if (conn_ctx_)
+                {
+                    for (const auto& entry : conn_ctx_->search_path())
+                    {
+                        if (entry.empty())
+                        {
+                            continue;
+                        }
+                        if (catalog::isVirtualTable(entry, base_name))
+                        {
+                            schema_name = entry;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (schema_name.empty() || base_name.empty() ||
+                !catalog::isVirtualTable(schema_name, base_name))
+            {
+                return false;
+            }
+
+            catalog::ProtocolType protocol = catalog::ProtocolType::SCRATCHBIRD;
+            if (conn_ctx_)
+            {
+                protocol = catalog::protocolTypeFromString(conn_ctx_->dialect_tag());
+            }
+
+            catalog::VirtualResultSet vrs;
+            core::Status status = catalog::executeVirtualQuery(protocol, schema_name, base_name,
+                                                               std::string(), vrs, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string msg = err_ctx.message.empty()
+                    ? "Virtual catalog query failed"
+                    : err_ctx.message;
+                error(msg);
+            }
+
+            std::vector<core::CatalogManager::ColumnInfo> columns;
+            status = router.getVirtualTableColumns(protocol, schema_name, base_name, columns, &err_ctx);
+            if (status != core::Status::OK || columns.empty())
+            {
+                columns.clear();
+                for (size_t i = 0; i < vrs.column_names.size(); ++i)
+                {
+                    core::CatalogManager::ColumnInfo col;
+                    col.column_name = vrs.column_names[i];
+                    col.data_type = static_cast<uint16_t>(vrs.column_types[i]);
+                    col.nullable = true;
+                    col.ordinal = static_cast<uint16_t>(i + 1);
+                    columns.push_back(std::move(col));
+                }
+            }
+
+            if (!current_result_set_)
+            {
+                current_result_set_ = std::make_unique<ResultSet>();
+            }
+
+            std::vector<size_t> projection_indices;
+            std::vector<std::string> projection_names;
+
+            if (is_select_star)
+            {
+                for (const auto& col : columns)
+                {
+                    current_result_set_->addColumn(col.column_name,
+                                                   static_cast<core::DataType>(col.data_type));
+                }
+            }
+            else
+            {
+                for (const auto& [col_name, alias] : select_items)
+                {
+                    auto it = std::find_if(columns.begin(), columns.end(),
+                                           [&col_name](const auto& c) {
+                                               return c.column_name == col_name;
+                                           });
+                    if (it == columns.end())
+                    {
+                        error("Column not found: " + col_name);
+                    }
+                    projection_indices.push_back(std::distance(columns.begin(), it));
+                    projection_names.push_back(alias.empty() ? col_name : alias);
+                }
+
+                for (size_t i = 0; i < projection_indices.size(); ++i)
+                {
+                    const auto& col = columns[projection_indices[i]];
+                    current_result_set_->addColumn(projection_names[i],
+                                                   static_cast<core::DataType>(col.data_type));
+                }
+            }
+
+            size_t where_start_pc = 0;
+            size_t where_end_pc = 0;
+            bool has_where = false;
+
+            if (pc_ < bytecode_size_ &&
+                bytecode_[pc_] == static_cast<uint8_t>(Opcode::WHERE_CLAUSE))
+            {
+                has_where = true;
+                readByte(); // Consume WHERE_CLAUSE opcode
+                where_start_pc = pc_;
+
+                int depth = 1;
+                while (pc_ < bytecode_size_ && depth > 0)
+                {
+                    Opcode op = static_cast<Opcode>(readByte());
+
+                    if (op == Opcode::LITERAL_INT32)
+                    {
+                        pc_ += 4;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_INT64)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_DOUBLE)
+                    {
+                        pc_ += 8;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_STRING || op == Opcode::COLUMN_REF)
+                    {
+                        uint32_t len = readInt32();
+                        pc_ += len;
+                        depth++;
+                    }
+                    else if (op == Opcode::LITERAL_NULL)
+                    {
+                        depth++;
+                    }
+                    else if (op >= Opcode::EXPR_ADD && op <= Opcode::EXPR_OR)
+                    {
+                        depth--;
+                    }
+                    else if (op == Opcode::EXPR_CAST)
+                    {
+                        readByte();
+                        Opcode type_op = static_cast<Opcode>(readByte());
+                        if (type_op == Opcode::TYPE_VARCHAR)
+                        {
+                            pc_ += 4;
+                        }
+                    }
+                }
+                where_end_pc = pc_;
+            }
+
+            bool has_aggregation = false;
+            if (pc_ < bytecode_size_)
+            {
+                Opcode next_op = static_cast<Opcode>(bytecode_[pc_]);
+                if (next_op == Opcode::GROUP_BY || next_op == Opcode::AGG_INIT)
+                {
+                    has_aggregation = true;
+                }
+            }
+
+            if (has_aggregation)
+            {
+                error("Aggregation not supported for virtual catalog queries");
+            }
+
+            std::unordered_map<std::string, size_t> column_index;
+            column_index.reserve(columns.size());
+            for (size_t i = 0; i < columns.size(); ++i)
+            {
+                column_index.emplace(columns[i].column_name, i);
+            }
+
+            for (const auto& row : vrs.rows)
+            {
+                std::vector<Value> row_values(columns.size(), Value::makeNull());
+                for (const auto& [name, value] : row.columns)
+                {
+                    auto it = column_index.find(name);
+                    if (it != column_index.end())
+                    {
+                        row_values[it->second] = value;
+                    }
+                }
+
+                if (has_where)
+                {
+                    size_t saved_pc = pc_;
+                    pc_ = where_start_pc;
+
+                    current_row_values_ = &row_values;
+                    current_row_columns_ = &columns;
+
+                    try
+                    {
+                        Value where_result = evaluateExpressionRange(where_end_pc);
+
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+                        pc_ = saved_pc;
+
+                        if (!where_result.toBoolean())
+                        {
+                            continue;
+                        }
+                    }
+                    catch (...)
+                    {
+                        current_row_values_ = nullptr;
+                        current_row_columns_ = nullptr;
+                        pc_ = saved_pc;
+                        throw;
+                    }
+                }
+
+                std::vector<Value> result_row;
+                if (is_select_star)
+                {
+                    result_row = std::move(row_values);
+                }
+                else
+                {
+                    result_row.reserve(projection_indices.size());
+                    for (size_t idx : projection_indices)
+                    {
+                        result_row.push_back(row_values[idx]);
+                    }
+                }
+
+                current_result_set_->addRow(std::move(result_row));
+            }
+
+            if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::WINDOW))
+            {
+                executeWindow(std::move(current_result_set_));
+                return true;
+            }
+
+            if (pc_ < bytecode_size_ && bytecode_[pc_] == static_cast<uint8_t>(Opcode::ORDER_BY))
+            {
+                executeSort(std::move(current_result_set_));
+                return true;
+            }
+
+            if (pc_ < bytecode_size_ &&
+                (bytecode_[pc_] == static_cast<uint8_t>(Opcode::LIMIT) ||
+                 bytecode_[pc_] == static_cast<uint8_t>(Opcode::OFFSET)))
+            {
+                executeLimit(std::move(current_result_set_));
+                return true;
+            }
+
+            return true;
+        }
+
         void Executor::executeSelect()
         {
             // SECURITY ENHANCEMENT (MEDIUM-3): Check query limits before expensive SELECT operation
@@ -14162,6 +14451,11 @@ namespace scratchbird
                 "SYS.CATALOG.OBJECT_RESOLVER")
             {
                 executeObjectResolverQuery(select_items, is_select_star);
+                return;
+            }
+
+            if (executeVirtualCatalogQuery(table_name, select_items, is_select_star))
+            {
                 return;
             }
 
@@ -22369,6 +22663,341 @@ namespace scratchbird
                             }
                         }
                     }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_FORMAT_TYPE))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count < 1 || arg_count > 2)
+                        {
+                            error("FORMAT_TYPE expects 1 or 2 arguments, got " + std::to_string(arg_count));
+                        }
+
+                        Value typmod_val;
+                        if (arg_count == 2)
+                        {
+                            typmod_val = pop();
+                        }
+                        Value oid_val = pop();
+
+                        if (oid_val.isNull())
+                        {
+                            push(Value::makeNull());
+                        }
+                        else
+                        {
+                            int64_t type_oid = oid_val.toInt64();
+                            int64_t typmod = typmod_val.isNull() ? -1 : typmod_val.toInt64();
+
+                            auto oidFromUuid = [](const core::ID& id) -> int64_t {
+                                uint64_t hash = 1469598103934665603ULL;
+                                for (uint8_t b : id.bytes)
+                                {
+                                    hash ^= b;
+                                    hash *= 1099511628211ULL;
+                                }
+                                hash &= 0x3fffffffffffffffULL;
+                                hash |= 0x4000000000000000ULL;
+                                return static_cast<int64_t>(hash);
+                            };
+
+                            auto baseTypeName = [](int64_t oid) -> std::string {
+                                switch (oid)
+                                {
+                                    case 16: return "boolean";
+                                    case 20: return "bigint";
+                                    case 21: return "smallint";
+                                    case 23: return "integer";
+                                    case 700: return "real";
+                                    case 701: return "double precision";
+                                    case 1700: return "numeric";
+                                    case 1042: return "character";
+                                    case 1043: return "character varying";
+                                    case 25: return "text";
+                                    case 17: return "bytea";
+                                    case 1082: return "date";
+                                    case 1083: return "time without time zone";
+                                    case 1114: return "timestamp without time zone";
+                                    case 1184: return "timestamp with time zone";
+                                    case 2950: return "uuid";
+                                    default: return "";
+                                }
+                            };
+
+                            std::string type_name = baseTypeName(type_oid);
+                            if (type_name.empty() && db_ && db_->domain_manager())
+                            {
+                                std::vector<core::DomainInfo> domains;
+                                core::ErrorContext ctx;
+                                if (db_->domain_manager()->listDomains(core::ID{}, domains, &ctx) == core::Status::OK)
+                                {
+                                    for (const auto& domain : domains)
+                                    {
+                                        if (oidFromUuid(domain.domain_id) == type_oid)
+                                        {
+                                            type_name = domain.domain_name;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (type_name.empty())
+                            {
+                                push(Value::makeNull());
+                            }
+                            else
+                            {
+                                if (typmod >= 0 &&
+                                    (type_name == "character varying" ||
+                                     type_name == "character" ||
+                                     type_name == "numeric"))
+                                {
+                                    type_name += "(" + std::to_string(typmod) + ")";
+                                }
+                                push(Value::makeText(type_name));
+                            }
+                        }
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_OBJ_DESCRIPTION) ||
+                             ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_SHOBJ_DESCRIPTION))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 1 && arg_count != 2)
+                        {
+                            error("OBJ_DESCRIPTION expects 1 or 2 arguments, got " + std::to_string(arg_count));
+                        }
+
+                        Value catalog_val;
+                        if (arg_count == 2)
+                        {
+                            catalog_val = pop();
+                        }
+                        Value oid_val = pop();
+
+                        if (oid_val.isNull())
+                        {
+                            push(Value::makeNull());
+                            break;
+                        }
+
+                        std::string catalog_name = arg_count == 2 ? catalog_val.toString() : "pg_class";
+                        for (auto& c : catalog_name)
+                        {
+                            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        }
+
+                        std::vector<core::CatalogManager::ObjectType> allowed_types;
+                        if (catalog_name == "pg_class")
+                        {
+                            allowed_types = {
+                                core::CatalogManager::ObjectType::TABLE,
+                                core::CatalogManager::ObjectType::VIEW,
+                                core::CatalogManager::ObjectType::INDEX,
+                                core::CatalogManager::ObjectType::SEQUENCE
+                            };
+                        }
+                        else if (catalog_name == "pg_namespace")
+                        {
+                            allowed_types = { core::CatalogManager::ObjectType::SCHEMA };
+                        }
+                        else if (catalog_name == "pg_proc")
+                        {
+                            allowed_types = {
+                                core::CatalogManager::ObjectType::FUNCTION,
+                                core::CatalogManager::ObjectType::PROCEDURE,
+                                core::CatalogManager::ObjectType::UDR
+                            };
+                        }
+                        else if (catalog_name == "pg_trigger")
+                        {
+                            allowed_types = { core::CatalogManager::ObjectType::TRIGGER };
+                        }
+                        else if (catalog_name == "pg_constraint")
+                        {
+                            allowed_types = { core::CatalogManager::ObjectType::CONSTRAINT };
+                        }
+                        else if (catalog_name == "pg_type")
+                        {
+                            allowed_types = {
+                                core::CatalogManager::ObjectType::DOMAIN,
+                                core::CatalogManager::ObjectType::COMPOSITE_TYPE
+                            };
+                        }
+                        else if (catalog_name == "pg_extension")
+                        {
+                            allowed_types = { core::CatalogManager::ObjectType::EXTENSION };
+                        }
+                        else if (catalog_name == "pg_collation")
+                        {
+                            allowed_types = { core::CatalogManager::ObjectType::COLLATION };
+                        }
+                        else if (catalog_name == "pg_database")
+                        {
+                            allowed_types = { core::CatalogManager::ObjectType::DATABASE };
+                        }
+                        else if (catalog_name == "pg_authid")
+                        {
+                            allowed_types = {
+                                core::CatalogManager::ObjectType::ROLE,
+                                core::CatalogManager::ObjectType::USER,
+                                core::CatalogManager::ObjectType::GROUP
+                            };
+                        }
+                        else if (catalog_name == "pg_tablespace")
+                        {
+                            allowed_types = { core::CatalogManager::ObjectType::TABLESPACE };
+                        }
+
+                        if (allowed_types.empty() || !db_ || !db_->catalog_manager())
+                        {
+                            push(Value::makeNull());
+                            break;
+                        }
+
+                        auto oidFromUuid = [](const core::ID& id) -> int64_t {
+                            uint64_t hash = 1469598103934665603ULL;
+                            for (uint8_t b : id.bytes)
+                            {
+                                hash ^= b;
+                                hash *= 1099511628211ULL;
+                            }
+                            hash &= 0x3fffffffffffffffULL;
+                            hash |= 0x4000000000000000ULL;
+                            return static_cast<int64_t>(hash);
+                        };
+
+                        std::vector<core::CatalogManager::CommentInfo> comments;
+                        core::ErrorContext ctx;
+                        if (db_->catalog_manager()->listComments(comments, &ctx) == core::Status::OK)
+                        {
+                            int64_t oid = oid_val.toInt64();
+                            std::string comment_text;
+                            bool found_comment = false;
+                            for (const auto& comment : comments)
+                            {
+                                if (std::find(allowed_types.begin(), allowed_types.end(),
+                                              comment.object_type) == allowed_types.end())
+                                {
+                                    continue;
+                                }
+                                if (oidFromUuid(comment.object_id) == oid)
+                                {
+                                    comment_text = comment.comment_text;
+                                    found_comment = true;
+                                    break;
+                                }
+                            }
+                            if (found_comment)
+                            {
+                                push(Value::makeText(comment_text));
+                                break;
+                            }
+                        }
+
+                        push(Value::makeNull());
+                    }
+                    else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_COL_DESCRIPTION))
+                    {
+                        uint8_t arg_count = readByte();
+                        if (arg_count != 2)
+                        {
+                            error("COL_DESCRIPTION expects 2 arguments, got " + std::to_string(arg_count));
+                        }
+
+                        Value attnum_val = pop();
+                        Value rel_oid_val = pop();
+
+                        if (rel_oid_val.isNull() || attnum_val.isNull())
+                        {
+                            push(Value::makeNull());
+                            break;
+                        }
+
+                        int64_t rel_oid = rel_oid_val.toInt64();
+                        int64_t attnum = attnum_val.toInt64();
+                        if (attnum <= 0 || !db_ || !db_->catalog_manager())
+                        {
+                            push(Value::makeNull());
+                            break;
+                        }
+
+                        auto oidFromUuid = [](const core::ID& id) -> int64_t {
+                            uint64_t hash = 1469598103934665603ULL;
+                            for (uint8_t b : id.bytes)
+                            {
+                                hash ^= b;
+                                hash *= 1099511628211ULL;
+                            }
+                            hash &= 0x3fffffffffffffffULL;
+                            hash |= 0x4000000000000000ULL;
+                            return static_cast<int64_t>(hash);
+                        };
+
+                        core::ID table_id;
+                        bool found_table = false;
+                        std::vector<core::CatalogManager::SchemaInfo> schemas;
+                        core::ErrorContext ctx;
+                        if (db_->catalog_manager()->listSchemas(schemas, &ctx) == core::Status::OK)
+                        {
+                            for (const auto& schema : schemas)
+                            {
+                                std::vector<core::CatalogManager::TableInfo> tables;
+                                if (db_->catalog_manager()->listTables(schema.schema_id, tables, &ctx) != core::Status::OK)
+                                {
+                                    continue;
+                                }
+                                for (const auto& table : tables)
+                                {
+                                    if (oidFromUuid(table.table_id) == rel_oid)
+                                    {
+                                        table_id = table.table_id;
+                                        found_table = true;
+                                        break;
+                                    }
+                                }
+                                if (found_table)
+                                {
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (!found_table)
+                        {
+                            push(Value::makeNull());
+                            break;
+                        }
+
+                        std::vector<core::CatalogManager::ColumnInfo> columns;
+                        if (db_->catalog_manager()->getColumns(table_id, columns, &ctx) != core::Status::OK)
+                        {
+                            push(Value::makeNull());
+                            break;
+                        }
+
+                        bool handled = false;
+                        for (const auto& column : columns)
+                        {
+                            if (column.ordinal == static_cast<uint16_t>(attnum))
+                            {
+                                std::string comment;
+                                if (db_->catalog_manager()->getComment(column.column_id, comment, &ctx) == core::Status::OK)
+                                {
+                                    push(Value::makeText(comment));
+                                }
+                                else
+                                {
+                                    push(Value::makeNull());
+                                }
+                                handled = true;
+                                break;
+                            }
+                        }
+
+                        if (!handled)
+                        {
+                            push(Value::makeNull());
+                        }
+                    }
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_POWER))
                     {
                         uint8_t arg_count = readByte();
@@ -23144,6 +23773,7 @@ namespace scratchbird
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ACOS),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ACOSH),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_AGE),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_COL_DESCRIPTION),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ASIN),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ASINH),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ATAN),
@@ -23156,16 +23786,19 @@ namespace scratchbird
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_COT),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_DEGREES),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_EXP),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_FORMAT_TYPE),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_FLOOR),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LN),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LOG),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LOG10),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_LOG2),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_MOD),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_OBJ_DESCRIPTION),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_PI),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_POWER),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_RADIANS),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ROUND),
+                    static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_SHOBJ_DESCRIPTION),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_SIGN),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_SIN),
                     static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_SINH),
@@ -28222,6 +28855,49 @@ namespace scratchbird
             }
         }
 
+        namespace
+        {
+            struct MetadataVisibilitySpec
+            {
+                bool supported = false;
+                core::CatalogManager::PermissionObjectType perm_type =
+                    core::CatalogManager::PermissionObjectType::TABLE;
+                uint32_t privilege = 0;
+            };
+
+            MetadataVisibilitySpec getMetadataVisibilitySpec(core::CatalogManager::ObjectType type)
+            {
+                using ObjectType = core::CatalogManager::ObjectType;
+                using PermType = core::CatalogManager::PermissionObjectType;
+                using Priv = core::CatalogManager::Privilege;
+
+                switch (type)
+                {
+                    case ObjectType::SCHEMA:
+                        return {true, PermType::SCHEMA, static_cast<uint32_t>(Priv::USAGE)};
+                    case ObjectType::TABLE:
+                        return {true, PermType::TABLE, static_cast<uint32_t>(Priv::SELECT)};
+                    case ObjectType::VIEW:
+                        return {true, PermType::VIEW, static_cast<uint32_t>(Priv::SELECT)};
+                    case ObjectType::SEQUENCE:
+                        return {true, PermType::SEQUENCE, static_cast<uint32_t>(Priv::SEQUENCE_USAGE)};
+                    case ObjectType::PROCEDURE:
+                    case ObjectType::PACKAGE:
+                        return {true, PermType::PROCEDURE, static_cast<uint32_t>(Priv::EXECUTE)};
+                    case ObjectType::FUNCTION:
+                        return {true, PermType::FUNCTION, static_cast<uint32_t>(Priv::EXECUTE)};
+                    case ObjectType::DOMAIN:
+                        return {true, PermType::DOMAIN, static_cast<uint32_t>(Priv::USAGE)};
+                    case ObjectType::DATABASE:
+                        return {true, PermType::DATABASE, static_cast<uint32_t>(Priv::CONNECT)};
+                    default:
+                        break;
+                }
+
+                return {};
+            }
+        } // namespace
+
         void Executor::executeShowTables()
         {
             // Read bytecode parameters
@@ -28305,6 +28981,16 @@ namespace scratchbird
                     continue;
                 }
 
+                bool redact_table = shouldRedactMetadata(
+                    table.table_id,
+                    core::CatalogManager::PermissionObjectType::TABLE,
+                    table.owner_id,
+                    static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
+                if (redact_table)
+                {
+                    continue;
+                }
+
                 // Apply LIKE pattern if provided
                 if (!like_pattern.empty())
                 {
@@ -28350,6 +29036,16 @@ namespace scratchbird
             // Add rows (filter by LIKE pattern if provided)
             for (const auto& schema : schemas)
             {
+                bool redact_schema = shouldRedactMetadata(
+                    schema.schema_id,
+                    core::CatalogManager::PermissionObjectType::SCHEMA,
+                    schema.owner_id,
+                    static_cast<uint32_t>(core::CatalogManager::Privilege::USAGE));
+                if (redact_schema)
+                {
+                    continue;
+                }
+
                 // Apply LIKE pattern if provided
                 if (!like_pattern.empty())
                 {
@@ -28419,6 +29115,24 @@ namespace scratchbird
             current_result_set_->addColumn("Key", core::DataType::VARCHAR);
             current_result_set_->addColumn("Default", core::DataType::VARCHAR);
             current_result_set_->addColumn("Extra", core::DataType::VARCHAR);
+
+            bool redact_table = shouldRedactMetadata(
+                table_info.table_id,
+                core::CatalogManager::PermissionObjectType::TABLE,
+                table_info.owner_id,
+                static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
+            if (redact_table)
+            {
+                current_result_set_->addRow({
+                    Value::makeVarchar("Redacted"),
+                    Value::makeVarchar("Redacted"),
+                    Value::makeVarchar("Redacted"),
+                    Value::makeVarchar("Redacted"),
+                    Value::makeVarchar("Redacted"),
+                    Value::makeVarchar("Redacted")
+                });
+                return;
+            }
 
             // Add rows (filter by LIKE pattern if provided)
             for (const auto& col : columns)
@@ -28536,6 +29250,23 @@ namespace scratchbird
             current_result_set_->addColumn("Key_name", core::DataType::VARCHAR);
             current_result_set_->addColumn("Column_name", core::DataType::VARCHAR);
             current_result_set_->addColumn("Index_type", core::DataType::VARCHAR);
+
+            bool redact_table = shouldRedactMetadata(
+                table_info.table_id,
+                core::CatalogManager::PermissionObjectType::TABLE,
+                table_info.owner_id,
+                static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
+            if (redact_table)
+            {
+                current_result_set_->addRow({
+                    Value::makeVarchar("Redacted"),
+                    Value::makeInt32(0),
+                    Value::makeVarchar("Redacted"),
+                    Value::makeVarchar("Redacted"),
+                    Value::makeVarchar("Redacted")
+                });
+                return;
+            }
 
             // Get all columns for the table to map column IDs to names
             std::vector<core::CatalogManager::ColumnInfo> columns;
@@ -28690,57 +29421,71 @@ namespace scratchbird
                 error("Failed to get columns: " + err_ctx.message);
             }
 
+            bool redact_table = shouldRedactMetadata(
+                table_info.table_id,
+                core::CatalogManager::PermissionObjectType::TABLE,
+                table_info.owner_id,
+                static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
+
             // Build CREATE TABLE statement
-            std::string create_stmt = "CREATE TABLE `" + table_name + "` (\n";
-
-            // Add column definitions
-            for (size_t i = 0; i < columns.size(); ++i)
+            std::string create_stmt;
+            if (redact_table)
             {
-                const auto& col = columns[i];
-
-                create_stmt += "  `" + col.column_name + "` ";
-
-                // Add type
-                std::string type_str = dataTypeToString(static_cast<core::DataType>(col.data_type));
-                if (col.type_precision > 0)
-                {
-                    type_str += "(" + std::to_string(col.type_precision);
-                    if (col.type_scale > 0)
-                    {
-                        type_str += "," + std::to_string(col.type_scale);
-                    }
-                    type_str += ")";
-                }
-                create_stmt += type_str;
-
-                // Add NOT NULL
-                if (!col.nullable)
-                {
-                    create_stmt += " NOT NULL";
-                }
-
-                // Add DEFAULT
-                if (col.has_default && !col.default_value.empty())
-                {
-                    create_stmt += " DEFAULT '" + col.default_value + "'";
-                }
-
-                // Add PRIMARY KEY
-                if (col.is_primary_key)
-                {
-                    create_stmt += " PRIMARY KEY";
-                }
-
-                // Add comma if not last column
-                if (i < columns.size() - 1)
-                {
-                    create_stmt += ",";
-                }
-
-                create_stmt += "\n";
+                create_stmt = "Redacted";
             }
+            else
+            {
+                create_stmt = "CREATE TABLE `" + table_name + "` (\n";
 
-            create_stmt += ")";
+                // Add column definitions
+                for (size_t i = 0; i < columns.size(); ++i)
+                {
+                    const auto& col = columns[i];
+
+                    create_stmt += "  `" + col.column_name + "` ";
+
+                    // Add type
+                    std::string type_str = dataTypeToString(static_cast<core::DataType>(col.data_type));
+                    if (col.type_precision > 0)
+                    {
+                        type_str += "(" + std::to_string(col.type_precision);
+                        if (col.type_scale > 0)
+                        {
+                            type_str += "," + std::to_string(col.type_scale);
+                        }
+                        type_str += ")";
+                    }
+                    create_stmt += type_str;
+
+                    // Add NOT NULL
+                    if (!col.nullable)
+                    {
+                        create_stmt += " NOT NULL";
+                    }
+
+                    // Add DEFAULT
+                    if (col.has_default && !col.default_value.empty())
+                    {
+                        create_stmt += " DEFAULT '" + col.default_value + "'";
+                    }
+
+                    // Add PRIMARY KEY
+                    if (col.is_primary_key)
+                    {
+                        create_stmt += " PRIMARY KEY";
+                    }
+
+                    // Add comma if not last column
+                    if (i < columns.size() - 1)
+                    {
+                        create_stmt += ",";
+                    }
+
+                    create_stmt += "\n";
+                }
+
+                create_stmt += ")";
+            }
 
             // Create result set
             if (!current_result_set_)
@@ -28812,6 +29557,24 @@ namespace scratchbird
             current_result_set_->addColumn("Key", core::DataType::VARCHAR);
             current_result_set_->addColumn("Default", core::DataType::VARCHAR);
             current_result_set_->addColumn("Extra", core::DataType::VARCHAR);
+
+            bool redact_table = shouldRedactMetadata(
+                table_info.table_id,
+                core::CatalogManager::PermissionObjectType::TABLE,
+                table_info.owner_id,
+                static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
+            if (redact_table)
+            {
+                current_result_set_->addRow({
+                    Value::makeVarchar("Redacted"),
+                    Value::makeVarchar("Redacted"),
+                    Value::makeVarchar("Redacted"),
+                    Value::makeVarchar("Redacted"),
+                    Value::makeVarchar("Redacted"),
+                    Value::makeVarchar("Redacted")
+                });
+                return;
+            }
 
             // Add rows
             for (const auto& col : columns)
@@ -28933,7 +29696,19 @@ namespace scratchbird
                 }
             }
             current_result_set_->addRow({Value::makeVarchar("Schema"), Value::makeVarchar(display_schema)});
-            current_result_set_->addRow({Value::makeVarchar("Column Count"), Value::makeVarchar(std::to_string(columns.size()))});
+            bool redact_table = shouldRedactMetadata(
+                table_info.table_id,
+                core::CatalogManager::PermissionObjectType::TABLE,
+                table_info.owner_id,
+                static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
+            current_result_set_->addRow({Value::makeVarchar("Column Count"),
+                                         Value::makeVarchar(redact_table ? "Redacted"
+                                                                         : std::to_string(columns.size()))});
+
+            if (redact_table)
+            {
+                return;
+            }
 
             // Add column info
             for (size_t i = 0; i < columns.size(); i++)
@@ -29021,6 +29796,12 @@ namespace scratchbird
                         error("Trigger '" + object_name + "' not found");
                     }
 
+                    bool redact_trigger = shouldRedactMetadata(
+                        db_trigger.trigger_id,
+                        core::CatalogManager::PermissionObjectType::DATABASE,
+                        db_trigger.owner_id,
+                        0);
+
                     if (!current_result_set_)
                     {
                         current_result_set_ = std::make_unique<ResultSet>();
@@ -29039,12 +29820,14 @@ namespace scratchbird
                     current_result_set_->addRow({Value::makeVarchar("Active"),
                                                  Value::makeVarchar(db_trigger.active ? "YES" : "NO")});
                     current_result_set_->addRow({Value::makeVarchar("Procedure"),
-                                                 Value::makeVarchar(db_trigger.procedure_name)});
+                                                 Value::makeVarchar(redact_trigger ? "Redacted"
+                                                                                     : db_trigger.procedure_name)});
                     current_result_set_->addRow({Value::makeVarchar("Body"),
                                                  Value::makeVarchar("Redacted")});
 
                     std::string comment;
-                    if (catalog->getComment(db_trigger.trigger_id, comment, &err_ctx) == core::Status::OK)
+                    if (!redact_trigger &&
+                        catalog->getComment(db_trigger.trigger_id, comment, &err_ctx) == core::Status::OK)
                     {
                         current_result_set_->addRow({Value::makeVarchar("Comment"),
                                                      Value::makeVarchar(comment)});
@@ -29091,12 +29874,18 @@ namespace scratchbird
                 }
             }
 
+            bool redact_trigger = shouldRedactMetadata(
+                trigger_info.table_id,
+                core::CatalogManager::PermissionObjectType::TABLE,
+                table_info.owner_id,
+                static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
+
             current_result_set_->addRow({Value::makeVarchar("Trigger Name"),
                                          Value::makeVarchar(trigger_info.trigger_name)});
             current_result_set_->addRow({Value::makeVarchar("Scope"),
                                          Value::makeVarchar("TABLE")});
             current_result_set_->addRow({Value::makeVarchar("Table"),
-                                         Value::makeVarchar(table_path)});
+                                         Value::makeVarchar(redact_trigger ? "Redacted" : table_path)});
             current_result_set_->addRow({Value::makeVarchar("Event"),
                                          Value::makeVarchar(triggerEventToString(trigger_info.event))});
             current_result_set_->addRow({Value::makeVarchar("Timing"),
@@ -29106,14 +29895,17 @@ namespace scratchbird
             current_result_set_->addRow({Value::makeVarchar("Enabled"),
                                          Value::makeVarchar(trigger_info.enabled ? "YES" : "NO")});
             current_result_set_->addRow({Value::makeVarchar("Procedure"),
-                                         Value::makeVarchar(trigger_info.procedure_name)});
+                                         Value::makeVarchar(redact_trigger ? "Redacted"
+                                                                           : trigger_info.procedure_name)});
             current_result_set_->addRow({Value::makeVarchar("Condition"),
-                                         Value::makeVarchar(trigger_info.when_expression)});
+                                         Value::makeVarchar(redact_trigger ? "Redacted"
+                                                                           : trigger_info.when_expression)});
             current_result_set_->addRow({Value::makeVarchar("Body"),
                                          Value::makeVarchar("Redacted")});
 
             std::string comment;
-            if (catalog->getComment(trigger_info.trigger_id, comment, &err_ctx) == core::Status::OK)
+            if (!redact_trigger &&
+                catalog->getComment(trigger_info.trigger_id, comment, &err_ctx) == core::Status::OK)
             {
                 current_result_set_->addRow({Value::makeVarchar("Comment"),
                                              Value::makeVarchar(comment)});
@@ -29433,7 +30225,7 @@ namespace scratchbird
                 domain_info.domain_id,
                 core::CatalogManager::PermissionObjectType::DOMAIN,
                 core::ID{},
-                static_cast<uint32_t>(core::CatalogManager::Privilege::ALL));
+                static_cast<uint32_t>(core::CatalogManager::Privilege::USAGE));
 
             std::string schema_path;
             if (!isZeroUuid(domain_info.schema_id))
@@ -29646,25 +30438,35 @@ namespace scratchbird
             current_result_set_->addColumn("Property", core::DataType::VARCHAR);
             current_result_set_->addColumn("Value", core::DataType::VARCHAR);
 
+            bool redact_sequence = shouldRedactMetadata(
+                seq_info.sequence_id,
+                core::CatalogManager::PermissionObjectType::SEQUENCE,
+                seq_info.owner_id,
+                static_cast<uint32_t>(core::CatalogManager::Privilege::SEQUENCE_USAGE));
+
             std::vector<Value> row1, row2, row3, row4, row5;
             row1.push_back(Value::makeVarchar("Generator Name"));
-            row1.push_back(Value::makeVarchar(seq_info.name));
+            row1.push_back(Value::makeVarchar(redact_sequence ? "Redacted" : seq_info.name));
             current_result_set_->addRow(row1);
 
             row2.push_back(Value::makeVarchar("Current Value"));
-            row2.push_back(Value::makeVarchar(std::to_string(seq_info.current_value)));
+            row2.push_back(Value::makeVarchar(redact_sequence ? "Redacted"
+                                                              : std::to_string(seq_info.current_value)));
             current_result_set_->addRow(row2);
 
             row3.push_back(Value::makeVarchar("Increment"));
-            row3.push_back(Value::makeVarchar(std::to_string(seq_info.increment_by)));
+            row3.push_back(Value::makeVarchar(redact_sequence ? "Redacted"
+                                                              : std::to_string(seq_info.increment_by)));
             current_result_set_->addRow(row3);
 
             row4.push_back(Value::makeVarchar("Min Value"));
-            row4.push_back(Value::makeVarchar(std::to_string(seq_info.min_value)));
+            row4.push_back(Value::makeVarchar(redact_sequence ? "Redacted"
+                                                              : std::to_string(seq_info.min_value)));
             current_result_set_->addRow(row4);
 
             row5.push_back(Value::makeVarchar("Max Value"));
-            row5.push_back(Value::makeVarchar(std::to_string(seq_info.max_value)));
+            row5.push_back(Value::makeVarchar(redact_sequence ? "Redacted"
+                                                              : std::to_string(seq_info.max_value)));
             current_result_set_->addRow(row5);
         }
 
@@ -29691,14 +30493,23 @@ namespace scratchbird
                 std::vector<core::CatalogManager::SchemaInfo> schemas;
                 core::ErrorContext err_ctx;
                 auto status = catalog->listSchemas(schemas, &err_ctx);
-                if (status == core::Status::OK)
-                {
-                    for (const auto& schema : schemas)
+                    if (status == core::Status::OK)
                     {
-                        current_result_set_->addRow({Value::makeVarchar(schema.schema_name), Value::makeVarchar("SYSDBA")});
+                        for (const auto& schema : schemas)
+                        {
+                            bool redact_schema = shouldRedactMetadata(
+                                schema.schema_id,
+                                core::CatalogManager::PermissionObjectType::SCHEMA,
+                                schema.owner_id,
+                                static_cast<uint32_t>(core::CatalogManager::Privilege::USAGE));
+                            if (redact_schema)
+                            {
+                                continue;
+                            }
+                            current_result_set_->addRow({Value::makeVarchar(schema.schema_name), Value::makeVarchar("SYSDBA")});
+                        }
                     }
                 }
-            }
             else
             {
                 // Show specific schema
@@ -29723,7 +30534,14 @@ namespace scratchbird
                 current_result_set_->addColumn("Property", core::DataType::VARCHAR);
                 current_result_set_->addColumn("Value", core::DataType::VARCHAR);
 
-                current_result_set_->addRow({Value::makeVarchar("Schema Name"), Value::makeVarchar(schema_info.schema_name)});
+                bool redact_schema = shouldRedactMetadata(
+                    schema_info.schema_id,
+                    core::CatalogManager::PermissionObjectType::SCHEMA,
+                    schema_info.owner_id,
+                    static_cast<uint32_t>(core::CatalogManager::Privilege::USAGE));
+                current_result_set_->addRow({Value::makeVarchar("Schema Name"),
+                                             Value::makeVarchar(redact_schema ? "Redacted"
+                                                                              : schema_info.schema_name)});
             }
         }
 
@@ -30388,6 +31206,64 @@ namespace scratchbird
 
             auto* catalog = db_->catalog_manager();
             core::ErrorContext err_ctx;
+            auto should_redact_comment = [&](const core::ID& object_id,
+                                             core::CatalogManager::ObjectType object_type,
+                                             const core::ID& owner_id) -> bool {
+                const auto spec = getMetadataVisibilitySpec(object_type);
+                if (spec.supported)
+                {
+                    core::ID resolved_owner = owner_id;
+                    if (resolved_owner == core::ID{})
+                    {
+                        switch (object_type)
+                        {
+                            case core::CatalogManager::ObjectType::SCHEMA:
+                            {
+                                core::CatalogManager::SchemaInfo info;
+                                if (catalog->getSchema(object_id, info, &err_ctx) == core::Status::OK)
+                                {
+                                    resolved_owner = info.owner_id;
+                                }
+                                break;
+                            }
+                            case core::CatalogManager::ObjectType::TABLE:
+                            {
+                                core::CatalogManager::TableInfo info;
+                                if (catalog->getTable(object_id, info, &err_ctx) == core::Status::OK)
+                                {
+                                    resolved_owner = info.owner_id;
+                                }
+                                break;
+                            }
+                            case core::CatalogManager::ObjectType::VIEW:
+                            {
+                                core::CatalogManager::ViewInfo info;
+                                if (catalog->getViewById(object_id, info, &err_ctx) == core::Status::OK)
+                                {
+                                    resolved_owner = info.owner_id;
+                                }
+                                break;
+                            }
+                            case core::CatalogManager::ObjectType::SEQUENCE:
+                            {
+                                core::CatalogManager::SequenceInfo info;
+                                if (catalog->getSequenceById(object_id, info, &err_ctx) == core::Status::OK)
+                                {
+                                    resolved_owner = info.owner_id;
+                                }
+                                break;
+                            }
+                            default:
+                                break;
+                        }
+                    }
+                    return shouldRedactMetadata(object_id, spec.perm_type, resolved_owner, spec.privilege);
+                }
+                return shouldRedactMetadata(object_id,
+                                            core::CatalogManager::PermissionObjectType::TABLE,
+                                            owner_id,
+                                            0);
+            };
 
             auto resolve_object = [&](const std::string& name,
                                       core::ID& object_id_out,
@@ -30477,6 +31353,10 @@ namespace scratchbird
 
                 for (const auto& comment : comments)
                 {
+                    if (should_redact_comment(comment.object_id, comment.object_type, comment.owner_id))
+                    {
+                        continue;
+                    }
                     std::string object_label = comment.object_id.toString();
                     core::CatalogManager::ResolvedObject resolved;
                     if (catalog->resolveObjectId(comment.object_id, resolved, &err_ctx) == core::Status::OK &&
@@ -30518,6 +31398,11 @@ namespace scratchbird
                 !resolved.full_path.empty())
             {
                 object_label = resolved.full_path;
+            }
+
+            if (should_redact_comment(object_id, object_type, core::ID{}))
+            {
+                comment = "Redacted";
             }
 
             current_result_set_->addRow({
@@ -30641,6 +31526,74 @@ namespace scratchbird
                 }
             };
 
+            auto should_redact_object = [&](const core::ID& object_id,
+                                            core::CatalogManager::ObjectType object_type) -> bool {
+                const auto spec = getMetadataVisibilitySpec(object_type);
+                if (spec.supported)
+                {
+                    core::ID owner_id{};
+                    switch (object_type)
+                    {
+                        case core::CatalogManager::ObjectType::SCHEMA:
+                        {
+                            core::CatalogManager::SchemaInfo info;
+                            if (catalog->getSchema(object_id, info, &err_ctx) == core::Status::OK)
+                            {
+                                owner_id = info.owner_id;
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::ObjectType::TABLE:
+                        {
+                            core::CatalogManager::TableInfo info;
+                            if (catalog->getTable(object_id, info, &err_ctx) == core::Status::OK)
+                            {
+                                owner_id = info.owner_id;
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::ObjectType::VIEW:
+                        {
+                            core::CatalogManager::ViewInfo info;
+                            if (catalog->getViewById(object_id, info, &err_ctx) == core::Status::OK)
+                            {
+                                owner_id = info.owner_id;
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::ObjectType::SEQUENCE:
+                        {
+                            core::CatalogManager::SequenceInfo info;
+                            if (catalog->getSequenceById(object_id, info, &err_ctx) == core::Status::OK)
+                            {
+                                owner_id = info.owner_id;
+                            }
+                            break;
+                        }
+                        default:
+                            break;
+                    }
+                    return shouldRedactMetadata(object_id, spec.perm_type, owner_id, spec.privilege);
+                }
+
+                core::CatalogManager::ResolvedObject resolved;
+                if (catalog->resolveObjectId(object_id, resolved, &err_ctx) == core::Status::OK &&
+                    resolved.parent_object_id != core::ID{})
+                {
+                    core::CatalogManager::TableInfo table_info;
+                    if (catalog->getTable(resolved.parent_object_id, table_info, &err_ctx) == core::Status::OK)
+                    {
+                        return shouldRedactMetadata(
+                            table_info.table_id,
+                            core::CatalogManager::PermissionObjectType::TABLE,
+                            table_info.owner_id,
+                            static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
+                    }
+                }
+
+                return true;
+            };
+
             std::vector<core::CatalogManager::DependencyInfo> deps;
             if (object_name.empty())
             {
@@ -30670,10 +31623,25 @@ namespace scratchbird
                 {
                     error("Failed to get dependencies");
                 }
+
+                if (should_redact_object(object_id, object_type))
+                {
+                    current_result_set_->addRow({
+                        Value::makeVarchar("Redacted"),
+                        Value::makeVarchar("Redacted"),
+                        Value::makeVarchar("Redacted")
+                    });
+                    return;
+                }
             }
 
             for (const auto& dep : deps)
             {
+                if (should_redact_object(dep.dependent_object_id, dep.dependent_type) ||
+                    should_redact_object(dep.referenced_object_id, dep.referenced_type))
+                {
+                    continue;
+                }
                 current_result_set_->addRow({
                     Value::makeVarchar(resolve_label(dep.dependent_object_id)),
                     Value::makeVarchar(resolve_label(dep.referenced_object_id)),
@@ -30737,7 +31705,7 @@ namespace scratchbird
                 pkg_info.package_id,
                 core::CatalogManager::PermissionObjectType::PROCEDURE,
                 pkg_info.owner_id,
-                0);
+                static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE));
             std::string header = (redact_package || pkg_info.package_header.empty())
                 ? "Redacted"
                 : pkg_info.package_header;
@@ -30953,6 +31921,20 @@ namespace scratchbird
                     continue;
                 }
 
+                core::CatalogManager::SchemaInfo schema_info;
+                if (catalog->getSchema(schema.object_id, schema_info, &err_ctx) == core::Status::OK)
+                {
+                    bool redact_schema = shouldRedactMetadata(
+                        schema_info.schema_id,
+                        core::CatalogManager::PermissionObjectType::SCHEMA,
+                        schema_info.owner_id,
+                        static_cast<uint32_t>(core::CatalogManager::Privilege::USAGE));
+                    if (redact_schema)
+                    {
+                        continue;
+                    }
+                }
+
                 std::vector<Value> row;
                 row.push_back(Value::makeVarchar(schema.schema_path));
                 row.push_back(Value::makeInt32(relative_depth));
@@ -31091,6 +32073,71 @@ namespace scratchbird
                 }
             };
 
+            auto should_redact_object = [&](const core::CatalogManager::ResolvedObject& obj) -> bool {
+                const auto spec = getMetadataVisibilitySpec(obj.object_type);
+                if (spec.supported)
+                {
+                    core::ID owner_id{};
+                    switch (obj.object_type)
+                    {
+                        case core::CatalogManager::ObjectType::SCHEMA:
+                        {
+                            core::CatalogManager::SchemaInfo info;
+                            if (catalog->getSchema(obj.object_id, info, &err_ctx) == core::Status::OK)
+                            {
+                                owner_id = info.owner_id;
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::ObjectType::TABLE:
+                        {
+                            core::CatalogManager::TableInfo info;
+                            if (catalog->getTable(obj.object_id, info, &err_ctx) == core::Status::OK)
+                            {
+                                owner_id = info.owner_id;
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::ObjectType::VIEW:
+                        {
+                            core::CatalogManager::ViewInfo info;
+                            if (catalog->getViewById(obj.object_id, info, &err_ctx) == core::Status::OK)
+                            {
+                                owner_id = info.owner_id;
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::ObjectType::SEQUENCE:
+                        {
+                            core::CatalogManager::SequenceInfo info;
+                            if (catalog->getSequenceById(obj.object_id, info, &err_ctx) == core::Status::OK)
+                            {
+                                owner_id = info.owner_id;
+                            }
+                            break;
+                        }
+                        default:
+                            break;
+                    }
+                    return shouldRedactMetadata(obj.object_id, spec.perm_type, owner_id, spec.privilege);
+                }
+
+                if (obj.parent_object_id != core::ID{})
+                {
+                    core::CatalogManager::TableInfo table_info;
+                    if (catalog->getTable(obj.parent_object_id, table_info, &err_ctx) == core::Status::OK)
+                    {
+                        return shouldRedactMetadata(
+                            table_info.table_id,
+                            core::CatalogManager::PermissionObjectType::TABLE,
+                            table_info.owner_id,
+                            static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
+                    }
+                }
+
+                return false;
+            };
+
             for (const auto& obj : objects)
             {
                 if (normalize(obj.object_name) != target_name)
@@ -31106,6 +32153,11 @@ namespace scratchbird
                     {
                         continue;
                     }
+                }
+
+                if (should_redact_object(obj))
+                {
+                    continue;
                 }
 
                 std::vector<Value> row;
@@ -31155,6 +32207,71 @@ namespace scratchbird
                     return;
                 }
 
+                auto should_redact_object = [&](const core::CatalogManager::ResolvedObject& obj) -> bool {
+                    const auto spec = getMetadataVisibilitySpec(obj.object_type);
+                    if (spec.supported)
+                    {
+                        core::ID owner_id{};
+                        switch (obj.object_type)
+                        {
+                            case core::CatalogManager::ObjectType::SCHEMA:
+                            {
+                                core::CatalogManager::SchemaInfo info;
+                                if (catalog->getSchema(obj.object_id, info, &err_ctx) == core::Status::OK)
+                                {
+                                    owner_id = info.owner_id;
+                                }
+                                break;
+                            }
+                            case core::CatalogManager::ObjectType::TABLE:
+                            {
+                                core::CatalogManager::TableInfo info;
+                                if (catalog->getTable(obj.object_id, info, &err_ctx) == core::Status::OK)
+                                {
+                                    owner_id = info.owner_id;
+                                }
+                                break;
+                            }
+                            case core::CatalogManager::ObjectType::VIEW:
+                            {
+                                core::CatalogManager::ViewInfo info;
+                                if (catalog->getViewById(obj.object_id, info, &err_ctx) == core::Status::OK)
+                                {
+                                    owner_id = info.owner_id;
+                                }
+                                break;
+                            }
+                            case core::CatalogManager::ObjectType::SEQUENCE:
+                            {
+                                core::CatalogManager::SequenceInfo info;
+                                if (catalog->getSequenceById(obj.object_id, info, &err_ctx) == core::Status::OK)
+                                {
+                                    owner_id = info.owner_id;
+                                }
+                                break;
+                            }
+                            default:
+                                break;
+                        }
+                        return shouldRedactMetadata(obj.object_id, spec.perm_type, owner_id, spec.privilege);
+                    }
+
+                    if (obj.parent_object_id != core::ID{})
+                    {
+                        core::CatalogManager::TableInfo table_info;
+                        if (catalog->getTable(obj.parent_object_id, table_info, &err_ctx) == core::Status::OK)
+                        {
+                            return shouldRedactMetadata(
+                                table_info.table_id,
+                                core::CatalogManager::PermissionObjectType::TABLE,
+                                table_info.owner_id,
+                                static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
+                        }
+                    }
+
+                    return false;
+                };
+
                 auto object_type_to_string = [](core::CatalogManager::ObjectType type) {
                     switch (type)
                     {
@@ -31183,11 +32300,22 @@ namespace scratchbird
                 };
 
                 std::vector<Value> row;
-                row.push_back(Value::makeVarchar(resolved.object_id.toString()));
-                row.push_back(Value::makeVarchar(object_type_to_string(resolved.object_type)));
-                row.push_back(Value::makeVarchar(resolved.schema_path));
-                row.push_back(Value::makeVarchar(resolved.full_path));
-                row.push_back(Value::makeVarchar(resolved.object_name));
+                if (should_redact_object(resolved))
+                {
+                    row.push_back(Value::makeVarchar("Redacted"));
+                    row.push_back(Value::makeVarchar("Redacted"));
+                    row.push_back(Value::makeVarchar("Redacted"));
+                    row.push_back(Value::makeVarchar("Redacted"));
+                    row.push_back(Value::makeVarchar("Redacted"));
+                }
+                else
+                {
+                    row.push_back(Value::makeVarchar(resolved.object_id.toString()));
+                    row.push_back(Value::makeVarchar(object_type_to_string(resolved.object_type)));
+                    row.push_back(Value::makeVarchar(resolved.schema_path));
+                    row.push_back(Value::makeVarchar(resolved.full_path));
+                    row.push_back(Value::makeVarchar(resolved.object_name));
+                }
                 current_result_set_->addRow(row);
                 return;
             }
@@ -31308,6 +32436,71 @@ namespace scratchbird
                 }
             };
 
+            auto should_redact_object = [&](const core::CatalogManager::ResolvedObject& obj) -> bool {
+                const auto spec = getMetadataVisibilitySpec(obj.object_type);
+                if (spec.supported)
+                {
+                    core::ID owner_id{};
+                    switch (obj.object_type)
+                    {
+                        case core::CatalogManager::ObjectType::SCHEMA:
+                        {
+                            core::CatalogManager::SchemaInfo info;
+                            if (catalog->getSchema(obj.schema_id, info, &err_ctx) == core::Status::OK)
+                            {
+                                owner_id = info.owner_id;
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::ObjectType::TABLE:
+                        {
+                            core::CatalogManager::TableInfo info;
+                            if (catalog->getTable(obj.object_id, info, &err_ctx) == core::Status::OK)
+                            {
+                                owner_id = info.owner_id;
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::ObjectType::VIEW:
+                        {
+                            core::CatalogManager::ViewInfo info;
+                            if (catalog->getViewById(obj.object_id, info, &err_ctx) == core::Status::OK)
+                            {
+                                owner_id = info.owner_id;
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::ObjectType::SEQUENCE:
+                        {
+                            core::CatalogManager::SequenceInfo info;
+                            if (catalog->getSequenceById(obj.object_id, info, &err_ctx) == core::Status::OK)
+                            {
+                                owner_id = info.owner_id;
+                            }
+                            break;
+                        }
+                        default:
+                            break;
+                    }
+                    return shouldRedactMetadata(obj.object_id, spec.perm_type, owner_id, spec.privilege);
+                }
+
+                if (obj.parent_object_id != core::ID{})
+                {
+                    core::CatalogManager::TableInfo table_info;
+                    if (catalog->getTable(obj.parent_object_id, table_info, &err_ctx) == core::Status::OK)
+                    {
+                        return shouldRedactMetadata(
+                            table_info.table_id,
+                            core::CatalogManager::PermissionObjectType::TABLE,
+                            table_info.owner_id,
+                            static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
+                    }
+                }
+
+                return false;
+            };
+
             for (const auto& obj : objects)
             {
                 if (obj.object_type == core::CatalogManager::ObjectType::SCHEMA)
@@ -31338,6 +32531,11 @@ namespace scratchbird
                 }
 
                 if (obj.parent_object_id != core::ID{})
+                {
+                    continue;
+                }
+
+                if (should_redact_object(obj))
                 {
                     continue;
                 }
@@ -31549,20 +32747,9 @@ namespace scratchbird
                 return true;
             }
 
-            core::CatalogManager* catalog = db_ ? db_->catalog_manager() : nullptr;
-            if (catalog)
+            if (!db_ || !db_->catalog_manager())
             {
-                std::vector<core::CatalogManager::PermissionInfo> perms;
-                core::ErrorContext err_ctx;
-                core::Status perm_status = catalog->getObjectPermissions(object_id, object_type, perms, &err_ctx);
-                if (perm_status != core::Status::OK)
-                {
-                    return false;
-                }
-                if (perms.empty())
-                {
-                    return false;
-                }
+                return false;
             }
 
             return !checkPermission(object_id, object_type, required_privilege);

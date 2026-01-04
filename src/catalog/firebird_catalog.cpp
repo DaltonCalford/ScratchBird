@@ -5,8 +5,12 @@
  */
 
 #include "scratchbird/catalog/firebird_catalog.h"
+#include "scratchbird/core/domain_manager.h"
+#include "scratchbird/core/proc_array.h"
 #include <algorithm>
 #include <cctype>
+#include <unordered_set>
+#include <unordered_map>
 #include <unistd.h>
 
 namespace scratchbird::catalog {
@@ -195,6 +199,9 @@ Status FirebirdCatalogHandler::getTableColumns(const std::string& /* schema_name
     if (upper == "RDB$INDEX_SEGMENTS") { getRdbIndexSegmentsColumns(columns); return Status::OK; }
     if (upper == "RDB$GENERATORS") { getRdbGeneratorsColumns(columns); return Status::OK; }
     if (upper == "MON$DATABASE") { getMonDatabaseColumns(columns); return Status::OK; }
+    if (upper == "MON$ATTACHMENTS") { getMonAttachmentsColumns(columns); return Status::OK; }
+    if (upper == "MON$TRANSACTIONS") { getMonTransactionsColumns(columns); return Status::OK; }
+    if (upper == "MON$STATEMENTS") { getMonStatementsColumns(columns); return Status::OK; }
     if (upper == "SEC$USERS") { getSecUsersColumns(columns); return Status::OK; }
 
     SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, ("Unknown Firebird system table: " + table_name).c_str());
@@ -295,7 +302,231 @@ Status FirebirdCatalogHandler::queryRdbFields(VirtualResultSet& results, ErrorCo
         DataType::INT16, DataType::TEXT, DataType::TEXT
     };
 
-    // Return empty for now - domain support is future work
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    struct FieldMapping {
+        int16_t field_type = 0;
+        int16_t field_length = 0;
+        int16_t field_scale = 0;
+        int16_t charset_id = 0;
+        int16_t collation_id = 0;
+    };
+
+    auto mapDataType = [](DataType type, uint32_t precision, uint32_t scale) -> FieldMapping {
+        FieldMapping mapping{};
+
+        switch (type) {
+            case DataType::INT8:
+            case DataType::INT16:
+                mapping.field_type = 7; // SMALLINT
+                mapping.field_length = 2;
+                break;
+            case DataType::INT32:
+                mapping.field_type = 8; // INTEGER
+                mapping.field_length = 4;
+                break;
+            case DataType::INT64:
+            case DataType::UINT64:
+            case DataType::UINT32:
+            case DataType::UINT16:
+            case DataType::UINT8:
+                mapping.field_type = 16; // BIGINT
+                mapping.field_length = 8;
+                break;
+            case DataType::FLOAT32:
+                mapping.field_type = 10; // FLOAT
+                mapping.field_length = 4;
+                break;
+            case DataType::FLOAT64:
+                mapping.field_type = 27; // DOUBLE
+                mapping.field_length = 8;
+                break;
+            case DataType::DECIMAL:
+            case DataType::MONEY: {
+                uint32_t prec = precision == 0 ? 18 : precision;
+                if (prec <= 4) {
+                    mapping.field_type = 7;
+                    mapping.field_length = 2;
+                } else if (prec <= 9) {
+                    mapping.field_type = 8;
+                    mapping.field_length = 4;
+                } else {
+                    mapping.field_type = 16;
+                    mapping.field_length = 8;
+                }
+                mapping.field_scale = static_cast<int16_t>(-static_cast<int32_t>(scale));
+                break;
+            }
+            case DataType::CHAR:
+                mapping.field_type = 14; // CHAR
+                mapping.field_length = static_cast<int16_t>(precision == 0 ? 1 : precision);
+                break;
+            case DataType::VARCHAR:
+                mapping.field_type = 37; // VARCHAR
+                mapping.field_length = static_cast<int16_t>(precision == 0 ? 255 : precision);
+                break;
+            case DataType::TEXT:
+                mapping.field_type = 37; // VARCHAR
+                mapping.field_length = static_cast<int16_t>(precision == 0 ? 8192 : precision);
+                break;
+            case DataType::DATE:
+                mapping.field_type = 12;
+                mapping.field_length = 4;
+                break;
+            case DataType::TIME:
+                mapping.field_type = 13;
+                mapping.field_length = 4;
+                break;
+            case DataType::TIMESTAMP:
+                mapping.field_type = 35;
+                mapping.field_length = 8;
+                break;
+            case DataType::BOOLEAN:
+                mapping.field_type = 23;
+                mapping.field_length = 1;
+                break;
+            case DataType::UUID:
+                mapping.field_type = 14; // CHAR
+                mapping.field_length = 16;
+                break;
+            case DataType::BLOB:
+            case DataType::BYTEA:
+            case DataType::BINARY:
+            case DataType::VARBINARY:
+            case DataType::JSON:
+            case DataType::JSONB:
+            case DataType::XML:
+            case DataType::ARRAY:
+            case DataType::COMPOSITE:
+            case DataType::VECTOR:
+                mapping.field_type = 261; // BLOB
+                mapping.field_length = 0;
+                break;
+            default:
+                mapping.field_type = 261; // Default to BLOB
+                mapping.field_length = 0;
+                break;
+        }
+
+        return mapping;
+    };
+
+    auto addFieldRow = [&results](const std::string& field_name,
+                                  const FieldMapping& mapping,
+                                  bool nullable,
+                                  const std::string& default_source) {
+        VirtualRow row;
+        row.columns = {
+            {"RDB$FIELD_NAME", TypedValue::makeVarchar(field_name)},
+            {"RDB$FIELD_TYPE", TypedValue::makeInt64(mapping.field_type)},
+            {"RDB$FIELD_LENGTH", TypedValue::makeInt64(mapping.field_length)},
+            {"RDB$FIELD_SCALE", TypedValue::makeInt64(mapping.field_scale)},
+            {"RDB$CHARACTER_SET_ID", TypedValue::makeInt64(mapping.charset_id)},
+            {"RDB$COLLATION_ID", TypedValue::makeInt64(mapping.collation_id)},
+            {"RDB$NULL_FLAG", nullable ? TypedValue() : TypedValue::makeInt64(1)},
+            {"RDB$DEFAULT_SOURCE", default_source.empty() ? TypedValue() : TypedValue::makeText(default_source)},
+            {"RDB$DESCRIPTION", TypedValue()}
+        };
+        results.rows.push_back(std::move(row));
+    };
+
+    ID zero_id{};
+    std::vector<DomainInfo> domains;
+    std::unordered_map<ID, DomainInfo, IDHash> domain_map;
+    if (catalog_manager_->listDomains(zero_id, domains, nullptr) == Status::OK) {
+        for (const auto& domain : domains) {
+            domain_map.emplace(domain.domain_id, domain);
+        }
+    }
+
+    std::unordered_set<std::string> field_names;
+
+    for (const auto& domain : domains) {
+        std::string field_name = toUpperCase(domain.domain_name);
+        if (!field_names.insert(field_name).second) {
+            continue;
+        }
+
+        DataType base_type = domain.base_type;
+        uint32_t precision = domain.precision;
+        uint32_t scale = domain.scale;
+
+        if (domain.domain_type == DomainType::ENUM) {
+            base_type = DataType::VARCHAR;
+            size_t max_len = 0;
+            for (const auto& val : domain.enum_values) {
+                max_len = std::max(max_len, val.label.size());
+            }
+            precision = max_len == 0 ? 1 : static_cast<uint32_t>(max_len);
+            scale = 0;
+        } else if (domain.domain_type != DomainType::BASIC) {
+            base_type = DataType::BLOB;
+        }
+
+        FieldMapping mapping = mapDataType(base_type, precision, scale);
+        addFieldRow(field_name, mapping, domain.nullable, domain.default_value);
+    }
+
+    std::vector<CatalogManager::SchemaInfo> schemas;
+    Status status = catalog_manager_->listSchemas(schemas, nullptr);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& schema : schemas) {
+        std::vector<CatalogManager::TableInfo> tables;
+        status = catalog_manager_->listTables(schema.schema_id, tables, nullptr);
+        if (status != Status::OK) {
+            continue;
+        }
+
+        for (const auto& table : tables) {
+            std::vector<CatalogManager::ColumnInfo> columns;
+            status = catalog_manager_->getColumns(table.table_id, columns, nullptr);
+            if (status != Status::OK) {
+                continue;
+            }
+
+            for (const auto& column : columns) {
+                std::string field_name = toUpperCase(column.column_name);
+                if (!field_names.insert(field_name).second) {
+                    continue;
+                }
+
+                FieldMapping mapping{};
+                auto domain_it = domain_map.find(column.domain_id);
+                if (domain_it != domain_map.end()) {
+                    const DomainInfo& domain = domain_it->second;
+                    DataType base_type = domain.base_type;
+                    uint32_t precision = domain.precision;
+                    uint32_t scale = domain.scale;
+
+                    if (domain.domain_type == DomainType::ENUM) {
+                        base_type = DataType::VARCHAR;
+                        size_t max_len = 0;
+                        for (const auto& val : domain.enum_values) {
+                            max_len = std::max(max_len, val.label.size());
+                        }
+                        precision = max_len == 0 ? 1 : static_cast<uint32_t>(max_len);
+                        scale = 0;
+                    } else if (domain.domain_type != DomainType::BASIC) {
+                        base_type = DataType::BLOB;
+                    }
+
+                    mapping = mapDataType(base_type, precision, scale);
+                } else {
+                    mapping = mapDataType(static_cast<DataType>(column.data_type),
+                                          column.type_precision,
+                                          column.type_scale);
+                }
+
+                addFieldRow(field_name, mapping, column.nullable, column.default_value);
+            }
+        }
+    }
+
     return Status::OK;
 }
 
@@ -676,27 +907,50 @@ Status FirebirdCatalogHandler::queryMonAttachments(VirtualResultSet& results, Er
         DataType::TEXT, DataType::INT64, DataType::TEXT, DataType::TEXT
     };
 
-    // Add current attachment
-    VirtualRow row;
-    row.columns = {
-        {"MON$ATTACHMENT_ID", TypedValue::makeInt64(1)},
-        {"MON$SERVER_PID", TypedValue::makeInt64(getpid())},
-        {"MON$STATE", TypedValue::makeInt64(1)},  // Active
-        {"MON$ATTACHMENT_NAME", TypedValue::makeVarchar("scratchbird.sbdb")},
-        {"MON$USER", TypedValue::makeVarchar("SYSDBA")},
-        {"MON$ROLE", TypedValue()},  // NULL
-        {"MON$REMOTE_PROTOCOL", TypedValue::makeVarchar("TCP/IP")},
-        {"MON$REMOTE_ADDRESS", TypedValue::makeVarchar("127.0.0.1")},
-        {"MON$REMOTE_PID", TypedValue()},  // NULL
-        {"MON$CHARACTER_SET_ID", TypedValue::makeInt64(4)},  // UTF8
-        {"MON$TIMESTAMP", TypedValue()},  // NULL
-        {"MON$GARBAGE_COLLECTION", TypedValue::makeInt64(1)},
-        {"MON$REMOTE_PROCESS", TypedValue()},  // NULL
-        {"MON$STAT_ID", TypedValue::makeInt64(1)},
-        {"MON$CLIENT_VERSION", TypedValue::makeVarchar("ScratchBird 1.0")},
-        {"MON$REMOTE_VERSION", TypedValue::makeVarchar("ScratchBird 1.0")}
-    };
-    results.rows.push_back(row);
+    std::vector<ProcessControlBlock> backends;
+    core::ErrorContext proc_ctx;
+    if (core::ProcArrayManager::getAllActiveBackends(&backends, &proc_ctx) != Status::OK) {
+        return Status::OK;
+    }
+
+    std::unordered_map<ID, CatalogManager::SessionInfo, IDHash> sessions_by_id;
+    if (catalog_manager_) {
+        std::vector<CatalogManager::SessionInfo> sessions;
+        if (catalog_manager_->listSessions(sessions, nullptr) == Status::OK) {
+            for (const auto& session : sessions) {
+                sessions_by_id[session.session_id] = session;
+            }
+        }
+    }
+
+    for (const auto& backend : backends) {
+        const CatalogManager::SessionInfo* session = nullptr;
+        auto it = sessions_by_id.find(backend.session_id);
+        if (it != sessions_by_id.end()) {
+            session = &it->second;
+        }
+
+        VirtualRow row;
+        row.columns = {
+            {"MON$ATTACHMENT_ID", TypedValue::makeInt64(static_cast<int64_t>(backend.proc_id + 1))},
+            {"MON$SERVER_PID", backend.backend_pid == 0 ? TypedValue() : TypedValue::makeInt64(static_cast<int64_t>(backend.backend_pid))},
+            {"MON$STATE", TypedValue::makeInt64(1)},  // Active
+            {"MON$ATTACHMENT_NAME", TypedValue::makeVarchar("scratchbird.sbdb")},
+            {"MON$USER", session ? TypedValue::makeVarchar(session->username) : TypedValue::makeVarchar("SYSDBA")},
+            {"MON$ROLE", TypedValue()},
+            {"MON$REMOTE_PROTOCOL", TypedValue::makeVarchar("TCP/IP")},
+            {"MON$REMOTE_ADDRESS", TypedValue::makeVarchar("127.0.0.1")},
+            {"MON$REMOTE_PID", TypedValue()},
+            {"MON$CHARACTER_SET_ID", TypedValue::makeInt64(4)},  // UTF8
+            {"MON$TIMESTAMP", backend.start_time == 0 ? TypedValue() : TypedValue::makeTimestamp(static_cast<int64_t>(backend.start_time))},
+            {"MON$GARBAGE_COLLECTION", TypedValue::makeInt64(1)},
+            {"MON$REMOTE_PROCESS", TypedValue()},
+            {"MON$STAT_ID", TypedValue::makeInt64(static_cast<int64_t>(backend.proc_id + 1))},
+            {"MON$CLIENT_VERSION", TypedValue::makeVarchar("ScratchBird 1.0")},
+            {"MON$REMOTE_VERSION", TypedValue::makeVarchar("ScratchBird 1.0")}
+        };
+        results.rows.push_back(std::move(row));
+    }
 
     return Status::OK;
 }
@@ -715,24 +969,34 @@ Status FirebirdCatalogHandler::queryMonTransactions(VirtualResultSet& results, E
         DataType::INT16, DataType::INT16, DataType::INT64
     };
 
-    // Add a sample active transaction
-    VirtualRow row;
-    row.columns = {
-        {"MON$TRANSACTION_ID", TypedValue::makeInt64(100)},
-        {"MON$ATTACHMENT_ID", TypedValue::makeInt64(1)},
-        {"MON$STATE", TypedValue::makeInt64(1)},  // Active
-        {"MON$TIMESTAMP", TypedValue()},  // NULL
-        {"MON$TOP_TRANSACTION", TypedValue::makeInt64(100)},
-        {"MON$OLDEST_TRANSACTION", TypedValue::makeInt64(1)},
-        {"MON$OLDEST_ACTIVE", TypedValue::makeInt64(100)},
-        {"MON$ISOLATION_MODE", TypedValue::makeInt64(2)},  // Snapshot
-        {"MON$LOCK_TIMEOUT", TypedValue::makeInt64(-1)},  // Infinite
-        {"MON$READ_ONLY", TypedValue::makeInt64(0)},
-        {"MON$AUTO_COMMIT", TypedValue::makeInt64(0)},
-        {"MON$AUTO_UNDO", TypedValue::makeInt64(1)},
-        {"MON$STAT_ID", TypedValue::makeInt64(1)}
-    };
-    results.rows.push_back(row);
+    std::vector<ProcessControlBlock> backends;
+    core::ErrorContext proc_ctx;
+    if (core::ProcArrayManager::getAllActiveBackends(&backends, &proc_ctx) != Status::OK) {
+        return Status::OK;
+    }
+
+    for (const auto& backend : backends) {
+        if (backend.xid == 0) {
+            continue;
+        }
+        VirtualRow row;
+        row.columns = {
+            {"MON$TRANSACTION_ID", TypedValue::makeInt64(static_cast<int64_t>(backend.xid))},
+            {"MON$ATTACHMENT_ID", TypedValue::makeInt64(static_cast<int64_t>(backend.proc_id + 1))},
+            {"MON$STATE", TypedValue::makeInt64(1)},  // Active
+            {"MON$TIMESTAMP", backend.xact_start_time == 0 ? TypedValue() : TypedValue::makeTimestamp(static_cast<int64_t>(backend.xact_start_time))},
+            {"MON$TOP_TRANSACTION", TypedValue::makeInt64(static_cast<int64_t>(backend.xid))},
+            {"MON$OLDEST_TRANSACTION", TypedValue::makeInt64(1)},
+            {"MON$OLDEST_ACTIVE", TypedValue::makeInt64(static_cast<int64_t>(backend.xid))},
+            {"MON$ISOLATION_MODE", TypedValue::makeInt64(static_cast<int64_t>(backend.isolation_level))},
+            {"MON$LOCK_TIMEOUT", TypedValue::makeInt64(-1)},  // Infinite
+            {"MON$READ_ONLY", TypedValue::makeInt64(backend.is_read_only ? 1 : 0)},
+            {"MON$AUTO_COMMIT", TypedValue::makeInt64(0)},
+            {"MON$AUTO_UNDO", TypedValue::makeInt64(1)},
+            {"MON$STAT_ID", TypedValue::makeInt64(static_cast<int64_t>(backend.proc_id + 1))}
+        };
+        results.rows.push_back(std::move(row));
+    }
 
     return Status::OK;
 }
@@ -747,7 +1011,35 @@ Status FirebirdCatalogHandler::queryMonStatements(VirtualResultSet& results, Err
         DataType::INT16, DataType::TIMESTAMP, DataType::TEXT, DataType::INT64
     };
 
-    // No active statements to show
+    std::vector<ProcessControlBlock> backends;
+    core::ErrorContext proc_ctx;
+    if (core::ProcArrayManager::getAllActiveBackends(&backends, &proc_ctx) != Status::OK) {
+        return Status::OK;
+    }
+
+    for (const auto& backend : backends) {
+        if (backend.query_start_time == 0) {
+            continue;
+        }
+
+        std::string sql_text;
+        if (backend.query_text[0] != '\0') {
+            sql_text = backend.query_text;
+        }
+
+        VirtualRow row;
+        row.columns = {
+            {"MON$STATEMENT_ID", TypedValue::makeInt64(static_cast<int64_t>(backend.query_start_time))},
+            {"MON$ATTACHMENT_ID", TypedValue::makeInt64(static_cast<int64_t>(backend.proc_id + 1))},
+            {"MON$TRANSACTION_ID", backend.xid == 0 ? TypedValue() : TypedValue::makeInt64(static_cast<int64_t>(backend.xid))},
+            {"MON$STATE", TypedValue::makeInt64(1)},
+            {"MON$TIMESTAMP", TypedValue::makeTimestamp(static_cast<int64_t>(backend.query_start_time))},
+            {"MON$SQL_TEXT", sql_text.empty() ? TypedValue() : TypedValue::makeText(sql_text)},
+            {"MON$STAT_ID", TypedValue::makeInt64(static_cast<int64_t>(backend.proc_id + 1))}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
     return Status::OK;
 }
 
@@ -908,6 +1200,54 @@ void FirebirdCatalogHandler::getMonDatabaseColumns(std::vector<CatalogManager::C
     cols.push_back(makeCol("MON$CRYPT_PAGE", DataType::INT64, true));
     cols.push_back(makeCol("MON$OWNER", DataType::TEXT, true));
     cols.push_back(makeCol("MON$SEC_DATABASE", DataType::TEXT, true));
+}
+
+void FirebirdCatalogHandler::getMonAttachmentsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("MON$ATTACHMENT_ID", DataType::INT64, false));
+    cols.push_back(makeCol("MON$SERVER_PID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$STATE", DataType::INT16, true));
+    cols.push_back(makeCol("MON$ATTACHMENT_NAME", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$USER", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$ROLE", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$REMOTE_PROTOCOL", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$REMOTE_ADDRESS", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$REMOTE_PID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$CHARACTER_SET_ID", DataType::INT16, true));
+    cols.push_back(makeCol("MON$TIMESTAMP", DataType::TIMESTAMP, true));
+    cols.push_back(makeCol("MON$GARBAGE_COLLECTION", DataType::INT16, true));
+    cols.push_back(makeCol("MON$REMOTE_PROCESS", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$CLIENT_VERSION", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$REMOTE_VERSION", DataType::TEXT, true));
+}
+
+void FirebirdCatalogHandler::getMonTransactionsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("MON$TRANSACTION_ID", DataType::INT64, false));
+    cols.push_back(makeCol("MON$ATTACHMENT_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$STATE", DataType::INT16, true));
+    cols.push_back(makeCol("MON$TIMESTAMP", DataType::TIMESTAMP, true));
+    cols.push_back(makeCol("MON$TOP_TRANSACTION", DataType::INT64, true));
+    cols.push_back(makeCol("MON$OLDEST_TRANSACTION", DataType::INT64, true));
+    cols.push_back(makeCol("MON$OLDEST_ACTIVE", DataType::INT64, true));
+    cols.push_back(makeCol("MON$ISOLATION_MODE", DataType::INT16, true));
+    cols.push_back(makeCol("MON$LOCK_TIMEOUT", DataType::INT64, true));
+    cols.push_back(makeCol("MON$READ_ONLY", DataType::INT16, true));
+    cols.push_back(makeCol("MON$AUTO_COMMIT", DataType::INT16, true));
+    cols.push_back(makeCol("MON$AUTO_UNDO", DataType::INT16, true));
+    cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
+}
+
+void FirebirdCatalogHandler::getMonStatementsColumns(std::vector<CatalogManager::ColumnInfo>& cols) {
+    cols.clear();
+    cols.push_back(makeCol("MON$STATEMENT_ID", DataType::INT64, false));
+    cols.push_back(makeCol("MON$ATTACHMENT_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$TRANSACTION_ID", DataType::INT64, true));
+    cols.push_back(makeCol("MON$STATE", DataType::INT16, true));
+    cols.push_back(makeCol("MON$TIMESTAMP", DataType::TIMESTAMP, true));
+    cols.push_back(makeCol("MON$SQL_TEXT", DataType::TEXT, true));
+    cols.push_back(makeCol("MON$STAT_ID", DataType::INT64, true));
 }
 
 void FirebirdCatalogHandler::getSecUsersColumns(std::vector<CatalogManager::ColumnInfo>& cols) {

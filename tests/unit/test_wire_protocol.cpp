@@ -22,10 +22,18 @@
 #include "scratchbird/protocol/wire_protocol.h"
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/core/error_context.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::protocol;
 using namespace scratchbird::server;
 using namespace scratchbird::core;
+
+namespace {
+bool isNetworkRestrictedError(const ErrorContext& ctx) {
+    return ctx.message.find("Operation not permitted") != std::string::npos ||
+           ctx.message.find("Permission denied") != std::string::npos;
+}
+} // namespace
 
 // ============================================================================
 // Message Header Tests
@@ -585,6 +593,9 @@ TEST_F(UtilityFunctionTest, SessionIdToString) {
 class ProtocolSessionTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        if (!scratchbird::testing::networkTestsEnabled()) {
+            GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
+        }
         // Use unique Unix socket path under build/ to avoid network restrictions
         static std::atomic<uint32_t> socket_counter{0};
         uint32_t idx = socket_counter.fetch_add(1);
@@ -616,7 +627,10 @@ TEST_F(ProtocolSessionTest, SendReceiveMessage) {
 
     Status status = server->listen(&ctx);
     if (status != Status::OK) {
-        GTEST_SKIP() << "Listen failed: " << ctx.message;
+        if (isNetworkRestrictedError(ctx)) {
+            GTEST_SKIP() << "Listen failed: " << ctx.message;
+        }
+        FAIL() << "Listen failed: " << ctx.message;
     }
 
     // Accept thread
@@ -699,13 +713,16 @@ TEST_F(ProtocolSessionTest, FullHandshake) {
     ASSERT_NE(server, nullptr);
     Status status = server->listen(&ctx);
     if (status != Status::OK) {
-        GTEST_SKIP() << "Listen failed: " << ctx.message;
+        if (isNetworkRestrictedError(ctx)) {
+            GTEST_SKIP() << "Listen failed: " << ctx.message;
+        }
+        FAIL() << "Listen failed: " << ctx.message;
     }
 
     std::unique_ptr<IPCConnection> server_conn;
+    ErrorContext accept_ctx;
     std::thread accept_thread([&]() {
-        ErrorContext actx;
-        server_conn = server->accept(&actx);
+        server_conn = server->accept(&accept_ctx);
     });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -716,12 +733,18 @@ TEST_F(ProtocolSessionTest, FullHandshake) {
     ASSERT_NE(client, nullptr);
     status = client->connect(&ctx);
     if (status != Status::OK) {
-        GTEST_SKIP() << "Connect failed: " << ctx.message;
+        if (isNetworkRestrictedError(ctx)) {
+            GTEST_SKIP() << "Connect failed: " << ctx.message;
+        }
+        FAIL() << "Connect failed: " << ctx.message;
     }
 
     accept_thread.join();
     if (!server_conn) {
-        GTEST_SKIP() << "Accept failed";
+        if (isNetworkRestrictedError(accept_ctx)) {
+            GTEST_SKIP() << "Accept failed: " << accept_ctx.message;
+        }
+        FAIL() << "Accept failed: " << accept_ctx.message;
     }
 
     ProtocolSession client_session(client->getConnection());

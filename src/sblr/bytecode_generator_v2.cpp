@@ -2049,6 +2049,22 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
     } else if (func_name == "COLLATE") {
         current_result_->writeOpcode(sblr::Opcode::FUNC_COLLATE);
         write_arg_count();
+    } else if (func_name == "FORMAT_TYPE") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_FORMAT_TYPE);
+        write_arg_count();
+    } else if (func_name == "OBJ_DESCRIPTION") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_OBJ_DESCRIPTION);
+        write_arg_count();
+    } else if (func_name == "COL_DESCRIPTION") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_COL_DESCRIPTION);
+        write_arg_count();
+    } else if (func_name == "SHOBJ_DESCRIPTION") {
+        current_result_->writeExtendedOpcode(
+            sblr::ExtendedOpcode::EXT_FUNC_SHOBJ_DESCRIPTION);
+        write_arg_count();
     }
     // Date/time functions
     else if (func_name == "NOW" || func_name == "CURRENT_TIMESTAMP") {

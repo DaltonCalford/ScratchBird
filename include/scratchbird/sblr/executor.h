@@ -810,6 +810,10 @@ namespace scratchbird
             void executeObjectResolverQuery(
                 const std::vector<std::pair<std::string, std::string>>& select_items,
                 bool is_select_star);
+            bool executeVirtualCatalogQuery(
+                const std::string& table_name,
+                const std::vector<std::pair<std::string, std::string>>& select_items,
+                bool is_select_star);
 
             // Session SET Commands (Firebird ISQL compatibility)
             void executeSetSqlDialect();     // Execute SET SQL DIALECT n

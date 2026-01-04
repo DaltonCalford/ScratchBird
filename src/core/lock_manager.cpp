@@ -1,5 +1,6 @@
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/error_context.h"
@@ -127,7 +128,7 @@ namespace scratchbird::core
             {
                 stats_.max_locks_used = stats_.current_locks;
             }
-            proc_locks_.insert({proc_id, lock_obj});
+            proc_locks_.insert({proc_id, ProcLockEntry{lock_obj, mode}});
             return Status::OK;
         }
 
@@ -165,6 +166,9 @@ namespace scratchbird::core
                                              : std::chrono::milliseconds(timeout_ms);
 
             bool granted = lock_wait_cv_.wait_for(lock, timeout, [req]() { return req->granted; });
+            uint64_t end_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                                    std::chrono::system_clock::now().time_since_epoch())
+                                    .count();
 
             if (!granted)
             {
@@ -175,6 +179,20 @@ namespace scratchbird::core
                 if (it != lock_obj->wait_queue.end())
                 {
                     lock_obj->wait_queue.erase(it);
+                }
+                if (db_ && db_->catalog_manager())
+                {
+                    CatalogManager::WaitHistoryEntry entry;
+                    entry.thread_id = proc_id;
+                    entry.event_id = req->request_time != 0 ? req->request_time : proc_id;
+                    entry.timer_start = req->request_time;
+                    entry.timer_end = end_time;
+                    entry.timer_wait = (req->request_time != 0 && end_time >= req->request_time)
+                        ? (end_time - req->request_time)
+                        : 0;
+                    entry.object_instance_begin = req->request_time;
+                    entry.timed_out = true;
+                    db_->catalog_manager()->recordWaitHistory(entry, nullptr);
                 }
                 stats_.lock_timeouts++;
                 SET_ERROR_CONTEXT(ctx, Status::LOCK_TIMEOUT, "Lock acquisition timeout");
@@ -188,6 +206,20 @@ namespace scratchbird::core
             if (it != lock_obj->wait_queue.end())
             {
                 lock_obj->wait_queue.erase(it);
+            }
+            if (db_ && db_->catalog_manager())
+            {
+                CatalogManager::WaitHistoryEntry entry;
+                entry.thread_id = proc_id;
+                entry.event_id = req->request_time != 0 ? req->request_time : proc_id;
+                entry.timer_start = req->request_time;
+                entry.timer_end = end_time;
+                entry.timer_wait = (req->request_time != 0 && end_time >= req->request_time)
+                    ? (end_time - req->request_time)
+                    : 0;
+                entry.object_instance_begin = req->request_time;
+                entry.timed_out = false;
+                db_->catalog_manager()->recordWaitHistory(entry, nullptr);
             }
         }
 
@@ -207,7 +239,7 @@ namespace scratchbird::core
         }
 
         // Track lock by proc_id
-        proc_locks_.insert({proc_id, lock_obj});
+        proc_locks_.insert({proc_id, ProcLockEntry{lock_obj, mode}});
 
         return Status::OK;
     }
@@ -247,7 +279,7 @@ namespace scratchbird::core
         auto range = proc_locks_.equal_range(proc_id);
         for (auto it2 = range.first; it2 != range.second; ++it2)
         {
-            if (it2->second == lock_obj)
+            if (it2->second.lock == lock_obj && it2->second.mode == mode)
             {
                 proc_locks_.erase(it2);
                 break;
@@ -273,16 +305,11 @@ namespace scratchbird::core
         // Collect all locks held by this process (store tag instead of pointer)
         for (auto it = range.first; it != range.second; ++it)
         {
-            Lock *lock_obj = it->second;
-
-            // Find which modes this proc holds
-            for (uint8_t i = 0; i < 8; ++i)
+            Lock *lock_obj = it->second.lock;
+            LockMode mode = it->second.mode;
+            if (lock_obj)
             {
-                if (lock_obj->granted_counts[i] > 0)
-                {
-                    LockMode mode = static_cast<LockMode>(i + 1);
-                    locks_to_release.push_back({lock_obj->tag, mode});
-                }
+                locks_to_release.push_back({lock_obj->tag, mode});
             }
         }
 
@@ -301,13 +328,20 @@ namespace scratchbird::core
             }
             Lock *lock_obj = it->second.get();
 
-            // Release all instances of this lock
-            uint32_t count = lock_obj->granted_counts[mode_idx];
-            lock_obj->granted_counts[mode_idx] = 0;
-            lock_obj->granted_mask &= ~(1u << mode_idx);
+            if (mode_idx >= 8 || lock_obj->granted_counts[mode_idx] == 0)
+            {
+                continue;
+            }
 
-            stats_.locks_released += count;
-            stats_.current_locks -= count;
+            // Release one instance of this lock
+            lock_obj->granted_counts[mode_idx]--;
+            if (lock_obj->granted_counts[mode_idx] == 0)
+            {
+                lock_obj->granted_mask &= ~(1u << mode_idx);
+            }
+
+            stats_.locks_released++;
+            stats_.current_locks--;
 
             // Try to grant waiting locks
             grantWaitingLocks(lock_obj);
@@ -339,6 +373,48 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(lock_table_mutex_);
         *stats_out = stats_;
+    }
+
+    auto LockManager::listLocks(std::vector<LockSnapshot>& locks_out) const -> Status
+    {
+        std::lock_guard<std::mutex> lock(lock_table_mutex_);
+        locks_out.clear();
+
+        // Granted locks per backend
+        for (const auto& entry : proc_locks_)
+        {
+            const ProcLockEntry& held = entry.second;
+            if (!held.lock)
+            {
+                continue;
+            }
+            LockSnapshot snap;
+            snap.tag = held.lock->tag;
+            snap.mode = held.mode;
+            snap.proc_id = entry.first;
+            snap.granted = true;
+            snap.request_time = 0;
+            locks_out.push_back(std::move(snap));
+        }
+
+        // Waiting locks from queues
+        for (const auto& pair : lock_table_)
+        {
+            const Lock* lock_obj = pair.second.get();
+            for (const auto& req_ptr : lock_obj->wait_queue)
+            {
+                const LockRequest* req = req_ptr.get();
+                LockSnapshot snap;
+                snap.tag = lock_obj->tag;
+                snap.mode = req->mode;
+                snap.proc_id = req->proc_id;
+                snap.granted = false;
+                snap.request_time = req->request_time;
+                locks_out.push_back(std::move(snap));
+            }
+        }
+
+        return Status::OK;
     }
 
     auto LockManager::detectDeadlocks(ErrorContext *ctx) -> Status
@@ -609,15 +685,11 @@ namespace scratchbird::core
                             for (const auto &proc_pair : lock_mgr_->proc_locks_)
                             {
                                 uint32_t holder_proc_id = proc_pair.first;
-                                Lock *proc_lock = proc_pair.second;
+                                const ProcLockEntry &entry = proc_pair.second;
 
-                                // Check if this proc holds the same lock object
-                                if (proc_lock == lock_obj)
+                                // Check if this proc holds the same lock object and mode
+                                if (entry.lock == lock_obj && entry.mode == held_mode)
                                 {
-                                    // Verify this proc actually holds the conflicting mode
-                                    // (we can't directly check from proc_locks_, so we assume
-                                    // if they're in proc_locks_ for this lock, they hold it)
-
                                     // Don't add self-edges
                                     if (holder_proc_id != waiter_proc_id)
                                     {

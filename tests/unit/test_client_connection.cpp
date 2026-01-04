@@ -24,6 +24,7 @@
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/protocol/wire_protocol.h"
 #include "scratchbird/core/error_context.h"
+#include "test_helpers.h"
 
 using scratchbird::protocol::MessageType;
 using scratchbird::protocol::Message;
@@ -32,6 +33,13 @@ using scratchbird::protocol::ProtocolSession;
 using scratchbird::protocol::WireType;
 using scratchbird::core::Status;
 using scratchbird::core::ErrorContext;
+
+namespace {
+bool isNetworkRestrictedError(const ErrorContext& ctx) {
+    return ctx.message.find("Operation not permitted") != std::string::npos ||
+           ctx.message.find("Permission denied") != std::string::npos;
+}
+} // namespace
 
 // ============================================================================
 // Test Fixtures
@@ -50,6 +58,7 @@ public:
     }
 
     bool start() {
+        last_error_ = ErrorContext{};
         scratchbird::server::IPCServerConfig config;
         config.database_name = db_name_;
         config.method = scratchbird::server::IPCMethod::TCP_LOCALHOST;
@@ -59,11 +68,13 @@ public:
         ErrorContext ctx;
         server_ = scratchbird::server::IPCServer::create(config, &ctx);
         if (!server_) {
+            last_error_ = ctx;
             return false;
         }
 
         auto status = server_->listen(&ctx);
         if (status != Status::OK) {
+            last_error_ = ctx;
             return false;
         }
 
@@ -83,6 +94,7 @@ public:
     }
 
     uint16_t getPort() const { return port_; }
+    const ErrorContext& lastError() const { return last_error_; }
 
 private:
     // Allocate unique port for each test to avoid conflicts during parallel execution
@@ -254,6 +266,7 @@ private:
     uint16_t port_;
     std::unique_ptr<scratchbird::server::IPCServer> server_;
     std::thread server_thread_;
+    ErrorContext last_error_;
 };
 
 /**
@@ -262,10 +275,17 @@ private:
 class ClientConnectionTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        if (!scratchbird::testing::networkTestsEnabled()) {
+            GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
+        }
         // Expected runtime for this suite: ~2-4 seconds (mock server startup per test).
         mock_server_ = std::make_unique<MockServer>("testdb");
         if (!mock_server_->start()) {
-            GTEST_SKIP() << "Failed to start mock server";
+            const auto& ctx = mock_server_->lastError();
+            if (isNetworkRestrictedError(ctx)) {
+                GTEST_SKIP() << "Failed to start mock server: " << ctx.message;
+            }
+            FAIL() << "Failed to start mock server: " << ctx.message;
         }
 
         // Give server time to start

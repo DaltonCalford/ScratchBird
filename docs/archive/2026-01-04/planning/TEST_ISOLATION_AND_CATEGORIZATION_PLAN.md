@@ -1,7 +1,7 @@
 # Test Isolation and Categorization Plan
 
 **Created:** 2025-12-29
-**Status:** 📋 PLANNING
+**Status:** 🚧 IN PROGRESS
 **Purpose:** Organize tests by execution time and risk to enable fast CI/CD and reliable testing
 
 ---
@@ -114,11 +114,14 @@ ctest -L unit --output-on-failure
 - MGA/MVCC tests
 - Client-server tests
 - Transaction isolation tests
+- Multi-component suites matched by `*Integration*`, `*E2E*`, `*EndToEnd*`, plus `QueryCompilerV2Test.*` and `Week3Week4ComprehensiveTest.*`
 
 **Usage:**
 ```bash
 ctest -L integration --output-on-failure
 ```
+
+**Runtime Gate:** Socket-based integration tests require `SCRATCHBIRD_TEST_NETWORK=1` to run.
 
 ### Category 4: Stress Tests (> 30 seconds each)
 
@@ -136,6 +139,7 @@ ctest -L integration --output-on-failure
 - Stress tests
 - Load tests
 - Concurrent access tests
+- Any tests with `Stress` in the name (`*Stress*` filter)
 
 **Usage:**
 ```bash
@@ -174,6 +178,7 @@ ctest -L quarantine --output-on-failure --timeout 60
 - Benchmark tests
 - Performance measurement tests
 - Query optimization tests
+- Any tests with `Benchmark` in the name (`*Benchmark*` filter)
 
 **Execution:** On-demand or nightly only
 
@@ -228,15 +233,25 @@ set_tests_properties(
 
 ### Phase 2: Create Test Execution Scripts (1 hour)
 
-**Create:** `tests/run_tests.sh`
+**Create:** `tests/run_tests.sh` (builds `scratchbird_test_binaries` before running CTest)
 
 ```bash
 #!/bin/bash
 # ScratchBird Test Execution Script
 
-set -e
+set -euo pipefail
 
-cd "$(dirname "$0")/../build"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD_DIR="${ROOT_DIR}/build"
+
+if [ ! -d "${BUILD_DIR}" ]; then
+    echo "Build directory not found: ${BUILD_DIR}" >&2
+    exit 1
+fi
+
+cmake --build "${BUILD_DIR}" --target scratchbird_test_binaries
+
+cd "${BUILD_DIR}"
 
 case "$1" in
     smoke)
@@ -287,6 +302,8 @@ case "$1" in
 esac
 ```
 
+**Update:** add a `performance` option and document `SCRATCHBIRD_TEST_NETWORK=1` for socket-based integration tests.
+
 **Make executable:**
 ```bash
 chmod +x tests/run_tests.sh
@@ -317,6 +334,9 @@ jobs:
           cmake .. && make -j$(nproc)
       - name: Run Smoke Tests
         run: ./tests/run_tests.sh smoke
+```
+
+**Update:** workflow now runs smoke, unit, and integration jobs via `tests/run_tests.sh`, with `SCRATCHBIRD_TEST_NETWORK=1` set for integration.
 
   unit-tests:
     name: Unit Tests
@@ -426,8 +446,8 @@ jobs:
 ### Week 1: Label Assignment
 
 1. Identify all current tests (Done: 1,346 tests, 51 labels)
-2. Add execution-time labels to CMakeLists.txt
-3. Create smoke test subset (target: 50-100 tests)
+2. Add execution-time labels to CMakeLists.txt (IN PROGRESS: smoke/perf/stress/integration/quarantine filters added for gtest_discover + integration labels added for IPC/server/wire/client tests)
+3. Create smoke test subset (target: 500-1000 tests) (EXPANDED to ~1000 via `SCRATCHBIRD_SMOKE_TESTS` + gtest filter in `tests/CMakeLists.txt`)
 
 ### Week 2: Script Creation
 

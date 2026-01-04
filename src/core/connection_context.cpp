@@ -7,6 +7,7 @@
 #include "scratchbird/core/config.h"
 #include <cassert>
 #include <cctype>
+#include <cstdio>
 
 namespace scratchbird::core
 {
@@ -30,6 +31,130 @@ namespace scratchbird::core
                 hash *= 1099511628211ULL;
             }
             return hash;
+        }
+
+        std::string digestHex(uint64_t value)
+        {
+            char buf[17];
+            std::snprintf(buf, sizeof(buf), "%016llX",
+                          static_cast<unsigned long long>(value));
+            return std::string(buf);
+        }
+
+        std::string normalizeDigestText(const std::string& sql)
+        {
+            std::string out;
+            out.reserve(sql.size());
+            bool in_quote = false;
+            char quote_char = '\0';
+            bool last_space = false;
+
+            for (size_t i = 0; i < sql.size(); ++i)
+            {
+                unsigned char c = static_cast<unsigned char>(sql[i]);
+                if (in_quote)
+                {
+                    if (c == static_cast<unsigned char>(quote_char))
+                    {
+                        if (i + 1 < sql.size() && sql[i + 1] == quote_char)
+                        {
+                            ++i;
+                            continue;
+                        }
+                        in_quote = false;
+                    }
+                    continue;
+                }
+
+                if (c == '\'' || c == '"')
+                {
+                    in_quote = true;
+                    quote_char = static_cast<char>(c);
+                    if (out.empty() || out.back() != '?')
+                    {
+                        out.push_back('?');
+                    }
+                    last_space = false;
+                    continue;
+                }
+
+                if (std::isspace(c))
+                {
+                    if (!last_space && !out.empty())
+                    {
+                        out.push_back(' ');
+                        last_space = true;
+                    }
+                    continue;
+                }
+
+                if (std::isdigit(c) || ((c == '+' || c == '-') &&
+                                        i + 1 < sql.size() &&
+                                        std::isdigit(static_cast<unsigned char>(sql[i + 1]))))
+                {
+                    size_t j = i;
+                    if (sql[j] == '0' && j + 1 < sql.size() &&
+                        (sql[j + 1] == 'x' || sql[j + 1] == 'X'))
+                    {
+                        j += 2;
+                        while (j < sql.size() &&
+                               std::isxdigit(static_cast<unsigned char>(sql[j])))
+                        {
+                            ++j;
+                        }
+                    }
+                    else
+                    {
+                        while (j < sql.size() &&
+                               std::isdigit(static_cast<unsigned char>(sql[j])))
+                        {
+                            ++j;
+                        }
+                        if (j < sql.size() && sql[j] == '.')
+                        {
+                            ++j;
+                            while (j < sql.size() &&
+                                   std::isdigit(static_cast<unsigned char>(sql[j])))
+                            {
+                                ++j;
+                            }
+                        }
+                        if (j < sql.size() && (sql[j] == 'e' || sql[j] == 'E'))
+                        {
+                            ++j;
+                            if (j < sql.size() && (sql[j] == '+' || sql[j] == '-'))
+                            {
+                                ++j;
+                            }
+                            while (j < sql.size() &&
+                                   std::isdigit(static_cast<unsigned char>(sql[j])))
+                            {
+                                ++j;
+                            }
+                        }
+                    }
+
+                    if (out.empty() || out.back() != '?')
+                    {
+                        out.push_back('?');
+                    }
+                    last_space = false;
+                    i = j - 1;
+                    continue;
+                }
+
+                char out_c = std::isalpha(c) ? static_cast<char>(std::toupper(c))
+                                             : static_cast<char>(c);
+                out.push_back(out_c);
+                last_space = false;
+            }
+
+            if (!out.empty() && out.back() == ' ')
+            {
+                out.pop_back();
+            }
+
+            return out;
         }
 
         bool isZeroUuidLocal(const ID& id)
@@ -774,27 +899,111 @@ namespace scratchbird::core
         }
 
         last_statement_status_ = StatementStatus::IN_PROGRESS;
+
+        ProcArrayManager::setQueryInfo(proc_id_, last_statement_time_, sql, nullptr);
     }
 
     void ConnectionContext::endStatementTrackingSuccess(int64_t rows_affected)
     {
+        uint64_t start_time = last_statement_time_;
+        uint64_t end_time = nowMicros();
         last_statement_status_ = StatementStatus::COMPLETED;
         last_rows_affected_ = rows_affected;
         last_error_code_ = 0;
         last_sqlstate_.clear();
-        last_statement_time_ = nowMicros();
+        last_statement_time_ = end_time;
         last_activity_time_ = last_statement_time_;
+        ProcArrayManager::clearQueryInfo(proc_id_, last_statement_time_, nullptr);
+
+        CatalogManager *catalog = db_ ? db_->catalog_manager() : nullptr;
+        if (catalog && !last_statement_text_.empty())
+        {
+            std::string digest_text = normalizeDigestText(last_statement_text_);
+            if (!digest_text.empty())
+            {
+                uint64_t digest_hash = fnv1a64(digest_text);
+                CatalogManager::StatementDigestEntry entry;
+                entry.schema_name = current_schema_name_;
+                CatalogManager::SessionInfo session_info;
+                if (!isZeroUuidLocal(session_id_) &&
+                    catalog->getSession(session_id_, session_info, nullptr) == Status::OK)
+                {
+                    entry.user_name = session_info.username;
+                }
+                if (entry.user_name.empty())
+                {
+                    entry.user_name = "unknown";
+                }
+                entry.host_name = "local";
+                entry.digest = digestHex(digest_hash);
+                entry.digest_text = digest_text;
+                entry.count_star = 1;
+                entry.sum_timer_wait = (start_time != 0 && end_time >= start_time)
+                    ? (end_time - start_time)
+                    : 0;
+                entry.min_timer_wait = entry.sum_timer_wait;
+                entry.max_timer_wait = entry.sum_timer_wait;
+                entry.sum_rows_affected = rows_affected > 0 ? static_cast<uint64_t>(rows_affected) : 0;
+                entry.first_seen = end_time;
+                entry.last_seen = end_time;
+                entry.query_sample_text = last_statement_text_;
+                entry.query_sample_seen = end_time;
+                entry.query_sample_timer_wait = entry.sum_timer_wait;
+                catalog->recordStatementDigest(entry, nullptr);
+            }
+        }
     }
 
     void ConnectionContext::endStatementTrackingFailure(uint32_t error_code,
                                                        const std::string& sqlstate)
     {
+        uint64_t start_time = last_statement_time_;
+        uint64_t end_time = nowMicros();
         last_statement_status_ = StatementStatus::FAILED;
         last_rows_affected_ = 0;
         last_error_code_ = error_code;
         last_sqlstate_ = sqlstate;
-        last_statement_time_ = nowMicros();
+        last_statement_time_ = end_time;
         last_activity_time_ = last_statement_time_;
+        ProcArrayManager::clearQueryInfo(proc_id_, last_statement_time_, nullptr);
+
+        CatalogManager *catalog = db_ ? db_->catalog_manager() : nullptr;
+        if (catalog && !last_statement_text_.empty())
+        {
+            std::string digest_text = normalizeDigestText(last_statement_text_);
+            if (!digest_text.empty())
+            {
+                uint64_t digest_hash = fnv1a64(digest_text);
+                CatalogManager::StatementDigestEntry entry;
+                entry.schema_name = current_schema_name_;
+                CatalogManager::SessionInfo session_info;
+                if (!isZeroUuidLocal(session_id_) &&
+                    catalog->getSession(session_id_, session_info, nullptr) == Status::OK)
+                {
+                    entry.user_name = session_info.username;
+                }
+                if (entry.user_name.empty())
+                {
+                    entry.user_name = "unknown";
+                }
+                entry.host_name = "local";
+                entry.digest = digestHex(digest_hash);
+                entry.digest_text = digest_text;
+                entry.count_star = 1;
+                entry.sum_timer_wait = (start_time != 0 && end_time >= start_time)
+                    ? (end_time - start_time)
+                    : 0;
+                entry.min_timer_wait = entry.sum_timer_wait;
+                entry.max_timer_wait = entry.sum_timer_wait;
+                entry.sum_errors = 1;
+                entry.first_seen = end_time;
+                entry.last_seen = end_time;
+                entry.query_sample_text = last_statement_text_;
+                entry.query_sample_seen = end_time;
+                entry.query_sample_timer_wait = entry.sum_timer_wait;
+                catalog->recordStatementDigest(entry, nullptr);
+            }
+        }
     }
 
     std::string ConnectionContext::sessionSettingsJson() const
@@ -1082,6 +1291,29 @@ namespace scratchbird::core
             }
         }
 
+        if (s == Status::OK)
+        {
+            CatalogManager *catalog = db_ ? db_->catalog_manager() : nullptr;
+            if (catalog)
+            {
+                uint64_t start_time = static_cast<uint64_t>(xact_start_time_.count());
+                uint64_t end_time = nowMicros();
+                CatalogManager::TransactionHistoryEntry entry;
+                entry.thread_id = proc_id_;
+                entry.trx_id = current_xid_;
+                entry.timer_start = start_time;
+                entry.timer_end = end_time;
+                entry.timer_wait = (start_time != 0 && end_time >= start_time) ? (end_time - start_time) : 0;
+                entry.read_only = is_read_only_;
+                entry.isolation_level = static_cast<uint8_t>(isolation_level_);
+                entry.autocommit = autocommit_mode_ && !autocommit_suspended_;
+                entry.committed = commit;
+                entry.event_id = start_time != 0 ? start_time : current_xid_;
+                entry.end_event_id = end_time;
+                catalog->recordTransactionHistory(entry, nullptr);
+            }
+        }
+
         // Clear statement XID (FIREBIRD MGA: No snapshots)
         statement_xid_ = 0;
 
@@ -1150,6 +1382,13 @@ namespace scratchbird::core
                 policy_epoch_table_ = pending_policy_epoch_table_;
                 pending_session_change_ = false;
                 pending_emulation_mode_.clear();
+                Status s = ProcArrayManager::setSessionId(proc_id_, session_id_, nullptr);
+                if (s != Status::OK)
+                {
+                    LOG_WARNING(TRANSACTION,
+                                "Failed to set staged session id in ProcArray for proc_id %u",
+                                proc_id_);
+                }
             }
 
             security_context_staged_ = false;
@@ -1504,6 +1743,12 @@ namespace scratchbird::core
             emulation_mode_ = emulation_mode.empty() ? "native" : emulation_mode;
             policy_epoch_global_ = policy_epoch_global;
             policy_epoch_table_ = policy_epoch_table;
+            Status s = ProcArrayManager::setSessionId(proc_id_, session_id_, nullptr);
+            if (s != Status::OK)
+            {
+                LOG_WARNING(TRANSACTION, "Failed to set session id in ProcArray for proc_id %u",
+                            proc_id_);
+            }
             LOG_DEBUG(TRANSACTION, "Set session context: proc_id=%u, session_id=%s, authkey_id=%s",
                       proc_id_, session_id.toString().c_str(), authkey_id.toString().c_str());
             return;

@@ -20,11 +20,15 @@
 
 #include <gtest/gtest.h>
 
+#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/sblr/opcodes.h"
 #include "test_helpers.h"
+#include <algorithm>
 #include <sstream>
 
 using namespace scratchbird::sblr;
@@ -45,12 +49,36 @@ protected:
         status = db_->open(db_file_->path(), &ctx);
         ASSERT_EQ(status, scratchbird::core::Status::OK) << ctx.message;
 
+        auto* catalog = db_->catalog_manager();
+        ASSERT_NE(catalog, nullptr);
+
+        scratchbird::core::CatalogManager::SchemaInfo schema_info;
+        status = catalog->getSchema("PUBLIC", schema_info, &ctx);
+        ASSERT_EQ(status, scratchbird::core::Status::OK) << ctx.message;
+        schema_id_ = schema_info.schema_id;
+
         compiler_ = std::make_unique<QueryCompilerV2>(db_.get());
+        compiler_->setCurrentSchema(schema_id_);
+
+        executor_ = std::make_unique<scratchbird::sblr::Executor>(db_.get());
+        executor_->setCurrentSchema(schema_id_);
+
+        status = db_->connect(connection_ctx_, &ctx);
+        ASSERT_EQ(status, scratchbird::core::Status::OK) << ctx.message;
+        connection_ctx_->setCurrentSchemaId(schema_id_);
+
+        system_user_id_ = catalog->getSystemUserId(&ctx);
+        connection_ctx_->setCurrentUser(system_user_id_, true);
+        scratchbird::core::ConnectionContext::setCurrent(connection_ctx_.get());
+        executor_->setConnectionContext(connection_ctx_.get());
     }
 
     void TearDown() override
     {
+        executor_.reset();
         compiler_.reset();
+        scratchbird::core::ConnectionContext::setCurrent(nullptr);
+        connection_ctx_.reset();
         db_.reset();
         db_file_.reset();
     }
@@ -112,10 +140,29 @@ protected:
         return false;
     }
 
+    scratchbird::sblr::ExecutionResult compileAndExecute(const std::string& sql)
+    {
+        auto result = compiler_->compile(sql);
+        if (!result.success())
+        {
+            std::string errors;
+            for (const auto& err : result.errors())
+            {
+                errors += err + "\n";
+            }
+            return scratchbird::sblr::ExecutionResult("Compilation failed: " + errors);
+        }
+        return executor_->execute(result.bytecode());
+    }
+
 private:
     std::unique_ptr<TestDatabaseFile> db_file_;
     std::unique_ptr<scratchbird::core::Database> db_;
     std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<scratchbird::sblr::Executor> executor_;
+    std::unique_ptr<scratchbird::core::ConnectionContext> connection_ctx_;
+    scratchbird::core::ID schema_id_{};
+    scratchbird::core::ID system_user_id_{};
     std::string last_error_;
 };
 
@@ -601,4 +648,97 @@ TEST_F(ShowSetCommandsTest, SetLocalTimeoutRequiresNumber)
 {
     EXPECT_FALSE(compileSucceeds("SET LOCAL_TIMEOUT"));
     EXPECT_FALSE(compileSucceeds("SET LOCAL_TIMEOUT abc"));
+}
+
+// =============================================================================
+// Metadata Redaction Regression
+// =============================================================================
+
+TEST_F(ShowSetCommandsTest, ShowTablesAndColumnsRedactWithoutSelect)
+{
+    auto* catalog = db_->catalog_manager();
+    ASSERT_NE(catalog, nullptr);
+
+    scratchbird::core::ErrorContext ctx;
+    scratchbird::core::ID visible_table_id;
+    scratchbird::core::ID hidden_table_id;
+
+    scratchbird::core::CatalogManager::ColumnInfo id_col;
+    id_col.column_name = "id";
+    id_col.data_type = static_cast<uint16_t>(scratchbird::core::DataType::INT32);
+    id_col.nullable = false;
+
+    scratchbird::core::CatalogManager::ColumnInfo name_col;
+    name_col.column_name = "name";
+    name_col.data_type = static_cast<uint16_t>(scratchbird::core::DataType::TEXT);
+    name_col.nullable = true;
+
+    std::vector<scratchbird::core::CatalogManager::ColumnInfo> visible_cols{id_col, name_col};
+    ASSERT_EQ(catalog->createTable(schema_id_, "visible_table", visible_cols,
+                                   visible_table_id, 0, &ctx),
+              scratchbird::core::Status::OK) << ctx.message;
+
+    scratchbird::core::CatalogManager::ColumnInfo secret_col = name_col;
+    secret_col.column_name = "secret";
+    std::vector<scratchbird::core::CatalogManager::ColumnInfo> hidden_cols{id_col, secret_col};
+    ASSERT_EQ(catalog->createTable(schema_id_, "hidden_table", hidden_cols,
+                                   hidden_table_id, 0, &ctx),
+              scratchbird::core::Status::OK) << ctx.message;
+
+    scratchbird::core::ID user_id;
+    auto status = catalog->createUser("viewer", "", schema_id_, false, user_id, &ctx);
+    if (status == scratchbird::core::Status::FILE_EXISTS)
+    {
+        scratchbird::core::CatalogManager::UserInfo user_info;
+        ASSERT_EQ(catalog->getUserByName("viewer", user_info, &ctx),
+                  scratchbird::core::Status::OK) << ctx.message;
+        user_id = user_info.user_id;
+    }
+    else
+    {
+        ASSERT_EQ(status, scratchbird::core::Status::OK) << ctx.message;
+    }
+
+    ASSERT_EQ(catalog->grantPermission(
+                  visible_table_id,
+                  scratchbird::core::CatalogManager::PermissionObjectType::TABLE,
+                  user_id,
+                  scratchbird::core::CatalogManager::GranteeType::USER,
+                  static_cast<uint32_t>(scratchbird::core::CatalogManager::Privilege::SELECT),
+                  false,
+                  system_user_id_,
+                  &ctx),
+              scratchbird::core::Status::OK) << ctx.message;
+
+    connection_ctx_->setCurrentUser(user_id, false);
+
+    auto show_tables = compileAndExecute("SHOW TABLES");
+    ASSERT_TRUE(show_tables.success()) << show_tables.error();
+    ASSERT_TRUE(show_tables.hasResultSet());
+
+    auto* tables_rs = show_tables.resultSet();
+    std::vector<std::string> table_names;
+    for (size_t row = 0; row < tables_rs->rowCount(); ++row)
+    {
+        table_names.push_back(tables_rs->getValue(row, 0).toString());
+    }
+    EXPECT_NE(std::find(table_names.begin(), table_names.end(), "visible_table"), table_names.end());
+    EXPECT_EQ(std::find(table_names.begin(), table_names.end(), "hidden_table"), table_names.end());
+
+    auto show_hidden_cols = compileAndExecute("SHOW COLUMNS FROM hidden_table");
+    ASSERT_TRUE(show_hidden_cols.success()) << show_hidden_cols.error();
+    ASSERT_TRUE(show_hidden_cols.hasResultSet());
+    auto* hidden_cols_rs = show_hidden_cols.resultSet();
+    ASSERT_GT(hidden_cols_rs->rowCount(), 0u);
+    EXPECT_EQ(hidden_cols_rs->getValue(0, 0).toString(), "Redacted");
+
+    auto show_visible_cols = compileAndExecute("SHOW COLUMNS FROM visible_table");
+    ASSERT_TRUE(show_visible_cols.success()) << show_visible_cols.error();
+    ASSERT_TRUE(show_visible_cols.hasResultSet());
+    auto* visible_cols_rs = show_visible_cols.resultSet();
+    ASSERT_GT(visible_cols_rs->rowCount(), 0u);
+    for (size_t row = 0; row < visible_cols_rs->rowCount(); ++row)
+    {
+        EXPECT_NE(visible_cols_rs->getValue(row, 0).toString(), "Redacted");
+    }
 }

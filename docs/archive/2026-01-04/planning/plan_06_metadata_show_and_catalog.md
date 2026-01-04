@@ -11,10 +11,20 @@ Completed:
 - SHOW TRIGGER/PROCEDURE/FUNCTION/VIEW/COMMENTS/DEPENDENCIES/PACKAGE now pull from catalog caches and honor body redaction when source is missing.
 - SHOW outputs now include object comments where available.
 - SHOW DOMAIN/GRANTS/CHECKS now use catalog lookups (constraints/permissions/domain manager) with redaction hooks.
+- Metadata visibility hooks now enforce owner/superuser/privilege-based redaction for SHOW TABLES/COLUMNS/INDEXES/CREATE TABLE/TABLE, SHOW GENERATOR, SHOW COMMENTS/DEPENDENCIES, and SHOW SCHEMA/SCHEMA TREE/RESOLVED/OBJECTS/LOCATION (restricted enumeration for schemas/tables/objects).
+- Virtual catalog routing initialized at database open and executor now resolves virtual schemas (information_schema/pg_catalog/mysql/etc) via VirtualCatalogRouter.
+- information_schema expanded to include domains, sequences, routines, triggers, stats, and privilege views with catalog-backed data.
+- Firebird RDB$FIELDS now maps domain and column metadata from ScratchBird domains/columns.
+- pg_catalog and mysql.* virtual catalogs now return real core metadata for key tables (namespace/class/type/attr/user/proc).
+- Runtime monitoring views now populate pg_stat_activity, pg_locks, MON$ATTACHMENTS/TRANSACTIONS/STATEMENTS, and MySQL information_schema/performance_schema processlist/threads/events_statements_*/events_transactions_current/events_transactions_history_long/events_waits_current/events_waits_history_long/metadata_locks.
+- pg_catalog helper functions (format_type, obj_description, col_description, shobj_description) now resolve core metadata comments/types.
+- Added targeted virtual catalog unit coverage for pg_catalog and MySQL performance_schema processlist/threads/events_statements/events_transactions/events_waits/history_long/metadata_locks.
+- MySQL performance_schema history_long tables now include completed transactions and lock waits (in-memory ring buffer).
+- MySQL performance_schema digest summary tables now track statement digests (global/account/user/host) with histogram buckets and quantile estimation.
 
 Partial / Outstanding:
-- Metadata visibility policy hooks now enforce owner/superuser/privilege-based redaction for SHOW details; restricted enumeration is still partial outside SHOW GRANTS/CHECKS.
-- Emulated catalog views and runtime monitoring views are still pending.
+- Metadata visibility for unsupported object types (packages/triggers/UDR/etc.) remains best-effort until dedicated permission object types exist.
+- MySQL information_schema/performance_schema emulation beyond processlist/threads/events_statements_*/events_statements_summary_by_*/events_statements_histogram_*/events_transactions_current/events_transactions_history_long/events_waits_current/events_waits_history_long/metadata_locks remains pending (plugins, other performance_schema tables, etc.).
 
 ## References
 - `docs/specifications/SYSTEM_CATALOG_STRUCTURE.md`
@@ -63,10 +73,11 @@ Partial / Outstanding:
 - Implement SHOW TRIGGER/PROCEDURE/FUNCTION/DOMAIN/COMMENTS/DEPENDENCIES/PACKAGE/GRANTS/CHECKS with real queries.
 - Add metadata visibility policy hooks (redaction, restricted enumeration).
 - Implement information_schema DOMAINS/USER_DEFINED_TYPES and Firebird RDB$FIELDS domain mapping.
+- Implement pg_catalog/mysql catalogs with core metadata (pg_namespace/pg_class/pg_attribute/pg_type/pg_enum/pg_proc/mysql.user/mysql.proc).
 - Implement runtime monitoring views required by emulated engines:
   - Firebird MON$ATTACHMENTS / MON$TRANSACTIONS.
   - PostgreSQL pg_stat_activity / pg_stat_database.
-  - MySQL performance_schema threads and transactions tables.
+  - MySQL performance_schema threads/events_statements/events_transactions/events_waits/metadata_locks tables.
 
 ## Required Data/Schema Changes
 - Add catalog tables for triggers, procedures, functions, domains, domain collision/history/aliases, domain constraints/fields/enum/variant/options, domain validation reports, comments, dependencies, packages.
@@ -91,6 +102,7 @@ Partial / Outstanding:
   - `tests/unit/test_catalog_manager.cpp`
   - `tests/unit/domains/test_domain_manager.cpp`
   - `tests/unit/test_runtime_monitor_views.cpp`
+  - `tests/unit/test_virtual_catalogs.cpp`
 
 ## Acceptance Criteria
 - All SHOW commands return real metadata.

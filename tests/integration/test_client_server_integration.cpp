@@ -33,6 +33,7 @@
 #include "scratchbird/client/connection.h"
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/core/error_context.h"
+#include "test_helpers.h"
 
 using scratchbird::client::Connection;
 using scratchbird::client::ConnectionConfig;
@@ -70,8 +71,13 @@ protected:
 
     static pid_t server_pid_;
     static bool server_started_;
+    static bool network_enabled_;
 
     static void SetUpTestSuite() {
+        network_enabled_ = scratchbird::testing::networkTestsEnabled();
+        if (!network_enabled_) {
+            return;
+        }
         // Clean up any existing test database
         cleanup();
 
@@ -101,6 +107,9 @@ protected:
     }
 
     static void TearDownTestSuite() {
+        if (!network_enabled_) {
+            return;
+        }
         // Kill server
         if (server_pid_ > 0) {
             kill(server_pid_, SIGTERM);
@@ -115,6 +124,9 @@ protected:
     }
 
     void SetUp() override {
+        if (!network_enabled_) {
+            GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
+        }
         if (!server_started_) {
             GTEST_SKIP() << "Server not started";
         }
@@ -171,6 +183,7 @@ private:
 
 pid_t ClientServerIntegrationTest::server_pid_ = 0;
 bool ClientServerIntegrationTest::server_started_ = false;
+bool ClientServerIntegrationTest::network_enabled_ = false;
 
 // ============================================================================
 // Connection Tests

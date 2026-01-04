@@ -1,9 +1,11 @@
 #pragma once
 
 #include "scratchbird/core/status.h"
+#include "scratchbird/core/uuidv7.h"
 #include <cstdint>
 #include <vector>
 #include <atomic>
+#include <string>
 #include <pthread.h>
 
 namespace scratchbird::core
@@ -18,6 +20,7 @@ namespace scratchbird::core
         uint32_t proc_id;  // Process ID (slot number)
         pid_t backend_pid; // OS process ID
         bool is_active;    // Is this slot active?
+        ID session_id;     // Bound session UUID (0 = none)
 
         // Transaction state
         uint64_t xid;             // Current transaction XID (0 = none)
@@ -35,12 +38,16 @@ namespace scratchbird::core
         // Statistics
         uint64_t start_time;       // Backend start timestamp (microseconds)
         uint64_t query_start_time; // Current query start (0 = idle)
+        uint64_t state_change_time; // Last state change timestamp (microseconds)
+
+        // Current query text (truncated, UTF-8 bytes)
+        char query_text[256];
 
         // Connection termination (for long transaction monitor)
         bool termination_requested; // Backend should terminate connection
 
         // Padding for cache line alignment (adjusted for new fields)
-        uint8_t padding[26];
+        uint8_t padding[8];
     };
 
     // Process array (shared memory structure)
@@ -98,6 +105,18 @@ namespace scratchbird::core
         // Set transaction start time
         static auto setTransactionStartTime(uint32_t proc_id, uint64_t start_time,
                                             ErrorContext *ctx = nullptr) -> Status;
+
+        // Session binding (for monitoring)
+        static auto setSessionId(uint32_t proc_id, const ID& session_id,
+                                 ErrorContext *ctx = nullptr) -> Status;
+
+        // Query tracking (for monitoring)
+        static auto setQueryInfo(uint32_t proc_id, uint64_t start_time,
+                                 const std::string& query_text,
+                                 ErrorContext *ctx = nullptr) -> Status;
+
+        static auto clearQueryInfo(uint32_t proc_id, uint64_t state_change_time,
+                                   ErrorContext *ctx = nullptr) -> Status;
 
         // Snapshot support
         static auto getActiveTransactions(std::vector<uint64_t> *xids_out,

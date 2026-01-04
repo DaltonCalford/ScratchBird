@@ -87,6 +87,23 @@ namespace scratchbird::core
         uint64_t request_time; // When requested (microseconds)
     };
 
+    struct Lock;
+
+    struct ProcLockEntry
+    {
+        Lock *lock = nullptr;
+        LockMode mode = LockMode::LOCK_ACCESS_SHARE;
+    };
+
+    struct LockSnapshot
+    {
+        LockTag tag;
+        LockMode mode = LockMode::LOCK_ACCESS_SHARE;
+        uint32_t proc_id = 0;
+        bool granted = false;
+        uint64_t request_time = 0;
+    };
+
     // Lock object (one lockable resource)
     struct Lock
     {
@@ -159,6 +176,9 @@ namespace scratchbird::core
         // Get statistics
         void getStatistics(LockStats *stats_out) const;
 
+        // Snapshot current locks (for monitoring views)
+        Status listLocks(std::vector<LockSnapshot>& locks_out) const;
+
         // Deadlock detection (called periodically or on timeout)
         Status detectDeadlocks(ErrorContext *ctx = nullptr);
 
@@ -167,7 +187,7 @@ namespace scratchbird::core
 
         // Lock tables (lock_table_ owns Lock objects via unique_ptr)
         std::unordered_map<LockTag, std::unique_ptr<Lock>, LockTag::Hash> lock_table_;
-        std::unordered_multimap<uint32_t, Lock *> proc_locks_; // By proc_id (non-owning references)
+        std::unordered_multimap<uint32_t, ProcLockEntry> proc_locks_; // By proc_id (non-owning references)
 
         // Synchronization
         mutable std::mutex lock_table_mutex_;

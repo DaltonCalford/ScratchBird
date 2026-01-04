@@ -1683,6 +1683,14 @@ std::optional<ResolvedFunctionRef> SemanticAnalyzerV2::resolveFunction(
         return ref;
     }
 
+    if (func_name == "format_type" || func_name == "obj_description" ||
+        func_name == "col_description" || func_name == "shobj_description") {
+        ret_type->data_type = DataType::TEXT;
+        ret_type->is_nullable = true;
+        ref.return_type = ret_type;
+        return ref;
+    }
+
     // Date/time functions
     if (func_name == "now" || func_name == "current_timestamp") {
         ret_type->data_type = DataType::TIMESTAMP;

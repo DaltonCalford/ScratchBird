@@ -194,7 +194,10 @@ namespace scratchbird::core
                               std::chrono::system_clock::now().time_since_epoch())
                               .count();
         pcb->query_start_time = 0;
+        pcb->state_change_time = pcb->start_time;
         pcb->termination_requested = false;
+        pcb->session_id = ID{};
+        std::memset(pcb->query_text, 0, sizeof(pcb->query_text));
 
         array->num_active++;
 
@@ -377,6 +380,87 @@ namespace scratchbird::core
 
         pthread_rwlock_wrlock(&array->array_lock);
         pcb->xact_start_time = start_time;
+        pthread_rwlock_unlock(&array->array_lock);
+
+        return Status::OK;
+    }
+
+    auto ProcArrayManager::setSessionId(uint32_t proc_id, const ID& session_id,
+                                        ErrorContext *ctx) -> Status
+    {
+        ProcArray *array = proc_array_.load(std::memory_order_acquire);
+        if (!array)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_rwlock_wrlock(&array->array_lock);
+        pcb->session_id = session_id;
+        pthread_rwlock_unlock(&array->array_lock);
+
+        return Status::OK;
+    }
+
+    auto ProcArrayManager::setQueryInfo(uint32_t proc_id, uint64_t start_time,
+                                        const std::string& query_text,
+                                        ErrorContext *ctx) -> Status
+    {
+        ProcArray *array = proc_array_.load(std::memory_order_acquire);
+        if (!array)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_rwlock_wrlock(&array->array_lock);
+        pcb->query_start_time = start_time;
+        pcb->state_change_time = start_time;
+        std::memset(pcb->query_text, 0, sizeof(pcb->query_text));
+        if (!query_text.empty())
+        {
+            std::strncpy(pcb->query_text, query_text.c_str(), sizeof(pcb->query_text) - 1);
+            pcb->query_text[sizeof(pcb->query_text) - 1] = '\0';
+        }
+        pthread_rwlock_unlock(&array->array_lock);
+
+        return Status::OK;
+    }
+
+    auto ProcArrayManager::clearQueryInfo(uint32_t proc_id, uint64_t state_change_time,
+                                          ErrorContext *ctx) -> Status
+    {
+        ProcArray *array = proc_array_.load(std::memory_order_acquire);
+        if (!array)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid or inactive backend");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_rwlock_wrlock(&array->array_lock);
+        pcb->query_start_time = 0;
+        pcb->state_change_time = state_change_time;
         pthread_rwlock_unlock(&array->array_lock);
 
         return Status::OK;

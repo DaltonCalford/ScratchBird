@@ -20,6 +20,7 @@
 
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/core/error_context.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::server;
 using namespace scratchbird::core;
@@ -175,6 +176,9 @@ TEST_F(IPCServerCreationTest, CreateClientWithDefaultMethod) {
 class TCPIntegrationTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        if (!scratchbird::testing::networkTestsEnabled()) {
+            GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
+        }
         // Use unique port for each test to avoid port conflicts during parallel execution
         // Each process gets a unique port range based on its PID
         // PID % 1000 gives us 1000 port ranges of 10 ports each
@@ -481,6 +485,9 @@ TEST_F(TCPIntegrationTest, ConnectionStats) {
 class UnixSocketTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        if (!scratchbird::testing::networkTestsEnabled()) {
+            GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
+        }
         // Generate unique socket name
         static std::atomic<int> counter{0};
         db_name_ = "unix_test_" + std::to_string(counter++);

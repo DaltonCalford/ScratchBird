@@ -412,6 +412,28 @@ private:
 };
 
 // ============================================================================
+// Virtual Catalog Initialization Helpers
+// ============================================================================
+
+// Register built-in virtual catalog handlers (information_schema, pg_catalog, mysql, firebird).
+void initializeVirtualCatalogs(CatalogManager* catalog);
+
+// Shutdown hook (no-op for now, kept for symmetry).
+void shutdownVirtualCatalogs();
+
+// Execute a virtual catalog query and return results.
+Status executeVirtualQuery(ProtocolType protocol,
+                           const std::string& schema_name,
+                           const std::string& table_name,
+                           const std::string& where_clause,
+                           VirtualResultSet& results,
+                           ErrorContext* ctx = nullptr);
+
+// Check if a schema/table is handled by a virtual catalog.
+bool isVirtualTable(const std::string& schema_name,
+                    const std::string& table_name = std::string());
+
+// ============================================================================
 // Emulation View Definition
 // ============================================================================
 

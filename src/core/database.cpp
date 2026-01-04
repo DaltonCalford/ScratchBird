@@ -20,6 +20,7 @@
 #include "scratchbird/core/permission_cache.h" // Security Phase 3.2.3
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/catalog/virtual_catalog.h"
 #include "scratchbird/optimizer/statistics_manager.h"
 #include <fcntl.h>
 #include <unistd.h>
@@ -1116,6 +1117,9 @@ namespace scratchbird::core
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate PermissionCache");
             return Status::OOM;
         }
+
+        // Initialize virtual catalog handlers (information_schema, pg_catalog, mysql, firebird).
+        scratchbird::catalog::initializeVirtualCatalogs(catalog_manager_.get());
 
         DEBUG_LOG_DB("Database opened successfully");
         return Status::OK;

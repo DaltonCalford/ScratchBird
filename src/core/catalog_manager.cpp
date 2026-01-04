@@ -2,6 +2,7 @@
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/audit_logger.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/heap_page.h"
@@ -16486,6 +16487,75 @@ auto CatalogManager::listSequencesBySchema(const ID& schema_id, std::vector<ID>&
     return Status::OK;
 }
 
+auto CatalogManager::listSequences(const ID& schema_id, std::vector<SequenceInfo>& sequences_out,
+                                   ErrorContext* /* ctx */) -> Status
+{
+    std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+    sequences_out.clear();
+
+    for (const auto& [seq_id, state] : sequence_cache_)
+    {
+        if (!state)
+        {
+            continue;
+        }
+        if (!isZeroUuidLocal(schema_id) && state->schema_id != schema_id)
+        {
+            continue;
+        }
+
+        SequenceInfo info;
+        info.sequence_id = seq_id;
+        info.schema_id = state->schema_id;
+        info.name = state->name;
+        info.name_is_delimited = state->name_is_delimited;
+        info.owner_id = state->owner_id;
+        info.current_value = state->current_value.load();
+        info.increment_by = state->increment_by;
+        info.min_value = state->min_value;
+        info.max_value = state->max_value;
+        info.start_value = state->start_value;
+        info.cache_size = state->cache_size;
+        info.cycle = state->cycle;
+        info.created_time = state->created_time;
+        info.last_modified_time = state->last_modified_time;
+        sequences_out.push_back(std::move(info));
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::getSequenceById(const ID& sequence_id, SequenceInfo& info_out,
+                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(sequence_cache_mutex_);
+
+    auto it = sequence_cache_.find(sequence_id);
+    if (it == sequence_cache_.end() || !it->second)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Sequence not found");
+        return Status::NOT_FOUND;
+    }
+
+    const auto& state = it->second;
+    info_out.sequence_id = sequence_id;
+    info_out.schema_id = state->schema_id;
+    info_out.name = state->name;
+    info_out.name_is_delimited = state->name_is_delimited;
+    info_out.owner_id = state->owner_id;
+    info_out.current_value = state->current_value.load();
+    info_out.increment_by = state->increment_by;
+    info_out.min_value = state->min_value;
+    info_out.max_value = state->max_value;
+    info_out.start_value = state->start_value;
+    info_out.cache_size = state->cache_size;
+    info_out.cycle = state->cycle;
+    info_out.created_time = state->created_time;
+    info_out.last_modified_time = state->last_modified_time;
+
+    return Status::OK;
+}
+
 // ============================================================================
 // View Operations (ALPHA Phase 1 - Views)
 // ============================================================================
@@ -24361,6 +24431,247 @@ auto CatalogManager::getSession(const ID& session_id, SessionInfo& session_out,
     return Status::OK;
 }
 
+auto CatalogManager::listSessions(std::vector<SessionInfo>& sessions_out,
+                                  ErrorContext* ctx) -> Status
+{
+    (void)ctx;
+    std::lock_guard<std::mutex> lock(session_cache_mutex_);
+    sessions_out.clear();
+    sessions_out.reserve(session_cache_.size());
+    for (const auto& pair : session_cache_)
+    {
+        sessions_out.push_back(pair.second);
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listLocks(std::vector<LockSnapshot>& locks_out,
+                               ErrorContext* ctx) -> Status
+{
+    (void)ctx;
+    if (!db_ || db_->lock_manager() == nullptr)
+    {
+        locks_out.clear();
+        return Status::OK;
+    }
+    return db_->lock_manager()->listLocks(locks_out);
+}
+
+auto CatalogManager::recordTransactionHistory(const TransactionHistoryEntry& entry,
+                                              ErrorContext* ctx) -> Status
+{
+    (void)ctx;
+    std::lock_guard<std::mutex> lock(history_mutex_);
+    if (transaction_history_.size() >= transaction_history_limit_)
+    {
+        transaction_history_.pop_front();
+    }
+    transaction_history_.push_back(entry);
+    return Status::OK;
+}
+
+auto CatalogManager::listTransactionHistory(std::vector<TransactionHistoryEntry>& entries_out,
+                                            ErrorContext* ctx) const -> Status
+{
+    (void)ctx;
+    std::lock_guard<std::mutex> lock(history_mutex_);
+    entries_out.assign(transaction_history_.begin(), transaction_history_.end());
+    return Status::OK;
+}
+
+auto CatalogManager::recordWaitHistory(const WaitHistoryEntry& entry,
+                                       ErrorContext* ctx) -> Status
+{
+    (void)ctx;
+    std::lock_guard<std::mutex> lock(history_mutex_);
+    if (wait_history_.size() >= wait_history_limit_)
+    {
+        wait_history_.pop_front();
+    }
+    wait_history_.push_back(entry);
+    return Status::OK;
+}
+
+auto CatalogManager::listWaitHistory(std::vector<WaitHistoryEntry>& entries_out,
+                                     ErrorContext* ctx) const -> Status
+{
+    (void)ctx;
+    std::lock_guard<std::mutex> lock(history_mutex_);
+    entries_out.assign(wait_history_.begin(), wait_history_.end());
+    return Status::OK;
+}
+
+auto CatalogManager::recordStatementDigest(const StatementDigestEntry& entry,
+                                           ErrorContext* ctx) -> Status
+{
+    (void)ctx;
+    std::lock_guard<std::mutex> lock(digest_mutex_);
+    const size_t bucket = digestHistogramBucket(entry.sum_timer_wait);
+    digest_histogram_global_[bucket] += entry.count_star;
+
+    auto applyEntry = [&](StatementDigestEntry& agg) {
+        agg.count_star += entry.count_star;
+        agg.sum_timer_wait += entry.sum_timer_wait;
+        agg.sum_lock_time += entry.sum_lock_time;
+        agg.sum_errors += entry.sum_errors;
+        agg.sum_warnings += entry.sum_warnings;
+        agg.sum_rows_affected += entry.sum_rows_affected;
+        agg.sum_rows_sent += entry.sum_rows_sent;
+        agg.sum_rows_examined += entry.sum_rows_examined;
+        agg.sum_created_tmp_disk_tables += entry.sum_created_tmp_disk_tables;
+        agg.sum_created_tmp_tables += entry.sum_created_tmp_tables;
+        agg.sum_select_full_join += entry.sum_select_full_join;
+        agg.sum_select_full_range_join += entry.sum_select_full_range_join;
+        agg.sum_select_range += entry.sum_select_range;
+        agg.sum_select_range_check += entry.sum_select_range_check;
+        agg.sum_select_scan += entry.sum_select_scan;
+        agg.sum_sort_merge_passes += entry.sum_sort_merge_passes;
+        agg.sum_sort_range += entry.sum_sort_range;
+        agg.sum_sort_rows += entry.sum_sort_rows;
+        agg.sum_sort_scan += entry.sum_sort_scan;
+        agg.sum_no_index_used += entry.sum_no_index_used;
+        agg.sum_no_good_index_used += entry.sum_no_good_index_used;
+        agg.sum_cpu_time += entry.sum_cpu_time;
+        agg.max_controlled_memory = std::max(agg.max_controlled_memory, entry.max_controlled_memory);
+        agg.max_total_memory = std::max(agg.max_total_memory, entry.max_total_memory);
+        agg.count_secondary += entry.count_secondary;
+        agg.histogram_counts[bucket] += entry.count_star;
+
+        if (agg.min_timer_wait == 0 || entry.min_timer_wait < agg.min_timer_wait)
+        {
+            agg.min_timer_wait = entry.min_timer_wait;
+        }
+        if (entry.max_timer_wait > agg.max_timer_wait)
+        {
+            agg.max_timer_wait = entry.max_timer_wait;
+        }
+
+        if (agg.first_seen == 0 || entry.first_seen < agg.first_seen)
+        {
+            agg.first_seen = entry.first_seen;
+        }
+        if (entry.last_seen > agg.last_seen)
+        {
+            agg.last_seen = entry.last_seen;
+        }
+
+        if (agg.query_sample_text.empty() && !entry.query_sample_text.empty())
+        {
+            agg.query_sample_text = entry.query_sample_text;
+            agg.query_sample_seen = entry.query_sample_seen;
+            agg.query_sample_timer_wait = entry.query_sample_timer_wait;
+        }
+
+        if (agg.user_name.empty() && !entry.user_name.empty())
+        {
+            agg.user_name = entry.user_name;
+        }
+        if (agg.host_name.empty() && !entry.host_name.empty())
+        {
+            agg.host_name = entry.host_name;
+        }
+    };
+
+    auto updateMap = [&](auto& map, auto& order, const std::string& key) {
+        auto it = map.find(key);
+        if (it == map.end())
+        {
+            if (order.size() >= digest_summary_limit_)
+            {
+                const std::string& oldest = order.front();
+                map.erase(oldest);
+                order.pop_front();
+            }
+            StatementDigestEntry stored = entry;
+            stored.histogram_counts[bucket] += entry.count_star;
+            map.emplace(key, std::move(stored));
+            order.push_back(key);
+            return;
+        }
+        applyEntry(it->second);
+    };
+
+    const std::string digest_key = entry.schema_name + "\n" + entry.digest;
+    updateMap(digest_summary_, digest_order_, digest_key);
+
+    const std::string account_key = entry.user_name + "\n" + entry.host_name + "\n" +
+        entry.schema_name + "\n" + entry.digest;
+    updateMap(digest_summary_by_account_, digest_order_by_account_, account_key);
+
+    const std::string user_key = entry.user_name + "\n" + entry.schema_name + "\n" + entry.digest;
+    updateMap(digest_summary_by_user_, digest_order_by_user_, user_key);
+
+    const std::string host_key = entry.host_name + "\n" + entry.schema_name + "\n" + entry.digest;
+    updateMap(digest_summary_by_host_, digest_order_by_host_, host_key);
+
+    return Status::OK;
+}
+
+auto CatalogManager::listStatementDigestSummary(std::vector<StatementDigestEntry>& entries_out,
+                                                ErrorContext* ctx) const -> Status
+{
+    (void)ctx;
+    std::lock_guard<std::mutex> lock(digest_mutex_);
+    entries_out.clear();
+    entries_out.reserve(digest_summary_.size());
+    for (const auto& pair : digest_summary_)
+    {
+        entries_out.push_back(pair.second);
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listStatementDigestSummaryByAccount(std::vector<StatementDigestEntry>& entries_out,
+                                                         ErrorContext* ctx) const -> Status
+{
+    (void)ctx;
+    std::lock_guard<std::mutex> lock(digest_mutex_);
+    entries_out.clear();
+    entries_out.reserve(digest_summary_by_account_.size());
+    for (const auto& pair : digest_summary_by_account_)
+    {
+        entries_out.push_back(pair.second);
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listStatementDigestSummaryByUser(std::vector<StatementDigestEntry>& entries_out,
+                                                      ErrorContext* ctx) const -> Status
+{
+    (void)ctx;
+    std::lock_guard<std::mutex> lock(digest_mutex_);
+    entries_out.clear();
+    entries_out.reserve(digest_summary_by_user_.size());
+    for (const auto& pair : digest_summary_by_user_)
+    {
+        entries_out.push_back(pair.second);
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listStatementDigestSummaryByHost(std::vector<StatementDigestEntry>& entries_out,
+                                                      ErrorContext* ctx) const -> Status
+{
+    (void)ctx;
+    std::lock_guard<std::mutex> lock(digest_mutex_);
+    entries_out.clear();
+    entries_out.reserve(digest_summary_by_host_.size());
+    for (const auto& pair : digest_summary_by_host_)
+    {
+        entries_out.push_back(pair.second);
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::getStatementDigestHistogramGlobal(std::array<uint64_t, kDigestHistogramBuckets>& counts_out,
+                                                       ErrorContext* ctx) const -> Status
+{
+    (void)ctx;
+    std::lock_guard<std::mutex> lock(digest_mutex_);
+    counts_out = digest_histogram_global_;
+    return Status::OK;
+}
+
 auto CatalogManager::closeSession(const ID& session_id, ErrorContext* ctx) -> Status
 {
     {
@@ -27817,6 +28128,20 @@ auto CatalogManager::findChildDomains(const ID& domain_id,
     }
 
     return Status::OK;
+}
+
+auto CatalogManager::listDomains(const ID& schema_id,
+                                 std::vector<DomainInfo>& domains_out,
+                                 ErrorContext* ctx) -> Status
+{
+    domains_out.clear();
+
+    if (!db_ || !db_->domain_manager())
+    {
+        return Status::OK;
+    }
+
+    return db_->domain_manager()->listDomains(schema_id, domains_out, ctx);
 }
 
 // Domain lookup wrapper - delegates to DomainManager
