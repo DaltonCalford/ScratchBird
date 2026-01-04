@@ -13,6 +13,7 @@
 #include "scratchbird/sblr/bytecode_generator_v2.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/domain_manager.h"
 #include "unit/test_user_helpers.h"
 #include <cstdio>
 #include <filesystem>
@@ -621,7 +622,7 @@ TEST_F(BytecodeGeneratorV2Test, CreateTable) {
 
 TEST_F(BytecodeGeneratorV2Test, CreateDomain) {
     auto result = generateBytecode(
-        "CREATE DOMAIN test_domain AS TEXT DEFAULT 5 "
+        "CREATE DOMAIN test_domain AS TEXT DEFAULT '5' "
         "WITH INTEGRITY (UNIQUENESS = TRUE) "
         "WITH SECURITY (MASKING = FULL) "
         "WITH VALIDATION (FUNCTION = validate_domain) "
@@ -667,7 +668,7 @@ TEST_F(BytecodeGeneratorV2Test, CreateDomain) {
     ASSERT_LE(payload_offset + value_len, result.bytecode().size());
     std::string default_value(result.bytecode().begin() + payload_offset,
                               result.bytecode().begin() + payload_offset + value_len);
-    EXPECT_EQ(default_value, "5");
+    EXPECT_EQ(default_value, "'5'");
 }
 
 TEST_F(BytecodeGeneratorV2Test, CreateDomainRecord) {
@@ -832,7 +833,18 @@ TEST_F(BytecodeGeneratorV2Test, CreateDomainVariant) {
 }
 
 TEST_F(BytecodeGeneratorV2Test, AlterDomainSetDefault) {
-    auto result = generateBytecode("ALTER DOMAIN test_domain SET DEFAULT 5");
+    auto* domain_mgr = db_.domain_manager();
+    ASSERT_NE(domain_mgr, nullptr);
+
+    DomainManager::DomainCreateOptions options;
+    ID domain_id{};
+    ErrorContext ctx;
+    auto status = domain_mgr->createBasicDomain(test_schema_id_, "test_domain",
+                                                DataType::TEXT, 0, 0,
+                                                options, domain_id, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to create test domain: " << ctx.message;
+
+    auto result = generateBytecode("ALTER DOMAIN test_domain SET DEFAULT '5'");
     ASSERT_TRUE(result.success()) << "Bytecode generation failed";
 
     size_t payload_offset = 0;

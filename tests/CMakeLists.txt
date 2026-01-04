@@ -214,6 +214,7 @@ target_link_libraries(scratchbird_tests
     scratchbird_client
     scratchbird_server
     scratchbird_network
+    scratchbird_odbc
     GTest::gtest
     GTest::gtest_main
 )

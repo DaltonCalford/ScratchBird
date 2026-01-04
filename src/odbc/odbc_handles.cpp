@@ -6,12 +6,19 @@
  */
 
 #include "scratchbird/odbc/odbc_handles.h"
+#include "scratchbird/odbc/odbc_client_bridge.h"
+#include "scratchbird/core/status.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cerrno>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
-#include <sstream>
 #include <regex>
+#include <sstream>
+
+#include "scratchbird/core/type_extractor.h"
 
 // Helper for casting pointers to integers in ODBC attributes
 #define ODBC_PTR_TO_UINT(p) static_cast<SQLUINTEGER>(reinterpret_cast<uintptr_t>(p))
@@ -19,6 +26,595 @@
 
 namespace scratchbird {
 namespace odbc {
+
+namespace {
+const char* mapStatusToSqlState(core::Status status) {
+    switch (status) {
+        case core::Status::OK:
+            return "00000";
+        case core::Status::CONNECTION_FAILURE:
+            return "08001";
+        case core::Status::CONNECTION_DOES_NOT_EXIST:
+            return "08003";
+        case core::Status::INVALID_PASSWORD:
+        case core::Status::INVALID_AUTHORIZATION:
+            return "28000";
+        case core::Status::INVALID_TRANSACTION_STATE:
+            return "25000";
+        case core::Status::READ_ONLY_TRANSACTION:
+            return "25006";
+        case core::Status::DEADLOCK:
+        case core::Status::SERIALIZATION_FAILURE:
+            return "40001";
+        case core::Status::LOCK_TIMEOUT:
+            return "HYT00";
+        case core::Status::QUERY_CANCELED:
+            return "HY008";
+        case core::Status::NOT_IMPLEMENTED:
+        case core::Status::NOT_SUPPORTED:
+            return "HYC00";
+        case core::Status::SYNTAX_ERROR:
+            return "42000";
+        case core::Status::UNDEFINED_TABLE:
+            return "42S02";
+        case core::Status::UNDEFINED_COLUMN:
+            return "42S22";
+        case core::Status::DUPLICATE_TABLE:
+            return "42S01";
+        case core::Status::DUPLICATE_COLUMN:
+            return "42S21";
+        case core::Status::CONSTRAINT_VIOLATION:
+        case core::Status::NOT_NULL_VIOLATION:
+        case core::Status::FOREIGN_KEY_VIOLATION:
+        case core::Status::UNIQUE_VIOLATION:
+        case core::Status::CHECK_VIOLATION:
+        case core::Status::EXCLUSION_VIOLATION:
+            return "23000";
+        case core::Status::DIVISION_BY_ZERO:
+            return "22012";
+        case core::Status::NUMERIC_VALUE_OUT_OF_RANGE:
+        case core::Status::OUT_OF_RANGE:
+            return "22003";
+        case core::Status::STRING_DATA_RIGHT_TRUNCATION:
+            return "22001";
+        case core::Status::DATETIME_FIELD_OVERFLOW:
+            return "22008";
+        case core::Status::INVALID_DATETIME_FORMAT:
+            return "22007";
+        case core::Status::INVALID_TEXT_REPRESENTATION:
+            return "22018";
+        case core::Status::NULL_VALUE_NOT_ALLOWED:
+            return "22004";
+        case core::Status::INVALID_ARGUMENT:
+            return "HY009";
+        default:
+            return "HY000";
+    }
+}
+
+std::string trimString(const std::string& value) {
+    size_t start = value.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) {
+        return "";
+    }
+    size_t end = value.find_last_not_of(" \t\r\n");
+    return value.substr(start, end - start + 1);
+}
+
+std::string toUpper(std::string value) {
+    for (char& ch : value) {
+        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    }
+    return value;
+}
+
+std::string sqlCharToString(const SQLCHAR* value, SQLSMALLINT length) {
+    if (!value) {
+        return "";
+    }
+    if (length == SQL_NTS) {
+        return std::string(reinterpret_cast<const char*>(value));
+    }
+    if (length <= 0) {
+        return "";
+    }
+    return std::string(reinterpret_cast<const char*>(value), length);
+}
+
+std::string escapeRegexChar(char ch) {
+    switch (ch) {
+        case '.': case '^': case '$': case '|': case '(':
+        case ')': case '[': case ']': case '{': case '}':
+        case '*': case '+': case '?': case '\\':
+            return std::string("\\") + ch;
+        default:
+            return std::string(1, ch);
+    }
+}
+
+bool matchPattern(const std::string& value, const std::string& pattern, bool metadata_id) {
+    if (pattern.empty()) {
+        return true;
+    }
+    if (metadata_id) {
+        return value == pattern;
+    }
+
+    std::string regex = "^";
+    bool escape = false;
+    for (char ch : pattern) {
+        if (escape) {
+            regex += escapeRegexChar(ch);
+            escape = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escape = true;
+            continue;
+        }
+        if (ch == '%') {
+            regex += ".*";
+        } else if (ch == '_') {
+            regex += '.';
+        } else {
+            regex += escapeRegexChar(ch);
+        }
+    }
+    regex += "$";
+
+    try {
+        return std::regex_match(value, std::regex(regex));
+    } catch (const std::regex_error&) {
+        return value == pattern;
+    }
+}
+
+bool isBinarySqlType(SQLSMALLINT type) {
+    switch (type) {
+        case SQL_BINARY:
+        case SQL_VARBINARY:
+        case SQL_LONGVARBINARY:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool isCharacterSqlType(SQLSMALLINT type) {
+    switch (type) {
+        case SQL_CHAR:
+        case SQL_VARCHAR:
+        case SQL_LONGVARCHAR:
+            return true;
+        default:
+            return false;
+    }
+}
+
+std::string bytesToHexString(const std::string& data) {
+    static const char kHex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(data.size() * 2);
+    for (unsigned char ch : data) {
+        out.push_back(kHex[(ch >> 4) & 0xF]);
+        out.push_back(kHex[ch & 0xF]);
+    }
+    return out;
+}
+
+constexpr SQLSMALLINT kOdbcFkCascade = 0;
+constexpr SQLSMALLINT kOdbcFkRestrict = 1;
+constexpr SQLSMALLINT kOdbcFkSetNull = 2;
+constexpr SQLSMALLINT kOdbcFkNoAction = 3;
+constexpr SQLSMALLINT kOdbcFkSetDefault = 4;
+constexpr SQLSMALLINT kOdbcNotDeferrable = 7;
+
+bool parseInt64(const std::string& value, int64_t& out) {
+    std::string trimmed = trimString(value);
+    if (trimmed.empty()) {
+        return false;
+    }
+    char* end = nullptr;
+    errno = 0;
+    long long parsed = std::strtoll(trimmed.c_str(), &end, 10);
+    if (errno != 0 || end == trimmed.c_str() || *end != '\0') {
+        return false;
+    }
+    out = static_cast<int64_t>(parsed);
+    return true;
+}
+
+bool parseUInt32(const std::string& value, uint32_t& out) {
+    std::string trimmed = trimString(value);
+    if (trimmed.empty()) {
+        return false;
+    }
+    char* end = nullptr;
+    errno = 0;
+    unsigned long parsed = std::strtoul(trimmed.c_str(), &end, 10);
+    if (errno != 0 || end == trimmed.c_str() || *end != '\0') {
+        return false;
+    }
+    out = static_cast<uint32_t>(parsed);
+    return true;
+}
+
+std::string stripIdentifierQuotes(const std::string& value) {
+    if (value.size() < 2) {
+        return value;
+    }
+    char first = value.front();
+    char last = value.back();
+    if ((first == '`' && last == '`') || (first == '"' && last == '"')) {
+        return value.substr(1, value.size() - 2);
+    }
+    return value;
+}
+
+std::vector<std::string> splitCsvColumns(const std::string& value) {
+    std::vector<std::string> columns;
+    std::stringstream ss(value);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        std::string trimmed = stripIdentifierQuotes(trimString(token));
+        if (!trimmed.empty()) {
+            columns.push_back(trimmed);
+        }
+    }
+    return columns;
+}
+
+SQLRETURN executeCatalogQuery(OdbcConnection* conn,
+                              const std::vector<std::string>& queries,
+                              std::vector<std::vector<std::string>>& rows,
+                              std::vector<ColumnMetadata>& columns,
+                              SQLLEN& rows_affected) {
+    SQLRETURN status = SQL_ERROR;
+    for (const auto& query : queries) {
+        status = conn->executeSQL(query, rows, columns, rows_affected);
+        if (status == SQL_SUCCESS) {
+            return status;
+        }
+    }
+    return status;
+}
+
+SQLSMALLINT mapFkRuleToOdbc(const std::string& value) {
+    int64_t numeric = 0;
+    if (parseInt64(value, numeric)) {
+        switch (numeric) {
+            case 0: return kOdbcFkNoAction;
+            case 1: return kOdbcFkRestrict;
+            case 2: return kOdbcFkCascade;
+            case 3: return kOdbcFkSetNull;
+            case 4: return kOdbcFkSetDefault;
+            default: return kOdbcFkNoAction;
+        }
+    }
+
+    std::string upper = toUpper(trimString(value));
+    if (upper == "CASCADE") return kOdbcFkCascade;
+    if (upper == "RESTRICT") return kOdbcFkRestrict;
+    if (upper == "SET NULL" || upper == "SET_NULL") return kOdbcFkSetNull;
+    if (upper == "SET DEFAULT" || upper == "SET_DEFAULT") return kOdbcFkSetDefault;
+    if (upper == "NO ACTION" || upper == "NO_ACTION") return kOdbcFkNoAction;
+    return kOdbcFkNoAction;
+}
+
+bool parseDateYMD(const std::string& value, SQL_DATE_STRUCT& out) {
+    if (value.size() < 10) {
+        return false;
+    }
+    auto is_digit = [](char ch) { return ch >= '0' && ch <= '9'; };
+    if (!is_digit(value[0]) || !is_digit(value[1]) || !is_digit(value[2]) || !is_digit(value[3]) ||
+        value[4] != '-' ||
+        !is_digit(value[5]) || !is_digit(value[6]) ||
+        value[7] != '-' ||
+        !is_digit(value[8]) || !is_digit(value[9])) {
+        return false;
+    }
+
+    out.year = static_cast<SQLSMALLINT>(std::stoi(value.substr(0, 4)));
+    out.month = static_cast<SQLUSMALLINT>(std::stoi(value.substr(5, 2)));
+    out.day = static_cast<SQLUSMALLINT>(std::stoi(value.substr(8, 2)));
+    return true;
+}
+
+bool parseTimeHMS(const std::string& value, SQL_TIME_STRUCT& out, SQLUINTEGER* fraction_ns) {
+    if (value.size() < 8) {
+        return false;
+    }
+    auto is_digit = [](char ch) { return ch >= '0' && ch <= '9'; };
+    if (!is_digit(value[0]) || !is_digit(value[1]) || value[2] != ':' ||
+        !is_digit(value[3]) || !is_digit(value[4]) || value[5] != ':' ||
+        !is_digit(value[6]) || !is_digit(value[7])) {
+        return false;
+    }
+
+    out.hour = static_cast<SQLUSMALLINT>(std::stoi(value.substr(0, 2)));
+    out.minute = static_cast<SQLUSMALLINT>(std::stoi(value.substr(3, 2)));
+    out.second = static_cast<SQLUSMALLINT>(std::stoi(value.substr(6, 2)));
+
+    if (fraction_ns) {
+        *fraction_ns = 0;
+        if (value.size() > 8 && value[8] == '.') {
+            std::string frac = value.substr(9);
+            if (frac.size() > 9) {
+                frac.resize(9);
+            }
+            SQLUINTEGER nanos = 0;
+            for (char ch : frac) {
+                if (!is_digit(ch)) {
+                    break;
+                }
+                nanos = nanos * 10 + static_cast<SQLUINTEGER>(ch - '0');
+            }
+            for (size_t i = frac.size(); i < 9; ++i) {
+                nanos *= 10;
+            }
+            *fraction_ns = nanos;
+        }
+    }
+    return true;
+}
+
+bool parseDateLiteral(const std::string& value, SQL_DATE_STRUCT& out) {
+    std::string trimmed = trimString(value);
+    if (trimmed.rfind("DATE(", 0) == 0 && trimmed.back() == ')') {
+        int64_t days = 0;
+        std::string inner = trimString(trimmed.substr(5, trimmed.size() - 6));
+        if (!parseInt64(inner, days)) {
+            return false;
+        }
+        out.year = static_cast<SQLSMALLINT>(core::TypeExtractor::extractYear(days));
+        out.month = static_cast<SQLUSMALLINT>(core::TypeExtractor::extractMonth(days));
+        out.day = static_cast<SQLUSMALLINT>(core::TypeExtractor::extractDay(days));
+        return true;
+    }
+    if (parseDateYMD(trimmed, out)) {
+        return true;
+    }
+    int64_t days = 0;
+    if (parseInt64(trimmed, days)) {
+        out.year = static_cast<SQLSMALLINT>(core::TypeExtractor::extractYear(days));
+        out.month = static_cast<SQLUSMALLINT>(core::TypeExtractor::extractMonth(days));
+        out.day = static_cast<SQLUSMALLINT>(core::TypeExtractor::extractDay(days));
+        return true;
+    }
+    return false;
+}
+
+bool parseTimeLiteral(const std::string& value, SQL_TIME_STRUCT& out) {
+    std::string trimmed = trimString(value);
+    if (trimmed.rfind("TIME(", 0) == 0 && trimmed.back() == ')') {
+        int64_t micros = 0;
+        std::string inner = trimString(trimmed.substr(5, trimmed.size() - 6));
+        if (!parseInt64(inner, micros)) {
+            return false;
+        }
+        out.hour = static_cast<SQLUSMALLINT>(core::TypeExtractor::extractHour(micros));
+        out.minute = static_cast<SQLUSMALLINT>(core::TypeExtractor::extractMinute(micros));
+        out.second = static_cast<SQLUSMALLINT>(core::TypeExtractor::extractSecond(micros));
+        return true;
+    }
+    return parseTimeHMS(trimmed, out, nullptr);
+}
+
+bool parseTimestampLiteral(const std::string& value, SQL_TIMESTAMP_STRUCT& out) {
+    std::string trimmed = trimString(value);
+    if (trimmed.rfind("TIMESTAMP(", 0) == 0 && trimmed.back() == ')') {
+        int64_t micros = 0;
+        std::string inner = trimString(trimmed.substr(10, trimmed.size() - 11));
+        if (!parseInt64(inner, micros)) {
+            return false;
+        }
+        out.year = static_cast<SQLSMALLINT>(core::TypeExtractor::extractTimestampYear(micros));
+        out.month = static_cast<SQLUSMALLINT>(core::TypeExtractor::extractTimestampMonth(micros));
+        out.day = static_cast<SQLUSMALLINT>(core::TypeExtractor::extractTimestampDay(micros));
+        out.hour = static_cast<SQLUSMALLINT>(core::TypeExtractor::extractTimestampHour(micros));
+        out.minute = static_cast<SQLUSMALLINT>(core::TypeExtractor::extractTimestampMinute(micros));
+        out.second = static_cast<SQLUSMALLINT>(core::TypeExtractor::extractTimestampSecond(micros));
+        out.fraction = static_cast<SQLUINTEGER>(core::TypeExtractor::extractTimestampMicrosecond(micros)) * 1000;
+        return true;
+    }
+
+    size_t split = trimmed.find(' ');
+    if (split == std::string::npos) {
+        split = trimmed.find('T');
+    }
+    if (split == std::string::npos) {
+        return false;
+    }
+
+    SQL_DATE_STRUCT date{};
+    SQL_TIME_STRUCT time{};
+    SQLUINTEGER fraction = 0;
+    if (!parseDateYMD(trimmed.substr(0, split), date)) {
+        return false;
+    }
+    if (!parseTimeHMS(trimmed.substr(split + 1), time, &fraction)) {
+        return false;
+    }
+
+    out.year = date.year;
+    out.month = date.month;
+    out.day = date.day;
+    out.hour = time.hour;
+    out.minute = time.minute;
+    out.second = time.second;
+    out.fraction = fraction;
+    return true;
+}
+
+bool parseGuidString(const std::string& value, SQLGUID& out) {
+    std::string hex;
+    hex.reserve(32);
+    for (char ch : value) {
+        if (ch == '-' || ch == '{' || ch == '}') {
+            continue;
+        }
+        if (std::isxdigit(static_cast<unsigned char>(ch))) {
+            hex.push_back(ch);
+        }
+    }
+    if (hex.size() != 32) {
+        return false;
+    }
+
+    auto hexToNibble = [](char ch) -> uint8_t {
+        if (ch >= '0' && ch <= '9') return static_cast<uint8_t>(ch - '0');
+        if (ch >= 'a' && ch <= 'f') return static_cast<uint8_t>(10 + ch - 'a');
+        if (ch >= 'A' && ch <= 'F') return static_cast<uint8_t>(10 + ch - 'A');
+        return 0;
+    };
+
+    uint8_t bytes[16]{};
+    for (size_t i = 0; i < 16; ++i) {
+        bytes[i] = static_cast<uint8_t>((hexToNibble(hex[i * 2]) << 4) | hexToNibble(hex[i * 2 + 1]));
+    }
+
+    out.Data1 = (static_cast<uint32_t>(bytes[0]) << 24) |
+                (static_cast<uint32_t>(bytes[1]) << 16) |
+                (static_cast<uint32_t>(bytes[2]) << 8) |
+                static_cast<uint32_t>(bytes[3]);
+    out.Data2 = static_cast<uint16_t>((bytes[4] << 8) | bytes[5]);
+    out.Data3 = static_cast<uint16_t>((bytes[6] << 8) | bytes[7]);
+    std::memcpy(out.Data4, bytes + 8, sizeof(out.Data4));
+    return true;
+}
+
+struct ParsedTypeInfo {
+    SQLSMALLINT sql_type{SQL_VARCHAR};
+    std::string type_name{"UNKNOWN"};
+    SQLULEN column_size{0};
+    SQLSMALLINT decimal_digits{0};
+    SQLSMALLINT num_prec_radix{0};
+};
+
+ParsedTypeInfo parseTypeString(const std::string& type_str) {
+    ParsedTypeInfo info;
+    std::string trimmed = trimString(type_str);
+    if (trimmed.empty()) {
+        return info;
+    }
+
+    size_t paren = trimmed.find('(');
+    std::string base = (paren == std::string::npos) ? trimmed : trimmed.substr(0, paren);
+    base = trimString(base);
+    std::string upper = toUpper(base);
+
+    uint32_t precision = 0;
+    uint32_t scale = 0;
+    if (paren != std::string::npos) {
+        size_t close = trimmed.find(')', paren);
+        std::string args = trimmed.substr(paren + 1, close == std::string::npos ? std::string::npos : close - paren - 1);
+        size_t comma = args.find(',');
+        if (comma == std::string::npos) {
+            parseUInt32(args, precision);
+        } else {
+            parseUInt32(args.substr(0, comma), precision);
+            parseUInt32(args.substr(comma + 1), scale);
+        }
+    }
+
+    if (upper == "TINYINT") {
+        info.sql_type = SQL_TINYINT;
+    } else if (upper == "SMALLINT") {
+        info.sql_type = SQL_SMALLINT;
+    } else if (upper == "INT" || upper == "INTEGER") {
+        info.sql_type = SQL_INTEGER;
+    } else if (upper == "BIGINT") {
+        info.sql_type = SQL_BIGINT;
+    } else if (upper == "FLOAT") {
+        info.sql_type = SQL_REAL;
+    } else if (upper == "DOUBLE") {
+        info.sql_type = SQL_DOUBLE;
+    } else if (upper == "DECIMAL" || upper == "NUMERIC") {
+        info.sql_type = SQL_DECIMAL;
+    } else if (upper == "BOOLEAN" || upper == "BOOL") {
+        info.sql_type = SQL_BIT;
+    } else if (upper == "CHAR") {
+        info.sql_type = SQL_CHAR;
+    } else if (upper == "VARCHAR") {
+        info.sql_type = SQL_VARCHAR;
+    } else if (upper == "TEXT") {
+        info.sql_type = SQL_LONGVARCHAR;
+    } else if (upper == "BINARY") {
+        info.sql_type = SQL_BINARY;
+    } else if (upper == "VARBINARY") {
+        info.sql_type = SQL_VARBINARY;
+    } else if (upper == "BLOB") {
+        info.sql_type = SQL_LONGVARBINARY;
+    } else if (upper == "DATE") {
+        info.sql_type = SQL_TYPE_DATE;
+    } else if (upper == "TIME") {
+        info.sql_type = SQL_TYPE_TIME;
+    } else if (upper == "TIMESTAMP" || upper == "TIMESTAMPTZ") {
+        info.sql_type = SQL_TYPE_TIMESTAMP;
+    } else if (upper == "UUID") {
+        info.sql_type = SQL_GUID;
+    } else if (upper == "JSON" || upper == "JSONB" || upper == "XML") {
+        info.sql_type = SQL_LONGVARCHAR;
+    } else if (upper == "ARRAY" || upper == "COMPOSITE") {
+        info.sql_type = SQL_LONGVARCHAR;
+    } else if (upper == "VECTOR" || upper == "POINT" || upper == "LINESTRING" || upper == "POLYGON") {
+        info.sql_type = SQL_LONGVARBINARY;
+    } else {
+        info.sql_type = SQL_VARCHAR;
+    }
+
+    info.type_name = upper;
+    if (precision > 0) {
+        info.column_size = precision;
+    }
+    if (info.sql_type == SQL_DECIMAL) {
+        info.decimal_digits = static_cast<SQLSMALLINT>(scale);
+        info.num_prec_radix = 10;
+    } else if (info.sql_type == SQL_INTEGER || info.sql_type == SQL_SMALLINT ||
+               info.sql_type == SQL_TINYINT || info.sql_type == SQL_BIGINT) {
+        info.num_prec_radix = 10;
+    } else if (isBinarySqlType(info.sql_type)) {
+        info.num_prec_radix = 2;
+    }
+
+    return info;
+}
+
+std::string sqlTypeName(SQLSMALLINT type) {
+    switch (type) {
+        case SQL_CHAR: return "CHAR";
+        case SQL_VARCHAR: return "VARCHAR";
+        case SQL_LONGVARCHAR: return "LONGVARCHAR";
+        case SQL_TINYINT: return "TINYINT";
+        case SQL_SMALLINT: return "SMALLINT";
+        case SQL_INTEGER: return "INTEGER";
+        case SQL_BIGINT: return "BIGINT";
+        case SQL_DECIMAL: return "DECIMAL";
+        case SQL_NUMERIC: return "NUMERIC";
+        case SQL_REAL: return "REAL";
+        case SQL_DOUBLE: return "DOUBLE";
+        case SQL_BIT: return "BIT";
+        case SQL_BINARY: return "BINARY";
+        case SQL_VARBINARY: return "VARBINARY";
+        case SQL_LONGVARBINARY: return "LONGVARBINARY";
+        case SQL_TYPE_DATE: return "DATE";
+        case SQL_TYPE_TIME: return "TIME";
+        case SQL_TYPE_TIMESTAMP: return "TIMESTAMP";
+        case SQL_GUID: return "GUID";
+        default: return "UNKNOWN";
+    }
+}
+
+ColumnMetadata makeCatalogColumn(const std::string& name, SQLSMALLINT type, SQLULEN size = 0) {
+    ColumnMetadata meta;
+    meta.name = name;
+    meta.sql_type = type;
+    meta.type_name = sqlTypeName(type);
+    meta.column_size = size;
+    meta.nullable = SQL_NULLABLE;
+    return meta;
+}
+} // namespace
 
 // =============================================================================
 // OdbcHandle Base Implementation
@@ -179,7 +775,8 @@ size_t OdbcEnvironment::getConnectionCount() const {
 // =============================================================================
 
 OdbcConnection::OdbcConnection(OdbcEnvironment* env)
-    : env_(env) {}
+    : env_(env),
+      client_bridge_(std::make_unique<OdbcClientBridge>()) {}
 
 OdbcConnection::~OdbcConnection() {
     if (connected_) {
@@ -299,15 +896,10 @@ SQLRETURN OdbcConnection::disconnect() {
         std::lock_guard lock(statements_mutex_);
         statements_.clear();
     }
+    prepared_sql_.clear();
 
-    // Close socket
-    if (socket_fd_ >= 0) {
-#ifdef _WIN32
-        // closesocket(socket_fd_);
-#else
-        // close(socket_fd_);
-#endif
-        socket_fd_ = -1;
+    if (client_bridge_) {
+        client_bridge_->disconnect();
     }
     connected_ = false;
     connection_dead_ = false;
@@ -480,26 +1072,32 @@ SQLRETURN OdbcConnection::endTransaction(SQLSMALLINT completion_type) {
         return SQL_SUCCESS;
     }
 
-    std::string sql;
     if (completion_type == SQL_COMMIT) {
-        sql = "COMMIT";
+        auto result = client_bridge_ ? client_bridge_->commit() : SQL_ERROR;
+        if (result == SQL_SUCCESS) {
+            in_transaction_ = false;
+        } else if (client_bridge_) {
+            auto status = client_bridge_->lastStatus();
+            auto message = client_bridge_->lastError();
+            setError(mapStatusToSqlState(status), static_cast<SQLINTEGER>(status),
+                     message.empty() ? "Commit failed" : message);
+        }
+        return result;
     } else if (completion_type == SQL_ROLLBACK) {
-        sql = "ROLLBACK";
+        auto result = client_bridge_ ? client_bridge_->rollback() : SQL_ERROR;
+        if (result == SQL_SUCCESS) {
+            in_transaction_ = false;
+        } else if (client_bridge_) {
+            auto status = client_bridge_->lastStatus();
+            auto message = client_bridge_->lastError();
+            setError(mapStatusToSqlState(status), static_cast<SQLINTEGER>(status),
+                     message.empty() ? "Rollback failed" : message);
+        }
+        return result;
     } else {
         setError("HY012", 0, "Invalid transaction operation code");
         return SQL_ERROR;
     }
-
-    // Execute commit/rollback
-    std::vector<std::vector<std::string>> results;
-    std::vector<ColumnMetadata> columns;
-    SQLLEN rows_affected;
-    auto result = executeSQL(sql, results, columns, rows_affected);
-    if (result == SQL_SUCCESS) {
-        in_transaction_ = false;
-    }
-
-    return result;
 }
 
 SQLRETURN OdbcConnection::beginTransaction() {
@@ -514,12 +1112,14 @@ SQLRETURN OdbcConnection::beginTransaction() {
         return SQL_SUCCESS;  // Already in transaction
     }
 
-    std::vector<std::vector<std::string>> results;
-    std::vector<ColumnMetadata> columns;
-    SQLLEN rows_affected;
-    auto result = executeSQL("BEGIN TRANSACTION", results, columns, rows_affected);
+    auto result = client_bridge_ ? client_bridge_->beginTransaction() : SQL_ERROR;
     if (result == SQL_SUCCESS) {
         in_transaction_ = true;
+    } else if (client_bridge_) {
+        auto status = client_bridge_->lastStatus();
+        auto message = client_bridge_->lastError();
+        setError(mapStatusToSqlState(status), static_cast<SQLINTEGER>(status),
+                 message.empty() ? "Begin transaction failed" : message);
     }
 
     return result;
@@ -927,16 +1527,23 @@ SQLRETURN OdbcConnection::parseConnectionString(const std::string& conn_str) {
 }
 
 SQLRETURN OdbcConnection::establishConnection() {
-    // TODO: Implement actual connection to ScratchBird server
-    // For now, just simulate a successful connection
+    if (!client_bridge_) {
+        setError("08001", 0, "Client bridge not initialized");
+        return SQL_ERROR;
+    }
 
-    // Set connection state
+    std::string error;
+    auto result = client_bridge_->connect(params_, error);
+    if (result != SQL_SUCCESS) {
+        setError("08001", 0, error.empty() ? "Failed to connect" : error);
+        return result;
+    }
+
     connected_ = true;
     current_database_ = params_.database;
     current_user_ = params_.user;
     current_schema_ = params_.schema;
 
-    // Apply settings
     if (params_.read_only) {
         access_mode_ = SQL_MODE_READ_ONLY;
     }
@@ -967,31 +1574,73 @@ std::string OdbcConnection::buildConnectionString() const {
     return ss.str();
 }
 
-SQLRETURN OdbcConnection::executeSQL(const std::string& /*sql*/,
-                                      std::vector<std::vector<std::string>>& /*results*/,
-                                      std::vector<ColumnMetadata>& /*columns*/,
+SQLRETURN OdbcConnection::executeSQL(const std::string& sql,
+                                      std::vector<std::vector<std::string>>& results,
+                                      std::vector<ColumnMetadata>& columns,
                                       SQLLEN& rows_affected) {
-    // TODO: Implement actual SQL execution over wire protocol
-    rows_affected = 0;
-    return SQL_SUCCESS;
+    if (!client_bridge_) {
+        setError("08003", 0, "Connection not open");
+        return SQL_ERROR;
+    }
+    auto result = client_bridge_->executeSQL(sql, results, columns, rows_affected);
+    if (result != SQL_SUCCESS) {
+        auto status = client_bridge_->lastStatus();
+        auto message = client_bridge_->lastError();
+        setError(mapStatusToSqlState(status), static_cast<SQLINTEGER>(status),
+                 message.empty() ? "Execution failed" : message);
+    }
+    return result;
 }
 
-SQLRETURN OdbcConnection::prepareSQL(const std::string& /*sql*/, uint64_t& stmt_id,
+SQLRETURN OdbcConnection::prepareSQL(const std::string& sql, uint64_t& stmt_id,
                                       std::vector<ColumnMetadata>& /*param_metadata*/) {
-    // TODO: Implement actual prepared statement
     static std::atomic<uint64_t> next_stmt_id{1};
     stmt_id = next_stmt_id++;
+    prepared_sql_[stmt_id] = sql;
     return SQL_SUCCESS;
 }
 
-SQLRETURN OdbcConnection::executePrepared(uint64_t /*stmt_id*/,
-                                           const std::vector<std::vector<uint8_t>>& /*params*/,
-                                           std::vector<std::vector<std::string>>& /*results*/,
-                                           std::vector<ColumnMetadata>& /*columns*/,
+SQLRETURN OdbcConnection::executePrepared(uint64_t stmt_id,
+                                           const std::vector<std::vector<uint8_t>>& params,
+                                           std::vector<std::vector<std::string>>& results,
+                                           std::vector<ColumnMetadata>& columns,
                                            SQLLEN& rows_affected) {
-    // TODO: Implement actual prepared statement execution
-    rows_affected = 0;
-    return SQL_SUCCESS;
+    auto it = prepared_sql_.find(stmt_id);
+    if (it == prepared_sql_.end()) {
+        setError("HY000", 0, "Unknown prepared statement");
+        return SQL_ERROR;
+    }
+
+    std::string sql = it->second;
+    if (!params.empty()) {
+        std::string out;
+        out.reserve(sql.size() + params.size() * 8);
+        size_t param_index = 0;
+        for (char ch : sql) {
+            if (ch == '?' && param_index < params.size()) {
+                const auto& param = params[param_index++];
+                if (param.empty()) {
+                    out += "NULL";
+                } else {
+                    out += "'";
+                    for (uint8_t byte : param) {
+                        char c = static_cast<char>(byte);
+                        if (c == '\'') {
+                            out += "''";
+                        } else {
+                            out.push_back(c);
+                        }
+                    }
+                    out += "'";
+                }
+            } else {
+                out.push_back(ch);
+            }
+        }
+        sql = std::move(out);
+    }
+
+    return executeSQL(sql, results, columns, rows_affected);
 }
 
 // =============================================================================
@@ -1477,6 +2126,8 @@ SQLRETURN OdbcStatement::getData(SQLUSMALLINT column_number,
     }
 
     const auto& value = rows_[current_row_ - 1][column_number - 1];
+    const auto& column_meta = columns_[column_number - 1];
+    bool is_binary_column = isBinarySqlType(column_meta.sql_type);
 
     // Handle NULL
     if (value.empty()) {
@@ -1492,14 +2143,18 @@ SQLRETURN OdbcStatement::getData(SQLUSMALLINT column_number,
     switch (target_type) {
         case SQL_C_CHAR:
         case SQL_C_DEFAULT: {
+            std::string out_value = value;
+            if (is_binary_column) {
+                out_value = bytesToHexString(value);
+            }
             if (str_len_or_ind) {
-                *str_len_or_ind = static_cast<SQLLEN>(value.size());
+                *str_len_or_ind = static_cast<SQLLEN>(out_value.size());
             }
             if (target_value && buffer_length > 0) {
-                size_t copy_len = std::min(static_cast<size_t>(buffer_length - 1), value.size());
-                std::memcpy(target_value, value.c_str(), copy_len);
+                size_t copy_len = std::min(static_cast<size_t>(buffer_length - 1), out_value.size());
+                std::memcpy(target_value, out_value.c_str(), copy_len);
                 static_cast<char*>(target_value)[copy_len] = '\0';
-                if (value.size() >= static_cast<size_t>(buffer_length)) {
+                if (out_value.size() >= static_cast<size_t>(buffer_length)) {
                     setError("01004", 0, "String data, right truncated");
                     result = SQL_SUCCESS_WITH_INFO;
                 }
@@ -1581,6 +2236,80 @@ SQLRETURN OdbcStatement::getData(SQLUSMALLINT column_number,
                     setError("01004", 0, "String data, right truncated");
                     result = SQL_SUCCESS_WITH_INFO;
                 }
+            }
+            break;
+        }
+
+        case SQL_C_DATE: {
+            if (!target_value) {
+                setError("HY009", 0, "Invalid use of null pointer");
+                return SQL_ERROR;
+            }
+            SQL_DATE_STRUCT date{};
+            if (!parseDateLiteral(value, date)) {
+                setError("22007", 0, "Invalid datetime format");
+                return SQL_ERROR;
+            }
+            *static_cast<SQL_DATE_STRUCT*>(target_value) = date;
+            if (str_len_or_ind) {
+                *str_len_or_ind = sizeof(SQL_DATE_STRUCT);
+            }
+            break;
+        }
+
+        case SQL_C_TIME: {
+            if (!target_value) {
+                setError("HY009", 0, "Invalid use of null pointer");
+                return SQL_ERROR;
+            }
+            SQL_TIME_STRUCT time{};
+            if (!parseTimeLiteral(value, time)) {
+                setError("22007", 0, "Invalid datetime format");
+                return SQL_ERROR;
+            }
+            *static_cast<SQL_TIME_STRUCT*>(target_value) = time;
+            if (str_len_or_ind) {
+                *str_len_or_ind = sizeof(SQL_TIME_STRUCT);
+            }
+            break;
+        }
+
+        case SQL_C_TIMESTAMP: {
+            if (!target_value) {
+                setError("HY009", 0, "Invalid use of null pointer");
+                return SQL_ERROR;
+            }
+            SQL_TIMESTAMP_STRUCT ts{};
+            if (!parseTimestampLiteral(value, ts)) {
+                setError("22007", 0, "Invalid datetime format");
+                return SQL_ERROR;
+            }
+            *static_cast<SQL_TIMESTAMP_STRUCT*>(target_value) = ts;
+            if (str_len_or_ind) {
+                *str_len_or_ind = sizeof(SQL_TIMESTAMP_STRUCT);
+            }
+            break;
+        }
+
+        case SQL_C_GUID: {
+            if (!target_value) {
+                setError("HY009", 0, "Invalid use of null pointer");
+                return SQL_ERROR;
+            }
+            SQLGUID guid{};
+            if (value.size() == 16) {
+                std::string hex = bytesToHexString(value);
+                if (!parseGuidString(hex, guid)) {
+                    setError("22018", 0, "Invalid GUID format");
+                    return SQL_ERROR;
+                }
+            } else if (!parseGuidString(value, guid)) {
+                setError("22018", 0, "Invalid GUID format");
+                return SQL_ERROR;
+            }
+            *static_cast<SQLGUID*>(target_value) = guid;
+            if (str_len_or_ind) {
+                *str_len_or_ind = sizeof(SQLGUID);
             }
             break;
         }
@@ -1870,85 +2599,817 @@ std::vector<std::vector<uint8_t>> OdbcStatement::buildParameterData() {
     return result;
 }
 
-// Catalog function stubs - these would query system tables
-SQLRETURN OdbcStatement::tables(const SQLCHAR* /*catalog*/, SQLSMALLINT /*catalog_len*/,
-                                 const SQLCHAR* /*schema*/, SQLSMALLINT /*schema_len*/,
-                                 const SQLCHAR* /*table*/, SQLSMALLINT /*table_len*/,
-                                 const SQLCHAR* /*table_type*/, SQLSMALLINT /*table_type_len*/) {
+void OdbcStatement::setCatalogResult(std::vector<ColumnMetadata> columns,
+                                     std::vector<std::vector<std::string>> rows) {
+    columns_ = std::move(columns);
+    rows_ = std::move(rows);
+    has_results_ = true;
+    executed_ = true;
+    prepared_ = false;
+    current_row_ = 0;
+    row_count_ = static_cast<SQLLEN>(rows_.size());
+}
+
+// Catalog functions
+SQLRETURN OdbcStatement::tables(const SQLCHAR* catalog, SQLSMALLINT catalog_len,
+                                 const SQLCHAR* schema, SQLSMALLINT schema_len,
+                                 const SQLCHAR* table, SQLSMALLINT table_len,
+                                 const SQLCHAR* table_type, SQLSMALLINT table_type_len) {
     clearDiagnostics();
-    // TODO: Execute catalog query
+
+    if (!conn_ || !conn_->isConnected()) {
+        setError("08003", 0, "Connection not open");
+        return SQL_ERROR;
+    }
+
+    std::string catalog_pattern = sqlCharToString(catalog, catalog_len);
+    std::string schema_pattern = sqlCharToString(schema, schema_len);
+    std::string table_pattern = sqlCharToString(table, table_len);
+    std::string table_type_pattern = sqlCharToString(table_type, table_type_len);
+    bool metadata_id = conn_->getMetadataId();
+
+    std::vector<ColumnMetadata> cols;
+    cols.push_back(makeCatalogColumn("TABLE_CAT", SQL_VARCHAR, DriverConfig::MAX_CATALOG_NAME_LEN));
+    cols.push_back(makeCatalogColumn("TABLE_SCHEM", SQL_VARCHAR, DriverConfig::MAX_SCHEMA_NAME_LEN));
+    cols.push_back(makeCatalogColumn("TABLE_NAME", SQL_VARCHAR, DriverConfig::MAX_TABLE_NAME_LEN));
+    cols.push_back(makeCatalogColumn("TABLE_TYPE", SQL_VARCHAR, 32));
+    cols.push_back(makeCatalogColumn("REMARKS", SQL_VARCHAR, 255));
+
+    const std::string& current_catalog = conn_->getCurrentDatabase();
+    const std::string& current_schema = conn_->getCurrentSchema();
+
+    if (!matchPattern(current_catalog, catalog_pattern, metadata_id) ||
+        !matchPattern(current_schema, schema_pattern, metadata_id)) {
+        setCatalogResult(std::move(cols), {});
+        return SQL_SUCCESS;
+    }
+
+    bool allow_table = true;
+    if (!table_type_pattern.empty()) {
+        allow_table = false;
+        std::string upper = toUpper(table_type_pattern);
+        std::stringstream ss(upper);
+        std::string token;
+        while (std::getline(ss, token, ',')) {
+            token = trimString(token);
+            if (!token.empty() && token.front() == '\'' && token.back() == '\'') {
+                token = token.substr(1, token.size() - 2);
+            }
+            if (token == "TABLE") {
+                allow_table = true;
+                break;
+            }
+        }
+    }
+
+    if (!allow_table) {
+        setCatalogResult(std::move(cols), {});
+        return SQL_SUCCESS;
+    }
+
+    std::vector<std::vector<std::string>> show_rows;
+    std::vector<ColumnMetadata> show_cols;
+    SQLLEN rows_affected = 0;
+    auto status = conn_->executeSQL("SHOW TABLES", show_rows, show_cols, rows_affected);
+    if (status != SQL_SUCCESS) {
+        setError("HY000", 0, "Failed to query tables");
+        return status;
+    }
+
+    std::vector<std::vector<std::string>> rows;
+    for (const auto& row : show_rows) {
+        if (row.empty()) {
+            continue;
+        }
+        const std::string& table_name = row[0];
+        if (!matchPattern(table_name, table_pattern, metadata_id)) {
+            continue;
+        }
+        rows.push_back({
+            current_catalog,
+            current_schema,
+            table_name,
+            "TABLE",
+            ""
+        });
+    }
+
+    setCatalogResult(std::move(cols), std::move(rows));
     return SQL_SUCCESS;
 }
 
-SQLRETURN OdbcStatement::columns(const SQLCHAR* /*catalog*/, SQLSMALLINT /*catalog_len*/,
-                                  const SQLCHAR* /*schema*/, SQLSMALLINT /*schema_len*/,
-                                  const SQLCHAR* /*table*/, SQLSMALLINT /*table_len*/,
-                                  const SQLCHAR* /*column*/, SQLSMALLINT /*column_len*/) {
+SQLRETURN OdbcStatement::columns(const SQLCHAR* catalog, SQLSMALLINT catalog_len,
+                                  const SQLCHAR* schema, SQLSMALLINT schema_len,
+                                  const SQLCHAR* table, SQLSMALLINT table_len,
+                                  const SQLCHAR* column, SQLSMALLINT column_len) {
     clearDiagnostics();
+
+    if (!conn_ || !conn_->isConnected()) {
+        setError("08003", 0, "Connection not open");
+        return SQL_ERROR;
+    }
+
+    std::string catalog_pattern = sqlCharToString(catalog, catalog_len);
+    std::string schema_pattern = sqlCharToString(schema, schema_len);
+    std::string table_pattern = sqlCharToString(table, table_len);
+    std::string column_pattern = sqlCharToString(column, column_len);
+    bool metadata_id = conn_->getMetadataId();
+
+    std::vector<ColumnMetadata> cols;
+    cols.push_back(makeCatalogColumn("TABLE_CAT", SQL_VARCHAR, DriverConfig::MAX_CATALOG_NAME_LEN));
+    cols.push_back(makeCatalogColumn("TABLE_SCHEM", SQL_VARCHAR, DriverConfig::MAX_SCHEMA_NAME_LEN));
+    cols.push_back(makeCatalogColumn("TABLE_NAME", SQL_VARCHAR, DriverConfig::MAX_TABLE_NAME_LEN));
+    cols.push_back(makeCatalogColumn("COLUMN_NAME", SQL_VARCHAR, DriverConfig::MAX_COLUMN_NAME_LEN));
+    cols.push_back(makeCatalogColumn("DATA_TYPE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("TYPE_NAME", SQL_VARCHAR, 64));
+    cols.push_back(makeCatalogColumn("COLUMN_SIZE", SQL_INTEGER));
+    cols.push_back(makeCatalogColumn("BUFFER_LENGTH", SQL_INTEGER));
+    cols.push_back(makeCatalogColumn("DECIMAL_DIGITS", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("NUM_PREC_RADIX", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("NULLABLE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("REMARKS", SQL_VARCHAR, 255));
+    cols.push_back(makeCatalogColumn("COLUMN_DEF", SQL_VARCHAR, 255));
+    cols.push_back(makeCatalogColumn("SQL_DATA_TYPE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("SQL_DATETIME_SUB", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("CHAR_OCTET_LENGTH", SQL_INTEGER));
+    cols.push_back(makeCatalogColumn("ORDINAL_POSITION", SQL_INTEGER));
+    cols.push_back(makeCatalogColumn("IS_NULLABLE", SQL_VARCHAR, 3));
+
+    const std::string& current_catalog = conn_->getCurrentDatabase();
+    const std::string& current_schema = conn_->getCurrentSchema();
+
+    if (!matchPattern(current_catalog, catalog_pattern, metadata_id) ||
+        !matchPattern(current_schema, schema_pattern, metadata_id)) {
+        setCatalogResult(std::move(cols), {});
+        return SQL_SUCCESS;
+    }
+
+    std::vector<std::vector<std::string>> show_tables;
+    std::vector<ColumnMetadata> show_table_cols;
+    SQLLEN rows_affected = 0;
+    auto status = conn_->executeSQL("SHOW TABLES", show_tables, show_table_cols, rows_affected);
+    if (status != SQL_SUCCESS) {
+        setError("HY000", 0, "Failed to query tables");
+        return status;
+    }
+
+    std::vector<std::vector<std::string>> rows;
+    for (const auto& table_row : show_tables) {
+        if (table_row.empty()) {
+            continue;
+        }
+        const std::string& table_name = table_row[0];
+        if (!matchPattern(table_name, table_pattern, metadata_id)) {
+            continue;
+        }
+
+        std::vector<std::vector<std::string>> show_columns;
+        std::vector<ColumnMetadata> show_column_cols;
+        status = conn_->executeSQL("SHOW COLUMNS FROM " + table_name, show_columns,
+                                   show_column_cols, rows_affected);
+        if (status != SQL_SUCCESS) {
+            setError("HY000", 0, "Failed to query columns");
+            return status;
+        }
+
+        SQLINTEGER ordinal = 1;
+        for (const auto& col_row : show_columns) {
+            if (col_row.size() < 6) {
+                continue;
+            }
+            const std::string& column_name = col_row[0];
+            if (!matchPattern(column_name, column_pattern, metadata_id)) {
+                ordinal++;
+                continue;
+            }
+
+            ParsedTypeInfo type_info = parseTypeString(col_row[1]);
+            std::string null_str = toUpper(trimString(col_row[2]));
+            bool nullable = (null_str == "YES");
+            std::string default_value = col_row[4];
+
+            std::string column_size = type_info.column_size > 0 ? std::to_string(type_info.column_size) : "";
+            std::string decimal_digits = type_info.decimal_digits > 0 ? std::to_string(type_info.decimal_digits) : "";
+            std::string radix = type_info.num_prec_radix > 0 ? std::to_string(type_info.num_prec_radix) : "";
+            std::string nullable_val = nullable ? std::to_string(SQL_NULLABLE) : std::to_string(SQL_NO_NULLS);
+            std::string char_octet = (isCharacterSqlType(type_info.sql_type) || isBinarySqlType(type_info.sql_type))
+                ? column_size : "";
+
+            rows.push_back({
+                current_catalog,
+                current_schema,
+                table_name,
+                column_name,
+                std::to_string(type_info.sql_type),
+                type_info.type_name,
+                column_size,
+                column_size,
+                decimal_digits,
+                radix,
+                nullable_val,
+                "",
+                default_value,
+                std::to_string(type_info.sql_type),
+                "",
+                char_octet,
+                std::to_string(ordinal),
+                nullable ? "YES" : "NO"
+            });
+            ordinal++;
+        }
+    }
+
+    setCatalogResult(std::move(cols), std::move(rows));
     return SQL_SUCCESS;
 }
 
-SQLRETURN OdbcStatement::primaryKeys(const SQLCHAR* /*catalog*/, SQLSMALLINT /*catalog_len*/,
-                                      const SQLCHAR* /*schema*/, SQLSMALLINT /*schema_len*/,
-                                      const SQLCHAR* /*table*/, SQLSMALLINT /*table_len*/) {
+SQLRETURN OdbcStatement::primaryKeys(const SQLCHAR* catalog, SQLSMALLINT catalog_len,
+                                      const SQLCHAR* schema, SQLSMALLINT schema_len,
+                                      const SQLCHAR* table, SQLSMALLINT table_len) {
     clearDiagnostics();
+
+    if (!conn_ || !conn_->isConnected()) {
+        setError("08003", 0, "Connection not open");
+        return SQL_ERROR;
+    }
+
+    std::string catalog_pattern = sqlCharToString(catalog, catalog_len);
+    std::string schema_pattern = sqlCharToString(schema, schema_len);
+    std::string table_pattern = sqlCharToString(table, table_len);
+    bool metadata_id = conn_->getMetadataId();
+
+    std::vector<ColumnMetadata> cols;
+    cols.push_back(makeCatalogColumn("TABLE_CAT", SQL_VARCHAR, DriverConfig::MAX_CATALOG_NAME_LEN));
+    cols.push_back(makeCatalogColumn("TABLE_SCHEM", SQL_VARCHAR, DriverConfig::MAX_SCHEMA_NAME_LEN));
+    cols.push_back(makeCatalogColumn("TABLE_NAME", SQL_VARCHAR, DriverConfig::MAX_TABLE_NAME_LEN));
+    cols.push_back(makeCatalogColumn("COLUMN_NAME", SQL_VARCHAR, DriverConfig::MAX_COLUMN_NAME_LEN));
+    cols.push_back(makeCatalogColumn("KEY_SEQ", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("PK_NAME", SQL_VARCHAR, 64));
+
+    const std::string& current_catalog = conn_->getCurrentDatabase();
+    const std::string& current_schema = conn_->getCurrentSchema();
+
+    if (!matchPattern(current_catalog, catalog_pattern, metadata_id) ||
+        !matchPattern(current_schema, schema_pattern, metadata_id)) {
+        setCatalogResult(std::move(cols), {});
+        return SQL_SUCCESS;
+    }
+
+    std::vector<std::vector<std::string>> show_tables;
+    std::vector<ColumnMetadata> show_table_cols;
+    SQLLEN rows_affected = 0;
+    auto status = conn_->executeSQL("SHOW TABLES", show_tables, show_table_cols, rows_affected);
+    if (status != SQL_SUCCESS) {
+        setError("HY000", 0, "Failed to query tables");
+        return status;
+    }
+
+    std::vector<std::vector<std::string>> rows;
+    for (const auto& table_row : show_tables) {
+        if (table_row.empty()) {
+            continue;
+        }
+        const std::string& table_name = table_row[0];
+        if (!matchPattern(table_name, table_pattern, metadata_id)) {
+            continue;
+        }
+
+        std::vector<std::vector<std::string>> show_columns;
+        std::vector<ColumnMetadata> show_column_cols;
+        status = conn_->executeSQL("SHOW COLUMNS FROM " + table_name, show_columns,
+                                   show_column_cols, rows_affected);
+        if (status != SQL_SUCCESS) {
+            setError("HY000", 0, "Failed to query columns");
+            return status;
+        }
+
+        SQLSMALLINT key_seq = 1;
+        for (const auto& col_row : show_columns) {
+            if (col_row.size() < 4) {
+                continue;
+            }
+            std::string key_flag = toUpper(trimString(col_row[3]));
+            if (key_flag != "PRI") {
+                continue;
+            }
+            rows.push_back({
+                current_catalog,
+                current_schema,
+                table_name,
+                col_row[0],
+                std::to_string(key_seq),
+                "PRIMARY"
+            });
+            key_seq++;
+        }
+    }
+
+    setCatalogResult(std::move(cols), std::move(rows));
     return SQL_SUCCESS;
 }
 
-SQLRETURN OdbcStatement::foreignKeys(const SQLCHAR* /*pk_catalog*/, SQLSMALLINT /*pk_catalog_len*/,
-                                      const SQLCHAR* /*pk_schema*/, SQLSMALLINT /*pk_schema_len*/,
-                                      const SQLCHAR* /*pk_table*/, SQLSMALLINT /*pk_table_len*/,
-                                      const SQLCHAR* /*fk_catalog*/, SQLSMALLINT /*fk_catalog_len*/,
-                                      const SQLCHAR* /*fk_schema*/, SQLSMALLINT /*fk_schema_len*/,
-                                      const SQLCHAR* /*fk_table*/, SQLSMALLINT /*fk_table_len*/) {
+SQLRETURN OdbcStatement::foreignKeys(const SQLCHAR* pk_catalog, SQLSMALLINT pk_catalog_len,
+                                      const SQLCHAR* pk_schema, SQLSMALLINT pk_schema_len,
+                                      const SQLCHAR* pk_table, SQLSMALLINT pk_table_len,
+                                      const SQLCHAR* fk_catalog, SQLSMALLINT fk_catalog_len,
+                                      const SQLCHAR* fk_schema, SQLSMALLINT fk_schema_len,
+                                      const SQLCHAR* fk_table, SQLSMALLINT fk_table_len) {
     clearDiagnostics();
+
+    if (!conn_ || !conn_->isConnected()) {
+        setError("08003", 0, "Connection not open");
+        return SQL_ERROR;
+    }
+
+    std::string pk_catalog_pattern = sqlCharToString(pk_catalog, pk_catalog_len);
+    std::string pk_schema_pattern = sqlCharToString(pk_schema, pk_schema_len);
+    std::string pk_table_pattern = sqlCharToString(pk_table, pk_table_len);
+    std::string fk_catalog_pattern = sqlCharToString(fk_catalog, fk_catalog_len);
+    std::string fk_schema_pattern = sqlCharToString(fk_schema, fk_schema_len);
+    std::string fk_table_pattern = sqlCharToString(fk_table, fk_table_len);
+    bool metadata_id = conn_->getMetadataId();
+
+    std::vector<ColumnMetadata> cols;
+    cols.push_back(makeCatalogColumn("PKTABLE_CAT", SQL_VARCHAR, DriverConfig::MAX_CATALOG_NAME_LEN));
+    cols.push_back(makeCatalogColumn("PKTABLE_SCHEM", SQL_VARCHAR, DriverConfig::MAX_SCHEMA_NAME_LEN));
+    cols.push_back(makeCatalogColumn("PKTABLE_NAME", SQL_VARCHAR, DriverConfig::MAX_TABLE_NAME_LEN));
+    cols.push_back(makeCatalogColumn("PKCOLUMN_NAME", SQL_VARCHAR, DriverConfig::MAX_COLUMN_NAME_LEN));
+    cols.push_back(makeCatalogColumn("FKTABLE_CAT", SQL_VARCHAR, DriverConfig::MAX_CATALOG_NAME_LEN));
+    cols.push_back(makeCatalogColumn("FKTABLE_SCHEM", SQL_VARCHAR, DriverConfig::MAX_SCHEMA_NAME_LEN));
+    cols.push_back(makeCatalogColumn("FKTABLE_NAME", SQL_VARCHAR, DriverConfig::MAX_TABLE_NAME_LEN));
+    cols.push_back(makeCatalogColumn("FKCOLUMN_NAME", SQL_VARCHAR, DriverConfig::MAX_COLUMN_NAME_LEN));
+    cols.push_back(makeCatalogColumn("KEY_SEQ", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("UPDATE_RULE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("DELETE_RULE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("FK_NAME", SQL_VARCHAR, 64));
+    cols.push_back(makeCatalogColumn("PK_NAME", SQL_VARCHAR, 64));
+    cols.push_back(makeCatalogColumn("DEFERRABILITY", SQL_SMALLINT));
+
+    const std::string& current_catalog = conn_->getCurrentDatabase();
+    const std::string& current_schema = conn_->getCurrentSchema();
+
+    if (!matchPattern(current_catalog, pk_catalog_pattern, metadata_id) ||
+        !matchPattern(current_catalog, fk_catalog_pattern, metadata_id)) {
+        setCatalogResult(std::move(cols), {});
+        return SQL_SUCCESS;
+    }
+
+    std::vector<std::vector<std::string>> schema_rows;
+    std::vector<ColumnMetadata> schema_cols;
+    std::vector<std::vector<std::string>> table_rows;
+    std::vector<ColumnMetadata> table_cols;
+    std::vector<std::vector<std::string>> fk_rows;
+    std::vector<ColumnMetadata> fk_cols;
+    SQLLEN rows_affected = 0;
+
+    SQLRETURN status = executeCatalogQuery(conn_, {
+        "SELECT schema_id, schema_name FROM sb_catalog.sb_schemas",
+        "SELECT schema_id, name FROM sb_catalog.sb_schemas",
+        "SELECT schema_id, schema_name FROM sb_schemas",
+        "SELECT schema_id, name FROM sb_schemas"
+    }, schema_rows, schema_cols, rows_affected);
+    if (status != SQL_SUCCESS) {
+        setError("HY000", 0, "Failed to query schemas");
+        return status;
+    }
+
+    status = executeCatalogQuery(conn_, {
+        "SELECT table_id, schema_id, table_name FROM sb_catalog.sb_tables",
+        "SELECT table_id, schema_id, name FROM sb_catalog.sb_tables",
+        "SELECT table_id, schema_id, table_name FROM sb_tables",
+        "SELECT table_id, schema_id, name FROM sb_tables"
+    }, table_rows, table_cols, rows_affected);
+    if (status != SQL_SUCCESS) {
+        setError("HY000", 0, "Failed to query tables");
+        return status;
+    }
+
+    status = executeCatalogQuery(conn_, {
+        "SELECT fk_name, child_table_id, parent_table_id, child_columns, parent_columns, on_update, on_delete, match_type, is_enabled "
+        "FROM sb_catalog.sb_foreign_keys",
+        "SELECT name, child_table_id, parent_table_id, child_columns, parent_columns, on_update, on_delete, match_type, is_enabled "
+        "FROM sb_catalog.sb_foreign_keys",
+        "SELECT fk_name, child_table_id, parent_table_id, child_columns, parent_columns, on_update, on_delete, match_type, is_enabled "
+        "FROM sb_foreign_keys",
+        "SELECT name, child_table_id, parent_table_id, child_columns, parent_columns, on_update, on_delete, match_type, is_enabled "
+        "FROM sb_foreign_keys"
+    }, fk_rows, fk_cols, rows_affected);
+    if (status != SQL_SUCCESS) {
+        setError("HY000", 0, "Failed to query foreign keys");
+        return status;
+    }
+
+    struct TableLookup {
+        std::string name;
+        std::string schema_id;
+    };
+
+    std::unordered_map<std::string, std::string> schema_by_id;
+    schema_by_id.reserve(schema_rows.size());
+    for (const auto& row : schema_rows) {
+        if (row.size() < 2) {
+            continue;
+        }
+        schema_by_id[row[0]] = row[1];
+    }
+
+    std::unordered_map<std::string, TableLookup> table_by_id;
+    table_by_id.reserve(table_rows.size());
+    for (const auto& row : table_rows) {
+        if (row.size() < 3) {
+            continue;
+        }
+        table_by_id[row[0]] = {row[2], row[1]};
+    }
+
+    std::vector<std::vector<std::string>> rows;
+    for (const auto& fk_row : fk_rows) {
+        if (fk_row.size() < 9) {
+            continue;
+        }
+
+        const std::string& fk_name = fk_row[0];
+        const std::string& child_table_id = fk_row[1];
+        const std::string& parent_table_id = fk_row[2];
+        const std::string& child_columns = fk_row[3];
+        const std::string& parent_columns = fk_row[4];
+        const std::string& on_update = fk_row[5];
+        const std::string& on_delete = fk_row[6];
+
+        auto child_it = table_by_id.find(child_table_id);
+        auto parent_it = table_by_id.find(parent_table_id);
+        if (child_it == table_by_id.end() || parent_it == table_by_id.end()) {
+            continue;
+        }
+
+        const std::string& fk_table_name = child_it->second.name;
+        const std::string& pk_table_name = parent_it->second.name;
+        std::string fk_schema_name = current_schema;
+        std::string pk_schema_name = current_schema;
+
+        auto fk_schema_it = schema_by_id.find(child_it->second.schema_id);
+        if (fk_schema_it != schema_by_id.end()) {
+            fk_schema_name = fk_schema_it->second;
+        }
+
+        auto pk_schema_it = schema_by_id.find(parent_it->second.schema_id);
+        if (pk_schema_it != schema_by_id.end()) {
+            pk_schema_name = pk_schema_it->second;
+        }
+
+        if (!matchPattern(pk_schema_name, pk_schema_pattern, metadata_id) ||
+            !matchPattern(fk_schema_name, fk_schema_pattern, metadata_id)) {
+            continue;
+        }
+        if (!matchPattern(pk_table_name, pk_table_pattern, metadata_id) ||
+            !matchPattern(fk_table_name, fk_table_pattern, metadata_id)) {
+            continue;
+        }
+
+        std::vector<std::string> fk_column_names = splitCsvColumns(child_columns);
+        std::vector<std::string> pk_column_names = splitCsvColumns(parent_columns);
+        size_t count = std::min(fk_column_names.size(), pk_column_names.size());
+        SQLSMALLINT update_rule = mapFkRuleToOdbc(on_update);
+        SQLSMALLINT delete_rule = mapFkRuleToOdbc(on_delete);
+
+        for (size_t i = 0; i < count; ++i) {
+            rows.push_back({
+                current_catalog,
+                pk_schema_name,
+                pk_table_name,
+                pk_column_names[i],
+                current_catalog,
+                fk_schema_name,
+                fk_table_name,
+                fk_column_names[i],
+                std::to_string(static_cast<int>(i + 1)),
+                std::to_string(update_rule),
+                std::to_string(delete_rule),
+                fk_name,
+                "PRIMARY",
+                std::to_string(kOdbcNotDeferrable)
+            });
+        }
+    }
+
+    setCatalogResult(std::move(cols), std::move(rows));
     return SQL_SUCCESS;
 }
 
-SQLRETURN OdbcStatement::statistics(const SQLCHAR* /*catalog*/, SQLSMALLINT /*catalog_len*/,
-                                     const SQLCHAR* /*schema*/, SQLSMALLINT /*schema_len*/,
-                                     const SQLCHAR* /*table*/, SQLSMALLINT /*table_len*/,
-                                     SQLUSMALLINT /*unique*/, SQLUSMALLINT /*reserved*/) {
+SQLRETURN OdbcStatement::statistics(const SQLCHAR* catalog, SQLSMALLINT catalog_len,
+                                     const SQLCHAR* schema, SQLSMALLINT schema_len,
+                                     const SQLCHAR* table, SQLSMALLINT table_len,
+                                     SQLUSMALLINT unique, SQLUSMALLINT reserved) {
     clearDiagnostics();
+
+    if (!conn_ || !conn_->isConnected()) {
+        setError("08003", 0, "Connection not open");
+        return SQL_ERROR;
+    }
+
+    std::string catalog_pattern = sqlCharToString(catalog, catalog_len);
+    std::string schema_pattern = sqlCharToString(schema, schema_len);
+    std::string table_pattern = sqlCharToString(table, table_len);
+    bool metadata_id = conn_->getMetadataId();
+
+    std::vector<ColumnMetadata> cols;
+    cols.push_back(makeCatalogColumn("TABLE_CAT", SQL_VARCHAR, DriverConfig::MAX_CATALOG_NAME_LEN));
+    cols.push_back(makeCatalogColumn("TABLE_SCHEM", SQL_VARCHAR, DriverConfig::MAX_SCHEMA_NAME_LEN));
+    cols.push_back(makeCatalogColumn("TABLE_NAME", SQL_VARCHAR, DriverConfig::MAX_TABLE_NAME_LEN));
+    cols.push_back(makeCatalogColumn("NON_UNIQUE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("INDEX_QUALIFIER", SQL_VARCHAR, DriverConfig::MAX_SCHEMA_NAME_LEN));
+    cols.push_back(makeCatalogColumn("INDEX_NAME", SQL_VARCHAR, 64));
+    cols.push_back(makeCatalogColumn("TYPE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("ORDINAL_POSITION", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("COLUMN_NAME", SQL_VARCHAR, DriverConfig::MAX_COLUMN_NAME_LEN));
+    cols.push_back(makeCatalogColumn("ASC_OR_DESC", SQL_CHAR, 1));
+    cols.push_back(makeCatalogColumn("CARDINALITY", SQL_INTEGER));
+    cols.push_back(makeCatalogColumn("PAGES", SQL_INTEGER));
+    cols.push_back(makeCatalogColumn("FILTER_CONDITION", SQL_VARCHAR, 255));
+
+    const std::string& current_catalog = conn_->getCurrentDatabase();
+    const std::string& current_schema = conn_->getCurrentSchema();
+
+    if (!matchPattern(current_catalog, catalog_pattern, metadata_id) ||
+        !matchPattern(current_schema, schema_pattern, metadata_id)) {
+        setCatalogResult(std::move(cols), {});
+        return SQL_SUCCESS;
+    }
+
+    std::vector<std::vector<std::string>> show_tables;
+    std::vector<ColumnMetadata> show_table_cols;
+    SQLLEN rows_affected = 0;
+    auto status = conn_->executeSQL("SHOW TABLES", show_tables, show_table_cols, rows_affected);
+    if (status != SQL_SUCCESS) {
+        setError("HY000", 0, "Failed to query tables");
+        return status;
+    }
+
+    std::vector<std::vector<std::string>> rows;
+    for (const auto& table_row : show_tables) {
+        if (table_row.empty()) {
+            continue;
+        }
+        const std::string& table_name = table_row[0];
+        if (!matchPattern(table_name, table_pattern, metadata_id)) {
+            continue;
+        }
+
+        std::vector<std::vector<std::string>> show_indexes;
+        std::vector<ColumnMetadata> show_index_cols;
+        status = conn_->executeSQL("SHOW INDEXES FROM " + table_name, show_indexes,
+                                   show_index_cols, rows_affected);
+        if (status != SQL_SUCCESS) {
+            setError("HY000", 0, "Failed to query indexes");
+            return status;
+        }
+
+        std::unordered_map<std::string, SQLSMALLINT> ordinal_map;
+        for (const auto& idx_row : show_indexes) {
+            if (idx_row.size() < 4) {
+                continue;
+            }
+
+            const std::string& non_unique = idx_row[1];
+            const std::string& index_name = idx_row[2];
+            const std::string& column_name = idx_row[3];
+
+            (void)unique;
+            (void)reserved;
+
+            SQLSMALLINT ordinal = ++ordinal_map[index_name];
+            rows.push_back({
+                current_catalog,
+                current_schema,
+                table_name,
+                non_unique,
+                "",
+                index_name,
+                "3",
+                std::to_string(ordinal),
+                column_name,
+                "",
+                "",
+                "",
+                ""
+            });
+        }
+    }
+
+    setCatalogResult(std::move(cols), std::move(rows));
     return SQL_SUCCESS;
 }
 
 SQLRETURN OdbcStatement::specialColumns(SQLUSMALLINT /*identifier_type*/,
-                                         const SQLCHAR* /*catalog*/, SQLSMALLINT /*catalog_len*/,
-                                         const SQLCHAR* /*schema*/, SQLSMALLINT /*schema_len*/,
-                                         const SQLCHAR* /*table*/, SQLSMALLINT /*table_len*/,
+                                         const SQLCHAR* catalog, SQLSMALLINT catalog_len,
+                                         const SQLCHAR* schema, SQLSMALLINT schema_len,
+                                         const SQLCHAR* table, SQLSMALLINT table_len,
                                          SQLUSMALLINT /*scope*/, SQLUSMALLINT /*nullable*/) {
     clearDiagnostics();
+
+    if (!conn_ || !conn_->isConnected()) {
+        setError("08003", 0, "Connection not open");
+        return SQL_ERROR;
+    }
+
+    std::string catalog_pattern = sqlCharToString(catalog, catalog_len);
+    std::string schema_pattern = sqlCharToString(schema, schema_len);
+    std::string table_pattern = sqlCharToString(table, table_len);
+    bool metadata_id = conn_->getMetadataId();
+
+    std::vector<ColumnMetadata> cols;
+    cols.push_back(makeCatalogColumn("SCOPE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("COLUMN_NAME", SQL_VARCHAR, DriverConfig::MAX_COLUMN_NAME_LEN));
+    cols.push_back(makeCatalogColumn("DATA_TYPE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("TYPE_NAME", SQL_VARCHAR, 64));
+    cols.push_back(makeCatalogColumn("COLUMN_SIZE", SQL_INTEGER));
+    cols.push_back(makeCatalogColumn("BUFFER_LENGTH", SQL_INTEGER));
+    cols.push_back(makeCatalogColumn("DECIMAL_DIGITS", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("PSEUDO_COLUMN", SQL_SMALLINT));
+
+    const std::string& current_catalog = conn_->getCurrentDatabase();
+    const std::string& current_schema = conn_->getCurrentSchema();
+
+    if (!matchPattern(current_catalog, catalog_pattern, metadata_id) ||
+        !matchPattern(current_schema, schema_pattern, metadata_id)) {
+        setCatalogResult(std::move(cols), {});
+        return SQL_SUCCESS;
+    }
+
+    std::vector<std::vector<std::string>> show_tables;
+    std::vector<ColumnMetadata> show_table_cols;
+    SQLLEN rows_affected = 0;
+    auto status = conn_->executeSQL("SHOW TABLES", show_tables, show_table_cols, rows_affected);
+    if (status != SQL_SUCCESS) {
+        setError("HY000", 0, "Failed to query tables");
+        return status;
+    }
+
+    std::vector<std::vector<std::string>> rows;
+    for (const auto& table_row : show_tables) {
+        if (table_row.empty()) {
+            continue;
+        }
+        const std::string& table_name = table_row[0];
+        if (!matchPattern(table_name, table_pattern, metadata_id)) {
+            continue;
+        }
+
+        std::vector<std::vector<std::string>> show_columns;
+        std::vector<ColumnMetadata> show_column_cols;
+        status = conn_->executeSQL("SHOW COLUMNS FROM " + table_name, show_columns,
+                                   show_column_cols, rows_affected);
+        if (status != SQL_SUCCESS) {
+            setError("HY000", 0, "Failed to query columns");
+            return status;
+        }
+
+        for (const auto& col_row : show_columns) {
+            if (col_row.size() < 4) {
+                continue;
+            }
+            std::string key_flag = toUpper(trimString(col_row[3]));
+            if (key_flag != "PRI") {
+                continue;
+            }
+            ParsedTypeInfo type_info = parseTypeString(col_row[1]);
+            std::string column_size = type_info.column_size > 0 ? std::to_string(type_info.column_size) : "";
+            std::string decimal_digits = type_info.decimal_digits > 0 ? std::to_string(type_info.decimal_digits) : "";
+
+            rows.push_back({
+                "2",
+                col_row[0],
+                std::to_string(type_info.sql_type),
+                type_info.type_name,
+                column_size,
+                column_size,
+                decimal_digits,
+                "1"
+            });
+        }
+    }
+
+    setCatalogResult(std::move(cols), std::move(rows));
     return SQL_SUCCESS;
 }
 
-SQLRETURN OdbcStatement::procedures(const SQLCHAR* /*catalog*/, SQLSMALLINT /*catalog_len*/,
-                                     const SQLCHAR* /*schema*/, SQLSMALLINT /*schema_len*/,
-                                     const SQLCHAR* /*proc*/, SQLSMALLINT /*proc_len*/) {
+SQLRETURN OdbcStatement::procedures(const SQLCHAR* catalog, SQLSMALLINT catalog_len,
+                                     const SQLCHAR* schema, SQLSMALLINT schema_len,
+                                     const SQLCHAR* proc, SQLSMALLINT proc_len) {
     clearDiagnostics();
+
+    std::vector<ColumnMetadata> cols;
+    cols.push_back(makeCatalogColumn("PROCEDURE_CAT", SQL_VARCHAR, DriverConfig::MAX_CATALOG_NAME_LEN));
+    cols.push_back(makeCatalogColumn("PROCEDURE_SCHEM", SQL_VARCHAR, DriverConfig::MAX_SCHEMA_NAME_LEN));
+    cols.push_back(makeCatalogColumn("PROCEDURE_NAME", SQL_VARCHAR, 128));
+    cols.push_back(makeCatalogColumn("NUM_INPUT_PARAMS", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("NUM_OUTPUT_PARAMS", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("NUM_RESULT_SETS", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("REMARKS", SQL_VARCHAR, 255));
+    cols.push_back(makeCatalogColumn("PROCEDURE_TYPE", SQL_SMALLINT));
+
+    (void)catalog;
+    (void)catalog_len;
+    (void)schema;
+    (void)schema_len;
+    (void)proc;
+    (void)proc_len;
+
+    setCatalogResult(std::move(cols), {});
     return SQL_SUCCESS;
 }
 
-SQLRETURN OdbcStatement::procedureColumns(const SQLCHAR* /*catalog*/, SQLSMALLINT /*catalog_len*/,
-                                           const SQLCHAR* /*schema*/, SQLSMALLINT /*schema_len*/,
-                                           const SQLCHAR* /*proc*/, SQLSMALLINT /*proc_len*/,
-                                           const SQLCHAR* /*column*/, SQLSMALLINT /*column_len*/) {
+SQLRETURN OdbcStatement::procedureColumns(const SQLCHAR* catalog, SQLSMALLINT catalog_len,
+                                           const SQLCHAR* schema, SQLSMALLINT schema_len,
+                                           const SQLCHAR* proc, SQLSMALLINT proc_len,
+                                           const SQLCHAR* column, SQLSMALLINT column_len) {
     clearDiagnostics();
+
+    std::vector<ColumnMetadata> cols;
+    cols.push_back(makeCatalogColumn("PROCEDURE_CAT", SQL_VARCHAR, DriverConfig::MAX_CATALOG_NAME_LEN));
+    cols.push_back(makeCatalogColumn("PROCEDURE_SCHEM", SQL_VARCHAR, DriverConfig::MAX_SCHEMA_NAME_LEN));
+    cols.push_back(makeCatalogColumn("PROCEDURE_NAME", SQL_VARCHAR, 128));
+    cols.push_back(makeCatalogColumn("COLUMN_NAME", SQL_VARCHAR, DriverConfig::MAX_COLUMN_NAME_LEN));
+    cols.push_back(makeCatalogColumn("COLUMN_TYPE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("DATA_TYPE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("TYPE_NAME", SQL_VARCHAR, 64));
+    cols.push_back(makeCatalogColumn("COLUMN_SIZE", SQL_INTEGER));
+    cols.push_back(makeCatalogColumn("BUFFER_LENGTH", SQL_INTEGER));
+    cols.push_back(makeCatalogColumn("DECIMAL_DIGITS", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("NUM_PREC_RADIX", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("NULLABLE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("REMARKS", SQL_VARCHAR, 255));
+    cols.push_back(makeCatalogColumn("COLUMN_DEF", SQL_VARCHAR, 255));
+    cols.push_back(makeCatalogColumn("SQL_DATA_TYPE", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("SQL_DATETIME_SUB", SQL_SMALLINT));
+    cols.push_back(makeCatalogColumn("CHAR_OCTET_LENGTH", SQL_INTEGER));
+    cols.push_back(makeCatalogColumn("ORDINAL_POSITION", SQL_INTEGER));
+    cols.push_back(makeCatalogColumn("IS_NULLABLE", SQL_VARCHAR, 3));
+
+    (void)catalog;
+    (void)catalog_len;
+    (void)schema;
+    (void)schema_len;
+    (void)proc;
+    (void)proc_len;
+    (void)column;
+    (void)column_len;
+
+    setCatalogResult(std::move(cols), {});
     return SQL_SUCCESS;
 }
 
-SQLRETURN OdbcStatement::tablePrivileges(const SQLCHAR* /*catalog*/, SQLSMALLINT /*catalog_len*/,
-                                          const SQLCHAR* /*schema*/, SQLSMALLINT /*schema_len*/,
-                                          const SQLCHAR* /*table*/, SQLSMALLINT /*table_len*/) {
+SQLRETURN OdbcStatement::tablePrivileges(const SQLCHAR* catalog, SQLSMALLINT catalog_len,
+                                          const SQLCHAR* schema, SQLSMALLINT schema_len,
+                                          const SQLCHAR* table, SQLSMALLINT table_len) {
     clearDiagnostics();
+
+    std::vector<ColumnMetadata> cols;
+    cols.push_back(makeCatalogColumn("TABLE_CAT", SQL_VARCHAR, DriverConfig::MAX_CATALOG_NAME_LEN));
+    cols.push_back(makeCatalogColumn("TABLE_SCHEM", SQL_VARCHAR, DriverConfig::MAX_SCHEMA_NAME_LEN));
+    cols.push_back(makeCatalogColumn("TABLE_NAME", SQL_VARCHAR, DriverConfig::MAX_TABLE_NAME_LEN));
+    cols.push_back(makeCatalogColumn("GRANTOR", SQL_VARCHAR, 64));
+    cols.push_back(makeCatalogColumn("GRANTEE", SQL_VARCHAR, 64));
+    cols.push_back(makeCatalogColumn("PRIVILEGE", SQL_VARCHAR, 64));
+    cols.push_back(makeCatalogColumn("IS_GRANTABLE", SQL_VARCHAR, 3));
+
+    (void)catalog;
+    (void)catalog_len;
+    (void)schema;
+    (void)schema_len;
+    (void)table;
+    (void)table_len;
+
+    setCatalogResult(std::move(cols), {});
     return SQL_SUCCESS;
 }
 
-SQLRETURN OdbcStatement::columnPrivileges(const SQLCHAR* /*catalog*/, SQLSMALLINT /*catalog_len*/,
-                                           const SQLCHAR* /*schema*/, SQLSMALLINT /*schema_len*/,
-                                           const SQLCHAR* /*table*/, SQLSMALLINT /*table_len*/,
-                                           const SQLCHAR* /*column*/, SQLSMALLINT /*column_len*/) {
+SQLRETURN OdbcStatement::columnPrivileges(const SQLCHAR* catalog, SQLSMALLINT catalog_len,
+                                           const SQLCHAR* schema, SQLSMALLINT schema_len,
+                                           const SQLCHAR* table, SQLSMALLINT table_len,
+                                           const SQLCHAR* column, SQLSMALLINT column_len) {
     clearDiagnostics();
+
+    std::vector<ColumnMetadata> cols;
+    cols.push_back(makeCatalogColumn("TABLE_CAT", SQL_VARCHAR, DriverConfig::MAX_CATALOG_NAME_LEN));
+    cols.push_back(makeCatalogColumn("TABLE_SCHEM", SQL_VARCHAR, DriverConfig::MAX_SCHEMA_NAME_LEN));
+    cols.push_back(makeCatalogColumn("TABLE_NAME", SQL_VARCHAR, DriverConfig::MAX_TABLE_NAME_LEN));
+    cols.push_back(makeCatalogColumn("COLUMN_NAME", SQL_VARCHAR, DriverConfig::MAX_COLUMN_NAME_LEN));
+    cols.push_back(makeCatalogColumn("GRANTOR", SQL_VARCHAR, 64));
+    cols.push_back(makeCatalogColumn("GRANTEE", SQL_VARCHAR, 64));
+    cols.push_back(makeCatalogColumn("PRIVILEGE", SQL_VARCHAR, 64));
+    cols.push_back(makeCatalogColumn("IS_GRANTABLE", SQL_VARCHAR, 3));
+
+    (void)catalog;
+    (void)catalog_len;
+    (void)schema;
+    (void)schema_len;
+    (void)table;
+    (void)table_len;
+    (void)column;
+    (void)column_len;
+
+    setCatalogResult(std::move(cols), {});
     return SQL_SUCCESS;
 }
 

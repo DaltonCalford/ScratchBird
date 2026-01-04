@@ -2,8 +2,8 @@
 
 **Date:** 2025-12-26
 **Purpose:** Complete analysis of existing ODBC implementation vs ODBC 3.x specification
-**Goal:** Full ODBC 3.x compliant driver for ScratchBird using libscratchbird.so/dll
-**Wire Protocol:** ScratchBird Native Wire Protocol (Port 3092, TLS 1.3)
+**Goal:** Full ODBC 3.x compliant driver for ScratchBird using `scratchbird_client` or a shared lib (TBD)
+**Wire Protocol:** Native protocol target **TBD** (local IPC v1.0 vs network/TLS v1.1)
 
 ---
 
@@ -17,6 +17,19 @@
 
 **Key Finding:**
 The codebase has substantial ODBC infrastructure already in place. Plan 05 should focus on **completing** the ODBC driver implementation, not creating it from scratch.
+
+**Repo Reality Check:**
+- `scratchbird_client` exists and speaks the **local IPC protocol** (v1.0, 12-byte header, magic "SBDB").
+- No client implementation for the **network/TLS spec** (v1.1, 40-byte header, magic "SBWP") is present.
+
+**Alpha Decisions (Confirmed):**
+- ODBC uses **libscratchbird** over the **network listener → parser → engine** path (no direct engine access).
+- Autocommit: commit after every statement when ON; always in a transaction.
+- Conformance level: Core/Basic only.
+- Scope: ScratchBird platform only (no emulation drivers).
+- Complex types: Hybrid mapping.
+- Catalog scope: Full 10 catalog functions.
+- Federation visibility: Current database only.
 
 ---
 
@@ -150,40 +163,38 @@ The codebase has substantial ODBC infrastructure already in place. Plan 05 shoul
 
 ## 3. WIRE PROTOCOL INTEGRATION REQUIREMENTS
 
-### 3.1 ScratchBird Native Wire Protocol ✅ SPECIFIED
+### 3.1 ScratchBird Native Wire Protocol: Spec vs Implementation
 
-The ScratchBird Native Wire Protocol specification (scratchbird_native_wire_protocol.md) provides complete details:
+**Spec (docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md):**
+- 40-byte header, magic "SBWP", protocol v1.1
+- TLS 1.3 mandatory
+- STARTUP/AUTH/READY handshake and extended query flow
 
-| Component | Status | Details |
-|-----------|--------|---------|
-| TLS 1.3 Support | ✅ REQUIRED | Mandatory encryption |
-| Message Format | ✅ SPECIFIED | 40-byte header + payload |
-| Authentication | ✅ SPECIFIED | SCRAM-SHA-256, Certificate, LDAP, etc. |
-| Query Protocol | ✅ SPECIFIED | Simple & extended query |
-| Prepared Statements | ✅ SPECIFIED | PARSE, BIND, EXECUTE |
-| Result Protocol | ✅ SPECIFIED | ROW_DESCRIPTION, DATA_ROW, COMMAND_COMPLETE |
-| Transaction Protocol | ✅ SPECIFIED | BEGIN, COMMIT, ROLLBACK, SAVEPOINT |
-| Type Serialization | ✅ SPECIFIED | All 86 ScratchBird types |
-| Error Handling | ✅ SPECIFIED | SQLSTATE codes + SB* extensions |
-| Compression | ✅ SPECIFIED | zstd optional |
-| Streaming | ✅ SPECIFIED | Backpressure control |
-| Federation | ✅ SPECIFIED | Cross-database queries |
+**Implementation (current repo):**
+- 12-byte header, magic "SBDB", protocol v1.0 (`include/scratchbird/protocol/wire_protocol.h`)
+- IPC transport only (Unix socket / named pipe / TCP localhost)
+- `scratchbird_client` implements connect/auth/query/txn over IPC
 
-### 3.2 ODBC → Wire Protocol Mapping
+**Decision:** ODBC must target either the IPC protocol (short path) or the network/TLS spec (long path).
 
-| ODBC Function | Wire Protocol Message | Status |
-|---------------|----------------------|--------|
-| SQLConnect | STARTUP → AUTH → READY | ⚠️ NEEDS IMPLEMENTATION |
-| SQLPrepare | PARSE | ⚠️ NEEDS IMPLEMENTATION |
-| SQLBindParameter | (client-side, used in BIND) | ✅ READY |
-| SQLExecute | BIND → EXECUTE → SYNC | ⚠️ NEEDS IMPLEMENTATION |
-| SQLExecDirect | QUERY | ⚠️ NEEDS IMPLEMENTATION |
-| SQLFetch | (read DATA_ROW) | ⚠️ NEEDS IMPLEMENTATION |
-| SQLEndTran(COMMIT) | TXN_COMMIT | ⚠️ NEEDS IMPLEMENTATION |
-| SQLEndTran(ROLLBACK) | TXN_ROLLBACK | ⚠️ NEEDS IMPLEMENTATION |
-| SQLCancel | CANCEL | ⚠️ NEEDS IMPLEMENTATION |
+### 3.2 ODBC → Wire Protocol Mapping (Target-Dependent)
 
-**Key Gap:** The ODBC functions exist but they don't yet communicate with the wire protocol.
+**IPC v1.0 (current client path):**
+- SQLConnect → CONNECT_REQUEST → AUTH_REQUEST → CONNECT_RESPONSE/AUTH_RESPONSE
+- SQLExecDirect → QUERY
+- SQLPrepare → client-side parameter substitution (no server PREPARE)
+- SQLExecute → QUERY after substitution
+- SQLEndTran → COMMIT / ROLLBACK
+
+**Network/TLS v1.1 (spec):**
+- SQLConnect → STARTUP → AUTH → READY
+- SQLPrepare → PARSE
+- SQLExecute → BIND → EXECUTE → SYNC
+- SQLExecDirect → QUERY
+- SQLFetch → DATA_ROW stream
+- SQLEndTran → TXN_COMMIT / TXN_ROLLBACK
+
+**Key Gap:** ODBC functions exist but do not yet communicate with either protocol path.
 
 ---
 
@@ -191,10 +202,14 @@ The ScratchBird Native Wire Protocol specification (scratchbird_native_wire_prot
 
 ### 4.1 Critical Gaps (Blockers)
 
-#### Gap 1: Wire Protocol Client Library ❌
-**Problem:** ODBC driver needs a C++ client library for the ScratchBird wire protocol.
+#### Gap 1: Wire Protocol Client Library ⚠️
+**Problem:** ODBC driver needs a client library aligned with the chosen protocol target.
 
-**Requirements:**
+**Current Status:**
+- ✅ `scratchbird_client` exists (IPC v1.0, 12-byte header, no TLS)
+- ❌ No network/TLS client for spec v1.1
+
+**Requirements (if network/TLS target):**
 - TLS 1.3 connection management
 - Message encoding/decoding (40-byte headers)
 - STARTUP/AUTH/READY handshake
@@ -204,14 +219,9 @@ The ScratchBird Native Wire Protocol specification (scratchbird_native_wire_prot
 - Error message parsing
 - Type serialization for all 86 types
 
-**Status:** ❌ NOT FOUND - Need to verify if libscratchbird_client exists
+**Decision Needed:** IPC-only (short path) vs network/TLS (long path).
 
-**Solution:** Either:
-- A) Use existing libscratchbird.so (if it includes client functionality)
-- B) Create libscratchbird_client.so with wire protocol implementation
-- C) Embed wire protocol client directly in ODBC driver
-
-**Estimated Effort:** 40-60 hours if creating from scratch
+**Estimated Effort:** 8-12 hours (IPC integration) or 40-60 hours (network/TLS client)
 
 #### Gap 2: Catalog Query Implementation ❌
 **Problem:** All 10 catalog functions are stubs.

@@ -15,15 +15,25 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 - ✅ **5,627 lines of ODBC code** already implemented across 5 files
 - ✅ **75% of core ODBC functions** have skeleton or partial implementations (39/52)
 - ✅ **Complete wire protocol specification** exists
-- ⚠️ **Critical gaps identified**: Wire protocol client, catalog functions, type conversion
+- ✅ **Local IPC client library exists** (`scratchbird_client`, Protocol v1.0 over IPC/TCP localhost)
+- ⚠️ **Critical gaps identified**: Wire protocol target mismatch, catalog functions, type conversion
 - ⚠️ **Decisions needed**: See "Open Questions" section below
 
 **Scope:**
 - ODBC 3.x full specification compliance (NOT a subset)
-- Native ScratchBird wire protocol (port 3092, TLS 1.3 mandatory)
-- Uses libscratchbird.so/dll only
+- Native ScratchBird wire protocol over the **network listener** (parser bridge required; engine never direct)
+- Uses **libscratchbird** client APIs (network-only or full engine library, but ODBC uses network path)
 - Support for all 86 ScratchBird native types
 - Full catalog function support (SQLTables, SQLColumns, etc.)
+
+**Alpha Decisions (Confirmed):**
+- ODBC uses **libscratchbird** via **network listener → parser → engine** (no direct engine access; embedded mode not exposed).
+- Autocommit semantics: ScratchBird is always in a transaction; **autocommit commits after every statement** and immediately starts a new transaction.
+- ODBC conformance level target for Alpha: **Core/Basic** only.
+- Driver scope: **ScratchBird platform only** (no emulation drivers).
+- Complex type mapping: **Hybrid** (text for JSON/XML/ARRAY/RECORD, binary for GEOMETRY/VECTOR).
+- Catalog scope: **All 10 catalog functions**.
+- Federation visibility: **Current database only** (Alpha).
 
 ---
 
@@ -44,6 +54,12 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 - **Type System:** All 86 ScratchBird types defined with serialization
 - **Attachment Multiplexing:** Multiple logical attachments per TCP connection
 - **Transaction Support:** Always-in-transaction model with txn_id in header
+
+**Repo Reality Check (Implementation Today):**
+- **Implemented protocol:** `include/scratchbird/protocol/wire_protocol.h` uses a **12-byte header** with magic **"SBDB"**, version **1.0**.
+- **Transport:** **IPC** (Unix socket / named pipe / TCP localhost) via `scratchbird::server::IPCClient`.
+- **Client library:** `scratchbird_client` (static) implements connect/auth/query/txn over IPC (no TLS).
+- **Mismatch:** Spec requires **v1.1** with **40-byte header** and **TLS 1.3**; current code does **not** implement that wire format or TLS.
 
 ### ODBC Implementation (Partial) ⚠️
 
@@ -84,25 +100,17 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 
 ## Critical Gaps Identified
 
-### Gap 1: Wire Protocol Client Library ⚠️ NEEDS VERIFICATION
+### Gap 1: Wire Protocol Client Library ⚠️
 
-**Status:** UNKNOWN - Need to verify libscratchbird.so/dll capabilities
+**Status:** Local IPC client exists; **network/TLS client is missing**
 
-**Questions:**
-1. Does libscratchbird.so/dll include a **client-side wire protocol implementation**?
-2. Does it provide C API functions for:
-   - Connection establishment (with TLS 1.3)
-   - Authentication (SCRAM-SHA-256, etc.)
-   - Simple query execution
-   - Extended query protocol (PARSE/BIND/EXECUTE)
-   - Result set retrieval
-   - Transaction management
-   - Error handling
+**Requirement (Alpha):**
+ODBC must connect via **network listener → parser → engine** using libscratchbird client APIs.
 
-**If YES:** Estimate 8-12 hours integration work
-**If NO:** Estimate 40-60 hours to implement client library
+**Implication:**
+We need a **network/TLS-capable libscratchbird client** aligned with the native wire protocol spec; current repo only has IPC client plumbing.
 
-**Decision Required:** User must confirm libscratchbird capabilities
+**Estimated Effort:** 40-60 hours to implement or complete the network client path
 
 ---
 
@@ -165,6 +173,49 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 **Estimated Effort:** 15-20 hours
 
 **Decision Required:** How should complex ScratchBird types be exposed via ODBC?
+
+---
+
+### Alpha Type Mapping (ODBC-Supported Types)
+
+ODBC types map to ScratchBird native types as follows (Alpha baseline):
+
+**Numeric**
+- `SQL_TINYINT` → `INT8` (or `UINT8` when column is unsigned)
+- `SQL_SMALLINT` → `INT16` (or `UINT16`)
+- `SQL_INTEGER` → `INT32` (or `UINT32`)
+- `SQL_BIGINT` → `INT64` (or `UINT64`)
+- `SQL_BIT` → `BOOLEAN`
+- `SQL_REAL` → `FLOAT32`
+- `SQL_FLOAT`, `SQL_DOUBLE` → `FLOAT64`
+- `SQL_DECIMAL`, `SQL_NUMERIC` → `DECIMAL64/128/256` (by precision/scale)
+
+**Text / Unicode**
+- `SQL_CHAR` → `CHAR`
+- `SQL_VARCHAR` → `VARCHAR`
+- `SQL_LONGVARCHAR` → `TEXT`
+- `SQL_WCHAR` → `NCHAR` (or UTF-8 `TEXT` with conversion)
+- `SQL_WVARCHAR` → `NVARCHAR` (or UTF-8 `TEXT` with conversion)
+- `SQL_WLONGVARCHAR` → `NTEXT` (or UTF-8 `TEXT` with conversion)
+
+**Binary**
+- `SQL_BINARY` → `BINARY`
+- `SQL_VARBINARY` → `VARBINARY`
+- `SQL_LONGVARBINARY` → `BLOB` / `BYTEA`
+
+**Temporal**
+- `SQL_DATE` / `SQL_TYPE_DATE` → `DATE`
+- `SQL_TIME` / `SQL_TYPE_TIME` → `TIME`
+- `SQL_TIMESTAMP` / `SQL_TYPE_TIMESTAMP` → `TIMESTAMP`
+- `SQL_INTERVAL_*` → `INTERVAL` (fallback to text if not supported)
+
+**Other**
+- `SQL_GUID` → `UUID`
+
+**ScratchBird Types without direct ODBC equivalents (Alpha fallback)**
+- `JSON`, `XML`, `INET`, `CIDR`, `MACADDR`, `TSVECTOR`, `TSQUERY`, `RANGE` → `SQL_LONGVARCHAR` (text)
+- `GEOMETRY` → `SQL_LONGVARBINARY` (WKB), optional text fallback
+- `ARRAY`, `COMPOSITE`, `RECORD`, `VARIANT`, `SET`, `ENUM`, `VECTOR` → `SQL_LONGVARCHAR` (JSON/text) or `SQL_LONGVARBINARY` (binary) based on chosen complex-type policy
 
 ---
 
@@ -232,138 +283,20 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 
 ---
 
-## Open Questions Requiring Decisions
+## Decisions (Resolved for Alpha)
 
-### Question 1: libscratchbird.so/dll Capabilities 🔴 CRITICAL
-
-**Question:** Does libscratchbird.so/dll include a client-side wire protocol implementation with C API?
-
-**Why Critical:** This determines whether we need 8 hours (integration) or 60 hours (implement from scratch)
-
-**User Must Provide:**
-- Confirmation of libscratchbird capabilities
-- API documentation if it exists
-- Or confirmation we need to implement client library
+- **libscratchbird usage:** ODBC connects via **network listener → parser → engine** only; embedded mode not exposed.
+- **Complex types:** Hybrid mapping (text for JSON/XML/ARRAY/RECORD, binary for GEOMETRY/VECTOR).
+- **Catalog scope:** All 10 catalog functions implemented.
+- **Federation visibility:** Current database only.
 
 ---
 
-### Question 2: Complex Type Mapping Strategy
+## Alpha Defaults (Confirmed)
 
-**Question:** How should ScratchBird-specific types be exposed via ODBC?
-
-**Specific Types:**
-- **RECORD**: JSON string? SQL_C_CHAR? Custom binary format?
-- **VARIANT**: Tagged JSON? SQL_C_BINARY with type prefix?
-- **ARRAY**: JSON array? Delimited string? Binary?
-- **GEOMETRY**: WKB (Well-Known Binary)? WKT (Well-Known Text)? GeoJSON?
-- **JSON/XML**: SQL_C_CHAR with content? SQL_WCHAR for XML?
-- **ENUM/SET**: String representation? Integer codes? Both?
-
-**Options:**
-- **A:** Use SQL_C_CHAR (string) for all complex types with JSON/text serialization
-- **B:** Use SQL_C_BINARY for structured types, SQL_C_CHAR for text-like types
-- **C:** Define custom ODBC type codes (SQL_SB_RECORD, etc.) - non-standard but precise
-
-**Recommendation Needed:** User decision on type mapping philosophy
-
----
-
-### Question 3: Autocommit Mapping Strategy
-
-**Question:** How should ODBC autocommit mode interact with always-in-transaction model?
-
-**Options:**
-- **A:** Autocommit ON → Issue COMMIT after every statement execution
-  - Pro: Matches ODBC semantics exactly
-  - Con: Performance overhead for every statement
-
-- **B:** Autocommit ON → Single transaction, commit only on disconnect
-  - Pro: Better performance
-  - Con: Violates ODBC semantics, long-lived transactions
-
-- **C:** Autocommit ON → COMMIT after DDL/DML, keep SELECT in transaction
-  - Pro: Balances performance and semantics
-  - Con: More complex logic
-
-**Recommendation Needed:** User decision on transaction mapping
-
----
-
-### Question 4: ODBC Conformance Level Target
-
-**Question:** What ODBC conformance level is required?
-
-**Levels:**
-- **Core:** Minimal ODBC functionality
-- **Level 1:** Core + extended features (scrollable cursors, SQLBrowseConnect, etc.)
-- **Level 2:** Level 1 + advanced features (bookmarks, positioned updates, etc.)
-
-**Current Status:** Most Core functions exist, some Level 1 features missing
-
-**Decision:** Should we target Core, Level 1, or Level 2 conformance?
-
----
-
-### Question 5: Catalog Function Scope
-
-**Question:** Which catalog functions are REQUIRED vs OPTIONAL for Alpha?
-
-**All 10 Functions:**
-1. SQLTables ✓ (REQUIRED for most tools)
-2. SQLColumns ✓ (REQUIRED for most tools)
-3. SQLPrimaryKeys ✓ (REQUIRED for schema tools)
-4. SQLForeignKeys ⚠️ (Nice to have)
-5. SQLStatistics ⚠️ (Nice to have)
-6. SQLSpecialColumns ⚠️ (Rarely used)
-7. SQLTablePrivileges ⚠️ (Security tools)
-8. SQLColumnPrivileges ⚠️ (Security tools)
-9. SQLProcedures ⚠️ (If procedures supported)
-10. SQLProcedureColumns ⚠️ (If procedures supported)
-
-**Recommendation:** Implement at minimum: SQLTables, SQLColumns, SQLPrimaryKeys (15 hours)
-**Full Set:** All 10 functions (20-30 hours)
-
-**Decision:** User approval on scope
-
----
-
-### Question 6: SSL/TLS Implementation
-
-**Question:** How is TLS 1.3 mandatory enforcement handled?
-
-**Wire Protocol Spec Says:** TLS 1.3 mandatory on port 3092
-
-**ODBC Driver Needs:**
-- Connection string parameter for certificate validation?
-- Support for self-signed certificates (testing)?
-- Certificate path configuration?
-- TLS version negotiation (fallback to 1.2?)?
-
-**Assumption:** libscratchbird.so/dll handles TLS internally
-**Verify:** User confirmation this is correct
-
----
-
-### Question 7: Federation and Multi-Database Support
-
-**Question:** How should ODBC catalog name parameter work with ScratchBird federation?
-
-**ScratchBird Model:**
-- Multi-database with federation (Oracle/DB2/SQL Server/ScratchBird engines)
-- Emulated databases under emulation tree (emulation.postgres.mydb)
-- Cross-database queries supported
-
-**ODBC Catalog Functions:**
-- Accept `catalog_name` parameter (database name in ODBC terms)
-- NULL means current database
-
-**Questions:**
-1. Should catalog functions list ALL databases (federated + emulated)?
-2. Should they respect connection's current database only?
-3. How to represent emulated databases in catalog results?
-4. Should SQLTables distinguish native vs emulated tables?
-
-**Decision:** User input on catalog scope and federation visibility
+- **Complex types:** Hybrid mapping (text for JSON/XML/ARRAY/RECORD, binary for GEOMETRY/VECTOR)
+- **Catalog scope:** Full 10 catalog functions
+- **Federation visibility:** Current database only
 
 ---
 
@@ -371,16 +304,19 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 
 ### Internal Dependencies (ScratchBird)
 
-1. **libscratchbird.so/dll** ⚠️ NEEDS VERIFICATION
-   - Must provide client wire protocol implementation
-   - OR we must implement client library first
+1. **scratchbird_client** ✅ EXISTS (IPC, protocol v1.0)
+   - Local IPC transport only (Unix socket / named pipe / TCP localhost)
+   - No TLS; no v1.1 header format
+2. **Network protocol alignment** ⚠️ OPEN
+   - Native protocol adapter exists server-side
+   - Client-side implementation not present
 
-2. **System Catalog Tables** ✅ ASSUMED READY
+3. **System Catalog Tables** ✅ ASSUMED READY
    - Metadata tables for SQLTables, SQLColumns, etc.
    - Permission tables for privilege catalog functions
    - Procedure tables if SQLProcedures needed
 
-3. **Schema/Database DDL** ✅ AVAILABLE (Plan 02B core complete)
+4. **Schema/Database DDL** ✅ AVAILABLE (Plan 02B core complete)
    - Alignment/testing still in progress; see `docs/planning/PLAN_02B_SCHEMA_DATABASE_DDL.md`
 
 ### External Dependencies
@@ -393,23 +329,15 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 
 ## Proposed Implementation Plan
 
-### Phase 1: Verify and Integrate Wire Protocol Client (8-60 hours)
+### Phase 1: Integrate libscratchbird Network Client (40-60 hours)
 
 **Tasks:**
-1. Verify libscratchbird.so/dll capabilities
-2. Document client API if exists
-3. OR implement client library if needed:
-   - Connection management with TLS 1.3
-   - Authentication flows
-   - Simple query execution
-   - Extended query protocol
-   - Result set retrieval
-   - Transaction commands
-4. Create integration layer between ODBC driver and client library
+1. Implement/complete **libscratchbird network client** aligned with native wire protocol spec
+2. Ensure connection path is **ODBC → libscratchbird → network listener → parser → engine**
+3. Build ODBC client bridge layer around libscratchbird APIs
+4. Confirm TLS 1.3 parameters flow from ODBC connection string to libscratchbird
 
-**Estimated:** 8-12 hours (if exists) OR 40-60 hours (if must implement)
-
-**Decision Gate:** CANNOT proceed without knowing libscratchbird status
+**Estimated:** 40-60 hours
 
 ---
 
@@ -449,7 +377,7 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 
 ---
 
-### Phase 4: Catalog Functions (20-30 hours)
+### Phase 4: Catalog Functions (Full 10) (20-30 hours)
 
 **Tasks:**
 1. **SQLTables** (4 hours)
@@ -489,7 +417,7 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 ### Phase 5: Transaction and Concurrency (8-12 hours)
 
 **Tasks:**
-1. Implement autocommit mode mapping (based on decision)
+1. Implement autocommit mode mapping (commit after every statement when ON)
 2. Update SQLEndTran to handle both autocommit ON/OFF
 3. Implement SQL_ATTR_AUTOCOMMIT connection attribute
 4. Add transaction isolation level support:
@@ -561,7 +489,7 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 - Phase 5 (transactions): 8-12 hours
 - Phase 7 (testing): 20-30 hours
 
-**Total Minimum:** 76-104 hours (if client ready) OR 108-152 hours (if client needed)
+**Total Minimum:** 76-104 hours (IPC client ready) OR 108-152 hours (network/TLS client needed)
 
 ### Full ODBC 3.x Compliance
 - All phases including Phase 6 (advanced features)
@@ -607,28 +535,17 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 
 ## Next Steps - Immediate Actions Required
 
-### Step 1: Verify libscratchbird.so/dll Capabilities 🔴 CRITICAL
+### Step 1: Implement/Complete libscratchbird Network Client 🔴 CRITICAL
 
-**Action Required:** User must provide:
-- Documentation for libscratchbird.so/dll
-- List of exported functions
-- Confirmation of wire protocol client support
-- OR confirmation we need to implement client library
+**Action Required:** Ensure libscratchbird provides network/TLS client APIs used by ODBC, with the mandatory parser bridge.
 
-**Blocking:** All implementation work
+**Blocking:** ODBC execution path and result fetching
 
 ---
 
-### Step 2: Make Architecture Decisions
+### Step 2: Proceed with Implementation (Decisions Locked)
 
-**Decisions Needed:**
-1. Complex type mapping strategy (Question 2)
-2. Autocommit mapping strategy (Question 3)
-3. ODBC conformance level target (Question 4)
-4. Catalog function scope (Question 5)
-5. Federation visibility in catalog (Question 7)
-
-**Impact:** Affects design and implementation approach
+**Scope Locked:** Hybrid type mapping, full 10 catalog functions, current-db-only visibility, core conformance.
 
 ---
 
@@ -665,7 +582,9 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 - `/src/odbc/type_conversion.h` (NEW)
 - `/src/odbc/type_conversion.cpp` (NEW)
 - `/src/odbc/catalog_queries.cpp` (NEW) - Catalog function SQL builders
-- `/src/odbc/wire_protocol_client.cpp` (NEW) - If libscratchbird insufficient
+- `/src/odbc/odbc_client_bridge.cpp` (NEW) - Adapter around libscratchbird client APIs
+- `/src/client/network_client.cpp` (NEW) - libscratchbird network client (native protocol)
+- `/include/scratchbird/client/network_client.h` (NEW) - Network client API
 - `/docs/planning/PLAN_05_IMPLEMENTATION_CHECKLIST.md` (NEW) - After decisions
 
 ### Documentation to Create
@@ -689,9 +608,9 @@ Plan 05 implements a **full ODBC 3.x compliant driver** for the ScratchBird nati
 
 ---
 
-**Status:** READY FOR DECISION GATE
-**Next Action:** User to answer Open Questions and approve plan
-**Blocking Issues:** libscratchbird.so/dll verification (Question 1)
+**Status:** READY FOR IMPLEMENTATION
+**Next Action:** Begin Phase 1 (libscratchbird network client integration) and create implementation checklist
+**Blocking Issues:** libscratchbird network client capability
 
 ---
 

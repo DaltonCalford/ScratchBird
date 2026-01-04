@@ -29,6 +29,7 @@ class OdbcEnvironment;
 class OdbcConnection;
 class OdbcStatement;
 class OdbcDescriptor;
+class OdbcClientBridge;
 
 // =============================================================================
 // Handle Type Constants (for runtime type checking)
@@ -323,6 +324,7 @@ public:
     const std::string& getCurrentDatabase() const { return current_database_; }
     const std::string& getCurrentUser() const { return current_user_; }
     const std::string& getCurrentSchema() const { return current_schema_; }
+    bool getMetadataId() const { return metadata_id_; }
 
 private:
     SQLRETURN parseConnectionString(const std::string& conn_str);
@@ -352,9 +354,13 @@ private:
     std::vector<std::unique_ptr<OdbcStatement>> statements_;
     mutable std::mutex statements_mutex_;
 
+    std::unique_ptr<OdbcClientBridge> client_bridge_;
+
     // Server-side state
     uint64_t server_session_id_{0};
     uint32_t server_protocol_version_{0};
+
+    std::unordered_map<uint64_t, std::string> prepared_sql_;
 };
 
 // =============================================================================
@@ -607,6 +613,8 @@ private:
     SQLRETURN bindResultData();
     SQLRETURN convertAndStore(size_t col_index, const std::string& value);
     std::vector<std::vector<uint8_t>> buildParameterData();
+    void setCatalogResult(std::vector<ColumnMetadata> columns,
+                          std::vector<std::vector<std::string>> rows);
 
     OdbcConnection* conn_;
 
