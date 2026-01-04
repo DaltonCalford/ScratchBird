@@ -1,6 +1,6 @@
 # ODBC Connectivity
 
-Connect to ScratchBird using ODBC drivers.
+Connect to ScratchBird using the native ScratchBird ODBC driver.
 
 [Back to Connectivity Index](index.md) | [Back to Documentation Index](../index.md)
 
@@ -8,7 +8,7 @@ Connect to ScratchBird using ODBC drivers.
 
 ## Overview
 
-ODBC (Open Database Connectivity) provides a standard API for database access. ScratchBird works with PostgreSQL ODBC drivers since it implements the PostgreSQL wire protocol.
+ODBC (Open Database Connectivity) provides a standard API for database access. ScratchBird ships a native ODBC driver that talks to the ScratchBird network listener (default port 3092) using the ScratchBird wire protocol.
 
 ---
 
@@ -16,65 +16,81 @@ ODBC (Open Database Connectivity) provides a standard API for database access. S
 
 ### Linux
 
-**PostgreSQL ODBC Driver:**
-```bash
-# Debian/Ubuntu
-sudo apt install odbc-postgresql unixodbc
+1. Install unixODBC:
+   ```bash
+   # Debian/Ubuntu
+   sudo apt install unixodbc
 
-# RHEL/Fedora
-sudo dnf install postgresql-odbc unixODBC
-```
+   # RHEL/Fedora
+   sudo dnf install unixODBC
+   ```
+2. Copy the driver library to your ODBC driver directory (example path shown below).
+3. Register the driver in `odbcinst.ini` (see next section).
 
 ### Windows
 
-1. Download PostgreSQL ODBC from [postgresql.org](https://www.postgresql.org/ftp/odbc/versions/)
-2. Run installer (psqlodbc_*.msi)
-3. Choose 32-bit or 64-bit based on your application
+1. Install the ScratchBird ODBC driver (MSI).
+2. Open "ODBC Data Sources" from Control Panel.
+3. Add a User or System DSN for ScratchBird.
 
 ### macOS
 
-```bash
-# Using Homebrew
-brew install psqlodbc unixodbc
+1. Install the ScratchBird ODBC driver (dylib).
+2. Register the driver with iODBC or unixODBC (see next section).
+
+---
+
+## Driver Registration (odbcinst.ini)
+
+### Linux (system-wide)
+
+Edit `/etc/odbcinst.ini`:
+
+```ini
+[ScratchBird]
+Description = ScratchBird ODBC Driver
+Driver = /usr/lib/x86_64-linux-gnu/odbc/libscratchbird_odbc.so
+Setup = /usr/lib/x86_64-linux-gnu/odbc/libscratchbird_odbc.so
+UsageCount = 1
+```
+
+### macOS (user)
+
+Edit `~/Library/ODBC/odbcinst.ini`:
+
+```ini
+[ScratchBird]
+Description = ScratchBird ODBC Driver
+Driver = /usr/local/lib/libscratchbird_odbc.dylib
+Setup = /usr/local/lib/libscratchbird_odbc.dylib
 ```
 
 ---
 
-## DSN Configuration
-
-### Linux/macOS (odbc.ini)
+## DSN Configuration (odbc.ini)
 
 Create or edit `/etc/odbc.ini` (system) or `~/.odbc.ini` (user):
 
 ```ini
 [ScratchBird]
 Description = ScratchBird Database
-Driver = PostgreSQL
-Servername = localhost
-Port = 5432
+Driver = ScratchBird
+Server = localhost
+Port = 3092
 Database = mydb
-Username = admin
-Password = secret
-```
-
-Edit `/etc/odbcinst.ini` for driver registration:
-
-```ini
-[PostgreSQL]
-Description = PostgreSQL ODBC Driver
-Driver = /usr/lib/x86_64-linux-gnu/odbc/psqlodbcw.so
-Setup = /usr/lib/x86_64-linux-gnu/odbc/libodbcpsqlS.so
+UID = admin
+PWD = secret
 ```
 
 ### Windows (ODBC Data Source Administrator)
 
 1. Open "ODBC Data Sources" from Control Panel
 2. Add new DSN (User or System)
-3. Select "PostgreSQL Unicode"
+3. Select "ScratchBird ODBC Driver"
 4. Configure:
    - Data Source: ScratchBird
    - Server: localhost
-   - Port: 5432
+   - Port: 3092
    - Database: mydb
    - User Name: admin
 5. Test and save
@@ -92,7 +108,7 @@ DSN=ScratchBird;UID=admin;PWD=secret
 ### DSN-Less
 
 ```
-Driver={PostgreSQL Unicode};Server=localhost;Port=5432;Database=mydb;Uid=admin;Pwd=secret
+Driver={ScratchBird ODBC Driver};Server=localhost;Port=3092;Database=mydb;UID=admin;PWD=secret
 ```
 
 ---
@@ -115,12 +131,12 @@ conn = pyodbc.connect('DSN=ScratchBird;UID=admin;PWD=secret')
 
 # DSN-less
 conn = pyodbc.connect(
-    'Driver={PostgreSQL Unicode};'
+    'Driver={ScratchBird ODBC Driver};'
     'Server=localhost;'
-    'Port=5432;'
+    'Port=3092;'
     'Database=mydb;'
-    'Uid=admin;'
-    'Pwd=secret'
+    'UID=admin;'
+    'PWD=secret'
 )
 
 cursor = conn.cursor()
@@ -206,29 +222,42 @@ while (reader.Read())
 
 ## Driver Options
 
-Common PostgreSQL ODBC driver options:
+Common ScratchBird ODBC driver options:
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `BoolsAsChar` | Return BOOLEANs as char | 1 |
-| `MaxVarcharSize` | Max VARCHAR size | 255 |
-| `MaxLongVarcharSize` | Max TEXT size | 8190 |
-| `UseDeclareFetch` | Use cursors for large results | 0 |
-| `Fetch` | Rows per fetch | 100 |
-| `SSLmode` | SSL mode | disable |
+| `Driver` | Driver name | ScratchBird ODBC Driver |
+| `Server` / `Host` | Server hostname | localhost |
+| `Port` | Server port | 3092 |
+| `Database` | Database name | (empty) |
+| `UID` / `User` | Username | (empty) |
+| `PWD` / `Password` | Password | (empty) |
+| `SSLMode` | SSL mode | prefer |
+| `SSLCert` | Client cert path | (empty) |
+| `SSLKey` | Client key path | (empty) |
+| `SSLRootCert` | CA cert path | (empty) |
+| `Timeout` / `ConnectTimeout` | Connect timeout (sec) | 30 |
+| `QueryTimeout` | Query timeout (sec) | 0 |
+| `ApplicationName` / `App` | Application name | (empty) |
+| `Schema` / `CurrentSchema` | Default schema | public |
+| `Charset` / `Encoding` | Client encoding | UTF8 |
+| `ReadOnly` | Read-only mode | false |
+| `AutoCommit` | Autocommit mode | true |
+| `PacketSize` | Packet size (bytes) | 8192 |
+| `Pooling` | Driver-manager pooling hint | true |
 
 Example with options:
 ```ini
 [ScratchBird]
-Driver = PostgreSQL
-Servername = localhost
-Port = 5432
+Driver = ScratchBird
+Server = localhost
+Port = 3092
 Database = mydb
-Username = admin
-Password = secret
-SSLmode = require
-UseDeclareFetch = 1
-Fetch = 1000
+UID = admin
+PWD = secret
+SSLMode = require
+ApplicationName = reporting
+AutoCommit = true
 ```
 
 ---
@@ -237,14 +266,16 @@ Fetch = 1000
 
 ```ini
 [ScratchBird_SSL]
-Driver = PostgreSQL
-Servername = localhost
-Port = 5432
+Driver = ScratchBird
+Server = localhost
+Port = 3092
 Database = mydb
-Username = admin
-Password = secret
-SSLmode = verify-full
-SSLrootcert = /path/to/ca.crt
+UID = admin
+PWD = secret
+SSLMode = verify_full
+SSLRootCert = /path/to/ca.crt
+SSLCert = /path/to/client.crt
+SSLKey = /path/to/client.key
 ```
 
 SSL modes:
@@ -252,8 +283,8 @@ SSL modes:
 - `allow` - Prefer non-SSL
 - `prefer` - Prefer SSL
 - `require` - Require SSL
-- `verify-ca` - Verify CA
-- `verify-full` - Verify CA and hostname
+- `verify_ca` - Verify CA
+- `verify_full` - Verify CA and hostname
 
 ---
 
@@ -307,7 +338,7 @@ ls -la /usr/lib/x86_64-linux-gnu/odbc/
 isql -v ScratchBird admin secret
 
 # Check connectivity
-nc -zv localhost 5432
+nc -zv localhost 3092
 ```
 
 ### 32-bit vs 64-bit (Windows)
@@ -320,22 +351,14 @@ nc -zv localhost 5432
 
 ## Performance Tips
 
-1. **Use cursors for large results:**
-   ```ini
-   UseDeclareFetch = 1
-   Fetch = 1000
-   ```
-
-2. **Enable connection pooling** in your application
-
-3. **Use parameterized queries** to enable prepared statements
-
-4. **Batch operations** when possible
+1. **Use parameterized queries** to enable prepared statements
+2. **Keep result sets narrow** when possible
+3. **Enable connection pooling** in your application when supported
 
 ---
 
 ## See Also
 
-- [PostgreSQL Clients](postgresql-clients.md)
 - [JDBC](jdbc.md)
 - [SSL Setup](../configuration/ssl-setup.md)
+- [ODBC Driver Specification](../../specifications/ODBC_DRIVER_SPECIFICATION.md)
