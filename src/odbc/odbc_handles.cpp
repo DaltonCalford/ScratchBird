@@ -2149,13 +2149,13 @@ SQLRETURN OdbcStatement::fetch() {
         return SQL_ERROR;
     }
 
-    if (current_row_ >= rows_.size()) {
+    size_t next_index = current_row_;
+    if (next_index >= rows_.size()) {
         return SQL_NO_DATA;
     }
 
-    // Bind data to bound columns
+    current_row_ = next_index + 1;
     auto result = bindResultData();
-    current_row_++;
 
     return result;
 }
@@ -2168,49 +2168,49 @@ SQLRETURN OdbcStatement::fetchScroll(SQLSMALLINT fetch_orientation, SQLLEN fetch
         return SQL_ERROR;
     }
 
-    size_t new_row = current_row_;
+    if (rows_.empty()) {
+        return SQL_NO_DATA;
+    }
+
+    int64_t current_index = current_row_ == 0 ? -1 : static_cast<int64_t>(current_row_ - 1);
+    int64_t new_index = current_index;
 
     switch (fetch_orientation) {
         case SQL_FETCH_NEXT:
-            new_row = current_row_;
+            new_index = current_index + 1;
             break;
         case SQL_FETCH_FIRST:
-            new_row = 0;
+            new_index = 0;
             break;
         case SQL_FETCH_LAST:
-            new_row = rows_.empty() ? 0 : rows_.size() - 1;
+            new_index = static_cast<int64_t>(rows_.size() - 1);
             break;
         case SQL_FETCH_PRIOR:
-            new_row = current_row_ > 0 ? current_row_ - 1 : 0;
+            new_index = current_index - 1;
             break;
         case SQL_FETCH_ABSOLUTE:
             if (fetch_offset > 0) {
-                new_row = static_cast<size_t>(fetch_offset - 1);
+                new_index = static_cast<int64_t>(fetch_offset - 1);
             } else if (fetch_offset < 0) {
-                if (static_cast<size_t>(-fetch_offset) <= rows_.size()) {
-                    new_row = rows_.size() + static_cast<size_t>(fetch_offset);
-                } else {
-                    return SQL_NO_DATA;
-                }
+                new_index = static_cast<int64_t>(rows_.size()) + fetch_offset;
             } else {
                 return SQL_NO_DATA;
             }
             break;
         case SQL_FETCH_RELATIVE:
-            new_row = static_cast<size_t>(static_cast<SQLLEN>(current_row_) + fetch_offset);
+            new_index = current_index + fetch_offset;
             break;
         default:
             setError("HY106", 0, "Fetch type out of range");
             return SQL_ERROR;
     }
 
-    if (new_row >= rows_.size()) {
+    if (new_index < 0 || static_cast<size_t>(new_index) >= rows_.size()) {
         return SQL_NO_DATA;
     }
 
-    current_row_ = new_row;
+    current_row_ = static_cast<size_t>(new_index) + 1;
     auto result = bindResultData();
-    current_row_++;
 
     return result;
 }
@@ -2598,11 +2598,11 @@ SQLRETURN OdbcStatement::getAttribute(SQLINTEGER attribute, SQLPOINTER value,
 }
 
 SQLRETURN OdbcStatement::bindResultData() {
-    if (current_row_ >= rows_.size()) {
+    if (current_row_ == 0 || current_row_ > rows_.size()) {
         return SQL_NO_DATA;
     }
 
-    const auto& row = rows_[current_row_];
+    const auto& row = rows_[current_row_ - 1];
     SQLRETURN result = SQL_SUCCESS;
 
     for (const auto& [col_num, binding] : col_bindings_) {

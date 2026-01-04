@@ -33,12 +33,12 @@
 
 ## PHASE 3: RESULT SET BINDING + FETCH
 
-- [ ] Implement `bindResultData()` (row -> bound buffers)
-- [ ] Implement `SQLGetData` for unbound columns
-- [ ] Support forward-only fetch (SQLFetch)
-- [ ] Support SQLFetchScroll (NEXT only for Alpha)
-- [ ] Populate descriptor metadata from result columns
-- [ ] Add tests for fetch + bind
+- [x] Implement `bindResultData()` (row -> bound buffers)
+- [x] Implement `SQLGetData` for unbound columns
+- [x] Support forward-only fetch (SQLFetch)
+- [x] Support SQLFetchScroll (NEXT only for Alpha)
+- [x] Populate descriptor metadata from result columns
+- [x] Add tests for fetch + bind
 
 ## PHASE 4: CATALOG FUNCTIONS (FULL 10)
 

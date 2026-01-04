@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
@@ -347,6 +348,48 @@ TEST(OdbcAutocommitTest, IsolationMappingUsesSetTransaction) {
     EXPECT_EQ(bridge_ptr->sql_log[0],
               "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE ON CONFLICT COMMIT");
     EXPECT_EQ(bridge_ptr->sql_log[1], "SET AUTOCOMMIT ON ON CONFLICT COMMIT");
+}
+
+TEST(OdbcFetchTest, BindAndFetchPopulateBuffers) {
+    scratchbird::odbc::OdbcEnvironment env;
+    scratchbird::odbc::OdbcConnection conn(&env);
+    scratchbird::odbc::OdbcStatement stmt(&conn);
+
+    scratchbird::odbc::ColumnMetadata int_col;
+    int_col.sql_type = SQL_INTEGER;
+    scratchbird::odbc::ColumnMetadata text_col;
+    text_col.sql_type = SQL_VARCHAR;
+
+    stmt.has_results_ = true;
+    stmt.columns_ = {int_col, text_col};
+    stmt.rows_ = {{"42", "hello"}, {"100", ""}};
+    stmt.current_row_ = 0;
+
+    SQLINTEGER out_int = 0;
+    char out_text[16] = {};
+    SQLLEN int_ind = 0;
+    SQLLEN text_ind = 0;
+    SQLUSMALLINT row_status = 0;
+    SQLULEN rows_fetched = 0;
+
+    ASSERT_EQ(stmt.bindCol(1, SQL_C_LONG, &out_int, sizeof(out_int), &int_ind), SQL_SUCCESS);
+    ASSERT_EQ(stmt.bindCol(2, SQL_C_CHAR, out_text, sizeof(out_text), &text_ind), SQL_SUCCESS);
+    stmt.row_status_ptr_ = &row_status;
+    stmt.rows_fetched_ptr_ = &rows_fetched;
+
+    SQLRETURN rc = stmt.fetch();
+    ASSERT_EQ(rc, SQL_SUCCESS);
+    EXPECT_EQ(out_int, 42);
+    EXPECT_STREQ(out_text, "hello");
+    EXPECT_EQ(int_ind, static_cast<SQLLEN>(sizeof(SQLINTEGER)));
+    EXPECT_EQ(text_ind, static_cast<SQLLEN>(std::strlen("hello")));
+    EXPECT_EQ(row_status, SQL_ROW_SUCCESS);
+    EXPECT_EQ(rows_fetched, 1u);
+
+    rc = stmt.fetch();
+    ASSERT_EQ(rc, SQL_SUCCESS);
+    EXPECT_EQ(out_int, 100);
+    EXPECT_EQ(text_ind, SQL_NULL_DATA);
 }
 
 } // namespace
