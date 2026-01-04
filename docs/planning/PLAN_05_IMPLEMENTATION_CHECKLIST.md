@@ -65,10 +65,10 @@
 
 ## PHASE 6: CORE CONFORMANCE CLEANUP
 
-- [ ] Remove remaining stubs in core ODBC API (Core/Basic)
-- [ ] Ensure SQLBrowseConnect reports unsupported (Alpha)
-- [ ] Validate SQLGetInfo responses for core conformance
-- [ ] Add diagnostics for unsupported functions
+- [x] Remove remaining stubs in core ODBC API (Core/Basic)
+- [x] Ensure SQLBrowseConnect reports unsupported (Alpha)
+- [x] Validate SQLGetInfo responses for core conformance
+- [x] Add diagnostics for unsupported functions
 
 ## PHASE 7: TESTING + VALIDATION
 

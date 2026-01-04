@@ -108,6 +108,27 @@ std::string toUpper(std::string value) {
     return value;
 }
 
+constexpr SQLUINTEGER kSqlConformanceEntry =
+#ifdef SQL_SC_SQL92_ENTRY
+    SQL_SC_SQL92_ENTRY;
+#else
+    1;
+#endif
+
+constexpr SQLUSMALLINT kOdbcApiLevel1 =
+#ifdef SQL_OAC_LEVEL1
+    SQL_OAC_LEVEL1;
+#else
+    1;
+#endif
+
+constexpr SQLUSMALLINT kOdbcSqlCore =
+#ifdef SQL_OSC_CORE
+    SQL_OSC_CORE;
+#else
+    1;
+#endif
+
 std::string buildAutocommitSql(SQLUINTEGER mode) {
     if (mode == SQL_AUTOCOMMIT_ON) {
         return "SET AUTOCOMMIT ON ON CONFLICT COMMIT";
@@ -912,10 +933,14 @@ SQLRETURN OdbcConnection::driverConnect(HWND /*window_handle*/,
 SQLRETURN OdbcConnection::browseConnect(const SQLCHAR* in_conn_str, SQLSMALLINT in_conn_str_len,
                                          SQLCHAR* out_conn_str, SQLSMALLINT out_buffer_len,
                                          SQLSMALLINT* out_conn_str_len) {
-    // For simplicity, delegate to driverConnect
-    return driverConnect(nullptr, in_conn_str, in_conn_str_len,
-                         out_conn_str, out_buffer_len, out_conn_str_len,
-                         SQL_DRIVER_NOPROMPT);
+    (void)in_conn_str;
+    (void)in_conn_str_len;
+    (void)out_conn_str;
+    (void)out_buffer_len;
+    (void)out_conn_str_len;
+    clearDiagnostics();
+    setError("HYC00", 0, "Optional feature not implemented");
+    return SQL_ERROR;
 }
 
 SQLRETURN OdbcConnection::disconnect() {
@@ -1337,13 +1362,13 @@ SQLRETURN OdbcConnection::getInfo(SQLUSMALLINT info_type, SQLPOINTER info_value,
 
         // SQL Conformance
         case SQL_SQL_CONFORMANCE:
-            setUInteger(8);  // SQL_SC_SQL92_FULL
+            setUInteger(kSqlConformanceEntry);
             break;
         case SQL_ODBC_API_CONFORMANCE:
-            setUSmallInt(2);  // SQL_OAC_LEVEL2
+            setUSmallInt(kOdbcApiLevel1);
             break;
         case SQL_ODBC_SQL_CONFORMANCE:
-            setUSmallInt(2);  // SQL_OSC_EXTENDED
+            setUSmallInt(kOdbcSqlCore);
             break;
 
         // Identifier case
@@ -1833,8 +1858,8 @@ SQLRETURN OdbcStatement::execDirect(const SQLCHAR* sql, SQLINTEGER sql_len) {
 
 SQLRETURN OdbcStatement::cancel() {
     clearDiagnostics();
-    // TODO: Implement actual cancel
-    return SQL_SUCCESS;
+    setError("HYC00", 0, "Optional feature not implemented");
+    return SQL_ERROR;
 }
 
 SQLRETURN OdbcStatement::closeCursor() {
