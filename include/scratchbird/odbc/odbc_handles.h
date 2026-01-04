@@ -329,6 +329,8 @@ public:
 private:
     SQLRETURN parseConnectionString(const std::string& conn_str);
     SQLRETURN establishConnection();
+    SQLRETURN applyAutocommitSetting();
+    SQLRETURN applyIsolationSetting();
     std::string buildConnectionString() const;
 
     OdbcEnvironment* env_;

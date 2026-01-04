@@ -108,6 +108,41 @@ std::string toUpper(std::string value) {
     return value;
 }
 
+std::string buildAutocommitSql(SQLUINTEGER mode) {
+    if (mode == SQL_AUTOCOMMIT_ON) {
+        return "SET AUTOCOMMIT ON ON CONFLICT COMMIT";
+    }
+    return "SET AUTOCOMMIT OFF ON CONFLICT KEEP";
+}
+
+bool buildIsolationSql(SQLUINTEGER isolation, std::string& out_sql) {
+    if (isolation == 0 || (isolation & (isolation - 1)) != 0) {
+        return false;
+    }
+
+    switch (isolation) {
+        case SQL_TXN_READ_UNCOMMITTED:
+            out_sql = "SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED ON CONFLICT COMMIT";
+            return true;
+        case SQL_TXN_READ_COMMITTED:
+            out_sql = "SET TRANSACTION ISOLATION LEVEL READ COMMITTED ON CONFLICT COMMIT";
+            return true;
+        case SQL_TXN_REPEATABLE_READ:
+            out_sql = "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ ON CONFLICT COMMIT";
+            return true;
+        case SQL_TXN_SERIALIZABLE:
+            out_sql = "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE ON CONFLICT COMMIT";
+            return true;
+#ifdef SQL_TXN_VERSIONING
+        case SQL_TXN_VERSIONING:
+            out_sql = "SET TRANSACTION ISOLATION LEVEL SNAPSHOT ON CONFLICT COMMIT";
+            return true;
+#endif
+        default:
+            return false;
+    }
+}
+
 std::string sqlCharToString(const SQLCHAR* value, SQLSMALLINT length) {
     if (!value) {
         return "";
@@ -918,12 +953,22 @@ SQLRETURN OdbcConnection::setAttribute(SQLINTEGER attribute, SQLPOINTER value,
             break;
 
         case SQL_ATTR_AUTOCOMMIT:
-            auto_commit_ = ODBC_PTR_TO_UINT(value);
-            if (connected_ && in_transaction_ && auto_commit_ == SQL_AUTOCOMMIT_ON) {
-                // Commit current transaction
-                endTransaction(SQL_COMMIT);
+        {
+            auto new_value = ODBC_PTR_TO_UINT(value);
+            if (new_value != SQL_AUTOCOMMIT_ON && new_value != SQL_AUTOCOMMIT_OFF) {
+                setError("HY024", 0, "Invalid attribute value");
+                return SQL_ERROR;
             }
+            auto_commit_ = new_value;
+            if (connected_) {
+                auto result = applyAutocommitSetting();
+                if (result != SQL_SUCCESS && result != SQL_SUCCESS_WITH_INFO) {
+                    return result;
+                }
+            }
+            in_transaction_ = (auto_commit_ == SQL_AUTOCOMMIT_OFF);
             break;
+        }
 
         case SQL_ATTR_LOGIN_TIMEOUT:
             login_timeout_ = ODBC_PTR_TO_UINT(value);
@@ -934,11 +979,28 @@ SQLRETURN OdbcConnection::setAttribute(SQLINTEGER attribute, SQLPOINTER value,
             break;
 
         case SQL_ATTR_TXN_ISOLATION:
-            txn_isolation_ = ODBC_PTR_TO_UINT(value);
+        {
+            auto new_value = ODBC_PTR_TO_UINT(value);
+            std::string sql;
+            if (!buildIsolationSql(new_value, sql)) {
+                setError("HY024", 0, "Invalid attribute value");
+                return SQL_ERROR;
+            }
+            txn_isolation_ = new_value;
             if (connected_) {
-                // TODO: Send SET TRANSACTION ISOLATION LEVEL to server
+                auto result = applyIsolationSetting();
+                if (result != SQL_SUCCESS && result != SQL_SUCCESS_WITH_INFO) {
+                    return result;
+                }
+                if (auto_commit_ == SQL_AUTOCOMMIT_ON) {
+                    result = applyAutocommitSetting();
+                    if (result != SQL_SUCCESS && result != SQL_SUCCESS_WITH_INFO) {
+                        return result;
+                    }
+                }
             }
             break;
+        }
 
         case SQL_ATTR_CURRENT_CATALOG:
             if (value) {
@@ -1075,7 +1137,7 @@ SQLRETURN OdbcConnection::endTransaction(SQLSMALLINT completion_type) {
     if (completion_type == SQL_COMMIT) {
         auto result = client_bridge_ ? client_bridge_->commit() : SQL_ERROR;
         if (result == SQL_SUCCESS) {
-            in_transaction_ = false;
+            in_transaction_ = (auto_commit_ == SQL_AUTOCOMMIT_OFF);
         } else if (client_bridge_) {
             auto status = client_bridge_->lastStatus();
             auto message = client_bridge_->lastError();
@@ -1086,7 +1148,7 @@ SQLRETURN OdbcConnection::endTransaction(SQLSMALLINT completion_type) {
     } else if (completion_type == SQL_ROLLBACK) {
         auto result = client_bridge_ ? client_bridge_->rollback() : SQL_ERROR;
         if (result == SQL_SUCCESS) {
-            in_transaction_ = false;
+            in_transaction_ = (auto_commit_ == SQL_AUTOCOMMIT_OFF);
         } else if (client_bridge_) {
             auto status = client_bridge_->lastStatus();
             auto message = client_bridge_->lastError();
@@ -1533,10 +1595,10 @@ SQLRETURN OdbcConnection::establishConnection() {
     }
 
     std::string error;
-    auto result = client_bridge_->connect(params_, error);
-    if (result != SQL_SUCCESS) {
+    auto connect_result = client_bridge_->connect(params_, error);
+    if (connect_result != SQL_SUCCESS) {
         setError("08001", 0, error.empty() ? "Failed to connect" : error);
-        return result;
+        return connect_result;
     }
 
     connected_ = true;
@@ -1549,6 +1611,25 @@ SQLRETURN OdbcConnection::establishConnection() {
     }
     auto_commit_ = params_.auto_commit ? SQL_AUTOCOMMIT_ON : SQL_AUTOCOMMIT_OFF;
     login_timeout_ = params_.connect_timeout;
+    in_transaction_ = (auto_commit_ == SQL_AUTOCOMMIT_OFF);
+
+    auto result = applyIsolationSetting();
+    if (result != SQL_SUCCESS && result != SQL_SUCCESS_WITH_INFO) {
+        if (client_bridge_) {
+            client_bridge_->disconnect();
+        }
+        connected_ = false;
+        return result;
+    }
+
+    result = applyAutocommitSetting();
+    if (result != SQL_SUCCESS && result != SQL_SUCCESS_WITH_INFO) {
+        if (client_bridge_) {
+            client_bridge_->disconnect();
+        }
+        connected_ = false;
+        return result;
+    }
 
     return SQL_SUCCESS;
 }
@@ -1572,6 +1653,37 @@ std::string OdbcConnection::buildConnectionString() const {
     // Don't include password in output string for security
 
     return ss.str();
+}
+
+SQLRETURN OdbcConnection::applyAutocommitSetting() {
+    if (!connected_) {
+        setError("08003", 0, "Connection not open");
+        return SQL_ERROR;
+    }
+
+    std::vector<std::vector<std::string>> results;
+    std::vector<ColumnMetadata> columns;
+    SQLLEN rows_affected = 0;
+    std::string sql = buildAutocommitSql(auto_commit_);
+    return executeSQL(sql, results, columns, rows_affected);
+}
+
+SQLRETURN OdbcConnection::applyIsolationSetting() {
+    if (!connected_) {
+        setError("08003", 0, "Connection not open");
+        return SQL_ERROR;
+    }
+
+    std::string sql;
+    if (!buildIsolationSql(txn_isolation_, sql)) {
+        setError("HY024", 0, "Invalid attribute value");
+        return SQL_ERROR;
+    }
+
+    std::vector<std::vector<std::string>> results;
+    std::vector<ColumnMetadata> columns;
+    SQLLEN rows_affected = 0;
+    return executeSQL(sql, results, columns, rows_affected);
 }
 
 SQLRETURN OdbcConnection::executeSQL(const std::string& sql,

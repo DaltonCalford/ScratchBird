@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -276,6 +277,76 @@ TEST(OdbcGetDataTest, TemporalAndGuidConversions) {
     EXPECT_EQ(guid_bin.Data3, 0x6677u);
     EXPECT_EQ(guid_bin.Data4[0], 0x88u);
     EXPECT_EQ(guid_bin.Data4[7], 0xffu);
+}
+
+class RecordingClientBridge : public scratchbird::odbc::OdbcClientBridge {
+public:
+    bool connected{true};
+    std::vector<std::string> sql_log;
+    SQLRETURN executeSQL(const std::string& sql,
+                         std::vector<std::vector<std::string>>& results,
+                         std::vector<scratchbird::odbc::ColumnMetadata>& columns,
+                         SQLLEN& rows_affected) override {
+        results.clear();
+        columns.clear();
+        rows_affected = 0;
+        sql_log.push_back(sql);
+        return SQL_SUCCESS;
+    }
+    bool isConnected() const override {
+        return connected;
+    }
+};
+
+TEST(OdbcAutocommitTest, SetAutocommitSendsConflictClause) {
+    scratchbird::odbc::OdbcEnvironment env;
+    scratchbird::odbc::OdbcConnection conn(&env);
+
+    auto bridge = std::make_unique<RecordingClientBridge>();
+    auto* bridge_ptr = bridge.get();
+    conn.client_bridge_ = std::move(bridge);
+    conn.connected_ = true;
+
+    SQLRETURN rc = conn.setAttribute(SQL_ATTR_AUTOCOMMIT,
+                                     reinterpret_cast<SQLPOINTER>(
+                                         static_cast<uintptr_t>(SQL_AUTOCOMMIT_OFF)),
+                                     0);
+    ASSERT_EQ(rc, SQL_SUCCESS);
+    EXPECT_EQ(conn.auto_commit_, SQL_AUTOCOMMIT_OFF);
+    EXPECT_TRUE(conn.in_transaction_);
+    ASSERT_EQ(bridge_ptr->sql_log.size(), 1u);
+    EXPECT_EQ(bridge_ptr->sql_log[0], "SET AUTOCOMMIT OFF ON CONFLICT KEEP");
+
+    rc = conn.setAttribute(SQL_ATTR_AUTOCOMMIT,
+                           reinterpret_cast<SQLPOINTER>(
+                               static_cast<uintptr_t>(SQL_AUTOCOMMIT_ON)),
+                           0);
+    ASSERT_EQ(rc, SQL_SUCCESS);
+    EXPECT_EQ(conn.auto_commit_, SQL_AUTOCOMMIT_ON);
+    EXPECT_FALSE(conn.in_transaction_);
+    ASSERT_EQ(bridge_ptr->sql_log.size(), 2u);
+    EXPECT_EQ(bridge_ptr->sql_log[1], "SET AUTOCOMMIT ON ON CONFLICT COMMIT");
+}
+
+TEST(OdbcAutocommitTest, IsolationMappingUsesSetTransaction) {
+    scratchbird::odbc::OdbcEnvironment env;
+    scratchbird::odbc::OdbcConnection conn(&env);
+
+    auto bridge = std::make_unique<RecordingClientBridge>();
+    auto* bridge_ptr = bridge.get();
+    conn.client_bridge_ = std::move(bridge);
+    conn.connected_ = true;
+
+    SQLRETURN rc = conn.setAttribute(SQL_ATTR_TXN_ISOLATION,
+                                     reinterpret_cast<SQLPOINTER>(
+                                         static_cast<uintptr_t>(SQL_TXN_SERIALIZABLE)),
+                                     0);
+    ASSERT_EQ(rc, SQL_SUCCESS);
+    EXPECT_EQ(conn.txn_isolation_, SQL_TXN_SERIALIZABLE);
+    ASSERT_EQ(bridge_ptr->sql_log.size(), 2u);
+    EXPECT_EQ(bridge_ptr->sql_log[0],
+              "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE ON CONFLICT COMMIT");
+    EXPECT_EQ(bridge_ptr->sql_log[1], "SET AUTOCOMMIT ON ON CONFLICT COMMIT");
 }
 
 } // namespace

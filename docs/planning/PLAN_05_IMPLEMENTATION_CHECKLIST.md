@@ -57,11 +57,11 @@
 
 ## PHASE 5: TRANSACTION + AUTOCOMMIT SEMANTICS
 
-- [ ] Enforce autocommit ON: COMMIT after every statement
-- [ ] Autocommit OFF: COMMIT/ROLLBACK only via SQLEndTran
-- [ ] Ensure new transaction begins after COMMIT/ROLLBACK
-- [ ] Implement isolation level mapping (default for Alpha)
-- [ ] Add tests for autocommit behavior
+- [x] Enforce autocommit ON: COMMIT after every statement
+- [x] Autocommit OFF: COMMIT/ROLLBACK only via SQLEndTran
+- [x] Ensure new transaction begins after COMMIT/ROLLBACK
+- [x] Implement isolation level mapping (default for Alpha)
+- [x] Add tests for autocommit behavior
 
 ## PHASE 6: CORE CONFORMANCE CLEANUP
 
