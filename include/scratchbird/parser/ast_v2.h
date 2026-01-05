@@ -1574,6 +1574,7 @@ public:
 
     Expression* expr = nullptr;
     TypeName target_type;
+    std::optional<StringPool::StringId> format;
 };
 
 // =============================================================================

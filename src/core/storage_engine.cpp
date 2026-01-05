@@ -1,4 +1,6 @@
 #include "scratchbird/core/config.h"
+#include "scratchbird/core/decimal.h"
+#include "scratchbird/core/plain_value_reader.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/database.h"
@@ -185,6 +187,18 @@ namespace scratchbird::core
             }
         }
 
+        TypeInfo buildTypeInfo(const CatalogManager::ColumnInfo &column)
+        {
+            TypeInfo info(static_cast<DataType>(column.data_type));
+            uint32_t precision = column.type_precision != 0 ? column.type_precision
+                                                            : column.max_length;
+            info.precision = precision;
+            info.scale = column.type_scale;
+            info.with_timezone = column.with_timezone;
+            info.timezone_hint = column.timezone_hint;
+            return info;
+        }
+
         Status computeColumnLayout(const uint8_t *tuple_data,
                                    uint32_t tuple_size,
                                    const std::vector<CatalogManager::ColumnInfo> &columns,
@@ -249,13 +263,13 @@ namespace scratchbird::core
                 size_t col_size = 0;
                 if (is_encrypted)
                 {
-                    if (current_offset + sizeof(uint32_t) > tuple_size)
+                    size_t len_offset = current_offset;
+                    uint32_t len = 0;
+                    if (!readUint32LE(tuple_data, tuple_size, len_offset, len))
                     {
                         SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Encrypted value length out of bounds");
                         return Status::DATA_CORRUPTED;
                     }
-                    uint32_t len = 0;
-                    std::memcpy(&len, tuple_data + current_offset, sizeof(uint32_t));
                     col_size = sizeof(uint32_t) + len;
                     if (current_offset + col_size > tuple_size)
                     {
@@ -265,66 +279,16 @@ namespace scratchbird::core
                 }
                 else
                 {
-                    DataType col_type = static_cast<DataType>(columns[i].data_type);
-                    switch (col_type)
+                    TypeInfo type_info = buildTypeInfo(columns[i]);
+                    Status size_status = computePlainValueSize(type_info.type,
+                                                               type_info,
+                                                               tuple_data + current_offset,
+                                                               tuple_size - current_offset,
+                                                               col_size,
+                                                               ctx);
+                    if (size_status != Status::OK)
                     {
-                        case DataType::INT8:
-                            col_size = sizeof(int8_t);
-                            break;
-                        case DataType::INT16:
-                            col_size = sizeof(int16_t);
-                            break;
-                        case DataType::INT32:
-                            col_size = sizeof(int32_t);
-                            break;
-                        case DataType::INT64:
-                        case DataType::MONEY:
-                            col_size = sizeof(int64_t);
-                            break;
-                        case DataType::FLOAT32:
-                            col_size = sizeof(float);
-                            break;
-                        case DataType::FLOAT64:
-                        case DataType::DECIMAL:
-                            col_size = sizeof(double);
-                            break;
-                        case DataType::BOOLEAN:
-                            col_size = sizeof(uint8_t);
-                            break;
-                        case DataType::DATE:
-                        case DataType::TIME:
-                            col_size = sizeof(int32_t);
-                            break;
-                        case DataType::TIMESTAMP:
-                            col_size = sizeof(int32_t) * 2;
-                            break;
-                        case DataType::UUID:
-                        case DataType::INT128:
-                            col_size = 16;
-                            break;
-                        case DataType::VECTOR:
-                        case DataType::VARCHAR:
-                        case DataType::TEXT:
-                        case DataType::CHAR:
-                        case DataType::BINARY:
-                        case DataType::VARBINARY:
-                        case DataType::BLOB:
-                        case DataType::BYTEA:
-                        case DataType::JSON:
-                        case DataType::JSONB:
-                        case DataType::XML:
-                        {
-                            if (current_offset + sizeof(uint32_t) <= tuple_size)
-                            {
-                                uint32_t len = 0;
-                                std::memcpy(&len, tuple_data + current_offset, sizeof(uint32_t));
-                                col_size = sizeof(uint32_t) + len;
-                            }
-                            break;
-                        }
-                        default:
-                            col_size = 0;
-                            break;
+                        return size_status;
                     }
                 }
 

@@ -58,7 +58,7 @@ public:
     }
 
     bool start() {
-        last_error_ = ErrorContext{};
+        resetLastError();
         scratchbird::server::IPCServerConfig config;
         config.database_name = db_name_;
         config.method = scratchbird::server::IPCMethod::TCP_LOCALHOST;
@@ -68,13 +68,13 @@ public:
         ErrorContext ctx;
         server_ = scratchbird::server::IPCServer::create(config, &ctx);
         if (!server_) {
-            last_error_ = ctx;
+            setLastError(ctx);
             return false;
         }
 
         auto status = server_->listen(&ctx);
         if (status != Status::OK) {
-            last_error_ = ctx;
+            setLastError(ctx);
             return false;
         }
 
@@ -259,6 +259,45 @@ private:
 
         auto response = ProtocolCodec::buildPong(timestamp, sequence);
         session.sendMessage(response);
+    }
+
+    void resetLastError() {
+        if (last_error_.cause) {
+            delete last_error_.cause;
+            last_error_.cause = nullptr;
+        }
+        last_error_.code = Status::OK;
+        last_error_.sqlstate = scratchbird::core::SQLSTATE_SUCCESS;
+        last_error_.message.clear();
+        last_error_.file = nullptr;
+        last_error_.line = 0;
+        last_error_.function = nullptr;
+        last_error_.constraint_name.clear();
+        last_error_.table_name.clear();
+        last_error_.column_name.clear();
+        last_error_.violating_value.clear();
+        last_error_.referenced_table.clear();
+        last_error_.referenced_column.clear();
+        last_error_.check_expression.clear();
+        last_error_.hint.clear();
+    }
+
+    void setLastError(const ErrorContext& src) {
+        resetLastError();
+        last_error_.code = src.code;
+        last_error_.sqlstate = src.sqlstate;
+        last_error_.message = src.message;
+        last_error_.file = src.file;
+        last_error_.line = src.line;
+        last_error_.function = src.function;
+        last_error_.constraint_name = src.constraint_name;
+        last_error_.table_name = src.table_name;
+        last_error_.column_name = src.column_name;
+        last_error_.violating_value = src.violating_value;
+        last_error_.referenced_table = src.referenced_table;
+        last_error_.referenced_column = src.referenced_column;
+        last_error_.check_expression = src.check_expression;
+        last_error_.hint = src.hint;
     }
 
     std::string db_name_;

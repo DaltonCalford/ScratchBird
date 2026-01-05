@@ -241,6 +241,7 @@ struct ResolvedFunctionCall : public ResolvedExpression {
 struct ResolvedCast : public ResolvedExpression {
     ResolvedExpression* expr = nullptr;
     ResolvedType target_type;
+    core::CastFormat format = core::CastFormat::DEFAULT;
     bool implicit = false;  // True if inserted by semantic analyzer
 };
 

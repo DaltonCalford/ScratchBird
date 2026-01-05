@@ -1,12 +1,24 @@
 #include "scratchbird/core/typed_value.h"
 #include "scratchbird/core/data_encryption.h"
+#include "scratchbird/core/decimal.h"
+#include "scratchbird/core/firebird_datetime.h"
 #include "scratchbird/core/network.h"
 #include "scratchbird/core/tsvector.h"
 #include "scratchbird/core/tsquery.h"
+#include "scratchbird/core/config.h"
+#include "scratchbird/core/timezone.h"
+#include "scratchbird/spatial/wkt_parser.h"
 #include <cstring>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <charconv>
+#include <sstream>
+#include <iomanip>
+#include <cctype>
+#include <cerrno>
+#include <cstdlib>
+#include <algorithm>
 
 namespace scratchbird::core
 {
@@ -61,6 +73,15 @@ namespace scratchbird::core
             uint64_t bits = 0;
             std::memcpy(&bits, &value, sizeof(bits));
             appendUint64(out, bits);
+        }
+
+        void appendInt128(std::vector<uint8_t> &out, int128_t value, size_t bytes)
+        {
+            uint128_t uvalue = static_cast<uint128_t>(value);
+            for (size_t i = 0; i < bytes; ++i)
+            {
+                out.push_back(static_cast<uint8_t>((uvalue >> (i * 8)) & 0xFF));
+            }
         }
 
         bool readUint8(const std::vector<uint8_t> &data, size_t &offset, uint8_t &value)
@@ -157,6 +178,653 @@ namespace scratchbird::core
             }
             std::memcpy(&value, &bits, sizeof(value));
             return true;
+        }
+
+        bool readInt128(const std::vector<uint8_t> &data, size_t &offset, size_t bytes,
+                        int128_t &value)
+        {
+            if (bytes == 0 || bytes > 16 || offset + bytes > data.size())
+            {
+                return false;
+            }
+
+            uint128_t uvalue = 0;
+            for (size_t i = 0; i < bytes; ++i)
+            {
+                uvalue |= (static_cast<uint128_t>(data[offset + i]) << (i * 8));
+            }
+
+            if (bytes < 16 && (data[offset + bytes - 1] & 0x80))
+            {
+                uint128_t sign_mask = ~((static_cast<uint128_t>(1) << (bytes * 8)) - 1);
+                uvalue |= sign_mask;
+            }
+
+            value = static_cast<int128_t>(uvalue);
+            offset += bytes;
+            return true;
+        }
+
+        size_t decimalStorageSize(uint8_t precision)
+        {
+            if (precision <= 2)
+            {
+                return 1;
+            }
+            if (precision <= 4)
+            {
+                return 2;
+            }
+            if (precision <= 9)
+            {
+                return 4;
+            }
+            if (precision <= 18)
+            {
+                return 8;
+            }
+            if (precision <= 38)
+            {
+                return 16;
+            }
+            return 0;
+        }
+
+        std::string trimAscii(const std::string &input)
+        {
+            size_t start = 0;
+            while (start < input.size() && std::isspace(static_cast<unsigned char>(input[start])))
+            {
+                ++start;
+            }
+            size_t end = input.size();
+            while (end > start && std::isspace(static_cast<unsigned char>(input[end - 1])))
+            {
+                --end;
+            }
+            return input.substr(start, end - start);
+        }
+
+        std::string formatOffsetSeconds(int32_t offset_seconds)
+        {
+            int32_t total_minutes = offset_seconds / 60;
+            int32_t hours = total_minutes / 60;
+            int32_t minutes = std::abs(total_minutes % 60);
+            std::ostringstream oss;
+            oss << (offset_seconds >= 0 ? '+' : '-') << std::setfill('0') << std::setw(2)
+                << std::abs(hours) << ':' << std::setfill('0') << std::setw(2) << minutes;
+            return oss.str();
+        }
+
+        int64_t floorDiv(int64_t value, int64_t divisor)
+        {
+            int64_t quotient = value / divisor;
+            int64_t remainder = value % divisor;
+            if (remainder != 0 && ((remainder > 0) != (divisor > 0)))
+            {
+                --quotient;
+            }
+            return quotient;
+        }
+
+        bool isStringLike(DataType type)
+        {
+            return type == DataType::CHAR || type == DataType::VARCHAR ||
+                   type == DataType::TEXT || type == DataType::JSON ||
+                   type == DataType::JSONB || type == DataType::XML;
+        }
+
+        bool isBinaryLike(DataType type)
+        {
+            return type == DataType::BINARY || type == DataType::VARBINARY ||
+                   type == DataType::BLOB || type == DataType::BYTEA ||
+                   type == DataType::VECTOR;
+        }
+
+        bool isIntegerType(DataType type)
+        {
+            return type == DataType::INT8 || type == DataType::INT16 ||
+                   type == DataType::INT32 || type == DataType::INT64 ||
+                   type == DataType::INT128 || type == DataType::UINT8 ||
+                   type == DataType::UINT16 || type == DataType::UINT32 ||
+                   type == DataType::UINT64;
+        }
+
+        bool isUnsignedType(DataType type)
+        {
+            return type == DataType::UINT8 || type == DataType::UINT16 ||
+                   type == DataType::UINT32 || type == DataType::UINT64;
+        }
+
+        bool isFloatType(DataType type)
+        {
+            return type == DataType::FLOAT32 || type == DataType::FLOAT64;
+        }
+
+        bool isNumericType(DataType type)
+        {
+            return isIntegerType(type) || isFloatType(type) ||
+                   type == DataType::DECIMAL || type == DataType::MONEY ||
+                   type == DataType::BOOLEAN;
+        }
+
+        bool decodeHex(const std::string &text, std::vector<uint8_t> &out, ErrorContext *ctx);
+
+        bool parseUuidString(const std::string &text, std::vector<uint8_t> &out,
+                             ErrorContext *ctx)
+        {
+            std::string trimmed = trimAscii(text);
+            if (trimmed.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                  "Empty UUID string");
+                return false;
+            }
+
+            if (trimmed.rfind("urn:uuid:", 0) == 0 || trimmed.rfind("URN:UUID:", 0) == 0)
+            {
+                trimmed = trimmed.substr(9);
+            }
+
+            std::string hex;
+            hex.reserve(trimmed.size());
+            for (char ch : trimmed)
+            {
+                if (ch == '{' || ch == '}' || ch == '-')
+                {
+                    continue;
+                }
+                hex.push_back(ch);
+            }
+
+            if (hex.size() != 32)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                  "Invalid UUID length");
+                return false;
+            }
+
+            if (!decodeHex(hex, out, ctx))
+            {
+                return false;
+            }
+
+            if (out.size() != 16)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                  "Invalid UUID value");
+                return false;
+            }
+
+            return true;
+        }
+
+        bool parseOffsetSuffix(const std::string &input, size_t min_pos,
+                               std::string &base_out, int32_t &offset_seconds_out,
+                               bool &has_offset_out, ErrorContext *ctx)
+        {
+            std::string trimmed = trimAscii(input);
+            if (trimmed.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT, "Empty value");
+                return false;
+            }
+
+            if (!trimmed.empty() && (trimmed.back() == 'Z' || trimmed.back() == 'z'))
+            {
+                base_out = trimAscii(trimmed.substr(0, trimmed.size() - 1));
+                offset_seconds_out = 0;
+                has_offset_out = true;
+                return true;
+            }
+
+            size_t pos = trimmed.find_last_of("+-");
+            if (pos != std::string::npos && pos >= min_pos)
+            {
+                std::string offset_str = trimmed.substr(pos);
+                auto offset = TimezoneOffset::fromString(offset_str, ctx);
+                if (!offset)
+                {
+                    return false;
+                }
+                base_out = trimAscii(trimmed.substr(0, pos));
+                offset_seconds_out = static_cast<int32_t>(offset->offset_minutes) * 60;
+                has_offset_out = true;
+                return true;
+            }
+
+            base_out = trimmed;
+            offset_seconds_out = 0;
+            has_offset_out = false;
+            return true;
+        }
+
+        bool parseIntegerString(const std::string &text, bool allow_signed,
+                                int128_t &value_out, ErrorContext *ctx)
+        {
+            std::string trimmed = trimAscii(text);
+            if (trimmed.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                  "Empty string is not a number");
+                return false;
+            }
+
+            const char *begin = trimmed.data();
+            const char *end = trimmed.data() + trimmed.size();
+            bool negative = false;
+            if (*begin == '+' || *begin == '-')
+            {
+                if (*begin == '-')
+                {
+                    negative = true;
+                }
+                ++begin;
+            }
+
+            if (!allow_signed && negative)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                  "Negative value not allowed for unsigned type");
+                return false;
+            }
+
+            if (begin == end)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                  "Invalid numeric format");
+                return false;
+            }
+
+            uint128_t value = 0;
+            uint128_t limit = allow_signed ? ((uint128_t{1} << 127) - 1) : ~uint128_t{0};
+
+            for (const char *ptr = begin; ptr < end; ++ptr)
+            {
+                if (*ptr < '0' || *ptr > '9')
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                      "Invalid numeric format");
+                    return false;
+                }
+                int digit = *ptr - '0';
+                if (value > (limit - static_cast<uint128_t>(digit)) / 10)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                      "Numeric value out of range");
+                    return false;
+                }
+                value = value * 10 + static_cast<uint128_t>(digit);
+            }
+
+            value_out = negative ? -static_cast<int128_t>(value) : static_cast<int128_t>(value);
+            return true;
+        }
+
+        bool parseFloatingString(const std::string &text, double &value_out,
+                                 ErrorContext *ctx)
+        {
+            std::string trimmed = trimAscii(text);
+            if (trimmed.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                  "Empty string is not a number");
+                return false;
+            }
+
+            char *end_ptr = nullptr;
+            errno = 0;
+            double val = std::strtod(trimmed.c_str(), &end_ptr);
+            if (end_ptr == trimmed.c_str() || *end_ptr != '\0' || errno == ERANGE)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                  ("Invalid numeric format: " + trimmed).c_str());
+                return false;
+            }
+            value_out = val;
+            return true;
+        }
+
+        bool parseDateParts(const std::string &text, int &year, int &month, int &day)
+        {
+            return std::sscanf(text.c_str(), "%d-%d-%d", &year, &month, &day) == 3;
+        }
+
+        bool parseTimeParts(const std::string &text, int &hour, int &minute, int &second,
+                            int &microseconds, ErrorContext *ctx)
+        {
+            hour = minute = second = microseconds = 0;
+            if (text.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT, "Empty time value");
+                return false;
+            }
+
+            std::string time_part = text;
+            std::string frac_part;
+            size_t dot_pos = text.find('.');
+            if (dot_pos != std::string::npos)
+            {
+                time_part = text.substr(0, dot_pos);
+                frac_part = text.substr(dot_pos + 1);
+            }
+
+            int parsed = std::sscanf(time_part.c_str(), "%d:%d:%d",
+                                     &hour, &minute, &second);
+            if (parsed < 2)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
+                                  "Invalid time format");
+                return false;
+            }
+            if (parsed == 2)
+            {
+                second = 0;
+            }
+
+            if (!frac_part.empty())
+            {
+                if (frac_part.size() > 6)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
+                                      "Too many fractional second digits");
+                    return false;
+                }
+                int frac_value = 0;
+                for (char ch : frac_part)
+                {
+                    if (ch < '0' || ch > '9')
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
+                                          "Invalid fractional seconds");
+                        return false;
+                    }
+                    frac_value = frac_value * 10 + (ch - '0');
+                }
+                int scale = 6 - static_cast<int>(frac_part.size());
+                for (int i = 0; i < scale; ++i)
+                {
+                    frac_value *= 10;
+                }
+                microseconds = frac_value;
+            }
+
+            return true;
+        }
+
+        int32_t defaultDateTimeDeciMs()
+        {
+            Config &cfg = Config::getInstance();
+            std::string default_time = cfg.getString("server.time", "date_default_time",
+                                                     "00:00:00");
+            int32_t deci_ms = FirebirdDateTime::parseTime(default_time);
+            if (deci_ms < 0)
+            {
+                deci_ms = 0;
+            }
+            return deci_ms;
+        }
+
+        std::string int128ToString(int128_t value)
+        {
+            if (value == 0)
+            {
+                return "0";
+            }
+
+            bool negative = value < 0;
+            uint128_t uvalue = negative ? static_cast<uint128_t>(-value)
+                                         : static_cast<uint128_t>(value);
+            std::string result;
+            while (uvalue > 0)
+            {
+                uint8_t digit = static_cast<uint8_t>(uvalue % 10);
+                result.push_back(static_cast<char>('0' + digit));
+                uvalue /= 10;
+            }
+            if (negative)
+            {
+                result.push_back('-');
+            }
+            std::reverse(result.begin(), result.end());
+            return result;
+        }
+
+        std::string encodeHex(const std::vector<uint8_t> &data)
+        {
+            static const char kHexDigits[] = "0123456789abcdef";
+            std::string out;
+            out.reserve(data.size() * 2);
+            for (uint8_t byte : data)
+            {
+                out.push_back(kHexDigits[(byte >> 4) & 0x0F]);
+                out.push_back(kHexDigits[byte & 0x0F]);
+            }
+            return out;
+        }
+
+        bool decodeHex(const std::string &text, std::vector<uint8_t> &out, ErrorContext *ctx)
+        {
+            std::string trimmed = trimAscii(text);
+            if (trimmed.rfind("0x", 0) == 0 || trimmed.rfind("0X", 0) == 0)
+            {
+                trimmed = trimmed.substr(2);
+            }
+            if (trimmed.rfind("\\x", 0) == 0 || trimmed.rfind("\\X", 0) == 0)
+            {
+                trimmed = trimmed.substr(2);
+            }
+            if (trimmed.size() % 2 != 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                  "Invalid hex string length");
+                return false;
+            }
+            out.clear();
+            out.reserve(trimmed.size() / 2);
+            auto hex_val = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+            };
+            for (size_t i = 0; i < trimmed.size(); i += 2)
+            {
+                int hi = hex_val(trimmed[i]);
+                int lo = hex_val(trimmed[i + 1]);
+                if (hi < 0 || lo < 0)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                      "Invalid hex digit");
+                    return false;
+                }
+                out.push_back(static_cast<uint8_t>((hi << 4) | lo));
+            }
+            return true;
+        }
+
+        std::string encodeBase64(const std::vector<uint8_t> &data)
+        {
+            static const char kBase64Chars[] =
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            std::string result;
+            result.reserve(((data.size() + 2) / 3) * 4);
+
+            size_t i = 0;
+            while (i + 2 < data.size())
+            {
+                uint32_t val = (static_cast<uint32_t>(data[i]) << 16) |
+                               (static_cast<uint32_t>(data[i + 1]) << 8) |
+                               static_cast<uint32_t>(data[i + 2]);
+                result.push_back(kBase64Chars[(val >> 18) & 0x3F]);
+                result.push_back(kBase64Chars[(val >> 12) & 0x3F]);
+                result.push_back(kBase64Chars[(val >> 6) & 0x3F]);
+                result.push_back(kBase64Chars[val & 0x3F]);
+                i += 3;
+            }
+
+            if (i + 1 == data.size())
+            {
+                uint32_t val = static_cast<uint32_t>(data[i]) << 16;
+                result.push_back(kBase64Chars[(val >> 18) & 0x3F]);
+                result.push_back(kBase64Chars[(val >> 12) & 0x3F]);
+                result.push_back('=');
+                result.push_back('=');
+            }
+            else if (i + 2 == data.size())
+            {
+                uint32_t val = (static_cast<uint32_t>(data[i]) << 16) |
+                               (static_cast<uint32_t>(data[i + 1]) << 8);
+                result.push_back(kBase64Chars[(val >> 18) & 0x3F]);
+                result.push_back(kBase64Chars[(val >> 12) & 0x3F]);
+                result.push_back(kBase64Chars[(val >> 6) & 0x3F]);
+                result.push_back('=');
+            }
+
+            return result;
+        }
+
+        bool decodeBase64(const std::string &text, std::vector<uint8_t> &out, ErrorContext *ctx)
+        {
+            auto base64_val = [](char c) -> int {
+                if (c >= 'A' && c <= 'Z') return c - 'A';
+                if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+                if (c >= '0' && c <= '9') return c - '0' + 52;
+                if (c == '+') return 62;
+                if (c == '/') return 63;
+                if (c == '=') return -1;
+                return -2;
+            };
+
+            std::string cleaned = text;
+            cleaned.erase(std::remove_if(cleaned.begin(), cleaned.end(), ::isspace), cleaned.end());
+
+            if (cleaned.size() % 4 != 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                  "Invalid base64 length");
+                return false;
+            }
+
+            out.clear();
+            out.reserve((cleaned.size() / 4) * 3);
+
+            for (size_t i = 0; i < cleaned.size(); i += 4)
+            {
+                int v0 = base64_val(cleaned[i]);
+                int v1 = base64_val(cleaned[i + 1]);
+                int v2 = base64_val(cleaned[i + 2]);
+                int v3 = base64_val(cleaned[i + 3]);
+
+                if (v0 < 0 || v1 < 0 || v2 == -2 || v3 == -2)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                      "Invalid base64 character");
+                    return false;
+                }
+
+                out.push_back(static_cast<uint8_t>((v0 << 2) | (v1 >> 4)));
+
+                if (v2 >= 0)
+                {
+                    out.push_back(static_cast<uint8_t>(((v1 & 0x0F) << 4) | (v2 >> 2)));
+                    if (v3 >= 0)
+                    {
+                        out.push_back(static_cast<uint8_t>(((v2 & 0x03) << 6) | v3));
+                    }
+                }
+            }
+            return true;
+        }
+
+        std::string encodeEscape(const std::vector<uint8_t> &data)
+        {
+            std::string result;
+            result.reserve(data.size());
+            for (uint8_t byte : data)
+            {
+                if (byte == '\\')
+                {
+                    result.append("\\\\");
+                }
+                else if (byte >= 32 && byte < 127)
+                {
+                    result.push_back(static_cast<char>(byte));
+                }
+                else
+                {
+                    result.push_back('\\');
+                    result.push_back('0' + ((byte >> 6) & 0x07));
+                    result.push_back('0' + ((byte >> 3) & 0x07));
+                    result.push_back('0' + (byte & 0x07));
+                }
+            }
+            return result;
+        }
+
+        bool decodeEscape(const std::string &text, std::vector<uint8_t> &out, ErrorContext *ctx)
+        {
+            out.clear();
+            out.reserve(text.size());
+            for (size_t i = 0; i < text.size(); ++i)
+            {
+                if (text[i] == '\\' && i + 1 < text.size())
+                {
+                    if (text[i + 1] == '\\')
+                    {
+                        out.push_back('\\');
+                        ++i;
+                    }
+                    else if (i + 3 < text.size() &&
+                             text[i + 1] >= '0' && text[i + 1] <= '3' &&
+                             text[i + 2] >= '0' && text[i + 2] <= '7' &&
+                             text[i + 3] >= '0' && text[i + 3] <= '7')
+                    {
+                        uint8_t val = static_cast<uint8_t>(
+                            ((text[i + 1] - '0') << 6) |
+                            ((text[i + 2] - '0') << 3) |
+                            (text[i + 3] - '0'));
+                        out.push_back(val);
+                        i += 3;
+                    }
+                    else
+                    {
+                        out.push_back(static_cast<uint8_t>(text[i]));
+                    }
+                }
+                else
+                {
+                    out.push_back(static_cast<uint8_t>(text[i]));
+                }
+            }
+            return true;
+        }
+
+        std::string formatUuid(const std::vector<uint8_t> &bytes)
+        {
+            if (bytes.size() != 16)
+            {
+                return "";
+            }
+            std::ostringstream oss;
+            oss << std::hex << std::setfill('0')
+                << std::setw(2) << static_cast<int>(bytes[0])
+                << std::setw(2) << static_cast<int>(bytes[1])
+                << std::setw(2) << static_cast<int>(bytes[2])
+                << std::setw(2) << static_cast<int>(bytes[3]) << "-"
+                << std::setw(2) << static_cast<int>(bytes[4])
+                << std::setw(2) << static_cast<int>(bytes[5]) << "-"
+                << std::setw(2) << static_cast<int>(bytes[6])
+                << std::setw(2) << static_cast<int>(bytes[7]) << "-"
+                << std::setw(2) << static_cast<int>(bytes[8])
+                << std::setw(2) << static_cast<int>(bytes[9]) << "-"
+                << std::setw(2) << static_cast<int>(bytes[10])
+                << std::setw(2) << static_cast<int>(bytes[11])
+                << std::setw(2) << static_cast<int>(bytes[12])
+                << std::setw(2) << static_cast<int>(bytes[13])
+                << std::setw(2) << static_cast<int>(bytes[14])
+                << std::setw(2) << static_cast<int>(bytes[15]);
+            return oss.str();
         }
 
         bool readBytes(const std::vector<uint8_t> &data, size_t &offset, size_t length,
@@ -467,6 +1135,16 @@ namespace scratchbird::core
         return tv;
     }
 
+    TypedValue TypedValue::makeDecimal(int128_t unscaled_value, uint8_t precision, uint8_t scale)
+    {
+        TypedValue tv(DataType::DECIMAL);
+        tv.is_null_ = false;
+        tv.decimal_unscaled_ = unscaled_value;
+        tv.decimal_precision_ = precision;
+        tv.decimal_scale_ = scale;
+        return tv;
+    }
+
     TypedValue TypedValue::makePoint(const Point& value)
     {
         TypedValue tv(DataType::POINT);
@@ -596,27 +1274,30 @@ namespace scratchbird::core
     }
 
     // Temporal types
-    TypedValue TypedValue::makeDate(int64_t days_since_epoch)
+    TypedValue TypedValue::makeDate(int64_t days_since_epoch, int32_t offset_seconds)
     {
         TypedValue tv(DataType::DATE);
         tv.is_null_ = false;
         tv.data_.int64_val = days_since_epoch;
+        tv.timezone_offset_seconds_ = offset_seconds;
         return tv;
     }
 
-    TypedValue TypedValue::makeTime(int64_t microseconds)
+    TypedValue TypedValue::makeTime(int64_t microseconds, int32_t offset_seconds)
     {
         TypedValue tv(DataType::TIME);
         tv.is_null_ = false;
         tv.data_.int64_val = microseconds;
+        tv.timezone_offset_seconds_ = offset_seconds;
         return tv;
     }
 
-    TypedValue TypedValue::makeTimestamp(int64_t microseconds_since_epoch)
+    TypedValue TypedValue::makeTimestamp(int64_t microseconds_since_epoch, int32_t offset_seconds)
     {
         TypedValue tv(DataType::TIMESTAMP);
         tv.is_null_ = false;
         tv.data_.int64_val = microseconds_since_epoch;
+        tv.timezone_offset_seconds_ = offset_seconds;
         return tv;
     }
 
@@ -752,10 +1433,17 @@ namespace scratchbird::core
             throw std::runtime_error("Cannot get value from NULL");
         }
         ensureDecrypted();
-        if (type_ != DataType::INT32) {
-            throw std::runtime_error("Type mismatch: expected INT32");
+        switch (type_)
+        {
+            case DataType::INT8:
+                return static_cast<int32_t>(data_.int8_val);
+            case DataType::INT16:
+                return static_cast<int32_t>(data_.int16_val);
+            case DataType::INT32:
+                return data_.int32_val;
+            default:
+                throw std::runtime_error("Type mismatch: expected INT32");
         }
-        return data_.int32_val;
     }
 
     int64_t TypedValue::getInt64() const
@@ -764,10 +1452,19 @@ namespace scratchbird::core
             throw std::runtime_error("Cannot get value from NULL");
         }
         ensureDecrypted();
-        if (type_ != DataType::INT64) {
-            throw std::runtime_error("Type mismatch: expected INT64");
+        switch (type_)
+        {
+            case DataType::INT8:
+                return static_cast<int64_t>(data_.int8_val);
+            case DataType::INT16:
+                return static_cast<int64_t>(data_.int16_val);
+            case DataType::INT32:
+                return static_cast<int64_t>(data_.int32_val);
+            case DataType::INT64:
+                return data_.int64_val;
+            default:
+                throw std::runtime_error("Type mismatch: expected INT64");
         }
-        return data_.int64_val;
     }
 
     uint8_t TypedValue::getUInt8() const
@@ -1100,6 +1797,27 @@ namespace scratchbird::core
         return binary_data_;
     }
 
+    const std::vector<uint8_t>& TypedValue::getBinary() const
+    {
+        if (is_null_) {
+            throw std::runtime_error("Cannot get value from NULL");
+        }
+        ensureDecrypted();
+        switch (type_)
+        {
+            case DataType::BINARY:
+            case DataType::VARBINARY:
+            case DataType::BLOB:
+            case DataType::BYTEA:
+            case DataType::UUID:
+            case DataType::INT128:
+            case DataType::VECTOR:
+                return binary_data_;
+            default:
+                throw std::runtime_error("Type mismatch: expected binary type");
+        }
+    }
+
     const Interval& TypedValue::getInterval() const
     {
         if (is_null_) {
@@ -1176,6 +1894,10 @@ namespace scratchbird::core
         ensureDecrypted();
 
         switch (type_) {
+            case DataType::INT8:
+                return std::to_string(data_.int8_val);
+            case DataType::INT16:
+                return std::to_string(data_.int16_val);
             case DataType::INT32:
                 return std::to_string(data_.int32_val);
             case DataType::INT64:
@@ -1192,6 +1914,17 @@ namespace scratchbird::core
                 return std::to_string(data_.float32_val);
             case DataType::FLOAT64:
                 return std::to_string(data_.float64_val);
+            case DataType::DECIMAL:
+            {
+                uint8_t precision = decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION : decimal_precision_;
+                Decimal decimal(decimal_unscaled_, precision, decimal_scale_);
+                return decimal.toStringWithPrecision(decimal_scale_);
+            }
+            case DataType::MONEY:
+            {
+                Decimal decimal(static_cast<int128_t>(data_.int64_val), 19, 4);
+                return decimal.toStringWithPrecision(4);
+            }
             case DataType::BOOLEAN:
                 return data_.bool_val ? "true" : "false";
             case DataType::VARCHAR:
@@ -1199,13 +1932,243 @@ namespace scratchbird::core
             case DataType::CHAR:
             case DataType::JSON:
             case DataType::JSONB:
+            case DataType::XML:
                 return string_data_;
             case DataType::DATE:
-                return "DATE(" + std::to_string(data_.int64_val) + ")";
+            {
+                int64_t days = data_.int64_val;
+                int32_t offset = timezone_offset_seconds_;
+                int32_t default_deci_ms = defaultDateTimeDeciMs();
+                int64_t utc_seconds = days * FirebirdDateTime::SECONDS_PER_DAY +
+                                      (default_deci_ms / FirebirdDateTime::DECI_MS_PER_SECOND);
+                int64_t local_seconds = utc_seconds + offset;
+                int32_t mjd_date = 0;
+                int32_t deci_ms_time = 0;
+                FirebirdDateTime::unixToFirebird(local_seconds, mjd_date, deci_ms_time);
+                std::string result = FirebirdDateTime::formatDate(mjd_date);
+                if (offset != 0)
+                {
+                    result += formatOffsetSeconds(offset);
+                }
+                return result;
+            }
             case DataType::TIME:
-                return "TIME(" + std::to_string(data_.int64_val) + ")";
+            {
+                int64_t micros = data_.int64_val;
+                int32_t offset = timezone_offset_seconds_;
+                int64_t local_micros = micros + static_cast<int64_t>(offset) * 1000000;
+                const int64_t micros_per_day =
+                    static_cast<int64_t>(FirebirdDateTime::SECONDS_PER_DAY) * 1000000;
+                local_micros %= micros_per_day;
+                if (local_micros < 0)
+                {
+                    local_micros += micros_per_day;
+                }
+                int32_t deci_ms = static_cast<int32_t>(local_micros / 100);
+                bool include_fraction = (local_micros % 1000000) != 0;
+                std::string result = FirebirdDateTime::formatTime(deci_ms, include_fraction);
+                if (offset != 0)
+                {
+                    result += formatOffsetSeconds(offset);
+                }
+                return result;
+            }
             case DataType::TIMESTAMP:
-                return "TIMESTAMP(" + std::to_string(data_.int64_val) + ")";
+            {
+                int64_t utc_micros = data_.int64_val;
+                int32_t offset = timezone_offset_seconds_;
+                int64_t local_micros = utc_micros + static_cast<int64_t>(offset) * 1000000;
+                int64_t unix_seconds = local_micros / 1000000;
+                int64_t micro_remainder = local_micros % 1000000;
+                if (micro_remainder < 0)
+                {
+                    micro_remainder += 1000000;
+                    unix_seconds -= 1;
+                }
+                int32_t mjd_date = 0;
+                int32_t deci_ms_time = 0;
+                FirebirdDateTime::unixToFirebird(unix_seconds, mjd_date, deci_ms_time);
+                deci_ms_time += static_cast<int32_t>(micro_remainder / 100);
+                bool include_fraction = micro_remainder != 0;
+                std::string result = FirebirdDateTime::formatTimestamp(mjd_date, deci_ms_time,
+                                                                       include_fraction);
+                if (offset != 0)
+                {
+                    result += formatOffsetSeconds(offset);
+                }
+                return result;
+            }
+            case DataType::UUID:
+            {
+                std::string formatted = formatUuid(binary_data_);
+                return formatted.empty() ? "<UUID>" : formatted;
+            }
+            case DataType::INT128:
+            {
+                if (binary_data_.size() != 16)
+                {
+                    return "<INT128>";
+                }
+                int128_t value = 0;
+                size_t offset = 0;
+                std::vector<uint8_t> bytes = binary_data_;
+                if (!readInt128(bytes, offset, 16, value))
+                {
+                    return "<INT128>";
+                }
+                return int128ToString(value);
+            }
+            case DataType::BINARY:
+            case DataType::VARBINARY:
+            case DataType::BLOB:
+            case DataType::BYTEA:
+                return encodeHex(binary_data_);
+            case DataType::VECTOR:
+            {
+                if (binary_data_.size() % sizeof(float) != 0)
+                {
+                    return encodeHex(binary_data_);
+                }
+                size_t count = binary_data_.size() / sizeof(float);
+                std::ostringstream oss;
+                oss << "[";
+                for (size_t i = 0; i < count; ++i)
+                {
+                    float val = 0.0f;
+                    std::memcpy(&val, binary_data_.data() + i * sizeof(float), sizeof(float));
+                    if (i > 0)
+                    {
+                        oss << ", ";
+                    }
+                    oss << val;
+                }
+                oss << "]";
+                return oss.str();
+            }
+            case DataType::POINT:
+                if (spatial_data_)
+                {
+                    return spatial::WKTParser::pointToWKT(spatial_data_->point);
+                }
+                return "POINT EMPTY";
+            case DataType::LINESTRING:
+                if (spatial_data_)
+                {
+                    return spatial::WKTParser::lineStringToWKT(spatial_data_->linestring);
+                }
+                return "LINESTRING EMPTY";
+            case DataType::POLYGON:
+                if (spatial_data_)
+                {
+                    return spatial::WKTParser::polygonToWKT(spatial_data_->polygon);
+                }
+                return "POLYGON EMPTY";
+            case DataType::MULTIPOINT:
+                if (spatial_data_)
+                {
+                    const auto& mp = spatial_data_->multipoint;
+                    std::ostringstream oss;
+                    oss << "MULTIPOINT(";
+                    for (size_t i = 0; i < mp.points.size(); ++i)
+                    {
+                        if (i > 0)
+                        {
+                            oss << ", ";
+                        }
+                        oss << "(" << mp.points[i].x << " " << mp.points[i].y << ")";
+                    }
+                    oss << ")";
+                    return oss.str();
+                }
+                return "MULTIPOINT EMPTY";
+            case DataType::MULTILINESTRING:
+                if (spatial_data_)
+                {
+                    const auto& mls = spatial_data_->multilinestring;
+                    std::ostringstream oss;
+                    oss << "MULTILINESTRING(";
+                    for (size_t i = 0; i < mls.linestrings.size(); ++i)
+                    {
+                        if (i > 0)
+                        {
+                            oss << ", ";
+                        }
+                        oss << "(";
+                        const auto& ls = mls.linestrings[i];
+                        for (size_t j = 0; j < ls.points.size(); ++j)
+                        {
+                            if (j > 0)
+                            {
+                                oss << ", ";
+                            }
+                            oss << ls.points[j].x << " " << ls.points[j].y;
+                        }
+                        oss << ")";
+                    }
+                    oss << ")";
+                    return oss.str();
+                }
+                return "MULTILINESTRING EMPTY";
+            case DataType::MULTIPOLYGON:
+                if (spatial_data_)
+                {
+                    const auto& mpoly = spatial_data_->multipolygon;
+                    std::ostringstream oss;
+                    oss << "MULTIPOLYGON(";
+                    for (size_t i = 0; i < mpoly.polygons.size(); ++i)
+                    {
+                        if (i > 0)
+                        {
+                            oss << ", ";
+                        }
+                        oss << "(";
+                        const auto& poly = mpoly.polygons[i];
+                        for (size_t j = 0; j < poly.rings.size(); ++j)
+                        {
+                            if (j > 0)
+                            {
+                                oss << ", ";
+                            }
+                            oss << "(";
+                            const auto& ring = poly.rings[j];
+                            for (size_t k = 0; k < ring.size(); ++k)
+                            {
+                                if (k > 0)
+                                {
+                                    oss << ", ";
+                                }
+                                oss << ring[k].x << " " << ring[k].y;
+                            }
+                            oss << ")";
+                        }
+                        oss << ")";
+                    }
+                    oss << ")";
+                    return oss.str();
+                }
+                return "MULTIPOLYGON EMPTY";
+            case DataType::GEOMETRYCOLLECTION:
+                if (spatial_data_)
+                {
+                    const auto& gc = spatial_data_->geometrycollection;
+                    std::ostringstream oss;
+                    oss << "GEOMETRYCOLLECTION(";
+                    for (size_t i = 0; i < gc.geometries.size(); ++i)
+                    {
+                        if (i > 0)
+                        {
+                            oss << ", ";
+                        }
+                        const auto& geom = gc.geometries[i];
+                        if (geom)
+                        {
+                            oss << geom->toString();
+                        }
+                    }
+                    oss << ")";
+                    return oss.str();
+                }
+                return "GEOMETRYCOLLECTION EMPTY";
             case DataType::INET:
                 if (complex_data_ && complex_data_->inet) {
                     return complex_data_->inet->toString();
@@ -1241,9 +2204,14 @@ namespace scratchbird::core
                 }
                 return "<empty range>";
             case DataType::INT8RANGE:
-            case DataType::NUMRANGE:
                 if (complex_data_ && complex_data_->range_data) {
                     auto* range = static_cast<Range<int64_t>*>(complex_data_->range_data.get());
+                    return range->toString();
+                }
+                return "<empty range>";
+            case DataType::NUMRANGE:
+                if (complex_data_ && complex_data_->range_data) {
+                    auto* range = static_cast<Range<double>*>(complex_data_->range_data.get());
                     return range->toString();
                 }
                 return "<empty range>";
@@ -1257,6 +2225,51 @@ namespace scratchbird::core
                     return complex_data_->tsquery->toString();
                 }
                 return "<empty tsquery>";
+            case DataType::INTERVAL:
+                if (complex_data_ && complex_data_->interval) {
+                    const auto& interval = *complex_data_->interval;
+                    return "interval " + std::to_string(interval.months) + " " +
+                        std::to_string(interval.days) + " " +
+                        std::to_string(interval.microseconds);
+                }
+                return "<empty interval>";
+            case DataType::ARRAY:
+            case DataType::COMPOSITE:
+                if (complex_data_ && complex_data_->array) {
+                    std::ostringstream oss;
+                    oss << (type_ == DataType::ARRAY ? "{" : "(");
+                    for (size_t i = 0; i < complex_data_->array->size(); ++i)
+                    {
+                        if (i > 0)
+                        {
+                            oss << ", ";
+                        }
+                        oss << (*complex_data_->array)[i].toString();
+                    }
+                    oss << (type_ == DataType::ARRAY ? "}" : ")");
+                    return oss.str();
+                }
+                return type_ == DataType::ARRAY ? "<empty array>" : "<empty composite>";
+            case DataType::VARIANT:
+                if (complex_data_ && complex_data_->array && !complex_data_->array->empty()) {
+                    if (complex_data_->array->size() == 1)
+                    {
+                        return (*complex_data_->array)[0].toString();
+                    }
+                    std::ostringstream oss;
+                    oss << "{";
+                    for (size_t i = 0; i < complex_data_->array->size(); ++i)
+                    {
+                        if (i > 0)
+                        {
+                            oss << ", ";
+                        }
+                        oss << (*complex_data_->array)[i].toString();
+                    }
+                    oss << "}";
+                    return oss.str();
+                }
+                return "<empty variant>";
             default:
                 return "<" + std::string(TypeSystem::getTypeName(type_)) + ">";
         }
@@ -1469,6 +2482,12 @@ namespace scratchbird::core
         string_data_ = value;
     }
 
+    void TypedValue::setDecimalType(uint8_t precision, uint8_t scale)
+    {
+        decimal_precision_ = precision;
+        decimal_scale_ = scale;
+    }
+
     // ===== Comparison Operators =====
 
     bool TypedValue::operator==(const TypedValue& other) const
@@ -1496,12 +2515,25 @@ namespace scratchbird::core
                 return data_.float32_val == other.data_.float32_val;
             case DataType::FLOAT64:
                 return data_.float64_val == other.data_.float64_val;
+            case DataType::DECIMAL:
+            {
+                uint8_t precision = decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION : decimal_precision_;
+                Decimal left(decimal_unscaled_, precision, decimal_scale_);
+                uint8_t other_precision = other.decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
+                                                                         : other.decimal_precision_;
+                Decimal right(other.decimal_unscaled_, other_precision, other.decimal_scale_);
+                return left == right;
+            }
             case DataType::BOOLEAN:
                 return data_.bool_val == other.data_.bool_val;
             case DataType::VARCHAR:
             case DataType::TEXT:
             case DataType::CHAR:
                 return string_data_ == other.string_data_;
+            case DataType::DATE:
+            case DataType::TIME:
+            case DataType::TIMESTAMP:
+                return data_.int64_val == other.data_.int64_val;
             case DataType::BINARY:
             case DataType::VARBINARY:
             case DataType::BLOB:
@@ -1559,12 +2591,25 @@ namespace scratchbird::core
                 return data_.float32_val < other.data_.float32_val;
             case DataType::FLOAT64:
                 return data_.float64_val < other.data_.float64_val;
+            case DataType::DECIMAL:
+            {
+                uint8_t precision = decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION : decimal_precision_;
+                Decimal left(decimal_unscaled_, precision, decimal_scale_);
+                uint8_t other_precision = other.decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
+                                                                         : other.decimal_precision_;
+                Decimal right(other.decimal_unscaled_, other_precision, other.decimal_scale_);
+                return left < right;
+            }
             case DataType::BOOLEAN:
                 return data_.bool_val < other.data_.bool_val;
             case DataType::VARCHAR:
             case DataType::TEXT:
             case DataType::CHAR:
                 return string_data_ < other.string_data_;
+            case DataType::DATE:
+            case DataType::TIME:
+            case DataType::TIMESTAMP:
+                return data_.int64_val < other.data_.int64_val;
             case DataType::BINARY:
             case DataType::VARBINARY:
             case DataType::BLOB:
@@ -1697,18 +2742,12 @@ namespace scratchbird::core
             case DataType::BOOLEAN:
                 appendUint8(out, data_.bool_val ? 1 : 0);
                 break;
-            case DataType::DATE:
-            case DataType::TIME:
-            case DataType::TIMESTAMP:
-                appendInt64(out, data_.int64_val);
-                break;
             case DataType::MONEY:
                 appendInt64(out, data_.int64_val);
                 break;
             case DataType::CHAR:
             case DataType::VARCHAR:
             case DataType::TEXT:
-            case DataType::DECIMAL:
             case DataType::JSON:
             case DataType::JSONB:
             case DataType::XML:
@@ -1718,6 +2757,33 @@ namespace scratchbird::core
                 {
                     return status;
                 }
+                break;
+            }
+            case DataType::DECIMAL:
+            {
+                uint8_t precision = decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION : decimal_precision_;
+                if (precision > DECIMAL_MAX_PRECISION || decimal_scale_ > precision)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid DECIMAL precision/scale");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                size_t width = decimalStorageSize(precision);
+                if (width == 0)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "DECIMAL precision not supported");
+                    return Status::OUT_OF_RANGE;
+                }
+
+                int128_t max_abs = POWERS_OF_10[precision] - 1;
+                if (decimal_unscaled_ > max_abs || decimal_unscaled_ < -max_abs)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                      "DECIMAL value out of range");
+                    return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                }
+
+                appendInt128(out, decimal_unscaled_, width);
                 break;
             }
             case DataType::BINARY:
@@ -1730,6 +2796,53 @@ namespace scratchbird::core
                 {
                     return status;
                 }
+                break;
+            }
+            case DataType::DATE:
+            {
+                int64_t days = data_.int64_val;
+                int64_t mjd64 = days + FirebirdDateTime::UNIX_EPOCH_MJD;
+                if (mjd64 < std::numeric_limits<int32_t>::min() ||
+                    mjd64 > std::numeric_limits<int32_t>::max())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATETIME_FIELD_OVERFLOW, "DATE out of range");
+                    return Status::DATETIME_FIELD_OVERFLOW;
+                }
+                appendInt32(out, static_cast<int32_t>(mjd64));
+                appendInt32(out, timezone_offset_seconds_);
+                break;
+            }
+            case DataType::TIME:
+            {
+                int64_t micros = data_.int64_val;
+                int64_t deci_ms64 = micros / 100;
+                if (deci_ms64 < std::numeric_limits<int32_t>::min() ||
+                    deci_ms64 > std::numeric_limits<int32_t>::max())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATETIME_FIELD_OVERFLOW, "TIME out of range");
+                    return Status::DATETIME_FIELD_OVERFLOW;
+                }
+                appendInt32(out, static_cast<int32_t>(deci_ms64));
+                appendInt32(out, timezone_offset_seconds_);
+                break;
+            }
+            case DataType::TIMESTAMP:
+            {
+                int64_t micros = data_.int64_val;
+                int64_t unix_seconds = micros / 1000000;
+                int64_t micro_remainder = micros % 1000000;
+                if (micro_remainder < 0)
+                {
+                    micro_remainder += 1000000;
+                    unix_seconds -= 1;
+                }
+                int32_t mjd_date = 0;
+                int32_t deci_ms_time = 0;
+                FirebirdDateTime::unixToFirebird(unix_seconds, mjd_date, deci_ms_time);
+                deci_ms_time += static_cast<int32_t>(micro_remainder / 100);
+                appendInt32(out, mjd_date);
+                appendInt32(out, deci_ms_time);
+                appendInt32(out, timezone_offset_seconds_);
                 break;
             }
             case DataType::UUID:
@@ -2325,15 +3438,12 @@ namespace scratchbird::core
                 data_.bool_val = (value != 0);
                 break;
             }
-            case DataType::DATE:
-            case DataType::TIME:
-            case DataType::TIMESTAMP:
             case DataType::MONEY:
             {
                 int64_t value = 0;
                 if (!readInt64(data, offset, value))
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid temporal payload");
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid MONEY payload");
                     return Status::DATA_CORRUPTED;
                 }
                 data_.int64_val = value;
@@ -2342,7 +3452,6 @@ namespace scratchbird::core
             case DataType::CHAR:
             case DataType::VARCHAR:
             case DataType::TEXT:
-            case DataType::DECIMAL:
             case DataType::JSON:
             case DataType::JSONB:
             case DataType::XML:
@@ -2352,6 +3461,77 @@ namespace scratchbird::core
                 {
                     return status;
                 }
+                break;
+            }
+            case DataType::DECIMAL:
+            {
+                uint8_t precision = decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION : decimal_precision_;
+                if (precision > DECIMAL_MAX_PRECISION || decimal_scale_ > precision)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid DECIMAL precision/scale");
+                    return Status::DATA_CORRUPTED;
+                }
+
+                size_t width = decimalStorageSize(precision);
+                int128_t value = 0;
+                if (width == 0 || !readInt128(data, offset, width, value))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid DECIMAL payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                decimal_unscaled_ = value;
+                decimal_precision_ = precision;
+                break;
+            }
+            case DataType::DATE:
+            {
+                int32_t mjd = 0;
+                int32_t offset_seconds = 0;
+                if (!readInt32(data, offset, mjd) ||
+                    !readInt32(data, offset, offset_seconds))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid DATE payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                data_.int64_val = static_cast<int64_t>(mjd) - FirebirdDateTime::UNIX_EPOCH_MJD;
+                timezone_offset_seconds_ = offset_seconds;
+                break;
+            }
+            case DataType::TIME:
+            {
+                int32_t deci_ms = 0;
+                int32_t offset_seconds = 0;
+                if (!readInt32(data, offset, deci_ms) ||
+                    !readInt32(data, offset, offset_seconds))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid TIME payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                data_.int64_val = static_cast<int64_t>(deci_ms) * 100;
+                timezone_offset_seconds_ = offset_seconds;
+                break;
+            }
+            case DataType::TIMESTAMP:
+            {
+                int32_t mjd = 0;
+                int32_t deci_ms = 0;
+                int32_t offset_seconds = 0;
+                if (!readInt32(data, offset, mjd) ||
+                    !readInt32(data, offset, deci_ms) ||
+                    !readInt32(data, offset, offset_seconds))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid TIMESTAMP payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                int32_t seconds_of_day = deci_ms / FirebirdDateTime::DECI_MS_PER_SECOND;
+                int32_t fraction_deci = deci_ms % FirebirdDateTime::DECI_MS_PER_SECOND;
+                int64_t unix_seconds =
+                    (static_cast<int64_t>(mjd) - FirebirdDateTime::UNIX_EPOCH_MJD) *
+                        FirebirdDateTime::SECONDS_PER_DAY +
+                    seconds_of_day;
+                data_.int64_val = unix_seconds * 1000000 +
+                                  static_cast<int64_t>(fraction_deci) * 100;
+                timezone_offset_seconds_ = offset_seconds;
                 break;
             }
             case DataType::BINARY:
@@ -2885,6 +4065,10 @@ namespace scratchbird::core
         encryption_key_version_ = other.encryption_key_version_;
         encryption_algorithm_ = other.encryption_algorithm_;
         encrypted_data_ = other.encrypted_data_;
+        decimal_unscaled_ = other.decimal_unscaled_;
+        decimal_precision_ = other.decimal_precision_;
+        decimal_scale_ = other.decimal_scale_;
+        timezone_offset_seconds_ = other.timezone_offset_seconds_;
 
         if (other.is_null_) {
             return;  // Nothing to copy for NULL values
@@ -2941,6 +4125,10 @@ namespace scratchbird::core
         encryption_key_version_ = other.encryption_key_version_;
         encryption_algorithm_ = other.encryption_algorithm_;
         encrypted_data_ = std::move(other.encrypted_data_);
+        decimal_unscaled_ = other.decimal_unscaled_;
+        decimal_precision_ = other.decimal_precision_;
+        decimal_scale_ = other.decimal_scale_;
+        timezone_offset_seconds_ = other.timezone_offset_seconds_;
 
         if (other.is_null_) {
             other.is_encrypted_ = false;
@@ -2996,6 +4184,10 @@ namespace scratchbird::core
         is_null_ = true;
         type_ = DataType::NULL_TYPE;
         std::memset(&data_, 0, sizeof(data_));
+        decimal_unscaled_ = 0;
+        decimal_precision_ = 0;
+        decimal_scale_ = 0;
+        timezone_offset_seconds_ = 0;
     }
 
     // GeometryCollection equality operator implementation
@@ -3024,113 +4216,1020 @@ namespace scratchbird::core
     }
 
     // Type conversion implementation
-    TypedValue TypedValue::convertTo(DataType target_type) const
+    Status TypedValue::convertTo(const TypeInfo& target_type,
+                                 TypedValue& result_out,
+                                 CastFormat format,
+                                 ErrorContext* ctx) const
     {
-        if (is_null_) {
-            return TypedValue(target_type);
+        DataType target = target_type.type;
+        if (target == DataType::NULL_TYPE)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Cannot convert to NULL type");
+            return Status::INVALID_ARGUMENT;
         }
+
+        if (is_null_)
+        {
+            result_out = TypedValue(target);
+            result_out.is_null_ = true;
+            if (target == DataType::DECIMAL)
+            {
+                result_out.decimal_precision_ = static_cast<uint8_t>(target_type.precision);
+                result_out.decimal_scale_ = static_cast<uint8_t>(target_type.scale);
+            }
+            return Status::OK;
+        }
+
         ensureDecrypted();
 
-        // If already the target type, return copy
-        if (type_ == target_type) {
-            return *this;
+        auto setStringResult = [&](DataType string_type, const std::string& value) -> Status
+        {
+            if ((string_type == DataType::CHAR || string_type == DataType::VARCHAR) &&
+                target_type.precision > 0 &&
+                value.size() > target_type.precision)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::STRING_DATA_RIGHT_TRUNCATION,
+                                  "String value exceeds target length");
+                return Status::STRING_DATA_RIGHT_TRUNCATION;
+            }
+
+            result_out = TypedValue(string_type);
+            result_out.is_null_ = false;
+            result_out.string_data_ = value;
+            return Status::OK;
+        };
+
+        auto setBinaryResult = [&](DataType binary_type, const std::vector<uint8_t>& data) -> Status
+        {
+            result_out = TypedValue(binary_type);
+            result_out.is_null_ = false;
+            result_out.binary_data_ = data;
+            return Status::OK;
+        };
+
+        auto normalized_format = (format == CastFormat::DEFAULT) ? CastFormat::HEX : format;
+
+        // Same type (handle modifiers)
+        if (type_ == target)
+        {
+            if (target == DataType::DECIMAL)
+            {
+                uint8_t precision = target_type.precision == 0
+                                        ? (decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
+                                                                   : decimal_precision_)
+                                        : static_cast<uint8_t>(target_type.precision);
+                uint8_t scale = target_type.precision == 0 && target_type.scale == 0
+                                    ? decimal_scale_
+                                    : static_cast<uint8_t>(target_type.scale);
+
+                if (scale > precision || precision > DECIMAL_MAX_PRECISION)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Invalid DECIMAL precision/scale");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                Decimal current(decimal_unscaled_,
+                                decimal_precision_ == 0 ? precision : decimal_precision_,
+                                decimal_scale_);
+                Decimal adjusted = current.rescale(precision, scale, DecimalRoundingMode::HALF_UP);
+                int128_t max_abs = POWERS_OF_10[precision] - 1;
+                if (adjusted.unscaledValue() > max_abs ||
+                    adjusted.unscaledValue() < -max_abs)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                      "DECIMAL value out of range");
+                    return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                }
+                result_out = makeDecimal(adjusted.unscaledValue(), precision, scale);
+                return Status::OK;
+            }
+
+            if (target == DataType::CHAR || target == DataType::VARCHAR)
+            {
+                return setStringResult(target, string_data_);
+            }
+
+            result_out = *this;
+            return Status::OK;
         }
 
-        // Implement common conversions
-        switch (target_type) {
-            case DataType::INT32:
-                if (type_ == DataType::INT64) return makeInt32(static_cast<int32_t>(data_.int64_val));
-                if (type_ == DataType::FLOAT64) {
-                    // P0-5: Check for NaN/Infinity
-                    if (std::isnan(data_.float64_val)) {
-                        throw std::runtime_error("Cannot convert NaN to integer");
+        auto setInvalidNumber = [&](const std::string& input) -> Status
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                              (input + " is not a number").c_str());
+            return Status::INVALID_TEXT_REPRESENTATION;
+        };
+
+        auto readInt128Value = [&](int128_t& out_value) -> bool
+        {
+            if (binary_data_.size() != 16)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "INT128 storage size invalid");
+                return false;
+            }
+            size_t offset = 0;
+            std::vector<uint8_t> bytes = binary_data_;
+            if (!readInt128(bytes, offset, 16, out_value))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "INT128 decode failed");
+                return false;
+            }
+            return true;
+        };
+
+        auto setIntegerResult = [&](DataType int_type, int128_t value) -> Status
+        {
+            if (isUnsignedType(int_type) && value < 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                  "Negative value for unsigned type");
+                return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+            }
+
+            switch (int_type)
+            {
+                case DataType::INT8:
+                    if (value < std::numeric_limits<int8_t>::min() ||
+                        value > std::numeric_limits<int8_t>::max())
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "INT8 value out of range");
+                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
                     }
-                    if (std::isinf(data_.float64_val)) {
-                        throw std::runtime_error("Cannot convert Infinity to integer");
+                    result_out = TypedValue(DataType::INT8);
+                    result_out.is_null_ = false;
+                    result_out.data_.int8_val = static_cast<int8_t>(value);
+                    return Status::OK;
+                case DataType::INT16:
+                    if (value < std::numeric_limits<int16_t>::min() ||
+                        value > std::numeric_limits<int16_t>::max())
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "INT16 value out of range");
+                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
                     }
-                    if (data_.float64_val > static_cast<double>(INT32_MAX) ||
-                        data_.float64_val < static_cast<double>(INT32_MIN)) {
-                        throw std::runtime_error("Float value out of range for INT32");
+                    result_out = TypedValue(DataType::INT16);
+                    result_out.is_null_ = false;
+                    result_out.data_.int16_val = static_cast<int16_t>(value);
+                    return Status::OK;
+                case DataType::INT32:
+                    if (value < std::numeric_limits<int32_t>::min() ||
+                        value > std::numeric_limits<int32_t>::max())
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "INT32 value out of range");
+                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
                     }
-                    return makeInt32(static_cast<int32_t>(data_.float64_val));
+                    result_out = TypedValue(DataType::INT32);
+                    result_out.is_null_ = false;
+                    result_out.data_.int32_val = static_cast<int32_t>(value);
+                    return Status::OK;
+                case DataType::INT64:
+                case DataType::MONEY:
+                    if (value < std::numeric_limits<int64_t>::min() ||
+                        value > std::numeric_limits<int64_t>::max())
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "INT64 value out of range");
+                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                    }
+                    result_out = TypedValue(int_type == DataType::MONEY ? DataType::MONEY
+                                                                        : DataType::INT64);
+                    result_out.is_null_ = false;
+                    result_out.data_.int64_val = static_cast<int64_t>(value);
+                    return Status::OK;
+                case DataType::INT128:
+                {
+                    uint8_t precision = DECIMAL_MAX_PRECISION;
+                    int128_t max_abs = POWERS_OF_10[precision] - 1;
+                    if (value > max_abs || value < -max_abs)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "INT128 value out of range");
+                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                    }
+                    result_out = TypedValue(DataType::INT128);
+                    result_out.is_null_ = false;
+                    result_out.binary_data_.clear();
+                    appendInt128(result_out.binary_data_, value, 16);
+                    return Status::OK;
                 }
-                if (type_ == DataType::FLOAT32) {
-                    // P0-5: Check for NaN/Infinity
-                    if (std::isnan(data_.float32_val)) {
-                        throw std::runtime_error("Cannot convert NaN to integer");
+                case DataType::UINT8:
+                    if (value < 0 || static_cast<uint128_t>(value) >
+                                     std::numeric_limits<uint8_t>::max())
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "UINT8 value out of range");
+                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
                     }
-                    if (std::isinf(data_.float32_val)) {
-                        throw std::runtime_error("Cannot convert Infinity to integer");
+                    result_out = TypedValue(DataType::UINT8);
+                    result_out.is_null_ = false;
+                    result_out.data_.uint8_val = static_cast<uint8_t>(value);
+                    return Status::OK;
+                case DataType::UINT16:
+                    if (value < 0 || static_cast<uint128_t>(value) >
+                                     std::numeric_limits<uint16_t>::max())
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "UINT16 value out of range");
+                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
                     }
-                    if (data_.float32_val > static_cast<float>(INT32_MAX) ||
-                        data_.float32_val < static_cast<float>(INT32_MIN)) {
-                        throw std::runtime_error("Float value out of range for INT32");
+                    result_out = TypedValue(DataType::UINT16);
+                    result_out.is_null_ = false;
+                    result_out.data_.uint16_val = static_cast<uint16_t>(value);
+                    return Status::OK;
+                case DataType::UINT32:
+                    if (value < 0 || static_cast<uint128_t>(value) >
+                                     std::numeric_limits<uint32_t>::max())
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "UINT32 value out of range");
+                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
                     }
-                    return makeInt32(static_cast<int32_t>(data_.float32_val));
-                }
-                if (type_ == DataType::BOOLEAN) return makeInt32(data_.bool_val ? 1 : 0);
-                break;
+                    result_out = TypedValue(DataType::UINT32);
+                    result_out.is_null_ = false;
+                    result_out.data_.uint32_val = static_cast<uint32_t>(value);
+                    return Status::OK;
+                case DataType::UINT64:
+                    if (value < 0 || static_cast<uint128_t>(value) >
+                                     std::numeric_limits<uint64_t>::max())
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "UINT64 value out of range");
+                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                    }
+                    result_out = TypedValue(DataType::UINT64);
+                    result_out.is_null_ = false;
+                    result_out.data_.uint64_val = static_cast<uint64_t>(value);
+                    return Status::OK;
+                default:
+                    break;
+            }
 
-            case DataType::INT64:
-                if (type_ == DataType::INT32) return makeInt64(static_cast<int64_t>(data_.int32_val));
-                if (type_ == DataType::FLOAT64) {
-                    // P0-5: Check for NaN/Infinity
-                    if (std::isnan(data_.float64_val)) {
-                        throw std::runtime_error("Cannot convert NaN to integer");
-                    }
-                    if (std::isinf(data_.float64_val)) {
-                        throw std::runtime_error("Cannot convert Infinity to integer");
-                    }
-                    // Note: INT64_MAX cannot be exactly represented as double, so we use a safe threshold
-                    if (data_.float64_val >= 9.223372036854776e18 ||  // > INT64_MAX
-                        data_.float64_val < static_cast<double>(INT64_MIN)) {
-                        throw std::runtime_error("Float value out of range for INT64");
-                    }
-                    return makeInt64(static_cast<int64_t>(data_.float64_val));
-                }
-                if (type_ == DataType::FLOAT32) {
-                    // P0-5: Check for NaN/Infinity
-                    if (std::isnan(data_.float32_val)) {
-                        throw std::runtime_error("Cannot convert NaN to integer");
-                    }
-                    if (std::isinf(data_.float32_val)) {
-                        throw std::runtime_error("Cannot convert Infinity to integer");
-                    }
-                    return makeInt64(static_cast<int64_t>(data_.float32_val));
-                }
-                if (type_ == DataType::BOOLEAN) return makeInt64(data_.bool_val ? 1 : 0);
-                break;
+            SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH, "Unsupported integer target");
+            return Status::DATATYPE_MISMATCH;
+        };
 
-            case DataType::FLOAT64:
-                if (type_ == DataType::INT32) return makeFloat64(static_cast<double>(data_.int32_val));
-                if (type_ == DataType::INT64) return makeFloat64(static_cast<double>(data_.int64_val));
-                if (type_ == DataType::FLOAT32) return makeFloat64(static_cast<double>(data_.float32_val));
-                break;
-
-            case DataType::FLOAT32:
-                if (type_ == DataType::INT32) return makeFloat32(static_cast<float>(data_.int32_val));
-                if (type_ == DataType::INT64) return makeFloat32(static_cast<float>(data_.int64_val));
-                if (type_ == DataType::FLOAT64) return makeFloat32(static_cast<float>(data_.float64_val));
-                break;
-
-            case DataType::BOOLEAN:
-                if (type_ == DataType::INT32) return makeBool(data_.int32_val != 0);
-                if (type_ == DataType::INT64) return makeBool(data_.int64_val != 0);
-                if (type_ == DataType::FLOAT64) return makeBool(data_.float64_val != 0.0);
-                if (type_ == DataType::FLOAT32) return makeBool(data_.float32_val != 0.0f);
-                break;
-
+        switch (target)
+        {
+            case DataType::CHAR:
             case DataType::VARCHAR:
             case DataType::TEXT:
-                return makeText(toString());
+            case DataType::JSON:
+            case DataType::JSONB:
+            case DataType::XML:
+            {
+                std::string value;
+                if (isBinaryLike(type_) || type_ == DataType::UUID || type_ == DataType::INT128)
+                {
+                    const std::vector<uint8_t>& data = getBinary();
+                    switch (normalized_format)
+                    {
+                        case CastFormat::HEX:
+                            value = encodeHex(data);
+                            break;
+                        case CastFormat::BASE64:
+                            value = encodeBase64(data);
+                            break;
+                        case CastFormat::ESCAPE:
+                            value = encodeEscape(data);
+                            break;
+                        default:
+                            SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED,
+                                              "Unsupported binary cast format");
+                            return Status::NOT_SUPPORTED;
+                    }
+                }
+                else
+                {
+                    value = toString();
+                }
 
+                return setStringResult(target, value);
+            }
+            case DataType::BINARY:
+            case DataType::VARBINARY:
+            case DataType::BLOB:
+            case DataType::BYTEA:
+            case DataType::VECTOR:
+            {
+                if (isBinaryLike(type_) || type_ == DataType::UUID || type_ == DataType::INT128)
+                {
+                    return setBinaryResult(target, getBinary());
+                }
+
+                if (isStringLike(type_))
+                {
+                    std::vector<uint8_t> data;
+                    std::string text = string_data_;
+                    bool ok = false;
+                    switch (normalized_format)
+                    {
+                        case CastFormat::HEX:
+                            ok = decodeHex(text, data, ctx);
+                            break;
+                        case CastFormat::BASE64:
+                            ok = decodeBase64(text, data, ctx);
+                            break;
+                        case CastFormat::ESCAPE:
+                            ok = decodeEscape(text, data, ctx);
+                            break;
+                        default:
+                            SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED,
+                                              "Unsupported binary cast format");
+                            return Status::NOT_SUPPORTED;
+                    }
+                    if (!ok)
+                    {
+                        return Status::INVALID_TEXT_REPRESENTATION;
+                    }
+                    return setBinaryResult(target, data);
+                }
+
+                SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                  "Cannot convert to binary type");
+                return Status::DATATYPE_MISMATCH;
+            }
+            case DataType::UUID:
+            {
+                if (type_ == DataType::UUID)
+                {
+                    result_out = *this;
+                    return Status::OK;
+                }
+
+                std::vector<uint8_t> uuid_bytes;
+                if (isStringLike(type_))
+                {
+                    if (!parseUuidString(string_data_, uuid_bytes, ctx))
+                    {
+                        return Status::INVALID_TEXT_REPRESENTATION;
+                    }
+                }
+                else if (isBinaryLike(type_) || type_ == DataType::INT128)
+                {
+                    uuid_bytes = getBinary();
+                    if (uuid_bytes.size() != 16)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                          "UUID requires 16 bytes");
+                        return Status::INVALID_TEXT_REPRESENTATION;
+                    }
+                }
+                else
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                      "Cannot convert to UUID");
+                    return Status::DATATYPE_MISMATCH;
+                }
+
+                result_out = makeUUID(uuid_bytes);
+                return Status::OK;
+            }
+            case DataType::BOOLEAN:
+            {
+                bool value = false;
+                if (type_ == DataType::BOOLEAN)
+                {
+                    value = data_.bool_val;
+                }
+                else if (isNumericType(type_))
+                {
+                    if (type_ == DataType::DECIMAL)
+                    {
+                        Decimal dec(decimal_unscaled_,
+                                    decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
+                                                            : decimal_precision_,
+                                    decimal_scale_);
+                        value = dec.unscaledValue() != 0;
+                    }
+                    else if (type_ == DataType::MONEY)
+                    {
+                        value = data_.int64_val != 0;
+                    }
+                    else if (type_ == DataType::INT128)
+                    {
+                        int128_t val = 0;
+                        if (!readInt128Value(val))
+                        {
+                            return Status::INVALID_ARGUMENT;
+                        }
+                        value = val != 0;
+                    }
+                    else if (isFloatType(type_))
+                    {
+                        double val = (type_ == DataType::FLOAT32)
+                                         ? static_cast<double>(data_.float32_val)
+                                         : data_.float64_val;
+                        value = val != 0.0;
+                    }
+                    else
+                    {
+                        value = toInt64() != 0;
+                    }
+                }
+                else if (isStringLike(type_))
+                {
+                    std::string text = trimAscii(string_data_);
+                    std::string lower;
+                    lower.reserve(text.size());
+                    for (char ch : text)
+                    {
+                        lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+                    }
+                    if (lower == "true" || lower == "t" || lower == "1")
+                    {
+                        value = true;
+                    }
+                    else if (lower == "false" || lower == "f" || lower == "0")
+                    {
+                        value = false;
+                    }
+                    else
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                          (text + " is not a boolean").c_str());
+                        return Status::INVALID_TEXT_REPRESENTATION;
+                    }
+                }
+                else
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                      "Cannot convert to BOOLEAN");
+                    return Status::DATATYPE_MISMATCH;
+                }
+
+                result_out = makeBool(value);
+                return Status::OK;
+            }
+            case DataType::INT8:
+            case DataType::INT16:
+            case DataType::INT32:
+            case DataType::INT64:
+            case DataType::INT128:
+            case DataType::UINT8:
+            case DataType::UINT16:
+            case DataType::UINT32:
+            case DataType::UINT64:
+            {
+                int128_t value = 0;
+                if (isIntegerType(type_))
+                {
+                    if (type_ == DataType::INT128)
+                    {
+                        if (!readInt128Value(value))
+                        {
+                            return Status::INVALID_ARGUMENT;
+                        }
+                    }
+                    else if (isUnsignedType(type_))
+                    {
+                        switch (type_)
+                        {
+                            case DataType::UINT8: value = data_.uint8_val; break;
+                            case DataType::UINT16: value = data_.uint16_val; break;
+                            case DataType::UINT32: value = data_.uint32_val; break;
+                            case DataType::UINT64: value = data_.uint64_val; break;
+                            default: break;
+                        }
+                    }
+                    else
+                    {
+                        value = toInt64();
+                    }
+                }
+                else if (type_ == DataType::DECIMAL)
+                {
+                    Decimal dec(decimal_unscaled_,
+                                decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
+                                                        : decimal_precision_,
+                                decimal_scale_);
+                    value = static_cast<int128_t>(dec.toInt64());
+                }
+                else if (type_ == DataType::MONEY)
+                {
+                    Decimal dec(static_cast<int128_t>(data_.int64_val), 19, 4);
+                    value = static_cast<int128_t>(dec.toInt64());
+                }
+                else if (isFloatType(type_))
+                {
+                    double val = (type_ == DataType::FLOAT32)
+                                     ? static_cast<double>(data_.float32_val)
+                                     : data_.float64_val;
+                    if (!std::isfinite(val))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "Float is not finite");
+                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                    }
+                    value = static_cast<int128_t>(val);
+                }
+                else if (type_ == DataType::BOOLEAN)
+                {
+                    value = data_.bool_val ? 1 : 0;
+                }
+                else if (isStringLike(type_))
+                {
+                    int128_t parsed = 0;
+                    std::string text = trimAscii(string_data_);
+                    bool allow_signed = !isUnsignedType(target);
+                    if (!parseIntegerString(text, allow_signed, parsed, ctx))
+                    {
+                        return setInvalidNumber(text);
+                    }
+                    value = parsed;
+                }
+                else
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                      "Cannot convert to integer type");
+                    return Status::DATATYPE_MISMATCH;
+                }
+
+                return setIntegerResult(target, value);
+            }
+            case DataType::FLOAT32:
+            case DataType::FLOAT64:
+            {
+                double value = 0.0;
+                if (isFloatType(type_))
+                {
+                    value = (type_ == DataType::FLOAT32)
+                                ? static_cast<double>(data_.float32_val)
+                                : data_.float64_val;
+                }
+                else if (isIntegerType(type_))
+                {
+                    if (type_ == DataType::INT128)
+                    {
+                        int128_t val = 0;
+                        if (!readInt128Value(val))
+                        {
+                            return Status::INVALID_ARGUMENT;
+                        }
+                        value = static_cast<double>(val);
+                    }
+                    else if (isUnsignedType(type_))
+                    {
+                        switch (type_)
+                        {
+                            case DataType::UINT8: value = data_.uint8_val; break;
+                            case DataType::UINT16: value = data_.uint16_val; break;
+                            case DataType::UINT32: value = data_.uint32_val; break;
+                            case DataType::UINT64: value = static_cast<double>(data_.uint64_val); break;
+                            default: break;
+                        }
+                    }
+                    else
+                    {
+                        value = static_cast<double>(toInt64());
+                    }
+                }
+                else if (type_ == DataType::DECIMAL)
+                {
+                    Decimal dec(decimal_unscaled_,
+                                decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
+                                                        : decimal_precision_,
+                                decimal_scale_);
+                    value = dec.toDouble();
+                }
+                else if (type_ == DataType::MONEY)
+                {
+                    Decimal dec(static_cast<int128_t>(data_.int64_val), 19, 4);
+                    value = dec.toDouble();
+                }
+                else if (type_ == DataType::BOOLEAN)
+                {
+                    value = data_.bool_val ? 1.0 : 0.0;
+                }
+                else if (isStringLike(type_))
+                {
+                    std::string text = trimAscii(string_data_);
+                    if (!parseFloatingString(text, value, ctx))
+                    {
+                        return setInvalidNumber(text);
+                    }
+                }
+                else
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                      "Cannot convert to float");
+                    return Status::DATATYPE_MISMATCH;
+                }
+
+                if (!std::isfinite(value))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                      "Float is not finite");
+                    return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                }
+
+                if (target == DataType::FLOAT32)
+                {
+                    if (std::fabs(value) > std::numeric_limits<float>::max())
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "FLOAT32 value out of range");
+                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                    }
+                    result_out = makeFloat32(static_cast<float>(value));
+                }
+                else
+                {
+                    result_out = makeFloat64(value);
+                }
+                return Status::OK;
+            }
+            case DataType::DECIMAL:
+            {
+                uint8_t precision = target_type.precision == 0
+                                        ? DECIMAL_MAX_PRECISION
+                                        : static_cast<uint8_t>(target_type.precision);
+                uint8_t scale = static_cast<uint8_t>(target_type.scale);
+                if (scale > precision || precision > DECIMAL_MAX_PRECISION)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Invalid DECIMAL precision/scale");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                Decimal dec;
+                if (type_ == DataType::DECIMAL)
+                {
+                    Decimal current(decimal_unscaled_,
+                                    decimal_precision_ == 0 ? precision : decimal_precision_,
+                                    decimal_scale_);
+                    dec = current.rescale(precision, scale, DecimalRoundingMode::HALF_UP);
+                }
+                else if (type_ == DataType::MONEY)
+                {
+                    Decimal money(static_cast<int128_t>(data_.int64_val), 19, 4);
+                    dec = money.rescale(precision, scale, DecimalRoundingMode::HALF_UP);
+                }
+                else if (isIntegerType(type_) || type_ == DataType::BOOLEAN)
+                {
+                    int128_t int_val = 0;
+                    if (type_ == DataType::INT128)
+                    {
+                        if (!readInt128Value(int_val))
+                        {
+                            return Status::INVALID_ARGUMENT;
+                        }
+                    }
+                    else if (isUnsignedType(type_))
+                    {
+                        switch (type_)
+                        {
+                            case DataType::UINT8: int_val = data_.uint8_val; break;
+                            case DataType::UINT16: int_val = data_.uint16_val; break;
+                            case DataType::UINT32: int_val = data_.uint32_val; break;
+                            case DataType::UINT64: int_val = data_.uint64_val; break;
+                            default: break;
+                        }
+                    }
+                    else if (type_ == DataType::BOOLEAN)
+                    {
+                        int_val = data_.bool_val ? 1 : 0;
+                    }
+                    else
+                    {
+                        int_val = toInt64();
+                    }
+
+                    int128_t scaled = int_val * POWERS_OF_10[scale];
+                    dec = Decimal(scaled, precision, scale);
+                }
+                else if (isFloatType(type_))
+                {
+                    double val = (type_ == DataType::FLOAT32)
+                                     ? static_cast<double>(data_.float32_val)
+                                     : data_.float64_val;
+                    if (!std::isfinite(val))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "Float is not finite");
+                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                    }
+                    dec = Decimal(val, precision, scale);
+                }
+                else if (isStringLike(type_))
+                {
+                    std::string text = trimAscii(string_data_);
+                    Status status = Decimal::parseWithError(text, precision, scale, &dec, ctx);
+                    if (status != Status::OK)
+                    {
+                        return setInvalidNumber(text);
+                    }
+                }
+                else
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                      "Cannot convert to DECIMAL");
+                    return Status::DATATYPE_MISMATCH;
+                }
+
+                int128_t max_abs = POWERS_OF_10[precision] - 1;
+                if (dec.unscaledValue() > max_abs || dec.unscaledValue() < -max_abs)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                      "DECIMAL value out of range");
+                    return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                }
+
+                result_out = makeDecimal(dec.unscaledValue(), precision, scale);
+                return Status::OK;
+            }
+            case DataType::MONEY:
+            {
+                Decimal money;
+                if (type_ == DataType::MONEY)
+                {
+                    result_out = *this;
+                    return Status::OK;
+                }
+                if (type_ == DataType::DECIMAL)
+                {
+                    Decimal dec(decimal_unscaled_,
+                                decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION
+                                                        : decimal_precision_,
+                                decimal_scale_);
+                    money = dec.rescale(19, 4, DecimalRoundingMode::HALF_UP);
+                }
+                else if (isIntegerType(type_) || type_ == DataType::BOOLEAN)
+                {
+                    int128_t int_val = 0;
+                    if (type_ == DataType::INT128)
+                    {
+                        if (!readInt128Value(int_val))
+                        {
+                            return Status::INVALID_ARGUMENT;
+                        }
+                    }
+                    else if (isUnsignedType(type_))
+                    {
+                        switch (type_)
+                        {
+                            case DataType::UINT8: int_val = data_.uint8_val; break;
+                            case DataType::UINT16: int_val = data_.uint16_val; break;
+                            case DataType::UINT32: int_val = data_.uint32_val; break;
+                            case DataType::UINT64: int_val = data_.uint64_val; break;
+                            default: break;
+                        }
+                    }
+                    else if (type_ == DataType::BOOLEAN)
+                    {
+                        int_val = data_.bool_val ? 1 : 0;
+                    }
+                    else
+                    {
+                        int_val = toInt64();
+                    }
+                    int128_t scaled = int_val * POWERS_OF_10[4];
+                    money = Decimal(scaled, 19, 4);
+                }
+                else if (isFloatType(type_))
+                {
+                    double val = (type_ == DataType::FLOAT32)
+                                     ? static_cast<double>(data_.float32_val)
+                                     : data_.float64_val;
+                    if (!std::isfinite(val))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                          "Float is not finite");
+                        return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                    }
+                    money = Decimal(val, 19, 4);
+                }
+                else if (isStringLike(type_))
+                {
+                    std::string text = trimAscii(string_data_);
+                    Status status = Decimal::parseWithError(text, 19, 4, &money, ctx);
+                    if (status != Status::OK)
+                    {
+                        return setInvalidNumber(text);
+                    }
+                }
+                else
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                      "Cannot convert to MONEY");
+                    return Status::DATATYPE_MISMATCH;
+                }
+
+                if (money.unscaledValue() < std::numeric_limits<int64_t>::min() ||
+                    money.unscaledValue() > std::numeric_limits<int64_t>::max())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                      "MONEY value out of range");
+                    return Status::NUMERIC_VALUE_OUT_OF_RANGE;
+                }
+
+                result_out = TypedValue(DataType::MONEY);
+                result_out.is_null_ = false;
+                result_out.data_.int64_val = static_cast<int64_t>(money.unscaledValue());
+                return Status::OK;
+            }
+            case DataType::DATE:
+            case DataType::TIME:
+            case DataType::TIMESTAMP:
+            {
+                if (type_ == DataType::DATE && target == DataType::TIMESTAMP)
+                {
+                    int32_t default_deci_ms = defaultDateTimeDeciMs();
+                    int64_t utc_seconds = data_.int64_val * FirebirdDateTime::SECONDS_PER_DAY +
+                                          (default_deci_ms / FirebirdDateTime::DECI_MS_PER_SECOND);
+                    int64_t micros = utc_seconds * 1000000;
+                    result_out = makeTimestamp(micros, timezone_offset_seconds_);
+                    return Status::OK;
+                }
+                if (type_ == DataType::TIME && target == DataType::TIMESTAMP)
+                {
+                    result_out = makeTimestamp(data_.int64_val, timezone_offset_seconds_);
+                    return Status::OK;
+                }
+                if (type_ == DataType::TIMESTAMP && target == DataType::DATE)
+                {
+                    int64_t local_micros = data_.int64_val +
+                                           static_cast<int64_t>(timezone_offset_seconds_) * 1000000;
+                    int64_t local_seconds = local_micros / 1000000;
+                    int64_t days = floorDiv(local_seconds, FirebirdDateTime::SECONDS_PER_DAY);
+                    result_out = makeDate(days, timezone_offset_seconds_);
+                    return Status::OK;
+                }
+                if (type_ == DataType::TIMESTAMP && target == DataType::TIME)
+                {
+                    int64_t local_micros = data_.int64_val +
+                                           static_cast<int64_t>(timezone_offset_seconds_) * 1000000;
+                    int64_t micros_per_day =
+                        static_cast<int64_t>(FirebirdDateTime::SECONDS_PER_DAY) * 1000000;
+                    int64_t time_micros = local_micros % micros_per_day;
+                    if (time_micros < 0)
+                    {
+                        time_micros += micros_per_day;
+                    }
+                    result_out = makeTime(time_micros, timezone_offset_seconds_);
+                    return Status::OK;
+                }
+
+                if (!isStringLike(type_))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                      "Temporal cast expects string input");
+                    return Status::DATATYPE_MISMATCH;
+                }
+
+                std::string base;
+                int32_t offset_seconds = 0;
+                bool has_offset = false;
+                size_t min_pos = 0;
+                if (target == DataType::DATE)
+                {
+                    min_pos = 10;
+                }
+                else if (target == DataType::TIME)
+                {
+                    min_pos = 5;
+                }
+                else
+                {
+                    min_pos = 16;
+                }
+
+                if (!parseOffsetSuffix(string_data_, min_pos, base, offset_seconds, has_offset, ctx))
+                {
+                    return Status::INVALID_DATETIME_FORMAT;
+                }
+
+                if (target == DataType::DATE)
+                {
+                    int year = 0;
+                    int month = 0;
+                    int day = 0;
+                    if (!parseDateParts(base, year, month, day))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
+                                          "Invalid DATE format");
+                        return Status::INVALID_DATETIME_FORMAT;
+                    }
+                    int32_t mjd = FirebirdDateTime::dateToMJD(year, month, day);
+                    int64_t days = static_cast<int64_t>(mjd) - FirebirdDateTime::UNIX_EPOCH_MJD;
+                    int32_t default_deci_ms = defaultDateTimeDeciMs();
+                    int64_t utc_seconds = days * FirebirdDateTime::SECONDS_PER_DAY +
+                                          (default_deci_ms / FirebirdDateTime::DECI_MS_PER_SECOND);
+                    if (has_offset)
+                    {
+                        utc_seconds -= offset_seconds;
+                    }
+                    int64_t utc_days = floorDiv(utc_seconds, FirebirdDateTime::SECONDS_PER_DAY);
+                    result_out = makeDate(utc_days, has_offset ? offset_seconds : 0);
+                    return Status::OK;
+                }
+
+                if (target == DataType::TIME)
+                {
+                    int hour = 0;
+                    int minute = 0;
+                    int second = 0;
+                    int micros = 0;
+                    if (!parseTimeParts(base, hour, minute, second, micros, ctx))
+                    {
+                        return Status::INVALID_DATETIME_FORMAT;
+                    }
+                    if (minute < 0 || minute > 59 || second < 0 || second > 59 ||
+                        hour < 0 || hour > 23)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
+                                          "Invalid TIME value");
+                        return Status::INVALID_DATETIME_FORMAT;
+                    }
+                    int64_t local_micros = (static_cast<int64_t>(hour) * 3600 +
+                                            static_cast<int64_t>(minute) * 60 +
+                                            static_cast<int64_t>(second)) * 1000000 +
+                                           micros;
+                    int64_t utc_micros = local_micros -
+                                         static_cast<int64_t>(offset_seconds) * 1000000;
+                    int64_t micros_per_day =
+                        static_cast<int64_t>(FirebirdDateTime::SECONDS_PER_DAY) * 1000000;
+                    utc_micros %= micros_per_day;
+                    if (utc_micros < 0)
+                    {
+                        utc_micros += micros_per_day;
+                    }
+                    result_out = makeTime(utc_micros, has_offset ? offset_seconds : 0);
+                    return Status::OK;
+                }
+
+                // TIMESTAMP
+                size_t sep_pos = base.find('T');
+                if (sep_pos == std::string::npos)
+                {
+                    sep_pos = base.find(' ');
+                }
+                if (sep_pos == std::string::npos)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
+                                      "Invalid TIMESTAMP format");
+                    return Status::INVALID_DATETIME_FORMAT;
+                }
+                std::string date_part = base.substr(0, sep_pos);
+                std::string time_part = base.substr(sep_pos + 1);
+
+                int year = 0;
+                int month = 0;
+                int day = 0;
+                if (!parseDateParts(date_part, year, month, day))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
+                                      "Invalid TIMESTAMP date");
+                    return Status::INVALID_DATETIME_FORMAT;
+                }
+                int hour = 0;
+                int minute = 0;
+                int second = 0;
+                int micros = 0;
+                if (!parseTimeParts(time_part, hour, minute, second, micros, ctx))
+                {
+                    return Status::INVALID_DATETIME_FORMAT;
+                }
+                if (minute < 0 || minute > 59 || second < 0 || second > 59 ||
+                    hour < 0 || hour > 23)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
+                                      "Invalid TIMESTAMP time");
+                    return Status::INVALID_DATETIME_FORMAT;
+                }
+
+                int32_t mjd = FirebirdDateTime::dateToMJD(year, month, day);
+                int64_t days = static_cast<int64_t>(mjd) - FirebirdDateTime::UNIX_EPOCH_MJD;
+                int64_t local_micros = (days * FirebirdDateTime::SECONDS_PER_DAY +
+                                        (hour * 3600 + minute * 60 + second)) * 1000000 +
+                                       micros;
+                int64_t utc_micros = local_micros -
+                                     static_cast<int64_t>(offset_seconds) * 1000000;
+                result_out = makeTimestamp(utc_micros, has_offset ? offset_seconds : 0);
+                return Status::OK;
+            }
             default:
                 break;
         }
 
-        // If no conversion available, throw error
-        throw std::runtime_error("Cannot convert from " + std::to_string(static_cast<int>(type_)) +
-                                 " to " + std::to_string(static_cast<int>(target_type)));
+        SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH, "Unsupported type conversion");
+        return Status::DATATYPE_MISMATCH;
+    }
+
+    TypedValue TypedValue::convertTo(DataType target_type) const
+    {
+        TypedValue result;
+        ErrorContext ctx;
+        TypeInfo info(target_type);
+        Status status = convertTo(info, result, CastFormat::DEFAULT, &ctx);
+        if (status != Status::OK)
+        {
+            throw std::runtime_error(ctx.message.empty() ? "Type conversion failed"
+                                                         : ctx.message);
+        }
+        return result;
     }
 
 } // namespace scratchbird::core

@@ -5,6 +5,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/heap_page.h"
+#include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/catalog_manager.h"
@@ -15,6 +16,7 @@
 #include "scratchbird/core/brin_index.h"
 #include "scratchbird/core/hnsw_index.h"
 #include "scratchbird/core/toast.h" // Phase 4: TOAST GC
+#include "scratchbird/core/plain_value_reader.h"
 #include <chrono>
 #include <thread>
 #include <algorithm>
@@ -1109,51 +1111,85 @@ namespace scratchbird::core
                     continue;
                 }
 
-                // Determine column size
                 DataType col_type = static_cast<DataType>(columns[i].data_type);
                 size_t col_size = 0;
 
-                switch (col_type)
+                bool is_encrypted = false;
+                if (columns[i].domain_id != ID{} && db_ && db_->domain_manager())
                 {
-                    case DataType::INT32:
-                        col_size = sizeof(int32_t);
-                        break;
-                    case DataType::INT64:
-                        col_size = sizeof(int64_t);
-                        break;
-                    case DataType::FLOAT64:
-                        col_size = sizeof(double);
-                        break;
-                    case DataType::VARCHAR:
-                    case DataType::TEXT:
-                        // Variable-length: read length prefix
-                        if (current_offset + sizeof(uint32_t) <= tuple_size)
-                        {
-                            uint32_t len;
-                            std::memcpy(&len, tuple_data + current_offset, sizeof(uint32_t));
-                            col_size = sizeof(uint32_t) + len;
+                    DomainInfo domain;
+                    Status domain_status = db_->domain_manager()->getDomain(columns[i].domain_id, domain, ctx);
+                    if (domain_status != Status::OK && domain_status != Status::NOT_FOUND)
+                    {
+                        continue;
+                    }
+                    is_encrypted = (domain_status == Status::OK) && domain.security.encryption_enabled;
+                }
 
-                            // Check if this is a TOAST pointer
+                if (is_encrypted)
+                {
+                    size_t len_offset = current_offset;
+                    uint32_t len = 0;
+                    if (!readUint32LE(tuple_data, tuple_size, len_offset, len))
+                    {
+                        continue;
+                    }
+                    col_size = sizeof(uint32_t) + len;
+                }
+                else
+                {
+                    TypeInfo type_info(static_cast<DataType>(columns[i].data_type));
+                    uint32_t precision = columns[i].type_precision != 0 ? columns[i].type_precision
+                                                                         : columns[i].max_length;
+                    type_info.precision = precision;
+                    type_info.scale = columns[i].type_scale;
+                    type_info.with_timezone = columns[i].with_timezone;
+                    type_info.timezone_hint = columns[i].timezone_hint;
+
+                    ErrorContext size_ctx;
+                    Status size_status = computePlainValueSize(type_info.type,
+                                                               type_info,
+                                                               tuple_data + current_offset,
+                                                               tuple_size - current_offset,
+                                                               col_size,
+                                                               &size_ctx);
+                    if (size_status != Status::OK)
+                    {
+                        continue;
+                    }
+
+                    bool length_prefixed = (col_type == DataType::CHAR ||
+                                            col_type == DataType::VARCHAR ||
+                                            col_type == DataType::TEXT ||
+                                            col_type == DataType::JSON ||
+                                            col_type == DataType::JSONB ||
+                                            col_type == DataType::XML ||
+                                            col_type == DataType::BINARY ||
+                                            col_type == DataType::VARBINARY ||
+                                            col_type == DataType::BLOB ||
+                                            col_type == DataType::BYTEA ||
+                                            col_type == DataType::VECTOR);
+
+                    if (length_prefixed && col_size >= sizeof(uint32_t) + sizeof(ToastPointer))
+                    {
+                        size_t len_offset = current_offset;
+                        uint32_t len = 0;
+                        if (readUint32LE(tuple_data, tuple_size, len_offset, len))
+                        {
                             const uint8_t* col_data = tuple_data + current_offset + sizeof(uint32_t);
                             if (len == sizeof(ToastPointer))
                             {
-                                // Check TOAST magic
                                 const auto* toast_ptr = reinterpret_cast<const ToastPointer*>(col_data);
                                 ToastStrategy strategy = static_cast<ToastStrategy>(toast_ptr->va_tag);
-
                                 if (strategy == ToastStrategy::EXTERNAL ||
                                     strategy == ToastStrategy::EXTENDED ||
                                     strategy == ToastStrategy::COMPRESSED)
                                 {
-                                    // This is a TOAST pointer - collect value_id
                                     referenced_value_ids.insert(toast_ptr->va_valueid);
                                 }
                             }
                         }
-                        break;
-                    default:
-                        col_size = 0;
-                        break;
+                    }
                 }
 
                 current_offset += col_size;

@@ -43,3 +43,9 @@ max_backends = 64
 [logging]
 # Log level: DEBUG, INFO, WARNING, ERROR (default: INFO)
 level = INFO
+
+# Time Configuration
+[server.time]
+# Default time-of-day used when normalizing DATE values to UTC
+# Format: HH:MM:SS (default: 00:00:00)
+date_default_time = 00:00:00

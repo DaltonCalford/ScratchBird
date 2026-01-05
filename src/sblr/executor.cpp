@@ -11,6 +11,8 @@
 #endif
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/domain_manager.h"
+#include "scratchbird/core/decimal.h"
+#include "scratchbird/core/plain_value_reader.h"
 #include "scratchbird/core/type_extractor.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
@@ -263,6 +265,103 @@ namespace scratchbird
 
                 core::Status status = value.setEncryptedData(record, ctx);
                 return status == core::Status::OK;
+            }
+
+            size_t decimalStorageSize(uint32_t precision)
+            {
+                if (precision <= 2)
+                {
+                    return 1;
+                }
+                if (precision <= 4)
+                {
+                    return 2;
+                }
+                if (precision <= 9)
+                {
+                    return 4;
+                }
+                if (precision <= 18)
+                {
+                    return 8;
+                }
+                if (precision <= 38)
+                {
+                    return 16;
+                }
+                return 0;
+            }
+
+            core::TypeInfo buildTypeInfo(const core::CatalogManager::ColumnInfo& column)
+            {
+                core::TypeInfo info(static_cast<core::DataType>(column.data_type));
+                uint32_t precision = column.type_precision != 0 ? column.type_precision
+                                                                : column.max_length;
+                info.precision = precision;
+                info.scale = column.type_scale;
+                info.with_timezone = column.with_timezone;
+                info.timezone_hint = column.timezone_hint;
+                return info;
+            }
+
+            void copyErrorContext(core::ErrorContext* dst, const core::ErrorContext& src)
+            {
+                if (!dst)
+                {
+                    return;
+                }
+                dst->code = src.code;
+                dst->sqlstate = src.sqlstate;
+                dst->message = src.message;
+                dst->file = src.file;
+                dst->line = src.line;
+                dst->function = src.function;
+                dst->constraint_name = src.constraint_name;
+                dst->table_name = src.table_name;
+                dst->column_name = src.column_name;
+                dst->violating_value = src.violating_value;
+                dst->referenced_table = src.referenced_table;
+                dst->referenced_column = src.referenced_column;
+                dst->check_expression = src.check_expression;
+                dst->hint = src.hint;
+                dst->cause = nullptr;
+            }
+
+            bool coerceValueForColumn(const core::TypedValue& value,
+                                      const core::CatalogManager::ColumnInfo& column,
+                                      core::TypedValue& coerced_out,
+                                      core::ErrorContext* ctx)
+            {
+                core::TypeInfo target = buildTypeInfo(column);
+                core::Status status = value.convertTo(target, coerced_out,
+                                                      core::CastFormat::DEFAULT, ctx);
+                if (status != core::Status::OK)
+                {
+                    if (ctx)
+                    {
+                        ctx->column_name = column.column_name;
+                        if (!value.isNull())
+                        {
+                            ctx->violating_value = value.toString();
+                        }
+                    }
+                    return false;
+                }
+                return true;
+            }
+
+            bool appendPlainValue(const core::TypedValue& value,
+                                  std::vector<uint8_t>& tuple_data,
+                                  core::ErrorContext* ctx)
+            {
+                std::vector<uint8_t> payload;
+                core::Status status = value.serializePlainValue(payload, ctx);
+                if (status != core::Status::OK)
+                {
+                    return false;
+                }
+                tuple_data.insert(tuple_data.end(), payload.begin(), payload.end());
+                return true;
             }
         }
 
@@ -6732,164 +6831,24 @@ namespace scratchbird
                 size_t row_count = result_set->rowCount();
                 for (size_t row_idx = 0; row_idx < row_count; row_idx++)
                 {
-                    // Build tuple in binary format
+                    std::vector<Value> row_values;
+                    row_values.reserve(col_count);
+                    for (size_t col_idx = 0; col_idx < col_count; col_idx++)
+                    {
+                        row_values.push_back(result_set->getValue(row_idx, col_idx));
+                    }
+
                     std::vector<uint8_t> tuple_data;
-
-                    // Reserve space for TupleHeader
-                    size_t header_offset = static_cast<uint32_t>(tuple_data.size());
-                    tuple_data.resize(static_cast<uint32_t>(tuple_data.size()) + sizeof(core::TupleHeader));
-
-                    // Determine if we need a null bitmap
-                    bool has_nulls = false;
-                    for (size_t col_idx = 0; col_idx < col_count; col_idx++)
+                    core::ErrorContext serialize_ctx;
+                    if (!serializeTupleFromValues(row_values, mat_columns, tuple_data, &serialize_ctx))
                     {
-                        if (result_set->getValue(row_idx, col_idx).isNull())
+                        std::string err_msg = "Failed to serialize materialized view row";
+                        if (!serialize_ctx.message.empty())
                         {
-                            has_nulls = true;
-                            break;
+                            err_msg += ": " + serialize_ctx.message;
                         }
+                        error(err_msg);
                     }
-
-                    // Add null bitmap if needed
-                    size_t null_bitmap_offset = 0;
-                    if (has_nulls)
-                    {
-                        null_bitmap_offset = static_cast<uint32_t>(tuple_data.size());
-                        size_t bitmap_bytes = (col_count + 7) / 8;
-                        tuple_data.resize(static_cast<uint32_t>(tuple_data.size()) + bitmap_bytes);
-                        std::fill(tuple_data.begin() + null_bitmap_offset,
-                                  tuple_data.begin() + null_bitmap_offset + bitmap_bytes, 0);
-                    }
-
-                    // Serialize each column value
-                    for (size_t col_idx = 0; col_idx < col_count; col_idx++)
-                    {
-                        const Value& value = result_set->getValue(row_idx, col_idx);
-                        core::DataType col_type = static_cast<core::DataType>(mat_columns[col_idx].data_type);
-
-                        if (value.isNull())
-                        {
-                            // Set null bit in bitmap
-                            size_t byte_offset = null_bitmap_offset + (col_idx / 8);
-                            size_t bit_pos = col_idx % 8;
-                            tuple_data[byte_offset] |= (1 << bit_pos);
-                            continue;
-                        }
-
-                        core::ErrorContext enc_ctx;
-                        auto enc_state = getColumnEncryptionState(db_, mat_columns[col_idx], &enc_ctx);
-                        if (enc_state == ColumnEncryptionState::ERROR_STATE)
-                        {
-                            error("Failed to resolve encryption state for column '" +
-                                  mat_columns[col_idx].column_name + "': " + enc_ctx.message);
-                        }
-                        if (enc_state == ColumnEncryptionState::ENCRYPTED)
-                        {
-                            core::TypedValue encrypted_value;
-                            if (!prepareEncryptedValue(db_, mat_columns[col_idx], value,
-                                                       encrypted_value, &enc_ctx) ||
-                                !appendEncryptedValue(encrypted_value, tuple_data, &enc_ctx))
-                            {
-                                error("Failed to serialize encrypted value for column '" +
-                                      mat_columns[col_idx].column_name + "': " + enc_ctx.message);
-                            }
-                            continue;
-                        }
-                        if (value.isEncrypted())
-                        {
-                            error("Encrypted value provided for non-encrypted column '" +
-                                  mat_columns[col_idx].column_name + "'");
-                        }
-
-                        // Serialize value based on column type
-                        switch (col_type)
-                        {
-                            case core::DataType::INT8:
-                            {
-                                int8_t val = static_cast<int8_t>(value.toInt64());
-                                size_t offset = static_cast<uint32_t>(tuple_data.size());
-                                tuple_data.resize(offset + sizeof(int8_t));
-                                std::memcpy(&tuple_data[offset], &val, sizeof(int8_t));
-                                break;
-                            }
-                            case core::DataType::INT16:
-                            {
-                                int16_t val = static_cast<int16_t>(value.toInt64());
-                                size_t offset = static_cast<uint32_t>(tuple_data.size());
-                                tuple_data.resize(offset + sizeof(int16_t));
-                                std::memcpy(&tuple_data[offset], &val, sizeof(int16_t));
-                                break;
-                            }
-                            case core::DataType::INT32:
-                            {
-                                int32_t val = static_cast<int32_t>(value.toInt64());
-                                size_t offset = static_cast<uint32_t>(tuple_data.size());
-                                tuple_data.resize(offset + sizeof(int32_t));
-                                std::memcpy(&tuple_data[offset], &val, sizeof(int32_t));
-                                break;
-                            }
-                            case core::DataType::INT64:
-                            {
-                                int64_t val = value.toInt64();
-                                size_t offset = static_cast<uint32_t>(tuple_data.size());
-                                tuple_data.resize(offset + sizeof(int64_t));
-                                std::memcpy(&tuple_data[offset], &val, sizeof(int64_t));
-                                break;
-                            }
-                            case core::DataType::FLOAT32:
-                            {
-                                float val = static_cast<float>(value.toDouble());
-                                size_t offset = static_cast<uint32_t>(tuple_data.size());
-                                tuple_data.resize(offset + sizeof(float));
-                                std::memcpy(&tuple_data[offset], &val, sizeof(float));
-                                break;
-                            }
-                            case core::DataType::FLOAT64:
-                            {
-                                double val = value.toDouble();
-                                size_t offset = static_cast<uint32_t>(tuple_data.size());
-                                tuple_data.resize(offset + sizeof(double));
-                                std::memcpy(&tuple_data[offset], &val, sizeof(double));
-                                break;
-                            }
-                            case core::DataType::VARCHAR:
-                            case core::DataType::TEXT:
-                            {
-                                std::string str = value.toString();
-                                uint32_t len = static_cast<uint32_t>(str.size());
-                                size_t offset = static_cast<uint32_t>(tuple_data.size());
-                                tuple_data.resize(offset + sizeof(uint32_t) + len);
-                                std::memcpy(&tuple_data[offset], &len, sizeof(uint32_t));
-                                std::memcpy(&tuple_data[offset + sizeof(uint32_t)], str.data(), len);
-                                break;
-                            }
-                            case core::DataType::BOOLEAN:
-                            {
-                                bool val = value.toBoolean();
-                                size_t offset = static_cast<uint32_t>(tuple_data.size());
-                                tuple_data.resize(offset + sizeof(bool));
-                                std::memcpy(&tuple_data[offset], &val, sizeof(bool));
-                                break;
-                            }
-                            default:
-                            {
-                                // For other types, serialize as string representation
-                                std::string str = value.toString();
-                                uint32_t len = static_cast<uint32_t>(str.size());
-                                size_t offset = static_cast<uint32_t>(tuple_data.size());
-                                tuple_data.resize(offset + sizeof(uint32_t) + len);
-                                std::memcpy(&tuple_data[offset], &len, sizeof(uint32_t));
-                                std::memcpy(&tuple_data[offset + sizeof(uint32_t)], str.data(), len);
-                                break;
-                            }
-                        }
-                    }
-
-                    // Initialize TupleHeader
-                    auto *header = reinterpret_cast<core::TupleHeader *>(&tuple_data[header_offset]);
-                    std::memset(header, 0, sizeof(core::TupleHeader));
-                    header->infomask = has_nulls ? core::TupleHeader::HEAP_HAS_NULLS : 0;
-                    header->null_bitmap_offset = has_nulls ? static_cast<uint16_t>(null_bitmap_offset) : 0;
 
                     // Insert row into materialized table
                     uint32_t page_id;
@@ -7152,162 +7111,24 @@ namespace scratchbird
             // Insert fresh data (same for both concurrent and non-concurrent)
             for (size_t row_idx = 0; row_idx < row_count; row_idx++)
             {
-                // Build tuple in binary format (same as in CREATE MATERIALIZED VIEW)
+                std::vector<Value> row_values;
+                row_values.reserve(col_count);
+                for (size_t col_idx = 0; col_idx < col_count; col_idx++)
+                {
+                    row_values.push_back(result_set->getValue(row_idx, col_idx));
+                }
+
                 std::vector<uint8_t> tuple_data;
-
-                size_t header_offset = static_cast<uint32_t>(tuple_data.size());
-                tuple_data.resize(static_cast<uint32_t>(tuple_data.size()) + sizeof(core::TupleHeader));
-
-                // Check for nulls
-                bool has_nulls = false;
-                for (size_t col_idx = 0; col_idx < col_count; col_idx++)
+                core::ErrorContext serialize_ctx;
+                if (!serializeTupleFromValues(row_values, mat_columns, tuple_data, &serialize_ctx))
                 {
-                    if (result_set->getValue(row_idx, col_idx).isNull())
+                    std::string err_msg = "Failed to serialize refresh row";
+                    if (!serialize_ctx.message.empty())
                     {
-                        has_nulls = true;
-                        break;
+                        err_msg += ": " + serialize_ctx.message;
                     }
+                    error(err_msg);
                 }
-
-                // Null bitmap
-                size_t null_bitmap_offset = 0;
-                if (has_nulls)
-                {
-                    null_bitmap_offset = static_cast<uint32_t>(tuple_data.size());
-                    size_t bitmap_bytes = (col_count + 7) / 8;
-                    tuple_data.resize(static_cast<uint32_t>(tuple_data.size()) + bitmap_bytes);
-                    std::fill(tuple_data.begin() + null_bitmap_offset,
-                              tuple_data.begin() + null_bitmap_offset + bitmap_bytes, 0);
-                }
-
-                // Serialize values
-                for (size_t col_idx = 0; col_idx < col_count; col_idx++)
-                {
-                    const Value& value = result_set->getValue(row_idx, col_idx);
-                    core::DataType col_type = static_cast<core::DataType>(mat_columns[col_idx].data_type);
-
-                    if (value.isNull())
-                    {
-                        size_t byte_offset = null_bitmap_offset + (col_idx / 8);
-                        size_t bit_pos = col_idx % 8;
-                        tuple_data[byte_offset] |= (1 << bit_pos);
-                        continue;
-                    }
-
-                    core::ErrorContext enc_ctx;
-                    auto enc_state = getColumnEncryptionState(db_, mat_columns[col_idx], &enc_ctx);
-                    if (enc_state == ColumnEncryptionState::ERROR_STATE)
-                    {
-                        error("Failed to resolve encryption state for column '" +
-                              mat_columns[col_idx].column_name + "': " + enc_ctx.message);
-                    }
-                    if (enc_state == ColumnEncryptionState::ENCRYPTED)
-                    {
-                        core::TypedValue encrypted_value;
-                        if (!prepareEncryptedValue(db_, mat_columns[col_idx], value,
-                                                   encrypted_value, &enc_ctx) ||
-                            !appendEncryptedValue(encrypted_value, tuple_data, &enc_ctx))
-                        {
-                            error("Failed to serialize encrypted value for column '" +
-                                  mat_columns[col_idx].column_name + "': " + enc_ctx.message);
-                        }
-                        continue;
-                    }
-                    if (value.isEncrypted())
-                    {
-                        error("Encrypted value provided for non-encrypted column '" +
-                              mat_columns[col_idx].column_name + "'");
-                    }
-
-                    // Serialize based on type
-                    switch (col_type)
-                    {
-                        case core::DataType::INT8:
-                        {
-                            int8_t val = static_cast<int8_t>(value.toInt64());
-                            size_t offset = static_cast<uint32_t>(tuple_data.size());
-                            tuple_data.resize(offset + sizeof(int8_t));
-                            std::memcpy(&tuple_data[offset], &val, sizeof(int8_t));
-                            break;
-                        }
-                        case core::DataType::INT16:
-                        {
-                            int16_t val = static_cast<int16_t>(value.toInt64());
-                            size_t offset = static_cast<uint32_t>(tuple_data.size());
-                            tuple_data.resize(offset + sizeof(int16_t));
-                            std::memcpy(&tuple_data[offset], &val, sizeof(int16_t));
-                            break;
-                        }
-                        case core::DataType::INT32:
-                        {
-                            int32_t val = static_cast<int32_t>(value.toInt64());
-                            size_t offset = static_cast<uint32_t>(tuple_data.size());
-                            tuple_data.resize(offset + sizeof(int32_t));
-                            std::memcpy(&tuple_data[offset], &val, sizeof(int32_t));
-                            break;
-                        }
-                        case core::DataType::INT64:
-                        {
-                            int64_t val = value.toInt64();
-                            size_t offset = static_cast<uint32_t>(tuple_data.size());
-                            tuple_data.resize(offset + sizeof(int64_t));
-                            std::memcpy(&tuple_data[offset], &val, sizeof(int64_t));
-                            break;
-                        }
-                        case core::DataType::FLOAT32:
-                        {
-                            float val = static_cast<float>(value.toDouble());
-                            size_t offset = static_cast<uint32_t>(tuple_data.size());
-                            tuple_data.resize(offset + sizeof(float));
-                            std::memcpy(&tuple_data[offset], &val, sizeof(float));
-                            break;
-                        }
-                        case core::DataType::FLOAT64:
-                        {
-                            double val = value.toDouble();
-                            size_t offset = static_cast<uint32_t>(tuple_data.size());
-                            tuple_data.resize(offset + sizeof(double));
-                            std::memcpy(&tuple_data[offset], &val, sizeof(double));
-                            break;
-                        }
-                        case core::DataType::VARCHAR:
-                        case core::DataType::TEXT:
-                        {
-                            std::string str = value.toString();
-                            uint32_t len = static_cast<uint32_t>(str.size());
-                            size_t offset = static_cast<uint32_t>(tuple_data.size());
-                            tuple_data.resize(offset + sizeof(uint32_t) + len);
-                            std::memcpy(&tuple_data[offset], &len, sizeof(uint32_t));
-                            std::memcpy(&tuple_data[offset + sizeof(uint32_t)], str.data(), len);
-                            break;
-                        }
-                        case core::DataType::BOOLEAN:
-                        {
-                            bool val = value.toBoolean();
-                            size_t offset = static_cast<uint32_t>(tuple_data.size());
-                            tuple_data.resize(offset + sizeof(bool));
-                            std::memcpy(&tuple_data[offset], &val, sizeof(bool));
-                            break;
-                        }
-                        default:
-                        {
-                            // For other types, serialize as string
-                            std::string str = value.toString();
-                            uint32_t len = static_cast<uint32_t>(str.size());
-                            size_t offset = static_cast<uint32_t>(tuple_data.size());
-                            tuple_data.resize(offset + sizeof(uint32_t) + len);
-                            std::memcpy(&tuple_data[offset], &len, sizeof(uint32_t));
-                            std::memcpy(&tuple_data[offset + sizeof(uint32_t)], str.data(), len);
-                            break;
-                        }
-                    }
-                }
-
-                // Initialize TupleHeader
-                auto *header = reinterpret_cast<core::TupleHeader *>(&tuple_data[header_offset]);
-                std::memset(header, 0, sizeof(core::TupleHeader));
-                header->infomask = has_nulls ? core::TupleHeader::HEAP_HAS_NULLS : 0;
-                header->null_bitmap_offset = has_nulls ? static_cast<uint16_t>(null_bitmap_offset) : 0;
 
                 // Insert row
                 uint32_t page_id;
@@ -8030,335 +7851,6 @@ namespace scratchbird
                     error(err_msg);
                 }
             }
-            // Build tuple in binary format
-            // Format: TupleHeader + null bitmap (if needed) + column data
-            // HeapPage will overwrite some TupleHeader fields (xmin, xmax, ctid, etc.)
-            std::vector<uint8_t> tuple_data;
-
-            // Reserve space for TupleHeader (HeapPage expects it)
-            size_t header_offset = static_cast<uint32_t>(tuple_data.size());
-            tuple_data.resize(static_cast<uint32_t>(tuple_data.size()) + sizeof(core::TupleHeader));
-
-            // Determine if we need a null bitmap
-            bool has_nulls = false;
-            for (const auto &val : row_values)
-            {
-                if (val.isNull())
-                {
-                    has_nulls = true;
-                    break;
-                }
-            }
-
-            // Add null bitmap if needed (one bit per column)
-            size_t null_bitmap_offset = 0;
-            if (has_nulls)
-            {
-                null_bitmap_offset = static_cast<uint32_t>(tuple_data.size());
-                size_t bitmap_bytes = (all_columns.size() + 7) / 8;
-                tuple_data.resize(static_cast<uint32_t>(tuple_data.size()) + bitmap_bytes);
-                // Initialize bitmap to zero
-                std::fill(tuple_data.begin() + null_bitmap_offset,
-                          tuple_data.begin() + null_bitmap_offset + bitmap_bytes, 0);
-            }
-
-            // Serialize each column value
-            for (size_t col_idx = 0; col_idx < all_columns.size(); col_idx++)
-            {
-                const auto &value = row_values[col_idx];
-                const auto &col_info = all_columns[col_idx];
-
-                if (value.isNull())
-                {
-                    // Set null bit in bitmap
-                    size_t bit_offset = col_idx;
-                    size_t byte_offset = null_bitmap_offset + (bit_offset / 8);
-                    size_t bit_pos = bit_offset % 8;
-                    tuple_data[byte_offset] |= (1 << bit_pos);
-                    // Don't write any data for null values
-                    continue;
-                }
-
-                core::ErrorContext enc_ctx;
-                auto enc_state = getColumnEncryptionState(db_, col_info, &enc_ctx);
-                if (enc_state == ColumnEncryptionState::ERROR_STATE)
-                {
-                    error("Failed to resolve encryption state for column '" +
-                          col_info.column_name + "': " + enc_ctx.message);
-                }
-                if (enc_state == ColumnEncryptionState::ENCRYPTED)
-                {
-                    core::TypedValue encrypted_value;
-                    if (!prepareEncryptedValue(db_, col_info, value, encrypted_value, &enc_ctx) ||
-                        !appendEncryptedValue(encrypted_value, tuple_data, &enc_ctx))
-                    {
-                        error("Failed to serialize encrypted value for column '" +
-                              col_info.column_name + "': " + enc_ctx.message);
-                    }
-                    continue;
-                }
-                if (value.isEncrypted())
-                {
-                    error("Encrypted value provided for non-encrypted column '" +
-                          col_info.column_name + "'");
-                }
-
-                // Serialize value based on column type
-                core::DataType col_type = static_cast<core::DataType>(col_info.data_type);
-
-                switch (col_type)
-                {
-                    case core::DataType::INT32:
-                    {
-                        int32_t val;
-                        // Handle type coercion - value might be INT32 or INT64
-                        if (value.type() == core::DataType::INT32) {
-                            val = value.getInt32();
-                        } else if (value.type() == core::DataType::INT64) {
-                            val = static_cast<int32_t>(value.getInt64());
-                        } else {
-                            error("Cannot convert value to INT32");
-                        }
-                        size_t offset = static_cast<uint32_t>(tuple_data.size());
-                        tuple_data.resize(offset + sizeof(int32_t));
-                        std::memcpy(&tuple_data[offset], &val, sizeof(int32_t));
-                        break;
-                    }
-                    case core::DataType::INT64:
-                    {
-                        int64_t val;
-                        // Handle type coercion - value might be INT32, INT64 or FLOAT64
-                        if (value.type() == core::DataType::INT64) {
-                            val = value.getInt64();
-                        } else if (value.type() == core::DataType::INT32) {
-                            val = static_cast<int64_t>(value.getInt32());
-                        } else if (value.type() == core::DataType::FLOAT64) {
-                            // Large numbers may be parsed as float
-                            val = static_cast<int64_t>(value.toDouble());
-                        } else {
-                            error("Cannot convert value to INT64");
-                        }
-                        size_t offset = static_cast<uint32_t>(tuple_data.size());
-                        tuple_data.resize(offset + sizeof(int64_t));
-                        std::memcpy(&tuple_data[offset], &val, sizeof(int64_t));
-                        break;
-                    }
-                    case core::DataType::FLOAT64:
-                    {
-                        double val = value.toDouble();
-                        size_t offset = static_cast<uint32_t>(tuple_data.size());
-                        tuple_data.resize(offset + sizeof(double));
-                        std::memcpy(&tuple_data[offset], &val, sizeof(double));
-                        break;
-                    }
-                    case core::DataType::VARCHAR:
-                    case core::DataType::CHAR:
-                    case core::DataType::TEXT:
-                    {
-                        std::string str = value.toString();
-                        // Write length prefix (4 bytes) then data
-                        uint32_t len = static_cast<uint32_t>(str.size());
-                        size_t offset = static_cast<uint32_t>(tuple_data.size());
-                        tuple_data.resize(offset + sizeof(uint32_t) + len);
-                        std::memcpy(&tuple_data[offset], &len, sizeof(uint32_t));
-                        std::memcpy(&tuple_data[offset + sizeof(uint32_t)], str.data(), len);
-                        break;
-                    }
-                    case core::DataType::INT16:
-                    {
-                        int16_t val = static_cast<int16_t>(value.getInt32());
-                        size_t offset = static_cast<uint32_t>(tuple_data.size());
-                        tuple_data.resize(offset + sizeof(int16_t));
-                        std::memcpy(&tuple_data[offset], &val, sizeof(int16_t));
-                        break;
-                    }
-                    case core::DataType::FLOAT32:
-                    {
-                        float val = static_cast<float>(value.toDouble());
-                        size_t offset = static_cast<uint32_t>(tuple_data.size());
-                        tuple_data.resize(offset + sizeof(float));
-                        std::memcpy(&tuple_data[offset], &val, sizeof(float));
-                        break;
-                    }
-                    case core::DataType::DECIMAL:
-                    {
-                        // Store DECIMAL as double (8 bytes)
-                        double val = value.toDouble();
-                        size_t offset = static_cast<uint32_t>(tuple_data.size());
-                        tuple_data.resize(offset + sizeof(double));
-                        std::memcpy(&tuple_data[offset], &val, sizeof(double));
-                        break;
-                    }
-                    case core::DataType::BOOLEAN:
-                    {
-                        bool val;
-                        // Handle type coercion - value might be BOOLEAN or INT32 (TRUE/FALSE literals)
-                        if (value.type() == core::DataType::BOOLEAN) {
-                            val = value.getBool();
-                        } else if (value.type() == core::DataType::INT32) {
-                            val = value.getInt32() != 0;
-                        } else if (value.type() == core::DataType::INT64) {
-                            val = value.getInt64() != 0;
-                        } else {
-                            error("Cannot convert value to BOOLEAN");
-                        }
-                        size_t offset = static_cast<uint32_t>(tuple_data.size());
-                        tuple_data.resize(offset + sizeof(uint8_t));
-                        uint8_t byte_val = val ? 1 : 0;
-                        std::memcpy(&tuple_data[offset], &byte_val, sizeof(uint8_t));
-                        break;
-                    }
-                    case core::DataType::DATE:
-                    {
-                        // Firebird DATE: Modified Julian Date (days since November 17, 1858)
-                        // Unix epoch (1970-01-01) = MJD 40587
-                        constexpr int32_t UNIX_EPOCH_MJD = 40587;
-                        int32_t mjd;
-                        if (value.type() == core::DataType::INT32) {
-                            mjd = value.getInt32();  // Assume already MJD if raw int
-                        } else if (value.type() == core::DataType::VARCHAR ||
-                                   value.type() == core::DataType::TEXT) {
-                            // Parse 'YYYY-MM-DD' format
-                            std::string str = value.toString();
-                            int year = 0, month = 0, day = 0;
-                            if (sscanf(str.c_str(), "%d-%d-%d", &year, &month, &day) == 3) {
-                                // Convert to Unix days, then to MJD
-                                std::tm tm = {};
-                                tm.tm_year = year - 1900;
-                                tm.tm_mon = month - 1;
-                                tm.tm_mday = day;
-                                tm.tm_hour = 0;  // Use midnight UTC
-                                std::time_t time = timegm(&tm);  // Use UTC
-                                // Floor division for negative timestamps (dates before 1970)
-                                int32_t unix_days = (time >= 0) ? static_cast<int32_t>(time / 86400)
-                                                                : static_cast<int32_t>((time - 86399) / 86400);
-                                mjd = unix_days + UNIX_EPOCH_MJD;
-                            } else {
-                                error("Invalid DATE format: " + str + " (expected YYYY-MM-DD)");
-                            }
-                        } else {
-                            error("Cannot convert value to DATE");
-                        }
-                        size_t offset = static_cast<uint32_t>(tuple_data.size());
-                        tuple_data.resize(offset + sizeof(int32_t));
-                        std::memcpy(&tuple_data[offset], &mjd, sizeof(int32_t));
-                        break;
-                    }
-                    case core::DataType::TIME:
-                    {
-                        // Firebird TIME: deci-milliseconds (100µs units) since midnight
-                        // Range: 0 to 863,999,999 (24 hours)
-                        int32_t deci_ms;
-                        if (value.type() == core::DataType::INT32) {
-                            deci_ms = value.getInt32();  // Assume already deci-ms if raw int
-                        } else if (value.type() == core::DataType::VARCHAR ||
-                                   value.type() == core::DataType::TEXT) {
-                            // Parse 'HH:MM:SS' or 'HH:MM:SS.nnnn' format
-                            std::string str = value.toString();
-                            int hour = 0, min = 0, sec = 0, frac = 0;
-                            int parsed = sscanf(str.c_str(), "%d:%d:%d.%d", &hour, &min, &sec, &frac);
-                            if (parsed >= 2) {
-                                // Convert to deci-milliseconds (10,000 units per second)
-                                deci_ms = (hour * 3600 + min * 60 + sec) * 10000;
-                                if (parsed >= 4) {
-                                    // Add fractional part (adjust based on digits)
-                                    deci_ms += frac;  // Assume 4 digits
-                                }
-                            } else {
-                                error("Invalid TIME format: " + str + " (expected HH:MM:SS)");
-                            }
-                        } else {
-                            error("Cannot convert value to TIME");
-                        }
-                        size_t offset = static_cast<uint32_t>(tuple_data.size());
-                        tuple_data.resize(offset + sizeof(int32_t));
-                        std::memcpy(&tuple_data[offset], &deci_ms, sizeof(int32_t));
-                        break;
-                    }
-                    case core::DataType::TIMESTAMP:
-                    {
-                        // Firebird TIMESTAMP: MJD date (int32) + deci-milliseconds time (int32)
-                        // Total 8 bytes, same as our previous int64 format
-                        constexpr int32_t UNIX_EPOCH_MJD = 40587;
-                        int32_t mjd_date;
-                        int32_t deci_ms_time;
-                        if (value.type() == core::DataType::INT64) {
-                            // Legacy: treat as microseconds since Unix epoch
-                            int64_t micros = value.getInt64();
-                            int64_t unix_seconds = micros / 1000000;
-                            int32_t unix_days = static_cast<int32_t>(unix_seconds / 86400);
-                            int32_t day_seconds = static_cast<int32_t>(unix_seconds % 86400);
-                            mjd_date = unix_days + UNIX_EPOCH_MJD;
-                            deci_ms_time = day_seconds * 10000;
-                        } else if (value.type() == core::DataType::VARCHAR ||
-                                   value.type() == core::DataType::TEXT) {
-                            // Parse 'YYYY-MM-DD HH:MM:SS' format
-                            std::string str = value.toString();
-                            int year = 0, month = 0, day = 0, hour = 0, min = 0, sec = 0, frac = 0;
-                            int parsed = sscanf(str.c_str(), "%d-%d-%d %d:%d:%d.%d",
-                                       &year, &month, &day, &hour, &min, &sec, &frac);
-                            if (parsed >= 3) {
-                                // Calculate MJD for date
-                                std::tm tm = {};
-                                tm.tm_year = year - 1900;
-                                tm.tm_mon = month - 1;
-                                tm.tm_mday = day;
-                                tm.tm_hour = 0;  // Use midnight UTC
-                                std::time_t time = timegm(&tm);  // Use UTC
-                                // Floor division for negative timestamps (dates before 1970)
-                                int32_t unix_days = (time >= 0) ? static_cast<int32_t>(time / 86400)
-                                                                : static_cast<int32_t>((time - 86399) / 86400);
-                                mjd_date = unix_days + UNIX_EPOCH_MJD;
-                                // Calculate deci-milliseconds for time
-                                deci_ms_time = (hour * 3600 + min * 60 + sec) * 10000;
-                                if (parsed >= 7) {
-                                    deci_ms_time += frac;  // Add fractional part
-                                }
-                            } else {
-                                error("Invalid TIMESTAMP format: " + str + " (expected YYYY-MM-DD HH:MM:SS)");
-                            }
-                        } else {
-                            error("Cannot convert value to TIMESTAMP");
-                        }
-                        size_t offset = static_cast<uint32_t>(tuple_data.size());
-                        tuple_data.resize(offset + sizeof(int32_t) * 2);
-                        std::memcpy(&tuple_data[offset], &mjd_date, sizeof(int32_t));
-                        std::memcpy(&tuple_data[offset + sizeof(int32_t)], &deci_ms_time, sizeof(int32_t));
-                        break;
-                    }
-                    case core::DataType::BLOB:
-                    case core::DataType::BINARY:
-                    case core::DataType::VARBINARY:
-                    {
-                        // Store BLOB as length-prefixed binary data
-                        std::string str = value.toString();
-                        uint32_t len = static_cast<uint32_t>(str.size());
-                        size_t offset = static_cast<uint32_t>(tuple_data.size());
-                        tuple_data.resize(offset + sizeof(uint32_t) + len);
-                        std::memcpy(&tuple_data[offset], &len, sizeof(uint32_t));
-                        std::memcpy(&tuple_data[offset + sizeof(uint32_t)], str.data(), len);
-                        break;
-                    }
-                    default:
-                        error("Unsupported column type for serialization: " + std::to_string(static_cast<int>(col_type)));
-                }
-            }
-
-            // Initialize TupleHeader (HeapPage will overwrite xmin, xmax, ctid later)
-            auto *header = reinterpret_cast<core::TupleHeader *>(&tuple_data[header_offset]);
-            // Initialize all fields to zero first
-            std::memset(header, 0, sizeof(core::TupleHeader));
-
-            // Set the fields we know about
-            header->infomask = has_nulls ? core::TupleHeader::HEAP_HAS_NULLS : 0;
-            header->null_bitmap_offset = has_nulls ? static_cast<uint16_t>(null_bitmap_offset) : 0;
-
-            // HeapPage::insertTuple() will set:
-            // - xmin (from transaction manager)
-            // - xmax = 0
-            // - back_version_tid = 0 (no back version for new insert)
-            // - ctid_page, ctid_item (from final item position)
-
             // Wave 2: Fire BEFORE INSERT triggers
             std::vector<core::CatalogManager::TriggerInfo> before_triggers;
             auto trigger_status = db_->catalog_manager()->listTriggersForTable(
@@ -8406,107 +7898,60 @@ namespace scratchbird
             }
 
             // ALPHA Phase A+: Enforce data type validation (Nov 19, 2025)
-            // Note: Type coercion happens during expression evaluation, but we validate
-            // that the final values match the column types
+            // Convert values to column types using canonical conversion rules
             for (size_t i = 0; i < all_columns.size(); i++)
             {
-                const auto& col = all_columns[i];
-                const auto& val = row_values[i];
-
-                // Skip NULL values (already handled by NOT NULL check above)
-                if (val.isNull())
+                if (row_values[i].isNull())
                 {
                     continue;
                 }
 
-                // Check type compatibility
-                bool type_compatible = false;
-                switch (static_cast<core::DataType>(col.data_type))
+                core::TypedValue coerced;
+                core::ErrorContext cast_ctx;
+                if (!coerceValueForColumn(row_values[i], all_columns[i], coerced, &cast_ctx))
                 {
-                    case core::DataType::INT32:
-                        type_compatible = (val.type() == core::DataType::INT32 ||
-                                         val.type() == core::DataType::INT64);  // Allow implicit INT64->INT32 if in range
-                        break;
-                    case core::DataType::INT64:
-                        type_compatible = (val.type() == core::DataType::INT32 ||
-                                         val.type() == core::DataType::INT64 ||
-                                         val.type() == core::DataType::FLOAT64);  // Large numbers may parse as float
-                        break;
-                    case core::DataType::FLOAT64:
-                        type_compatible = (val.type() == core::DataType::FLOAT64 ||
-                                         val.type() == core::DataType::INT32 ||
-                                         val.type() == core::DataType::INT64);  // Allow numeric -> float
-                        break;
-                    case core::DataType::VARCHAR:
-                    case core::DataType::TEXT:
-                        type_compatible = (val.type() == core::DataType::VARCHAR ||
-                                         val.type() == core::DataType::TEXT);
-                        break;
-                    case core::DataType::BOOLEAN:
-                        type_compatible = (val.type() == core::DataType::BOOLEAN ||
-                                         val.type() == core::DataType::INT32 ||  // TRUE/FALSE stored as 1/0
-                                         val.type() == core::DataType::INT64);
-                        break;
-                    // Firebird types
-                    case core::DataType::INT16:
-                        type_compatible = (val.type() == core::DataType::INT16 ||
-                                         val.type() == core::DataType::INT32 ||
-                                         val.type() == core::DataType::INT64);  // Allow larger ints
-                        break;
-                    case core::DataType::FLOAT32:
-                        type_compatible = (val.type() == core::DataType::FLOAT32 ||
-                                         val.type() == core::DataType::FLOAT64 ||
-                                         val.type() == core::DataType::INT32 ||
-                                         val.type() == core::DataType::INT64);  // Allow numeric -> float
-                        break;
-                    case core::DataType::DECIMAL:
-                        type_compatible = (val.type() == core::DataType::DECIMAL ||
-                                         val.type() == core::DataType::FLOAT64 ||
-                                         val.type() == core::DataType::FLOAT32 ||
-                                         val.type() == core::DataType::INT32 ||
-                                         val.type() == core::DataType::INT64);  // Allow numeric -> decimal
-                        break;
-                    case core::DataType::CHAR:
-                        type_compatible = (val.type() == core::DataType::CHAR ||
-                                         val.type() == core::DataType::VARCHAR ||
-                                         val.type() == core::DataType::TEXT);  // Allow string types
-                        break;
-                    case core::DataType::DATE:
-                        type_compatible = (val.type() == core::DataType::DATE ||
-                                         val.type() == core::DataType::INT32 ||  // Days since epoch
-                                         val.type() == core::DataType::VARCHAR);  // Date string
-                        break;
-                    case core::DataType::TIME:
-                        type_compatible = (val.type() == core::DataType::TIME ||
-                                         val.type() == core::DataType::INT32 ||  // Microseconds
-                                         val.type() == core::DataType::VARCHAR);  // Time string
-                        break;
-                    case core::DataType::TIMESTAMP:
-                        type_compatible = (val.type() == core::DataType::TIMESTAMP ||
-                                         val.type() == core::DataType::INT64 ||  // Microseconds since epoch
-                                         val.type() == core::DataType::VARCHAR);  // Timestamp string
-                        break;
-                    case core::DataType::BLOB:
-                    case core::DataType::BINARY:
-                    case core::DataType::VARBINARY:
-                        type_compatible = (val.type() == core::DataType::BLOB ||
-                                         val.type() == core::DataType::BINARY ||
-                                         val.type() == core::DataType::VARBINARY ||
-                                         val.type() == core::DataType::VARCHAR);  // String -> binary
-                        break;
-                    default:
-                        // For other types, require exact match
-                        type_compatible = (val.type() == static_cast<core::DataType>(col.data_type));
-                        break;
+                    std::string err_msg = "Type mismatch for column '" + all_columns[i].column_name + "'";
+                    if (!cast_ctx.message.empty())
+                    {
+                        err_msg += ": " + cast_ctx.message;
+                    }
+                    if (!cast_ctx.violating_value.empty())
+                    {
+                        err_msg += " (value: " + cast_ctx.violating_value + ")";
+                    }
+                    error(err_msg);
                 }
+                row_values[i] = std::move(coerced);
+            }
 
-                if (!type_compatible)
+            // Build tuple in binary format (canonical TypedValue encoding)
+            std::vector<uint8_t> tuple_data;
+            core::ErrorContext serialize_ctx;
+            if (!serializeTupleFromValues(row_values, all_columns, tuple_data, &serialize_ctx))
+            {
+                std::string err_msg = "Failed to serialize tuple for INSERT";
+                if (!serialize_ctx.message.empty())
                 {
-                    error("Type mismatch: cannot insert value of type " +
-                          std::to_string(static_cast<int>(val.type())) +
-                          " into column '" + col.column_name + "' of type " +
-                          std::to_string(static_cast<int>(col.data_type)));
+                    err_msg += ": " + serialize_ctx.message;
                 }
+                if (!serialize_ctx.column_name.empty() || !serialize_ctx.violating_value.empty())
+                {
+                    err_msg += " (";
+                    if (!serialize_ctx.column_name.empty())
+                    {
+                        err_msg += "column: " + serialize_ctx.column_name;
+                    }
+                    if (!serialize_ctx.violating_value.empty())
+                    {
+                        if (!serialize_ctx.column_name.empty())
+                        {
+                            err_msg += ", ";
+                        }
+                        err_msg += "value: " + serialize_ctx.violating_value;
+                    }
+                    err_msg += ")";
+                }
+                error(err_msg);
             }
 
             uint64_t xid = db_->storage_engine()->getCurrentXid();
@@ -9340,97 +8785,28 @@ namespace scratchbird
                     const auto& col = all_columns[assign.column_index];
                     const auto& val = row_values[assign.column_index];
 
-                    // Skip NULL values (already handled by NOT NULL check above)
                     if (val.isNull())
                     {
                         continue;
                     }
 
-                    // Check type compatibility
-                    bool type_compatible = false;
-                    switch (static_cast<core::DataType>(col.data_type))
+                    core::TypedValue coerced;
+                    core::ErrorContext cast_ctx;
+                    if (!coerceValueForColumn(val, col, coerced, &cast_ctx))
                     {
-                        case core::DataType::INT32:
-                            type_compatible = (val.type() == core::DataType::INT32 ||
-                                             val.type() == core::DataType::INT64);
-                            break;
-                        case core::DataType::INT64:
-                            type_compatible = (val.type() == core::DataType::INT32 ||
-                                             val.type() == core::DataType::INT64 ||
-                                             val.type() == core::DataType::FLOAT64);
-                            break;
-                        case core::DataType::FLOAT64:
-                            type_compatible = (val.type() == core::DataType::FLOAT64 ||
-                                             val.type() == core::DataType::INT32 ||
-                                             val.type() == core::DataType::INT64);
-                            break;
-                        case core::DataType::VARCHAR:
-                        case core::DataType::TEXT:
-                            type_compatible = (val.type() == core::DataType::VARCHAR ||
-                                             val.type() == core::DataType::TEXT);
-                            break;
-                        case core::DataType::BOOLEAN:
-                            type_compatible = (val.type() == core::DataType::BOOLEAN ||
-                                             val.type() == core::DataType::INT32 ||
-                                             val.type() == core::DataType::INT64);
-                            break;
-                        case core::DataType::INT16:
-                            type_compatible = (val.type() == core::DataType::INT16 ||
-                                             val.type() == core::DataType::INT32 ||
-                                             val.type() == core::DataType::INT64);
-                            break;
-                        case core::DataType::FLOAT32:
-                            type_compatible = (val.type() == core::DataType::FLOAT32 ||
-                                             val.type() == core::DataType::FLOAT64 ||
-                                             val.type() == core::DataType::INT32 ||
-                                             val.type() == core::DataType::INT64);
-                            break;
-                        case core::DataType::DECIMAL:
-                            type_compatible = (val.type() == core::DataType::DECIMAL ||
-                                             val.type() == core::DataType::FLOAT64 ||
-                                             val.type() == core::DataType::FLOAT32 ||
-                                             val.type() == core::DataType::INT32 ||
-                                             val.type() == core::DataType::INT64);
-                            break;
-                        case core::DataType::CHAR:
-                            type_compatible = (val.type() == core::DataType::CHAR ||
-                                             val.type() == core::DataType::VARCHAR ||
-                                             val.type() == core::DataType::TEXT);
-                            break;
-                        case core::DataType::DATE:
-                            type_compatible = (val.type() == core::DataType::DATE ||
-                                             val.type() == core::DataType::INT32 ||
-                                             val.type() == core::DataType::VARCHAR);
-                            break;
-                        case core::DataType::TIME:
-                            type_compatible = (val.type() == core::DataType::TIME ||
-                                             val.type() == core::DataType::INT32 ||
-                                             val.type() == core::DataType::VARCHAR);
-                            break;
-                        case core::DataType::TIMESTAMP:
-                            type_compatible = (val.type() == core::DataType::TIMESTAMP ||
-                                             val.type() == core::DataType::INT64 ||
-                                             val.type() == core::DataType::VARCHAR);
-                            break;
-                        case core::DataType::BLOB:
-                        case core::DataType::BINARY:
-                        case core::DataType::VARBINARY:
-                            type_compatible = (val.type() == core::DataType::BLOB ||
-                                             val.type() == core::DataType::BINARY ||
-                                             val.type() == core::DataType::VARBINARY ||
-                                             val.type() == core::DataType::VARCHAR);
-                            break;
-                        default:
-                            type_compatible = (val.type() == static_cast<core::DataType>(col.data_type));
-                            break;
+                        std::string err_msg = "Type mismatch for column '" + col.column_name + "'";
+                        if (!cast_ctx.message.empty())
+                        {
+                            err_msg += ": " + cast_ctx.message;
+                        }
+                        if (!cast_ctx.violating_value.empty())
+                        {
+                            err_msg += " (value: " + cast_ctx.violating_value + ")";
+                        }
+                        error(err_msg);
                     }
 
-                    if (!type_compatible)
-                    {
-                        error("Type mismatch: cannot update column '" + col.column_name +
-                              "' of type " + std::to_string(static_cast<int>(col.data_type)) +
-                              " with value of type " + std::to_string(static_cast<int>(val.type())));
-                    }
+                    row_values[assign.column_index] = std::move(coerced);
                 }
 
                 uint64_t xid = db_->storage_engine()->getCurrentXid();
@@ -9661,333 +9037,32 @@ namespace scratchbird
 
                 // Serialize updated tuple data (same format as INSERT)
                 std::vector<uint8_t> new_tuple_data;
-
-                // Reserve space for TupleHeader
-                new_tuple_data.resize(sizeof(core::TupleHeader));
-
-                // Determine if we need a null bitmap
-                bool has_nulls = false;
-                for (const auto &val : row_values)
+                core::ErrorContext serialize_ctx;
+                if (!serializeTupleFromValues(row_values, all_columns, new_tuple_data, &serialize_ctx))
                 {
-                    if (val.isNull())
+                    std::string err_msg = "Failed to serialize tuple for UPDATE";
+                    if (!serialize_ctx.message.empty())
                     {
-                        has_nulls = true;
-                        break;
+                        err_msg += ": " + serialize_ctx.message;
                     }
-                }
-
-                // Add null bitmap if needed
-                if (has_nulls)
-                {
-                    size_t num_bytes = (all_columns.size() + 7) / 8;
-                    size_t bitmap_offset = new_tuple_data.size();
-                    new_tuple_data.resize(new_tuple_data.size() + num_bytes, 0);
-
-                    for (size_t i = 0; i < row_values.size(); i++)
+                    if (!serialize_ctx.column_name.empty() || !serialize_ctx.violating_value.empty())
                     {
-                        if (row_values[i].isNull())
+                        err_msg += " (";
+                        if (!serialize_ctx.column_name.empty())
                         {
-                            size_t byte_idx = i / 8;
-                            size_t bit_idx = i % 8;
-                            new_tuple_data[bitmap_offset + byte_idx] |= (1 << bit_idx);
+                            err_msg += "column: " + serialize_ctx.column_name;
                         }
+                        if (!serialize_ctx.violating_value.empty())
+                        {
+                            if (!serialize_ctx.column_name.empty())
+                            {
+                                err_msg += ", ";
+                            }
+                            err_msg += "value: " + serialize_ctx.violating_value;
+                        }
+                        err_msg += ")";
                     }
-                }
-
-                // Serialize column data
-                for (size_t i = 0; i < row_values.size(); i++)
-                {
-                    if (row_values[i].isNull())
-                    {
-                        continue; // NULL values already marked in bitmap
-                    }
-
-                    const auto &val = row_values[i];
-                    const auto &col = all_columns[i];
-
-                    core::ErrorContext enc_ctx;
-                    auto enc_state = getColumnEncryptionState(db_, col, &enc_ctx);
-                    if (enc_state == ColumnEncryptionState::ERROR_STATE)
-                    {
-                        error("Failed to resolve encryption state for column '" +
-                              col.column_name + "': " + enc_ctx.message);
-                    }
-                    if (enc_state == ColumnEncryptionState::ENCRYPTED)
-                    {
-                        core::TypedValue encrypted_value;
-                        if (!prepareEncryptedValue(db_, col, val, encrypted_value, &enc_ctx) ||
-                            !appendEncryptedValue(encrypted_value, new_tuple_data, &enc_ctx))
-                        {
-                            error("Failed to serialize encrypted value for column '" +
-                                  col.column_name + "': " + enc_ctx.message);
-                        }
-                        continue;
-                    }
-                    if (val.isEncrypted())
-                    {
-                        error("Encrypted value provided for non-encrypted column '" +
-                              col.column_name + "'");
-                    }
-
-                    // Serialize based on column data type
-                    switch (static_cast<core::DataType>(col.data_type))
-                    {
-                        case core::DataType::INT32:
-                        {
-                            int32_t int_val;
-                            if (val.type() == core::DataType::INT32)
-                            {
-                                int_val = val.getInt32();
-                            }
-                            else if (val.type() == core::DataType::INT64)
-                            {
-                                int_val = static_cast<int32_t>(val.getInt64());
-                            }
-                            else
-                            {
-                                error("Cannot convert value to INT32");
-                            }
-                            new_tuple_data.insert(new_tuple_data.end(),
-                                                  reinterpret_cast<const uint8_t *>(&int_val),
-                                                  reinterpret_cast<const uint8_t *>(&int_val) + 4);
-                            break;
-                        }
-                        case core::DataType::INT64:
-                        {
-                            int64_t long_val;
-                            if (val.type() == core::DataType::INT64)
-                            {
-                                long_val = val.getInt64();
-                            }
-                            else if (val.type() == core::DataType::INT32)
-                            {
-                                long_val = static_cast<int64_t>(val.getInt32());
-                            }
-                            else if (val.type() == core::DataType::FLOAT64)
-                            {
-                                long_val = static_cast<int64_t>(val.toDouble());
-                            }
-                            else
-                            {
-                                error("Cannot convert value to INT64");
-                            }
-                            new_tuple_data.insert(new_tuple_data.end(),
-                                                  reinterpret_cast<const uint8_t *>(&long_val),
-                                                  reinterpret_cast<const uint8_t *>(&long_val) + 8);
-                            break;
-                        }
-                        case core::DataType::FLOAT64:
-                        {
-                            double dbl_val = val.toDouble();
-                            new_tuple_data.insert(new_tuple_data.end(),
-                                                  reinterpret_cast<const uint8_t *>(&dbl_val),
-                                                  reinterpret_cast<const uint8_t *>(&dbl_val) + 8);
-                            break;
-                        }
-                        case core::DataType::VARCHAR:
-                        case core::DataType::CHAR:
-                        case core::DataType::TEXT:
-                        {
-                            std::string str_val = val.toString();
-                            uint32_t str_len = static_cast<uint32_t>(str_val.size());
-                            new_tuple_data.insert(new_tuple_data.end(),
-                                                  reinterpret_cast<const uint8_t *>(&str_len),
-                                                  reinterpret_cast<const uint8_t *>(&str_len) + 4);
-                            new_tuple_data.insert(new_tuple_data.end(), str_val.begin(), str_val.end());
-                            break;
-                        }
-                        case core::DataType::INT16:
-                        {
-                            int16_t int_val = static_cast<int16_t>(val.getInt32());
-                            new_tuple_data.insert(new_tuple_data.end(),
-                                                  reinterpret_cast<const uint8_t *>(&int_val),
-                                                  reinterpret_cast<const uint8_t *>(&int_val) + sizeof(int16_t));
-                            break;
-                        }
-                        case core::DataType::FLOAT32:
-                        {
-                            float flt_val = static_cast<float>(val.toDouble());
-                            new_tuple_data.insert(new_tuple_data.end(),
-                                                  reinterpret_cast<const uint8_t *>(&flt_val),
-                                                  reinterpret_cast<const uint8_t *>(&flt_val) + sizeof(float));
-                            break;
-                        }
-                        case core::DataType::DECIMAL:
-                        {
-                            double dec_val = val.toDouble();
-                            new_tuple_data.insert(new_tuple_data.end(),
-                                                  reinterpret_cast<const uint8_t *>(&dec_val),
-                                                  reinterpret_cast<const uint8_t *>(&dec_val) + sizeof(double));
-                            break;
-                        }
-                        case core::DataType::BOOLEAN:
-                        {
-                            bool bool_val;
-                            if (val.type() == core::DataType::BOOLEAN)
-                            {
-                                bool_val = val.getBool();
-                            }
-                            else if (val.type() == core::DataType::INT32)
-                            {
-                                bool_val = val.getInt32() != 0;
-                            }
-                            else if (val.type() == core::DataType::INT64)
-                            {
-                                bool_val = val.getInt64() != 0;
-                            }
-                            else
-                            {
-                                error("Cannot convert value to BOOLEAN");
-                            }
-                            new_tuple_data.push_back(bool_val ? 1 : 0);
-                            break;
-                        }
-                        case core::DataType::DATE:
-                        {
-                            constexpr int32_t UNIX_EPOCH_MJD = 40587;
-                            int32_t mjd;
-                            if (val.type() == core::DataType::INT32)
-                            {
-                                mjd = val.getInt32();
-                            }
-                            else if (val.type() == core::DataType::VARCHAR ||
-                                     val.type() == core::DataType::TEXT)
-                            {
-                                std::string str = val.toString();
-                                int year = 0, month = 0, day = 0;
-                                if (sscanf(str.c_str(), "%d-%d-%d", &year, &month, &day) == 3)
-                                {
-                                    std::tm tm = {};
-                                    tm.tm_year = year - 1900;
-                                    tm.tm_mon = month - 1;
-                                    tm.tm_mday = day;
-                                    tm.tm_hour = 0;
-                                    std::time_t time = timegm(&tm);
-                                    int32_t unix_days = (time >= 0) ? static_cast<int32_t>(time / 86400)
-                                                                    : static_cast<int32_t>((time - 86399) / 86400);
-                                    mjd = unix_days + UNIX_EPOCH_MJD;
-                                }
-                                else
-                                {
-                                    error("Invalid DATE format: " + str + " (expected YYYY-MM-DD)");
-                                }
-                            }
-                            else
-                            {
-                                error("Cannot convert value to DATE");
-                            }
-                            new_tuple_data.insert(new_tuple_data.end(),
-                                                  reinterpret_cast<const uint8_t *>(&mjd),
-                                                  reinterpret_cast<const uint8_t *>(&mjd) + sizeof(int32_t));
-                            break;
-                        }
-                        case core::DataType::TIME:
-                        {
-                            int32_t deci_ms;
-                            if (val.type() == core::DataType::INT32)
-                            {
-                                deci_ms = val.getInt32();
-                            }
-                            else if (val.type() == core::DataType::VARCHAR ||
-                                     val.type() == core::DataType::TEXT)
-                            {
-                                std::string str = val.toString();
-                                int hour = 0, min = 0, sec = 0, frac = 0;
-                                int parsed = sscanf(str.c_str(), "%d:%d:%d.%d",
-                                                    &hour, &min, &sec, &frac);
-                                if (parsed >= 2)
-                                {
-                                    deci_ms = (hour * 3600 + min * 60 + sec) * 10000;
-                                    if (parsed >= 4)
-                                    {
-                                        deci_ms += frac;
-                                    }
-                                }
-                                else
-                                {
-                                    error("Invalid TIME format: " + str + " (expected HH:MM:SS)");
-                                }
-                            }
-                            else
-                            {
-                                error("Cannot convert value to TIME");
-                            }
-                            new_tuple_data.insert(new_tuple_data.end(),
-                                                  reinterpret_cast<const uint8_t *>(&deci_ms),
-                                                  reinterpret_cast<const uint8_t *>(&deci_ms) + sizeof(int32_t));
-                            break;
-                        }
-                        case core::DataType::TIMESTAMP:
-                        {
-                            constexpr int32_t UNIX_EPOCH_MJD = 40587;
-                            int32_t mjd_date;
-                            int32_t deci_ms_time;
-                            if (val.type() == core::DataType::INT64)
-                            {
-                                int64_t micros = val.getInt64();
-                                int64_t unix_seconds = micros / 1000000;
-                                int32_t unix_days = static_cast<int32_t>(unix_seconds / 86400);
-                                int32_t day_seconds = static_cast<int32_t>(unix_seconds % 86400);
-                                mjd_date = unix_days + UNIX_EPOCH_MJD;
-                                deci_ms_time = day_seconds * 10000;
-                            }
-                            else if (val.type() == core::DataType::VARCHAR ||
-                                     val.type() == core::DataType::TEXT)
-                            {
-                                std::string str = val.toString();
-                                int year = 0, month = 0, day = 0, hour = 0, min = 0, sec = 0, frac = 0;
-                                int parsed = sscanf(str.c_str(), "%d-%d-%d %d:%d:%d.%d",
-                                                    &year, &month, &day, &hour, &min, &sec, &frac);
-                                if (parsed >= 3)
-                                {
-                                    std::tm tm = {};
-                                    tm.tm_year = year - 1900;
-                                    tm.tm_mon = month - 1;
-                                    tm.tm_mday = day;
-                                    tm.tm_hour = 0;
-                                    std::time_t time = timegm(&tm);
-                                    int32_t unix_days = (time >= 0) ? static_cast<int32_t>(time / 86400)
-                                                                    : static_cast<int32_t>((time - 86399) / 86400);
-                                    mjd_date = unix_days + UNIX_EPOCH_MJD;
-                                    deci_ms_time = (hour * 3600 + min * 60 + sec) * 10000;
-                                    if (parsed >= 7)
-                                    {
-                                        deci_ms_time += frac;
-                                    }
-                                }
-                                else
-                                {
-                                    error("Invalid TIMESTAMP format: " + str +
-                                          " (expected YYYY-MM-DD HH:MM:SS)");
-                                }
-                            }
-                            else
-                            {
-                                error("Cannot convert value to TIMESTAMP");
-                            }
-                            new_tuple_data.insert(new_tuple_data.end(),
-                                                  reinterpret_cast<const uint8_t *>(&mjd_date),
-                                                  reinterpret_cast<const uint8_t *>(&mjd_date) + sizeof(int32_t));
-                            new_tuple_data.insert(new_tuple_data.end(),
-                                                  reinterpret_cast<const uint8_t *>(&deci_ms_time),
-                                                  reinterpret_cast<const uint8_t *>(&deci_ms_time) + sizeof(int32_t));
-                            break;
-                        }
-                        case core::DataType::BLOB:
-                        case core::DataType::BINARY:
-                        case core::DataType::VARBINARY:
-                        {
-                            std::string str_val = val.toString();
-                            uint32_t str_len = static_cast<uint32_t>(str_val.size());
-                            new_tuple_data.insert(new_tuple_data.end(),
-                                                  reinterpret_cast<const uint8_t *>(&str_len),
-                                                  reinterpret_cast<const uint8_t *>(&str_len) + 4);
-                            new_tuple_data.insert(new_tuple_data.end(), str_val.begin(), str_val.end());
-                            break;
-                        }
-                        default:
-                            error("Unsupported data type in UPDATE");
-                    }
+                    error(err_msg);
                 }
 
                 // Wave 2: Fire BEFORE UPDATE triggers
@@ -10891,9 +9966,16 @@ namespace scratchbird
 
                                 // Serialize and update tuple
                                 std::vector<uint8_t> new_tuple_data;
-                                if (!serializeTupleFromValues(updated_row, target_columns, new_tuple_data))
+                                core::ErrorContext serialize_ctx;
+                                if (!serializeTupleFromValues(updated_row, target_columns, new_tuple_data,
+                                                             &serialize_ctx))
                                 {
-                                    error("Failed to serialize updated tuple");
+                                    std::string err_msg = "Failed to serialize updated tuple";
+                                    if (!serialize_ctx.message.empty())
+                                    {
+                                        err_msg += ": " + serialize_ctx.message;
+                                    }
+                                    error(err_msg);
                                     return;
                                 }
 
@@ -10971,9 +10053,16 @@ namespace scratchbird
 
                             // Serialize and insert
                             std::vector<uint8_t> tuple_data;
-                            if (!serializeTupleFromValues(full_row, target_columns, tuple_data))
+                            core::ErrorContext serialize_ctx;
+                            if (!serializeTupleFromValues(full_row, target_columns, tuple_data,
+                                                         &serialize_ctx))
                             {
-                                error("Failed to serialize insert tuple");
+                                std::string err_msg = "Failed to serialize insert tuple";
+                                if (!serialize_ctx.message.empty())
+                                {
+                                    err_msg += ": " + serialize_ctx.message;
+                                }
+                                error(err_msg);
                                 return;
                             }
 
@@ -13812,10 +12901,15 @@ namespace scratchbird
                     {
                         readByte();
                         Opcode type_op = static_cast<Opcode>(readByte());
-                        if (type_op == Opcode::TYPE_VARCHAR)
+                        if (type_op == Opcode::TYPE_VARCHAR || type_op == Opcode::TYPE_CHAR)
                         {
                             pc_ += 4;
                         }
+                        else if (type_op == Opcode::TYPE_DECIMAL)
+                        {
+                            pc_ += 8;
+                        }
+                        pc_ += 1;  // Cast format
                     }
                 }
                 where_end_pc = pc_;
@@ -14125,10 +13219,15 @@ namespace scratchbird
                     {
                         readByte();
                         Opcode type_op = static_cast<Opcode>(readByte());
-                        if (type_op == Opcode::TYPE_VARCHAR)
+                        if (type_op == Opcode::TYPE_VARCHAR || type_op == Opcode::TYPE_CHAR)
                         {
                             pc_ += 4;
                         }
+                        else if (type_op == Opcode::TYPE_DECIMAL)
+                        {
+                            pc_ += 8;
+                        }
+                        pc_ += 1;  // Cast format
                     }
                 }
                 where_end_pc = pc_;
@@ -14653,10 +13752,15 @@ namespace scratchbird
                         readByte();
                         // Read and skip type opcode
                         Opcode type_op = static_cast<Opcode>(readByte());
-                        if (type_op == Opcode::TYPE_VARCHAR)
+                        if (type_op == Opcode::TYPE_VARCHAR || type_op == Opcode::TYPE_CHAR)
                         {
                             pc_ += 4; // Skip precision
                         }
+                        else if (type_op == Opcode::TYPE_DECIMAL)
+                        {
+                            pc_ += 8; // Skip precision + scale
+                        }
+                        pc_ += 1; // Skip cast format
                         // depth unchanged (consume 1, produce 1)
                     }
                 }
@@ -16438,49 +15542,68 @@ namespace scratchbird
 
                     // Read target type
                     Opcode type_op = static_cast<Opcode>(readByte());
-                    core::DataType target_type = core::DataType::UNKNOWN;
                     uint32_t precision = 0;
-
+                    uint32_t scale = 0;
                     switch (type_op)
                     {
-                        case Opcode::TYPE_INTEGER:
-                            target_type = core::DataType::INT32;
-                            break;
-                        case Opcode::TYPE_BIGINT:
-                            target_type = core::DataType::INT64;
-                            break;
-                        case Opcode::TYPE_DOUBLE:
-                            target_type = core::DataType::FLOAT64;
-                            break;
                         case Opcode::TYPE_VARCHAR:
-                            target_type = core::DataType::VARCHAR;
+                        case Opcode::TYPE_CHAR:
                             precision = readInt32();
                             break;
+                        case Opcode::TYPE_DECIMAL:
+                            precision = readInt32();
+                            scale = readInt32();
+                            break;
                         default:
-                            error("Unknown type in CAST");
+                            break;
                     }
+
+                    core::DataType target_type = core::DataType::UNKNOWN;
+                    try
+                    {
+                        target_type = convertDataType(type_op, precision);
+                    }
+                    catch (const std::exception&)
+                    {
+                        error("Unknown type in CAST");
+                    }
+
+                    core::TypeInfo target_info(target_type);
+                    target_info.precision = precision;
+                    target_info.scale = scale;
+
+                    core::CastFormat format =
+                        static_cast<core::CastFormat>(readByte());
 
                     // Pop value to cast (Value is already TypedValue)
                     Value value = pop();
 
                     // Perform cast using TypedValue conversion
-                    try
+                    core::ErrorContext cast_ctx;
+                    Value converted;
+                    core::Status status = value.convertTo(target_info, converted, format, &cast_ctx);
+                    if (status == core::Status::OK)
                     {
-                        auto converted = value.convertTo(target_type);
                         push(converted);
                     }
-                    catch (const std::exception& e)
+                    else if (is_try_cast)
                     {
-                        if (is_try_cast)
+                        // TRY_CAST returns NULL on failure
+                        push(Value::makeNull(target_type));
+                    }
+                    else
+                    {
+                        std::string msg = cast_ctx.message;
+                        if (msg.empty())
                         {
-                            // TRY_CAST returns NULL on failure
-                            push(Value::makeNull());
+                            msg = "Failed to cast value '" + value.toString() +
+                                  "' to " + core::TypeSystem::getTypeName(target_type);
                         }
-                        else
+                        else if (msg.find("target") == std::string::npos)
                         {
-                            // CAST throws error on failure
-                            error("Failed to cast value to target type");
+                            msg += " (target " + std::string(core::TypeSystem::getTypeName(target_type)) + ")";
                         }
+                        error(msg);
                     }
                     break;
                 }
@@ -24581,214 +23704,54 @@ namespace scratchbird
                     continue;
                 }
 
-                switch (col_type)
+                core::ErrorContext local_ctx;
+                core::TypedValue value(static_cast<core::DataType>(columns[i].data_type));
+                if (value.type() == core::DataType::DECIMAL)
                 {
-                    case core::DataType::INT32:
-                    {
-                        if (data_offset + sizeof(int32_t) > tuple_size)
-                            return false;
-
-                        int32_t val;
-                        std::memcpy(&val, tuple_data + data_offset, sizeof(int32_t));
-                        values_out.push_back(Value::makeInt32(val));
-                        data_offset += sizeof(int32_t);
-                        break;
-                    }
-                    case core::DataType::INT64:
-                    {
-                        if (data_offset + sizeof(int64_t) > tuple_size)
-                            return false;
-
-                        int64_t val;
-                        std::memcpy(&val, tuple_data + data_offset, sizeof(int64_t));
-                        values_out.push_back(Value::makeInt64(val));
-                        data_offset += sizeof(int64_t);
-                        break;
-                    }
-                    case core::DataType::FLOAT64:
-                    {
-                        if (data_offset + sizeof(double) > tuple_size)
-                            return false;
-
-                        double val;
-                        std::memcpy(&val, tuple_data + data_offset, sizeof(double));
-                        values_out.push_back(Value::makeFloat64(val));
-                        data_offset += sizeof(double);
-                        break;
-                    }
-                    case core::DataType::VARCHAR:
-                    case core::DataType::CHAR:
-                    case core::DataType::TEXT:
-                    {
-                        if (data_offset + sizeof(uint32_t) > tuple_size)
-                            return false;
-
-                        uint32_t len;
-                        std::memcpy(&len, tuple_data + data_offset, sizeof(uint32_t));
-                        data_offset += sizeof(uint32_t);
-
-                        if (data_offset + len > tuple_size)
-                            return false;
-
-                        std::string str(reinterpret_cast<const char *>(tuple_data + data_offset),
-                                        len);
-                        values_out.push_back(Value::makeVarchar(str));
-                        data_offset += len;
-                        break;
-                    }
-                    case core::DataType::INT16:
-                    {
-                        if (data_offset + sizeof(int16_t) > tuple_size)
-                            return false;
-
-                        int16_t val;
-                        std::memcpy(&val, tuple_data + data_offset, sizeof(int16_t));
-                        values_out.push_back(Value::makeInt32(static_cast<int32_t>(val)));
-                        data_offset += sizeof(int16_t);
-                        break;
-                    }
-                    case core::DataType::FLOAT32:
-                    {
-                        if (data_offset + sizeof(float) > tuple_size)
-                            return false;
-
-                        float val;
-                        std::memcpy(&val, tuple_data + data_offset, sizeof(float));
-                        values_out.push_back(Value::makeFloat64(static_cast<double>(val)));
-                        data_offset += sizeof(float);
-                        break;
-                    }
-                    case core::DataType::DECIMAL:
-                    {
-                        // DECIMAL is stored as double
-                        if (data_offset + sizeof(double) > tuple_size)
-                            return false;
-
-                        double val;
-                        std::memcpy(&val, tuple_data + data_offset, sizeof(double));
-                        values_out.push_back(Value::makeFloat64(val));
-                        data_offset += sizeof(double);
-                        break;
-                    }
-                    case core::DataType::BOOLEAN:
-                    {
-                        if (data_offset + sizeof(uint8_t) > tuple_size)
-                            return false;
-
-                        uint8_t val;
-                        std::memcpy(&val, tuple_data + data_offset, sizeof(uint8_t));
-                        values_out.push_back(Value::makeBool(val != 0));
-                        data_offset += sizeof(uint8_t);
-                        break;
-                    }
-                    case core::DataType::DATE:
-                    {
-                        // Firebird DATE: Modified Julian Date (days since Nov 17, 1858)
-                        // MJD 40587 = Unix epoch (1970-01-01)
-                        constexpr int32_t UNIX_EPOCH_MJD = 40587;
-                        if (data_offset + sizeof(int32_t) > tuple_size)
-                            return false;
-
-                        int32_t mjd;
-                        std::memcpy(&mjd, tuple_data + data_offset, sizeof(int32_t));
-
-                        // Convert MJD to Unix days, then to YYYY-MM-DD
-                        int32_t unix_days = mjd - UNIX_EPOCH_MJD;
-                        std::time_t time = static_cast<std::time_t>(unix_days) * 86400;
-                        std::tm* tm = std::gmtime(&time);
-                        char buf[32];
-                        std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
-                                    tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday);
-                        values_out.push_back(Value::makeVarchar(std::string(buf)));
-                        data_offset += sizeof(int32_t);
-                        break;
-                    }
-                    case core::DataType::TIME:
-                    {
-                        // Firebird TIME: deci-milliseconds (100µs units) since midnight
-                        if (data_offset + sizeof(int32_t) > tuple_size)
-                            return false;
-
-                        int32_t deci_ms;
-                        std::memcpy(&deci_ms, tuple_data + data_offset, sizeof(int32_t));
-
-                        // Convert deci-milliseconds to HH:MM:SS.nnnn
-                        int total_seconds = deci_ms / 10000;
-                        int frac = deci_ms % 10000;
-                        int hour = total_seconds / 3600;
-                        int min = (total_seconds % 3600) / 60;
-                        int sec = total_seconds % 60;
-                        char buf[32];
-                        if (frac > 0) {
-                            std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d.%04d", hour, min, sec, frac);
-                        } else {
-                            std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d", hour, min, sec);
-                        }
-                        values_out.push_back(Value::makeVarchar(std::string(buf)));
-                        data_offset += sizeof(int32_t);
-                        break;
-                    }
-                    case core::DataType::TIMESTAMP:
-                    {
-                        // Firebird TIMESTAMP: MJD date (int32) + deci-milliseconds time (int32)
-                        constexpr int32_t UNIX_EPOCH_MJD = 40587;
-                        if (data_offset + sizeof(int32_t) * 2 > tuple_size)
-                            return false;
-
-                        int32_t mjd_date, deci_ms_time;
-                        std::memcpy(&mjd_date, tuple_data + data_offset, sizeof(int32_t));
-                        std::memcpy(&deci_ms_time, tuple_data + data_offset + sizeof(int32_t), sizeof(int32_t));
-
-                        // Convert MJD to date
-                        int32_t unix_days = mjd_date - UNIX_EPOCH_MJD;
-                        std::time_t date_time = static_cast<std::time_t>(unix_days) * 86400;
-                        std::tm* tm = std::gmtime(&date_time);
-
-                        // Convert deci-milliseconds to time components
-                        int total_seconds = deci_ms_time / 10000;
-                        int frac = deci_ms_time % 10000;
-                        int hour = total_seconds / 3600;
-                        int min = (total_seconds % 3600) / 60;
-                        int sec = total_seconds % 60;
-
-                        char buf[40];
-                        if (frac > 0) {
-                            std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d.%04d",
-                                        tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-                                        hour, min, sec, frac);
-                        } else {
-                            std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
-                                        tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-                                        hour, min, sec);
-                        }
-                        values_out.push_back(Value::makeVarchar(std::string(buf)));
-                        data_offset += sizeof(int32_t) * 2;
-                        break;
-                    }
-                    case core::DataType::BLOB:
-                    case core::DataType::BINARY:
-                    case core::DataType::VARBINARY:
-                    {
-                        // Binary data stored like VARCHAR with length prefix
-                        if (data_offset + sizeof(uint32_t) > tuple_size)
-                            return false;
-
-                        uint32_t len;
-                        std::memcpy(&len, tuple_data + data_offset, sizeof(uint32_t));
-                        data_offset += sizeof(uint32_t);
-
-                        if (data_offset + len > tuple_size)
-                            return false;
-
-                        std::string str(reinterpret_cast<const char *>(tuple_data + data_offset),
-                                        len);
-                        values_out.push_back(Value::makeVarchar(str));
-                        data_offset += len;
-                        break;
-                    }
-                    default:
-                        return false; // Unsupported type
+                    uint32_t precision = columns[i].type_precision != 0
+                                             ? columns[i].type_precision
+                                             : columns[i].max_length;
+                    value.setDecimalType(static_cast<uint8_t>(precision),
+                                         static_cast<uint8_t>(columns[i].type_scale));
                 }
+
+                core::TypeInfo type_info = buildTypeInfo(columns[i]);
+                size_t value_size = 0;
+                core::Status size_status = core::computePlainValueSize(type_info.type,
+                                                                       type_info,
+                                                                       tuple_data + data_offset,
+                                                                       tuple_size - data_offset,
+                                                                       value_size,
+                                                                       &local_ctx);
+                if (size_status != core::Status::OK)
+                {
+                    return false;
+                }
+
+                if (data_offset + value_size > tuple_size)
+                {
+                    return false;
+                }
+
+                std::vector<uint8_t> payload(tuple_data + data_offset,
+                                             tuple_data + data_offset + value_size);
+                data_offset += value_size;
+
+                if (value.deserializePlainValue(payload, &local_ctx) != core::Status::OK)
+                {
+                    return false;
+                }
+
+                // Enforce VARCHAR/CHAR length if metadata exists
+                if ((col_type == core::DataType::CHAR ||
+                     col_type == core::DataType::VARCHAR) &&
+                    columns[i].type_precision > 0 &&
+                    value.toString().size() > columns[i].type_precision)
+                {
+                    return false;
+                }
+
+                values_out.push_back(std::move(value));
             }
 
             return true;
@@ -34393,7 +33356,8 @@ namespace scratchbird
         // Serialize tuple from column values (all columns)
         bool Executor::serializeTupleFromValues(const std::vector<Value>& values,
                                                const std::vector<core::CatalogManager::ColumnInfo>& columns,
-                                               std::vector<uint8_t>& tuple_data_out)
+                                               std::vector<uint8_t>& tuple_data_out,
+                                               core::ErrorContext* ctx)
         {
             if (values.size() != columns.size())
             {
@@ -34450,14 +33414,33 @@ namespace scratchbird
                 auto enc_state = getColumnEncryptionState(db_, col_info, &enc_ctx);
                 if (enc_state == ColumnEncryptionState::ERROR_STATE)
                 {
+                    if (ctx && ctx->message.empty())
+                    {
+                        copyErrorContext(ctx, enc_ctx);
+                    }
                     return false;
                 }
+
+                core::TypedValue coerced_value;
+                if (!coerceValueForColumn(value, col_info, coerced_value, &enc_ctx))
+                {
+                    if (ctx && ctx->message.empty())
+                    {
+                        copyErrorContext(ctx, enc_ctx);
+                    }
+                    return false;
+                }
+
                 if (enc_state == ColumnEncryptionState::ENCRYPTED)
                 {
                     core::TypedValue encrypted_value;
-                    if (!prepareEncryptedValue(db_, col_info, value, encrypted_value, &enc_ctx) ||
+                    if (!prepareEncryptedValue(db_, col_info, coerced_value, encrypted_value, &enc_ctx) ||
                         !appendEncryptedValue(encrypted_value, tuple_data_out, &enc_ctx))
                     {
+                        if (ctx && ctx->message.empty())
+                        {
+                            copyErrorContext(ctx, enc_ctx);
+                        }
                         return false;
                     }
                     continue;
@@ -34467,48 +33450,13 @@ namespace scratchbird
                     return false;
                 }
 
-                // Serialize value based on column type
-                core::DataType col_type = static_cast<core::DataType>(col_info.data_type);
-
-                switch (col_type)
+                if (!appendPlainValue(coerced_value, tuple_data_out, &enc_ctx))
                 {
-                    case core::DataType::INT32:
+                    if (ctx && ctx->message.empty())
                     {
-                        int32_t val = static_cast<int32_t>(value.toInt64());
-                        size_t offset = tuple_data_out.size();
-                        tuple_data_out.resize(offset + sizeof(int32_t));
-                        std::memcpy(&tuple_data_out[offset], &val, sizeof(int32_t));
-                        break;
+                        copyErrorContext(ctx, enc_ctx);
                     }
-                    case core::DataType::INT64:
-                    {
-                        int64_t val = value.toInt64();
-                        size_t offset = tuple_data_out.size();
-                        tuple_data_out.resize(offset + sizeof(int64_t));
-                        std::memcpy(&tuple_data_out[offset], &val, sizeof(int64_t));
-                        break;
-                    }
-                    case core::DataType::FLOAT64:
-                    {
-                        double val = value.toDouble();
-                        size_t offset = tuple_data_out.size();
-                        tuple_data_out.resize(offset + sizeof(double));
-                        std::memcpy(&tuple_data_out[offset], &val, sizeof(double));
-                        break;
-                    }
-                    case core::DataType::VARCHAR:
-                    {
-                        std::string str = value.toString();
-                        // Write length prefix (4 bytes) then data
-                        uint32_t len = static_cast<uint32_t>(str.size());
-                        size_t offset = tuple_data_out.size();
-                        tuple_data_out.resize(offset + sizeof(uint32_t) + len);
-                        std::memcpy(&tuple_data_out[offset], &len, sizeof(uint32_t));
-                        std::memcpy(&tuple_data_out[offset + sizeof(uint32_t)], str.data(), len);
-                        break;
-                    }
-                    default:
-                        return false; // Unsupported type
+                    return false;
                 }
             }
 
@@ -34552,7 +33500,7 @@ namespace scratchbird
             }
 
             // Reserialize with modified values
-            return serializeTupleFromValues(current_values, all_columns, new_tuple_out);
+            return serializeTupleFromValues(current_values, all_columns, new_tuple_out, nullptr);
         }
 
         // ========================================================================

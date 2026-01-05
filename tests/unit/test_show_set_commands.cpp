@@ -155,7 +155,7 @@ protected:
         return executor_->execute(result.bytecode());
     }
 
-private:
+protected:
     std::unique_ptr<TestDatabaseFile> db_file_;
     std::unique_ptr<scratchbird::core::Database> db_;
     std::unique_ptr<QueryCompilerV2> compiler_;

@@ -372,7 +372,7 @@ namespace scratchbird::sblr
                                                   const std::vector<TypedValue> &row)
     {
         TypedValue value = evaluate(expr->expr(), row);
-        return castValue(value, expr->targetType().type);
+        return castValue(value, expr->targetType(), expr->format());
     }
 
     TypedValue ExpressionEvaluator::evaluateCase(const CaseExpr *expr,
@@ -438,31 +438,25 @@ namespace scratchbird::sblr
     // Helper Methods
     // ========================================================================
 
-    TypedValue ExpressionEvaluator::castValue(const TypedValue &value, core::DataType target_type)
+    TypedValue ExpressionEvaluator::castValue(const TypedValue &value,
+                                              const TypeInfo& target_type,
+                                              CastFormat format)
     {
         if (value.isNull())
         {
-            return TypedValue::makeNull();
+            return TypedValue::makeNull(target_type.type);
         }
 
-        switch (target_type)
+        TypedValue result;
+        ErrorContext ctx;
+        Status status = value.convertTo(target_type, result, format, &ctx);
+        if (status != Status::OK)
         {
-        case core::DataType::INT64:
-            return TypedValue::makeInt64(value.toInt64());
-
-        case core::DataType::FLOAT64:
-            return TypedValue::makeFloat64(value.toDouble());
-
-        case core::DataType::VARCHAR:
-        case core::DataType::TEXT:
-            return TypedValue::makeVarchar(value.toString());
-
-        case core::DataType::BOOLEAN:
-            return TypedValue::makeBoolean(value.toBoolean());
-
-        default:
-            throw std::runtime_error("Unsupported cast target type");
+            throw std::runtime_error(ctx.message.empty()
+                                         ? "Type conversion failed"
+                                         : ctx.message);
         }
+        return result;
     }
 
     bool ExpressionEvaluator::isTruthy(const TypedValue &value)

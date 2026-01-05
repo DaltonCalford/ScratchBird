@@ -134,7 +134,8 @@ namespace scratchbird::sblr
         TypedValue evaluateNullIf(const NullIfExpr *expr, const std::vector<TypedValue> &row);
 
         // Helper methods
-        TypedValue castValue(const TypedValue &value, DataType target_type);
+        TypedValue castValue(const TypedValue &value, const TypeInfo& target_type,
+                             CastFormat format);
         bool isTruthy(const TypedValue &value);
         static std::string normalizeIdentifier(std::string_view name);
         int compareValues(const TypedValue &left, const TypedValue &right);

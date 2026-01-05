@@ -198,6 +198,63 @@ CREATE DOMAIN user\_id AS identifier
 
 For maximum flexibility in procedural code, ScratchBird provides the VARIANT type, which can hold a value of any other type at runtime.
 
+## **7\. Canonical Storage Encoding (Alpha)**
+
+The canonical on-disk encoding for unencrypted heap tuples **must** match `TypedValue::serializePlainValue` unless explicitly noted. This guarantees that encrypted payloads, uniqueness indexes, and heap storage all round-trip with the same byte layout.
+For implementation details and CAST error semantics, see `docs/specifications/DATA_TYPE_PERSISTENCE_AND_CASTS.md`.
+
+### **7.1. Numeric storage**
+- **INT8/INT16/INT32/INT64/UINT8/UINT16/UINT32/UINT64**: stored as fixed-width integers (little-endian).
+- **FLOAT32/FLOAT64**: stored as IEEE-754 floats (little-endian).
+- **DECIMAL/NUMERIC**: stored as a **scaled integer only**. The storage width is determined by the column precision (not per-row):  
+  - precision ≤ 2 → 1 byte  
+  - precision ≤ 4 → 2 bytes  
+  - precision ≤ 9 → 4 bytes  
+  - precision ≤ 18 → 8 bytes  
+  - precision ≤ 38 → 16 bytes  
+  Scale is recorded in column metadata; no precision/scale bytes are stored in the tuple.
+- **MONEY**: stored as a fixed-width `INT64` (scaled 10^-4).
+
+### **7.2. String and binary storage**
+- **CHAR/VARCHAR/TEXT/JSON/JSONB/XML**: stored as `uint32 length + bytes` (little-endian length) with **no implicit truncation**.
+- **BINARY/VARBINARY/BLOB/BYTEA/VECTOR**: stored as `uint32 length + raw bytes` (little-endian length). No text conversion on write.
+
+### **7.3. Temporal storage**
+ScratchBird uses Firebird-compatible time formats plus a timezone offset:
+- **DATE**: `int32 MJD` + `int32 offset_seconds` (UTC normalized using `server.time.date_default_time`).
+- **TIME**: `int32 deci-ms` + `int32 offset_seconds`.
+- **TIMESTAMP**: `int32 MJD` + `int32 deci-ms` + `int32 offset_seconds`.
+
+All timestamps are normalized to UTC on write, with `offset_seconds` preserved for display and reconstruction.
+
+### **7.4. UUID/INT128**
+- **UUID/INT128**: fixed 16 bytes.
+
+## **8\. CAST/CONVERT Semantics (Alpha)**
+
+### **8.1. Mandatory conversions**
+Every type must support conversion to string (`TEXT/VARCHAR`) and numeric types must support string-to-number conversions with deterministic error reporting.
+
+Required behavior:
+- **String → numeric**: reject non-numeric input with `INVALID_TEXT_REPRESENTATION`.
+- **Numeric → string**: always supported using canonical formatting.
+- **Temporal ↔ string**: `DATE/TIME/TIMESTAMP` parse and format `YYYY-MM-DD`, `HH:MM:SS[.ffff]`, and `YYYY-MM-DD HH:MM:SS[.ffff]` with optional timezone offsets.
+- **Binary ↔ string**: uses `CAST(... USING <format>)`.
+
+### **8.2. CAST ... USING formats**
+Binary-to-text and text-to-binary casts accept:
+- `USING HEX` (default)
+- `USING BASE64`
+- `USING ESCAPE`
+
+Unsupported format names must fail with `NOT_SUPPORTED`.
+
+### **8.3. Overlength handling**
+`CHAR(n)` and `VARCHAR(n)` inserts and casts **must reject** values exceeding `n` with `STRING_DATA_RIGHT_TRUNCATION`. No hidden truncations.
+
+### **8.4. Parser/SBLR integration**
+Parser and SBLR CAST handling must follow this spec (Sections 7–8) and must transport the `USING` format into the resolved AST and bytecode.
+
 \-- A generic logging procedure using VARIANT  
 CREATE PROCEDURE log\_change(  
     @table\_name TEXT,  

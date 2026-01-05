@@ -366,6 +366,7 @@ private:
     // ==========================================================================
 
     ResolvedType resolveTypeName(const TypeName& type_name);
+    core::CastFormat resolveCastFormat(const CastExpr* expr);
     DataType mapToDataType(DataType ast_type, int32_t precision, int32_t scale);
 
     // ==========================================================================

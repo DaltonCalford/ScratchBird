@@ -2029,6 +2029,7 @@ ResolvedExpression* SemanticAnalyzerV2::insertImplicitCast(
     cast->expr = expr;
     cast->target_type = target_type;
     cast->type = target_type;
+    cast->format = core::CastFormat::DEFAULT;
     cast->implicit = true;
     cast->span = expr->span;
     return cast;
@@ -4046,6 +4047,7 @@ ResolvedExpression* SemanticAnalyzerV2::analyzeCast(CastExpr* expr) {
     resolved->expr = operand;
     resolved->target_type = resolveTypeName(expr->target_type);
     resolved->type = resolved->target_type;
+    resolved->format = resolveCastFormat(expr);
     resolved->implicit = false;
 
     return resolved;
@@ -4921,6 +4923,29 @@ ResolvedType SemanticAnalyzerV2::resolveTypeName(const TypeName& type_name) {
     resolved.with_time_zone = type_name.with_time_zone;
 
     return resolved;
+}
+
+core::CastFormat SemanticAnalyzerV2::resolveCastFormat(const CastExpr* expr) {
+    if (!expr || !expr->format.has_value()) {
+        return core::CastFormat::DEFAULT;
+    }
+
+    std::string fmt = std::string(string_pool_.get(expr->format.value()));
+    std::transform(fmt.begin(), fmt.end(), fmt.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    if (fmt == "hex") {
+        return core::CastFormat::HEX;
+    }
+    if (fmt == "base64") {
+        return core::CastFormat::BASE64;
+    }
+    if (fmt == "escape") {
+        return core::CastFormat::ESCAPE;
+    }
+
+    error(expr->span, "Unknown CAST USING format: " + fmt);
+    return core::CastFormat::DEFAULT;
 }
 
 DataType SemanticAnalyzerV2::mapToDataType(DataType ast_type, int32_t /*precision*/, int32_t /*scale*/) {

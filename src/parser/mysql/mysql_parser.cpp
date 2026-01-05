@@ -7,6 +7,7 @@
 
 #include "scratchbird/parser/mysql/mysql_parser.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/types.h"
 #include <cctype>
 #include <cstring>
 #include <algorithm>
@@ -1679,7 +1680,6 @@ void Parser::parseCastExpr() {
     consume(TokenType::KW_CAST, "Expected CAST");
     consume(TokenType::LEFT_PAREN, "Expected (");
 
-    emit(sblr::Opcode::EXPR_CAST);
     parseExpression();
 
     consumeKeyword(TokenType::KW_AS, "Expected AS");
@@ -1688,14 +1688,17 @@ void Parser::parseCastExpr() {
     MySQLDataType type = parseDataType();
 
     // Emit type opcode
+    emit(sblr::Opcode::EXPR_CAST);
+    emitByte(0);  // try_cast = false
     emit(typeToOpcode(type.kind));
     if (type.length > 0) {
         emitU32(type.length);
     }
     if (type.precision > 0) {
-        emitU16(type.precision);
-        emitU16(type.scale);
+        emitU32(type.precision);
+        emitU32(type.scale);
     }
+    emitByte(static_cast<uint8_t>(core::CastFormat::DEFAULT));
 
     consume(TokenType::RIGHT_PAREN, "Expected )");
 }

@@ -171,22 +171,26 @@ namespace scratchbird::core
     {
     public:
         CastExpr(std::unique_ptr<Expression> expr, const TypeInfo &target_type,
-                 bool is_try_cast = false)
+                 bool is_try_cast = false,
+                 CastFormat format = CastFormat::DEFAULT)
             : Expression(ExprKind::CAST),
               expr_(std::move(expr)),
               target_type_(target_type),
-              is_try_cast_(is_try_cast)
+              is_try_cast_(is_try_cast),
+              format_(format)
         {
         }
 
         Expression *expr() const { return expr_.get(); }
         const TypeInfo &targetType() const { return target_type_; }
         bool isTryCast() const { return is_try_cast_; }
+        CastFormat format() const { return format_; }
 
     private:
         std::unique_ptr<Expression> expr_;
         TypeInfo target_type_;
         bool is_try_cast_ = false;
+        CastFormat format_ = CastFormat::DEFAULT;
     };
 
     class CaseExpr : public Expression

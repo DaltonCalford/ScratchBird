@@ -101,7 +101,7 @@ namespace scratchbird
             EXPR_OR = 0x71,  // Logical OR
 
             // Type conversion
-            EXPR_CAST = 0x72, // Type cast (expr + target type)
+            EXPR_CAST = 0x72, // Type cast (expr + target type + modifiers + format)
 
             // Pattern matching
             EXPR_LIKE = 0x78,  // LIKE pattern match

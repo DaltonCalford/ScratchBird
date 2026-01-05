@@ -284,7 +284,13 @@ namespace scratchbird::core
 
     void ExpressionSerializer::serializeCast(const CastExpr *expr, std::vector<uint8_t> &buffer)
     {
-        writeU8(buffer, 0);
+        uint8_t flags = 0;
+        if (expr->isTryCast())
+        {
+            flags |= 0x01;
+        }
+        writeU8(buffer, flags);
+        writeU8(buffer, static_cast<uint8_t>(expr->format()));
 
         const TypeInfo &target = expr->targetType();
         writeU16(buffer, static_cast<uint16_t>(target.type));
@@ -515,7 +521,9 @@ namespace scratchbird::core
 
     std::unique_ptr<Expression> ExpressionSerializer::deserializeCast(const uint8_t *&ptr, const uint8_t *end)
     {
-        readU8(ptr, end); // flags
+        uint8_t flags = readU8(ptr, end);
+        auto format = static_cast<CastFormat>(readU8(ptr, end));
+        bool is_try_cast = (flags & 0x01) != 0;
 
         TypeInfo target;
         target.type = static_cast<DataType>(readU16(ptr, end));
@@ -526,7 +534,7 @@ namespace scratchbird::core
         target.timezone_hint = readU16(ptr, end);
 
         auto expr = deserializeNode(ptr, end);
-        return std::make_unique<CastExpr>(std::move(expr), target, false);
+        return std::make_unique<CastExpr>(std::move(expr), target, is_try_cast, format);
     }
 
     std::unique_ptr<Expression> ExpressionSerializer::deserializeCase(const uint8_t *&ptr, const uint8_t *end)

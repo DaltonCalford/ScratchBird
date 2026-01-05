@@ -61,6 +61,7 @@ namespace scratchbird::core
         static TypedValue makeVarchar(const std::string& value);
         static TypedValue makeText(const std::string& value);
         static TypedValue makeChar(const std::string& value);
+        static TypedValue makeDecimal(int128_t unscaled_value, uint8_t precision, uint8_t scale);
 
         // Factory methods for spatial types
         static TypedValue makePoint(const Point& value);
@@ -91,9 +92,9 @@ namespace scratchbird::core
         static TypedValue makeTSQuery(const std::shared_ptr<TSQuery>& value);
 
         // Factory methods for temporal types
-        static TypedValue makeDate(int64_t days_since_epoch);
-        static TypedValue makeTime(int64_t microseconds);
-        static TypedValue makeTimestamp(int64_t microseconds_since_epoch);
+        static TypedValue makeDate(int64_t days_since_epoch, int32_t offset_seconds = 0);
+        static TypedValue makeTime(int64_t microseconds, int32_t offset_seconds = 0);
+        static TypedValue makeTimestamp(int64_t microseconds_since_epoch, int32_t offset_seconds = 0);
         static TypedValue makeBoolean(bool value) { return makeBool(value); } // Alias
 
         // Factory methods for other types
@@ -159,11 +160,16 @@ namespace scratchbird::core
         int64_t getDate() const;
         int64_t getTime() const;
         int64_t getTimestamp() const;
+        int32_t getTimezoneOffsetSeconds() const { return timezone_offset_seconds_; }
 
         // Getters for other types
         const std::vector<uint8_t>& getUUID() const;
+        const std::vector<uint8_t>& getBinary() const;
         const Interval& getInterval() const;
         const std::vector<TypedValue>& getArray() const;
+        int128_t getDecimalUnscaled() const { return decimal_unscaled_; }
+        uint8_t getDecimalPrecision() const { return decimal_precision_; }
+        uint8_t getDecimalScale() const { return decimal_scale_; }
 
         // Utility methods
         std::string toString() const;
@@ -172,8 +178,15 @@ namespace scratchbird::core
         int64_t toInt64() const {
             ensureDecrypted();
             switch (type_) {
+                case DataType::INT8: return static_cast<int64_t>(data_.int8_val);
+                case DataType::INT16: return static_cast<int64_t>(data_.int16_val);
                 case DataType::INT32: return static_cast<int64_t>(data_.int32_val);
                 case DataType::INT64: return data_.int64_val;
+                case DataType::UINT8: return static_cast<int64_t>(data_.uint8_val);
+                case DataType::UINT16: return static_cast<int64_t>(data_.uint16_val);
+                case DataType::UINT32: return static_cast<int64_t>(data_.uint32_val);
+                case DataType::UINT64: return static_cast<int64_t>(data_.uint64_val);
+                case DataType::BOOLEAN: return data_.bool_val ? 1 : 0;
                 case DataType::FLOAT32: return static_cast<int64_t>(data_.float32_val);
                 case DataType::FLOAT64: return static_cast<int64_t>(data_.float64_val);
                 default: return getInt64();
@@ -182,8 +195,13 @@ namespace scratchbird::core
         int32_t toInt32() const {
             ensureDecrypted();
             switch (type_) {
+                case DataType::INT8: return static_cast<int32_t>(data_.int8_val);
+                case DataType::INT16: return static_cast<int32_t>(data_.int16_val);
                 case DataType::INT32: return data_.int32_val;
                 case DataType::INT64: return static_cast<int32_t>(data_.int64_val);
+                case DataType::UINT8: return static_cast<int32_t>(data_.uint8_val);
+                case DataType::UINT16: return static_cast<int32_t>(data_.uint16_val);
+                case DataType::UINT32: return static_cast<int32_t>(data_.uint32_val);
                 case DataType::FLOAT32: return static_cast<int32_t>(data_.float32_val);
                 case DataType::FLOAT64: return static_cast<int32_t>(data_.float64_val);
                 default: return getInt32();
@@ -192,8 +210,14 @@ namespace scratchbird::core
         double toDouble() const {
             ensureDecrypted();
             switch (type_) {
+                case DataType::INT8: return static_cast<double>(data_.int8_val);
+                case DataType::INT16: return static_cast<double>(data_.int16_val);
                 case DataType::INT32: return static_cast<double>(data_.int32_val);
                 case DataType::INT64: return static_cast<double>(data_.int64_val);
+                case DataType::UINT8: return static_cast<double>(data_.uint8_val);
+                case DataType::UINT16: return static_cast<double>(data_.uint16_val);
+                case DataType::UINT32: return static_cast<double>(data_.uint32_val);
+                case DataType::UINT64: return static_cast<double>(data_.uint64_val);
                 case DataType::FLOAT32: return static_cast<double>(data_.float32_val);
                 case DataType::FLOAT64: return data_.float64_val;
                 case DataType::DECIMAL: return std::stod(toString());
@@ -237,6 +261,14 @@ namespace scratchbird::core
 
         // Type conversion method
         TypedValue convertTo(DataType target_type) const;
+        Status convertTo(const TypeInfo& target_type,
+                         TypedValue& result_out,
+                         CastFormat format = CastFormat::DEFAULT,
+                         ErrorContext* ctx = nullptr) const;
+
+        // Plain-value serialization for canonical storage encoding
+        Status serializePlainValue(std::vector<uint8_t>& out, ErrorContext* ctx) const;
+        Status deserializePlainValue(const std::vector<uint8_t>& data, ErrorContext* ctx);
 
         // Setters for primitive types
         void setInt32(int32_t value);
@@ -247,6 +279,8 @@ namespace scratchbird::core
         void setVarchar(const std::string& value);
         void setText(const std::string& value);
         void setChar(const std::string& value);
+        void setDecimalType(uint8_t precision, uint8_t scale);
+        void setTimezoneOffsetSeconds(int32_t offset_seconds) { timezone_offset_seconds_ = offset_seconds; }
 
         // Comparison operators
         bool operator==(const TypedValue& other) const;
@@ -281,6 +315,14 @@ namespace scratchbird::core
 
         // Storage for binary types
         std::vector<uint8_t> binary_data_;
+
+        // Decimal storage (scaled integer + metadata)
+        int128_t decimal_unscaled_ = 0;
+        uint8_t decimal_precision_ = 0;
+        uint8_t decimal_scale_ = 0;
+
+        // Temporal timezone offset (seconds)
+        int32_t timezone_offset_seconds_ = 0;
 
         // Storage for spatial types (heap-allocated for complex types)
         struct SpatialData
@@ -328,8 +370,6 @@ namespace scratchbird::core
         void moveFrom(TypedValue&& other) noexcept;
         void clear();
         void ensureDecrypted() const;
-        Status serializePlainValue(std::vector<uint8_t>& out, ErrorContext* ctx) const;
-        Status deserializePlainValue(const std::vector<uint8_t>& data, ErrorContext* ctx);
     };
 
     // Template implementations for range types

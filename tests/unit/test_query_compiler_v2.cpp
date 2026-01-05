@@ -218,6 +218,36 @@ TEST_F(QueryCompilerV2Test, ExecuteSelectMultipleColumns) {
     EXPECT_EQ(rs->columnCount(), 3);
 }
 
+TEST_F(QueryCompilerV2Test, ExecuteCastUsingHex) {
+    auto result = compileAndExecute(
+        "SELECT CAST(CAST('48656c6c6f' AS BLOB USING hex) AS VARCHAR USING hex)");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1);
+    ASSERT_EQ(rs->columnCount(), 1);
+
+    auto value = rs->getValue(0, 0);
+    EXPECT_EQ(value.getVarchar(), "48656c6c6f");
+}
+
+TEST_F(QueryCompilerV2Test, ExecuteCastUsingBase64) {
+    auto result = compileAndExecute(
+        "SELECT CAST(CAST('SGVsbG8=' AS BLOB USING base64) AS VARCHAR USING base64)");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1);
+    ASSERT_EQ(rs->columnCount(), 1);
+
+    auto value = rs->getValue(0, 0);
+    EXPECT_EQ(value.getVarchar(), "SGVsbG8=");
+}
+
 TEST_F(QueryCompilerV2Test, ExecuteSelectBoolean) {
     auto result = compileAndExecute("SELECT TRUE, FALSE");
     ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();

@@ -18904,7 +18904,7 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
                 break;
             }
             case scratchbird::sblr::Opcode::EXPR_CAST: {
-                // EXPR_CAST payload: try_cast flag (1 byte) + target type opcode + optional precision
+                // EXPR_CAST payload: try_cast flag + type opcode + modifiers + cast format
                 pc += 1;  // try_cast flag
                 if (pc >= bytecode.size()) break;
                 uint8_t type_op = bytecode[pc++];
@@ -18915,6 +18915,7 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
                 } else if (type_opcode == scratchbird::sblr::Opcode::TYPE_DECIMAL) {
                     pc += 8;  // precision + scale
                 }
+                pc += 1;  // cast format
                 break;
             }
             case scratchbird::sblr::Opcode::DEFAULT_VALUE:

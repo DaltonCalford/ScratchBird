@@ -303,6 +303,24 @@ TEST_F(SemanticAnalyzerV2Test, CastIntToVarchar) {
     EXPECT_EQ(cast->target_type.data_type, DataType::VARCHAR);
 }
 
+TEST_F(SemanticAnalyzerV2Test, CastUsingFormat) {
+    auto result = analyze("SELECT CAST('ff' AS BLOB USING hex)");
+    ASSERT_TRUE(result.success()) << "Analysis failed for CAST USING";
+
+    auto* stmt = dynamic_cast<ResolvedSelectStmt*>(result.statement());
+    ASSERT_NE(stmt, nullptr);
+
+    auto* cast = dynamic_cast<ResolvedCast*>(stmt->select_list[0].expr);
+    ASSERT_NE(cast, nullptr);
+    EXPECT_EQ(cast->target_type.data_type, DataType::BLOB);
+    EXPECT_EQ(cast->format, CastFormat::HEX);
+}
+
+TEST_F(SemanticAnalyzerV2Test, CastUsingFormatInvalid) {
+    auto result = analyze("SELECT CAST('ff' AS BLOB USING bananas)");
+    EXPECT_FALSE(result.success()) << "Expected CAST USING to fail on invalid format";
+}
+
 // =============================================================================
 // IS NULL Expression Analysis Tests
 // =============================================================================

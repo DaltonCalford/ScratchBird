@@ -238,7 +238,15 @@ namespace scratchbird::optimizer
     bool ExpressionMatcher::matchCast(const CastExpr *q,
                                      const CastExpr *i)
     {
-        if (q->targetType().type != i->targetType().type)
+        const auto& q_type = q->targetType();
+        const auto& i_type = i->targetType();
+        if (q_type.type != i_type.type ||
+            q_type.precision != i_type.precision ||
+            q_type.scale != i_type.scale ||
+            q_type.element_type != i_type.element_type ||
+            q_type.with_timezone != i_type.with_timezone ||
+            q_type.timezone_hint != i_type.timezone_hint ||
+            q->format() != i->format())
         {
             return false;
         }

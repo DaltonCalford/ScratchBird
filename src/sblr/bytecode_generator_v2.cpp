@@ -2262,7 +2262,11 @@ void BytecodeGeneratorV2::generateFunctionCall(ResolvedFunctionCall* expr) {
 void BytecodeGeneratorV2::generateCast(ResolvedCast* expr) {
     generateExpression(expr->expr);
     current_result_->writeOpcode(sblr::Opcode::EXPR_CAST);
+    // CAST payload: try_cast flag + target type + modifiers + format
+    // See docs/specifications/DATA_TYPE_PERSISTENCE_AND_CASTS.md
+    current_result_->writeByte(0);  // try_cast = false
     generateDataType(expr->target_type);
+    current_result_->writeByte(static_cast<uint8_t>(expr->format));
 }
 
 void BytecodeGeneratorV2::generateCase(ResolvedCase* expr) {

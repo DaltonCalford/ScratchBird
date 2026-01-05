@@ -106,6 +106,15 @@ namespace scratchbird::core
         NULL_TYPE = 255, // SQL NULL
     };
 
+    // CAST formatting for binary/text conversions.
+    enum class CastFormat : uint8_t
+    {
+        DEFAULT = 0, // Engine default (hex for binary <-> text)
+        HEX = 1,
+        BASE64 = 2,
+        ESCAPE = 3,
+    };
+
     /**
      * Type metadata - stores additional information about a type
      */

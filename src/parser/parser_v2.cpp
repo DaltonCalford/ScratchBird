@@ -3796,6 +3796,10 @@ Expression* Parser::parseCastExpr() {
     expr->expr = parseExpression();
     expect(TokenType::KW_AS, "Expected AS in CAST expression");
     expr->target_type = parseTypeName();
+    // CAST ... USING <format> (see docs/specifications/DATA_TYPE_PERSISTENCE_AND_CASTS.md)
+    if (match(TokenType::KW_USING)) {
+        expr->format = expectIdentifier("Expected CAST USING format");
+    }
     expect(TokenType::RIGHT_PAREN, "Expected ')' after CAST");
 
     return expr;

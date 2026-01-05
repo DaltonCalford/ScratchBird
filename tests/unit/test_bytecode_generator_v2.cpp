@@ -11,10 +11,12 @@
 #include "scratchbird/parser/parser_v2.h"
 #include "scratchbird/sblr/semantic_analyzer_v2.h"
 #include "scratchbird/sblr/bytecode_generator_v2.h"
+#include "scratchbird/sblr/opcodes.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/domain_manager.h"
 #include "unit/test_user_helpers.h"
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <sstream>
@@ -451,6 +453,40 @@ TEST_F(BytecodeGeneratorV2Test, CastExpression) {
     ASSERT_TRUE(result.success()) << "Bytecode generation failed";
 
     EXPECT_TRUE(hasOpcode(result.bytecode(), Opcode::EXPR_CAST));
+}
+
+TEST_F(BytecodeGeneratorV2Test, CastExpressionPayload) {
+    auto result = generateBytecode("SELECT CAST(42 AS VARCHAR)");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    const auto& bytecode = result.bytecode();
+    auto it = std::find(bytecode.begin(), bytecode.end(),
+                        static_cast<uint8_t>(Opcode::EXPR_CAST));
+    ASSERT_NE(it, bytecode.end());
+    size_t pos = static_cast<size_t>(it - bytecode.begin());
+    ASSERT_GT(bytecode.size(), pos + 7);
+
+    EXPECT_EQ(bytecode[pos + 1], 0u);  // try_cast flag
+    EXPECT_EQ(bytecode[pos + 2], static_cast<uint8_t>(Opcode::TYPE_VARCHAR));
+    uint32_t len = sblr::readInt32(&bytecode[pos + 3]);
+    EXPECT_EQ(len, 255u);
+    EXPECT_EQ(bytecode[pos + 7], static_cast<uint8_t>(CastFormat::DEFAULT));
+}
+
+TEST_F(BytecodeGeneratorV2Test, CastUsingFormatPayload) {
+    auto result = generateBytecode("SELECT CAST('ff' AS BLOB USING hex)");
+    ASSERT_TRUE(result.success()) << "Bytecode generation failed";
+
+    const auto& bytecode = result.bytecode();
+    auto it = std::find(bytecode.begin(), bytecode.end(),
+                        static_cast<uint8_t>(Opcode::EXPR_CAST));
+    ASSERT_NE(it, bytecode.end());
+    size_t pos = static_cast<size_t>(it - bytecode.begin());
+    ASSERT_GT(bytecode.size(), pos + 3);
+
+    EXPECT_EQ(bytecode[pos + 1], 0u);  // try_cast flag
+    EXPECT_EQ(bytecode[pos + 2], static_cast<uint8_t>(Opcode::TYPE_BLOB));
+    EXPECT_EQ(bytecode[pos + 3], static_cast<uint8_t>(CastFormat::HEX));
 }
 
 TEST_F(BytecodeGeneratorV2Test, LikeExpression) {
